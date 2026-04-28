@@ -14,6 +14,20 @@ export function useIsMobile() {
 
 export const formatGBP = (n) => '£' + (Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
+export const formatProposalNumber = (n) =>
+  n && n.year && n.seq ? n.year + '-' + String(n.seq).padStart(3, '0') : '';
+
+export const formatDuration = (s) => {
+  s = Math.max(0, Math.round(Number(s) || 0));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (m < 60) return r ? m + 'm ' + r + 's' : m + 'm';
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return mm ? h + 'h ' + mm + 'm' : h + 'h';
+};
+
 export function resizeImage(file, maxW, maxH, keepPng) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

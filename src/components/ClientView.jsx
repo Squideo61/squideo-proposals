@@ -7,7 +7,7 @@ import {
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { useStore } from '../store.jsx';
-import { formatGBP, sendNotification, useIsMobile } from '../utils.js';
+import { formatGBP, formatProposalNumber, sendNotification, useIsMobile } from '../utils.js';
 import { openPrintWindow } from '../utils/printProposal.js';
 import { Field, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
 import { SignedBlock } from './SignedBlock.jsx';
@@ -77,9 +77,67 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
   const signed = state.signatures[id] || null;
   const payment = state.payments[id] || null;
 
+  // Track viewing session: open + heartbeat (active time only) + close beacon
   useEffect(() => {
-    if (data) actions.recordView(id);
-  }, [id, data, actions]);
+    if (!data) return;
+    const sessionId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+    let active = 0;
+    let lastTick = Date.now();
+
+    const post = (durationSeconds) => {
+      try {
+        fetch('/api/views/' + id, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId, durationSeconds }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch { /* ignore */ }
+    };
+
+    post(0); // initial open
+
+    const tick = () => {
+      if (document.visibilityState === 'visible') {
+        active += Math.round((Date.now() - lastTick) / 1000);
+        post(active);
+      }
+      lastTick = Date.now();
+    };
+    const heartbeat = setInterval(tick, 15000);
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') tick();
+      else lastTick = Date.now();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    const finalSend = () => {
+      const final = active + (document.visibilityState === 'visible'
+        ? Math.round((Date.now() - lastTick) / 1000)
+        : 0);
+      try {
+        const blob = new Blob(
+          [JSON.stringify({ sessionId, durationSeconds: final })],
+          { type: 'application/json' }
+        );
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon('/api/views/' + id, blob);
+        } else {
+          post(final);
+        }
+      } catch { /* ignore */ }
+    };
+    window.addEventListener('pagehide', finalSend);
+
+    return () => {
+      clearInterval(heartbeat);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', finalSend);
+      finalSend();
+    };
+  }, [id, data]);
 
   const [selectedExtras, setSelectedExtras] = useState({});
   const [partnerSelected, setPartnerSelected] = useState(false);
@@ -215,6 +273,11 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
             <div>{data.contactBusinessName || '[Business Name]'}</div>
             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 14, opacity: 0.85 }}>{data.date}</span>
+              {data._number && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.35)', color: 'white', padding: '3px 10px', borderRadius: 999, letterSpacing: 0.4 }}>
+                  Proposal #{formatProposalNumber(data._number)}
+                </span>
+              )}
               {(() => {
                 const expiry = validityLabel(data.date, data.validityDays);
                 if (!expiry) return null;

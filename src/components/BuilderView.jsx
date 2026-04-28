@@ -22,9 +22,10 @@ function SectionStatus({ issues }) {
   );
 }
 
-export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
+export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   const { state, actions, showMsg } = useStore();
-  const data = state.proposals[id];
+  const isTemplate = mode === 'template';
+  const data = isTemplate ? state.templates[id] : state.proposals[id];
   const [showSaveTpl, setShowSaveTpl] = useState(false);
   const [tplName, setTplName] = useState('');
   const [showBankPicker, setShowBankPicker] = useState(false);
@@ -37,14 +38,18 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
   if (!data) {
     return (
       <div style={{ padding: 60, textAlign: 'center' }}>
-        Proposal not found.
+        {isTemplate ? 'Template' : 'Proposal'} not found.
         <div style={{ marginTop: 16 }}><button onClick={onBack} className="btn-ghost">Back</button></div>
       </div>
     );
   }
 
   const update = (patch) => {
-    actions.saveProposal(id, { ...data, ...patch });
+    if (isTemplate) {
+      actions.saveTemplate(id, { ...data, ...patch });
+    } else {
+      actions.saveProposal(id, { ...data, ...patch });
+    }
   };
 
   const updateTeam = (i, patch) => {
@@ -59,9 +64,9 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
     update({ optionalExtras: arr });
   };
 
-  // Validation — required fields per section
+  // Validation — required fields per section (client fields skipped in template mode)
   const issues = {
-    client: [
+    client: isTemplate ? [] : [
       !data.clientName?.trim() && 'Client name',
       !data.contactBusinessName?.trim() && 'Business name',
     ].filter(Boolean),
@@ -74,7 +79,9 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
   };
   const totalIssues = Object.values(issues).flat().length;
 
-  const proposalLabel = [data.clientName, data.contactBusinessName].filter(Boolean).join(' · ') || 'New Proposal';
+  const proposalLabel = isTemplate
+    ? 'Template: ' + (data.name || 'Untitled')
+    : [data.clientName, data.contactBusinessName].filter(Boolean).join(' · ') || 'New Proposal';
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: isMobile ? 12 : 24 }}>
@@ -108,40 +115,59 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
         )}
 
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-          {!isMobile && (
+          {!isMobile && !isTemplate && (
             <button onClick={() => { setTplName(data.contactBusinessName ? data.contactBusinessName + ' template' : ''); setShowSaveTpl(true); }} className="btn-ghost">
               <Save size={14} /> Save as template
             </button>
           )}
-          <button onClick={onPreview} className="btn"><Eye size={14} /> Preview</button>
+          {!isTemplate && <button onClick={onPreview} className="btn"><Eye size={14} /> Preview</button>}
+          {isTemplate && <button onClick={onBack} className="btn"><Check size={14} /> Done</button>}
         </div>
       </div>
 
-      {/* ── Client Details ── */}
-      <Section title="Client Details" color="#0369a1" icon={Building2} badge={<SectionStatus issues={issues.client} />}>
-        <Field label="Client name" error={!data.clientName?.trim()}>
-          <input className="input" value={data.clientName} onChange={(e) => update({ clientName: e.target.value })} placeholder="e.g. John Smith" />
-        </Field>
-        <Field label="Business name" error={!data.contactBusinessName?.trim()}>
-          <input className="input" value={data.contactBusinessName} onChange={(e) => update({ contactBusinessName: e.target.value })} placeholder="e.g. Acme Ltd" />
-        </Field>
-        <Field label="Proposal title (optional)">
-          <input className="input" value={data.proposalTitle || ''} onChange={(e) => update({ proposalTitle: e.target.value })} placeholder="Explainer Video Proposal" />
-        </Field>
-        <Field label="Client logo (optional)">
-          <LogoUploader logo={data.clientLogo} onChange={(logo) => update({ clientLogo: logo })} showMsg={showMsg} />
-        </Field>
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
-          <Field label="Date">
-            <input className="input" value={data.date} onChange={(e) => update({ date: e.target.value })} />
+      {/* ── Client Details / Template Info ── */}
+      <Section
+        title={isTemplate ? 'Template Info' : 'Client Details'}
+        color="#0369a1"
+        icon={Building2}
+        badge={isTemplate ? null : <SectionStatus issues={issues.client} />}
+      >
+        {isTemplate ? (
+          <Field label="Template name">
+            <input
+              className="input"
+              value={data.name || ''}
+              onChange={(e) => update({ name: e.target.value })}
+              placeholder="e.g. NHS / SMB / Standard 60s"
+            />
           </Field>
-          <Field label="Prepared by">
-            <input className="input" value={data.preparedBy} onChange={(e) => update({ preparedBy: e.target.value })} />
-          </Field>
-        </div>
-        <Field label="Job title">
-          <input className="input" value={data.preparedByTitle || ''} onChange={(e) => update({ preparedByTitle: e.target.value })} placeholder="e.g. Partnership Lead" />
-        </Field>
+        ) : (
+          <>
+            <Field label="Client name" error={!data.clientName?.trim()}>
+              <input className="input" value={data.clientName} onChange={(e) => update({ clientName: e.target.value })} placeholder="e.g. John Smith" />
+            </Field>
+            <Field label="Business name" error={!data.contactBusinessName?.trim()}>
+              <input className="input" value={data.contactBusinessName} onChange={(e) => update({ contactBusinessName: e.target.value })} placeholder="e.g. Acme Ltd" />
+            </Field>
+            <Field label="Proposal title (optional)">
+              <input className="input" value={data.proposalTitle || ''} onChange={(e) => update({ proposalTitle: e.target.value })} placeholder="Explainer Video Proposal" />
+            </Field>
+            <Field label="Client logo (optional)">
+              <LogoUploader logo={data.clientLogo} onChange={(logo) => update({ clientLogo: logo })} showMsg={showMsg} />
+            </Field>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+              <Field label="Date">
+                <input className="input" value={data.date} onChange={(e) => update({ date: e.target.value })} />
+              </Field>
+              <Field label="Prepared by">
+                <input className="input" value={data.preparedBy} onChange={(e) => update({ preparedBy: e.target.value })} />
+              </Field>
+            </div>
+            <Field label="Job title">
+              <input className="input" value={data.preparedByTitle || ''} onChange={(e) => update({ preparedByTitle: e.target.value })} placeholder="e.g. Partnership Lead" />
+            </Field>
+          </>
+        )}
       </Section>
 
       {/* ── Project Vision ── */}
@@ -475,7 +501,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
       )}
 
       {/* Mobile: save-as-template accessible from bottom */}
-      {isMobile && (
+      {isMobile && !isTemplate && (
         <button
           onClick={() => { setTplName(data.contactBusinessName ? data.contactBusinessName + ' template' : ''); setShowSaveTpl(true); }}
           className="btn-ghost"

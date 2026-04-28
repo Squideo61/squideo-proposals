@@ -11,6 +11,7 @@ import { BuilderView } from './components/BuilderView.jsx';
 import { ClientView } from './components/ClientView.jsx';
 import { PublicClientShell } from './components/PublicClientShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
+import { TemplatesView } from './components/TemplatesView.jsx';
 import { UserManager } from './components/UserManager.jsx';
 import { NotificationSettings } from './components/NotificationSettings.jsx';
 import { AccountSettings } from './components/AccountSettings.jsx';
@@ -50,6 +51,9 @@ function AppShell() {
     const copy = JSON.parse(JSON.stringify(base));
     delete copy.id;
     delete copy.name;
+    delete copy._number;
+    delete copy._views;
+    delete copy._createdAt;
     const data = {
       ...copy,
       clientName: '',
@@ -76,8 +80,30 @@ function AppShell() {
     delete tpl.contactBusinessName;
     delete tpl.clientLogo;
     delete tpl.projectVision;
+    delete tpl._number;
+    delete tpl._views;
+    delete tpl._createdAt;
     actions.saveTemplate(id, tpl);
     showMsg('Template saved: ' + name);
+  };
+
+  const createTemplate = () => {
+    const id = makeId();
+    const tpl = JSON.parse(JSON.stringify(DEFAULT_PROPOSAL));
+    delete tpl.clientName;
+    delete tpl.contactBusinessName;
+    delete tpl.clientLogo;
+    delete tpl.projectVision;
+    tpl.name = 'New template';
+    tpl.createdAt = Date.now();
+    actions.saveTemplate(id, tpl);
+    setActiveId(id);
+    setView('template-builder');
+  };
+
+  const editTemplate = (id) => {
+    setActiveId(id);
+    setView('template-builder');
   };
 
   const deleteProposal = (id) => {
@@ -108,11 +134,20 @@ function AppShell() {
           onOpen={(id) => { setActiveId(id); setView('builder'); }}
           onPreview={(id) => { setActiveId(id); setView('client'); }}
           onDelete={deleteProposal}
-          onDeleteTemplate={deleteTemplate}
           onLogout={logout}
           onManageUsers={() => setModal({ type: 'users' })}
           onManageNotifications={() => setModal({ type: 'notifications' })}
           onManageAccount={() => setModal({ type: 'account' })}
+          onManageTemplates={() => setView('templates')}
+        />
+      )}
+      {view === 'templates' && (
+        <TemplatesView
+          onBack={() => setView('list')}
+          onUse={(t) => createFrom(t)}
+          onEdit={editTemplate}
+          onCreate={createTemplate}
+          onDelete={deleteTemplate}
         />
       )}
       {view === 'builder' && activeId && (
@@ -121,6 +156,13 @@ function AppShell() {
           onBack={() => { setView('list'); setActiveId(null); }}
           onPreview={() => setView('client')}
           onSaveAsTemplate={saveAsTemplate}
+        />
+      )}
+      {view === 'template-builder' && activeId && (
+        <BuilderView
+          id={activeId}
+          mode="template"
+          onBack={() => { setView('templates'); setActiveId(null); }}
         />
       )}
       {view === 'client' && activeId && (

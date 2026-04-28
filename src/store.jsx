@@ -10,7 +10,7 @@ function emptyStore() {
     proposals: {},
     templates: {},
     signatures: {},
-    views: {},
+    viewSessions: {},
     payments: {},
     notificationRecipients: [],
     extrasBank: [],
@@ -115,11 +115,34 @@ export function StoreProvider({ children }) {
       api.delete('/api/users/' + encodeURIComponent(email)).catch(() => {});
     },
     saveProposal(id, data) {
-      setState(s => ({ ...s, proposals: { ...s.proposals, [id]: data } }));
+      setState(s => {
+        const existing = s.proposals[id];
+        // Preserve server-assigned metadata (_number, _views, _createdAt) across local edits
+        const merged = {
+          ...data,
+          _number: existing && existing._number ? existing._number : (data._number || null),
+          _views:  existing && existing._views  ? existing._views  : (data._views  || { opens: 0, duration: 0, lastActiveAt: null }),
+          _createdAt: existing && existing._createdAt ? existing._createdAt : data._createdAt,
+        };
+        return { ...s, proposals: { ...s.proposals, [id]: merged } };
+      });
       // Debounce writes — builder calls this on every keystroke
       clearTimeout(saveTimers.current[id]);
       saveTimers.current[id] = setTimeout(() => {
-        api.put('/api/proposals/' + id, data).catch(() => {});
+        // Strip client-only metadata before sending
+        const payload = { ...data };
+        delete payload._number;
+        delete payload._views;
+        delete payload._createdAt;
+        api.put('/api/proposals/' + id, payload).then((resp) => {
+          if (resp && resp.number) {
+            setState(s => {
+              const cur = s.proposals[id];
+              if (!cur) return s;
+              return { ...s, proposals: { ...s.proposals, [id]: { ...cur, _number: resp.number } } };
+            });
+          }
+        }).catch(() => {});
       }, 800);
     },
     deleteProposal(id) {
@@ -127,7 +150,8 @@ export function StoreProvider({ children }) {
         const proposals = { ...s.proposals }; delete proposals[id];
         const signatures = { ...s.signatures }; delete signatures[id];
         const payments = { ...s.payments }; delete payments[id];
-        return { ...s, proposals, signatures, payments };
+        const viewSessions = { ...s.viewSessions }; delete viewSessions[id];
+        return { ...s, proposals, signatures, payments, viewSessions };
       });
       api.delete('/api/proposals/' + id).catch(() => {});
     },
@@ -143,9 +167,12 @@ export function StoreProvider({ children }) {
       });
       api.delete('/api/templates/' + id).catch(() => {});
     },
-    recordView(id) {
-      setState(s => s.views[id] ? s : ({ ...s, views: { ...s.views, [id]: new Date().toISOString() } }));
-      api.post('/api/views/' + id).catch(() => {});
+    loadViewSessions(id) {
+      return api.get('/api/views/' + id).then((rows) => {
+        const list = Array.isArray(rows) ? rows : [];
+        setState(s => ({ ...s, viewSessions: { ...s.viewSessions, [id]: list } }));
+        return list;
+      }).catch(() => []);
     },
     saveSignature(id, sig) {
       setState(s => ({ ...s, signatures: { ...s.signatures, [id]: sig } }));

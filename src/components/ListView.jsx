@@ -1,36 +1,38 @@
 import React, { useState } from 'react';
-import { Download, Eye, FileText, Link2, Mail, Plus, Search, Trash2, Users, X } from 'lucide-react';
+import { BarChart3, Download, Eye, FileText, LayoutTemplate, Link2, Mail, Plus, Search, Trash2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
-import { formatGBP, useIsMobile } from '../utils.js';
+import { formatDuration, formatGBP, formatProposalNumber, useIsMobile } from '../utils.js';
 import { openPrintWindow } from '../utils/printProposal.js';
 import { Badge, Logo } from './ui.jsx';
+import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDeleteTemplate, onLogout, onManageUsers, onManageNotifications, onManageAccount }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onLogout, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
+  const [analyticsId, setAnalyticsId] = useState(null);
   const isMobile = useIsMobile();
 
   const proposals = Object.entries(state.proposals)
-    .map(([id, d]) => ({ id, ...d }))
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  const templates = Object.entries(state.templates)
     .map(([id, d]) => ({ id, ...d }))
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
   const filtered = search.trim()
     ? proposals.filter((p) => {
         const q = search.toLowerCase();
+        const num = p._number ? formatProposalNumber(p._number).toLowerCase() : '';
         return (
           (p.clientName || '').toLowerCase().includes(q) ||
           (p.contactBusinessName || '').toLowerCase().includes(q) ||
           (p.preparedBy || '').toLowerCase().includes(q) ||
-          (p.date || '').toLowerCase().includes(q)
+          (p.date || '').toLowerCase().includes(q) ||
+          num.includes(q)
         );
       })
     : proposals;
 
   const user = state.session;
+  const analyticsProposal = analyticsId ? proposals.find((p) => p.id === analyticsId) : null;
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px' : '40px 24px' }}>
@@ -45,6 +47,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDeleteTempla
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={onManageTemplates} className="btn-ghost"><LayoutTemplate size={14} /> Templates</button>
           <button onClick={onManageNotifications} className="btn-ghost"><Mail size={14} /> Notifications</button>
           <button onClick={onManageUsers} className="btn-ghost"><Users size={14} /> Users</button>
           <button onClick={onLogout} className="btn-ghost">Sign out</button>
@@ -62,28 +65,6 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDeleteTempla
         </div>
       </header>
 
-      {templates.length > 0 && (
-        <div style={{ marginBottom: 32 }}>
-          <h2 className="section-label">Templates</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-            {templates.map((t) => (
-              <div key={t.id} style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                    <FileText size={13} color={BRAND.blue} />
-                    <span style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: BRAND.muted }}>
-                    {formatGBP(t.basePrice * (1 + t.vatRate))} · {(t.optionalExtras || []).length} extras
-                  </div>
-                </div>
-                <button onClick={() => onDeleteTemplate(t.id)} aria-label={'Delete template ' + t.name} className="btn-icon is-danger"><Trash2 size={12} /></button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <h2 className="section-label" style={{ margin: 0 }}>
           Proposals {search && <span style={{ color: BRAND.blue, textTransform: 'none', letterSpacing: 0 }}>· {filtered.length} of {proposals.length}</span>}
@@ -95,7 +76,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDeleteTempla
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by client, business, date..."
+              placeholder="Search by number, client, business..."
               className="input"
               style={{ paddingLeft: 34, paddingRight: search ? 34 : 12 }}
             />
@@ -131,9 +112,21 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDeleteTempla
       ) : (
         <div style={{ display: 'grid', gap: 12 }}>
           {filtered.map((p) => (
-            <ProposalCard key={p.id} proposal={p} onOpen={onOpen} onPreview={onPreview} onDelete={onDelete} showMsg={showMsg} />
+            <ProposalCard
+              key={p.id}
+              proposal={p}
+              onOpen={onOpen}
+              onPreview={onPreview}
+              onDelete={onDelete}
+              onAnalytics={() => setAnalyticsId(p.id)}
+              showMsg={showMsg}
+            />
           ))}
         </div>
+      )}
+
+      {analyticsProposal && (
+        <ViewAnalyticsModal proposal={analyticsProposal} onClose={() => setAnalyticsId(null)} />
       )}
     </div>
   );
@@ -154,12 +147,15 @@ function CreatorAvatar({ proposal }) {
   );
 }
 
-function ProposalCard({ proposal, onOpen, onPreview, onDelete, showMsg }) {
+function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, showMsg }) {
   const { state } = useStore();
   const signed = state.signatures[proposal.id];
   const payment = state.payments[proposal.id];
-  const viewed = state.views[proposal.id];
+  const views = proposal._views || { opens: 0, duration: 0 };
+  const opened = views.opens > 0;
   const isMobile = useIsMobile();
+
+  const number = proposal._number ? formatProposalNumber(proposal._number) : '';
 
   const copyLink = () => {
     const url = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposal.id;
@@ -172,10 +168,15 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, showMsg }) {
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: isMobile ? 12 : 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: isMobile ? 10 : 16, flexWrap: 'wrap' }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3, flexWrap: 'wrap' }}>
+          {number && (
+            <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, background: '#F1F5F9', padding: '2px 7px', borderRadius: 6, letterSpacing: 0.4 }}>
+              {number}
+            </span>
+          )}
           <h3 style={{ margin: 0, fontSize: isMobile ? 14 : 16, fontWeight: 600 }}>{proposal.clientName || 'Untitled Proposal'}</h3>
           {signed
             ? <Badge color="green">ACCEPTED</Badge>
-            : viewed
+            : opened
               ? <Badge color="yellow">OPENED</Badge>
               : <Badge color="grey">SENT</Badge>}
           {payment && <Badge color="blue">PAID {formatGBP(payment.amount)}</Badge>}
@@ -185,11 +186,17 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, showMsg }) {
           <span>{proposal.contactBusinessName || '—'}</span>
           <span>{proposal.date}</span>
           <span>{formatGBP(proposal.basePrice * (1 + proposal.vatRate))}</span>
+          {opened && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Eye size={11} /> {views.opens} {views.opens === 1 ? 'view' : 'views'} · {formatDuration(views.duration)}
+            </span>
+          )}
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 4 : 8, flexWrap: 'wrap' }}>
         {!isMobile && <CreatorAvatar proposal={proposal} />}
         {!isMobile && <div style={{ width: 1, height: 24, background: BRAND.border, flexShrink: 0 }} />}
+        <button onClick={onAnalytics} className="btn-icon" title="View analytics" aria-label="View analytics"><BarChart3 size={16} /></button>
         <button onClick={copyLink} className="btn-icon" title="Share link" aria-label="Copy share link"><Link2 size={16} /></button>
         <button onClick={() => openPrintWindow(proposal)} className="btn-icon" title="Download PDF" aria-label="Download PDF"><Download size={16} /></button>
         <button onClick={() => onPreview(proposal.id)} className="btn-icon" title="Preview" aria-label="Preview proposal"><Eye size={16} /></button>

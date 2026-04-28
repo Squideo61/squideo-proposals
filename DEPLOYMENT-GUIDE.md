@@ -43,11 +43,14 @@ CREATE TABLE users (
 );
 
 CREATE TABLE proposals (
-  id         TEXT PRIMARY KEY,
-  data       JSONB NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  id          TEXT PRIMARY KEY,
+  data        JSONB NOT NULL,
+  number_year INTEGER,
+  number_seq  INTEGER,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE UNIQUE INDEX idx_proposals_number ON proposals(number_year, number_seq);
 
 CREATE TABLE templates (
   id         TEXT PRIMARY KEY,
@@ -72,10 +75,20 @@ CREATE TABLE payments (
   customer_email    TEXT
 );
 
-CREATE TABLE views (
-  proposal_id TEXT PRIMARY KEY REFERENCES proposals(id) ON DELETE CASCADE,
-  viewed_at   TIMESTAMPTZ NOT NULL
+CREATE TABLE proposal_views (
+  proposal_id      TEXT        NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+  session_id       TEXT        NOT NULL,
+  opened_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_active_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  duration_seconds INTEGER     NOT NULL DEFAULT 0,
+  ip_address       TEXT,
+  country          TEXT,
+  region           TEXT,
+  city             TEXT,
+  user_agent       TEXT,
+  PRIMARY KEY (proposal_id, session_id)
 );
+CREATE INDEX idx_proposal_views_opened ON proposal_views(proposal_id, opened_at DESC);
 
 CREATE TABLE settings (
   id                      INTEGER PRIMARY KEY DEFAULT 1,
@@ -89,6 +102,42 @@ INSERT INTO settings DEFAULT VALUES;
 ```
 
 You should see a success message. Your database is now ready.
+
+> **Already deployed an older version?** If your database was created before proposal numbering and per-session view tracking, run this one-time migration in the SQL Editor:
+> ```sql
+> -- Proposal numbering (sequential per calendar year)
+> ALTER TABLE proposals
+>   ADD COLUMN IF NOT EXISTS number_year INTEGER,
+>   ADD COLUMN IF NOT EXISTS number_seq  INTEGER;
+> CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_number
+>   ON proposals(number_year, number_seq);
+> WITH ranked AS (
+>   SELECT id,
+>          EXTRACT(YEAR FROM created_at)::INT AS y,
+>          ROW_NUMBER() OVER (PARTITION BY EXTRACT(YEAR FROM created_at)
+>                             ORDER BY created_at) AS n
+>   FROM proposals WHERE number_seq IS NULL
+> )
+> UPDATE proposals p SET number_year = r.y, number_seq = r.n
+> FROM ranked r WHERE p.id = r.id;
+>
+> -- Replace minimal views table with rich session log
+> DROP TABLE IF EXISTS views;
+> CREATE TABLE proposal_views (
+>   proposal_id      TEXT        NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+>   session_id       TEXT        NOT NULL,
+>   opened_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   last_active_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   duration_seconds INTEGER     NOT NULL DEFAULT 0,
+>   ip_address       TEXT,
+>   country          TEXT,
+>   region           TEXT,
+>   city             TEXT,
+>   user_agent       TEXT,
+>   PRIMARY KEY (proposal_id, session_id)
+> );
+> CREATE INDEX idx_proposal_views_opened ON proposal_views(proposal_id, opened_at DESC);
+> ```
 
 6. Click **Dashboard** in the top left, then find the **"Connection string"** section
 7. Copy the connection string — it looks like:
