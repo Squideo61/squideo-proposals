@@ -346,18 +346,22 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
 
         <PageTitle>Payment Options</PageTitle>
         <div style={{ display: 'grid', gap: 12, marginBottom: 32 }}>
-          {(data.paymentOptions || ['5050', 'full']).map((key) => {
+          {(() => {
+            const subtitlesPrice = data.optionalExtras.find(e => e.id === 'subtitles')?.price ?? 125;
+            const fullIncentive = data.paymentOptionDescs?.full?.trim() || `get a free subtitled version (worth £${subtitlesPrice})`;
             const OPTION_CONFIG = {
               '5050': { title: '50/50 split', desc: '50% deposit to start, balance invoiced when you approve the final video.' },
-              'full': { title: 'Pay in full — get a free subtitled version (worth £125)', desc: 'Pay upfront via card or BACS.' },
+              'full': { title: `Pay in full — ${fullIncentive}`, desc: 'Pay upfront via card or BACS.' },
               'po': { title: 'Purchase Order', desc: 'Raise a Purchase Order — our team will be in touch to set up supplier details and confirm payment.' },
             };
-            const cfg = OPTION_CONFIG[key];
-            if (!cfg) return null;
-            return (
-              <PaymentOption key={key} selected={paymentOption === key} onSelect={() => !signed && setPaymentOption(key)} title={cfg.title} desc={cfg.desc} disabled={!!signed} />
-            );
-          })}
+            return (data.paymentOptions || ['5050', 'full']).map((key) => {
+              const cfg = OPTION_CONFIG[key];
+              if (!cfg) return null;
+              return (
+                <PaymentOption key={key} selected={paymentOption === key} onSelect={() => !signed && setPaymentOption(key)} title={cfg.title} desc={cfg.desc} disabled={!!signed} />
+              );
+            });
+          })()}
         </div>
 
         <PageTitle>Next Steps</PageTitle>

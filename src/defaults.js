@@ -55,5 +55,6 @@ export const DEFAULT_PROPOSAL = {
   processVideoUrl: 'https://vimeo.com/625502459',
   vatRate: 0.20,
   validityDays: 28,
-  paymentOptions: ['5050', 'full']
+  paymentOptions: ['5050', 'full'],
+  paymentOptionDescs: {}
 };
