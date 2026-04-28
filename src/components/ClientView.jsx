@@ -363,9 +363,17 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
             <span style={{ position: 'absolute', top: -12, right: 16, background: '#D97706', color: 'white', fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 999, boxShadow: '0 2px 6px rgba(146, 64, 14, 0.25)', letterSpacing: 0.3 }}>
               Save {formatGBP(partnerDiscount)} + VAT on this project
             </span>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10, color: '#92400E' }}>
-              Squideo Partner Programme —{' '}
-              <a href="https://www.squideo.com/partner-programme" target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Click Here to Learn More</a>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+              <img
+                src="/partner-logo.png"
+                alt=""
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                style={{ height: 40, width: 'auto', flexShrink: 0 }}
+              />
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#92400E' }}>
+                Squideo Partner Programme —{' '}
+                <a href="https://www.squideo.com/partner-programme" target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Click Here to Learn More</a>
+              </div>
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, cursor: signed ? 'default' : 'pointer' }}>
               <input type="checkbox" checked={partnerSelected} onChange={(e) => setPartnerSelected(e.target.checked)} disabled={!!signed} />
@@ -382,10 +390,13 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
             )}
 
             <div style={{ border: '1px solid #FDE68A', borderRadius: 8, padding: 14, fontSize: 13, color: BRAND.muted, whiteSpace: 'pre-wrap', lineHeight: 1.7, marginBottom: 14, background: 'white' }}>
-              {data.partnerProgramme.description}
+              {(data.partnerProgramme.description || '').replace(/^\s*\d+\s+minute(?:s)?\s+of\s+additional\s+content\s+credit\s+per\s+month\s*[-–—]\s*Cancel\s+any\s+time\s*\n+/i, '')}
+            </div>
+            <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '12px 14px', marginBottom: 14, fontSize: 14, color: BRAND.ink, lineHeight: 1.5 }}>
+              You&apos;ll receive <strong style={{ color: '#92400E' }}>{partnerCredits} {partnerCredits === 1 ? 'minute' : 'minutes'}</strong> of new content credit per month
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>Minutes per month:</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Adjust:</span>
               <button onClick={() => !signed && setPartnerCredits(c => Math.max(1, c - 1))} disabled={!!signed || partnerCredits <= 1} style={{ width: isMobile ? 44 : 28, height: isMobile ? 44 : 28, borderRadius: 6, border: '1px solid #FDE68A', background: 'white', cursor: signed || partnerCredits <= 1 ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>−</button>
               <span style={{ fontWeight: 700, fontSize: 15, minWidth: 20, textAlign: 'center' }}>{partnerCredits}</span>
               <button onClick={() => !signed && setPartnerCredits(c => c + 1)} disabled={!!signed} style={{ width: isMobile ? 44 : 28, height: isMobile ? 44 : 28, borderRadius: 6, border: '1px solid #FDE68A', background: 'white', cursor: signed ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>+</button>
