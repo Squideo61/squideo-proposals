@@ -29,9 +29,10 @@ export function UserManager({ onClose }) {
       <div style={{ display: 'grid', gap: 8 }}>
         {users.map((u) => (
           <div key={u.email} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8 }}>
-            <div style={{ width: 36, height: 36, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
-              {u.name[0].toUpperCase()}
-            </div>
+            {u.avatar
+              ? <img src={u.avatar} alt={u.name} style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+              : <div style={{ width: 36, height: 36, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 }}>{u.name[0].toUpperCase()}</div>
+            }
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 600, fontSize: 14 }}>
                 {u.name}

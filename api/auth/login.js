@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'email and password are required' });
 
-  const rows = await sql`SELECT email, name, password_hash FROM users WHERE email = ${email}`;
+  const rows = await sql`SELECT email, name, avatar, password_hash FROM users WHERE email = ${email}`;
   const user = rows[0];
   if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
@@ -19,5 +19,5 @@ export default async function handler(req, res) {
   if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
 
   const token = await signToken({ email: user.email, name: user.name });
-  res.status(200).json({ token, user: { email: user.email, name: user.name } });
+  res.status(200).json({ token, user: { email: user.email, name: user.name, avatar: user.avatar } });
 }

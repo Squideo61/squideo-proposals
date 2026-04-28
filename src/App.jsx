@@ -12,6 +12,7 @@ import { ClientView } from './components/ClientView.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
 import { UserManager } from './components/UserManager.jsx';
 import { NotificationSettings } from './components/NotificationSettings.jsx';
+import { AccountSettings } from './components/AccountSettings.jsx';
 
 function AppShell() {
   const { state, actions, showMsg, toast } = useStore();
@@ -110,6 +111,7 @@ function AppShell() {
           onLogout={logout}
           onManageUsers={() => setModal({ type: 'users' })}
           onManageNotifications={() => setModal({ type: 'notifications' })}
+          onManageAccount={() => setModal({ type: 'account' })}
         />
       )}
       {view === 'builder' && activeId && (
@@ -134,6 +136,9 @@ function AppShell() {
       )}
       {modal && modal.type === 'notifications' && (
         <NotificationSettings onClose={() => setModal(null)} />
+      )}
+      {modal && modal.type === 'account' && (
+        <AccountSettings onClose={() => setModal(null)} />
       )}
       <Toast msg={toast} />
     </div>

@@ -18,5 +18,5 @@ export default async function handler(req, res) {
   await sql`INSERT INTO users (email, name, password_hash) VALUES (${email}, ${name}, ${password_hash})`;
 
   const token = await signToken({ email, name });
-  res.status(201).json({ token, user: { email, name } });
+  res.status(201).json({ token, user: { email, name, avatar: null } });
 }

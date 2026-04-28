@@ -6,7 +6,7 @@ import { formatGBP, useIsMobile } from '../utils.js';
 import { openPrintWindow } from '../utils/printProposal.js';
 import { Badge, Logo } from './ui.jsx';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDeleteTemplate, onLogout, onManageUsers, onManageNotifications }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDeleteTemplate, onLogout, onManageUsers, onManageNotifications, onManageAccount }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   const isMobile = useIsMobile();
@@ -48,6 +48,16 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDeleteTempla
           <button onClick={onManageNotifications} className="btn-ghost"><Mail size={14} /> Notifications</button>
           <button onClick={onManageUsers} className="btn-ghost"><Users size={14} /> Users</button>
           <button onClick={onLogout} className="btn-ghost">Sign out</button>
+          <button
+            onClick={onManageAccount}
+            aria-label="My account"
+            style={{ width: 36, height: 36, borderRadius: '50%', border: 'none', padding: 0, cursor: 'pointer', overflow: 'hidden', flexShrink: 0 }}
+          >
+            {user.avatar
+              ? <img src={user.avatar} alt={user.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              : <div style={{ width: '100%', height: '100%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 15 }}>{(user.name || '?')[0].toUpperCase()}</div>
+            }
+          </button>
           <button onClick={onCreate} className="btn"><Plus size={16} /> New Proposal</button>
         </div>
       </header>

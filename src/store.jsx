@@ -83,7 +83,7 @@ export function StoreProvider({ children }) {
   const actions = useMemo(() => ({
     login(user, token) {
       if (token) setToken(token);
-      setState(s => ({ ...s, session: user, loading: true }));
+      setState(s => ({ ...s, session: { email: user.email, name: user.name, avatar: user.avatar ?? null }, loading: true }));
       fetchAllRef.current?.();
     },
     logout() {
@@ -92,8 +92,19 @@ export function StoreProvider({ children }) {
     },
     signup(user, token) {
       if (token) setToken(token);
-      setState(s => ({ ...s, session: { email: user.email, name: user.name }, users: { ...s.users, [user.email]: user }, loading: true }));
+      setState(s => ({ ...s, session: { email: user.email, name: user.name, avatar: null }, users: { ...s.users, [user.email]: user }, loading: true }));
       fetchAllRef.current?.();
+    },
+    updateAvatar(avatar) {
+      setState(s => ({
+        ...s,
+        session: { ...s.session, avatar },
+        users: { ...s.users, [s.session.email]: { ...s.users[s.session.email], avatar } },
+      }));
+      return api.patch('/api/users/me', { avatar });
+    },
+    updatePassword(currentPassword, newPassword) {
+      return api.patch('/api/users/me', { current_password: currentPassword, new_password: newPassword });
     },
     removeUser(email) {
       setState(s => {
