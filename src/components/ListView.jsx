@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { BarChart3, Download, Eye, FileText, LayoutTemplate, Link2, Mail, Plus, Search, Trash2, Users, X } from 'lucide-react';
+import { BarChart3, Clock, Download, Eye, FileText, LayoutTemplate, Link2, Mail, Plus, Search, Trash2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
-import { formatDuration, formatGBP, formatProposalNumber, useIsMobile } from '../utils.js';
+import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, useIsMobile } from '../utils.js';
 import { openPrintWindow } from '../utils/printProposal.js';
 import { Badge, Logo } from './ui.jsx';
 import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
@@ -174,11 +174,8 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
             </span>
           )}
           <h3 style={{ margin: 0, fontSize: isMobile ? 14 : 16, fontWeight: 600 }}>{proposal.clientName || 'Untitled Proposal'}</h3>
-          {signed
-            ? <Badge color="green">ACCEPTED</Badge>
-            : opened
-              ? <Badge color="yellow">OPENED</Badge>
-              : <Badge color="grey">SENT</Badge>}
+          {signed && <Badge color="green">ACCEPTED</Badge>}
+          {!signed && opened && <Badge color="yellow">OPENED</Badge>}
           {payment && <Badge color="blue">PAID {formatGBP(payment.amount)}</Badge>}
           {signed && !payment && <Badge color="orange">AWAITING PAYMENT</Badge>}
         </div>
@@ -187,9 +184,23 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
           <span>{proposal.date}</span>
           <span>{formatGBP(proposal.basePrice * (1 + proposal.vatRate))}</span>
           {opened && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <Eye size={11} /> {views.opens} {views.opens === 1 ? 'view' : 'views'} · {formatDuration(views.duration)}
-            </span>
+            <button
+              onClick={onAnalytics}
+              title="View analytics"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid ' + BRAND.border, borderRadius: 999, background: '#FFFBEB', color: '#92400E', fontWeight: 600, fontSize: isMobile ? 11 : 12, cursor: 'pointer' }}
+            >
+              <Eye size={11} />
+              <span>{views.opens} {views.opens === 1 ? 'view' : 'views'}</span>
+              <span style={{ opacity: 0.6 }}>·</span>
+              <Clock size={11} />
+              <span>{formatDuration(views.duration)}</span>
+              {views.lastActiveAt && (
+                <>
+                  <span style={{ opacity: 0.6 }}>·</span>
+                  <span>{formatRelativeTime(views.lastActiveAt)}</span>
+                </>
+              )}
+            </button>
           )}
         </div>
       </div>
