@@ -1,0 +1,400 @@
+import React, { useEffect, useState } from 'react';
+import { Check, ChevronLeft, FileDown, Globe, Phone } from 'lucide-react';
+import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
+import { SQUIDEO_LOGO } from '../defaults.js';
+import { useStore } from '../store.jsx';
+import { formatGBP, sendNotification, useIsMobile } from '../utils.js';
+import { openPrintWindow } from '../utils/printProposal.js';
+import { Field, PageTitle, PaymentOption, PriceRow } from './ui.jsx';
+import { SignedBlock } from './SignedBlock.jsx';
+import { StripeSimModal } from './StripeSimModal.jsx';
+
+function getEmbedUrl(url) {
+  if (!url) return null;
+  const yt = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+  if (yt) return 'https://www.youtube.com/embed/' + yt[1];
+  const vimeo = url.match(/vimeo\.com\/(\d+)/);
+  if (vimeo) return 'https://player.vimeo.com/video/' + vimeo[1];
+  return url;
+}
+
+export function ClientView({ id, onBack }) {
+  const { state, actions, showMsg } = useStore();
+  const data = state.proposals[id];
+  const signed = state.signatures[id] || null;
+  const payment = state.payments[id] || null;
+
+  useEffect(() => {
+    if (data) actions.recordView(id);
+  }, [id, data, actions]);
+
+  const [selectedExtras, setSelectedExtras] = useState({});
+  const [partnerSelected, setPartnerSelected] = useState(false);
+  const [partnerCredits, setPartnerCredits] = useState(1);
+  const [paymentOption, setPaymentOption] = useState('5050');
+  const [sigName, setSigName] = useState('');
+  const [sigEmail, setSigEmail] = useState('');
+  const [sigAccepted, setSigAccepted] = useState(false);
+  const [paymentChoice, setPaymentChoice] = useState(null);
+  const isMobile = useIsMobile();
+
+  if (!data) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center' }}>
+        Proposal not found.
+        <div style={{ marginTop: 16 }}><button onClick={onBack} className="btn-ghost">Back</button></div>
+      </div>
+    );
+  }
+
+  const extrasTotal = data.optionalExtras.reduce((s, e) => selectedExtras[e.id] ? s + e.price : s, 0);
+  const subtotal = data.basePrice + extrasTotal;
+  const vat = subtotal * data.vatRate;
+  const total = subtotal + vat;
+  const partnerSubtotal = data.partnerProgramme.price * partnerCredits;
+  const partnerVat = partnerSubtotal * data.vatRate;
+  const partnerTotal = partnerSubtotal + partnerVat;
+  const partnerDiscount = subtotal * (data.partnerProgramme.discountRate ?? 0.20);
+  const discountedSubtotal = subtotal - partnerDiscount;
+  const discountedVat = discountedSubtotal * data.vatRate;
+  const discountedTotal = discountedSubtotal + discountedVat;
+
+  const handleSign = async () => {
+    if (!sigName.trim() || !sigEmail.trim() || !sigAccepted) {
+      showMsg('Please complete name, email and tick the acceptance box.');
+      return;
+    }
+    const sig = {
+      name: sigName,
+      email: sigEmail,
+      signedAt: new Date().toISOString(),
+      selectedExtras: data.optionalExtras.filter((e) => selectedExtras[e.id]),
+      partnerSelected,
+      partnerCredits,
+      paymentOption,
+      total,
+      partnerTotal: partnerSelected ? partnerTotal : 0
+    };
+    actions.saveSignature(id, sig);
+
+    const n = await sendNotification('signed', data, sig, null, state.notificationRecipients);
+    if (n > 0) showMsg('Proposal accepted! Team notified (' + n + ').');
+    else showMsg('Proposal accepted!');
+  };
+
+  const handlePayNow = () => {
+    setPaymentChoice('stripe-sim');
+  };
+
+  const confirmStripeSim = async () => {
+    const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
+    const isDeposit = signed.paymentOption === '5050';
+    const p = {
+      amount: amountDue,
+      paymentType: isDeposit ? 'deposit' : 'full',
+      paidAt: new Date().toISOString(),
+      stripeSessionId: 'sim_' + Date.now(),
+      customerEmail: signed.email
+    };
+    actions.savePayment(id, p);
+    setPaymentChoice(null);
+    const n = await sendNotification('paid', data, signed, p, state.notificationRecipients);
+    if (n > 0) showMsg('Payment received! Team notified.');
+    else showMsg('Payment received!');
+  };
+
+  return (
+    <div style={{ background: BRAND.paper, minHeight: '100vh' }}>
+      <div style={{ position: 'sticky', top: 0, background: 'white', borderBottom: '1px solid ' + BRAND.border, padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
+        <button onClick={onBack} className="btn-ghost"><ChevronLeft size={16} /> Back</button>
+        <div style={{ fontSize: 12, color: BRAND.muted }}>Client view</div>
+        <button
+          onClick={() => openPrintWindow(data, { signable: true, selectedExtras, paymentOption, partnerSelected })}
+          className="btn-ghost"
+          style={{ fontSize: 13 }}
+        >
+          <FileDown size={14} /> Print &amp; Sign
+        </button>
+      </div>
+
+      <div style={{ maxWidth: 800, margin: '0 auto', padding: '32px 24px 80px', background: 'white' }}>
+        <div style={{ background: BRAND.blue, color: 'white', padding: 32, borderRadius: 12, marginBottom: 32 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+            <img src={SQUIDEO_LOGO} alt="Squideo" style={{ height: 48, width: 'auto', display: 'block' }} />
+          </div>
+          <h1 style={{ fontSize: isMobile ? 20 : 28, fontWeight: 700, margin: '0 0 16px', lineHeight: 1.2 }}>Explainer Video Proposal</h1>
+          <div style={{ fontSize: isMobile ? 13 : 16, opacity: 0.95, lineHeight: 1.6 }}>
+            <div>Prepared for <strong>{data.clientName || '[Client Name]'}</strong></div>
+            <div>{data.contactBusinessName || '[Business Name]'}</div>
+            <div style={{ marginTop: 8, fontSize: 14, opacity: 0.85 }}>{data.date}</div>
+          </div>
+          <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid rgba(255,255,255,0.25)', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, fontSize: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {DEFAULT_PHOTOS[data.preparedBy] && (
+                <img src={DEFAULT_PHOTOS[data.preparedBy]} alt={data.preparedBy} style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: '2px solid rgba(255,255,255,0.4)', flexShrink: 0 }} />
+              )}
+              <div>
+                <div>By <strong>{data.preparedBy}</strong></div>
+                {data.preparedByTitle && <div style={{ fontSize: 12, opacity: 0.8 }}>{data.preparedByTitle}</div>}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <span><Globe size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />{CONFIG.company.website}</span>
+              <span><Phone size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />{CONFIG.company.phone}</span>
+            </div>
+          </div>
+        </div>
+
+        {data.clientLogo && (
+          <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: '32px 24px', marginBottom: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+            <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Prepared for</div>
+            <img src={data.clientLogo} alt="Client logo" style={{ maxWidth: '100%', maxHeight: 120, objectFit: 'contain' }} />
+            {data.contactBusinessName && (
+              <div style={{ fontSize: 14, color: BRAND.muted, fontWeight: 500 }}>{data.contactBusinessName}</div>
+            )}
+          </div>
+        )}
+
+        <PageTitle>{data.contactBusinessName ? `${data.contactBusinessName}, thank you for considering Squideo as your creative partner` : 'Thank you for considering Squideo as your creative partner'}</PageTitle>
+        {data.intro.split('\n\n').map((p, i) => (
+          <p key={i} style={{ fontSize: 14, lineHeight: 1.7, marginBottom: 12 }}>{p}</p>
+        ))}
+
+        <PageTitle>Your Delivery Team</PageTitle>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))', gap: 16, marginBottom: 16 }}>
+          {data.team.map((m, i) => {
+            const photoSrc = m.photo || DEFAULT_PHOTOS[m.name];
+            return (
+              <div key={i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+                  {photoSrc ? (
+                    <img src={photoSrc} alt={m.name} style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: '2px solid ' + BRAND.blue }} />
+                  ) : (
+                    <div style={{ width: 56, height: 56, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 20 }}>
+                      {m.name[0]}
+                    </div>
+                  )}
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>{m.name}</div>
+                    <div style={{ fontSize: 12, color: BRAND.muted }}>{m.role}</div>
+                  </div>
+                </div>
+                <p style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, margin: 0 }}>{m.bio}</p>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 20, marginBottom: 32, display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
+          <img src="/team-photos/producers.png" alt="Our Production Team" style={{ width: isMobile ? '100%' : 220, maxWidth: '100%', borderRadius: 10, objectFit: 'cover' }} />
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>Our Producers</div>
+            <p style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, margin: 0 }}>Our experienced producers will be involved throughout the production process, each contributing their expertise to ensure the highest standard of work. You'll have the opportunity to communicate with them directly at key stages of the project, from initial planning through to final delivery. Every member of our production team takes pride in delivering exceptional results that reflect Squideo's commitment to quality and creativity.</p>
+          </div>
+        </div>
+
+        <PageTitle>Your Requirement</PageTitle>
+        <p style={{ fontSize: 14, lineHeight: 1.7, marginBottom: 12, fontWeight: 500, whiteSpace: 'pre-wrap' }}>{data.requirement}</p>
+        {data.projectVision && (
+          <>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 20, marginBottom: 8 }}>Project Vision</h3>
+            <p style={{ fontSize: 14, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{data.projectVision}</p>
+          </>
+        )}
+
+        {data.processVideoUrl && (() => {
+          const embedUrl = getEmbedUrl(data.processVideoUrl);
+          return (
+            <div style={{ marginBottom: 32 }}>
+              <PageTitle>Production Process</PageTitle>
+              <p style={{ fontSize: 14, color: BRAND.muted, marginBottom: 16, lineHeight: 1.6 }}>Here is a detailed overview of our proven production process:</p>
+              <div style={{ position: 'relative', paddingBottom: '56.25%', borderRadius: 10, overflow: 'hidden' }}>
+                <iframe
+                  src={embedUrl}
+                  title="Production Process"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
+                />
+              </div>
+            </div>
+          );
+        })()}
+
+        <PageTitle>Your Quote</PageTitle>
+        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>What's included:</h3>
+        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+          {data.baseInclusions.map((inc, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', fontSize: 14, borderBottom: i < data.baseInclusions.length - 1 ? '1px solid ' + BRAND.border : 'none' }}>
+              <Check size={16} color={BRAND.blue} style={{ flexShrink: 0, marginTop: 2 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 500 }}>{inc.title}</div>
+                {inc.description && (
+                  <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginTop: 3 }}>{inc.description}</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <PriceRow label="Subtotal" value={data.basePrice} />
+        <PriceRow label={'VAT (' + (data.vatRate * 100).toFixed(0) + '%)'} value={data.basePrice * data.vatRate} />
+        <PriceRow label="Total" value={data.basePrice * (1 + data.vatRate)} bold />
+
+        <PageTitle>Optional Extras</PageTitle>
+        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden', marginBottom: 24 }}>
+          {data.optionalExtras.map((extra, i) => (
+            <label key={extra.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', borderBottom: i < data.optionalExtras.length - 1 ? '1px solid ' + BRAND.border : 'none', cursor: signed ? 'default' : 'pointer', background: selectedExtras[extra.id] ? '#F0F9FF' : 'white' }}>
+              <input type="checkbox" checked={!!selectedExtras[extra.id]} onChange={(e) => setSelectedExtras({ ...selectedExtras, [extra.id]: e.target.checked })} disabled={!!signed} style={{ marginTop: 3 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 500 }}>{extra.label}</div>
+                {extra.description && <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.5, marginTop: 4 }}>{extra.description}</div>}
+              </div>
+              <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0 }}>{formatGBP(extra.price)}</span>
+            </label>
+          ))}
+        </div>
+
+        {data.partnerProgramme.enabled && (
+          <div style={{ marginTop: 16, marginBottom: 16, background: '#FFF8E1', border: '2px solid #FFB300', borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ background: '#FFB300', color: 'white', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <span style={{ fontWeight: 800, fontSize: 15, letterSpacing: 0.3 }}>Join & save 20% on this project</span>
+              <span style={{ fontWeight: 700, fontSize: 18 }}>Save {formatGBP(partnerDiscount)}</span>
+            </div>
+            <div style={{ padding: 20 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10 }}>
+              Squideo Partner Programme —{' '}
+              <a href="https://www.squideo.com/partner-programme" target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Click Here to Learn More</a>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, cursor: signed ? 'default' : 'pointer' }}>
+              <input type="checkbox" checked={partnerSelected} onChange={(e) => setPartnerSelected(e.target.checked)} disabled={!!signed} />
+              <span style={{ fontWeight: 600, fontSize: 14 }}>Check to subscribe (Monthly)</span>
+            </label>
+            <div style={{ fontSize: 12, color: '#5D8A00', marginBottom: 14 }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
+            {partnerSelected && (
+              <div className="partner-confirm" style={{ background: '#E8F5E9', border: '1px solid #A5D6A7', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, fontWeight: 600, color: '#2E7D32' }}>
+                Great choice! Your {Math.round((data.partnerProgramme.discountRate ?? 0.20) * 100)}% discount has been applied to this project.
+              </div>
+            )}
+            <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 14, fontSize: 13, color: BRAND.muted, whiteSpace: 'pre-wrap', lineHeight: 1.7, marginBottom: 14 }}>
+              {data.partnerProgramme.description}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Minutes per month:</span>
+              <button onClick={() => !signed && setPartnerCredits(c => Math.max(1, c - 1))} disabled={!!signed || partnerCredits <= 1} style={{ width: isMobile ? 44 : 28, height: isMobile ? 44 : 28, borderRadius: 6, border: '1px solid #FFE082', background: 'white', cursor: signed || partnerCredits <= 1 ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>−</button>
+              <span style={{ fontWeight: 700, fontSize: 15, minWidth: 20, textAlign: 'center' }}>{partnerCredits}</span>
+              <button onClick={() => !signed && setPartnerCredits(c => c + 1)} disabled={!!signed} style={{ width: isMobile ? 44 : 28, height: isMobile ? 44 : 28, borderRadius: 6, border: '1px solid #FFE082', background: 'white', cursor: signed ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>+</button>
+            </div>
+            <div style={{ borderTop: '1px solid #FFE082', paddingTop: 12 }}>
+              <PriceRow label="Subtotal" value={partnerSubtotal} />
+              <PriceRow label={'VAT (' + (data.vatRate * 100).toFixed(0) + '%)'} value={partnerVat} />
+              <PriceRow label="Monthly total" value={partnerTotal} bold />
+            </div>
+            </div>
+          </div>
+        )}
+
+        <div style={{ background: BRAND.ink, color: 'white', padding: 20, borderRadius: 10, marginBottom: 32 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, opacity: 0.8 }}>
+            <span>Subtotal</span><span>{formatGBP(partnerSelected ? discountedSubtotal : subtotal)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: partnerSelected ? 4 : 12, opacity: 0.8 }}>
+            <span>VAT</span><span>{formatGBP(partnerSelected ? discountedVat : vat)}</span>
+          </div>
+          {partnerSelected && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 12, opacity: 0.8, color: '#FFD54F' }}>
+              <span>20% partner discount</span><span>−{formatGBP(partnerDiscount)}</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+            <span>Project total</span>
+            <span>
+              {partnerSelected && <span style={{ fontWeight: 400, fontSize: 14, opacity: 0.5, textDecoration: 'line-through', marginRight: 8 }}>{formatGBP(total)}</span>}
+              {formatGBP(partnerSelected ? discountedTotal : total)}
+            </span>
+          </div>
+          {partnerSelected && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.2)', color: '#FFD54F' }}>
+              <span>+ Partner Programme</span><span>{formatGBP(partnerTotal)}/mo</span>
+            </div>
+          )}
+        </div>
+
+        <PageTitle>Payment Options</PageTitle>
+        <div style={{ display: 'grid', gap: 12, marginBottom: 32 }}>
+          <PaymentOption selected={paymentOption === '5050'} onSelect={() => !signed && setPaymentOption('5050')} title="50/50 split" desc="50% deposit to start, balance invoiced when you approve the final video." disabled={!!signed} />
+          <PaymentOption selected={paymentOption === 'full'} onSelect={() => !signed && setPaymentOption('full')} title="Pay in full — get a free subtitled version (worth £125)" desc="Pay upfront via card or BACS." disabled={!!signed} />
+        </div>
+
+        <PageTitle>Next Steps</PageTitle>
+        <div style={{ marginBottom: 32 }}>
+          {[
+            'Accept this quote to guarantee a production slot in our creative schedule.',
+            "We'll invoice your initial payment or arrange supplier setup with you for Purchase Orders.",
+            'Your Production Manager will reach out to arrange an introduction meeting with our Delivery Team.',
+          ].map((step, i) => (
+            <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 12, fontSize: 14, lineHeight: 1.7 }}>
+              <div style={{ width: 24, height: 24, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0, marginTop: 1 }}>
+                {i + 1}
+              </div>
+              <span>{step}</span>
+            </div>
+          ))}
+          <p style={{ fontSize: 14, marginTop: 20, marginBottom: 20 }}>
+            Still got questions? Give us a call on{' '}
+            <a href={`tel:${CONFIG.company.phone}`} style={{ color: BRAND.blue, fontWeight: 600 }}>
+              +44 (0){CONFIG.company.phone}
+            </a>
+            .
+          </p>
+          <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, fontSize: 13, color: BRAND.muted, lineHeight: 1.7 }}>
+            <strong style={{ color: BRAND.ink }}>Please note:</strong>{' '}Our production schedule is often booked several weeks in advance.
+            To ensure we can deliver within your desired timeframe, we recommend confirming this quote as soon as possible.
+            <br /><br />
+            <strong style={{ color: BRAND.ink }}>You don't need to have your brief finalised before securing your slot</strong>{' '}—
+            once confirmed, we'll help you refine your content and creative direction as part of the process.
+            <br /><br />
+            After the 28-day validity period, we may not be able to fulfil the project due to existing commitments.
+          </div>
+        </div>
+
+        {signed ? (
+          <SignedBlock signed={signed} payment={payment} paymentChoice={paymentChoice} onPayNow={handlePayNow} onChooseInvoice={() => setPaymentChoice('invoice')} onUndoInvoice={() => setPaymentChoice(null)} />
+        ) : (
+          <div style={{ background: BRAND.paper, border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24 }}>
+            <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Accept this proposal</h3>
+            <Field label="Your full name">
+              <input className="input" value={sigName} onChange={(e) => setSigName(e.target.value)} placeholder="Type your name to sign" />
+            </Field>
+            <Field label="Email address">
+              <input className="input" type="email" value={sigEmail} onChange={(e) => setSigEmail(e.target.value)} placeholder="you@company.com" />
+            </Field>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 0', cursor: 'pointer', fontSize: 14 }}>
+              <input type="checkbox" checked={sigAccepted} onChange={(e) => setSigAccepted(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>
+                I accept this proposal and authorise Squideo to begin work. By typing my name, I am providing my electronic signature
+                {CONFIG.company.termsUrl ? <>, and agree to our <a href={CONFIG.company.termsUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Terms & Conditions</a></> : null}.
+              </span>
+            </label>
+            <button onClick={handleSign} className="btn" style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15, marginTop: 12, background: '#16A34A' }}>
+              <Check size={18} /> Accept & Sign — {formatGBP(total)}
+              {partnerSelected && ' + ' + formatGBP(partnerTotal) + '/mo'}
+            </button>
+          </div>
+        )}
+
+        <div style={{ marginTop: 40, paddingTop: 20, borderTop: '1px solid ' + BRAND.border, fontSize: 12, color: BRAND.muted, textAlign: 'center' }}>
+          {CONFIG.company.name} · {CONFIG.company.website} · {CONFIG.company.phone}
+        </div>
+      </div>
+
+      {paymentChoice === 'stripe-sim' && signed && (
+        <StripeSimModal
+          amount={signed.paymentOption === '5050' ? signed.total / 2 : signed.total}
+          isDeposit={signed.paymentOption === '5050'}
+          onConfirm={confirmStripeSim}
+          onClose={() => setPaymentChoice(null)}
+        />
+      )}
+    </div>
+  );
+}

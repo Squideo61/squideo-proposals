@@ -1,0 +1,134 @@
+:root {
+  --blue: #2BB8E6;
+  --blue-hover: #1FA4D1;
+  --blue-active: #1791BC;
+  --blue-soft: #F0F9FF;
+  --ink: #0F2A3D;
+  --paper: #FAFBFC;
+  --border: #E5E9EE;
+  --border-strong: #C7CFD8;
+  --muted: #6B7785;
+  --danger: #D32F2F;
+  --focus-ring: 0 0 0 3px rgba(43, 184, 230, 0.35);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+/* ---------- Inputs ---------- */
+.input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  color: var(--ink);
+  background: white;
+  outline: none;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.input:hover:not(:disabled):not(:focus) { border-color: var(--border-strong); }
+.input:focus-visible { border-color: var(--blue); box-shadow: var(--focus-ring); }
+.input:disabled { background: var(--paper); color: var(--muted); cursor: not-allowed; }
+
+/* ---------- Buttons ---------- */
+.btn, .btn-ghost, .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 120ms, color 120ms, border-color 120ms, transform 80ms, box-shadow 120ms;
+}
+.btn:focus-visible, .btn-ghost:focus-visible, .btn-icon:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.btn:disabled, .btn-ghost:disabled, .btn-icon:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn {
+  background: var(--blue);
+  color: white;
+  border: none;
+  padding: 10px 16px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.btn:hover:not(:disabled) { background: var(--blue-hover); }
+.btn:active:not(:disabled) { background: var(--blue-active); transform: translateY(1px); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  font-weight: 500;
+  font-size: 13px;
+}
+.btn-ghost:hover:not(:disabled) { background: var(--paper); border-color: var(--border-strong); }
+.btn-ghost:active:not(:disabled) { background: var(--border); transform: translateY(1px); }
+.btn-ghost.is-danger { color: var(--danger); }
+.btn-ghost.is-danger:hover:not(:disabled) { background: #FFEBEE; border-color: #FFCDD2; }
+
+.btn-icon {
+  background: white;
+  color: var(--ink);
+  border: 1px solid var(--border);
+  padding: 8px;
+  border-radius: 6px;
+}
+.btn-icon:hover:not(:disabled) { background: var(--paper); border-color: var(--border-strong); }
+.btn-icon:active:not(:disabled) { background: var(--border); }
+.btn-icon.is-danger { color: var(--danger); }
+.btn-icon.is-danger:hover:not(:disabled) { background: #FFEBEE; border-color: #FFCDD2; }
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--blue);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  font-family: inherit;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+.btn-link:hover { text-decoration: underline; }
+.btn-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* ---------- Partner confirmation banner ---------- */
+@keyframes partner-confirm-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.partner-confirm {
+  animation: partner-confirm-in 300ms ease both;
+}
+
+/* ---------- Section labels ---------- */
+.section-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 16px;
+}
+
+/* ---------- Mobile ---------- */
+@media (max-width: 640px) {
+  .btn, .btn-ghost { padding: 10px 14px; min-height: 44px; }
+  .btn-icon { padding: 10px; min-height: 44px; min-width: 44px; justify-content: center; }
+  .input { font-size: 16px; } /* prevent iOS Safari auto-zoom on focus */
+}

@@ -1,0 +1,269 @@
+import { SQUIDEO_LOGO } from '../defaults.js';
+import { CONFIG, DEFAULT_PHOTOS } from '../theme.js';
+import { formatGBP } from '../utils.js';
+
+// Resolve relative public paths to absolute so they load inside the popup window.
+const abs = (src) => src && src.startsWith('/') ? window.location.origin + src : src;
+
+function esc(str) {
+  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOption = '5050', partnerSelected = false } = {}) {
+  const extrasTotal = data.optionalExtras.reduce((s, e) => selectedExtras[e.id] ? s + e.price : s, 0);
+  const subtotal = data.basePrice + extrasTotal;
+  const vat = subtotal * data.vatRate;
+  const total = subtotal + vat;
+  const discountRate = partnerSelected ? (data.partnerProgramme.discountRate ?? 0.20) : 0;
+  const partnerDiscount = subtotal * discountRate;
+  const discountedSubtotal = subtotal - partnerDiscount;
+  const discountedVat = discountedSubtotal * data.vatRate;
+  const discountedTotal = discountedSubtotal + discountedVat;
+
+  const teamCards = data.team.map(m => {
+    const photoSrc = abs(m.photo || DEFAULT_PHOTOS[m.name] || '');
+    const photoEl = photoSrc
+      ? `<img src="${esc(photoSrc)}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid #2BB8E6;flex-shrink:0;" />`
+      : `<div style="width:56px;height:56px;border-radius:50%;background:#2BB8E6;color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;flex-shrink:0;">${esc(m.name[0])}</div>`;
+    return `
+      <div style="border:1px solid #E5E9EE;border-radius:10px;padding:16px;break-inside:avoid;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+          ${photoEl}
+          <div>
+            <div style="font-weight:600;font-size:15px;">${esc(m.name)}</div>
+            <div style="font-size:12px;color:#6B7785;">${esc(m.role)}</div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:#6B7785;line-height:1.5;margin:0;">${esc(m.bio)}</p>
+      </div>`;
+  }).join('');
+
+  const inclusionRows = data.baseInclusions.map(inc => `
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #E5E9EE;font-size:13px;">
+      <span style="color:#2BB8E6;flex-shrink:0;font-size:16px;line-height:1;">✓</span>
+      <div>
+        <div style="font-weight:500;">${esc(inc.title)}</div>
+        ${inc.description ? `<div style="font-size:12px;color:#6B7785;margin-top:2px;">${esc(inc.description)}</div>` : ''}
+      </div>
+    </div>`).join('');
+
+  const extrasRows = data.optionalExtras.map(e => {
+    const checked = !!selectedExtras[e.id];
+    const box = signable
+      ? `<input type="checkbox" ${checked ? 'checked' : ''} style="margin-top:2px;flex-shrink:0;" />`
+      : `<div style="width:14px;height:14px;border:2px solid #C7CFD8;border-radius:3px;flex-shrink:0;background:${checked ? '#2BB8E6' : 'white'};"></div>`;
+    return `
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #E5E9EE;font-size:13px;">
+        ${box}
+        <div style="flex:1;">
+          <div style="font-weight:500;">${esc(e.label)}</div>
+          ${e.description ? `<div style="font-size:12px;color:#6B7785;margin-top:2px;">${esc(e.description)}</div>` : ''}
+        </div>
+        <div style="font-weight:600;white-space:nowrap;">${formatGBP(e.price)}</div>
+      </div>`;
+  }).join('');
+
+  const clientLogoBlock = data.clientLogo ? `
+    <div style="text-align:center;padding:24px;border:1px solid #E5E9EE;border-radius:12px;margin-bottom:28px;">
+      <div style="font-size:11px;color:#6B7785;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">Prepared for</div>
+      <img src="${esc(data.clientLogo)}" style="max-width:200px;max-height:100px;object-fit:contain;" />
+      ${data.contactBusinessName ? `<div style="font-size:14px;color:#6B7785;margin-top:8px;">${esc(data.contactBusinessName)}</div>` : ''}
+    </div>` : '';
+
+  const partnerBlock = data.partnerProgramme.enabled ? (() => {
+    const box = signable
+      ? `<input type="checkbox" ${partnerSelected ? 'checked' : ''} style="margin-top:2px;flex-shrink:0;" />`
+      : `<div style="width:14px;height:14px;border:2px solid #C7CFD8;border-radius:3px;flex-shrink:0;background:${partnerSelected ? '#2BB8E6' : 'white'};"></div>`;
+    return `
+    <div style="border:1px solid #E5E9EE;border-radius:10px;padding:20px;margin:20px 0;">
+      <div style="font-size:16px;font-weight:700;margin:0 0 10px;">
+        Squideo Partner Programme &mdash;
+        <a href="https://www.squideo.com/partner-programme" style="color:#2BB8E6;text-decoration:none;">Click Here to Learn More</a>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        ${box}
+        <span style="font-size:14px;font-weight:600;">Check to subscribe (Monthly — ${formatGBP(data.partnerProgramme.price * (1 + data.vatRate))}/mo)</span>
+      </div>
+      <div style="border:1px solid #E5E9EE;border-radius:8px;padding:14px;font-size:13px;white-space:pre-wrap;line-height:1.7;color:#0F2A3D;">
+${esc(data.partnerProgramme.description)}
+      </div>
+    </div>`;
+  })() : '';
+
+  const sigBlock = `
+    <div style="border:2px solid #2BB8E6;border-radius:12px;padding:28px;margin-top:32px;break-inside:avoid;">
+      <h2 style="font-size:18px;font-weight:700;margin:0 0 20px;">Acceptance & Signature</h2>
+      <p style="font-size:13px;color:#6B7785;margin:0 0 24px;line-height:1.6;">
+        By signing below, I confirm that I have read and accept this proposal and authorise Squideo Ltd to commence work as described.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-bottom:24px;">
+        <div>
+          <div style="font-size:12px;color:#6B7785;margin-bottom:6px;">Full name</div>
+          <div style="border-bottom:1px solid #0F2A3D;height:28px;"></div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#6B7785;margin-bottom:6px;">Job title / position</div>
+          <div style="border-bottom:1px solid #0F2A3D;height:28px;"></div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#6B7785;margin-bottom:6px;">Signature</div>
+          <div style="border-bottom:1px solid #0F2A3D;height:40px;"></div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#6B7785;margin-bottom:6px;">Date</div>
+          <div style="border-bottom:1px solid #0F2A3D;height:28px;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:12px;color:#6B7785;margin-bottom:6px;">Company name</div>
+        <div style="border-bottom:1px solid #0F2A3D;height:28px;"></div>
+      </div>
+      <p style="font-size:11px;color:#6B7785;margin:20px 0 0;line-height:1.5;">
+        Please return the signed copy to <strong>hello@squideo.com</strong> or post to Squideo Ltd, Hull, HU1.
+        This proposal is valid for ${data.validityDays || 28} days from the date above.
+      </p>
+    </div>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Squideo Proposal — ${esc(data.contactBusinessName || data.clientName || 'Untitled')}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, system-ui, sans-serif; color: #0F2A3D; background: white; }
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .no-print { display: none !important; }
+    }
+    @media screen {
+      body { max-width: 820px; margin: 0 auto; padding: 32px 24px; }
+    }
+    .page-title { font-size: 18px; font-weight: 700; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #2BB8E6; }
+    .muted { color: #6B7785; }
+  </style>
+</head>
+<body>
+  <div class="no-print" style="background:#FFF8E1;border:1px solid #FFE082;padding:12px 20px;text-align:center;font-size:13px;color:#8A6D00;margin-bottom:24px;border-radius:6px;">
+    Use your browser's <strong>File → Print</strong> (or Ctrl+P / ⌘P) to save as PDF or print.
+    <button onclick="window.print()" style="margin-left:16px;padding:6px 14px;background:#2BB8E6;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Print / Save as PDF</button>
+  </div>
+
+  <!-- Header -->
+  <div style="background:#2BB8E6;color:white;padding:32px;border-radius:12px;margin-bottom:28px;">
+    <img src="${SQUIDEO_LOGO}" alt="Squideo" style="height:44px;width:auto;display:block;margin-bottom:20px;" />
+    <h1 style="font-size:26px;font-weight:700;margin:0 0 14px;line-height:1.2;">Explainer Video Proposal</h1>
+    <div style="font-size:15px;line-height:1.6;opacity:0.95;">
+      <div>Prepared for <strong>${esc(data.clientName || '[Client Name]')}</strong></div>
+      <div>${esc(data.contactBusinessName || '')}</div>
+      <div style="margin-top:6px;font-size:13px;opacity:0.85;">${esc(data.date)}</div>
+    </div>
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.25);display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:13px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        ${DEFAULT_PHOTOS[data.preparedBy] ? `<img src="${abs(DEFAULT_PHOTOS[data.preparedBy])}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,0.4);flex-shrink:0;" />` : ''}
+        <div>
+          <div>By <strong>${esc(data.preparedBy)}</strong></div>
+          ${data.preparedByTitle ? `<div style="font-size:11px;opacity:0.8;">${esc(data.preparedByTitle)}</div>` : ''}
+        </div>
+      </div>
+      <div style="display:flex;gap:16px;opacity:0.9;">
+        <span>${esc(CONFIG.company.website)}</span>
+        <span>${esc(CONFIG.company.phone)}</span>
+      </div>
+    </div>
+  </div>
+
+  ${clientLogoBlock}
+
+  <!-- Intro -->
+  <h2 class="page-title">Thank You for Considering Squideo</h2>
+  ${data.intro.split('\n\n').map(p => `<p style="font-size:13px;line-height:1.7;margin:0 0 10px;">${esc(p)}</p>`).join('')}
+
+  <!-- Team -->
+  <h2 class="page-title">Your Delivery Team</h2>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:14px;">
+    ${teamCards}
+  </div>
+  <div style="border:1px solid #E5E9EE;border-radius:10px;padding:20px;margin-bottom:28px;display:flex;gap:24px;align-items:center;flex-wrap:wrap;break-inside:avoid;">
+    <img src="${abs('/team-photos/producers.png')}" style="width:220px;border-radius:10px;object-fit:cover;flex-shrink:0;" />
+    <div style="flex:1;min-width:200px;">
+      <div style="font-weight:600;font-size:15px;margin-bottom:8px;">Our Producers</div>
+      <p style="font-size:13px;color:#6B7785;line-height:1.5;margin:0;">Our experienced producers will be involved throughout the production process, each contributing their expertise to ensure the highest standard of work. You'll have the opportunity to communicate with them directly at key stages of the project, from initial planning through to final delivery. Every member of our production team takes pride in delivering exceptional results that reflect Squideo's commitment to quality and creativity.</p>
+    </div>
+  </div>
+
+  <!-- Requirement -->
+  <h2 class="page-title">Your Requirement</h2>
+  <p style="font-size:13px;font-weight:500;line-height:1.7;white-space:pre-wrap;">${esc(data.requirement)}</p>
+  ${data.projectVision ? `<h3 style="font-size:15px;font-weight:600;margin:18px 0 6px;">Project Vision</h3><p style="font-size:13px;line-height:1.7;white-space:pre-wrap;">${esc(data.projectVision)}</p>` : ''}
+
+  <!-- Quote -->
+  <h2 class="page-title">Your Quote</h2>
+  <h3 style="font-size:14px;font-weight:600;margin:0 0 8px;">What's included:</h3>
+  <div style="border:1px solid #E5E9EE;border-radius:10px;padding:12px 16px;margin-bottom:16px;">
+    ${inclusionRows}
+  </div>
+
+  <!-- Base pricing -->
+  <div style="border:1px solid #E5E9EE;border-radius:8px;overflow:hidden;margin-bottom:20px;">
+    <div style="display:flex;justify-content:space-between;padding:10px 16px;font-size:13px;border-bottom:1px solid #E5E9EE;">
+      <span class="muted">Subtotal</span><span>${formatGBP(data.basePrice)}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:10px 16px;font-size:13px;border-bottom:1px solid #E5E9EE;">
+      <span class="muted">VAT (${(data.vatRate * 100).toFixed(0)}%)</span><span>${formatGBP(data.basePrice * data.vatRate)}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:12px 16px;font-size:16px;font-weight:700;background:#F8FAFC;">
+      <span>Base total</span><span>${formatGBP(data.basePrice * (1 + data.vatRate))}</span>
+    </div>
+  </div>
+
+  ${partnerBlock}
+
+  <!-- Optional extras -->
+  <h2 class="page-title">Optional Extras</h2>
+  <div style="border:1px solid #E5E9EE;border-radius:10px;padding:4px 16px;margin-bottom:16px;">
+    ${extrasRows}
+  </div>
+
+  <!-- Total summary (when extras selected or partner discount applies) -->
+  ${(extrasTotal > 0 || partnerSelected) ? `
+  <div style="background:#0F2A3D;color:white;padding:16px 20px;border-radius:10px;margin-bottom:28px;">
+    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;opacity:0.8;"><span>Subtotal${extrasTotal > 0 ? ' (with selected extras)' : ''}</span><span>${formatGBP(partnerSelected ? discountedSubtotal : subtotal)}</span></div>
+    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:${partnerSelected ? '4px' : '10px'};opacity:0.8;"><span>VAT</span><span>${formatGBP(partnerSelected ? discountedVat : vat)}</span></div>
+    ${partnerSelected ? `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:10px;color:#FFD54F;"><span>${Math.round(discountRate * 100)}% partner discount</span><span>−${formatGBP(partnerDiscount)}</span></div>` : ''}
+    <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:700;padding-top:10px;border-top:1px solid rgba(255,255,255,0.2);">
+      <span>Project total</span>
+      <span>${partnerSelected ? `<span style="font-weight:400;font-size:13px;opacity:0.5;text-decoration:line-through;margin-right:8px;">${formatGBP(total)}</span>` : ''}${formatGBP(partnerSelected ? discountedTotal : total)}</span>
+    </div>
+  </div>` : ''}
+
+  <!-- Payment options -->
+  <h2 class="page-title">Payment Options</h2>
+  <div style="display:grid;gap:10px;margin-bottom:28px;">
+    <div style="border:2px solid ${paymentOption === '5050' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === '5050' ? '#F0F9FF' : 'white'};">
+      <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === '5050' ? '✓ ' : ''}50/50 split</div>
+      <div style="font-size:13px;color:#6B7785;">50% deposit to start, balance invoiced when you approve the final video.</div>
+    </div>
+    <div style="border:2px solid ${paymentOption === 'full' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === 'full' ? '#F0F9FF' : 'white'};">
+      <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'full' ? '✓ ' : ''}Pay in full — get a free subtitled version (worth £125)</div>
+      <div style="font-size:13px;color:#6B7785;">Pay upfront via card or BACS.</div>
+    </div>
+  </div>
+
+  ${sigBlock}
+
+  <!-- Footer -->
+  <div style="margin-top:40px;padding-top:16px;border-top:1px solid #E5E9EE;font-size:11px;color:#6B7785;text-align:center;">
+    ${esc(CONFIG.company.name)} · ${esc(CONFIG.company.website)} · ${esc(CONFIG.company.phone)}
+  </div>
+</body>
+</html>`;
+}
+
+export function openPrintWindow(data, opts = {}) {
+  const w = window.open('', '_blank');
+  if (!w) return false;
+  w.document.write(buildPrintHTML(data, opts));
+  w.document.close();
+  return true;
+}
