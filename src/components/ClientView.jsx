@@ -1,11 +1,15 @@
-import React, { useEffect, useState } from 'react';
-import { Check, ChevronLeft, FileDown, Globe, Phone } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Archive, Award, CalendarClock, Calendar, Captions, Check, ChevronLeft, Download,
+  FileDown, FileText, Globe, LayoutGrid, Mic, Music, Palette, PenLine, Phone,
+  RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
+} from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile } from '../utils.js';
 import { openPrintWindow } from '../utils/printProposal.js';
-import { Field, PageTitle, PaymentOption, PriceRow } from './ui.jsx';
+import { Field, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
 import { SignedBlock } from './SignedBlock.jsx';
 import { StripeSimModal } from './StripeSimModal.jsx';
 
@@ -16,6 +20,55 @@ function getEmbedUrl(url) {
   const vimeo = url.match(/vimeo\.com\/(\d+)/);
   if (vimeo) return 'https://player.vimeo.com/video/' + vimeo[1];
   return url;
+}
+
+const INCLUSION_ICON_RULES = [
+  [/script|copy(?!right)|narrative/i, PenLine],
+  [/storyboard|slide\s*deck/i, LayoutGrid],
+  [/voiceover|voice\s*artist/i, Mic],
+  [/music|sound/i, Music],
+  [/revis|amend/i, RefreshCw],
+  [/timeline|schedule|turnaround/i, Calendar],
+  [/kick.?off/i, Rocket],
+  [/style|visual\s*direction|palette/i, Palette],
+  [/logo/i, Sparkles],
+  [/ownership|rights|licens/i, Award],
+  [/storage|futureproof|archive|file/i, Archive],
+  [/subtitle|caption/i, Captions],
+  [/portrait|mobile|reels|tiktok/i, Smartphone],
+  [/delivery|format|export|download/i, Download],
+  [/share|platform|review/i, Share2],
+  [/meeting|team|follow.?up/i, Users],
+  [/word|narrative|140/i, FileText],
+];
+
+function iconForInclusion(title) {
+  if (!title) return Check;
+  for (const [pattern, Icon] of INCLUSION_ICON_RULES) {
+    if (pattern.test(title)) return Icon;
+  }
+  return Check;
+}
+
+function parseDateUK(s) {
+  if (!s) return null;
+  const m = String(s).match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/);
+  if (!m) {
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  let [, dd, mm, yyyy] = m;
+  if (yyyy.length === 2) yyyy = '20' + yyyy;
+  const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function validityLabel(dateStr, days) {
+  const start = parseDateUK(dateStr);
+  if (!start || !days) return null;
+  const expiry = new Date(start);
+  expiry.setDate(expiry.getDate() + Number(days));
+  return expiry.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 export function ClientView({ id, onBack, useRealStripe = false }) {
@@ -40,6 +93,15 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
   const [sigAccepted, setSigAccepted] = useState(false);
   const [paymentChoice, setPaymentChoice] = useState(null);
   const isMobile = useIsMobile();
+  const signRef = useRef(null);
+
+  const scrollToSign = () => {
+    if (!signRef.current) return;
+    const reduceMotion = typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false;
+    signRef.current.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+  };
 
   if (!data) {
     return (
@@ -142,16 +204,27 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         </button>
       </div>
 
-      <div style={{ maxWidth: 800, margin: '0 auto', padding: '32px 24px 80px', background: 'white' }}>
+      <div style={{ maxWidth: 800, margin: '0 auto', padding: signed ? '32px 24px 80px' : '32px 24px 140px', background: 'white' }}>
         <div style={{ background: BRAND.blue, color: 'white', padding: 32, borderRadius: 12, marginBottom: 32 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
             <img src={SQUIDEO_LOGO} alt="Squideo" style={{ height: 48, width: 'auto', display: 'block' }} />
           </div>
-          <h1 style={{ fontSize: isMobile ? 20 : 28, fontWeight: 700, margin: '0 0 16px', lineHeight: 1.2 }}>Explainer Video Proposal</h1>
+          <h1 style={{ fontSize: isMobile ? 20 : 28, fontWeight: 700, margin: '0 0 16px', lineHeight: 1.2 }}>{(data.proposalTitle && data.proposalTitle.trim()) || 'Explainer Video Proposal'}</h1>
           <div style={{ fontSize: isMobile ? 13 : 16, opacity: 0.95, lineHeight: 1.6 }}>
             <div>Prepared for <strong>{data.clientName || '[Client Name]'}</strong></div>
             <div>{data.contactBusinessName || '[Business Name]'}</div>
-            <div style={{ marginTop: 8, fontSize: 14, opacity: 0.85 }}>{data.date}</div>
+            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 14, opacity: 0.85 }}>{data.date}</span>
+              {(() => {
+                const expiry = validityLabel(data.date, data.validityDays);
+                if (!expiry) return null;
+                return (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.35)', color: 'white', padding: '3px 10px', borderRadius: 999 }}>
+                    <CalendarClock size={12} /> Valid until {expiry}
+                  </span>
+                );
+              })()}
+            </div>
           </div>
           <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid rgba(255,255,255,0.25)', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, fontSize: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -248,22 +321,28 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         <PageTitle>Your Quote</PageTitle>
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>What's included:</h3>
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 16 }}>
-          {data.baseInclusions.map((inc, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', fontSize: 14, borderBottom: i < data.baseInclusions.length - 1 ? '1px solid ' + BRAND.border : 'none' }}>
-              <Check size={16} color={BRAND.blue} style={{ flexShrink: 0, marginTop: 2 }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 500 }}>{inc.title}</div>
-                {inc.description && (
-                  <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginTop: 3 }}>{inc.description}</div>
-                )}
+          {data.baseInclusions.map((inc, i) => {
+            const Icon = iconForInclusion(inc.title);
+            return (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0', fontSize: 14, borderBottom: i < data.baseInclusions.length - 1 ? '1px solid ' + BRAND.border : 'none' }}>
+                <span style={{ flexShrink: 0, marginTop: 1, width: 28, height: 28, borderRadius: 8, background: BRAND.blue + '14', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Icon size={16} color={BRAND.blue} strokeWidth={2.25} />
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 500 }}>{inc.title}</div>
+                  {inc.description && (
+                    <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginTop: 3 }}>{inc.description}</div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        <PriceRow label="Subtotal" value={data.basePrice} />
-        <PriceRow label={'VAT (' + (data.vatRate * 100).toFixed(0) + '%)'} value={data.basePrice * data.vatRate} />
-        <PriceRow label="Total" value={data.basePrice * (1 + data.vatRate)} bold />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 16px', border: '1px solid ' + BRAND.border, borderRadius: 10, fontSize: 16, fontWeight: 700 }}>
+          <span>Project base price</span>
+          <span>{formatGBP(data.basePrice)} <span style={{ fontWeight: 500, fontSize: 13, color: BRAND.muted }}>+ VAT</span></span>
+        </div>
 
         <PageTitle>Optional Extras</PageTitle>
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden', marginBottom: 24 }}>
@@ -280,72 +359,72 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         </div>
 
         {data.partnerProgramme.enabled && (
-          <div style={{ marginTop: 16, marginBottom: 16, background: '#FFF8E1', border: '2px solid #FFB300', borderRadius: 10, overflow: 'hidden' }}>
-            <div style={{ background: '#FFB300', color: 'white', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-              <span style={{ fontWeight: 800, fontSize: 15, letterSpacing: 0.3 }}>Join & save 20% on this project</span>
-              <span style={{ fontWeight: 700, fontSize: 18 }}>Save {formatGBP(partnerDiscount)}</span>
-            </div>
-            <div style={{ padding: 20 }}>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10 }}>
+          <div style={{ position: 'relative', marginTop: 24, marginBottom: 16, background: '#FFFAEB', border: '1px solid #D97706', borderRadius: 12, padding: 20 }}>
+            <span style={{ position: 'absolute', top: -12, right: 16, background: '#D97706', color: 'white', fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 999, boxShadow: '0 2px 6px rgba(146, 64, 14, 0.25)', letterSpacing: 0.3 }}>
+              Save {formatGBP(partnerDiscount)} + VAT on this project
+            </span>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10, color: '#92400E' }}>
               Squideo Partner Programme —{' '}
               <a href="https://www.squideo.com/partner-programme" target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Click Here to Learn More</a>
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, cursor: signed ? 'default' : 'pointer' }}>
               <input type="checkbox" checked={partnerSelected} onChange={(e) => setPartnerSelected(e.target.checked)} disabled={!!signed} />
-              <span style={{ fontWeight: 600, fontSize: 14 }}>Check to subscribe (Monthly)</span>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>Check to join (Monthly)</span>
             </label>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#92400E', marginBottom: 4 }}>
+              Saves {formatGBP(partnerDiscount)} + VAT on this project ({Math.round((data.partnerProgramme.discountRate ?? 0.20) * 100)}% off)
+            </div>
             <div style={{ fontSize: 12, color: '#5D8A00', marginBottom: 14 }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
             {partnerSelected && (
               <div className="partner-confirm" style={{ background: '#E8F5E9', border: '1px solid #A5D6A7', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, fontWeight: 600, color: '#2E7D32' }}>
                 Great choice! Your {Math.round((data.partnerProgramme.discountRate ?? 0.20) * 100)}% discount has been applied to this project.
               </div>
             )}
-            <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 14, fontSize: 13, color: BRAND.muted, whiteSpace: 'pre-wrap', lineHeight: 1.7, marginBottom: 14 }}>
+
+            <div style={{ border: '1px solid #FDE68A', borderRadius: 8, padding: 14, fontSize: 13, color: BRAND.muted, whiteSpace: 'pre-wrap', lineHeight: 1.7, marginBottom: 14, background: 'white' }}>
               {data.partnerProgramme.description}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
               <span style={{ fontSize: 13, fontWeight: 600 }}>Minutes per month:</span>
-              <button onClick={() => !signed && setPartnerCredits(c => Math.max(1, c - 1))} disabled={!!signed || partnerCredits <= 1} style={{ width: isMobile ? 44 : 28, height: isMobile ? 44 : 28, borderRadius: 6, border: '1px solid #FFE082', background: 'white', cursor: signed || partnerCredits <= 1 ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>−</button>
+              <button onClick={() => !signed && setPartnerCredits(c => Math.max(1, c - 1))} disabled={!!signed || partnerCredits <= 1} style={{ width: isMobile ? 44 : 28, height: isMobile ? 44 : 28, borderRadius: 6, border: '1px solid #FDE68A', background: 'white', cursor: signed || partnerCredits <= 1 ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>−</button>
               <span style={{ fontWeight: 700, fontSize: 15, minWidth: 20, textAlign: 'center' }}>{partnerCredits}</span>
-              <button onClick={() => !signed && setPartnerCredits(c => c + 1)} disabled={!!signed} style={{ width: isMobile ? 44 : 28, height: isMobile ? 44 : 28, borderRadius: 6, border: '1px solid #FFE082', background: 'white', cursor: signed ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>+</button>
+              <button onClick={() => !signed && setPartnerCredits(c => c + 1)} disabled={!!signed} style={{ width: isMobile ? 44 : 28, height: isMobile ? 44 : 28, borderRadius: 6, border: '1px solid #FDE68A', background: 'white', cursor: signed ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>+</button>
             </div>
-            <div style={{ borderTop: '1px solid #FFE082', paddingTop: 12 }}>
-              <PriceRow label="Subtotal" value={partnerSubtotal} />
-              <PriceRow label={'VAT (' + (data.vatRate * 100).toFixed(0) + '%)'} value={partnerVat} />
-              <PriceRow label="Monthly total" value={partnerTotal} bold />
-            </div>
+            <div style={{ borderTop: '1px solid #FDE68A', paddingTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 15, fontWeight: 700 }}>
+              <span>Monthly subscription</span>
+              <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>+ VAT / month</span></span>
             </div>
           </div>
         )}
 
         <div style={{ background: BRAND.ink, color: 'white', padding: 20, borderRadius: 10, marginBottom: 32 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, opacity: 0.8 }}>
-            <span>Subtotal</span><span>{formatGBP(partnerSelected ? discountedSubtotal : subtotal)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: partnerSelected ? 4 : 12, opacity: 0.8 }}>
-            <span>VAT</span><span>{formatGBP(partnerSelected ? discountedVat : vat)}</span>
-          </div>
           {partnerSelected && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 12, opacity: 0.8, color: '#FFD54F' }}>
-              <span>20% partner discount</span><span>−{formatGBP(partnerDiscount)}</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, opacity: 0.8 }}>
+              <span>Project price (without Partner)</span>
+              <span style={{ textDecoration: 'line-through' }}>{formatGBP(subtotal)} + VAT</span>
             </div>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+          {partnerSelected && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 12, color: '#FFD54F' }}>
+              <span>Partner discount ({Math.round((data.partnerProgramme.discountRate ?? 0.20) * 100)}%)</span>
+              <span>−{formatGBP(partnerDiscount)} + VAT</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, paddingTop: partnerSelected ? 12 : 0, borderTop: partnerSelected ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
             <span>Project total</span>
             <span>
-              {partnerSelected && <span style={{ fontWeight: 400, fontSize: 14, opacity: 0.5, textDecoration: 'line-through', marginRight: 8 }}>{formatGBP(total)}</span>}
-              {formatGBP(partnerSelected ? discountedTotal : total)}
+              {formatGBP(partnerSelected ? discountedSubtotal : subtotal)} <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT</span>
             </span>
           </div>
           {partnerSelected && (
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.2)', color: '#FFD54F' }}>
-              <span>+ Partner Programme</span><span>{formatGBP(partnerTotal)}/mo</span>
+              <span>+ Partner Programme</span><span>{formatGBP(partnerSubtotal)} + VAT / month</span>
             </div>
           )}
         </div>
 
         <PageTitle>Payment Options</PageTitle>
-        <div style={{ display: 'grid', gap: 12, marginBottom: 32 }}>
+        <div style={{ display: 'grid', gap: 12, marginBottom: 12 }}>
           {(() => {
             const subtitlesPrice = data.optionalExtras.find(e => e.id === 'subtitles')?.price ?? 125;
             const fullIncentive = data.paymentOptionDescs?.full?.trim() || `get a free subtitled version (worth £${subtitlesPrice})`;
@@ -363,6 +442,25 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
             });
           })()}
         </div>
+        {(() => {
+          const exVat = partnerSelected ? discountedSubtotal : subtotal;
+          const half = exVat / 2;
+          const vatNote = <span style={{ color: BRAND.muted, fontWeight: 500 }}>+ VAT</span>;
+          let line = null;
+          if (paymentOption === '5050') {
+            line = <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(half)}</strong> {vatNote} today, <strong>{formatGBP(half)}</strong> {vatNote} on final approval.</>;
+          } else if (paymentOption === 'full') {
+            line = <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(exVat)}</strong> {vatNote} today.</>;
+          } else if (paymentOption === 'po') {
+            line = <>We&apos;ll invoice <strong style={{ color: BRAND.blue }}>{formatGBP(exVat)}</strong> {vatNote} once your Purchase Order is set up.</>;
+          }
+          if (!line) return null;
+          return (
+            <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '12px 16px', fontSize: 13, color: BRAND.ink, marginBottom: 32, lineHeight: 1.5 }}>
+              {line}
+            </div>
+          );
+        })()}
 
         <PageTitle>Next Steps</PageTitle>
         <div style={{ marginBottom: 32 }}>
@@ -397,9 +495,9 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         </div>
 
         {signed ? (
-          <SignedBlock signed={signed} payment={payment} paymentChoice={paymentChoice} onPayNow={handlePayNow} onChooseInvoice={() => setPaymentChoice('invoice')} onUndoInvoice={() => setPaymentChoice(null)} />
+          <SignedBlock signed={signed} payment={payment} paymentChoice={paymentChoice} vatRate={data.vatRate} onPayNow={handlePayNow} onChooseInvoice={() => setPaymentChoice('invoice')} onUndoInvoice={() => setPaymentChoice(null)} />
         ) : (
-          <div style={{ background: BRAND.paper, border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24 }}>
+          <div ref={signRef} style={{ background: BRAND.paper, border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24, scrollMarginTop: 80 }}>
             <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Accept this proposal</h3>
             <Field label="Your full name">
               <input className="input" value={sigName} onChange={(e) => setSigName(e.target.value)} placeholder="Type your name to sign" />
@@ -415,8 +513,8 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
               </span>
             </label>
             <button onClick={handleSign} className="btn" style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15, marginTop: 12, background: '#16A34A' }}>
-              <Check size={18} /> Accept & Sign — {formatGBP(total)}
-              {partnerSelected && ' + ' + formatGBP(partnerTotal) + '/mo'}
+              <Check size={18} /> Accept &amp; Sign — {formatGBP(partnerSelected ? discountedSubtotal : subtotal)} + VAT
+              {partnerSelected && ' + ' + formatGBP(partnerSubtotal) + ' + VAT/mo'}
             </button>
           </div>
         )}
@@ -425,6 +523,16 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
           {CONFIG.company.name} · {CONFIG.company.website} · {CONFIG.company.phone}
         </div>
       </div>
+
+      {!signed && (
+        <StickyCTA
+          totalExVat={partnerSelected ? discountedSubtotal : subtotal}
+          partnerMonthlyExVat={partnerSubtotal}
+          partnerSelected={partnerSelected}
+          phone={CONFIG.company.phone}
+          onSign={scrollToSign}
+        />
+      )}
 
       {paymentChoice === 'stripe-sim' && signed && (
         <StripeSimModal

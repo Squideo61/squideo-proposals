@@ -125,6 +125,9 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
         <Field label="Business name" error={!data.contactBusinessName?.trim()}>
           <input className="input" value={data.contactBusinessName} onChange={(e) => update({ contactBusinessName: e.target.value })} placeholder="e.g. Acme Ltd" />
         </Field>
+        <Field label="Proposal title (optional)">
+          <input className="input" value={data.proposalTitle || ''} onChange={(e) => update({ proposalTitle: e.target.value })} placeholder="Explainer Video Proposal" />
+        </Field>
         <Field label="Client logo (optional)">
           <LogoUploader logo={data.clientLogo} onChange={(logo) => update({ clientLogo: logo })} showMsg={showMsg} />
         </Field>

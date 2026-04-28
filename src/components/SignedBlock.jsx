@@ -3,10 +3,11 @@ import { Check } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { formatGBP } from '../utils.js';
 
-export function SignedBlock({ signed, payment, paymentChoice, onPayNow, onChooseInvoice, onUndoInvoice }) {
+export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice }) {
   const isPO = signed.paymentOption === 'po';
   const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
   const isDeposit = signed.paymentOption === '5050';
+  const totalExVat = vatRate ? signed.total / (1 + vatRate) : signed.total;
 
   return (
     <div>
@@ -18,7 +19,7 @@ export function SignedBlock({ signed, payment, paymentChoice, onPayNow, onChoose
         <div style={{ fontSize: 14, color: '#2E7D32', lineHeight: 1.6 }}>
           <div>Signed by <strong>{signed.name}</strong> ({signed.email})</div>
           <div>On {new Date(signed.signedAt).toLocaleString('en-GB')}</div>
-          <div style={{ marginTop: 8 }}>Total committed including VAT (if applicable): <strong>{formatGBP(signed.total)}</strong></div>
+          <div style={{ marginTop: 8 }}>Total committed: <strong>{formatGBP(totalExVat)} + VAT</strong></div>
         </div>
       </div>
 

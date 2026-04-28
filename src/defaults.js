@@ -5,6 +5,7 @@ export const DEFAULT_PROPOSAL = {
   clientName: '',
   contactBusinessName: '',
   clientLogo: null,
+  proposalTitle: '',
   date: new Date().toLocaleDateString('en-GB'),
   preparedBy: 'Adam Shelton',
   preparedByTitle: 'Partnership Lead',

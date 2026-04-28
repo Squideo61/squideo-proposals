@@ -132,3 +132,8 @@ body {
   .btn-icon { padding: 10px; min-height: 44px; min-width: 44px; justify-content: center; }
   .input { font-size: 16px; } /* prevent iOS Safari auto-zoom on focus */
 }
+
+/* ---------- Sticky CTA (proposal) ---------- */
+@media print {
+  .sticky-cta { display: none !important; }
+}

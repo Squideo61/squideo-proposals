@@ -1,4 +1,5 @@
 import React, { useEffect, useId } from 'react';
+import { Check, Phone } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { formatGBP, useIsMobile } from '../utils.js';
@@ -131,6 +132,73 @@ export function Modal({ children, onClose }) {
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 42, 61, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 20 }}>
       <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ background: 'white', borderRadius: 12, padding: 24, width: '100%', maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', maxHeight: '90vh', overflowY: 'auto' }}>
         {children}
+      </div>
+    </div>
+  );
+}
+
+export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, phone, onSign }) {
+  const isMobile = useIsMobile();
+  const telHref = phone ? 'tel:' + String(phone).replace(/[^+\d]/g, '') : null;
+  return (
+    <div
+      className="sticky-cta"
+      style={{
+        position: 'fixed',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'white',
+        borderTop: '1px solid ' + BRAND.border,
+        boxShadow: '0 -4px 16px rgba(15, 42, 61, 0.08)',
+        zIndex: 90,
+        paddingBottom: 'env(safe-area-inset-bottom)',
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 800,
+          margin: '0 auto',
+          padding: isMobile ? '10px 14px' : '12px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: isMobile ? 10 : 16,
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>Total</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: isMobile ? 16 : 18, fontWeight: 700, color: BRAND.ink }}>
+              {formatGBP(totalExVat)} <span style={{ fontSize: 12, color: BRAND.muted, fontWeight: 500 }}>+ VAT</span>
+            </span>
+            {partnerSelected && partnerMonthlyExVat > 0 && (
+              <span style={{ fontSize: 11, color: '#92400E', background: '#FFFAEB', border: '1px solid #FDE68A', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>
+                + {formatGBP(partnerMonthlyExVat)} + VAT/mo
+              </span>
+            )}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: isMobile ? 6 : 10, flexShrink: 0 }}>
+          {telHref && (
+            <a
+              href={telHref}
+              className="btn-ghost"
+              style={{ textDecoration: 'none', whiteSpace: 'nowrap', fontWeight: 600 }}
+              aria-label="Call us"
+            >
+              <Phone size={14} />{!isMobile && <span>Contact</span>}
+            </a>
+          )}
+          <button
+            onClick={onSign}
+            className="btn"
+            style={{ background: '#16A34A', whiteSpace: 'nowrap', fontWeight: 700 }}
+          >
+            <Check size={16} />
+            {isMobile ? 'Sign' : 'Accept & Sign'}
+          </button>
+        </div>
       </div>
     </div>
   );
