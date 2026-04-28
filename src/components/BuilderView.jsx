@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BookmarkPlus, Check, ChevronLeft, Eye, Plus, Save, X } from 'lucide-react';
+import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, Lightbulb, List, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { useIsMobile } from '../utils.js';
@@ -8,6 +8,19 @@ import { LogoUploader } from './LogoUploader.jsx';
 import { TeamMemberEditor } from './TeamMemberEditor.jsx';
 import { ExtrasBankManager } from './ExtrasBankManager.jsx';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
+
+function SectionStatus({ issues }) {
+  if (!issues || issues.length === 0) return (
+    <span style={{ fontSize: 11, color: '#15803d', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}>
+      <Check size={11} strokeWidth={3} /> Complete
+    </span>
+  );
+  return (
+    <span style={{ fontSize: 11, color: '#92400E', fontWeight: 700, background: '#FEF3C7', padding: '2px 8px', borderRadius: 10, border: '1px solid #FDE68A' }}>
+      {issues.length} required
+    </span>
+  );
+}
 
 export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
   const { state, actions, showMsg } = useStore();
@@ -46,44 +59,91 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
     update({ optionalExtras: arr });
   };
 
+  // Validation — required fields per section
+  const issues = {
+    client: [
+      !data.clientName?.trim() && 'Client name',
+      !data.contactBusinessName?.trim() && 'Business name',
+    ].filter(Boolean),
+    vision: [
+      !data.requirement?.trim() && 'Requirement',
+    ].filter(Boolean),
+    pricing: [
+      !(data.basePrice > 0) && 'Base price must be greater than 0',
+    ].filter(Boolean),
+  };
+  const totalIssues = Object.values(issues).flat().length;
+
+  const proposalLabel = [data.clientName, data.contactBusinessName].filter(Boolean).join(' · ') || 'New Proposal';
+
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: isMobile ? 16 : 24 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, position: 'sticky', top: 0, background: BRAND.paper, padding: '16px 0', zIndex: 10, borderBottom: '1px solid ' + BRAND.border, flexWrap: 'wrap', gap: 8 }}>
-        <button onClick={onBack} className="btn-ghost"><ChevronLeft size={16} /> Back</button>
-        <div style={{ fontSize: 13, color: '#2E7D32', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Check size={14} /> Auto-saved
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={() => { setTplName(data.contactBusinessName ? data.contactBusinessName + ' template' : ''); setShowSaveTpl(true); }} className="btn-ghost">
-            <Save size={14} /> Save as template
-          </button>
+    <div style={{ maxWidth: 900, margin: '0 auto', padding: isMobile ? 12 : 24 }}>
+
+      {/* ── Sticky header ── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        marginBottom: 24, position: 'sticky', top: 0, background: BRAND.paper,
+        padding: '12px 0', zIndex: 10, borderBottom: '1px solid ' + BRAND.border,
+        flexWrap: 'wrap', gap: 8,
+      }}>
+        <button onClick={onBack} className="btn-ghost" style={{ flexShrink: 0 }}>
+          <ChevronLeft size={16} /> Back
+        </button>
+
+        {!isMobile && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flex: 1, minWidth: 0, padding: '0 12px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+              {proposalLabel}
+            </div>
+            {totalIssues > 0 ? (
+              <div style={{ fontSize: 11, color: '#92400E', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                ⚠ {totalIssues} field{totalIssues !== 1 ? 's' : ''} incomplete
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: '#15803d', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Check size={10} strokeWidth={3} /> Ready to send · auto-saved
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          {!isMobile && (
+            <button onClick={() => { setTplName(data.contactBusinessName ? data.contactBusinessName + ' template' : ''); setShowSaveTpl(true); }} className="btn-ghost">
+              <Save size={14} /> Save as template
+            </button>
+          )}
           <button onClick={onPreview} className="btn"><Eye size={14} /> Preview</button>
         </div>
       </div>
 
-      <Section title="Client Details">
-        <Field label="Client name">
-          <input className="input" value={data.clientName} onChange={(e) => update({ clientName: e.target.value })} />
+      {/* ── Client Details ── */}
+      <Section title="Client Details" color="#0369a1" icon={Building2} badge={<SectionStatus issues={issues.client} />}>
+        <Field label="Client name" error={!data.clientName?.trim()}>
+          <input className="input" value={data.clientName} onChange={(e) => update({ clientName: e.target.value })} placeholder="e.g. John Smith" />
         </Field>
-        <Field label="Business name">
-          <input className="input" value={data.contactBusinessName} onChange={(e) => update({ contactBusinessName: e.target.value })} />
+        <Field label="Business name" error={!data.contactBusinessName?.trim()}>
+          <input className="input" value={data.contactBusinessName} onChange={(e) => update({ contactBusinessName: e.target.value })} placeholder="e.g. Acme Ltd" />
         </Field>
         <Field label="Client logo (optional)">
           <LogoUploader logo={data.clientLogo} onChange={(logo) => update({ clientLogo: logo })} showMsg={showMsg} />
         </Field>
-        <Field label="Date">
-          <input className="input" value={data.date} onChange={(e) => update({ date: e.target.value })} />
-        </Field>
-        <Field label="Prepared by">
-          <input className="input" value={data.preparedBy} onChange={(e) => update({ preparedBy: e.target.value })} />
-        </Field>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+          <Field label="Date">
+            <input className="input" value={data.date} onChange={(e) => update({ date: e.target.value })} />
+          </Field>
+          <Field label="Prepared by">
+            <input className="input" value={data.preparedBy} onChange={(e) => update({ preparedBy: e.target.value })} />
+          </Field>
+        </div>
         <Field label="Job title">
           <input className="input" value={data.preparedByTitle || ''} onChange={(e) => update({ preparedByTitle: e.target.value })} placeholder="e.g. Partnership Lead" />
         </Field>
       </Section>
 
-      <Section title="Project Vision">
-        <Field label="Requirement">
+      {/* ── Project Vision ── */}
+      <Section title="Project Vision" color="#7c3aed" icon={Lightbulb} badge={<SectionStatus issues={issues.vision} />}>
+        <Field label="Requirement" error={!data.requirement?.trim()}>
           <textarea
             rows={10}
             className="input"
@@ -98,7 +158,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
         </Field>
       </Section>
 
-      <Section title="Delivery Team">
+      {/* ── Delivery Team ── */}
+      <Section title="Delivery Team" color="#0f766e" icon={Users}>
         <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 16px' }}>Photos appear on the client proposal.</p>
         {data.team.map((m, i) => (
           <TeamMemberEditor
@@ -121,7 +182,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
         </button>
       </Section>
 
-      <Section title="Production Process">
+      {/* ── Production Process ── */}
+      <Section title="Production Process" color="#c2410c" icon={Video}>
         <Field label="Video URL">
           <input
             className="input"
@@ -133,16 +195,25 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
         <p style={{ fontSize: 12, color: BRAND.muted, margin: '4px 0 0' }}>Paste a YouTube or Vimeo link. The section will only appear on the proposal if a URL is set.</p>
       </Section>
 
-      <Section title="Pricing">
-        <Field label="Base price (ex VAT)">
-          <input type="number" className="input" value={data.basePrice} onChange={(e) => update({ basePrice: parseFloat(e.target.value) || 0 })} />
-        </Field>
-        <Field label="VAT rate (%)">
-          <input type="number" step="1" className="input" value={Math.round(data.vatRate * 100)} onChange={(e) => update({ vatRate: (parseFloat(e.target.value) || 0) / 100 })} />
-        </Field>
+      {/* ── Pricing ── */}
+      <Section title="Pricing" color="#15803d" icon={PoundSterling} badge={<SectionStatus issues={issues.pricing} />}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+          <Field label="Base price (ex VAT)" error={!(data.basePrice > 0)}>
+            <input type="number" className="input" value={data.basePrice} onChange={(e) => update({ basePrice: parseFloat(e.target.value) || 0 })} />
+          </Field>
+          <Field label="VAT rate (%)">
+            <input type="number" step="1" className="input" value={Math.round(data.vatRate * 100)} onChange={(e) => update({ vatRate: (parseFloat(e.target.value) || 0) / 100 })} />
+          </Field>
+        </div>
+        {data.basePrice > 0 && (
+          <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#15803d', fontWeight: 600 }}>
+            Total inc. VAT: £{(data.basePrice * (1 + data.vatRate)).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+        )}
       </Section>
 
-      <Section title="Payment Options">
+      {/* ── Payment Options ── */}
+      <Section title="Payment Options" color="#1d4ed8" icon={CreditCard}>
         <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 12px' }}>Select which payment options are available to the client. At least one must be selected.</p>
         {(() => {
           const subtitlesPrice = data.optionalExtras.find(e => e.id === 'subtitles')?.price ?? 125;
@@ -189,7 +260,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
         })()}
       </Section>
 
-      <Section title="What's Included">
+      {/* ── What's Included ── */}
+      <Section title="What's Included" color="#0e7490" icon={List}>
         {data.baseInclusions.map((inc, i) => (
           <div key={i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 12, marginBottom: 10 }}>
             <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
@@ -275,27 +347,39 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
         })()}
       </Section>
 
-      <Section title="Partner Programme">
-        <Field label="Enabled">
+      {/* ── Partner Programme ── */}
+      <Section title="Partner Programme" color="#b45309" icon={Star}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, cursor: 'pointer' }}>
           <input type="checkbox" checked={data.partnerProgramme.enabled} onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, enabled: e.target.checked } })} />
-        </Field>
-        <Field label="Monthly price (ex VAT)">
-          <input type="number" className="input" value={data.partnerProgramme.price} onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, price: parseFloat(e.target.value) || 0 } })} />
-        </Field>
-        <Field label="Project discount (%)">
-          <input type="number" className="input" min="0" max="100" value={((data.partnerProgramme.discountRate || 0) * 100).toFixed(0)} onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, discountRate: (parseFloat(e.target.value) || 0) / 100 } })} />
-        </Field>
-        <Field label="Description">
-          <textarea className="input" style={{ minHeight: 60 }} value={data.partnerProgramme.description} onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, description: e.target.value } })} />
-        </Field>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Show Partner Programme on this proposal</span>
+        </label>
+        {data.partnerProgramme.enabled && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+              <Field label="Monthly price (ex VAT)">
+                <input type="number" className="input" value={data.partnerProgramme.price} onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, price: parseFloat(e.target.value) || 0 } })} />
+              </Field>
+              <Field label="Project discount (%)">
+                <input type="number" className="input" min="0" max="100" value={((data.partnerProgramme.discountRate || 0) * 100).toFixed(0)} onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, discountRate: (parseFloat(e.target.value) || 0) / 100 } })} />
+              </Field>
+            </div>
+            <Field label="Description">
+              <textarea className="input" style={{ minHeight: 60 }} value={data.partnerProgramme.description} onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, description: e.target.value } })} />
+            </Field>
+          </>
+        )}
       </Section>
 
-      <Section title="Optional Extras">
+      {/* ── Optional Extras ── */}
+      <Section title="Optional Extras" color="#be185d" icon={Package}>
         {data.optionalExtras.map((extra, i) => (
           <div key={extra.id} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 12, marginBottom: 10 }}>
             <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
               <input className="input" style={{ flex: 1 }} value={extra.label} onChange={(e) => updateExtra(i, { label: e.target.value })} />
-              <input type="number" className="input" style={{ width: 100 }} value={extra.price} onChange={(e) => updateExtra(i, { price: parseFloat(e.target.value) || 0 })} />
+              <div style={{ position: 'relative', flexShrink: 0 }}>
+                <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: BRAND.muted, pointerEvents: 'none' }}>£</span>
+                <input type="number" className="input" style={{ width: 90, paddingLeft: 22 }} value={extra.price} onChange={(e) => updateExtra(i, { price: parseFloat(e.target.value) || 0 })} />
+              </div>
               <button
                 onClick={() => {
                   const bank = state.extrasBank;
@@ -385,6 +469,17 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
             </button>
           </div>
         </Modal>
+      )}
+
+      {/* Mobile: save-as-template accessible from bottom */}
+      {isMobile && (
+        <button
+          onClick={() => { setTplName(data.contactBusinessName ? data.contactBusinessName + ' template' : ''); setShowSaveTpl(true); }}
+          className="btn-ghost"
+          style={{ width: '100%', justifyContent: 'center', marginBottom: 32 }}
+        >
+          <Save size={14} /> Save as template
+        </button>
       )}
     </div>
   );

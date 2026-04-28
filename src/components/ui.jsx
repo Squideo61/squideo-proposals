@@ -19,17 +19,44 @@ export function Logo({ size, dark }) {
   );
 }
 
-export function Section({ title, children }) {
+export function Section({ title, children, color, icon: Icon, badge }) {
   const isMobile = useIsMobile();
+  const accent = color || BRAND.blue;
   return (
-    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 16 : 24, marginBottom: 16 }}>
-      <h2 className="section-label">{title}</h2>
-      {children}
+    <div style={{
+      background: 'white',
+      borderTop: '1px solid ' + BRAND.border,
+      borderRight: '1px solid ' + BRAND.border,
+      borderBottom: '1px solid ' + BRAND.border,
+      borderLeft: '4px solid ' + accent,
+      borderRadius: 12,
+      marginBottom: 20,
+      overflow: 'hidden',
+      boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+    }}>
+      <div style={{
+        padding: isMobile ? '11px 14px' : '12px 20px',
+        background: accent + '12',
+        borderBottom: '1px solid ' + BRAND.border,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {Icon && <Icon size={14} color={accent} strokeWidth={2.5} />}
+          <h2 className="section-label" style={{ margin: 0, fontSize: 11, fontWeight: 700, color: accent, letterSpacing: 0.7, textTransform: 'uppercase' }}>{title}</h2>
+        </div>
+        {badge}
+      </div>
+      <div style={{ padding: isMobile ? 14 : 20 }}>
+        {children}
+      </div>
     </div>
   );
 }
 
-export function Field({ label, children, htmlFor }) {
+export function Field({ label, children, htmlFor, error }) {
   const fallbackId = useId();
   const targetId = htmlFor || fallbackId;
   const child = React.isValidElement(children) && !children.props.id
@@ -37,7 +64,10 @@ export function Field({ label, children, htmlFor }) {
     : children;
   return (
     <div style={{ marginBottom: 14 }}>
-      <label htmlFor={targetId} style={{ display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 6 }}>{label}</label>
+      <label htmlFor={targetId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13, fontWeight: 500, marginBottom: 6 }}>
+        <span>{label}</span>
+        {error && <span style={{ fontSize: 11, color: '#92400E', fontWeight: 700, background: '#FEF3C7', padding: '1px 7px', borderRadius: 10 }}>Required</span>}
+      </label>
       {child}
     </div>
   );
