@@ -101,10 +101,10 @@ export function StoreProvider({ children }) {
         session: { ...s.session, avatar },
         users: { ...s.users, [s.session.email]: { ...s.users[s.session.email], avatar } },
       }));
-      return api.patch('/api/users/me', { avatar });
+      return api.patch('/api/users', { avatar });
     },
     updatePassword(currentPassword, newPassword) {
-      return api.patch('/api/users/me', { current_password: currentPassword, new_password: newPassword });
+      return api.patch('/api/users', { current_password: currentPassword, new_password: newPassword });
     },
     removeUser(email) {
       setState(s => {
