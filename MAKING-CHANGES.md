@@ -2,6 +2,28 @@
 
 Follow these steps every time you want to update the app.
 
+> **⚠ Never paste real credentials, passwords, API keys, or connection strings into this file or any other file in the repo.** Secrets live in Vercel's Environment Variables. Use `vercel env pull` (below) to bring them down to your machine — that file (`.env.local`) is gitignored.
+
+---
+
+## First-time setup (only once per machine)
+
+Before your first run, link this folder to the Vercel project and pull the env vars down locally:
+
+```bash
+vercel link
+```
+
+Pick the existing **squideo-proposals** project when prompted.
+
+```bash
+vercel env pull .env.local
+```
+
+This creates a local `.env.local` containing `DATABASE_URL`, `JWT_SECRET`, and any other env vars from Vercel. The file is in `.gitignore` and will not be committed.
+
+> Re-run `vercel env pull .env.local` any time the secrets change in the Vercel dashboard (e.g. after a rotation).
+
 ---
 
 ## Step 1 — Open a terminal in VS Code
@@ -12,23 +34,13 @@ In VS Code: **Terminal → New Terminal**
 
 ## Step 2 — Start the local app for testing
 
-Run these three commands one at a time (copy and paste each separately):
-
-```powershell
-$env:DATABASE_URL='postgresql://neondb_owner:npg_zV1P9remvbdW@ep-green-grass-abv33j3f-pooler.eu-west-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
-```
-
-```powershell
-$env:JWT_SECRET='CU8Eu:P[=Kt+J#:xj8TZmEt,,A25fxr,q6@8j$Q8'
-```
-
-```powershell
+```bash
 vercel dev
 ```
 
-Once you see `Ready! Available at http://localhost:3000`, open your browser to **http://localhost:3000** and test your changes there.
+`vercel dev` automatically reads `.env.local`, so you no longer need to set `$env:DATABASE_URL` or `$env:JWT_SECRET` by hand.
 
-> You need to do this every time you open a new terminal. The secrets are not stored in the terminal permanently.
+Once you see `Ready! Available at http://localhost:3000`, open your browser to **http://localhost:3000** and test your changes there.
 
 ---
 
@@ -64,7 +76,9 @@ You can watch the progress at **https://vercel.com/dashboard** → your project 
 
 | Task | Command |
 |------|---------|
-| Start local app | `vercel dev` (after setting the two env vars above) |
+| First-time link to Vercel | `vercel link` |
+| Pull env vars from Vercel | `vercel env pull .env.local` |
+| Start local app | `vercel dev` |
 | Stop local app | Press `Ctrl+C` in the terminal |
 | Save changes to GitHub | `git add .` → `git commit -m "message"` → `git push` |
 | View live app | Your Vercel URL (e.g. `https://squideo-proposals.vercel.app`) |
