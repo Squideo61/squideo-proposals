@@ -31,7 +31,10 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
   const [selectedExtras, setSelectedExtras] = useState({});
   const [partnerSelected, setPartnerSelected] = useState(false);
   const [partnerCredits, setPartnerCredits] = useState(1);
-  const [paymentOption, setPaymentOption] = useState('5050');
+  const [paymentOption, setPaymentOption] = useState(() => {
+    const opts = data?.paymentOptions || ['5050', 'full'];
+    return opts[0];
+  });
   const [sigName, setSigName] = useState('');
   const [sigEmail, setSigEmail] = useState('');
   const [sigAccepted, setSigAccepted] = useState(false);
@@ -343,8 +346,18 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
 
         <PageTitle>Payment Options</PageTitle>
         <div style={{ display: 'grid', gap: 12, marginBottom: 32 }}>
-          <PaymentOption selected={paymentOption === '5050'} onSelect={() => !signed && setPaymentOption('5050')} title="50/50 split" desc="50% deposit to start, balance invoiced when you approve the final video." disabled={!!signed} />
-          <PaymentOption selected={paymentOption === 'full'} onSelect={() => !signed && setPaymentOption('full')} title="Pay in full — get a free subtitled version (worth £125)" desc="Pay upfront via card or BACS." disabled={!!signed} />
+          {(data.paymentOptions || ['5050', 'full']).map((key) => {
+            const OPTION_CONFIG = {
+              '5050': { title: '50/50 split', desc: '50% deposit to start, balance invoiced when you approve the final video.' },
+              'full': { title: 'Pay in full — get a free subtitled version (worth £125)', desc: 'Pay upfront via card or BACS.' },
+              'po': { title: 'Purchase Order', desc: 'Raise a Purchase Order — our team will be in touch to set up supplier details and confirm payment.' },
+            };
+            const cfg = OPTION_CONFIG[key];
+            if (!cfg) return null;
+            return (
+              <PaymentOption key={key} selected={paymentOption === key} onSelect={() => !signed && setPaymentOption(key)} title={cfg.title} desc={cfg.desc} disabled={!!signed} />
+            );
+          })}
         </div>
 
         <PageTitle>Next Steps</PageTitle>

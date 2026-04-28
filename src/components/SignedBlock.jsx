@@ -4,6 +4,7 @@ import { BRAND } from '../theme.js';
 import { formatGBP } from '../utils.js';
 
 export function SignedBlock({ signed, payment, paymentChoice, onPayNow, onChooseInvoice, onUndoInvoice }) {
+  const isPO = signed.paymentOption === 'po';
   const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
   const isDeposit = signed.paymentOption === '5050';
 
@@ -31,7 +32,16 @@ export function SignedBlock({ signed, payment, paymentChoice, onPayNow, onChoose
         </div>
       )}
 
-      {!payment && paymentChoice === 'invoice' && (
+      {!payment && isPO && (
+        <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20 }}>
+          <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Purchase Order confirmed</h4>
+          <p style={{ fontSize: 13, color: BRAND.muted, margin: 0, lineHeight: 1.5 }}>
+            Our team will be in touch within 24 hours to set up your supplier details and confirm the Purchase Order for {formatGBP(amountDue)}.
+          </p>
+        </div>
+      )}
+
+      {!payment && !isPO && paymentChoice === 'invoice' && (
         <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20 }}>
           <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Invoice on its way</h4>
           <p style={{ fontSize: 13, color: BRAND.muted, margin: 0, lineHeight: 1.5 }}>
@@ -43,7 +53,7 @@ export function SignedBlock({ signed, payment, paymentChoice, onPayNow, onChoose
         </div>
       )}
 
-      {!payment && paymentChoice !== 'invoice' && (
+      {!payment && !isPO && paymentChoice !== 'invoice' && (
         <div style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24 }}>
           <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>
             Would you like to pay your {isDeposit ? 'deposit' : 'invoice'} now?

@@ -142,6 +142,35 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate }) {
         </Field>
       </Section>
 
+      <Section title="Payment Options">
+        <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 12px' }}>Select which payment options are available to the client. At least one must be selected.</p>
+        {[
+          { key: '5050', label: '50/50 split', desc: '50% deposit to start, balance invoiced on final approval' },
+          { key: 'full', label: 'Pay in full', desc: 'Pay upfront via card or BACS — includes free subtitled version (worth £125)' },
+          { key: 'po', label: 'Purchase Order', desc: 'Client raises a PO — Squideo invoices against it' },
+        ].map(({ key, label, desc }) => {
+          const currentOpts = data.paymentOptions || ['5050', 'full'];
+          const enabled = currentOpts.includes(key);
+          return (
+            <label key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', cursor: 'pointer', fontSize: 14, borderBottom: '1px solid ' + BRAND.border }}>
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => {
+                  const next = e.target.checked ? [...currentOpts, key] : currentOpts.filter(k => k !== key);
+                  if (next.length > 0) update({ paymentOptions: next });
+                }}
+                style={{ marginTop: 3 }}
+              />
+              <div>
+                <div style={{ fontWeight: 600 }}>{label}</div>
+                <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{desc}</div>
+              </div>
+            </label>
+          );
+        })}
+      </Section>
+
       <Section title="What's Included">
         {data.baseInclusions.map((inc, i) => (
           <div key={i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 12, marginBottom: 10 }}>
