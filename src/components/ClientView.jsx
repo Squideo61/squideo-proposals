@@ -7,7 +7,7 @@ import {
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { useStore } from '../store.jsx';
-import { formatGBP, formatProposalNumber, sendNotification, useIsMobile } from '../utils.js';
+import { formatGBP, sendNotification, useIsMobile } from '../utils.js';
 import { openPrintWindow } from '../utils/printProposal.js';
 import { Field, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
 import { SignedBlock } from './SignedBlock.jsx';
@@ -258,7 +258,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
           className="btn-ghost"
           style={{ fontSize: 13 }}
         >
-          <FileDown size={14} /> Print &amp; Sign
+          <FileDown size={14} /> Download PDF
         </button>
       </div>
 
@@ -273,11 +273,6 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
             <div>{data.contactBusinessName || '[Business Name]'}</div>
             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 14, opacity: 0.85 }}>{data.date}</span>
-              {data._number && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.35)', color: 'white', padding: '3px 10px', borderRadius: 999, letterSpacing: 0.4 }}>
-                  Proposal #{formatProposalNumber(data._number)}
-                </span>
-              )}
               {(() => {
                 const expiry = validityLabel(data.date, data.validityDays);
                 if (!expiry) return null;
