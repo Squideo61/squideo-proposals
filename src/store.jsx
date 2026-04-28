@@ -155,6 +155,22 @@ export function StoreProvider({ children }) {
       setState(s => ({ ...s, payments: { ...s.payments, [id]: payment } }));
       api.post('/api/payments/' + id, payment).catch(() => {});
     },
+    loadPublicProposal(id) {
+      setState(s => ({ ...s, loading: true }));
+      Promise.all([
+        api.get('/api/proposals/' + id).catch(() => null),
+        api.get('/api/signatures/' + id).catch(() => null),
+        api.get('/api/payments/' + id).catch(() => null),
+      ]).then(([proposal, sig, payment]) => {
+        setState(s => ({
+          ...s,
+          loading: false,
+          proposals: proposal ? { ...s.proposals, [id]: proposal } : s.proposals,
+          signatures: sig     ? { ...s.signatures, [id]: sig }     : s.signatures,
+          payments:   payment ? { ...s.payments,   [id]: payment } : s.payments,
+        }));
+      }).catch(() => setState(s => ({ ...s, loading: false })));
+    },
     setNotificationRecipients(list) {
       setState(s => ({ ...s, notificationRecipients: list }));
       api.put('/api/settings', { notificationRecipients: list }).catch(() => {});

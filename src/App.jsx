@@ -9,6 +9,7 @@ import { AuthScreen } from './components/AuthScreen.jsx';
 import { ListView } from './components/ListView.jsx';
 import { BuilderView } from './components/BuilderView.jsx';
 import { ClientView } from './components/ClientView.jsx';
+import { PublicClientShell } from './components/PublicClientShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
 import { UserManager } from './components/UserManager.jsx';
 import { NotificationSettings } from './components/NotificationSettings.jsx';
@@ -146,6 +147,17 @@ function AppShell() {
 }
 
 export default function App() {
+  const proposalId = new URLSearchParams(window.location.search).get('proposal');
+  if (proposalId) {
+    return (
+      <ErrorBoundary>
+        <StoreProvider>
+          <PublicClientShell proposalId={proposalId} />
+        </StoreProvider>
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <StoreProvider>

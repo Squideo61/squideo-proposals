@@ -162,7 +162,10 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, showMsg }) {
   const isMobile = useIsMobile();
 
   const copyLink = () => {
-    showMsg('Share link: #view/' + proposal.id + ' (will work on real domain after deploy)');
+    const url = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposal.id;
+    navigator.clipboard.writeText(url)
+      .then(() => showMsg('Link copied to clipboard'))
+      .catch(() => showMsg('Copy failed — link: ' + url));
   };
 
   return (

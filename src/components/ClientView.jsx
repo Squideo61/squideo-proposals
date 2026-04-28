@@ -18,7 +18,7 @@ function getEmbedUrl(url) {
   return url;
 }
 
-export function ClientView({ id, onBack }) {
+export function ClientView({ id, onBack, useRealStripe = false }) {
   const { state, actions, showMsg } = useStore();
   const data = state.proposals[id];
   const signed = state.signatures[id] || null;
@@ -82,8 +82,30 @@ export function ClientView({ id, onBack }) {
     else showMsg('Proposal accepted!');
   };
 
-  const handlePayNow = () => {
-    setPaymentChoice('stripe-sim');
+  const handlePayNow = async () => {
+    if (!useRealStripe) {
+      setPaymentChoice('stripe-sim');
+      return;
+    }
+    setPaymentChoice('processing');
+    try {
+      const r = await fetch('/api/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proposalId: id,
+          amount: signed.paymentOption === '5050' ? signed.total / 2 : signed.total,
+          isDeposit: signed.paymentOption === '5050',
+          customerEmail: signed.email,
+        }),
+      });
+      const { url, error } = await r.json();
+      if (!r.ok || !url) throw new Error(error || 'No checkout URL');
+      window.location.href = url;
+    } catch {
+      setPaymentChoice(null);
+      showMsg('Could not start checkout. Please try again.');
+    }
   };
 
   const confirmStripeSim = async () => {
@@ -106,7 +128,7 @@ export function ClientView({ id, onBack }) {
   return (
     <div style={{ background: BRAND.paper, minHeight: '100vh' }}>
       <div style={{ position: 'sticky', top: 0, background: 'white', borderBottom: '1px solid ' + BRAND.border, padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
-        <button onClick={onBack} className="btn-ghost"><ChevronLeft size={16} /> Back</button>
+        {onBack ? <button onClick={onBack} className="btn-ghost"><ChevronLeft size={16} /> Back</button> : <div />}
         <div style={{ fontSize: 12, color: BRAND.muted }}>Client view</div>
         <button
           onClick={() => openPrintWindow(data, { signable: true, selectedExtras, paymentOption, partnerSelected })}
