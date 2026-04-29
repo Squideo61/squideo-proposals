@@ -164,6 +164,7 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
   const views = proposal._views || { opens: 0, duration: 0 };
   const opened = views.opens > 0;
   const isMobile = useIsMobile();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const number = proposal._number ? formatProposalNumber(proposal._number) : '';
 
@@ -206,6 +207,8 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
     <div
       className="proposal-card"
       style={{
+        position: 'relative',
+        zIndex: menuOpen ? 50 : 'auto',
         background: 'white',
         border: '1px solid ' + BRAND.border,
         borderLeft: '4px solid ' + accentColour,
@@ -280,6 +283,8 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
         <button onClick={copyLink} className="btn-icon" title="Share link" aria-label="Copy share link"><Link2 size={16} /></button>
         <button onClick={() => onOpen(proposal.id)} className="btn-icon" title="Edit" aria-label="Edit proposal">Edit</button>
         <ActionMenu
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
           items={[
             { label: 'View analytics', icon: BarChart3, onClick: onAnalytics },
             { label: 'Preview', icon: Eye, onClick: () => onPreview(proposal.id) },
@@ -294,8 +299,8 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
   );
 }
 
-function ActionMenu({ items }) {
-  const [open, setOpen] = useState(false);
+function ActionMenu({ items, open, onOpenChange }) {
+  const setOpen = onOpenChange;
   const ref = useRef(null);
 
   useEffect(() => {
@@ -310,10 +315,10 @@ function ActionMenu({ items }) {
       document.removeEventListener('mousedown', close);
       document.removeEventListener('keydown', closeOnEsc);
     };
-  }, [open]);
+  }, [open, setOpen]);
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} style={{ position: 'relative', zIndex: open ? 50 : 'auto' }}>
       <button
         onClick={() => setOpen(o => !o)}
         className="btn-icon"
@@ -337,7 +342,7 @@ function ActionMenu({ items }) {
             boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)',
             minWidth: 180,
             padding: 4,
-            zIndex: 10,
+            zIndex: 50,
           }}
         >
           {items.map((item, i) => (
