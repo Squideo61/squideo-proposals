@@ -210,7 +210,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
 
   const handlePayNow = async () => {
     if (!useRealStripe) {
-      setPaymentChoice('stripe-sim');
+      showMsg('Payments are disabled in preview mode');
       return;
     }
     setPaymentChoice('processing');
