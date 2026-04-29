@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BarChart3, Clock, Download, Eye, FileText, LayoutTemplate, Link2, Mail, Plus, Search, Trash2, Users, X } from 'lucide-react';
+import { BarChart3, Clock, Download, Eye, FileText, LayoutTemplate, Link2, Mail, Plus, Search, Trash2, Trophy, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, useIsMobile } from '../utils.js';
@@ -7,7 +7,7 @@ import { openPrintWindow } from '../utils/printProposal.js';
 import { Badge, Logo } from './ui.jsx';
 import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onLogout, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onLogout, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   const [analyticsId, setAnalyticsId] = useState(null);
@@ -47,6 +47,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onLogout, onMa
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={onManageLeaderboard} className="btn-ghost"><Trophy size={14} /> Leaderboard</button>
           <button onClick={onManageTemplates} className="btn-ghost"><LayoutTemplate size={14} /> Templates</button>
           <button onClick={onManageNotifications} className="btn-ghost"><Mail size={14} /> Notifications</button>
           <button onClick={onManageUsers} className="btn-ghost"><Users size={14} /> Users</button>

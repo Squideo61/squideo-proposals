@@ -15,6 +15,7 @@ function emptyStore() {
     notificationRecipients: [],
     extrasBank: [],
     inclusionsBank: [],
+    leaderboard: null,
     session: null,
     loading: true,
   };
@@ -173,6 +174,13 @@ export function StoreProvider({ children }) {
         setState(s => ({ ...s, viewSessions: { ...s.viewSessions, [id]: list } }));
         return list;
       }).catch(() => []);
+    },
+    loadLeaderboard() {
+      return api.get('/api/leaderboard').then((data) => {
+        const board = data || { totals: [], trend: [] };
+        setState(s => ({ ...s, leaderboard: board }));
+        return board;
+      }).catch(() => ({ totals: [], trend: [] }));
     },
     saveSignature(id, sig) {
       setState(s => ({ ...s, signatures: { ...s.signatures, [id]: sig } }));

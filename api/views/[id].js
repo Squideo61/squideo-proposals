@@ -2,6 +2,7 @@
 // GET   /api/views/[id]                                            requires auth
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
+import { sendMail, firstViewHtml, APP_URL } from '../_lib/email.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -33,6 +34,9 @@ export default async function handler(req, res) {
     }
     const ua = h['user-agent'] || null;
 
+    const existing = await sql`SELECT 1 FROM proposal_views WHERE proposal_id = ${id} LIMIT 1`;
+    const isFirstEver = existing.length === 0;
+
     await sql`
       INSERT INTO proposal_views
         (proposal_id, session_id, opened_at, last_active_at, duration_seconds,
@@ -44,6 +48,29 @@ export default async function handler(req, res) {
         last_active_at   = NOW(),
         duration_seconds = GREATEST(proposal_views.duration_seconds, EXCLUDED.duration_seconds)
     `;
+
+    if (isFirstEver) {
+      try {
+        const rows = await sql`SELECT data FROM proposals WHERE id = ${id}`;
+        if (rows.length) {
+          const data = rows[0].data || {};
+          const ownerEmail = data.preparedByEmail || null;
+          if (ownerEmail) {
+            const title = data.proposalTitle || data.clientName || 'Your proposal';
+            const link = `${APP_URL}/?proposal=${id}`;
+            await sendMail({
+              to: ownerEmail,
+              subject: `${data.clientName || 'A client'} just opened "${title}"`,
+              html: firstViewHtml({ title, clientName: data.clientName, country, city, link }),
+              text: `${data.clientName || 'A client'} opened ${title}. ${link}`,
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[views] first-view email failed', err);
+      }
+    }
+
     return res.status(200).json({ ok: true });
   }
 

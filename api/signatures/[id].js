@@ -1,5 +1,6 @@
 import sql from '../_lib/db.js';
 import { cors } from '../_lib/middleware.js';
+import { sendMail, signedHtml, APP_URL } from '../_lib/email.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -23,6 +24,28 @@ export default async function handler(req, res) {
         SET name = EXCLUDED.name, email = EXCLUDED.email,
             signed_at = EXCLUDED.signed_at, data = EXCLUDED.data
     `;
+
+    try {
+      const [users, proposals] = await Promise.all([
+        sql`SELECT email FROM users`,
+        sql`SELECT data FROM proposals WHERE id = ${id}`,
+      ]);
+      const proposal = proposals[0]?.data || {};
+      const recipients = users.map(u => u.email).filter(Boolean);
+      if (recipients.length) {
+        const title = proposal.proposalTitle || proposal.clientName || id;
+        const link = `${APP_URL}/?proposal=${id}`;
+        await sendMail({
+          to: recipients,
+          subject: `🎉 Signed: ${title}`,
+          html: signedHtml({ proposal, signerName: name, signerEmail: email, signedAt, link }),
+          text: `${name || 'Someone'} (${email || ''}) signed "${title}" on ${signedAt}. ${link}`,
+        });
+      }
+    } catch (err) {
+      console.error('[signatures] broadcast email failed', err);
+    }
+
     return res.status(201).json({ ok: true });
   }
 

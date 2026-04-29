@@ -12,6 +12,7 @@ import { ClientView } from './components/ClientView.jsx';
 import { PublicClientShell } from './components/PublicClientShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
 import { TemplatesView } from './components/TemplatesView.jsx';
+import { LeaderboardView } from './components/LeaderboardView.jsx';
 import { UserManager } from './components/UserManager.jsx';
 import { NotificationSettings } from './components/NotificationSettings.jsx';
 import { AccountSettings } from './components/AccountSettings.jsx';
@@ -139,7 +140,11 @@ function AppShell() {
           onManageNotifications={() => setModal({ type: 'notifications' })}
           onManageAccount={() => setModal({ type: 'account' })}
           onManageTemplates={() => setView('templates')}
+          onManageLeaderboard={() => setView('leaderboard')}
         />
+      )}
+      {view === 'leaderboard' && (
+        <LeaderboardView onBack={() => setView('list')} />
       )}
       {view === 'templates' && (
         <TemplatesView
