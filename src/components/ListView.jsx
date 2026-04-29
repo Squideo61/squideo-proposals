@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { BarChart3, Clock, Download, Eye, FileText, LayoutTemplate, Link2, Mail, Plus, Search, Trash2, Trophy, Users, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { BarChart3, Check, Clock, Download, Eye, FileText, LayoutTemplate, Link2, Mail, MoreVertical, Plus, Search, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, useIsMobile } from '../utils.js';
@@ -31,7 +31,13 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onLogout, onMa
       })
     : proposals;
 
-  const user = state.session;
+  const sessionUser = state.session;
+  const userRecord = state.users[sessionUser?.email];
+  const user = {
+    ...sessionUser,
+    avatar: sessionUser?.avatar ?? userRecord?.avatar ?? null,
+    name: sessionUser?.name || userRecord?.name || '',
+  };
   const analyticsProposal = analyticsId ? proposals.find((p) => p.id === analyticsId) : null;
 
   return (
@@ -152,7 +158,7 @@ function CreatorAvatar({ proposal, size = 24, showName = true }) {
 }
 
 function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, showMsg }) {
-  const { state } = useStore();
+  const { state, actions } = useStore();
   const signed = state.signatures[proposal.id];
   const payment = state.payments[proposal.id];
   const views = proposal._views || { opens: 0, duration: 0 };
@@ -168,12 +174,33 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
       .catch(() => showMsg('Copy failed — link: ' + url));
   };
 
+  const handleMarkPaid = () => {
+    const totalNum = Number(proposal.basePrice) * (1 + Number(proposal.vatRate || 0));
+    const defaultStr = (Number.isFinite(totalNum) ? totalNum : 0).toFixed(2);
+    const input = window.prompt('Mark as paid — enter the amount received (£):', defaultStr);
+    if (input === null) return;
+    const amount = parseFloat(input);
+    if (!Number.isFinite(amount) || amount < 0) {
+      showMsg('Invalid amount');
+      return;
+    }
+    actions.markAsPaid(proposal.id, amount);
+    showMsg('Marked as paid: ' + formatGBP(amount));
+  };
+
+  const handleUnmarkAccepted = () => {
+    if (!window.confirm('Remove the signature for this proposal? It will be marked as not yet accepted.')) return;
+    actions.removeSignature(proposal.id);
+    showMsg('Signature removed');
+  };
+
   const accentColour = payment ? '#10B981'
     : signed ? BRAND.blue
     : opened ? '#F59E0B'
     : '#CBD5E1';
 
-  const total = formatGBP(proposal.basePrice * (1 + proposal.vatRate));
+  const hasVat = Number(proposal.vatRate) > 0;
+  const figure = formatGBP(proposal.basePrice);
 
   return (
     <div
@@ -231,30 +258,118 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
         {isMobile && (
           <div style={{ marginTop: 6 }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
-              {total}
+              {figure}
             </div>
-            <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>inc. VAT</div>
+            {hasVat && <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>+VAT</div>}
           </div>
         )}
       </div>
       {!isMobile && (
         <div style={{ textAlign: 'right', minWidth: 90, fontVariantNumeric: 'tabular-nums' }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: BRAND.ink, lineHeight: 1.1 }}>
-            {total}
+            {figure}
           </div>
-          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>inc. VAT</div>
+          {hasVat && <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>+VAT</div>}
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 4 : 8, flexWrap: 'wrap' }}>
-        <CreatorAvatar proposal={proposal} size={isMobile ? 20 : 24} showName={!isMobile} />
+        <div style={{ minWidth: isMobile ? 24 : 150, flexShrink: 0 }}>
+          <CreatorAvatar proposal={proposal} size={isMobile ? 20 : 24} showName={!isMobile} />
+        </div>
         {!isMobile && <div style={{ width: 1, height: 24, background: BRAND.border, flexShrink: 0 }} />}
-        <button onClick={onAnalytics} className="btn-icon" title="View analytics" aria-label="View analytics"><BarChart3 size={16} /></button>
         <button onClick={copyLink} className="btn-icon" title="Share link" aria-label="Copy share link"><Link2 size={16} /></button>
-        <button onClick={() => openPrintWindow(proposal)} className="btn-icon" title="Download PDF" aria-label="Download PDF"><Download size={16} /></button>
-        <button onClick={() => onPreview(proposal.id)} className="btn-icon" title="Preview" aria-label="Preview proposal"><Eye size={16} /></button>
         <button onClick={() => onOpen(proposal.id)} className="btn-icon" title="Edit" aria-label="Edit proposal">Edit</button>
-        <button onClick={() => onDelete(proposal.id)} className="btn-icon is-danger" title="Delete" aria-label="Delete proposal"><Trash2 size={16} /></button>
+        <ActionMenu
+          items={[
+            { label: 'View analytics', icon: BarChart3, onClick: onAnalytics },
+            { label: 'Preview', icon: Eye, onClick: () => onPreview(proposal.id) },
+            { label: 'Download PDF', icon: Download, onClick: () => openPrintWindow(proposal) },
+            ...(signed && !payment ? [{ label: 'Mark as paid', icon: Check, onClick: handleMarkPaid }] : []),
+            ...(signed && !payment ? [{ label: 'Unmark as accepted', icon: Undo2, onClick: handleUnmarkAccepted }] : []),
+            { label: 'Delete', icon: Trash2, onClick: () => onDelete(proposal.id), danger: true },
+          ]}
+        />
       </div>
+    </div>
+  );
+}
+
+function ActionMenu({ items }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const closeOnEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', closeOnEsc);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', closeOnEsc);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="btn-icon"
+        title="More actions"
+        aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <MoreVertical size={16} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            right: 0,
+            background: 'white',
+            border: '1px solid ' + BRAND.border,
+            borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)',
+            minWidth: 180,
+            padding: 4,
+            zIndex: 10,
+          }}
+        >
+          {items.map((item, i) => (
+            <button
+              key={i}
+              role="menuitem"
+              onClick={() => { setOpen(false); item.onClick(); }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                padding: '8px 10px',
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: 500,
+                color: item.danger ? '#D32F2F' : BRAND.ink,
+                textAlign: 'left',
+                fontFamily: 'inherit',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = item.danger ? '#FFEBEE' : '#F1F5F9'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <item.icon size={14} />
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import sql from '../_lib/db.js';
-import { cors } from '../_lib/middleware.js';
+import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, signedHtml, APP_URL } from '../_lib/email.js';
 
 export default async function handler(req, res) {
@@ -7,6 +7,13 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const { id } = req.query;
+
+  if (req.method === 'DELETE') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    await sql`DELETE FROM signatures WHERE proposal_id = ${id}`;
+    return res.status(200).json({ ok: true });
+  }
 
   if (req.method === 'GET') {
     const rows = await sql`SELECT name, email, signed_at, data FROM signatures WHERE proposal_id = ${id}`;

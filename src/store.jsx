@@ -187,9 +187,28 @@ export function StoreProvider({ children }) {
       setState(s => ({ ...s, signatures: { ...s.signatures, [id]: sig } }));
       api.post('/api/signatures/' + id, sig).catch(() => {});
     },
+    removeSignature(id) {
+      setState(s => {
+        const signatures = { ...s.signatures };
+        delete signatures[id];
+        return { ...s, signatures };
+      });
+      return api.delete('/api/signatures/' + id).catch(() => {});
+    },
     savePayment(id, payment) {
       setState(s => ({ ...s, payments: { ...s.payments, [id]: payment } }));
       api.post('/api/payments/' + id, payment).catch(() => {});
+    },
+    markAsPaid(id, amount, paymentType = 'manual') {
+      const payment = {
+        amount: Number(amount) || 0,
+        paymentType,
+        paidAt: new Date().toISOString(),
+        stripeSessionId: null,
+        customerEmail: null,
+      };
+      setState(s => ({ ...s, payments: { ...s.payments, [id]: payment } }));
+      return api.post('/api/payments/' + id, payment).catch(() => {});
     },
     loadPublicProposal(id) {
       setState(s => ({ ...s, loading: true }));
