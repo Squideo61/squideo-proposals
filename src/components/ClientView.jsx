@@ -78,8 +78,11 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
   const payment = state.payments[id] || null;
 
   // Track viewing session: open + heartbeat (active time only) + close beacon
+  // Only fires for real client views (public URL). Internal previews from the
+  // dashboard skip tracking so they don't pollute analytics or trigger the
+  // first-view notification email.
   useEffect(() => {
-    if (!data) return;
+    if (!data || !useRealStripe) return;
     const sessionId = (typeof crypto !== 'undefined' && crypto.randomUUID)
       ? crypto.randomUUID()
       : 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
@@ -137,7 +140,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
       window.removeEventListener('pagehide', finalSend);
       finalSend();
     };
-  }, [id, data]);
+  }, [id, data, useRealStripe]);
 
   const [selectedExtras, setSelectedExtras] = useState({});
   const [partnerSelected, setPartnerSelected] = useState(false);
@@ -222,12 +225,14 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
           customerEmail: signed.email,
         }),
       });
-      const { url, error } = await r.json();
-      if (!r.ok || !url) throw new Error(error || 'No checkout URL');
-      window.location.href = url;
-    } catch {
+      let payload = {};
+      try { payload = await r.json(); } catch {}
+      if (!r.ok || !payload.url) throw new Error(payload.error || ('Checkout failed (HTTP ' + r.status + ')'));
+      window.location.href = payload.url;
+    } catch (err) {
+      console.error('[stripe checkout]', err);
       setPaymentChoice(null);
-      showMsg('Could not start checkout. Please try again.');
+      showMsg(err?.message ? 'Checkout error: ' + err.message : 'Could not start checkout. Please try again.');
     }
   };
 

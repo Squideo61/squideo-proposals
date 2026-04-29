@@ -67,26 +67,35 @@ export default async function handler(req, res) {
     const { proposalId, amount, isDeposit, customerEmail } = body;
     if (!proposalId || !amount) return res.status(400).json({ error: 'proposalId and amount required' });
 
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      customer_email: customerEmail || undefined,
-      line_items: [{
-        price_data: {
-          currency: 'gbp',
-          product_data: {
-            name: isDeposit ? 'Video Production — 50% Deposit' : 'Video Production — Full Payment',
-          },
-          unit_amount: Math.round(amount * 100),
-        },
-        quantity: 1,
-      }],
-      metadata: { proposalId, isDeposit: isDeposit ? 'true' : 'false' },
-      success_url: 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId
-                   + '&session_id={CHECKOUT_SESSION_ID}',
-      cancel_url: 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId,
-    });
+    const validEmail = typeof customerEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail.trim())
+      ? customerEmail.trim()
+      : undefined;
 
-    return res.status(200).json({ url: session.url });
+    try {
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer_email: validEmail,
+        line_items: [{
+          price_data: {
+            currency: 'gbp',
+            product_data: {
+              name: isDeposit ? 'Video Production — 50% Deposit' : 'Video Production — Full Payment',
+            },
+            unit_amount: Math.round(amount * 100),
+          },
+          quantity: 1,
+        }],
+        metadata: { proposalId, isDeposit: isDeposit ? 'true' : 'false' },
+        success_url: 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId
+                     + '&session_id={CHECKOUT_SESSION_ID}',
+        cancel_url: 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId,
+      });
+
+      return res.status(200).json({ url: session.url });
+    } catch (err) {
+      console.error('[stripe checkout] failed', err);
+      return res.status(502).json({ error: err.message || 'Stripe checkout failed' });
+    }
   }
 
   // --- VERIFY ---
