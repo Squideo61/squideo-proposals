@@ -116,6 +116,17 @@ body {
   animation: partner-confirm-in 300ms ease both;
 }
 
+/* ---------- Proposal cards ---------- */
+.proposal-card {
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+@media (hover: hover) {
+  .proposal-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(15, 42, 61, 0.06);
+  }
+}
+
 /* ---------- Section labels ---------- */
 .section-label {
   font-size: 13px;

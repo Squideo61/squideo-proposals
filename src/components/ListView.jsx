@@ -133,17 +133,20 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onLogout, onMa
   );
 }
 
-function CreatorAvatar({ proposal }) {
+function CreatorAvatar({ proposal, size = 24, showName = true }) {
   const { state } = useStore();
   const creator = state.users[proposal.preparedByEmail];
   const name = creator?.name || proposal.preparedBy || '?';
   const initial = name[0].toUpperCase();
+  const avatar = creator?.avatar;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <div style={{ width: 24, height: 24, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 12, flexShrink: 0 }}>
-        {initial}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} title={name}>
+      <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: Math.round(size * 0.5), flexShrink: 0 }}>
+        {avatar
+          ? <img src={avatar} alt={name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          : initial}
       </div>
-      <span>{name}</span>
+      {showName && <span>{name}</span>}
     </div>
   );
 }
@@ -165,8 +168,30 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
       .catch(() => showMsg('Copy failed — link: ' + url));
   };
 
+  const accentColour = payment ? '#10B981'
+    : signed ? BRAND.blue
+    : opened ? '#F59E0B'
+    : '#CBD5E1';
+
+  const total = formatGBP(proposal.basePrice * (1 + proposal.vatRate));
+
   return (
-    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: isMobile ? 12 : 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: isMobile ? 10 : 16, flexWrap: 'wrap' }}>
+    <div
+      className="proposal-card"
+      style={{
+        background: 'white',
+        border: '1px solid ' + BRAND.border,
+        borderLeft: '4px solid ' + accentColour,
+        borderRadius: 10,
+        padding: isMobile ? 12 : 20,
+        paddingLeft: isMobile ? 8 : 16,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: isMobile ? 10 : 16,
+        flexWrap: 'wrap',
+      }}
+    >
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3, flexWrap: 'wrap' }}>
           {number && (
@@ -180,10 +205,9 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
           {payment && <Badge color="blue">PAID {formatGBP(payment.amount)}</Badge>}
           {signed && !payment && <Badge color="orange">AWAITING PAYMENT</Badge>}
         </div>
-        <div style={{ fontSize: isMobile ? 11 : 13, color: BRAND.muted, display: 'flex', gap: isMobile ? 10 : 16, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: isMobile ? 11 : 13, color: BRAND.muted, display: 'flex', gap: isMobile ? 10 : 16, flexWrap: 'wrap', alignItems: 'center' }}>
           <span>{proposal.contactBusinessName || '—'}</span>
           <span>{proposal.date}</span>
-          <span>{formatGBP(proposal.basePrice * (1 + proposal.vatRate))}</span>
           {opened && (
             <button
               onClick={onAnalytics}
@@ -204,9 +228,25 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
             </button>
           )}
         </div>
+        {isMobile && (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
+              {total}
+            </div>
+            <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>inc. VAT</div>
+          </div>
+        )}
       </div>
+      {!isMobile && (
+        <div style={{ textAlign: 'right', minWidth: 90, fontVariantNumeric: 'tabular-nums' }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: BRAND.ink, lineHeight: 1.1 }}>
+            {total}
+          </div>
+          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>inc. VAT</div>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 4 : 8, flexWrap: 'wrap' }}>
-        {!isMobile && <CreatorAvatar proposal={proposal} />}
+        <CreatorAvatar proposal={proposal} size={isMobile ? 20 : 24} showName={!isMobile} />
         {!isMobile && <div style={{ width: 1, height: 24, background: BRAND.border, flexShrink: 0 }} />}
         <button onClick={onAnalytics} className="btn-icon" title="View analytics" aria-label="View analytics"><BarChart3 size={16} /></button>
         <button onClick={copyLink} className="btn-icon" title="Share link" aria-label="Copy share link"><Link2 size={16} /></button>
