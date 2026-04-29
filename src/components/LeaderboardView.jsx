@@ -11,29 +11,43 @@ import { formatGBP, useIsMobile } from '../utils.js';
 
 const SERIES_COLORS = ['#2BB8E6', '#0F2A3D', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6'];
 
-function monthKey(d) {
+const RANGE_OPTIONS = [
+  { value: 'month', label: 'This month' },
+  { value: 'year', label: 'Past 12 months' },
+  { value: 'all', label: 'All time' },
+];
+
+function bucketKey(d, grain) {
   const dt = new Date(d);
+  if (grain === 'day') {
+    return dt.getUTCFullYear() + '-' + String(dt.getUTCMonth() + 1).padStart(2, '0') + '-' + String(dt.getUTCDate()).padStart(2, '0');
+  }
   return dt.getUTCFullYear() + '-' + String(dt.getUTCMonth() + 1).padStart(2, '0');
 }
 
-function monthLabel(key) {
+function bucketLabel(key, grain) {
+  if (grain === 'day') {
+    const [y, m, d] = key.split('-');
+    const dt = new Date(Number(y), Number(m) - 1, Number(d));
+    return dt.toLocaleString('en-GB', { day: 'numeric', month: 'short' });
+  }
   const [y, m] = key.split('-');
   const dt = new Date(Number(y), Number(m) - 1, 1);
   return dt.toLocaleString('en-GB', { month: 'short', year: '2-digit' });
 }
 
-function buildTrendSeries(trend, mode) {
-  const months = new Set();
+function buildTrendSeries(trendRows, grain) {
+  const buckets = new Set();
   const byUser = {};
-  for (const row of trend) {
-    const k = monthKey(row.month);
-    months.add(k);
+  for (const row of trendRows) {
+    const k = bucketKey(row.bucket, grain);
+    buckets.add(k);
     if (!byUser[row.email]) byUser[row.email] = {};
-    byUser[row.email][k] = (byUser[row.email][k] || 0) + (row[mode] || 0);
+    byUser[row.email][k] = (byUser[row.email][k] || 0) + (row.count || 0);
   }
-  const sortedMonths = Array.from(months).sort();
-  const data = sortedMonths.map((k) => {
-    const point = { month: monthLabel(k) };
+  const sortedBuckets = Array.from(buckets).sort();
+  const data = sortedBuckets.map((k) => {
+    const point = { bucket: bucketLabel(k, grain) };
     for (const email of Object.keys(byUser)) {
       point[email] = byUser[email][k] || 0;
     }
@@ -44,18 +58,19 @@ function buildTrendSeries(trend, mode) {
 
 export function LeaderboardView({ onBack }) {
   const { state, actions } = useStore();
-  const [loading, setLoading] = useState(!state.leaderboard);
+  const [range, setRange] = useState('month');
+  const [loading, setLoading] = useState(true);
   const [trendMode, setTrendMode] = useState('signed');
   const isMobile = useIsMobile();
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    actions.loadLeaderboard().finally(() => { if (active) setLoading(false); });
+    actions.loadLeaderboard(range).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [actions]);
+  }, [actions, range]);
 
-  const board = state.leaderboard || { totals: [], trend: [] };
+  const board = state.leaderboard || { totals: [], createdTrend: [], signedTrend: [], grain: 'day', periodLabel: '' };
   const totals = useMemo(
     () => (board.totals || []).filter(t => t.email && t.email !== 'unknown'),
     [board.totals]
@@ -67,42 +82,73 @@ export function LeaderboardView({ onBack }) {
     return m;
   }, [totals]);
 
-  const trendSeries = useMemo(() => buildTrendSeries(board.trend || [], trendMode), [board.trend, trendMode]);
+  const grain = board.grain || (range === 'month' ? 'day' : 'month');
+  const trendSeries = useMemo(
+    () => buildTrendSeries(trendMode === 'signed' ? (board.signedTrend || []) : (board.createdTrend || []), grain),
+    [board.signedTrend, board.createdTrend, trendMode, grain]
+  );
 
   const podium = totals.slice(0, 3);
   const maxSigned = Math.max(1, ...totals.map(t => t.signed));
+  const periodLabel = board.periodLabel || RANGE_OPTIONS.find(o => o.value === range)?.label || '';
+  const isStale = board.range && board.range !== range;
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px' : '40px 24px' }}>
-      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, gap: 12, flexWrap: 'wrap' }}>
+      <header style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Trophy size={22} color={BRAND.blue} />
-              <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Sales Leaderboard</h1>
+              <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>{periodLabel} Leaderboard</h1>
             </div>
             <p style={{ fontSize: 13, color: BRAND.muted, margin: '2px 0 0' }}>
-              Friendly competition — proposals created, signed, and revenue.
+              {range === 'month'
+                ? 'Counts reset on the 1st — created, signed, and paid in this calendar month.'
+                : range === 'year'
+                  ? 'Activity over the past 12 months.'
+                  : 'All-time totals across the workspace.'}
             </p>
           </div>
         </div>
+        <div style={{ display: 'inline-flex', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden', background: 'white' }}>
+          {RANGE_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => setRange(opt.value)}
+              style={{
+                padding: '8px 14px',
+                fontSize: 13,
+                fontWeight: 600,
+                border: 'none',
+                cursor: 'pointer',
+                background: range === opt.value ? BRAND.blue : 'white',
+                color: range === opt.value ? 'white' : BRAND.ink,
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </header>
 
-      {loading ? (
+      {loading && !isStale ? (
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 60, textAlign: 'center', color: BRAND.muted }}>
           Loading leaderboard…
         </div>
       ) : totals.length === 0 ? (
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 60, textAlign: 'center' }}>
           <Trophy size={40} color={BRAND.muted} style={{ marginBottom: 12 }} />
-          <h3 style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 600 }}>No data yet</h3>
-          <p style={{ color: BRAND.muted, fontSize: 14, margin: 0 }}>Create some proposals to see the leaderboard.</p>
+          <h3 style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 600 }}>No activity {range === 'month' ? 'this month' : range === 'year' ? 'in the past 12 months' : 'yet'}</h3>
+          <p style={{ color: BRAND.muted, fontSize: 14, margin: 0 }}>
+            {range === 'month' ? 'Create or sign a proposal and the leaderboard will populate.' : 'Try a wider range or create some proposals.'}
+          </p>
         </div>
       ) : (
         <>
           {podium.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(' + podium.length + ', 1fr)', gap: 12, marginBottom: 24 }}>
               {podium.map((t, i) => (
                 <PodiumCard key={t.email} rank={i + 1} entry={t} />
               ))}
@@ -142,7 +188,7 @@ export function LeaderboardView({ onBack }) {
           </Section>
 
           <Section
-            title="Trend over last 12 months"
+            title={range === 'month' ? 'Daily trend' : range === 'year' ? 'Monthly trend' : 'All-time trend'}
             right={
               <div style={{ display: 'inline-flex', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
                 {['signed', 'created'].map((m) => (
@@ -166,13 +212,15 @@ export function LeaderboardView({ onBack }) {
             }
           >
             {trendSeries.data.length === 0 ? (
-              <p style={{ color: BRAND.muted, fontSize: 14, margin: '20px 0' }}>No activity in the last 12 months yet.</p>
+              <p style={{ color: BRAND.muted, fontSize: 14, margin: '20px 0' }}>
+                No {trendMode} activity in this range yet.
+              </p>
             ) : (
               <div style={{ width: '100%', height: 320 }}>
                 <ResponsiveContainer>
                   <LineChart data={trendSeries.data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={BRAND.border} />
-                    <XAxis dataKey="month" tick={{ fontSize: 12, fill: BRAND.muted }} />
+                    <XAxis dataKey="bucket" tick={{ fontSize: 12, fill: BRAND.muted }} />
                     <YAxis tick={{ fontSize: 12, fill: BRAND.muted }} allowDecimals={false} />
                     <Tooltip />
                     <Legend wrapperStyle={{ fontSize: 12 }} />

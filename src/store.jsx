@@ -175,12 +175,13 @@ export function StoreProvider({ children }) {
         return list;
       }).catch(() => []);
     },
-    loadLeaderboard() {
-      return api.get('/api/proposals?view=leaderboard').then((data) => {
-        const board = data || { totals: [], trend: [] };
+    loadLeaderboard(range = 'month') {
+      const r = ['month', 'year', 'all'].includes(range) ? range : 'month';
+      return api.get('/api/proposals?view=leaderboard&range=' + r).then((data) => {
+        const board = data || { totals: [], createdTrend: [], signedTrend: [], range: r, grain: r === 'month' ? 'day' : 'month', periodLabel: '' };
         setState(s => ({ ...s, leaderboard: board }));
         return board;
-      }).catch(() => ({ totals: [], trend: [] }));
+      }).catch(() => ({ totals: [], createdTrend: [], signedTrend: [], range: r, grain: 'day', periodLabel: '' }));
     },
     saveSignature(id, sig) {
       setState(s => ({ ...s, signatures: { ...s.signatures, [id]: sig } }));
