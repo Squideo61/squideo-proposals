@@ -176,7 +176,7 @@ export function StoreProvider({ children }) {
       }).catch(() => []);
     },
     loadLeaderboard() {
-      return api.get('/api/leaderboard').then((data) => {
+      return api.get('/api/proposals?view=leaderboard').then((data) => {
         const board = data || { totals: [], trend: [] };
         setState(s => ({ ...s, leaderboard: board }));
         return board;
