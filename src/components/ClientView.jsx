@@ -154,6 +154,15 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
     const opts = data?.paymentOptions || ['5050', 'full'];
     return opts[0];
   });
+
+  // Partner Programme unlocks its discount only on full payment (or PO).
+  // When the client opts in, bump them off 50/50 onto the next available option.
+  useEffect(() => {
+    if (!partnerSelected || signed || paymentOption !== '5050') return;
+    const opts = data?.paymentOptions || ['5050', 'full'];
+    const next = opts.find(o => o !== '5050') || 'full';
+    setPaymentOption(next);
+  }, [partnerSelected, signed, paymentOption, data]);
   const [sigName, setSigName] = useState('');
   const [sigEmail, setSigEmail] = useState('');
   const [sigAccepted, setSigAccepted] = useState(false);
@@ -534,6 +543,11 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         </div>
 
         <PageTitle>Payment Options</PageTitle>
+        {partnerSelected && (
+          <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#78350F', lineHeight: 1.5, marginBottom: 12 }}>
+            <strong>Partner Programme selected.</strong> To unlock the {Math.round((data.partnerProgramme.discountRate ?? 0.20) * 100)}% project discount, payment must be made in full (card/BACS) or via Purchase Order. The 50/50 split is not available with the Partner Programme.
+          </div>
+        )}
         <div style={{ display: 'grid', gap: 12, marginBottom: 12 }}>
           {(() => {
             const subtitlesPrice = data.optionalExtras.find(e => e.id === 'subtitles')?.price ?? 125;
@@ -546,8 +560,21 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
             return (data.paymentOptions || ['5050', 'full']).map((key) => {
               const cfg = OPTION_CONFIG[key];
               if (!cfg) return null;
+              const lockedByPartner = key === '5050' && partnerSelected;
+              const disabled = !!signed || lockedByPartner;
+              const disabledReason = lockedByPartner
+                ? 'Unavailable with the Partner Programme — choose Pay in full or Purchase Order.'
+                : undefined;
               return (
-                <PaymentOption key={key} selected={paymentOption === key} onSelect={() => !signed && setPaymentOption(key)} title={cfg.title} desc={cfg.desc} disabled={!!signed} />
+                <PaymentOption
+                  key={key}
+                  selected={paymentOption === key}
+                  onSelect={() => !signed && !lockedByPartner && setPaymentOption(key)}
+                  title={cfg.title}
+                  desc={cfg.desc}
+                  disabled={disabled}
+                  disabledReason={disabledReason}
+                />
               );
             });
           })()}

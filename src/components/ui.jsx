@@ -92,15 +92,33 @@ export function PriceRow({ label, value, bold }) {
   );
 }
 
-export function PaymentOption({ selected, onSelect, title, desc, disabled }) {
+export function PaymentOption({ selected, onSelect, title, desc, disabled, disabledReason }) {
+  const handleClick = () => { if (!disabled && onSelect) onSelect(); };
   return (
-    <label onClick={onSelect} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 16, border: '2px solid ' + (selected ? BRAND.blue : BRAND.border), borderRadius: 10, cursor: disabled ? 'default' : 'pointer', background: selected ? '#F0F9FF' : 'white' }}>
+    <label
+      onClick={handleClick}
+      title={disabled && disabledReason ? disabledReason : undefined}
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 12,
+        padding: 16,
+        border: '2px solid ' + (selected ? BRAND.blue : BRAND.border),
+        borderRadius: 10,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        background: disabled ? '#F4F6F8' : (selected ? '#F0F9FF' : 'white'),
+        opacity: disabled ? 0.55 : 1,
+      }}
+    >
       <div style={{ width: 18, height: 18, borderRadius: '50%', border: '2px solid ' + (selected ? BRAND.blue : BRAND.muted), flexShrink: 0, marginTop: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {selected && <div style={{ width: 8, height: 8, borderRadius: '50%', background: BRAND.blue }} />}
       </div>
-      <div>
+      <div style={{ flex: 1 }}>
         <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{title}</div>
         <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>{desc}</div>
+        {disabled && disabledReason && (
+          <div style={{ fontSize: 12, color: '#92400E', marginTop: 6, fontStyle: 'italic' }}>{disabledReason}</div>
+        )}
       </div>
     </label>
   );
