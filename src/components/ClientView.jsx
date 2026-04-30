@@ -636,8 +636,8 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
                 }}
               >
                 {partnerSelected
-                  ? '✓ Joined — click to remove'
-                  : `Join Partner Programme — save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`}
+                  ? `✓ Joined — saving ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off) — click to remove`
+                  : `Opt in to Partner Programme — save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`}
               </button>
               <div style={{ fontSize: 12, color: '#5D8A00', textAlign: 'center', marginTop: 8 }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
             </div>
