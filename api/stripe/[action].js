@@ -94,7 +94,7 @@ export default async function handler(req, res) {
             {
               price_data: {
                 currency: 'gbp',
-                product_data: { name: 'Video Production — discounted project' },
+                product_data: { name: 'Video production — discounted project' },
                 unit_amount: Math.round(projectGross * 100),
               },
               quantity: 1,
@@ -134,7 +134,7 @@ export default async function handler(req, res) {
           price_data: {
             currency: 'gbp',
             product_data: {
-              name: isDeposit ? 'Video Production — 50% Deposit' : 'Video Production — Full Payment',
+              name: isDeposit ? 'Video production — 50% deposit' : 'Video production — full payment',
             },
             unit_amount: Math.round(amount * 100),
           },

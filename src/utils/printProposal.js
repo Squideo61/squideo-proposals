@@ -394,7 +394,7 @@ function buildReceiptHTML(data, signed, payment) {
   if (signed.partnerSelected && signed.amountBreakdown) {
     const { projectExVat, partnerExVat, partnerCredits } = signed.amountBreakdown;
     lineItems.push({
-      label: 'Video Production — discounted project',
+      label: 'Video production — discounted project',
       sub: data.proposalTitle || data.clientName || '',
       ex: projectExVat,
     });
@@ -407,7 +407,7 @@ function buildReceiptHTML(data, signed, payment) {
     const isDeposit = payment.paymentType === 'deposit';
     const exVat = vatRate > 0 ? payment.amount / (1 + vatRate) : payment.amount;
     lineItems.push({
-      label: isDeposit ? 'Video Production — 50% Deposit' : 'Video Production — Full Payment',
+      label: isDeposit ? 'Video production — 50% deposit' : 'Video production — full payment',
       sub: data.proposalTitle || data.clientName || '',
       ex: exVat,
     });
