@@ -41,6 +41,17 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
             <div style={{ marginTop: 8 }}>Total committed: <strong>{formatGBP(totalExVat)} + VAT</strong></div>
           )}
         </div>
+        {onDownloadSignedProposal && (
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #A5D6A7' }}>
+            <button
+              onClick={onDownloadSignedProposal}
+              className="btn"
+              style={{ width: '100%', justifyContent: 'center', padding: '12px 16px', fontSize: 14, background: '#2E7D32' }}
+            >
+              <FileText size={16} /> Download Signed Proposal
+            </button>
+          </div>
+        )}
       </div>
 
       {payment && (
@@ -50,18 +61,11 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
             <div><strong>{formatGBP(payment.amount)}</strong> paid {payment.paymentType === 'deposit' ? '(50% deposit)' : '(full payment)'}</div>
             <div style={{ color: BRAND.muted, fontSize: 13 }}>On {new Date(payment.paidAt).toLocaleString('en-GB')}</div>
           </div>
-          {(onDownloadReceipt || onDownloadSignedProposal) && (
-            <div style={{ display: 'flex', gap: 10, marginTop: 18, paddingTop: 18, borderTop: '1px solid ' + BRAND.border, flexWrap: 'wrap' }}>
-              {onDownloadReceipt && (
-                <button onClick={onDownloadReceipt} className="btn" style={{ flex: '1 1 200px', justifyContent: 'center', padding: '12px 16px', fontSize: 14 }}>
-                  <Download size={16} /> Download Receipt
-                </button>
-              )}
-              {onDownloadSignedProposal && (
-                <button onClick={onDownloadSignedProposal} className="btn" style={{ flex: '1 1 200px', justifyContent: 'center', padding: '12px 16px', fontSize: 14 }}>
-                  <FileText size={16} /> Download Signed Proposal
-                </button>
-              )}
+          {onDownloadReceipt && (
+            <div style={{ marginTop: 18, paddingTop: 18, borderTop: '1px solid ' + BRAND.border }}>
+              <button onClick={onDownloadReceipt} className="btn" style={{ width: '100%', justifyContent: 'center', padding: '12px 16px', fontSize: 14 }}>
+                <Download size={16} /> Download Receipt
+              </button>
             </div>
           )}
         </div>

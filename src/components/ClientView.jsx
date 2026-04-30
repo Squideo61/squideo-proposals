@@ -412,24 +412,26 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
 
   return (
     <div style={{ background: BRAND.paper, minHeight: '100vh' }}>
-      <div style={{ position: 'sticky', top: 0, background: 'white', borderBottom: '1px solid ' + BRAND.border, padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
-        {onBack ? <button onClick={onBack} className="btn-ghost"><ChevronLeft size={16} /> Back</button> : <div />}
-        <div style={{ fontSize: 12, color: '#92400E', fontWeight: 700, letterSpacing: 0.5 }}>
-          {isPreview ? 'PREVIEW MODE' : ''}
+      {isPreview && (
+        <div style={{ position: 'sticky', top: 0, background: 'white', borderBottom: '1px solid ' + BRAND.border, padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
+          {onBack ? <button onClick={onBack} className="btn-ghost"><ChevronLeft size={16} /> Back</button> : <div />}
+          <div style={{ fontSize: 12, color: '#92400E', fontWeight: 700, letterSpacing: 0.5 }}>
+            PREVIEW MODE
+          </div>
+          <button
+            onClick={() => openPrintWindow(
+              data,
+              signed
+                ? printOptionsForSigned(signed, payment)
+                : { signable: true, selectedExtras, paymentOption, partnerSelected }
+            )}
+            className="btn-ghost"
+            style={{ fontSize: 13 }}
+          >
+            <FileDown size={14} /> {signed ? 'Download signed copy' : 'Download PDF'}
+          </button>
         </div>
-        <button
-          onClick={() => openPrintWindow(
-            data,
-            signed
-              ? printOptionsForSigned(signed, payment)
-              : { signable: true, selectedExtras, paymentOption, partnerSelected }
-          )}
-          className="btn-ghost"
-          style={{ fontSize: 13 }}
-        >
-          <FileDown size={14} /> {signed ? 'Download signed copy' : 'Download PDF'}
-        </button>
-      </div>
+      )}
 
       {isPreview && (
         <div style={{ background: '#FEF3C7', borderBottom: '1px solid #FDE68A', color: '#78350F', padding: '10px 24px', fontSize: 13, lineHeight: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
