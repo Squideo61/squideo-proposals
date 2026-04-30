@@ -422,8 +422,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                   <div>
                     <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Per extra credit (%)</div>
                     <input
-                      type="number" className="input" min="0" max="100"
-                      value={((data.partnerProgramme.extraDiscountPerCredit || 0) * 100).toFixed(0)}
+                      type="number" className="input" min="0" max="100" step="0.5"
+                      value={((data.partnerProgramme.extraDiscountPerCredit || 0) * 100).toFixed(2).replace(/\.?0+$/, '')}
                       onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, extraDiscountPerCredit: (parseFloat(e.target.value) || 0) / 100 } })}
                     />
                   </div>
@@ -441,7 +441,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                   const extraD = data.partnerProgramme.extraDiscountPerCredit || 0;
                   const maxD = data.partnerProgramme.maxDiscount || baseD;
                   const tier = (n) => Math.min(baseD + Math.max(0, n - 1) * extraD, maxD);
-                  const samples = [1, 2, 3, 4].map(n => `${n} ${n === 1 ? 'min' : 'mins'} = ${Math.round(tier(n) * 100)}%`);
+                  const fmtPct = (v) => (Math.round(v * 1000) / 10).toString().replace(/\.0$/, '');
+                  const samples = [1, 2, 3, 4].map(n => `${n} ${n === 1 ? 'min' : 'mins'} = ${fmtPct(tier(n))}%`);
                   return (
                     <div style={{ fontSize: 12, color: '#6B7785', marginTop: 6, lineHeight: 1.5 }}>
                       Worked example: {samples.join(' · ')}{tier(4) === maxD && extraD > 0 ? ' (capped)' : ''}.

@@ -210,6 +210,13 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
     );
   }
 
+  // Render a 0–1 discount rate as a tidy percentage: whole numbers without
+  // decimals (15%) and half/quarter steps with one decimal place (17.5%).
+  const formatPct = (rate) => {
+    const pct = Math.round(rate * 1000) / 10;
+    return pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1);
+  };
+
   const extrasTotal = data.optionalExtras.reduce((s, e) => selectedExtras[e.id] ? s + e.price : s, 0);
   const subtotal = data.basePrice + extrasTotal;
   const vat = subtotal * data.vatRate;
@@ -541,12 +548,11 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
             </div>
             {(() => {
               const standardRate = Number(data.basePrice) || 0;
-              if (standardRate <= 0) return null;
+              if (standardRate <= 0 || effectiveDiscount <= 0) return null;
               const futureRate = partnerRatePerMin;
               const savingPerMin = standardRate - futureRate;
-              const futurePct = Math.round(effectiveDiscount * 100);
-              const maxPct = Math.round(partnerMaxDiscount * 100);
-              if (futurePct <= 0) return null;
+              const futurePct = formatPct(effectiveDiscount);
+              const maxPct = formatPct(partnerMaxDiscount);
               return (
                 <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#92400E', marginBottom: 8 }}>
@@ -559,7 +565,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
                   </div>
                   <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5 }}>
                     Lock in <strong>{futurePct}% off</strong> every future minute of content for as long as you stay subscribed.
-                    {partnerExtraPerCredit > 0 && futurePct < maxPct && (
+                    {partnerExtraPerCredit > 0 && effectiveDiscount < partnerMaxDiscount && (
                       <> Add another minute to lock in an even bigger discount — up to <strong>{maxPct}% off</strong>.</>
                     )}
                   </div>
@@ -571,12 +577,12 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
               <span style={{ fontWeight: 600, fontSize: 14 }}>Check to join (Monthly)</span>
             </label>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#92400E', marginBottom: 4 }}>
-              Join and save {formatGBP(partnerDiscount)} on this project ({Math.round(effectiveDiscount * 100)}% off)
+              Join and save {formatGBP(partnerDiscount)} on this project ({formatPct(effectiveDiscount)}% off)
             </div>
             <div style={{ fontSize: 12, color: '#5D8A00', marginBottom: 14 }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
             {partnerSelected && (
               <div className="partner-confirm" style={{ background: '#E8F5E9', border: '1px solid #A5D6A7', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, fontWeight: 600, color: '#2E7D32' }}>
-                Great choice! Your {Math.round(effectiveDiscount * 100)}% discount has been applied to this project.
+                Great choice! Your {formatPct(effectiveDiscount)}% discount has been applied to this project.
               </div>
             )}
 
@@ -594,10 +600,10 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
             </div>
             {partnerExtraPerCredit > 0 && (
               <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: '#78350F', lineHeight: 1.55 }}>
-                Each extra minute/month adds <strong>{Math.round(partnerExtraPerCredit * 100)}% off</strong> this project, up to <strong>{Math.round(partnerMaxDiscount * 100)}%</strong>.
-                {' '}You&apos;re at <strong>{partnerCredits} {partnerCredits === 1 ? 'minute' : 'minutes'} = {Math.round(effectiveDiscount * 100)}% off</strong>
+                Each extra minute/month adds <strong>{formatPct(partnerExtraPerCredit)}% off</strong> this project, up to <strong>{formatPct(partnerMaxDiscount)}%</strong>.
+                {' '}You&apos;re at <strong>{partnerCredits} {partnerCredits === 1 ? 'minute' : 'minutes'} = {formatPct(effectiveDiscount)}% off</strong>
                 {effectiveDiscount < partnerMaxDiscount
-                  ? <> · add another minute to save <strong>{Math.round(Math.min(partnerMaxDiscount, effectiveDiscount + partnerExtraPerCredit) * 100)}%</strong>.</>
+                  ? <> · add another minute to save <strong>{formatPct(Math.min(partnerMaxDiscount, effectiveDiscount + partnerExtraPerCredit))}%</strong>.</>
                   : <> — that&apos;s the maximum discount.</>}
               </div>
             )}
@@ -617,7 +623,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
           )}
           {partnerSelected && (
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 12, color: '#FFD54F' }}>
-              <span>Partner discount ({Math.round(effectiveDiscount * 100)}%)</span>
+              <span>Partner discount ({formatPct(effectiveDiscount)}%)</span>
               <span>−{formatGBP(partnerDiscount)} + VAT</span>
             </div>
           )}
@@ -653,7 +659,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         <PageTitle>Payment Options</PageTitle>
         {partnerSelected && (
           <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#78350F', lineHeight: 1.5, marginBottom: 12 }}>
-            <strong>Partner Programme selected.</strong> To unlock the {Math.round(effectiveDiscount * 100)}% project discount, payment must be made in full (card/BACS). The 50/50 split is not available with the Partner Programme.
+            <strong>Partner Programme selected.</strong> To unlock the {formatPct(effectiveDiscount)}% project discount, payment must be made in full (card/BACS). The 50/50 split is not available with the Partner Programme.
           </div>
         )}
         <div style={{ display: 'grid', gap: 12, marginBottom: 12 }}>
