@@ -311,7 +311,7 @@ ${esc(data.partnerProgramme.description)}
       <div style="font-size:13px;color:#6B7785;">50% deposit to start, balance invoiced when you approve the final video.</div>
     </div>
     <div style="border:2px solid ${paymentOption === 'full' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === 'full' ? '#F0F9FF' : 'white'};">
-      <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'full' ? '✓ ' : ''}Pay in full — get a free subtitled version (worth £125)</div>
+      <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'full' ? '✓ ' : ''}${partnerSelected ? 'Pay in full' : 'Pay in full — get a free subtitled version (worth £125)'}</div>
       <div style="font-size:13px;color:#6B7785;">Pay upfront via card or BACS.</div>
     </div>
   </div>
