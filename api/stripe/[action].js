@@ -76,53 +76,46 @@ export default async function handler(req, res) {
                        + '&session_id={CHECKOUT_SESSION_ID}';
       const cancelUrl = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId;
 
-      // Partner Programme: subscription mode with the project added as a one-off
-      // line item on the first invoice. Stripe Checkout only allows recurring
-      // line items in subscription mode, so the one-off project goes via
-      // subscription_data.add_invoice_items.
+      // Partner Programme: charge project + first-month partner combined as a
+      // single one-off payment. Stripe Checkout doesn't support mixing one-off
+      // and recurring items in a single session, so the recurring subscription
+      // for months 2+ is set up separately (manually or via a future webhook
+      // hook off `checkout.session.completed` — metadata below carries the
+      // info needed to create the subscription programmatically later).
       if (partner && partner.partnerExVat > 0) {
         const vatRate = Number(partner.vatRate) || 0;
-        const partnerMonthlyGross = partner.partnerExVat * (1 + vatRate);
         const projectGross = partner.projectExVat * (1 + vatRate);
+        const partnerMonthlyGross = partner.partnerExVat * (1 + vatRate);
 
         const session = await stripe.checkout.sessions.create({
-          mode: 'subscription',
+          mode: 'payment',
           customer_email: validEmail,
-          line_items: [{
-            price_data: {
-              currency: 'gbp',
-              product_data: {
-                name: 'Squideo Partner Programme'
-                  + (partner.partnerCredits ? ' — ' + partner.partnerCredits + ' min credit/mo' : ''),
+          line_items: [
+            {
+              price_data: {
+                currency: 'gbp',
+                product_data: { name: 'Video Production — discounted project' },
+                unit_amount: Math.round(projectGross * 100),
               },
-              unit_amount: Math.round(partnerMonthlyGross * 100),
-              recurring: { interval: 'month' },
+              quantity: 1,
             },
-            quantity: 1,
-          }],
-          subscription_data: {
-            metadata: {
-              proposalId,
-              partnerCredits: String(partner.partnerCredits || 1),
+            {
+              price_data: {
+                currency: 'gbp',
+                product_data: {
+                  name: 'Squideo Partner Programme — first month'
+                    + (partner.partnerCredits ? ` (${partner.partnerCredits} min credit)` : ''),
+                },
+                unit_amount: Math.round(partnerMonthlyGross * 100),
+              },
+              quantity: 1,
             },
-            invoice_settings: {
-              issuer: { type: 'self' },
-            },
-          },
-          // One-off project added to the first invoice only.
-          // (Stripe Checkout supports this via the top-level `add_invoice_items` field.)
-          add_invoice_items: [{
-            price_data: {
-              currency: 'gbp',
-              product_data: { name: 'Video Production — discounted project' },
-              unit_amount: Math.round(projectGross * 100),
-            },
-            quantity: 1,
-          }],
+          ],
           metadata: {
             proposalId,
             isDeposit: 'false',
             partnerProgramme: 'true',
+            partnerCredits: String(partner.partnerCredits || 1),
             projectGross: String(Math.round(projectGross * 100)),
             partnerMonthlyGross: String(Math.round(partnerMonthlyGross * 100)),
           },
