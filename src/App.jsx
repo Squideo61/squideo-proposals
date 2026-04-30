@@ -66,6 +66,15 @@ function AppShell() {
       date: new Date().toLocaleDateString('en-GB'),
       createdAt: Date.now()
     };
+    // Default the Partner Programme monthly rate to 20% off the project base price.
+    // The team can adjust either value in the BuilderView; the relationship is
+    // recomputed dynamically from current values for client-facing display.
+    if (data.partnerProgramme && typeof data.basePrice === 'number') {
+      data.partnerProgramme = {
+        ...data.partnerProgramme,
+        price: Math.round(data.basePrice * 0.8 * 100) / 100,
+      };
+    }
     actions.saveProposal(id, data);
     setActiveId(id);
     setView('builder');

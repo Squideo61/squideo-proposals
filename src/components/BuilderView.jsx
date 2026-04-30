@@ -387,9 +387,24 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
               <Field label="Monthly price (ex VAT)">
                 <input type="number" className="input" value={data.partnerProgramme.price} onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, price: parseFloat(e.target.value) || 0 } })} />
+                {(() => {
+                  const base = Number(data.basePrice) || 0;
+                  const partner = Number(data.partnerProgramme.price) || 0;
+                  if (base <= 0) return null;
+                  const pct = Math.round(((base - partner) / base) * 100);
+                  const direction = pct >= 0 ? 'less' : 'more';
+                  return (
+                    <div style={{ fontSize: 12, color: '#6B7785', marginTop: 6, lineHeight: 1.4 }}>
+                      Currently <strong style={{ color: '#0F2A3D' }}>{Math.abs(pct)}% {direction}</strong> than the project base price (£{base.toFixed(0)} → £{partner.toFixed(0)}). Adjust either to change the relationship shown on the proposal.
+                    </div>
+                  );
+                })()}
               </Field>
               <Field label="Project discount (%)">
                 <input type="number" className="input" min="0" max="100" value={((data.partnerProgramme.discountRate || 0) * 100).toFixed(0)} onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, discountRate: (parseFloat(e.target.value) || 0) / 100 } })} />
+                <div style={{ fontSize: 12, color: '#6B7785', marginTop: 6, lineHeight: 1.4 }}>
+                  Discount applied to <em>this</em> project's price when the client joins the Partner Programme.
+                </div>
               </Field>
             </div>
             <Field label="Description">

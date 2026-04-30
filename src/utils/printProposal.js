@@ -96,12 +96,41 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOp
     const box = signable
       ? `<input type="checkbox" ${partnerSelected ? 'checked' : ''} style="margin-top:2px;flex-shrink:0;" />`
       : `<div style="width:14px;height:14px;border:2px solid #C7CFD8;border-radius:3px;flex-shrink:0;background:${partnerSelected ? '#2BB8E6' : 'white'};"></div>`;
+
+    const standardRate = Number(data.basePrice) || 0;
+    const futureRate = Number(data.partnerProgramme.price) || 0;
+    const savingPerMin = standardRate - futureRate;
+    const futurePct = standardRate > 0 ? Math.round((savingPerMin / standardRate) * 100) : 0;
+    const futureRatePanel = (standardRate > 0 && futureRate > 0 && futurePct > 0) ? `
+      <div style="background:white;border:1px solid #FDE68A;border-radius:8px;padding:14px 16px;margin-bottom:14px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:#92400E;margin-bottom:8px;">Your future video rate</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px;">
+          <div style="background:#F8FAFC;border:1px solid #E5E9EE;border-radius:8px;padding:8px 10px;text-align:center;">
+            <div style="font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#6B7785;margin-bottom:4px;">Standard</div>
+            <div style="font-size:14px;font-weight:700;color:#6B7785;text-decoration:line-through;">${formatGBP(standardRate)}/min</div>
+          </div>
+          <div style="background:#FFFAEB;border:1px solid #FDE68A;border-radius:8px;padding:8px 10px;text-align:center;">
+            <div style="font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#6B7785;margin-bottom:4px;">Partner rate</div>
+            <div style="font-size:14px;font-weight:700;color:#92400E;">${formatGBP(futureRate)}/min</div>
+          </div>
+          <div style="background:#FFFAEB;border:1px solid #FDE68A;border-radius:8px;padding:8px 10px;text-align:center;">
+            <div style="font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#6B7785;margin-bottom:4px;">You save</div>
+            <div style="font-size:14px;font-weight:700;color:#92400E;">${futurePct}% &middot; ${formatGBP(savingPerMin)}</div>
+          </div>
+        </div>
+        <div style="font-size:12px;color:#78350F;line-height:1.5;">
+          Lock in <strong>${futurePct}% off</strong> every future minute of content for as long as you stay subscribed.
+        </div>
+      </div>
+    ` : '';
+
     return `
     <div style="border:1px solid #E5E9EE;border-radius:10px;padding:20px;margin:20px 0;">
       <div style="font-size:16px;font-weight:700;margin:0 0 10px;">
         Squideo Partner Programme &mdash;
         <a href="https://www.squideo.com/partner-programme" style="color:#2BB8E6;text-decoration:none;">Click Here to Learn More</a>
       </div>
+      ${futureRatePanel}
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
         ${box}
         <span style="font-size:14px;font-weight:600;">Check to subscribe (Monthly — ${formatGBP(data.partnerProgramme.price * (1 + data.vatRate))}/mo)</span>

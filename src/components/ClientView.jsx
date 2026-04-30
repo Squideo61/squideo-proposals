@@ -63,6 +63,29 @@ function parseDateUK(s) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+function FutureRateCell({ label, value, muted, highlight, strike }) {
+  return (
+    <div style={{
+      background: highlight ? '#FFFAEB' : '#F8FAFC',
+      border: '1px solid ' + (highlight ? '#FDE68A' : '#E5E9EE'),
+      borderRadius: 8,
+      padding: '8px 10px',
+      textAlign: 'center',
+    }}>
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#6B7785', marginBottom: 4 }}>{label}</div>
+      <div style={{
+        fontSize: 14,
+        fontWeight: 700,
+        color: highlight ? '#92400E' : (muted ? '#6B7785' : '#0F2A3D'),
+        textDecoration: strike ? 'line-through' : 'none',
+        textDecorationColor: '#94A3B8',
+      }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function validityLabel(dateStr, days) {
   const start = parseDateUK(dateStr);
   if (!start || !days) return null;
@@ -502,6 +525,29 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
                 <a href="https://www.squideo.com/partner-programme" target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Click Here to Learn More</a>
               </div>
             </div>
+            {(() => {
+              const standardRate = Number(data.basePrice) || 0;
+              const futureRate = Number(data.partnerProgramme.price) || 0;
+              if (standardRate <= 0 || futureRate <= 0) return null;
+              const savingPerMin = standardRate - futureRate;
+              const futurePct = Math.round((savingPerMin / standardRate) * 100);
+              if (futurePct <= 0) return null;
+              return (
+                <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#92400E', marginBottom: 8 }}>
+                    Your future video rate
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 8 }}>
+                    <FutureRateCell label="Standard" value={formatGBP(standardRate) + '/min'} muted strike />
+                    <FutureRateCell label="Partner rate" value={formatGBP(futureRate) + '/min'} highlight />
+                    <FutureRateCell label="You save" value={futurePct + '% · ' + formatGBP(savingPerMin)} highlight />
+                  </div>
+                  <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5 }}>
+                    Lock in <strong>{futurePct}% off</strong> every future minute of content for as long as you stay subscribed.
+                  </div>
+                </div>
+              );
+            })()}
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, cursor: signed ? 'default' : 'pointer' }}>
               <input type="checkbox" checked={partnerSelected} onChange={(e) => setPartnerSelected(e.target.checked)} disabled={!!signed} />
               <span style={{ fontWeight: 600, fontSize: 14 }}>Check to join (Monthly)</span>
