@@ -572,13 +572,37 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
                 </div>
               );
             })()}
-            <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, cursor: signed ? 'default' : 'pointer' }}>
-              <input type="checkbox" checked={partnerSelected} onChange={(e) => setPartnerSelected(e.target.checked)} disabled={!!signed} />
-              <span style={{ fontWeight: 600, fontSize: 14 }}>Check to join (Monthly)</span>
-            </label>
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#92400E', marginBottom: 4 }}>
-              Join and save {formatGBP(partnerDiscount)} on this project ({formatPct(effectiveDiscount)}% off)
-            </div>
+            <button
+              onClick={() => !signed && setPartnerSelected(p => !p)}
+              disabled={!!signed}
+              style={{
+                width: '100%',
+                padding: '14px 20px',
+                marginBottom: 10,
+                border: 'none',
+                borderRadius: 10,
+                fontSize: 15,
+                fontWeight: 700,
+                fontFamily: 'inherit',
+                cursor: signed ? 'default' : 'pointer',
+                transition: 'background 120ms, color 120ms, transform 80ms',
+                ...(partnerSelected
+                  ? {
+                      background: '#E5E7EB',
+                      color: '#4B5563',
+                      border: '1px solid #D1D5DB',
+                    }
+                  : {
+                      background: '#D97706',
+                      color: 'white',
+                      boxShadow: '0 2px 8px rgba(146, 64, 14, 0.25)',
+                    }),
+              }}
+            >
+              {partnerSelected
+                ? '✓ Joined — click to remove'
+                : `Join Partner Programme — save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`}
+            </button>
             <div style={{ fontSize: 12, color: '#5D8A00', marginBottom: 14 }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
             {partnerSelected && (
               <div className="partner-confirm" style={{ background: '#E8F5E9', border: '1px solid #A5D6A7', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, fontWeight: 600, color: '#2E7D32' }}>
