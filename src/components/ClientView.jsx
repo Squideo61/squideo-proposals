@@ -217,7 +217,17 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
   const partnerSubtotal = data.partnerProgramme.price * partnerCredits;
   const partnerVat = partnerSubtotal * data.vatRate;
   const partnerTotal = partnerSubtotal + partnerVat;
-  const partnerDiscount = subtotal * (data.partnerProgramme.discountRate ?? 0.20);
+  // Tiered project-discount ladder: base + (extra * (credits-1)), capped at max.
+  // Legacy proposals (no extraDiscountPerCredit / maxDiscount) collapse to a flat
+  // discountRate because extraPerCredit defaults to 0 and max defaults to base.
+  const partnerBaseDiscount   = data.partnerProgramme.discountRate          ?? 0.10;
+  const partnerExtraPerCredit = data.partnerProgramme.extraDiscountPerCredit ?? 0;
+  const partnerMaxDiscount    = data.partnerProgramme.maxDiscount            ?? partnerBaseDiscount;
+  const effectiveDiscount = Math.min(
+    partnerBaseDiscount + Math.max(0, partnerCredits - 1) * partnerExtraPerCredit,
+    partnerMaxDiscount
+  );
+  const partnerDiscount = subtotal * effectiveDiscount;
   const discountedSubtotal = subtotal - partnerDiscount;
   const discountedVat = discountedSubtotal * data.vatRate;
   const discountedTotal = discountedSubtotal + discountedVat;
@@ -246,7 +256,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         partnerExVat: partnerSubtotal,
         partnerTotal,
         partnerCredits,
-        discountRate: data.partnerProgramme.discountRate ?? 0.20,
+        discountRate: effectiveDiscount,
         vatRate: data.vatRate,
       } : null,
     };
@@ -553,12 +563,12 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
               <span style={{ fontWeight: 600, fontSize: 14 }}>Check to join (Monthly)</span>
             </label>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#92400E', marginBottom: 4 }}>
-              Join and save {formatGBP(partnerDiscount)} on this project ({Math.round((data.partnerProgramme.discountRate ?? 0.20) * 100)}% off)
+              Join and save {formatGBP(partnerDiscount)} on this project ({Math.round(effectiveDiscount * 100)}% off)
             </div>
             <div style={{ fontSize: 12, color: '#5D8A00', marginBottom: 14 }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
             {partnerSelected && (
               <div className="partner-confirm" style={{ background: '#E8F5E9', border: '1px solid #A5D6A7', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, fontWeight: 600, color: '#2E7D32' }}>
-                Great choice! Your {Math.round((data.partnerProgramme.discountRate ?? 0.20) * 100)}% discount has been applied to this project.
+                Great choice! Your {Math.round(effectiveDiscount * 100)}% discount has been applied to this project.
               </div>
             )}
 
@@ -574,6 +584,15 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
               <span style={{ fontWeight: 700, fontSize: 15, minWidth: 20, textAlign: 'center' }}>{partnerCredits}</span>
               <button onClick={() => !signed && setPartnerCredits(c => c + 1)} disabled={!!signed} style={{ width: isMobile ? 44 : 28, height: isMobile ? 44 : 28, borderRadius: 6, border: '1px solid #FDE68A', background: 'white', cursor: signed ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>+</button>
             </div>
+            {partnerExtraPerCredit > 0 && (
+              <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: '#78350F', lineHeight: 1.55 }}>
+                Each extra minute/month adds <strong>{Math.round(partnerExtraPerCredit * 100)}% off</strong> this project, up to <strong>{Math.round(partnerMaxDiscount * 100)}%</strong>.
+                {' '}You&apos;re at <strong>{partnerCredits} {partnerCredits === 1 ? 'minute' : 'minutes'} = {Math.round(effectiveDiscount * 100)}% off</strong>
+                {effectiveDiscount < partnerMaxDiscount
+                  ? <> · add another minute to save <strong>{Math.round(Math.min(partnerMaxDiscount, effectiveDiscount + partnerExtraPerCredit) * 100)}%</strong>.</>
+                  : <> — that&apos;s the maximum discount.</>}
+              </div>
+            )}
             <div style={{ borderTop: '1px solid #FDE68A', paddingTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 15, fontWeight: 700 }}>
               <span>Monthly subscription</span>
               <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>+ VAT / month</span></span>
@@ -590,7 +609,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
           )}
           {partnerSelected && (
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 12, color: '#FFD54F' }}>
-              <span>Partner discount ({Math.round((data.partnerProgramme.discountRate ?? 0.20) * 100)}%)</span>
+              <span>Partner discount ({Math.round(effectiveDiscount * 100)}%)</span>
               <span>−{formatGBP(partnerDiscount)} + VAT</span>
             </div>
           )}
@@ -621,7 +640,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         <PageTitle>Payment Options</PageTitle>
         {partnerSelected && (
           <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#78350F', lineHeight: 1.5, marginBottom: 12 }}>
-            <strong>Partner Programme selected.</strong> To unlock the {Math.round((data.partnerProgramme.discountRate ?? 0.20) * 100)}% project discount, payment must be made in full (card/BACS). The 50/50 split is not available with the Partner Programme.
+            <strong>Partner Programme selected.</strong> To unlock the {Math.round(effectiveDiscount * 100)}% project discount, payment must be made in full (card/BACS). The 50/50 split is not available with the Partner Programme.
           </div>
         )}
         <div style={{ display: 'grid', gap: 12, marginBottom: 12 }}>

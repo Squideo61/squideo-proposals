@@ -36,7 +36,22 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOp
   const subtotal = data.basePrice + extrasTotal;
   const vat = subtotal * data.vatRate;
   const total = subtotal + vat;
-  const discountRate = partnerSelected ? (data.partnerProgramme.discountRate ?? 0.20) : 0;
+  // Pick the rate to render the discount line at:
+  // - When the proposal is already signed, use the locked-in rate from the signature.
+  // - Otherwise compute from the partner-programme tier ladder (default to base, since
+  //   unsigned PDFs don't carry the client's selected credit count).
+  const baseDiscount = data.partnerProgramme.discountRate ?? 0.10;
+  const extraPerCredit = data.partnerProgramme.extraDiscountPerCredit ?? 0;
+  const maxDiscount = data.partnerProgramme.maxDiscount ?? baseDiscount;
+  const printedCredits = signed?.partnerCredits || 1;
+  const computedDiscount = Math.min(
+    baseDiscount + Math.max(0, printedCredits - 1) * extraPerCredit,
+    maxDiscount
+  );
+  const lockedDiscount = signed?.amountBreakdown?.discountRate;
+  const discountRate = partnerSelected
+    ? (typeof lockedDiscount === 'number' ? lockedDiscount : computedDiscount)
+    : 0;
   const partnerDiscount = subtotal * discountRate;
   const discountedSubtotal = subtotal - partnerDiscount;
   const discountedVat = discountedSubtotal * data.vatRate;

@@ -400,11 +400,45 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                   );
                 })()}
               </Field>
-              <Field label="Project discount (%)">
-                <input type="number" className="input" min="0" max="100" value={((data.partnerProgramme.discountRate || 0) * 100).toFixed(0)} onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, discountRate: (parseFloat(e.target.value) || 0) / 100 } })} />
-                <div style={{ fontSize: 12, color: '#6B7785', marginTop: 6, lineHeight: 1.4 }}>
-                  Discount applied to <em>this</em> project's price when the client joins the Partner Programme.
+              <Field label="Project discount tiers">
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Base (%)</div>
+                    <input
+                      type="number" className="input" min="0" max="100"
+                      value={((data.partnerProgramme.discountRate || 0) * 100).toFixed(0)}
+                      onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, discountRate: (parseFloat(e.target.value) || 0) / 100 } })}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Per extra credit (%)</div>
+                    <input
+                      type="number" className="input" min="0" max="100"
+                      value={((data.partnerProgramme.extraDiscountPerCredit || 0) * 100).toFixed(0)}
+                      onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, extraDiscountPerCredit: (parseFloat(e.target.value) || 0) / 100 } })}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Max (%)</div>
+                    <input
+                      type="number" className="input" min="0" max="100"
+                      value={((data.partnerProgramme.maxDiscount || 0) * 100).toFixed(0)}
+                      onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, maxDiscount: (parseFloat(e.target.value) || 0) / 100 } })}
+                    />
+                  </div>
                 </div>
+                {(() => {
+                  const baseD = data.partnerProgramme.discountRate || 0;
+                  const extraD = data.partnerProgramme.extraDiscountPerCredit || 0;
+                  const maxD = data.partnerProgramme.maxDiscount || baseD;
+                  const tier = (n) => Math.min(baseD + Math.max(0, n - 1) * extraD, maxD);
+                  const samples = [1, 2, 3, 4].map(n => `${n} ${n === 1 ? 'min' : 'mins'} = ${Math.round(tier(n) * 100)}%`);
+                  return (
+                    <div style={{ fontSize: 12, color: '#6B7785', marginTop: 6, lineHeight: 1.5 }}>
+                      Worked example: {samples.join(' · ')}{tier(4) === maxD && extraD > 0 ? ' (capped)' : ''}.
+                    </div>
+                  );
+                })()}
               </Field>
             </div>
             <Field label="Description">
