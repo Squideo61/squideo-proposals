@@ -383,3 +383,152 @@ export function openPrintWindow(data, opts = {}) {
   w.document.close();
   return true;
 }
+
+function buildReceiptHTML(data, signed, payment) {
+  const vatRate = Number(data.vatRate) || 0;
+  const paidAt = payment.paidAt ? new Date(payment.paidAt) : new Date();
+  const paidAtStr = paidAt.toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  // Compose line items from what was actually charged.
+  const lineItems = [];
+  if (signed.partnerSelected && signed.amountBreakdown) {
+    const { projectExVat, partnerExVat, partnerCredits } = signed.amountBreakdown;
+    lineItems.push({
+      label: 'Video Production — discounted project',
+      sub: data.proposalTitle || data.clientName || '',
+      ex: projectExVat,
+    });
+    lineItems.push({
+      label: 'Squideo Partner Programme — first month' + (partnerCredits ? ` (${partnerCredits} min credit)` : ''),
+      sub: '',
+      ex: partnerExVat,
+    });
+  } else {
+    const isDeposit = payment.paymentType === 'deposit';
+    const exVat = vatRate > 0 ? payment.amount / (1 + vatRate) : payment.amount;
+    lineItems.push({
+      label: isDeposit ? 'Video Production — 50% Deposit' : 'Video Production — Full Payment',
+      sub: data.proposalTitle || data.clientName || '',
+      ex: exVat,
+    });
+  }
+
+  const subtotalEx = lineItems.reduce((s, li) => s + li.ex, 0);
+  const vat = subtotalEx * vatRate;
+  const total = subtotalEx + vat;
+
+  const number = data._number && data._number.year && data._number.seq
+    ? data._number.year + '-' + String(data._number.seq).padStart(3, '0')
+    : null;
+
+  const lineRows = lineItems.map(li => `
+    <tr>
+      <td style="padding:12px 14px;border-top:1px solid #E5E9EE;font-size:13px;">
+        <div style="font-weight:600;color:#0F2A3D;">${esc(li.label)}</div>
+        ${li.sub ? `<div style="font-size:12px;color:#6B7785;margin-top:2px;">${esc(li.sub)}</div>` : ''}
+      </td>
+      <td style="padding:12px 14px;border-top:1px solid #E5E9EE;text-align:right;font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap;">
+        ${formatGBP(li.ex)}
+      </td>
+    </tr>`).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Receipt — ${esc(data.contactBusinessName || data.clientName || 'Squideo')}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, system-ui, sans-serif; color: #0F2A3D; background: white; }
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .no-print { display: none !important; }
+    }
+    @media screen {
+      body { max-width: 720px; margin: 0 auto; padding: 32px 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="no-print" style="background:#FFF8E1;border:1px solid #FFE082;padding:12px 20px;text-align:center;font-size:13px;color:#8A6D00;margin-bottom:24px;border-radius:6px;">
+    Use your browser's <strong>File → Print</strong> (or Ctrl+P / ⌘P) to save as PDF or print.
+    <button onclick="window.print()" style="margin-left:16px;padding:6px 14px;background:#2BB8E6;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Print / Save as PDF</button>
+  </div>
+
+  <!-- Header -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;margin-bottom:28px;flex-wrap:wrap;">
+    <div>
+      <img src="${SQUIDEO_LOGO}" alt="Squideo" style="height:44px;width:auto;display:block;margin-bottom:14px;" />
+      <div style="font-size:11px;color:#6B7785;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;">Payment Receipt</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px;">Receipt</div>
+    </div>
+    <div style="text-align:right;font-size:13px;color:#6B7785;line-height:1.7;">
+      <div><strong style="color:#0F2A3D;">Date</strong>: ${esc(paidAtStr)}</div>
+      ${number ? `<div><strong style="color:#0F2A3D;">Proposal</strong>: ${esc(number)}</div>` : ''}
+      ${payment.stripeSessionId ? `<div><strong style="color:#0F2A3D;">Reference</strong>: <span style="font-family:ui-monospace, SFMono-Regular, Menlo, monospace;font-size:11px;">${esc(payment.stripeSessionId)}</span></div>` : ''}
+    </div>
+  </div>
+
+  <!-- Paid-by + Project blocks -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px;">
+    <div style="border:1px solid #E5E9EE;border-radius:10px;padding:16px;">
+      <div style="font-size:11px;color:#6B7785;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;">Paid by</div>
+      <div style="font-size:14px;font-weight:600;">${esc(signed.name || '')}</div>
+      ${signed.email ? `<div style="font-size:13px;color:#6B7785;margin-top:2px;">${esc(signed.email)}</div>` : ''}
+      ${data.contactBusinessName ? `<div style="font-size:13px;color:#6B7785;margin-top:2px;">${esc(data.contactBusinessName)}</div>` : ''}
+    </div>
+    <div style="border:1px solid #E5E9EE;border-radius:10px;padding:16px;">
+      <div style="font-size:11px;color:#6B7785;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;">For</div>
+      <div style="font-size:14px;font-weight:600;">${esc(data.proposalTitle || 'Explainer Video Project')}</div>
+      ${data.clientName ? `<div style="font-size:13px;color:#6B7785;margin-top:2px;">Client: ${esc(data.clientName)}</div>` : ''}
+    </div>
+  </div>
+
+  <!-- Line items -->
+  <table style="width:100%;border-collapse:collapse;border:1px solid #E5E9EE;border-radius:10px;overflow:hidden;margin-bottom:18px;">
+    <thead>
+      <tr style="background:#F8FAFC;">
+        <th style="padding:10px 14px;text-align:left;font-size:11px;color:#6B7785;text-transform:uppercase;letter-spacing:0.6px;font-weight:700;">Description</th>
+        <th style="padding:10px 14px;text-align:right;font-size:11px;color:#6B7785;text-transform:uppercase;letter-spacing:0.6px;font-weight:700;">Amount (ex VAT)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${lineRows}
+    </tbody>
+  </table>
+
+  <!-- Totals -->
+  <div style="display:flex;justify-content:flex-end;margin-bottom:24px;">
+    <table style="border-collapse:collapse;font-size:13px;min-width:280px;">
+      <tr><td style="padding:6px 14px 6px 0;color:#6B7785;">Subtotal</td><td style="padding:6px 0;text-align:right;font-variant-numeric:tabular-nums;">${formatGBP(subtotalEx)}</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#6B7785;">VAT (${(vatRate * 100).toFixed(0)}%)</td><td style="padding:6px 0;text-align:right;font-variant-numeric:tabular-nums;">${formatGBP(vat)}</td></tr>
+      <tr><td style="padding:10px 14px 10px 0;border-top:2px solid #0F2A3D;font-weight:700;font-size:15px;">Total paid</td><td style="padding:10px 0;border-top:2px solid #0F2A3D;text-align:right;font-weight:700;font-size:15px;font-variant-numeric:tabular-nums;">${formatGBP(total)}</td></tr>
+    </table>
+  </div>
+
+  <!-- Paid stamp -->
+  <div style="background:#F0FDF4;border:2px solid #16A34A;border-radius:12px;padding:18px 20px;display:flex;align-items:center;gap:14px;margin-bottom:24px;">
+    <div style="background:#16A34A;color:white;font-weight:700;letter-spacing:1px;padding:8px 16px;border-radius:999px;font-size:13px;">PAID</div>
+    <div style="font-size:14px;color:#166534;line-height:1.5;">
+      <div><strong>${formatGBP(payment.amount)}</strong> received on ${esc(paidAtStr)}</div>
+      <div style="font-size:12px;margin-top:2px;">Paid by card${payment.customerEmail ? ' · ' + esc(payment.customerEmail) : ''}</div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div style="margin-top:32px;padding-top:16px;border-top:1px solid #E5E9EE;font-size:11px;color:#6B7785;text-align:center;line-height:1.6;">
+    ${esc(CONFIG.company.name)} · ${esc(CONFIG.company.website)} · ${esc(CONFIG.company.phone)}<br />
+    Thank you for your payment. Please retain this receipt for your records.
+  </div>
+</body>
+</html>`;
+}
+
+export function openReceiptWindow(data, signed, payment) {
+  if (!signed || !payment) return false;
+  const w = window.open('', '_blank');
+  if (!w) return false;
+  w.document.write(buildReceiptHTML(data, signed, payment));
+  w.document.close();
+  return true;
+}

@@ -8,7 +8,7 @@ import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile } from '../utils.js';
-import { openPrintWindow, printOptionsForSigned } from '../utils/printProposal.js';
+import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
 import { Field, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
 import { SignedBlock } from './SignedBlock.jsx';
 import { StripeSimModal } from './StripeSimModal.jsx';
@@ -782,7 +782,17 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         </div>
 
         {signed ? (
-          <SignedBlock signed={signed} payment={payment} paymentChoice={paymentChoice} vatRate={data.vatRate} onPayNow={handlePayNow} onChooseInvoice={() => setPaymentChoice('invoice')} onUndoInvoice={() => setPaymentChoice(null)} />
+          <SignedBlock
+            signed={signed}
+            payment={payment}
+            paymentChoice={paymentChoice}
+            vatRate={data.vatRate}
+            onPayNow={handlePayNow}
+            onChooseInvoice={() => setPaymentChoice('invoice')}
+            onUndoInvoice={() => setPaymentChoice(null)}
+            onDownloadReceipt={payment ? () => openReceiptWindow(data, signed, payment) : undefined}
+            onDownloadSignedProposal={signed ? () => openPrintWindow(data, printOptionsForSigned(signed, payment)) : undefined}
+          />
         ) : (
           <div ref={signRef} style={{ background: BRAND.paper, border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24, scrollMarginTop: 80 }}>
             <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Accept this proposal</h3>

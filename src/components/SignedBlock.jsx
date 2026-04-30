@@ -1,9 +1,9 @@
 import React from 'react';
-import { Check } from 'lucide-react';
+import { Check, Download, FileText } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { formatGBP } from '../utils.js';
 
-export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice }) {
+export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onDownloadReceipt, onDownloadSignedProposal }) {
   const isPO = signed.paymentOption === 'po';
   const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
   const isDeposit = signed.paymentOption === '5050';
@@ -50,6 +50,20 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
             <div><strong>{formatGBP(payment.amount)}</strong> paid {payment.paymentType === 'deposit' ? '(50% deposit)' : '(full payment)'}</div>
             <div style={{ color: BRAND.muted, fontSize: 13 }}>On {new Date(payment.paidAt).toLocaleString('en-GB')}</div>
           </div>
+          {(onDownloadReceipt || onDownloadSignedProposal) && (
+            <div style={{ display: 'flex', gap: 10, marginTop: 18, paddingTop: 18, borderTop: '1px solid ' + BRAND.border, flexWrap: 'wrap' }}>
+              {onDownloadReceipt && (
+                <button onClick={onDownloadReceipt} className="btn" style={{ flex: '1 1 200px', justifyContent: 'center', padding: '12px 16px', fontSize: 14 }}>
+                  <Download size={16} /> Download Receipt
+                </button>
+              )}
+              {onDownloadSignedProposal && (
+                <button onClick={onDownloadSignedProposal} className="btn" style={{ flex: '1 1 200px', justifyContent: 'center', padding: '12px 16px', fontSize: 14 }}>
+                  <FileText size={16} /> Download Signed Proposal
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
