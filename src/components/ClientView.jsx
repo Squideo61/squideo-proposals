@@ -430,7 +430,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         ))}
 
         <PageTitle>Your Delivery Team</PageTitle>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))', gap: 16, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 16, marginBottom: 16 }}>
           {data.team.map((m, i) => {
             const photoSrc = m.photo || DEFAULT_PHOTOS[m.name];
             return (
@@ -547,7 +547,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
               </div>
             </div>
 
-            <div style={{ display: isMobile ? 'block' : 'grid', gridTemplateColumns: isMobile ? undefined : '1fr 1fr', gap: 16, alignItems: 'stretch' }}>
+            <div style={{ display: isMobile ? 'block' : 'grid', gridTemplateColumns: isMobile ? undefined : '1fr 1fr', gap: 16, alignItems: 'start' }}>
               {/* LEFT — benefits */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {(() => {
@@ -605,39 +605,41 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
                   <span>Monthly subscription</span>
                   <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>+ VAT / month</span></span>
                 </div>
-                <div style={{ flex: 1 }} />
-                <button
-                  onClick={() => !signed && setPartnerSelected(p => !p)}
-                  disabled={!!signed}
-                  style={{
-                    width: '100%',
-                    padding: '14px 20px',
-                    border: 'none',
-                    borderRadius: 10,
-                    fontSize: 15,
-                    fontWeight: 700,
-                    fontFamily: 'inherit',
-                    cursor: signed ? 'default' : 'pointer',
-                    transition: 'background 120ms, color 120ms, transform 80ms',
-                    ...(partnerSelected
-                      ? {
-                          background: '#E5E7EB',
-                          color: '#4B5563',
-                          border: '1px solid #D1D5DB',
-                        }
-                      : {
-                          background: '#D97706',
-                          color: 'white',
-                          boxShadow: '0 2px 8px rgba(146, 64, 14, 0.25)',
-                        }),
-                  }}
-                >
-                  {partnerSelected
-                    ? '✓ Joined — click to remove'
-                    : `Join Partner Programme — save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`}
-                </button>
-                <div style={{ fontSize: 12, color: '#5D8A00', textAlign: 'center' }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
               </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <button
+                onClick={() => !signed && setPartnerSelected(p => !p)}
+                disabled={!!signed}
+                style={{
+                  width: '100%',
+                  padding: '14px 20px',
+                  border: 'none',
+                  borderRadius: 10,
+                  fontSize: 15,
+                  fontWeight: 700,
+                  fontFamily: 'inherit',
+                  cursor: signed ? 'default' : 'pointer',
+                  transition: 'background 120ms, color 120ms, transform 80ms',
+                  ...(partnerSelected
+                    ? {
+                        background: '#E5E7EB',
+                        color: '#4B5563',
+                        border: '1px solid #D1D5DB',
+                      }
+                    : {
+                        background: '#D97706',
+                        color: 'white',
+                        boxShadow: '0 2px 8px rgba(146, 64, 14, 0.25)',
+                      }),
+                }}
+              >
+                {partnerSelected
+                  ? '✓ Joined — click to remove'
+                  : `Join Partner Programme — save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`}
+              </button>
+              <div style={{ fontSize: 12, color: '#5D8A00', textAlign: 'center', marginTop: 8 }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
             </div>
           </div>
         )}
