@@ -375,7 +375,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         </div>
       )}
 
-      <div style={{ maxWidth: 800, margin: '0 auto', padding: signed ? '32px 24px 80px' : '32px 24px 140px', background: 'white' }}>
+      <div style={{ maxWidth: 960, margin: '0 auto', padding: signed ? '32px 24px 80px' : '32px 24px 140px', background: 'white' }}>
         <div style={{ background: BRAND.blue, color: 'white', padding: 32, borderRadius: 12, marginBottom: 32 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
             <img src={SQUIDEO_LOGO} alt="Squideo" style={{ height: 48, width: 'auto', display: 'block' }} />
@@ -530,11 +530,11 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         </div>
 
         {data.partnerProgramme.enabled && (
-          <div style={{ position: 'relative', marginTop: 24, marginBottom: 16, background: '#FFFAEB', border: '1px solid #D97706', borderRadius: 12, padding: 20 }}>
+          <div style={{ position: 'relative', marginTop: 24, marginBottom: 16, background: '#FFFAEB', border: '1px solid #D97706', borderRadius: 12, padding: 16 }}>
             <span style={{ position: 'absolute', top: -12, right: 16, background: '#D97706', color: 'white', fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 999, boxShadow: '0 2px 6px rgba(146, 64, 14, 0.25)', letterSpacing: 0.3 }}>
               Join and save {formatGBP(partnerDiscount)} on this project
             </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
               <img
                 src="/partner-logo.png"
                 alt=""
@@ -546,94 +546,98 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
                 <a href="https://www.squideo.com/partner-programme" target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Click Here to Learn More</a>
               </div>
             </div>
-            {(() => {
-              const standardRate = Number(data.basePrice) || 0;
-              if (standardRate <= 0 || effectiveDiscount <= 0) return null;
-              const futureRate = partnerRatePerMin;
-              const savingPerMin = standardRate - futureRate;
-              const futurePct = formatPct(effectiveDiscount);
-              const maxPct = formatPct(partnerMaxDiscount);
-              return (
-                <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#92400E', marginBottom: 8 }}>
-                    Your future video rate
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 8 }}>
-                    <FutureRateCell label="Standard" value={formatGBP(standardRate) + '/min'} muted strike />
-                    <FutureRateCell label="Partner rate" value={formatGBP(futureRate) + '/min'} highlight />
-                    <FutureRateCell label="You save" value={futurePct + '% · ' + formatGBP(savingPerMin)} highlight />
-                  </div>
-                  <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5 }}>
-                    Lock in <strong>{futurePct}% off</strong> every future minute of content for as long as you stay subscribed.
-                    {partnerExtraPerCredit > 0 && effectiveDiscount < partnerMaxDiscount && (
-                      <> Add another minute to lock in an even bigger discount — up to <strong>{maxPct}% off</strong>.</>
-                    )}
+
+            <div style={{ display: isMobile ? 'block' : 'grid', gridTemplateColumns: isMobile ? undefined : '1fr 1fr', gap: 16, alignItems: 'stretch' }}>
+              {/* LEFT — benefits */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {(() => {
+                  const standardRate = Number(data.basePrice) || 0;
+                  if (standardRate <= 0 || effectiveDiscount <= 0) return null;
+                  const futureRate = partnerRatePerMin;
+                  const savingPerMin = standardRate - futureRate;
+                  const futurePct = formatPct(effectiveDiscount);
+                  const maxPct = formatPct(partnerMaxDiscount);
+                  return (
+                    <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 14px' }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#92400E', marginBottom: 8 }}>
+                        Your future video rate
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 }}>
+                        <FutureRateCell label="Standard" value={formatGBP(standardRate) + '/min'} muted strike />
+                        <FutureRateCell label="Partner rate" value={formatGBP(futureRate) + '/min'} highlight />
+                        <FutureRateCell label="You save" value={futurePct + '% · ' + formatGBP(savingPerMin)} highlight />
+                      </div>
+                      <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5 }}>
+                        Lock in <strong>{futurePct}% off</strong> every future minute of content for as long as you stay subscribed.
+                        {partnerExtraPerCredit > 0 && effectiveDiscount < partnerMaxDiscount && (
+                          <> Add another minute to lock in up to <strong>{maxPct}% off</strong>.</>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+                <div style={{ flex: 1, border: '1px solid #FDE68A', borderRadius: 8, padding: 12, fontSize: 13, color: BRAND.muted, whiteSpace: 'pre-wrap', lineHeight: 1.6, background: 'white' }}>
+                  {(data.partnerProgramme.description || '').replace(/^\s*\d+\s+minute(?:s)?\s+of\s+additional\s+content\s+credit\s+per\s+month\s*[-–—]\s*Cancel\s+any\s+time\s*\n+/i, '')}
+                </div>
+              </div>
+
+              {/* RIGHT — action */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink }}>Monthly content credit:</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <button onClick={() => !signed && setPartnerCredits(c => Math.max(1, c - 1))} disabled={!!signed || partnerCredits <= 1} style={{ width: isMobile ? 44 : 30, height: isMobile ? 44 : 30, borderRadius: 6, border: '1px solid #FDE68A', background: '#FFFAEB', cursor: signed || partnerCredits <= 1 ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>−</button>
+                    <span style={{ fontWeight: 700, fontSize: 16, minWidth: 28, textAlign: 'center' }}>{partnerCredits}</span>
+                    <button onClick={() => !signed && setPartnerCredits(c => c + 1)} disabled={!!signed} style={{ width: isMobile ? 44 : 30, height: isMobile ? 44 : 30, borderRadius: 6, border: '1px solid #FDE68A', background: '#FFFAEB', cursor: signed ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>+</button>
+                    <span style={{ fontSize: 13, color: BRAND.muted }}>{partnerCredits === 1 ? 'min' : 'mins'}/mo</span>
                   </div>
                 </div>
-              );
-            })()}
-            <button
-              onClick={() => !signed && setPartnerSelected(p => !p)}
-              disabled={!!signed}
-              style={{
-                width: '100%',
-                padding: '14px 20px',
-                marginBottom: 10,
-                border: 'none',
-                borderRadius: 10,
-                fontSize: 15,
-                fontWeight: 700,
-                fontFamily: 'inherit',
-                cursor: signed ? 'default' : 'pointer',
-                transition: 'background 120ms, color 120ms, transform 80ms',
-                ...(partnerSelected
-                  ? {
-                      background: '#E5E7EB',
-                      color: '#4B5563',
-                      border: '1px solid #D1D5DB',
-                    }
-                  : {
-                      background: '#D97706',
-                      color: 'white',
-                      boxShadow: '0 2px 8px rgba(146, 64, 14, 0.25)',
-                    }),
-              }}
-            >
-              {partnerSelected
-                ? '✓ Joined — click to remove'
-                : `Join Partner Programme — save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`}
-            </button>
-            <div style={{ fontSize: 12, color: '#5D8A00', marginBottom: 14 }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
-            {partnerSelected && (
-              <div className="partner-confirm" style={{ background: '#E8F5E9', border: '1px solid #A5D6A7', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, fontWeight: 600, color: '#2E7D32' }}>
-                Great choice! Your {formatPct(effectiveDiscount)}% discount has been applied to this project.
+                {partnerExtraPerCredit > 0 && (
+                  <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#78350F', lineHeight: 1.5 }}>
+                    Each extra minute/month adds <strong>{formatPct(partnerExtraPerCredit)}% off</strong> this project, up to <strong>{formatPct(partnerMaxDiscount)}%</strong>.
+                    {' '}You&apos;re at <strong>{partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'} = {formatPct(effectiveDiscount)}% off</strong>
+                    {effectiveDiscount < partnerMaxDiscount
+                      ? <> · add another to save <strong>{formatPct(Math.min(partnerMaxDiscount, effectiveDiscount + partnerExtraPerCredit))}%</strong>.</>
+                      : <> — maximum.</>}
+                  </div>
+                )}
+                <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 15, fontWeight: 700 }}>
+                  <span>Monthly subscription</span>
+                  <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>+ VAT / month</span></span>
+                </div>
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={() => !signed && setPartnerSelected(p => !p)}
+                  disabled={!!signed}
+                  style={{
+                    width: '100%',
+                    padding: '14px 20px',
+                    border: 'none',
+                    borderRadius: 10,
+                    fontSize: 15,
+                    fontWeight: 700,
+                    fontFamily: 'inherit',
+                    cursor: signed ? 'default' : 'pointer',
+                    transition: 'background 120ms, color 120ms, transform 80ms',
+                    ...(partnerSelected
+                      ? {
+                          background: '#E5E7EB',
+                          color: '#4B5563',
+                          border: '1px solid #D1D5DB',
+                        }
+                      : {
+                          background: '#D97706',
+                          color: 'white',
+                          boxShadow: '0 2px 8px rgba(146, 64, 14, 0.25)',
+                        }),
+                  }}
+                >
+                  {partnerSelected
+                    ? '✓ Joined — click to remove'
+                    : `Join Partner Programme — save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`}
+                </button>
+                <div style={{ fontSize: 12, color: '#5D8A00', textAlign: 'center' }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
               </div>
-            )}
-
-            <div style={{ border: '1px solid #FDE68A', borderRadius: 8, padding: 14, fontSize: 13, color: BRAND.muted, whiteSpace: 'pre-wrap', lineHeight: 1.7, marginBottom: 14, background: 'white' }}>
-              {(data.partnerProgramme.description || '').replace(/^\s*\d+\s+minute(?:s)?\s+of\s+additional\s+content\s+credit\s+per\s+month\s*[-–—]\s*Cancel\s+any\s+time\s*\n+/i, '')}
-            </div>
-            <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '12px 14px', marginBottom: 14, fontSize: 14, color: BRAND.ink, lineHeight: 1.5 }}>
-              You&apos;ll receive <strong style={{ color: '#92400E' }}>{partnerCredits} {partnerCredits === 1 ? 'minute' : 'minutes'}</strong> of new content credit per month
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>Adjust:</span>
-              <button onClick={() => !signed && setPartnerCredits(c => Math.max(1, c - 1))} disabled={!!signed || partnerCredits <= 1} style={{ width: isMobile ? 44 : 28, height: isMobile ? 44 : 28, borderRadius: 6, border: '1px solid #FDE68A', background: 'white', cursor: signed || partnerCredits <= 1 ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>−</button>
-              <span style={{ fontWeight: 700, fontSize: 15, minWidth: 20, textAlign: 'center' }}>{partnerCredits}</span>
-              <button onClick={() => !signed && setPartnerCredits(c => c + 1)} disabled={!!signed} style={{ width: isMobile ? 44 : 28, height: isMobile ? 44 : 28, borderRadius: 6, border: '1px solid #FDE68A', background: 'white', cursor: signed ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>+</button>
-            </div>
-            {partnerExtraPerCredit > 0 && (
-              <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: '#78350F', lineHeight: 1.55 }}>
-                Each extra minute/month adds <strong>{formatPct(partnerExtraPerCredit)}% off</strong> this project, up to <strong>{formatPct(partnerMaxDiscount)}%</strong>.
-                {' '}You&apos;re at <strong>{partnerCredits} {partnerCredits === 1 ? 'minute' : 'minutes'} = {formatPct(effectiveDiscount)}% off</strong>
-                {effectiveDiscount < partnerMaxDiscount
-                  ? <> · add another minute to save <strong>{formatPct(Math.min(partnerMaxDiscount, effectiveDiscount + partnerExtraPerCredit))}%</strong>.</>
-                  : <> — that&apos;s the maximum discount.</>}
-              </div>
-            )}
-            <div style={{ borderTop: '1px solid #FDE68A', paddingTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 15, fontWeight: 700 }}>
-              <span>Monthly subscription</span>
-              <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>+ VAT / month</span></span>
             </div>
           </div>
         )}
