@@ -112,10 +112,16 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOp
       ? `<input type="checkbox" ${partnerSelected ? 'checked' : ''} style="margin-top:2px;flex-shrink:0;" />`
       : `<div style="width:14px;height:14px;border:2px solid #C7CFD8;border-radius:3px;flex-shrink:0;background:${partnerSelected ? '#2BB8E6' : 'white'};"></div>`;
 
+    // Future-rate panel mirrors the same tier ladder as the project discount.
+    // For a signed proposal we display the locked-in rate; for unsigned we use
+    // the base discount (which is what a 1-credit subscription would yield).
     const standardRate = Number(data.basePrice) || 0;
-    const futureRate = Number(data.partnerProgramme.price) || 0;
+    const printPct = (typeof discountRate === 'number' && discountRate > 0)
+      ? discountRate
+      : (data.partnerProgramme.discountRate ?? 0.10);
+    const futureRate = standardRate * (1 - printPct);
     const savingPerMin = standardRate - futureRate;
-    const futurePct = standardRate > 0 ? Math.round((savingPerMin / standardRate) * 100) : 0;
+    const futurePct = Math.round(printPct * 100);
     const futureRatePanel = (standardRate > 0 && futureRate > 0 && futurePct > 0) ? `
       <div style="background:white;border:1px solid #FDE68A;border-radius:8px;padding:14px 16px;margin-bottom:14px;">
         <div style="font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:#92400E;margin-bottom:8px;">Your future video rate</div>

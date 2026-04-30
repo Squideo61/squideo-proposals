@@ -214,9 +214,6 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
   const subtotal = data.basePrice + extrasTotal;
   const vat = subtotal * data.vatRate;
   const total = subtotal + vat;
-  const partnerSubtotal = data.partnerProgramme.price * partnerCredits;
-  const partnerVat = partnerSubtotal * data.vatRate;
-  const partnerTotal = partnerSubtotal + partnerVat;
   // Tiered project-discount ladder: base + (extra * (credits-1)), capped at max.
   // Legacy proposals (no extraDiscountPerCredit / maxDiscount) collapse to a flat
   // discountRate because extraPerCredit defaults to 0 and max defaults to base.
@@ -227,6 +224,13 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
     partnerBaseDiscount + Math.max(0, partnerCredits - 1) * partnerExtraPerCredit,
     partnerMaxDiscount
   );
+  // Per-minute partner rate is derived from the same tier — same % off the
+  // standard project rate. This ties the future-rate panel and the monthly
+  // subscription cost to the live tier ladder.
+  const partnerRatePerMin = data.basePrice * (1 - effectiveDiscount);
+  const partnerSubtotal = partnerRatePerMin * partnerCredits;
+  const partnerVat = partnerSubtotal * data.vatRate;
+  const partnerTotal = partnerSubtotal + partnerVat;
   const partnerDiscount = subtotal * effectiveDiscount;
   const discountedSubtotal = subtotal - partnerDiscount;
   const discountedVat = discountedSubtotal * data.vatRate;
@@ -537,10 +541,11 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
             </div>
             {(() => {
               const standardRate = Number(data.basePrice) || 0;
-              const futureRate = Number(data.partnerProgramme.price) || 0;
-              if (standardRate <= 0 || futureRate <= 0) return null;
+              if (standardRate <= 0) return null;
+              const futureRate = partnerRatePerMin;
               const savingPerMin = standardRate - futureRate;
-              const futurePct = Math.round((savingPerMin / standardRate) * 100);
+              const futurePct = Math.round(effectiveDiscount * 100);
+              const maxPct = Math.round(partnerMaxDiscount * 100);
               if (futurePct <= 0) return null;
               return (
                 <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
@@ -554,6 +559,9 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
                   </div>
                   <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5 }}>
                     Lock in <strong>{futurePct}% off</strong> every future minute of content for as long as you stay subscribed.
+                    {partnerExtraPerCredit > 0 && futurePct < maxPct && (
+                      <> Add another minute to lock in an even bigger discount — up to <strong>{maxPct}% off</strong>.</>
+                    )}
                   </div>
                 </div>
               );
