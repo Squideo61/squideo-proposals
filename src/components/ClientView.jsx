@@ -8,7 +8,7 @@ import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile } from '../utils.js';
-import { openPrintWindow } from '../utils/printProposal.js';
+import { openPrintWindow, printOptionsForSigned } from '../utils/printProposal.js';
 import { Field, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
 import { SignedBlock } from './SignedBlock.jsx';
 import { StripeSimModal } from './StripeSimModal.jsx';
@@ -259,11 +259,16 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         {onBack ? <button onClick={onBack} className="btn-ghost"><ChevronLeft size={16} /> Back</button> : <div />}
         <div style={{ fontSize: 12, color: BRAND.muted }}>Client view</div>
         <button
-          onClick={() => openPrintWindow(data, { signable: true, selectedExtras, paymentOption, partnerSelected })}
+          onClick={() => openPrintWindow(
+            data,
+            signed
+              ? printOptionsForSigned(signed, payment)
+              : { signable: true, selectedExtras, paymentOption, partnerSelected }
+          )}
           className="btn-ghost"
           style={{ fontSize: 13 }}
         >
-          <FileDown size={14} /> Download PDF
+          <FileDown size={14} /> {signed ? 'Download signed copy' : 'Download PDF'}
         </button>
       </div>
 

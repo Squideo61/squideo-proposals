@@ -3,7 +3,7 @@ import { BarChart3, Check, Clock, Download, Eye, FileText, LayoutTemplate, Link2
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, useIsMobile } from '../utils.js';
-import { openPrintWindow } from '../utils/printProposal.js';
+import { openPrintWindow, printOptionsForSigned } from '../utils/printProposal.js';
 import { Badge, Logo } from './ui.jsx';
 import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
@@ -288,7 +288,11 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
           items={[
             { label: 'View analytics', icon: BarChart3, onClick: onAnalytics },
             { label: 'Preview', icon: Eye, onClick: () => onPreview(proposal.id) },
-            { label: 'Download PDF', icon: Download, onClick: () => openPrintWindow(proposal) },
+            {
+              label: signed ? 'Download signed proposal' : 'Download PDF',
+              icon: Download,
+              onClick: () => openPrintWindow(proposal, signed ? printOptionsForSigned(signed, payment) : {}),
+            },
             ...(signed && !payment ? [{ label: 'Mark as paid', icon: Check, onClick: handleMarkPaid }] : []),
             ...(signed && !payment ? [{ label: 'Unmark as accepted', icon: Undo2, onClick: handleUnmarkAccepted }] : []),
             { label: 'Delete', icon: Trash2, onClick: () => onDelete(proposal.id), danger: true },

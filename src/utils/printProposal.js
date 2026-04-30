@@ -9,7 +9,29 @@ function esc(str) {
   return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOption = '5050', partnerSelected = false } = {}) {
+const PAYMENT_OPTION_LABEL = {
+  '5050': '50/50 split (50% deposit, balance on approval)',
+  'full': 'Pay in full upfront',
+  'po': 'Purchase Order',
+};
+
+export function printOptionsForSigned(signed, payment) {
+  if (!signed) return { signable: true };
+  const selectedExtras = (signed.selectedExtras || []).reduce((acc, e) => {
+    if (e && e.id) acc[e.id] = true;
+    return acc;
+  }, {});
+  return {
+    signable: false,
+    signed,
+    payment: payment || null,
+    selectedExtras,
+    partnerSelected: !!signed.partnerSelected,
+    paymentOption: signed.paymentOption || '5050',
+  };
+}
+
+function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOption = '5050', partnerSelected = false, signed = null, payment = null } = {}) {
   const extrasTotal = data.optionalExtras.reduce((s, e) => selectedExtras[e.id] ? s + e.price : s, 0);
   const subtotal = data.basePrice + extrasTotal;
   const vat = subtotal * data.vatRate;
@@ -90,7 +112,7 @@ ${esc(data.partnerProgramme.description)}
     </div>`;
   })() : '';
 
-  const sigBlock = `
+  const blankSigBlock = `
     <div style="border:2px solid #2BB8E6;border-radius:12px;padding:28px;margin-top:32px;break-inside:avoid;">
       <h2 style="font-size:18px;font-weight:700;margin:0 0 20px;">Acceptance & Signature</h2>
       <p style="font-size:13px;color:#6B7785;margin:0 0 24px;line-height:1.6;">
@@ -124,6 +146,43 @@ ${esc(data.partnerProgramme.description)}
       </p>
     </div>`;
 
+  const acceptedSigBlock = signed ? (() => {
+    const signedDate = signed.signedAt ? new Date(signed.signedAt).toLocaleString('en-GB') : '';
+    const totalCommitted = typeof signed.total === 'number' ? signed.total : null;
+    const optLabel = PAYMENT_OPTION_LABEL[signed.paymentOption] || signed.paymentOption || '';
+    const paidLine = payment ? `
+      <div style="margin-top:18px;padding-top:18px;border-top:1px solid #BBF7D0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div style="background:#2BB8E6;color:white;padding:5px 14px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:0.5px;">PAID</div>
+        <div style="font-size:14px;color:#0F2A3D;">
+          <strong>${formatGBP(payment.amount || 0)}</strong>
+          ${payment.paymentType === 'deposit' ? ' (50% deposit)' : payment.paymentType === 'full' ? ' (full payment)' : ''}
+          ${payment.paidAt ? ' · ' + esc(new Date(payment.paidAt).toLocaleString('en-GB')) : ''}
+        </div>
+      </div>` : '';
+    return `
+    <div style="border:2px solid #16A34A;background:#F0FDF4;border-radius:12px;padding:28px;margin-top:32px;break-inside:avoid;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
+        <div style="width:32px;height:32px;border-radius:50%;background:#16A34A;color:white;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;">✓</div>
+        <h2 style="font-size:20px;font-weight:700;margin:0;color:#15803D;">Proposal Accepted</h2>
+      </div>
+      <div style="font-size:14px;line-height:1.9;color:#166534;">
+        <div><strong>Signed by:</strong> ${esc(signed.name || '')}${signed.email ? ' (' + esc(signed.email) + ')' : ''}</div>
+        ${signedDate ? `<div><strong>Date:</strong> ${esc(signedDate)}</div>` : ''}
+        ${totalCommitted !== null ? `<div><strong>Total committed:</strong> ${formatGBP(totalCommitted)}</div>` : ''}
+        ${optLabel ? `<div><strong>Payment option:</strong> ${esc(optLabel)}</div>` : ''}
+      </div>
+      ${paidLine}
+      <p style="margin:20px 0 0;font-size:11px;color:#166534;line-height:1.5;font-style:italic;">
+        This document confirms electronic acceptance of the proposal via the Squideo Proposals portal. By typing their name on the acceptance form, the signatory provided their electronic signature.
+      </p>
+    </div>`;
+  })() : '';
+
+  const sigBlock = signed ? acceptedSigBlock : blankSigBlock;
+  const headerStatusBadge = signed
+    ? `<span style="display:inline-block;background:#16A34A;color:white;font-size:11px;font-weight:700;letter-spacing:0.5px;padding:4px 10px;border-radius:999px;margin-left:10px;vertical-align:middle;">ACCEPTED</span>`
+    : '';
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -152,7 +211,7 @@ ${esc(data.partnerProgramme.description)}
   <!-- Header -->
   <div style="background:#2BB8E6;color:white;padding:32px;border-radius:12px;margin-bottom:28px;">
     <img src="${SQUIDEO_LOGO}" alt="Squideo" style="height:44px;width:auto;display:block;margin-bottom:20px;" />
-    <h1 style="font-size:26px;font-weight:700;margin:0 0 14px;line-height:1.2;">Explainer Video Proposal</h1>
+    <h1 style="font-size:26px;font-weight:700;margin:0 0 14px;line-height:1.2;">Explainer Video Proposal${headerStatusBadge}</h1>
     <div style="font-size:15px;line-height:1.6;opacity:0.95;">
       <div>Prepared for <strong>${esc(data.clientName || '[Client Name]')}</strong></div>
       <div>${esc(data.contactBusinessName || '')}</div>
