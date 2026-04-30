@@ -9,6 +9,56 @@ function esc(str) {
   return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// Mirror of renderDescriptionMarkup in ClientView — same parser, HTML output
+// for the printed PDF. Paragraphs, sub-headings (lines ending with `:`), and
+// dash-bullet lists rendered as proper <p>/<h4>/<ul><li>.
+function renderDescriptionHTML(text) {
+  if (!text) return '';
+  const lines = String(text).replace(/\r\n/g, '\n').split('\n');
+  const parts = [];
+  let buffer = [];
+  let listItems = [];
+
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    const joined = buffer.join(' ').trim();
+    if (!joined) { buffer = []; return; }
+    if (buffer.length === 1 && /:\s*$/.test(buffer[0].trim())) {
+      parts.push(`<h4 style="font-size:14px;font-weight:700;color:#0F2A3D;margin:14px 0 6px;">${esc(joined)}</h4>`);
+    } else {
+      parts.push(`<p style="margin:0 0 10px;font-size:13px;color:#0F2A3D;line-height:1.7;">${esc(joined)}</p>`);
+    }
+    buffer = [];
+  };
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    const items = listItems.map(it => `<li style="margin-bottom:2px;">${esc(it)}</li>`).join('');
+    parts.push(`<ul style="margin:0 0 10px;padding-left:22px;color:#6B7785;font-size:13px;line-height:1.7;">${items}</ul>`);
+    listItems = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      flushBuffer();
+      flushList();
+      continue;
+    }
+    const bullet = line.match(/^[-•]\s*(.+)$/);
+    if (bullet) {
+      flushBuffer();
+      listItems.push(bullet[1].trim());
+    } else {
+      flushList();
+      buffer.push(line);
+    }
+  }
+  flushBuffer();
+  flushList();
+
+  return parts.join('');
+}
+
 const PAYMENT_OPTION_LABEL = {
   '5050': '50/50 split (50% deposit, balance on approval)',
   'full': 'Pay in full upfront',
@@ -156,8 +206,8 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOp
         ${box}
         <span style="font-size:14px;font-weight:600;">Check to subscribe (Monthly — ${formatGBP(data.partnerProgramme.price * (1 + data.vatRate))}/mo)</span>
       </div>
-      <div style="border:1px solid #E5E9EE;border-radius:8px;padding:14px;font-size:13px;white-space:pre-wrap;line-height:1.7;color:#0F2A3D;">
-${esc(data.partnerProgramme.description)}
+      <div style="border:1px solid #E5E9EE;border-radius:8px;padding:14px 16px;line-height:1.7;color:#0F2A3D;">
+        ${renderDescriptionHTML(data.partnerProgramme.description)}
       </div>
     </div>`;
   })() : '';

@@ -86,6 +86,79 @@ function FutureRateCell({ label, value, muted, highlight, strike }) {
   );
 }
 
+// Parse the partner-programme description (a `\n`-delimited string with
+// dash-bullets) into structured JSX: paragraphs, sub-headings, and bullet lists.
+// Render-time only — the underlying string in defaults / proposal data is
+// unchanged so the team can keep editing copy in the BuilderView naturally.
+function renderDescriptionMarkup(text) {
+  if (!text) return null;
+  const lines = String(text).replace(/\r\n/g, '\n').split('\n');
+  const blocks = [];
+  let buffer = []; // current run of text lines (a paragraph)
+  let listItems = []; // current run of bullet lines
+
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    const joined = buffer.join(' ').trim();
+    if (!joined) { buffer = []; return; }
+    // Detect "Heading:" pattern (line ending with `:`)
+    if (buffer.length === 1 && /:\s*$/.test(buffer[0].trim())) {
+      blocks.push({ kind: 'heading', text: joined });
+    } else {
+      blocks.push({ kind: 'paragraph', text: joined });
+    }
+    buffer = [];
+  };
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    blocks.push({ kind: 'list', items: listItems });
+    listItems = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      flushBuffer();
+      flushList();
+      continue;
+    }
+    const bullet = line.match(/^[-•]\s*(.+)$/);
+    if (bullet) {
+      flushBuffer();
+      listItems.push(bullet[1].trim());
+    } else {
+      flushList();
+      buffer.push(line);
+    }
+  }
+  flushBuffer();
+  flushList();
+
+  return blocks.map((b, i) => {
+    if (b.kind === 'heading') {
+      return (
+        <h4 key={i} style={{ fontSize: 14, fontWeight: 700, color: '#0F2A3D', margin: i === 0 ? '0 0 6px' : '14px 0 6px' }}>
+          {b.text}
+        </h4>
+      );
+    }
+    if (b.kind === 'list') {
+      return (
+        <ul key={i} style={{ margin: '0 0 10px', paddingLeft: 22, color: BRAND.muted, fontSize: 13, lineHeight: 1.7 }}>
+          {b.items.map((item, j) => (
+            <li key={j} style={{ marginBottom: 2 }}>{item}</li>
+          ))}
+        </ul>
+      );
+    }
+    return (
+      <p key={i} style={{ margin: i === 0 ? '0 0 10px' : '10px 0', fontSize: 13, color: BRAND.muted, lineHeight: 1.7 }}>
+        {b.text}
+      </p>
+    );
+  });
+}
+
 function validityLabel(dateStr, days) {
   const start = parseDateUK(dateStr);
   if (!start || !days) return null;
@@ -576,9 +649,6 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
                     </div>
                   );
                 })()}
-                <div style={{ flex: 1, border: '1px solid #FDE68A', borderRadius: 8, padding: 12, fontSize: 13, color: BRAND.muted, whiteSpace: 'pre-wrap', lineHeight: 1.6, background: 'white' }}>
-                  {(data.partnerProgramme.description || '').replace(/^\s*\d+\s+minute(?:s)?\s+of\s+additional\s+content\s+credit\s+per\s+month\s*[-–—]\s*Cancel\s+any\s+time\s*\n+/i, '')}
-                </div>
               </div>
 
               {/* RIGHT — action */}
@@ -607,6 +677,12 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
                 </div>
               </div>
             </div>
+
+            {data.partnerProgramme.description && (
+              <div style={{ marginTop: 14, background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 18px' }}>
+                {renderDescriptionMarkup((data.partnerProgramme.description || '').replace(/^\s*\d+\s+minute(?:s)?\s+of\s+additional\s+content\s+credit\s+per\s+month\s*[-–—]\s*Cancel\s+any\s+time\s*\n+/i, ''))}
+              </div>
+            )}
 
             <div style={{ marginTop: 14 }}>
               <button
