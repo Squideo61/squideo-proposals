@@ -575,7 +575,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
         <PageTitle>Payment Options</PageTitle>
         {partnerSelected && (
           <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#78350F', lineHeight: 1.5, marginBottom: 12 }}>
-            <strong>Partner Programme selected.</strong> To unlock the {Math.round((data.partnerProgramme.discountRate ?? 0.20) * 100)}% project discount, payment must be made in full (card/BACS) or via Purchase Order. The 50/50 split is not available with the Partner Programme.
+            <strong>Partner Programme selected.</strong> To unlock the {Math.round((data.partnerProgramme.discountRate ?? 0.20) * 100)}% project discount, payment must be made in full (card/BACS). The 50/50 split is not available with the Partner Programme.
           </div>
         )}
         <div style={{ display: 'grid', gap: 12, marginBottom: 12 }}>
