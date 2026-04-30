@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import sql from '../_lib/db.js';
 import { cors } from '../_lib/middleware.js';
+import { sendMail, paidHtml, APP_URL } from '../_lib/email.js';
 
 // bodyParser must be off so the webhook path gets raw bytes for signature verification.
 // For checkout/verify we parse the raw body manually below.
@@ -40,15 +41,62 @@ export default async function handler(req, res) {
         const proposalId = session.metadata?.proposalId;
         if (proposalId) {
           const isDeposit = session.metadata?.isDeposit === 'true';
+          const amount = session.amount_total / 100;
           await sql`
             INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email)
-            VALUES (${proposalId}, ${session.amount_total / 100}, ${isDeposit ? 'deposit' : 'full'},
+            VALUES (${proposalId}, ${amount}, ${isDeposit ? 'deposit' : 'full'},
                     NOW(), ${session.id}, ${session.customer_details?.email || null})
             ON CONFLICT (proposal_id) DO UPDATE
               SET amount = EXCLUDED.amount, payment_type = EXCLUDED.payment_type,
                   paid_at = EXCLUDED.paid_at, stripe_session_id = EXCLUDED.stripe_session_id,
                   customer_email = EXCLUDED.customer_email
           `;
+
+          // Notify the proposal creator. Best-effort — failures here mustn't
+          // affect the webhook's 200 response (Stripe will retry otherwise and
+          // we'd record duplicate payments via the idempotent upsert above).
+          try {
+            const [proposalRows, sigRows] = await Promise.all([
+              sql`SELECT data FROM proposals WHERE id = ${proposalId}`,
+              sql`SELECT name, email FROM signatures WHERE proposal_id = ${proposalId}`,
+            ]);
+            const proposal = proposalRows[0]?.data || {};
+            const ownerEmail = proposal.preparedByEmail || null;
+            if (ownerEmail) {
+              // Pull the Stripe-hosted receipt URL from the latest charge so
+              // the email's button takes the user straight to it.
+              let receiptUrl = null;
+              try {
+                if (session.payment_intent) {
+                  const pi = await stripe.paymentIntents.retrieve(session.payment_intent, { expand: ['latest_charge'] });
+                  receiptUrl = pi.latest_charge?.receipt_url || null;
+                }
+              } catch (err) {
+                console.warn('[stripe webhook] could not fetch receipt URL', err.message);
+              }
+
+              const sig = sigRows[0] || {};
+              const title = proposal.proposalTitle || proposal.clientName || proposalId;
+              const link = `${APP_URL}/?proposal=${proposalId}`;
+              await sendMail({
+                to: ownerEmail,
+                subject: `💰 Payment received: ${title}`,
+                html: paidHtml({
+                  proposal,
+                  signerName: sig.name || session.customer_details?.name,
+                  signerEmail: sig.email || session.customer_details?.email,
+                  amount,
+                  paymentType: isDeposit ? 'deposit' : 'full',
+                  paidAt: new Date().toISOString(),
+                  receiptUrl,
+                  link,
+                }),
+                text: `${sig.name || 'A client'} paid £${amount.toFixed(2)} (${isDeposit ? '50% deposit' : 'full payment'}) for "${title}".${receiptUrl ? ' Receipt: ' + receiptUrl : ''} ${link}`,
+              });
+            }
+          } catch (err) {
+            console.error('[stripe webhook] payment-received email failed', err);
+          }
         }
       }
     }
