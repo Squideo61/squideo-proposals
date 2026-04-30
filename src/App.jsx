@@ -121,6 +121,31 @@ function AppShell() {
     actions.deleteProposal(id);
   };
 
+  const duplicateProposal = (id) => {
+    const source = state.proposals[id];
+    if (!source) return;
+    const newId = makeId();
+    const copy = JSON.parse(JSON.stringify(source));
+    // Strip server-managed metadata so the new row starts fresh.
+    delete copy.id;
+    delete copy._number;
+    delete copy._views;
+    delete copy._createdAt;
+    // Re-stamp ownership and timestamps. Client/project content is preserved
+    // verbatim — that's the point of a duplicate.
+    const data = {
+      ...copy,
+      preparedBy: user.name || copy.preparedBy || 'Adam Shelton',
+      preparedByEmail: user.email || copy.preparedByEmail || null,
+      date: new Date().toLocaleDateString('en-GB'),
+      createdAt: Date.now(),
+    };
+    actions.saveProposal(newId, data);
+    setActiveId(newId);
+    setView('builder');
+    showMsg('Proposal duplicated');
+  };
+
   const deleteTemplate = (id) => {
     if (!confirm('Delete this template?')) return;
     actions.deleteTemplate(id);
@@ -144,6 +169,7 @@ function AppShell() {
           onOpen={(id) => { setActiveId(id); setView('builder'); }}
           onPreview={(id) => { setActiveId(id); setView('client'); }}
           onDelete={deleteProposal}
+          onDuplicate={duplicateProposal}
           onLogout={logout}
           onManageUsers={() => setModal({ type: 'users' })}
           onManageNotifications={() => setModal({ type: 'notifications' })}

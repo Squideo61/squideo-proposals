@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BarChart3, Check, Clock, Download, Eye, FileText, LayoutTemplate, Link2, Mail, MoreVertical, Plus, Search, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
+import { BarChart3, Check, Clock, Copy, Download, Eye, FileText, LayoutTemplate, Link2, Mail, MoreVertical, Plus, Search, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, useIsMobile } from '../utils.js';
@@ -7,7 +7,7 @@ import { openPrintWindow, printOptionsForSigned } from '../utils/printProposal.j
 import { Badge, Logo } from './ui.jsx';
 import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onLogout, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onLogout, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   const [analyticsId, setAnalyticsId] = useState(null);
@@ -125,6 +125,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onLogout, onMa
               onOpen={onOpen}
               onPreview={onPreview}
               onDelete={onDelete}
+              onDuplicate={onDuplicate}
               onAnalytics={() => setAnalyticsId(p.id)}
               showMsg={showMsg}
             />
@@ -157,7 +158,7 @@ function CreatorAvatar({ proposal, size = 24, showName = true }) {
   );
 }
 
-function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, showMsg }) {
+function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAnalytics, showMsg }) {
   const { state, actions } = useStore();
   const signed = state.signatures[proposal.id];
   const payment = state.payments[proposal.id];
@@ -293,6 +294,7 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onAnalytics, show
               icon: Download,
               onClick: () => openPrintWindow(proposal, signed ? printOptionsForSigned(signed, payment) : {}),
             },
+            ...(onDuplicate ? [{ label: 'Duplicate proposal', icon: Copy, onClick: () => onDuplicate(proposal.id) }] : []),
             ...(signed && !payment ? [{ label: 'Mark as paid', icon: Check, onClick: handleMarkPaid }] : []),
             ...(signed && !payment ? [{ label: 'Unmark as accepted', icon: Undo2, onClick: handleUnmarkAccepted }] : []),
             { label: 'Delete', icon: Trash2, onClick: () => onDelete(proposal.id), danger: true },
