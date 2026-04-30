@@ -658,7 +658,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
             </div>
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: partnerSelected ? 15 : 18, fontWeight: partnerSelected ? 600 : 700, paddingTop: partnerSelected ? 12 : 0, borderTop: partnerSelected ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
-            <span>{partnerSelected ? 'Project (discounted)' : 'Base project price'}</span>
+            <span>{partnerSelected ? 'Project (discounted)' : `Project total${extrasTotal > 0 ? ' (including selected extras)' : ''}`}</span>
             <span>
               {formatGBP(partnerSelected ? discountedSubtotal : subtotal)} <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT</span>
             </span>
