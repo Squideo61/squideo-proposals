@@ -37,7 +37,7 @@ export const DEFAULT_PROPOSAL = {
     enabled: true,
     price: 1200,
     discountRate: 0.20,
-    description: 'Video Credits are a pre-agreed way to allocate budget to ongoing video production.\n- Spend all credits on a single piece\n- Split credits across several smaller pieces\n- Roll credits forward for a larger video later\n\nWhy it\'s better:\n- More cost-effective – Less procurement/admin each time\n- Faster delivery – Streamlined production process utilising reserved capacity\n- Consistency: the same style can be reused and extended'
+    description: 'Content Credit is a pre-agreed way to allocate budget to ongoing video production.\n- Spend all credits on a single piece\n- Split credits across several smaller pieces\n- Roll credits forward for a larger video later\n\nWhy it\'s better:\n- More cost-effective – Less procurement/admin each time\n- Faster delivery – Streamlined production process utilising reserved capacity\n- Consistency - The same style can be reused and extended'
   },
   optionalExtras: [
     { id: 'voiceover', label: 'Professional Human Voiceover Artist', price: 125, description: 'Partner artists in a variety of styles to match your messaging.' },
