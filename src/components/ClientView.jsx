@@ -341,8 +341,8 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
     <div style={{ background: BRAND.paper, minHeight: '100vh' }}>
       <div style={{ position: 'sticky', top: 0, background: 'white', borderBottom: '1px solid ' + BRAND.border, padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
         {onBack ? <button onClick={onBack} className="btn-ghost"><ChevronLeft size={16} /> Back</button> : <div />}
-        <div style={{ fontSize: 12, color: isPreview ? '#92400E' : BRAND.muted, fontWeight: isPreview ? 700 : 400, letterSpacing: isPreview ? 0.5 : 0 }}>
-          {isPreview ? 'PREVIEW MODE' : 'Client view'}
+        <div style={{ fontSize: 12, color: '#92400E', fontWeight: 700, letterSpacing: 0.5 }}>
+          {isPreview ? 'PREVIEW MODE' : ''}
         </div>
         <button
           onClick={() => openPrintWindow(
