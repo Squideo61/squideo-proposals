@@ -630,7 +630,12 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
           {partnerSelected && (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 600, marginTop: 6 }}>
-                <span>+ First month Partner Programme</span>
+                <span>
+                  + First month Partner Programme
+                  <span style={{ opacity: 0.7, fontWeight: 500, fontSize: 13, marginLeft: 6 }}>
+                    ({partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'}/mo)
+                  </span>
+                </span>
                 <span>{formatGBP(partnerSubtotal)} <span style={{ fontWeight: 500, fontSize: 13, opacity: 0.7 }}>+ VAT</span></span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
@@ -638,7 +643,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
                 <span>{formatGBP(discountedSubtotal + partnerSubtotal)} <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT</span></span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 8, color: '#FFD54F' }}>
-                <span>Then £{partnerSubtotal.toFixed(2)} + VAT / month, cancel any time</span>
+                <span>Then {formatGBP(partnerSubtotal)} + VAT / month for {partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'} of content credit, cancel any time</span>
                 <span></span>
               </div>
             </>
