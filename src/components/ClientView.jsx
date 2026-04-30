@@ -74,8 +74,13 @@ function validityLabel(dateStr, days) {
 export function ClientView({ id, onBack, useRealStripe = false }) {
   const { state, actions, showMsg } = useStore();
   const data = state.proposals[id];
-  const signed = state.signatures[id] || null;
-  const payment = state.payments[id] || null;
+  const isPreview = !useRealStripe;
+  const storeSigned = state.signatures[id] || null;
+  const storePayment = state.payments[id] || null;
+  // In preview mode, any "signature" is local-only — never persisted.
+  const [previewSigned, setPreviewSigned] = useState(null);
+  const signed = isPreview && previewSigned ? previewSigned : storeSigned;
+  const payment = storePayment;
 
   // Track viewing session: open + heartbeat (active time only) + close beacon
   // Only fires for real client views (public URL). Internal previews from the
@@ -201,6 +206,13 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
       total,
       partnerTotal: partnerSelected ? partnerTotal : 0
     };
+
+    if (isPreview) {
+      setPreviewSigned(sig);
+      showMsg('Signature simulated — preview only, not saved');
+      return;
+    }
+
     actions.saveSignature(id, sig);
 
     const n = await sendNotification('signed', data, sig, null, state.notificationRecipients);
@@ -257,7 +269,9 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
     <div style={{ background: BRAND.paper, minHeight: '100vh' }}>
       <div style={{ position: 'sticky', top: 0, background: 'white', borderBottom: '1px solid ' + BRAND.border, padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
         {onBack ? <button onClick={onBack} className="btn-ghost"><ChevronLeft size={16} /> Back</button> : <div />}
-        <div style={{ fontSize: 12, color: BRAND.muted }}>Client view</div>
+        <div style={{ fontSize: 12, color: isPreview ? '#92400E' : BRAND.muted, fontWeight: isPreview ? 700 : 400, letterSpacing: isPreview ? 0.5 : 0 }}>
+          {isPreview ? 'PREVIEW MODE' : 'Client view'}
+        </div>
         <button
           onClick={() => openPrintWindow(
             data,
@@ -271,6 +285,23 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
           <FileDown size={14} /> {signed ? 'Download signed copy' : 'Download PDF'}
         </button>
       </div>
+
+      {isPreview && (
+        <div style={{ background: '#FEF3C7', borderBottom: '1px solid #FDE68A', color: '#78350F', padding: '10px 24px', fontSize: 13, lineHeight: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <strong>Preview mode</strong> — changes are not saved. You can simulate the client experience (selections, signature, payment), but nothing here will affect the live proposal or notify the team.
+          </div>
+          {previewSigned && (
+            <button
+              onClick={() => { setPreviewSigned(null); showMsg('Simulated signature cleared'); }}
+              className="btn-ghost"
+              style={{ fontSize: 12, padding: '6px 12px' }}
+            >
+              Clear simulated signature
+            </button>
+          )}
+        </div>
+      )}
 
       <div style={{ maxWidth: 800, margin: '0 auto', padding: signed ? '32px 24px 80px' : '32px 24px 140px', background: 'white' }}>
         <div style={{ background: BRAND.blue, color: 'white', padding: 32, borderRadius: 12, marginBottom: 32 }}>
