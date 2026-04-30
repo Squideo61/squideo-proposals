@@ -64,7 +64,7 @@ export default async function handler(req, res) {
   // --- CHECKOUT ---
   if (action === 'checkout') {
     if (req.method !== 'POST') return res.status(405).end();
-    const { proposalId, amount, isDeposit, customerEmail } = body;
+    const { proposalId, amount, isDeposit, customerEmail, partner } = body;
     if (!proposalId || !amount) return res.status(400).json({ error: 'proposalId and amount required' });
 
     const validEmail = typeof customerEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail.trim())
@@ -72,6 +72,68 @@ export default async function handler(req, res) {
       : undefined;
 
     try {
+      const successUrl = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId
+                       + '&session_id={CHECKOUT_SESSION_ID}';
+      const cancelUrl = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId;
+
+      // Partner Programme: subscription mode with the project added as a one-off
+      // line item on the first invoice. Stripe Checkout only allows recurring
+      // line items in subscription mode, so the one-off project goes via
+      // subscription_data.add_invoice_items.
+      if (partner && partner.partnerExVat > 0) {
+        const vatRate = Number(partner.vatRate) || 0;
+        const partnerMonthlyGross = partner.partnerExVat * (1 + vatRate);
+        const projectGross = partner.projectExVat * (1 + vatRate);
+
+        const session = await stripe.checkout.sessions.create({
+          mode: 'subscription',
+          customer_email: validEmail,
+          line_items: [{
+            price_data: {
+              currency: 'gbp',
+              product_data: {
+                name: 'Squideo Partner Programme'
+                  + (partner.partnerCredits ? ' — ' + partner.partnerCredits + ' min credit/mo' : ''),
+              },
+              unit_amount: Math.round(partnerMonthlyGross * 100),
+              recurring: { interval: 'month' },
+            },
+            quantity: 1,
+          }],
+          subscription_data: {
+            metadata: {
+              proposalId,
+              partnerCredits: String(partner.partnerCredits || 1),
+            },
+            invoice_settings: {
+              issuer: { type: 'self' },
+            },
+          },
+          // One-off project added to the first invoice only.
+          // (Stripe Checkout supports this via the top-level `add_invoice_items` field.)
+          add_invoice_items: [{
+            price_data: {
+              currency: 'gbp',
+              product_data: { name: 'Video Production — discounted project' },
+              unit_amount: Math.round(projectGross * 100),
+            },
+            quantity: 1,
+          }],
+          metadata: {
+            proposalId,
+            isDeposit: 'false',
+            partnerProgramme: 'true',
+            projectGross: String(Math.round(projectGross * 100)),
+            partnerMonthlyGross: String(Math.round(partnerMonthlyGross * 100)),
+          },
+          success_url: successUrl,
+          cancel_url: cancelUrl,
+        });
+
+        return res.status(200).json({ url: session.url });
+      }
+
+      // Standard one-off payment (no partner).
       const session = await stripe.checkout.sessions.create({
         mode: 'payment',
         customer_email: validEmail,
@@ -86,9 +148,8 @@ export default async function handler(req, res) {
           quantity: 1,
         }],
         metadata: { proposalId, isDeposit: isDeposit ? 'true' : 'false' },
-        success_url: 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId
-                     + '&session_id={CHECKOUT_SESSION_ID}',
-        cancel_url: 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
       });
 
       return res.status(200).json({ url: session.url });

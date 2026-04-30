@@ -198,6 +198,9 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
   const discountedSubtotal = subtotal - partnerDiscount;
   const discountedVat = discountedSubtotal * data.vatRate;
   const discountedTotal = discountedSubtotal + discountedVat;
+  // Combined "due today" when client opts into the Partner Programme:
+  // discounted project + first month of the partner subscription.
+  const dueNowTotal = partnerSelected ? (discountedTotal + partnerTotal) : total;
 
   const handleSign = async () => {
     if (!sigName.trim() || !sigEmail.trim() || !sigAccepted) {
@@ -212,8 +215,17 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
       partnerSelected,
       partnerCredits,
       paymentOption,
-      total,
-      partnerTotal: partnerSelected ? partnerTotal : 0
+      total: dueNowTotal,
+      partnerTotal: partnerSelected ? partnerTotal : 0,
+      amountBreakdown: partnerSelected ? {
+        projectExVat: discountedSubtotal,
+        projectTotal: discountedTotal,
+        partnerExVat: partnerSubtotal,
+        partnerTotal,
+        partnerCredits,
+        discountRate: data.partnerProgramme.discountRate ?? 0.20,
+        vatRate: data.vatRate,
+      } : null,
     };
 
     if (isPreview) {
@@ -236,6 +248,12 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
     }
     setPaymentChoice('processing');
     try {
+      const partnerCtx = signed.partnerSelected && signed.amountBreakdown ? {
+        projectExVat: signed.amountBreakdown.projectExVat,
+        partnerExVat: signed.amountBreakdown.partnerExVat,
+        partnerCredits: signed.amountBreakdown.partnerCredits,
+        vatRate: signed.amountBreakdown.vatRate,
+      } : null;
       const r = await fetch('/api/stripe/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -244,6 +262,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
           amount: signed.paymentOption === '5050' ? signed.total / 2 : signed.total,
           isDeposit: signed.paymentOption === '5050',
           customerEmail: signed.email,
+          partner: partnerCtx,
         }),
       });
       let payload = {};
@@ -529,16 +548,27 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
               <span>−{formatGBP(partnerDiscount)} + VAT</span>
             </div>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, paddingTop: partnerSelected ? 12 : 0, borderTop: partnerSelected ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
-            <span>Project total</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: partnerSelected ? 15 : 18, fontWeight: partnerSelected ? 600 : 700, paddingTop: partnerSelected ? 12 : 0, borderTop: partnerSelected ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
+            <span>{partnerSelected ? 'Project (discounted)' : 'Project total'}</span>
             <span>
               {formatGBP(partnerSelected ? discountedSubtotal : subtotal)} <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT</span>
             </span>
           </div>
           {partnerSelected && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.2)', color: '#FFD54F' }}>
-              <span>+ Partner Programme</span><span>{formatGBP(partnerSubtotal)} + VAT / month</span>
-            </div>
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 600, marginTop: 6 }}>
+                <span>+ First month Partner Programme</span>
+                <span>{formatGBP(partnerSubtotal)} <span style={{ fontWeight: 500, fontSize: 13, opacity: 0.7 }}>+ VAT</span></span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+                <span>Due today</span>
+                <span>{formatGBP(discountedSubtotal + partnerSubtotal)} <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT</span></span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 8, color: '#FFD54F' }}>
+                <span>Then £{partnerSubtotal.toFixed(2)} + VAT / month, cancel any time</span>
+                <span></span>
+              </div>
+            </>
           )}
         </div>
 
@@ -583,13 +613,18 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
           const exVat = partnerSelected ? discountedSubtotal : subtotal;
           const half = exVat / 2;
           const vatNote = <span style={{ color: BRAND.muted, fontWeight: 500 }}>+ VAT</span>;
+          const dueExVat = partnerSelected ? (discountedSubtotal + partnerSubtotal) : exVat;
           let line = null;
           if (paymentOption === '5050') {
             line = <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(half)}</strong> {vatNote} today, <strong>{formatGBP(half)}</strong> {vatNote} on final approval.</>;
           } else if (paymentOption === 'full') {
-            line = <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(exVat)}</strong> {vatNote} today.</>;
+            line = partnerSelected
+              ? <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(dueExVat)}</strong> {vatNote} today ({formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month Partner Programme), then {formatGBP(partnerSubtotal)} {vatNote}/month — cancel any time.</>
+              : <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(exVat)}</strong> {vatNote} today.</>;
           } else if (paymentOption === 'po') {
-            line = <>We&apos;ll invoice <strong style={{ color: BRAND.blue }}>{formatGBP(exVat)}</strong> {vatNote} once your Purchase Order is set up.</>;
+            line = partnerSelected
+              ? <>We&apos;ll invoice <strong style={{ color: BRAND.blue }}>{formatGBP(dueExVat)}</strong> {vatNote} once your Purchase Order is set up ({formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month Partner Programme), then {formatGBP(partnerSubtotal)} {vatNote}/month.</>
+              : <>We&apos;ll invoice <strong style={{ color: BRAND.blue }}>{formatGBP(exVat)}</strong> {vatNote} once your Purchase Order is set up.</>;
           }
           if (!line) return null;
           return (
@@ -649,9 +684,20 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
                 {CONFIG.company.termsUrl ? <>, and agree to our <a href={CONFIG.company.termsUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Terms & Conditions</a></> : null}.
               </span>
             </label>
-            <button onClick={handleSign} className="btn" style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15, marginTop: 12, background: '#16A34A' }}>
-              <Check size={18} /> Accept &amp; Sign — {formatGBP(partnerSelected ? discountedSubtotal : subtotal)} + VAT
-              {partnerSelected && ' + ' + formatGBP(partnerSubtotal) + ' + VAT/mo'}
+            <button onClick={handleSign} className="btn" style={{ width: '100%', justifyContent: 'center', padding: partnerSelected ? '14px 20px' : 14, fontSize: 15, marginTop: 12, background: '#16A34A', flexDirection: partnerSelected ? 'column' : 'row', gap: partnerSelected ? 4 : 6 }}>
+              {partnerSelected ? (
+                <>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16 }}>
+                    <Check size={18} /> Accept &amp; Sign
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.95 }}>
+                    {formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month
+                    {' '}= <strong>{formatGBP(discountedSubtotal + partnerSubtotal)} + VAT</strong>
+                  </span>
+                </>
+              ) : (
+                <><Check size={18} /> Accept &amp; Sign — {formatGBP(subtotal)} + VAT</>
+              )}
             </button>
           </div>
         )}

@@ -168,8 +168,15 @@ ${esc(data.partnerProgramme.description)}
       <div style="font-size:14px;line-height:1.9;color:#166534;">
         <div><strong>Signed by:</strong> ${esc(signed.name || '')}${signed.email ? ' (' + esc(signed.email) + ')' : ''}</div>
         ${signedDate ? `<div><strong>Date:</strong> ${esc(signedDate)}</div>` : ''}
-        ${totalCommitted !== null ? `<div><strong>Total committed:</strong> ${formatGBP(totalCommitted)}</div>` : ''}
         ${optLabel ? `<div><strong>Payment option:</strong> ${esc(optLabel)}</div>` : ''}
+        ${signed.partnerSelected && signed.amountBreakdown ? `
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid #BBF7D0;">
+            <div style="display:flex;justify-content:space-between;"><span>Project (discounted)</span><span><strong>${formatGBP(signed.amountBreakdown.projectExVat)}</strong> + VAT</span></div>
+            <div style="display:flex;justify-content:space-between;"><span>First month Partner Programme</span><span><strong>${formatGBP(signed.amountBreakdown.partnerExVat)}</strong> + VAT</span></div>
+            <div style="display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #BBF7D0;font-weight:700;"><span>Total committed today</span><span>${formatGBP(signed.amountBreakdown.projectExVat + signed.amountBreakdown.partnerExVat)} + VAT</span></div>
+            <div style="font-size:12px;color:#15803D;margin-top:6px;">Then ${formatGBP(signed.amountBreakdown.partnerExVat)} + VAT / month — cancel any time.</div>
+          </div>
+        ` : (totalCommitted !== null ? `<div><strong>Total committed:</strong> ${formatGBP(totalCommitted)}</div>` : '')}
       </div>
       ${paidLine}
       <p style="margin:20px 0 0;font-size:11px;color:#166534;line-height:1.5;font-style:italic;">

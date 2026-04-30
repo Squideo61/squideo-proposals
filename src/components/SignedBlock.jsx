@@ -19,7 +19,27 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
         <div style={{ fontSize: 14, color: '#2E7D32', lineHeight: 1.6 }}>
           <div>Signed by <strong>{signed.name}</strong> ({signed.email})</div>
           <div>On {new Date(signed.signedAt).toLocaleString('en-GB')}</div>
-          <div style={{ marginTop: 8 }}>Total committed: <strong>{formatGBP(totalExVat)} + VAT</strong></div>
+          {signed.partnerSelected && signed.amountBreakdown ? (
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #A5D6A7' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Project (discounted)</span>
+                <span><strong>{formatGBP(signed.amountBreakdown.projectExVat)}</strong> + VAT</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>First month Partner Programme</span>
+                <span><strong>{formatGBP(signed.amountBreakdown.partnerExVat)}</strong> + VAT</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid #A5D6A7', fontWeight: 700 }}>
+                <span>Total committed today</span>
+                <span>{formatGBP(signed.amountBreakdown.projectExVat + signed.amountBreakdown.partnerExVat)} + VAT</span>
+              </div>
+              <div style={{ fontSize: 12, color: '#15803D', marginTop: 6 }}>
+                Then {formatGBP(signed.amountBreakdown.partnerExVat)} + VAT / month — cancel any time.
+              </div>
+            </div>
+          ) : (
+            <div style={{ marginTop: 8 }}>Total committed: <strong>{formatGBP(totalExVat)} + VAT</strong></div>
+          )}
         </div>
       </div>
 
