@@ -23,13 +23,18 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
+    // Reject replay/overwrite: once signed, the only way to re-sign is for the
+    // team to clear the signature via the auth-required DELETE above (the
+    // dashboard's "Unmark as accepted" action).
+    const existing = await sql`SELECT 1 FROM signatures WHERE proposal_id = ${id} LIMIT 1`;
+    if (existing.length > 0) {
+      return res.status(409).json({ error: 'This proposal has already been signed.' });
+    }
+
     const { name, email, signedAt, ...rest } = req.body;
     await sql`
       INSERT INTO signatures (proposal_id, name, email, signed_at, data)
       VALUES (${id}, ${name}, ${email}, ${signedAt}, ${JSON.stringify(rest)})
-      ON CONFLICT (proposal_id) DO UPDATE
-        SET name = EXCLUDED.name, email = EXCLUDED.email,
-            signed_at = EXCLUDED.signed_at, data = EXCLUDED.data
     `;
 
     try {

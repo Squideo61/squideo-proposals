@@ -34,6 +34,11 @@ export default async function handler(req, res) {
     }
 
     if (avatar !== undefined) {
+      // Cap the data URL string at ~7.5 MB so a malicious caller can't bloat
+      // the DB (5 MB image binary ≈ 6.7 MB base64; small headroom for prefix).
+      if (typeof avatar === 'string' && avatar.length > 7_500_000) {
+        return res.status(413).json({ error: 'Avatar too large (max 5 MB)' });
+      }
       await sql`UPDATE users SET avatar = ${avatar || null} WHERE email = ${payload.email}`;
       return res.status(200).json({ ok: true });
     }

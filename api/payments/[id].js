@@ -1,5 +1,5 @@
 import sql from '../_lib/db.js';
-import { cors } from '../_lib/middleware.js';
+import { cors, requireAuth } from '../_lib/middleware.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -15,6 +15,8 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
     const { amount, paymentType, paidAt, stripeSessionId, customerEmail } = req.body;
     await sql`
       INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email)
