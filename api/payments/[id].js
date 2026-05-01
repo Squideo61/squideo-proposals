@@ -8,23 +8,24 @@ export default async function handler(req, res) {
   const { id } = req.query;
 
   if (req.method === 'GET') {
-    const rows = await sql`SELECT amount, payment_type, paid_at, stripe_session_id, customer_email FROM payments WHERE proposal_id = ${id}`;
+    const rows = await sql`SELECT amount, payment_type, paid_at, stripe_session_id, customer_email, receipt_url FROM payments WHERE proposal_id = ${id}`;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const r = rows[0];
-    return res.status(200).json({ amount: r.amount, paymentType: r.payment_type, paidAt: r.paid_at, stripeSessionId: r.stripe_session_id, customerEmail: r.customer_email });
+    return res.status(200).json({ amount: r.amount, paymentType: r.payment_type, paidAt: r.paid_at, stripeSessionId: r.stripe_session_id, customerEmail: r.customer_email, receiptUrl: r.receipt_url });
   }
 
   if (req.method === 'POST') {
     const user = await requireAuth(req, res);
     if (!user) return;
-    const { amount, paymentType, paidAt, stripeSessionId, customerEmail } = req.body;
+    const { amount, paymentType, paidAt, stripeSessionId, customerEmail, receiptUrl } = req.body;
     await sql`
-      INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email)
-      VALUES (${id}, ${amount}, ${paymentType}, ${paidAt}, ${stripeSessionId}, ${customerEmail})
+      INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email, receipt_url)
+      VALUES (${id}, ${amount}, ${paymentType}, ${paidAt}, ${stripeSessionId}, ${customerEmail}, ${receiptUrl || null})
       ON CONFLICT (proposal_id) DO UPDATE
         SET amount = EXCLUDED.amount, payment_type = EXCLUDED.payment_type,
             paid_at = EXCLUDED.paid_at, stripe_session_id = EXCLUDED.stripe_session_id,
-            customer_email = EXCLUDED.customer_email
+            customer_email = EXCLUDED.customer_email,
+            receipt_url = COALESCE(EXCLUDED.receipt_url, payments.receipt_url)
     `;
     return res.status(201).json({ ok: true });
   }

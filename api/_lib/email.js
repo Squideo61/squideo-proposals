@@ -58,6 +58,52 @@ function shell(innerHtml) {
 </body></html>`;
 }
 
+// Mirrors the NEXT_STEPS constant in src/defaults.js. Update both together.
+const CLIENT_NEXT_STEPS = [
+  'Accept this quote to guarantee a production slot in our creative schedule.',
+  "We'll invoice your initial payment or arrange supplier setup with you for Purchase Orders.",
+  'Your Production Manager will reach out to arrange an introduction meeting with our Delivery Team.',
+];
+
+function nextStepsList() {
+  return `<ol style="margin:0 0 20px;padding:0 0 0 20px;color:#0F2A3D;">
+    ${CLIENT_NEXT_STEPS.map(s => `<li style="margin:0 0 8px;font-size:14px;line-height:1.55;">${escapeHtml(s)}</li>`).join('')}
+  </ol>`;
+}
+
+function ctaButton(href, label, color = '#2BB8E6') {
+  return `<a href="${escapeHtml(href)}" style="display:inline-block;background:${color};color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;">${escapeHtml(label)}</a>`;
+}
+
+export function clientSignedThanksHtml({ proposal, clientName, signedProposalLink }) {
+  const title = proposal.proposalTitle || proposal.clientName || 'your proposal';
+  const inner = `
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Thanks${clientName ? ', ' + escapeHtml(clientName) : ''} — we've got your signed proposal</h2>
+    <p style="margin:0 0 16px;">We've received your acceptance for <strong>${escapeHtml(title)}</strong>. A copy is below for your records, along with the next steps.</p>
+    <p style="margin:0 0 18px;">${ctaButton(signedProposalLink, 'Download signed proposal', '#16A34A')}</p>
+    <h3 style="margin:18px 0 10px;font-size:15px;font-weight:700;">What happens next</h3>
+    ${nextStepsList()}
+    <p style="margin:0;font-size:13px;color:#6B7785;">Any questions? Just reply to this email.</p>
+  `;
+  return shell(inner);
+}
+
+export function clientPaidThanksHtml({ proposal, clientName, signedProposalLink, receiptUrl }) {
+  const title = proposal.proposalTitle || proposal.clientName || 'your proposal';
+  const inner = `
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Payment received — thanks${clientName ? ', ' + escapeHtml(clientName) : ''}!</h2>
+    <p style="margin:0 0 16px;">We've received your payment for <strong>${escapeHtml(title)}</strong>. Production will be scheduled shortly.</p>
+    <p style="margin:0 0 18px;">
+      ${ctaButton(signedProposalLink, 'Download signed proposal', '#16A34A')}
+      ${receiptUrl ? ctaButton(receiptUrl, 'Download receipt', '#2BB8E6') : ''}
+    </p>
+    <h3 style="margin:18px 0 10px;font-size:15px;font-weight:700;">What happens next</h3>
+    ${nextStepsList()}
+    <p style="margin:0;font-size:13px;color:#6B7785;">Any questions? Just reply to this email.</p>
+  `;
+  return shell(inner);
+}
+
 export function inviteHtml({ inviterName, link, expiresInDays = 7 }) {
   const inner = `
     <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">You've been invited to Squideo Proposals</h2>

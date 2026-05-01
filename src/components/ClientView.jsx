@@ -5,7 +5,7 @@ import {
   RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
 } from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
-import { SQUIDEO_LOGO } from '../defaults.js';
+import { SQUIDEO_LOGO, NEXT_STEPS } from '../defaults.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
@@ -167,7 +167,7 @@ function validityLabel(dateStr, days) {
   return expiry.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export function ClientView({ id, onBack, useRealStripe = false }) {
+export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
   const { state, actions, showMsg } = useStore();
   const data = state.proposals[id];
   const isPreview = !useRealStripe;
@@ -352,6 +352,8 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
     }
 
     actions.saveSignature(id, sig);
+
+    if (onSigned) onSigned(sig);
 
     const n = await sendNotification('signed', data, sig, null, state.notificationRecipients);
     if (n > 0) showMsg('Proposal accepted! Team notified (' + n + ').');
@@ -829,11 +831,7 @@ export function ClientView({ id, onBack, useRealStripe = false }) {
 
         <PageTitle>Next Steps</PageTitle>
         <div style={{ marginBottom: 32 }}>
-          {[
-            'Accept this quote to guarantee a production slot in our creative schedule.',
-            "We'll invoice your initial payment or arrange supplier setup with you for Purchase Orders.",
-            'Your Production Manager will reach out to arrange an introduction meeting with our Delivery Team.',
-          ].map((step, i) => (
+          {NEXT_STEPS.map((step, i) => (
             <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 12, fontSize: 14, lineHeight: 1.7 }}>
               <div style={{ width: 24, height: 24, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0, marginTop: 1 }}>
                 {i + 1}

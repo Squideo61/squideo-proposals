@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import sql from '../_lib/db.js';
 import { cors } from '../_lib/middleware.js';
-import { sendMail, paidHtml, APP_URL } from '../_lib/email.js';
+import { sendMail, paidHtml, clientPaidThanksHtml, APP_URL } from '../_lib/email.js';
 
 // bodyParser must be off so the webhook path gets raw bytes for signature verification.
 // For checkout/verify we parse the raw body manually below.
@@ -42,19 +42,37 @@ export default async function handler(req, res) {
         if (proposalId) {
           const isDeposit = session.metadata?.isDeposit === 'true';
           const amount = session.amount_total / 100;
-          await sql`
-            INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email)
+
+          // Pull the Stripe-hosted receipt URL from the latest charge so we
+          // can persist it and link to it from the client thank-you email.
+          let receiptUrl = null;
+          try {
+            if (session.payment_intent) {
+              const pi = await stripe.paymentIntents.retrieve(session.payment_intent, { expand: ['latest_charge'] });
+              receiptUrl = pi.latest_charge?.receipt_url || null;
+            }
+          } catch (err) {
+            console.warn('[stripe webhook] could not fetch receipt URL', err.message);
+          }
+
+          // xmax = 0 in RETURNING is true only when the row was actually
+          // inserted, false on UPDATE. We use that to send the client
+          // thank-you email exactly once even if verify and webhook race.
+          const upserted = await sql`
+            INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email, receipt_url)
             VALUES (${proposalId}, ${amount}, ${isDeposit ? 'deposit' : 'full'},
-                    NOW(), ${session.id}, ${session.customer_details?.email || null})
+                    NOW(), ${session.id}, ${session.customer_details?.email || null}, ${receiptUrl})
             ON CONFLICT (proposal_id) DO UPDATE
               SET amount = EXCLUDED.amount, payment_type = EXCLUDED.payment_type,
                   paid_at = EXCLUDED.paid_at, stripe_session_id = EXCLUDED.stripe_session_id,
-                  customer_email = EXCLUDED.customer_email
+                  customer_email = EXCLUDED.customer_email,
+                  receipt_url = COALESCE(EXCLUDED.receipt_url, payments.receipt_url)
+            RETURNING (xmax = 0) AS inserted
           `;
+          const isFirstWrite = upserted[0]?.inserted === true;
 
-          // Notify the proposal creator. Best-effort — failures here mustn't
-          // affect the webhook's 200 response (Stripe will retry otherwise and
-          // we'd record duplicate payments via the idempotent upsert above).
+          // Best-effort emails — failures here mustn't affect the webhook's
+          // 200 response (Stripe would retry and we'd risk duplicates).
           try {
             const [proposalRows, sigRows] = await Promise.all([
               sql`SELECT data FROM proposals WHERE id = ${proposalId}`,
@@ -62,22 +80,11 @@ export default async function handler(req, res) {
             ]);
             const proposal = proposalRows[0]?.data || {};
             const ownerEmail = proposal.preparedByEmail || null;
-            if (ownerEmail) {
-              // Pull the Stripe-hosted receipt URL from the latest charge so
-              // the email's button takes the user straight to it.
-              let receiptUrl = null;
-              try {
-                if (session.payment_intent) {
-                  const pi = await stripe.paymentIntents.retrieve(session.payment_intent, { expand: ['latest_charge'] });
-                  receiptUrl = pi.latest_charge?.receipt_url || null;
-                }
-              } catch (err) {
-                console.warn('[stripe webhook] could not fetch receipt URL', err.message);
-              }
+            const sig = sigRows[0] || {};
+            const title = proposal.proposalTitle || proposal.clientName || proposalId;
+            const link = `${APP_URL}/?proposal=${proposalId}`;
 
-              const sig = sigRows[0] || {};
-              const title = proposal.proposalTitle || proposal.clientName || proposalId;
-              const link = `${APP_URL}/?proposal=${proposalId}`;
+            if (isFirstWrite && ownerEmail) {
               await sendMail({
                 to: ownerEmail,
                 subject: `💰 Payment received: ${title}`,
@@ -92,6 +99,17 @@ export default async function handler(req, res) {
                   link,
                 }),
                 text: `${sig.name || 'A client'} paid £${amount.toFixed(2)} (${isDeposit ? '50% deposit' : 'full payment'}) for "${title}".${receiptUrl ? ' Receipt: ' + receiptUrl : ''} ${link}`,
+              });
+            }
+
+            const clientEmail = sig.email || session.customer_details?.email;
+            if (isFirstWrite && clientEmail) {
+              const signedProposalLink = `${APP_URL}/?proposal=${proposalId}&thanks=1&download=signed`;
+              await sendMail({
+                to: clientEmail,
+                subject: `Payment received — ${title}`,
+                html: clientPaidThanksHtml({ proposal, clientName: sig.name, signedProposalLink, receiptUrl }),
+                text: `Thanks${sig.name ? ', ' + sig.name : ''}! Payment received for "${title}". Signed proposal: ${signedProposalLink}${receiptUrl ? ' · Receipt: ' + receiptUrl : ''}`,
               });
             }
           } catch (err) {
@@ -211,23 +229,83 @@ export default async function handler(req, res) {
     if (session.metadata?.proposalId !== proposalId) return res.status(403).json({ error: 'Session mismatch' });
 
     const isDeposit = session.metadata?.isDeposit === 'true';
+
+    let receiptUrl = null;
+    try {
+      if (session.payment_intent) {
+        const pi = await stripe.paymentIntents.retrieve(session.payment_intent, { expand: ['latest_charge'] });
+        receiptUrl = pi.latest_charge?.receipt_url || null;
+      }
+    } catch (err) {
+      console.warn('[stripe verify] could not fetch receipt URL', err.message);
+    }
+
     const payment = {
       amount: session.amount_total / 100,
       paymentType: isDeposit ? 'deposit' : 'full',
       paidAt: new Date().toISOString(),
       stripeSessionId: session_id,
       customerEmail: session.customer_details?.email || null,
+      receiptUrl,
     };
 
-    await sql`
-      INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email)
+    const upserted = await sql`
+      INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email, receipt_url)
       VALUES (${proposalId}, ${payment.amount}, ${payment.paymentType}, ${payment.paidAt},
-              ${payment.stripeSessionId}, ${payment.customerEmail})
+              ${payment.stripeSessionId}, ${payment.customerEmail}, ${receiptUrl})
       ON CONFLICT (proposal_id) DO UPDATE
         SET amount = EXCLUDED.amount, payment_type = EXCLUDED.payment_type,
             paid_at = EXCLUDED.paid_at, stripe_session_id = EXCLUDED.stripe_session_id,
-            customer_email = EXCLUDED.customer_email
+            customer_email = EXCLUDED.customer_email,
+            receipt_url = COALESCE(EXCLUDED.receipt_url, payments.receipt_url)
+      RETURNING (xmax = 0) AS inserted
     `;
+    const isFirstWrite = upserted[0]?.inserted === true;
+
+    if (isFirstWrite) {
+      try {
+        const [proposalRows, sigRows] = await Promise.all([
+          sql`SELECT data FROM proposals WHERE id = ${proposalId}`,
+          sql`SELECT name, email FROM signatures WHERE proposal_id = ${proposalId}`,
+        ]);
+        const proposal = proposalRows[0]?.data || {};
+        const sig = sigRows[0] || {};
+        const ownerEmail = proposal.preparedByEmail || null;
+        const title = proposal.proposalTitle || proposal.clientName || proposalId;
+        const link = `${APP_URL}/?proposal=${proposalId}`;
+
+        if (ownerEmail) {
+          await sendMail({
+            to: ownerEmail,
+            subject: `💰 Payment received: ${title}`,
+            html: paidHtml({
+              proposal,
+              signerName: sig.name || session.customer_details?.name,
+              signerEmail: sig.email || session.customer_details?.email,
+              amount: payment.amount,
+              paymentType: payment.paymentType,
+              paidAt: payment.paidAt,
+              receiptUrl,
+              link,
+            }),
+            text: `${sig.name || 'A client'} paid £${payment.amount.toFixed(2)} (${isDeposit ? '50% deposit' : 'full payment'}) for "${title}".${receiptUrl ? ' Receipt: ' + receiptUrl : ''} ${link}`,
+          });
+        }
+
+        const clientEmail = sig.email || session.customer_details?.email;
+        if (clientEmail) {
+          const signedProposalLink = `${APP_URL}/?proposal=${proposalId}&thanks=1&download=signed`;
+          await sendMail({
+            to: clientEmail,
+            subject: `Payment received — ${title}`,
+            html: clientPaidThanksHtml({ proposal, clientName: sig.name, signedProposalLink, receiptUrl }),
+            text: `Thanks${sig.name ? ', ' + sig.name : ''}! Payment received for "${title}". Signed proposal: ${signedProposalLink}${receiptUrl ? ' · Receipt: ' + receiptUrl : ''}`,
+          });
+        }
+      } catch (err) {
+        console.error('[stripe verify] payment-received email failed', err);
+      }
+    }
 
     return res.status(200).json(payment);
   }

@@ -1,6 +1,6 @@
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
-import { sendMail, signedHtml, APP_URL } from '../_lib/email.js';
+import { sendMail, signedHtml, clientSignedThanksHtml, APP_URL } from '../_lib/email.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -44,14 +44,24 @@ export default async function handler(req, res) {
       ]);
       const proposal = proposals[0]?.data || {};
       const recipients = users.map(u => u.email).filter(Boolean);
+      const title = proposal.proposalTitle || proposal.clientName || id;
+      const link = `${APP_URL}/?proposal=${id}`;
       if (recipients.length) {
-        const title = proposal.proposalTitle || proposal.clientName || id;
-        const link = `${APP_URL}/?proposal=${id}`;
         await sendMail({
           to: recipients,
           subject: `🎉 Signed: ${title}`,
           html: signedHtml({ proposal, signerName: name, signerEmail: email, signedAt, link }),
           text: `${name || 'Someone'} (${email || ''}) signed "${title}" on ${signedAt}. ${link}`,
+        });
+      }
+
+      if (email) {
+        const signedProposalLink = `${APP_URL}/?proposal=${id}&thanks=1&download=signed`;
+        await sendMail({
+          to: email,
+          subject: `Thanks for signing — ${title}`,
+          html: clientSignedThanksHtml({ proposal, clientName: name, signedProposalLink }),
+          text: `Thanks${name ? ', ' + name : ''}! We've got your signed proposal for "${title}". Download it here: ${signedProposalLink}`,
         });
       }
     } catch (err) {

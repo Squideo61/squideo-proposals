@@ -1,6 +1,12 @@
 import { CONFIG } from './theme.js';
 export { SQUIDEO_LOGO } from './_logo_tmp.js';
 
+export const NEXT_STEPS = [
+  'Accept this quote to guarantee a production slot in our creative schedule.',
+  "We'll invoice your initial payment or arrange supplier setup with you for Purchase Orders.",
+  'Your Production Manager will reach out to arrange an introduction meeting with our Delivery Team.',
+];
+
 export const DEFAULT_PROPOSAL = {
   clientName: '',
   contactBusinessName: '',
