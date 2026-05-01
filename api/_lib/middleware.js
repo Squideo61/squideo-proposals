@@ -20,3 +20,13 @@ export async function requireAuth(req, res) {
     return null;
   }
 }
+
+export async function requireAdmin(req, res) {
+  const payload = await requireAuth(req, res);
+  if (!payload) return null;
+  if (payload.role !== 'admin') {
+    res.status(403).json({ error: 'Admin access required' });
+    return null;
+  }
+  return payload;
+}

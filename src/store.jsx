@@ -27,7 +27,7 @@ function sessionFromToken() {
     if (!token) return null;
     const payload = JSON.parse(atob(token.split('.')[1]));
     if (payload.exp && payload.exp < Date.now() / 1000) { clearToken(); return null; }
-    return { email: payload.email, name: payload.name };
+    return { email: payload.email, name: payload.name, role: payload.role || 'member' };
   } catch {
     return null;
   }
@@ -84,7 +84,7 @@ export function StoreProvider({ children }) {
   const actions = useMemo(() => ({
     login(user, token) {
       if (token) setToken(token);
-      setState(s => ({ ...s, session: { email: user.email, name: user.name, avatar: user.avatar ?? null }, loading: true }));
+      setState(s => ({ ...s, session: { email: user.email, name: user.name, avatar: user.avatar ?? null, role: user.role || 'member' }, loading: true }));
       fetchAllRef.current?.();
     },
     logout() {
@@ -93,7 +93,7 @@ export function StoreProvider({ children }) {
     },
     signup(user, token) {
       if (token) setToken(token);
-      setState(s => ({ ...s, session: { email: user.email, name: user.name, avatar: null }, users: { ...s.users, [user.email]: user }, loading: true }));
+      setState(s => ({ ...s, session: { email: user.email, name: user.name, avatar: null, role: user.role || 'member' }, users: { ...s.users, [user.email]: user }, loading: true }));
       fetchAllRef.current?.();
     },
     updateAvatar(avatar) {
@@ -113,7 +113,7 @@ export function StoreProvider({ children }) {
         delete users[email];
         return { ...s, users };
       });
-      api.delete('/api/users/' + encodeURIComponent(email)).catch(() => {});
+      api.delete('/api/users?email=' + encodeURIComponent(email)).catch(() => {});
     },
     saveProposal(id, data) {
       setState(s => {

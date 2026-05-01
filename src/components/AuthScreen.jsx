@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { api } from '../api.js';
@@ -6,31 +6,61 @@ import { Field, Logo } from './ui.jsx';
 
 export function AuthScreen() {
   const { actions, showMsg } = useStore();
-  const [mode, setMode] = useState('login');
+  const inviteToken = new URLSearchParams(window.location.search).get('invite');
+
+  const [mode, setMode] = useState(inviteToken ? 'signup' : 'login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [invitePreview, setInvitePreview] = useState(null);
+  const [inviteState, setInviteState] = useState(inviteToken ? 'loading' : 'none'); // none | loading | valid | invalid
+
+  useEffect(() => {
+    if (!inviteToken) return;
+    let cancelled = false;
+    api.get('/api/invites?token=' + encodeURIComponent(inviteToken))
+      .then((data) => {
+        if (cancelled) return;
+        setInvitePreview(data);
+        setEmail(data.email);
+        setInviteState('valid');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setInviteState('invalid');
+      });
+    return () => { cancelled = true; };
+  }, [inviteToken]);
+
+  const stripInviteFromUrl = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('invite');
+    window.history.replaceState({}, '', url.toString());
+  };
 
   const submit = async () => {
     setError('');
-    if (!email.trim() || !password.trim() || (mode === 'signup' && !name.trim())) {
-      setError('All fields required');
-      return;
-    }
-    if (!email.includes('@')) {
-      setError('Enter a valid email');
-      return;
+    if (mode === 'signup') {
+      if (!name.trim() || !password.trim()) { setError('All fields required'); return; }
+      if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
+    } else {
+      if (!email.trim() || !password.trim()) { setError('All fields required'); return; }
+      if (!email.includes('@')) { setError('Enter a valid email'); return; }
     }
     setBusy(true);
     try {
-      const e = email.toLowerCase().trim();
       if (mode === 'signup') {
-        const { token, user } = await api.post('/api/auth/signup', { email: e, name: name.trim(), password });
+        const e = (invitePreview?.email || email).toLowerCase().trim();
+        const { token, user } = await api.post('/api/auth/signup', {
+          email: e, name: name.trim(), password, inviteToken,
+        });
         actions.signup(user, token);
+        stripInviteFromUrl();
         showMsg('Welcome, ' + user.name);
       } else {
+        const e = email.toLowerCase().trim();
         const { token, user } = await api.post('/api/auth/login', { email: e, password });
         actions.login(user, token);
         showMsg('Welcome back, ' + user.name);
@@ -50,29 +80,59 @@ export function AuthScreen() {
           <div>
             <div style={{ fontSize: 18, fontWeight: 700 }}>Squideo Proposals</div>
             <div style={{ fontSize: 12, color: BRAND.muted }}>
-              {mode === 'login' ? 'Sign in to your account' : 'Create an account'}
+              {mode === 'login' ? 'Sign in to your account' : 'Accept your invite'}
             </div>
           </div>
         </div>
 
-        {mode === 'signup' && (
-          <Field label="Full name">
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Adam Shelton" />
-          </Field>
+        {mode === 'signup' && inviteState === 'loading' && (
+          <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 16 }}>Checking invite…</div>
         )}
-        <Field label="Email">
-          <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@squideo.com" />
-        </Field>
-        <Field label="Password">
-          <input
-            className="input"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-          />
-        </Field>
+
+        {mode === 'signup' && inviteState === 'invalid' && (
+          <div style={{ background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '10px 12px', borderRadius: 6, marginBottom: 12 }}>
+            This invite is invalid or has expired. Ask your workspace admin for a new one.
+          </div>
+        )}
+
+        {mode === 'signup' && inviteState === 'valid' && (
+          <>
+            <Field label="Full name">
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" autoFocus />
+            </Field>
+            <Field label="Email">
+              <input className="input" type="email" value={invitePreview?.email || email} readOnly disabled />
+            </Field>
+            <Field label="Password">
+              <input
+                className="input"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="At least 6 characters"
+                onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+              />
+            </Field>
+          </>
+        )}
+
+        {mode === 'login' && (
+          <>
+            <Field label="Email">
+              <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@squideo.co.uk" />
+            </Field>
+            <Field label="Password">
+              <input
+                className="input"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+              />
+            </Field>
+          </>
+        )}
 
         {error && (
           <div style={{ background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '10px 12px', borderRadius: 6, marginBottom: 12 }}>
@@ -80,18 +140,34 @@ export function AuthScreen() {
           </div>
         )}
 
-        <button onClick={submit} disabled={busy} className="btn" style={{ width: '100%', justifyContent: 'center', padding: 12 }}>
-          {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
-        </button>
-
-        <div style={{ textAlign: 'center', marginTop: 16, fontSize: 13, color: BRAND.muted }}>
-          {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-          <button
-            onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); }}
-            className="btn-link"
-          >
-            {mode === 'login' ? 'Sign up' : 'Sign in'}
+        {(mode === 'login' || (mode === 'signup' && inviteState === 'valid')) && (
+          <button onClick={submit} disabled={busy} className="btn" style={{ width: '100%', justifyContent: 'center', padding: 12 }}>
+            {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
           </button>
+        )}
+
+        {mode === 'signup' && inviteState === 'invalid' && (
+          <button
+            onClick={() => { setMode('login'); setError(''); stripInviteFromUrl(); }}
+            className="btn"
+            style={{ width: '100%', justifyContent: 'center', padding: 12 }}
+          >
+            Back to sign in
+          </button>
+        )}
+
+        <div style={{ textAlign: 'center', marginTop: 16, fontSize: 12, color: BRAND.muted }}>
+          {mode === 'login'
+            ? 'Account creation is by invite only. Contact your workspace admin if you need access.'
+            : 'Already have an account? '}
+          {mode === 'signup' && (
+            <button
+              onClick={() => { setMode('login'); setError(''); stripInviteFromUrl(); }}
+              className="btn-link"
+            >
+              Sign in
+            </button>
+          )}
         </div>
       </div>
     </div>

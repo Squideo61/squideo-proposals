@@ -58,6 +58,17 @@ function shell(innerHtml) {
 </body></html>`;
 }
 
+export function inviteHtml({ inviterName, link, expiresInDays = 7 }) {
+  const inner = `
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">You've been invited to Squideo Proposals</h2>
+    <p style="margin:0 0 12px;">${escapeHtml(inviterName || 'A teammate')} has invited you to join the Squideo Proposals workspace.</p>
+    <p style="margin:0 0 20px;">Click the button below to set up your account. This invite expires in ${expiresInDays} days.</p>
+    <p style="margin:0 0 20px;"><a href="${escapeHtml(link)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Accept invite</a></p>
+    <p style="margin:0;color:#6B7785;font-size:12px;">If the button doesn't work, paste this link into your browser:<br/><span style="word-break:break-all;">${escapeHtml(link)}</span></p>
+  `;
+  return shell(inner);
+}
+
 export function firstViewHtml({ title, clientName, country, city, link }) {
   const where = [city, country].filter(Boolean).join(', ');
   const inner = `

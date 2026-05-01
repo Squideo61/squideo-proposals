@@ -1,24 +1,25 @@
 import bcrypt from 'bcryptjs';
-import sql from '../_lib/db.js';
-import { cors, requireAuth } from '../_lib/middleware.js';
+import sql from './_lib/db.js';
+import { cors, requireAuth, requireAdmin } from './_lib/middleware.js';
 
 export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const payload = await requireAuth(req, res);
-  if (!payload) return;
-
   if (req.method === 'GET') {
-    const rows = await sql`SELECT email, name, avatar, created_at FROM users ORDER BY created_at ASC`;
+    const payload = await requireAuth(req, res);
+    if (!payload) return;
+    const rows = await sql`SELECT email, name, avatar, role, created_at FROM users ORDER BY created_at ASC`;
     const users = {};
     for (const row of rows) {
-      users[row.email] = { email: row.email, name: row.name, avatar: row.avatar, createdAt: row.created_at };
+      users[row.email] = { email: row.email, name: row.name, avatar: row.avatar, role: row.role || 'member', createdAt: row.created_at };
     }
     return res.status(200).json(users);
   }
 
   if (req.method === 'PATCH') {
+    const payload = await requireAuth(req, res);
+    if (!payload) return;
     const { avatar, current_password, new_password } = req.body;
 
     if (new_password !== undefined) {
@@ -44,6 +45,16 @@ export default async function handler(req, res) {
     }
 
     return res.status(400).json({ error: 'Nothing to update' });
+  }
+
+  if (req.method === 'DELETE') {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const email = req.query.email ? String(req.query.email) : null;
+    if (!email) return res.status(400).json({ error: 'email query parameter is required' });
+    if (email === admin.email) return res.status(400).json({ error: 'You cannot delete your own account' });
+    await sql`DELETE FROM users WHERE email = ${email}`;
+    return res.status(200).json({ ok: true });
   }
 
   res.status(405).end();
