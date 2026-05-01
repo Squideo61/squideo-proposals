@@ -140,7 +140,7 @@ export default async function handler(req, res) {
     try {
       const successUrl = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId
                        + '&session_id={CHECKOUT_SESSION_ID}';
-      const cancelUrl = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId;
+      const cancelUrl = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId + '&thanks=1';
 
       // Partner Programme: charge project + first-month partner combined as a
       // single one-off payment. Stripe Checkout doesn't support mixing one-off

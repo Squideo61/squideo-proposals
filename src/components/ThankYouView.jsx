@@ -1,13 +1,15 @@
-import React, { useEffect, useRef } from 'react';
-import { Check, Download, FileText, Phone } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Check, CreditCard, Download, FileText, Phone } from 'lucide-react';
 import { BRAND, CONFIG } from '../theme.js';
 import { NEXT_STEPS } from '../defaults.js';
 import { formatGBP } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
+import { startStripeCheckout } from '../utils/stripeCheckout.js';
 import { Logo } from './ui.jsx';
 
-export function ThankYouView({ proposal, signed, payment, onViewProposal }) {
+export function ThankYouView({ proposalId, proposal, signed, payment, onViewProposal, useRealStripe = true, showMsg }) {
   const autoPrintFiredRef = useRef(false);
+  const [paymentChoice, setPaymentChoice] = useState(null); // null | 'invoice' | 'processing'
 
   // Auto-fire print when arriving via the email's "Download signed proposal"
   // CTA. Strip the flag so a refresh doesn't re-trigger it.
@@ -35,6 +37,10 @@ export function ThankYouView({ proposal, signed, payment, onViewProposal }) {
   const title = proposal.proposalTitle || proposal.clientName || 'your proposal';
   const clientName = signed?.name || proposal.clientName;
   const totalExVat = proposal.vatRate && signed?.total ? signed.total / (1 + proposal.vatRate) : signed?.total;
+  const isPO = signed?.paymentOption === 'po';
+  const isDeposit = signed?.paymentOption === '5050';
+  const amountDue = signed ? (isDeposit ? signed.total / 2 : signed.total) : 0;
+  const showPaymentPanel = signed && !payment && !isPO;
 
   const downloadSigned = () => {
     if (!signed) return;
@@ -44,6 +50,21 @@ export function ThankYouView({ proposal, signed, payment, onViewProposal }) {
   const downloadReceipt = () => {
     if (!signed || !payment) return;
     openReceiptWindow(proposal, signed, payment);
+  };
+
+  const handlePayNow = async () => {
+    if (!useRealStripe) {
+      showMsg && showMsg('Payments are disabled in preview mode');
+      return;
+    }
+    setPaymentChoice('processing');
+    try {
+      await startStripeCheckout({ proposalId, signed });
+    } catch (err) {
+      console.error('[stripe checkout]', err);
+      setPaymentChoice(null);
+      showMsg && showMsg(err?.message ? 'Checkout error: ' + err.message : 'Could not start checkout. Please try again.');
+    }
   };
 
   return (
@@ -114,6 +135,76 @@ export function ThankYouView({ proposal, signed, payment, onViewProposal }) {
           </div>
         </div>
 
+        {showPaymentPanel && paymentChoice !== 'invoice' && (
+          <div style={{
+            background: 'white',
+            border: '2px solid ' + BRAND.blue,
+            borderRadius: 12,
+            padding: 24,
+            marginBottom: 20,
+          }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>
+              Pay your {isDeposit ? 'deposit' : 'invoice'} now
+            </h3>
+            <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
+              {isDeposit
+                ? 'Pay your 50% deposit of ' + formatGBP(amountDue) + ' now to start production immediately.'
+                : signed.partnerSelected
+                  ? 'Pay the full amount of ' + formatGBP(amountDue) + ' now to start production and activate your Partner Programme.'
+                  : 'Pay the full amount of ' + formatGBP(amountDue) + ' now to lock in your free subtitled version.'}
+            </p>
+
+            <div style={{ background: BRAND.paper, borderRadius: 8, padding: 14, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 12, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>Amount due now</div>
+                <div style={{ fontSize: 22, fontWeight: 700, marginTop: 2 }}>{formatGBP(amountDue)}</div>
+              </div>
+              <div style={{ fontSize: 11, color: BRAND.muted, textAlign: 'right' }}>
+                Secure payment by<br />
+                <strong style={{ color: BRAND.ink, fontSize: 13 }}>Stripe</strong>
+              </div>
+            </div>
+
+            <button
+              onClick={handlePayNow}
+              disabled={paymentChoice === 'processing'}
+              className="btn"
+              style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}
+            >
+              <CreditCard size={16} />
+              {paymentChoice === 'processing' ? 'Connecting…' : 'Pay ' + formatGBP(amountDue) + ' now by card'}
+            </button>
+
+            <button
+              onClick={() => setPaymentChoice('invoice')}
+              style={{ background: 'none', border: 'none', color: BRAND.muted, cursor: 'pointer', fontSize: 13, marginTop: 12, width: '100%', textAlign: 'center', padding: 8 }}
+            >
+              Skip — send me an invoice instead
+            </button>
+          </div>
+        )}
+
+        {showPaymentPanel && paymentChoice === 'invoice' && (
+          <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+            <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Invoice on its way</h4>
+            <p style={{ fontSize: 13, color: BRAND.muted, margin: 0, lineHeight: 1.5 }}>
+              We'll send an invoice for {formatGBP(amountDue)} to {signed.email} within 24 hours.
+            </p>
+            <button onClick={() => setPaymentChoice(null)} className="btn-ghost" style={{ marginTop: 12, fontSize: 12 }}>
+              Changed your mind? Pay now instead
+            </button>
+          </div>
+        )}
+
+        {signed && !payment && isPO && (
+          <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+            <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Purchase Order confirmed</h4>
+            <p style={{ fontSize: 13, color: BRAND.muted, margin: 0, lineHeight: 1.5 }}>
+              Our team will be in touch within 24 hours to set up your supplier details and confirm the Purchase Order for {formatGBP(amountDue)}.
+            </p>
+          </div>
+        )}
+
         <div style={{
           background: 'white',
           border: '1px solid ' + BRAND.border,
@@ -152,3 +243,4 @@ export function ThankYouView({ proposal, signed, payment, onViewProposal }) {
     </div>
   );
 }
+

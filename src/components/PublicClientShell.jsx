@@ -70,9 +70,11 @@ export function PublicClientShell({ proposalId }) {
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <ThankYouView
+          proposalId={proposalId}
           proposal={proposal}
           signed={signed}
           payment={payment}
+          showMsg={showMsg}
           onViewProposal={() => {
             const clean = new URL(window.location.href);
             clean.searchParams.delete('thanks');

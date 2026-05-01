@@ -75,12 +75,16 @@ function ctaButton(href, label, color = '#2BB8E6') {
   return `<a href="${escapeHtml(href)}" style="display:inline-block;background:${color};color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;">${escapeHtml(label)}</a>`;
 }
 
-export function clientSignedThanksHtml({ proposal, clientName, signedProposalLink }) {
+export function clientSignedThanksHtml({ proposal, clientName, signedProposalLink, payNowLink }) {
   const title = proposal.proposalTitle || proposal.clientName || 'your proposal';
   const inner = `
     <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Thanks${clientName ? ', ' + escapeHtml(clientName) : ''} — we've got your signed proposal</h2>
     <p style="margin:0 0 16px;">We've received your acceptance for <strong>${escapeHtml(title)}</strong>. A copy is below for your records, along with the next steps.</p>
-    <p style="margin:0 0 18px;">${ctaButton(signedProposalLink, 'Download signed proposal', '#16A34A')}</p>
+    <p style="margin:0 0 18px;">
+      ${ctaButton(signedProposalLink, 'Download signed proposal', '#16A34A')}
+      ${payNowLink ? ctaButton(payNowLink, 'Pay now by card', '#2BB8E6') : ''}
+    </p>
+    ${payNowLink ? `<p style="margin:0 0 18px;font-size:13px;color:#6B7785;">Paying by card now starts production immediately.</p>` : ''}
     <h3 style="margin:18px 0 10px;font-size:15px;font-weight:700;">What happens next</h3>
     ${nextStepsList()}
     <p style="margin:0;font-size:13px;color:#6B7785;">Any questions? Just reply to this email.</p>

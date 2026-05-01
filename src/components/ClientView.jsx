@@ -9,6 +9,7 @@ import { SQUIDEO_LOGO, NEXT_STEPS } from '../defaults.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
+import { startStripeCheckout } from '../utils/stripeCheckout.js';
 import { Field, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
 import { SignedBlock } from './SignedBlock.jsx';
 import { StripeSimModal } from './StripeSimModal.jsx';
@@ -367,27 +368,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     }
     setPaymentChoice('processing');
     try {
-      const partnerCtx = signed.partnerSelected && signed.amountBreakdown ? {
-        projectExVat: signed.amountBreakdown.projectExVat,
-        partnerExVat: signed.amountBreakdown.partnerExVat,
-        partnerCredits: signed.amountBreakdown.partnerCredits,
-        vatRate: signed.amountBreakdown.vatRate,
-      } : null;
-      const r = await fetch('/api/stripe/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          proposalId: id,
-          amount: signed.paymentOption === '5050' ? signed.total / 2 : signed.total,
-          isDeposit: signed.paymentOption === '5050',
-          customerEmail: signed.email,
-          partner: partnerCtx,
-        }),
-      });
-      let payload = {};
-      try { payload = await r.json(); } catch {}
-      if (!r.ok || !payload.url) throw new Error(payload.error || ('Checkout failed (HTTP ' + r.status + ')'));
-      window.location.href = payload.url;
+      await startStripeCheckout({ proposalId: id, signed });
     } catch (err) {
       console.error('[stripe checkout]', err);
       setPaymentChoice(null);
