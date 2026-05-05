@@ -10,10 +10,36 @@ import { Logo } from './ui.jsx';
 export function ThankYouView({ proposalId, proposal, signed, payment, onViewProposal, useRealStripe = true, showMsg }) {
   const autoPrintFiredRef = useRef(false);
   const [paymentChoice, setPaymentChoice] = useState(null); // null | 'invoice' | 'processing'
+  const [celebrating] = useState(() =>
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('celebrate') === '1'
+  );
 
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
+
+  // One-shot celebration on fresh sign. The ?celebrate=1 flag is set by
+  // PublicClientShell.onSigned and stripped here so refresh / re-entry doesn't
+  // re-fire the confetti.
+  useEffect(() => {
+    if (!celebrating) return;
+    let cancelled = false;
+    import('canvas-confetti').then(({ default: confetti }) => {
+      if (cancelled) return;
+      confetti({ particleCount: 90, spread: 70, origin: { y: 0.35 } });
+      setTimeout(() => {
+        if (cancelled) return;
+        confetti({ particleCount: 60, spread: 100, origin: { y: 0.45 } });
+      }, 220);
+    });
+    const params = new URLSearchParams(window.location.search);
+    params.delete('celebrate');
+    const url = new URL(window.location.href);
+    url.search = params.toString();
+    window.history.replaceState({}, '', url.toString());
+    return () => { cancelled = true; };
+  }, [celebrating]);
 
   // Auto-fire print when arriving via the email's "Download signed proposal"
   // CTA. Strip the flag so a refresh doesn't re-trigger it.
@@ -88,14 +114,20 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
           marginBottom: 20,
           boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
         }}>
-          <div style={{
-            width: 56, height: 56, borderRadius: '50%', background: '#E8F5E9',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 18px',
-          }}>
+          <div
+            className={celebrating ? 'celebrate-pop' : undefined}
+            style={{
+              width: 56, height: 56, borderRadius: '50%', background: '#E8F5E9',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 18px',
+            }}
+          >
             <Check size={32} color="#16A34A" strokeWidth={2.5} />
           </div>
-          <h1 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 700, color: BRAND.ink }}>
+          <h1
+            className={celebrating ? 'celebrate-rise' : undefined}
+            style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 700, color: BRAND.ink }}
+          >
             {payment ? 'Payment received' : 'Thanks for signing'}{clientName ? `, ${clientName}` : ''}!
           </h1>
           <p style={{ margin: 0, fontSize: 15, color: BRAND.muted, lineHeight: 1.55 }}>

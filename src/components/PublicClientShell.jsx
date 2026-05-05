@@ -97,6 +97,7 @@ export function PublicClientShell({ proposalId }) {
         onSigned={() => {
           const clean = new URL(window.location.href);
           clean.searchParams.set('thanks', '1');
+          clean.searchParams.set('celebrate', '1');
           window.history.pushState({}, '', clean.toString());
           setShowThanks(true);
         }}

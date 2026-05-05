@@ -588,8 +588,8 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
         </div>
 
         {data.partnerProgramme.enabled && (
-          <div style={{ position: 'relative', marginTop: 24, marginBottom: 16, background: '#FFFAEB', border: '1px solid #D97706', borderRadius: 12, padding: 16 }}>
-            <span style={{ position: 'absolute', top: -16, right: 16, background: '#D97706', color: 'white', fontSize: 14, fontWeight: 700, padding: '6px 14px', borderRadius: 999, boxShadow: '0 2px 6px rgba(146, 64, 14, 0.25)', letterSpacing: 0.3 }}>
+          <div style={{ position: 'relative', marginTop: 24, marginBottom: 16, background: '#FFFAEB', border: '1px solid #C9A227', borderRadius: 12, padding: 16 }}>
+            <span style={{ position: 'absolute', top: -16, right: 16, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', fontSize: 14, fontWeight: 700, padding: '6px 14px', borderRadius: 999, boxShadow: '0 2px 8px rgba(146, 64, 14, 0.35), inset 0 1px 0 rgba(255,255,255,0.3)', textShadow: '0 1px 2px rgba(0,0,0,0.35)', letterSpacing: 0.3 }}>
               Opt in today and save {formatGBP(partnerDiscount)} on this project
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
@@ -690,9 +690,10 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                         border: '1px solid #D1D5DB',
                       }
                     : {
-                        background: '#D97706',
+                        background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)',
                         color: 'white',
-                        boxShadow: '0 2px 8px rgba(146, 64, 14, 0.25)',
+                        textShadow: '0 1px 2px rgba(0,0,0,0.35)',
+                        boxShadow: '0 2px 10px rgba(146, 64, 14, 0.35), inset 0 1px 0 rgba(255,255,255,0.35)',
                       }),
                 }}
               >
