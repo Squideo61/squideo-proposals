@@ -37,7 +37,7 @@ export const DEFAULT_PROPOSAL = {
     { title: 'Team follow-up video revisions meeting', description: 'A comprehensive review of your revisions, ensuring we understand exactly what needs changing.' },
     { title: 'Bespoke animated version of your logo', description: 'Included within the video.' },
     { title: 'Ownership rights of final video version', description: '' },
-    { title: 'Futureproofing — 24 months editable file storage', description: 'During this time ongoing updates can be made at any time.' }
+    { title: 'Futureproofing - 24 months editable file storage', description: 'During this time ongoing updates can be made at any time.' }
   ],
   partnerProgramme: {
     enabled: true,

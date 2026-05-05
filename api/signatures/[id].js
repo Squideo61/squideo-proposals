@@ -60,7 +60,7 @@ export default async function handler(req, res) {
         const payNowLink = rest.paymentOption !== 'po' ? `${APP_URL}/?proposal=${id}&thanks=1` : null;
         await sendMail({
           to: email,
-          subject: `Thanks for signing — ${title}`,
+          subject: `Thanks for signing - ${title}`,
           html: clientSignedThanksHtml({ proposal, clientName: name, signedProposalLink, payNowLink }),
           text: `Thanks${name ? ', ' + name : ''}! We've got your signed proposal for "${title}". Download it here: ${signedProposalLink}${payNowLink ? '. Pay now: ' + payNowLink : ''}`,
         });

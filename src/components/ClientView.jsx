@@ -349,7 +349,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
 
     if (isPreview) {
       setPreviewSigned(sig);
-      showMsg('Signature simulated — preview only, not saved');
+      showMsg('Signature simulated - preview only, not saved');
       return;
     }
 
@@ -420,7 +420,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
       {isPreview && (
         <div style={{ background: '#FEF3C7', borderBottom: '1px solid #FDE68A', color: '#78350F', padding: '10px 24px', fontSize: 13, lineHeight: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div>
-            <strong>Preview mode</strong> — changes are not saved. You can simulate the client experience (selections, signature, payment), but nothing here will affect the live proposal or notify the team.
+            <strong>Preview mode</strong> - changes are not saved. You can simulate the client experience (selections, signature, payment), but nothing here will affect the live proposal or notify the team.
           </div>
           {previewSigned && (
             <button
@@ -601,7 +601,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                 style={{ height: 40, width: 'auto', flexShrink: 0 }}
               />
               <div style={{ fontSize: 16, fontWeight: 700, color: '#92400E' }}>
-                Squideo Partner Programme —{' '}
+                Squideo Partner Programme -{' '}
                 <a href="https://www.squideo.com/partner-programme" target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Click Here to Learn More</a>
               </div>
             </div>
@@ -625,12 +625,12 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                         <span style={{ fontSize: 28, fontWeight: 800, color: '#0F2A3D', lineHeight: 1.1 }}>
                           {formatGBP(futureRate)}<span style={{ fontSize: 16, fontWeight: 600, color: '#6B7785' }}>/min</span>
                         </span>
-                        <span style={{ fontSize: 12, fontWeight: 700, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', padding: '3px 10px', borderRadius: 999, textShadow: '0 1px 1px rgba(0,0,0,0.25)' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', lineHeight: 1, fontSize: 12, fontWeight: 700, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', padding: '5px 10px', borderRadius: 999, textShadow: '0 1px 1px rgba(0,0,0,0.25)', alignSelf: 'center' }}>
                           −{futurePct}%
                         </span>
                       </div>
                       <div style={{ fontSize: 13, color: '#78350F', marginBottom: 12, lineHeight: 1.5 }}>
-                        {formatGBP(savingPerMin)} less per minute than the standard <span style={{ textDecoration: 'line-through' }}>{formatGBP(standardRate)}/min</span> — locked in as long as you stay subscribed.
+                        {formatGBP(savingPerMin)} less per minute than the standard rate - locked in as long as you stay subscribed.
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 }}>
                         <FutureRateCell label="Standard" value={formatGBP(standardRate) + '/min'} muted strike />
@@ -664,7 +664,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                     {' '}You&apos;re at <strong>{partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'} = {formatPct(effectiveDiscount)}% off</strong>
                     {effectiveDiscount < partnerMaxDiscount
                       ? <> · add another to save <strong>{formatPct(Math.min(partnerMaxDiscount, effectiveDiscount + partnerExtraPerCredit))}%</strong>.</>
-                      : <> — maximum.</>}
+                      : <> - maximum.</>}
                   </div>
                 )}
                 <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 15, fontWeight: 700 }}>
@@ -672,7 +672,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                   <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>+ VAT / month</span></span>
                 </div>
                 <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5, padding: '4px 2px' }}>
-                  💳 <strong>First month charged when you sign.</strong> Renews monthly — cancel any time, even mid-project.
+                  💳 <strong>First month charged when you sign.</strong> Renews monthly - cancel any time, even mid-project.
                 </div>
               </div>
             </div>
@@ -712,8 +712,8 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                 }}
               >
                 {partnerSelected
-                  ? `✓ Joined — saving ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off) — click to remove`
-                  : `Opt in to Partner Programme — save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`}
+                  ? `✓ Joined - saving ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off) - click to remove`
+                  : `Opt in to Partner Programme - save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`}
               </button>
               <div style={{ fontSize: 12, color: '#5D8A00', textAlign: 'center', marginTop: 8 }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
             </div>
@@ -772,11 +772,11 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           {(() => {
             const subtitlesPrice = data.optionalExtras.find(e => e.id === 'subtitles')?.price ?? 125;
             const fullIncentive = data.paymentOptionDescs?.full?.trim() || `get a free subtitled version (worth £${subtitlesPrice})`;
-            const fullTitle = partnerSelected ? 'Pay in full' : `Pay in full — ${fullIncentive}`;
+            const fullTitle = partnerSelected ? 'Pay in full' : `Pay in full - ${fullIncentive}`;
             const OPTION_CONFIG = {
               '5050': { title: '50/50 split', desc: '50% deposit to start, balance invoiced when you approve the final video.' },
               'full': { title: fullTitle, desc: 'Pay upfront via card or BACS.' },
-              'po': { title: 'Purchase Order', desc: 'Raise a Purchase Order — our team will be in touch to set up supplier details and confirm payment.' },
+              'po': { title: 'Purchase Order', desc: 'Raise a Purchase Order - our team will be in touch to set up supplier details and confirm payment.' },
             };
             return (data.paymentOptions || ['5050', 'full']).map((key) => {
               const cfg = OPTION_CONFIG[key];
@@ -784,7 +784,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
               const lockedByPartner = key === '5050' && partnerSelected;
               const disabled = !!signed || lockedByPartner;
               const disabledReason = lockedByPartner
-                ? 'Unavailable with the Partner Programme — choose Pay in full or Purchase Order.'
+                ? 'Unavailable with the Partner Programme - choose Pay in full or Purchase Order.'
                 : undefined;
               return (
                 <PaymentOption
@@ -810,7 +810,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
             line = <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(half)}</strong> {vatNote} today, <strong>{formatGBP(half)}</strong> {vatNote} on final approval.</>;
           } else if (paymentOption === 'full') {
             line = partnerSelected
-              ? <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(dueExVat)}</strong> {vatNote} today ({formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month Partner Programme), then {formatGBP(partnerSubtotal)} {vatNote}/month — cancel any time.</>
+              ? <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(dueExVat)}</strong> {vatNote} today ({formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month Partner Programme), then {formatGBP(partnerSubtotal)} {vatNote}/month - cancel any time.</>
               : <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(exVat)}</strong> {vatNote} today.</>;
           } else if (paymentOption === 'po') {
             line = partnerSelected
@@ -833,7 +833,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
               <CalendarClock size={18} color="#B45309" style={{ flexShrink: 0 }} />
               <div style={{ fontSize: 13, color: '#78350F', lineHeight: 1.5 }}>
                 <strong style={{ color: '#92400E' }}>This proposal expires {expiry}.</strong>{' '}
-                Production slots fill up — please confirm before then to secure yours.
+                Production slots fill up - please confirm before then to secure yours.
               </div>
             </div>
           );
@@ -860,7 +860,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
             <strong style={{ color: BRAND.ink }}>Please note:</strong>{' '}Our production schedule is often booked several weeks in advance.
             To ensure we can deliver within your desired timeframe, we recommend confirming this quote as soon as possible.
             <br /><br />
-            <strong style={{ color: BRAND.ink }}>You don't need to have your brief finalised before securing your slot</strong>{' '}—
+            <strong style={{ color: BRAND.ink }}>You don't need to have your brief finalised before securing your slot</strong>{' '}-
             once confirmed, we'll help you refine your content and creative direction as part of the process.
             <br /><br />
             After the 28-day validity period, we may not be able to fulfil the project due to existing commitments.

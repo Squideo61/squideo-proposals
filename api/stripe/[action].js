@@ -107,7 +107,7 @@ export default async function handler(req, res) {
               const signedProposalLink = `${APP_URL}/?proposal=${proposalId}&thanks=1&download=signed`;
               await sendMail({
                 to: clientEmail,
-                subject: `Payment received — ${title}`,
+                subject: `Payment received - ${title}`,
                 html: clientPaidThanksHtml({ proposal, clientName: sig.name, signedProposalLink, receiptUrl }),
                 text: `Thanks${sig.name ? ', ' + sig.name : ''}! Payment received for "${title}". Signed proposal: ${signedProposalLink}${receiptUrl ? ' · Receipt: ' + receiptUrl : ''}`,
               });
@@ -160,7 +160,7 @@ export default async function handler(req, res) {
             {
               price_data: {
                 currency: 'gbp',
-                product_data: { name: 'Video production — discounted project' },
+                product_data: { name: 'Video production - discounted project' },
                 unit_amount: Math.round(projectGross * 100),
               },
               quantity: 1,
@@ -169,7 +169,7 @@ export default async function handler(req, res) {
               price_data: {
                 currency: 'gbp',
                 product_data: {
-                  name: 'Squideo Partner Programme — first month'
+                  name: 'Squideo Partner Programme - first month'
                     + (partner.partnerCredits ? ` (${partner.partnerCredits} min credit)` : ''),
                 },
                 unit_amount: Math.round(partnerMonthlyGross * 100),
@@ -200,7 +200,7 @@ export default async function handler(req, res) {
           price_data: {
             currency: 'gbp',
             product_data: {
-              name: isDeposit ? 'Video production — 50% deposit' : 'Video production — full payment',
+              name: isDeposit ? 'Video production - 50% deposit' : 'Video production - full payment',
             },
             unit_amount: Math.round(amount * 100),
           },
@@ -297,7 +297,7 @@ export default async function handler(req, res) {
           const signedProposalLink = `${APP_URL}/?proposal=${proposalId}&thanks=1&download=signed`;
           await sendMail({
             to: clientEmail,
-            subject: `Payment received — ${title}`,
+            subject: `Payment received - ${title}`,
             html: clientPaidThanksHtml({ proposal, clientName: sig.name, signedProposalLink, receiptUrl }),
             text: `Thanks${sig.name ? ', ' + sig.name : ''}! Payment received for "${title}". Signed proposal: ${signedProposalLink}${receiptUrl ? ' · Receipt: ' + receiptUrl : ''}`,
           });

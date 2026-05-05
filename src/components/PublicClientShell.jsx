@@ -48,7 +48,7 @@ export function PublicClientShell({ proposalId }) {
         setShowThanks(true);
         showMsg('Payment confirmed! Thank you.');
       })
-      .catch(() => showMsg('Could not verify payment — please contact us.'));
+      .catch(() => showMsg('Could not verify payment - please contact us.'));
   }, [proposalId]); // eslint-disable-line
 
   if (state.loading) {

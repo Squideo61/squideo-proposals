@@ -215,7 +215,7 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
               onClick={() => setPaymentChoice('invoice')}
               style={{ background: 'none', border: 'none', color: BRAND.muted, cursor: 'pointer', fontSize: 13, marginTop: 12, width: '100%', textAlign: 'center', padding: 8 }}
             >
-              Skip — send me an invoice instead
+              Skip - send me an invoice instead
             </button>
           </div>
         )}

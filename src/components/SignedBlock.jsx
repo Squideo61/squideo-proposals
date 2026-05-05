@@ -34,7 +34,7 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
                 <span>{formatGBP(signed.amountBreakdown.projectExVat + signed.amountBreakdown.partnerExVat)} + VAT</span>
               </div>
               <div style={{ fontSize: 12, color: '#15803D', marginTop: 6 }}>
-                Then {formatGBP(signed.amountBreakdown.partnerExVat)} + VAT / month — cancel any time.
+                Then {formatGBP(signed.amountBreakdown.partnerExVat)} + VAT / month - cancel any time.
               </div>
             </div>
           ) : (
@@ -121,7 +121,7 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
           </button>
 
           <button onClick={onChooseInvoice} style={{ background: 'none', border: 'none', color: BRAND.muted, cursor: 'pointer', fontSize: 13, marginTop: 12, width: '100%', textAlign: 'center', padding: 8 }}>
-            Skip — send me an invoice instead
+            Skip - send me an invoice instead
           </button>
         </div>
       )}

@@ -78,7 +78,7 @@ function ctaButton(href, label, color = '#2BB8E6') {
 export function clientSignedThanksHtml({ proposal, clientName, signedProposalLink, payNowLink }) {
   const title = proposal.proposalTitle || proposal.clientName || 'your proposal';
   const inner = `
-    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Thanks${clientName ? ', ' + escapeHtml(clientName) : ''} — we've got your signed proposal</h2>
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Thanks${clientName ? ', ' + escapeHtml(clientName) : ''} - we've got your signed proposal</h2>
     <p style="margin:0 0 16px;">We've received your acceptance for <strong>${escapeHtml(title)}</strong>. A copy is below for your records, along with the next steps.</p>
     <p style="margin:0 0 18px;">
       ${ctaButton(signedProposalLink, 'Download signed proposal', '#16A34A')}
@@ -95,7 +95,7 @@ export function clientSignedThanksHtml({ proposal, clientName, signedProposalLin
 export function clientPaidThanksHtml({ proposal, clientName, signedProposalLink, receiptUrl }) {
   const title = proposal.proposalTitle || proposal.clientName || 'your proposal';
   const inner = `
-    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Payment received — thanks${clientName ? ', ' + escapeHtml(clientName) : ''}!</h2>
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Payment received - thanks${clientName ? ', ' + escapeHtml(clientName) : ''}!</h2>
     <p style="margin:0 0 16px;">We've received your payment for <strong>${escapeHtml(title)}</strong>. Production will be scheduled shortly.</p>
     <p style="margin:0 0 18px;">
       ${ctaButton(signedProposalLink, 'Download signed proposal', '#16A34A')}
@@ -124,7 +124,7 @@ export function firstViewHtml({ title, clientName, country, city, link }) {
   const inner = `
     <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">${escapeHtml(clientName || 'A client')} just opened your proposal</h2>
     <p style="margin:0 0 12px;">They've opened <strong>${escapeHtml(title)}</strong> for the first time${where ? ` from <strong>${escapeHtml(where)}</strong>` : ''}.</p>
-    <p style="margin:0 0 20px;color:#6B7785;font-size:13px;">This is a one-time alert — you won't get another email for the same proposal.</p>
+    <p style="margin:0 0 20px;color:#6B7785;font-size:13px;">This is a one-time alert - you won't get another email for the same proposal.</p>
     <p style="margin:0;"><a href="${escapeHtml(link)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open proposal</a></p>
   `;
   return shell(inner);
@@ -156,7 +156,7 @@ export function paidHtml({ proposal, signerName, signerEmail, amount, paymentTyp
   const amountLabel = paymentType === 'deposit' ? '50% deposit' : 'full payment';
   const inner = `
     <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">💰 Payment received</h2>
-    <p style="margin:0 0 16px;">${escapeHtml(signerName || 'A client')}${signerEmail ? ` (${escapeHtml(signerEmail)})` : ''} just paid <strong>${formatGBP(amount)}</strong> (${escapeHtml(amountLabel)}) for <strong>${escapeHtml(title)}</strong>${proposal.clientName && proposal.clientName !== title ? ` — ${escapeHtml(proposal.clientName)}` : ''}.</p>
+    <p style="margin:0 0 16px;">${escapeHtml(signerName || 'A client')}${signerEmail ? ` (${escapeHtml(signerEmail)})` : ''} just paid <strong>${formatGBP(amount)}</strong> (${escapeHtml(amountLabel)}) for <strong>${escapeHtml(title)}</strong>${proposal.clientName && proposal.clientName !== title ? ` - ${escapeHtml(proposal.clientName)}` : ''}.</p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 22px;">
       ${proposal.contactBusinessName ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Business</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(proposal.contactBusinessName)}</td></tr>` : ''}
       <tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Amount</td><td style="padding:4px 0;font-size:13px;font-weight:600;">${formatGBP(amount)}</td></tr>

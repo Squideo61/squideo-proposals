@@ -204,7 +204,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOp
       ${futureRatePanel}
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
         ${box}
-        <span style="font-size:14px;font-weight:600;">Check to subscribe (Monthly — ${formatGBP(data.partnerProgramme.price * (1 + data.vatRate))}/mo)</span>
+        <span style="font-size:14px;font-weight:600;">Check to subscribe (Monthly - ${formatGBP(data.partnerProgramme.price * (1 + data.vatRate))}/mo)</span>
       </div>
       <div style="border:1px solid #E5E9EE;border-radius:8px;padding:14px 16px;line-height:1.7;color:#0F2A3D;">
         ${renderDescriptionHTML(data.partnerProgramme.description)}
@@ -274,7 +274,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOp
             <div style="display:flex;justify-content:space-between;"><span>Project (discounted)</span><span><strong>${formatGBP(signed.amountBreakdown.projectExVat)}</strong> + VAT</span></div>
             <div style="display:flex;justify-content:space-between;"><span>First month Partner Programme</span><span><strong>${formatGBP(signed.amountBreakdown.partnerExVat)}</strong> + VAT</span></div>
             <div style="display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #BBF7D0;font-weight:700;"><span>Total committed today</span><span>${formatGBP(signed.amountBreakdown.projectExVat + signed.amountBreakdown.partnerExVat)} + VAT</span></div>
-            <div style="font-size:12px;color:#15803D;margin-top:6px;">Then ${formatGBP(signed.amountBreakdown.partnerExVat)} + VAT / month — cancel any time.</div>
+            <div style="font-size:12px;color:#15803D;margin-top:6px;">Then ${formatGBP(signed.amountBreakdown.partnerExVat)} + VAT / month - cancel any time.</div>
           </div>
         ` : (totalCommitted !== null ? `<div><strong>Total committed:</strong> ${formatGBP(totalCommitted)}</div>` : '')}
       </div>
@@ -294,7 +294,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOp
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Squideo Proposal — ${esc(data.contactBusinessName || data.clientName || 'Untitled')}</title>
+  <title>Squideo Proposal - ${esc(data.contactBusinessName || data.clientName || 'Untitled')}</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: -apple-system, system-ui, sans-serif; color: #0F2A3D; background: white; }
@@ -411,7 +411,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOp
       <div style="font-size:13px;color:#6B7785;">50% deposit to start, balance invoiced when you approve the final video.</div>
     </div>
     <div style="border:2px solid ${paymentOption === 'full' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === 'full' ? '#F0F9FF' : 'white'};">
-      <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'full' ? '✓ ' : ''}${partnerSelected ? 'Pay in full' : 'Pay in full — get a free subtitled version (worth £125)'}</div>
+      <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'full' ? '✓ ' : ''}${partnerSelected ? 'Pay in full' : 'Pay in full - get a free subtitled version (worth £125)'}</div>
       <div style="font-size:13px;color:#6B7785;">Pay upfront via card or BACS.</div>
     </div>
   </div>
@@ -444,12 +444,12 @@ function buildReceiptHTML(data, signed, payment) {
   if (signed.partnerSelected && signed.amountBreakdown) {
     const { projectExVat, partnerExVat, partnerCredits } = signed.amountBreakdown;
     lineItems.push({
-      label: 'Video production — discounted project',
+      label: 'Video production - discounted project',
       sub: data.proposalTitle || data.clientName || '',
       ex: projectExVat,
     });
     lineItems.push({
-      label: 'Squideo Partner Programme — first month' + (partnerCredits ? ` (${partnerCredits} min credit)` : ''),
+      label: 'Squideo Partner Programme - first month' + (partnerCredits ? ` (${partnerCredits} min credit)` : ''),
       sub: '',
       ex: partnerExVat,
     });
@@ -457,7 +457,7 @@ function buildReceiptHTML(data, signed, payment) {
     const isDeposit = payment.paymentType === 'deposit';
     const exVat = vatRate > 0 ? payment.amount / (1 + vatRate) : payment.amount;
     lineItems.push({
-      label: isDeposit ? 'Video production — 50% deposit' : 'Video production — full payment',
+      label: isDeposit ? 'Video production - 50% deposit' : 'Video production - full payment',
       sub: data.proposalTitle || data.clientName || '',
       ex: exVat,
     });
@@ -486,7 +486,7 @@ function buildReceiptHTML(data, signed, payment) {
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Receipt — ${esc(data.contactBusinessName || data.clientName || 'Squideo')}</title>
+  <title>Receipt - ${esc(data.contactBusinessName || data.clientName || 'Squideo')}</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: -apple-system, system-ui, sans-serif; color: #0F2A3D; background: white; }
