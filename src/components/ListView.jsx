@@ -204,9 +204,23 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
   const hasVat = Number(proposal.vatRate) > 0;
   const figure = formatGBP(proposal.basePrice);
 
+  const handleCardClick = () => onPreview(proposal.id);
+  const handleCardKey = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onPreview(proposal.id);
+    }
+  };
+  const stop = (e) => e.stopPropagation();
+
   return (
     <div
       className="proposal-card"
+      role="button"
+      tabIndex={0}
+      onClick={handleCardClick}
+      onKeyDown={handleCardKey}
+      aria-label={`Preview proposal for ${proposal.clientName || 'untitled'}`}
       style={{
         position: 'relative',
         zIndex: menuOpen ? 50 : 'auto',
@@ -221,6 +235,7 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
         justifyContent: 'space-between',
         gap: isMobile ? 10 : 16,
         flexWrap: 'wrap',
+        cursor: 'pointer',
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -241,7 +256,7 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
           <span>{proposal.date}</span>
           {opened && (
             <button
-              onClick={onAnalytics}
+              onClick={(e) => { stop(e); onAnalytics(); }}
               title="View analytics"
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid ' + BRAND.border, borderRadius: 999, background: '#FFFBEB', color: '#92400E', fontWeight: 600, fontSize: isMobile ? 11 : 12, cursor: 'pointer' }}
             >
@@ -276,13 +291,13 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
           {hasVat && <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>+VAT</div>}
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 4 : 8, flexWrap: 'wrap' }}>
+      <div onClick={stop} style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 4 : 8, flexWrap: 'wrap' }}>
         <div style={{ minWidth: isMobile ? 24 : 150, flexShrink: 0 }}>
           <CreatorAvatar proposal={proposal} size={isMobile ? 20 : 24} showName={!isMobile} />
         </div>
         {!isMobile && <div style={{ width: 1, height: 24, background: BRAND.border, flexShrink: 0 }} />}
-        <button onClick={copyLink} className="btn-icon" title="Share link" aria-label="Copy share link"><Link2 size={16} /></button>
-        <button onClick={() => onOpen(proposal.id)} className="btn-icon" title="Edit" aria-label="Edit proposal">Edit</button>
+        <button onClick={(e) => { stop(e); copyLink(); }} className="btn-icon" title="Share link" aria-label="Copy share link"><Link2 size={16} /></button>
+        <button onClick={(e) => { stop(e); onOpen(proposal.id); }} className="btn-icon" title="Edit" aria-label="Edit proposal">Edit</button>
         <ActionMenu
           open={menuOpen}
           onOpenChange={setMenuOpen}
