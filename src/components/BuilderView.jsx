@@ -249,13 +249,29 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       {/* ── Pricing ── */}
       <Section title="Pricing" color="#15803d" icon={PoundSterling} badge={<SectionStatus issues={issues.pricing} />}>
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
-          <Field label="Base price (ex VAT)" error={!(data.basePrice > 0)}>
+          <Field label="Project base price (ex VAT)" error={!(data.basePrice > 0)}>
             <input type="number" className="input" value={data.basePrice} onChange={(e) => update({ basePrice: parseFloat(e.target.value) || 0 })} />
           </Field>
           <Field label="VAT rate (%)">
             <input type="number" step="1" className="input" value={Math.round(data.vatRate * 100)} onChange={(e) => update({ vatRate: (parseFloat(e.target.value) || 0) / 100 })} />
           </Field>
         </div>
+        <Field label="Standard rate per minute (£/min)">
+          <input
+            type="number" min="0" step="1"
+            className="input"
+            value={data.partnerProgramme?.standardRatePerMin ?? data.basePrice ?? ''}
+            onChange={(e) => update({
+              partnerProgramme: {
+                ...data.partnerProgramme,
+                standardRatePerMin: parseFloat(e.target.value) || 0,
+              },
+            })}
+          />
+          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
+            The headline per-minute rate used in the Partner Programme — independent of the project base price above.
+          </div>
+        </Field>
         {data.basePrice > 0 && (
           <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#15803d', fontWeight: 600 }}>
             Total inc. VAT: £{(data.basePrice * (1 + data.vatRate)).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -406,22 +422,6 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         </label>
         {data.partnerProgramme.enabled && (
           <>
-            <Field label="Standard rate per minute (£/min)">
-              <input
-                type="number" min="0" step="1"
-                className="input"
-                value={data.partnerProgramme?.standardRatePerMin ?? data.basePrice ?? ''}
-                onChange={(e) => update({
-                  partnerProgramme: {
-                    ...data.partnerProgramme,
-                    standardRatePerMin: parseFloat(e.target.value) || 0,
-                  },
-                })}
-              />
-              <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
-                Headline rate shown in the Partner Programme panel. Independent of this proposal's project base price.
-              </div>
-            </Field>
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
               <Field label="Monthly subscription rate (auto-derived)">
                 {(() => {
