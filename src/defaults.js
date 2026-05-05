@@ -41,7 +41,7 @@ export const DEFAULT_PROPOSAL = {
   ],
   partnerProgramme: {
     enabled: true,
-    price: 1200,
+    standardRatePerMin: 1250,
     discountRate: 0.15,
     extraDiscountPerCredit: 0.025,
     maxDiscount: 0.20,

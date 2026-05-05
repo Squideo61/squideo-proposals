@@ -384,16 +384,32 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         </label>
         {data.partnerProgramme.enabled && (
           <>
+            <Field label="Standard rate per minute (£/min)">
+              <input
+                type="number" min="0" step="1"
+                className="input"
+                value={data.partnerProgramme?.standardRatePerMin ?? data.basePrice ?? ''}
+                onChange={(e) => update({
+                  partnerProgramme: {
+                    ...data.partnerProgramme,
+                    standardRatePerMin: parseFloat(e.target.value) || 0,
+                  },
+                })}
+              />
+              <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
+                Headline rate shown in the Partner Programme panel. Independent of this proposal's project base price.
+              </div>
+            </Field>
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
               <Field label="Monthly subscription rate (auto-derived)">
                 {(() => {
-                  const base = Number(data.basePrice) || 0;
+                  const base = Number(data.partnerProgramme?.standardRatePerMin) || Number(data.basePrice) || 0;
                   const baseD = data.partnerProgramme.discountRate || 0;
                   const extraD = data.partnerProgramme.extraDiscountPerCredit || 0;
                   const maxD = data.partnerProgramme.maxDiscount || baseD;
                   const tierRate = (n) => base * (1 - Math.min(baseD + Math.max(0, n - 1) * extraD, maxD));
                   if (base <= 0) {
-                    return <div style={{ fontSize: 13, color: '#6B7785', padding: 8 }}>Set a project base price to compute the partner rate.</div>;
+                    return <div style={{ fontSize: 13, color: '#6B7785', padding: 8 }}>Set a standard rate per minute to compute the partner rate.</div>;
                   }
                   return (
                     <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 6, padding: '10px 12px', fontSize: 13, lineHeight: 1.6 }}>
@@ -403,7 +419,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                         <strong>3 mins</strong>: £{tierRate(3).toFixed(0)}/mo
                       </div>
                       <div style={{ fontSize: 12, color: '#78350F', marginTop: 4 }}>
-                        Per-minute rate is computed from the project base price and the discount tier; tweak the tier on the right to change it.
+                        Per-minute rate is the standard rate × discount tier; tweak the tier on the right to change it.
                       </div>
                     </div>
                   );

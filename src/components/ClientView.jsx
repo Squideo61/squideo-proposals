@@ -305,10 +305,12 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     partnerBaseDiscount + Math.max(0, partnerCredits - 1) * partnerExtraPerCredit,
     partnerMaxDiscount
   );
-  // Per-minute partner rate is derived from the same tier — same % off the
-  // standard project rate. This ties the future-rate panel and the monthly
-  // subscription cost to the live tier ladder.
-  const partnerRatePerMin = data.basePrice * (1 - effectiveDiscount);
+  // Per-minute partner rate is derived from the standard rate per minute
+  // (independent of basePrice — basePrice is the project price, not a per-min
+  // rate) times the live tier-ladder discount. Falls back to basePrice for
+  // legacy proposals saved before standardRatePerMin existed.
+  const standardRatePerMin = Number(data.partnerProgramme?.standardRatePerMin) || Number(data.basePrice) || 0;
+  const partnerRatePerMin = standardRatePerMin * (1 - effectiveDiscount);
   const partnerSubtotal = partnerRatePerMin * partnerCredits;
   const partnerVat = partnerSubtotal * data.vatRate;
   const partnerTotal = partnerSubtotal + partnerVat;
@@ -610,7 +612,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
               {/* LEFT — benefits */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {(() => {
-                  const standardRate = Number(data.basePrice) || 0;
+                  const standardRate = standardRatePerMin;
                   if (standardRate <= 0 || effectiveDiscount <= 0) return null;
                   const futureRate = partnerRatePerMin;
                   const savingPerMin = standardRate - futureRate;

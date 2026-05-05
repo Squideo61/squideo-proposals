@@ -165,7 +165,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOp
     // Future-rate panel mirrors the same tier ladder as the project discount.
     // For a signed proposal we display the locked-in rate; for unsigned we use
     // the base discount (which is what a 1-credit subscription would yield).
-    const standardRate = Number(data.basePrice) || 0;
+    const standardRate = Number(data.partnerProgramme?.standardRatePerMin) || Number(data.basePrice) || 0;
     const printPct = (typeof discountRate === 'number' && discountRate > 0)
       ? discountRate
       : (data.partnerProgramme.discountRate ?? 0.10);
@@ -204,7 +204,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOp
       ${futureRatePanel}
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
         ${box}
-        <span style="font-size:14px;font-weight:600;">Check to subscribe (Monthly - ${formatGBP(data.partnerProgramme.price * (1 + data.vatRate))}/mo)</span>
+        <span style="font-size:14px;font-weight:600;">Check to subscribe (from ${formatGBP(futureRate * (1 + data.vatRate))}/mo for 1 minute of content credit)</span>
       </div>
       <div style="border:1px solid #E5E9EE;border-radius:8px;padding:14px 16px;line-height:1.7;color:#0F2A3D;">
         ${renderDescriptionHTML(data.partnerProgramme.description)}
