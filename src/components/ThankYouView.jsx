@@ -11,6 +11,10 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
   const autoPrintFiredRef = useRef(false);
   const [paymentChoice, setPaymentChoice] = useState(null); // null | 'invoice' | 'processing'
 
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
   // Auto-fire print when arriving via the email's "Download signed proposal"
   // CTA. Strip the flag so a refresh doesn't re-trigger it.
   useEffect(() => {
