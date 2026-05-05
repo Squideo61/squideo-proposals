@@ -319,6 +319,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
   // Combined "due today" when client opts into the Partner Programme:
   // discounted project + first month of the partner subscription.
   const dueNowTotal = partnerSelected ? (discountedTotal + partnerTotal) : total;
+  const incVat = (n) => formatGBP(n * (1 + (data.vatRate || 0)));
 
   const handleSign = async () => {
     if (!sigName.trim() || !sigEmail.trim() || !sigAccepted) {
@@ -616,21 +617,31 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                   const futurePct = formatPct(effectiveDiscount);
                   const maxPct = formatPct(partnerMaxDiscount);
                   return (
-                    <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 14px' }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#92400E', marginBottom: 8 }}>
-                        Your future video rate
+                    <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 16px' }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#92400E', marginBottom: 4 }}>
+                        Your Partner rate per minute
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+                        <span style={{ fontSize: 28, fontWeight: 800, color: '#0F2A3D', lineHeight: 1.1 }}>
+                          {formatGBP(futureRate)}<span style={{ fontSize: 16, fontWeight: 600, color: '#6B7785' }}>/min</span>
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: 700, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', padding: '3px 10px', borderRadius: 999, textShadow: '0 1px 1px rgba(0,0,0,0.25)' }}>
+                          −{futurePct}%
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 13, color: '#78350F', marginBottom: 12, lineHeight: 1.5 }}>
+                        {formatGBP(savingPerMin)} less per minute than the standard <span style={{ textDecoration: 'line-through' }}>{formatGBP(standardRate)}/min</span> — locked in as long as you stay subscribed.
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 }}>
                         <FutureRateCell label="Standard" value={formatGBP(standardRate) + '/min'} muted strike />
-                        <FutureRateCell label="Partner rate" value={formatGBP(futureRate) + '/min'} highlight />
+                        <FutureRateCell label="Your Partner rate" value={formatGBP(futureRate) + '/min'} highlight />
                         <FutureRateCell label="You save" value={futurePct + '% · ' + formatGBP(savingPerMin)} highlight />
                       </div>
-                      <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5 }}>
-                        Lock in <strong>{futurePct}% off</strong> every future minute of content for as long as you stay subscribed.
-                        {partnerExtraPerCredit > 0 && effectiveDiscount < partnerMaxDiscount && (
-                          <> Add another minute to lock in up to <strong>{maxPct}% off</strong>.</>
-                        )}
-                      </div>
+                      {partnerExtraPerCredit > 0 && effectiveDiscount < partnerMaxDiscount && (
+                        <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5 }}>
+                          Add another minute to lock in up to <strong>{maxPct}% off</strong>.
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
@@ -659,6 +670,9 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                 <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 15, fontWeight: 700 }}>
                   <span>Monthly subscription</span>
                   <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>+ VAT / month</span></span>
+                </div>
+                <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5, padding: '4px 2px' }}>
+                  💳 <strong>First month charged when you sign.</strong> Renews monthly — cancel any time, even mid-project.
                 </div>
               </div>
             </div>
@@ -722,7 +736,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: partnerSelected ? 15 : 18, fontWeight: partnerSelected ? 600 : 700, paddingTop: partnerSelected ? 12 : 0, borderTop: partnerSelected ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
             <span>{partnerSelected ? 'Project (discounted)' : `Project total${extrasTotal > 0 ? ' (including selected extras)' : ''}`}</span>
             <span>
-              {formatGBP(partnerSelected ? discountedSubtotal : subtotal)} <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT</span>
+              {formatGBP(partnerSelected ? discountedSubtotal : subtotal)} <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(partnerSelected ? discountedSubtotal : subtotal)} inc.</span></span>
             </span>
           </div>
           {partnerSelected && (
@@ -738,7 +752,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
                 <span>Due today</span>
-                <span>{formatGBP(discountedSubtotal + partnerSubtotal)} <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT</span></span>
+                <span>{formatGBP(discountedSubtotal + partnerSubtotal)} <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(discountedSubtotal + partnerSubtotal)} inc.</span></span></span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 8, color: '#FFD54F' }}>
                 <span>Then {formatGBP(partnerSubtotal)} + VAT / month for {partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'} of content credit, cancel any time</span>
@@ -811,6 +825,20 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           );
         })()}
 
+        {(() => {
+          const expiry = validityLabel(data.date, data.validityDays);
+          if (!expiry) return null;
+          return (
+            <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
+              <CalendarClock size={18} color="#B45309" style={{ flexShrink: 0 }} />
+              <div style={{ fontSize: 13, color: '#78350F', lineHeight: 1.5 }}>
+                <strong style={{ color: '#92400E' }}>This proposal expires {expiry}.</strong>{' '}
+                Production slots fill up — please confirm before then to secure yours.
+              </div>
+            </div>
+          );
+        })()}
+
         <PageTitle>Next Steps</PageTitle>
         <div style={{ marginBottom: 32 }}>
           {NEXT_STEPS.map((step, i) => (
@@ -867,20 +895,21 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                 {CONFIG.company.termsUrl ? <>, and agree to our <a href={CONFIG.company.termsUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Terms & Conditions</a></> : null}.
               </span>
             </label>
-            <button onClick={handleSign} className="btn" style={{ width: '100%', justifyContent: 'center', padding: partnerSelected ? '14px 20px' : 14, fontSize: 15, marginTop: 12, background: '#16A34A', flexDirection: partnerSelected ? 'column' : 'row', gap: partnerSelected ? 4 : 6 }}>
-              {partnerSelected ? (
-                <>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16 }}>
-                    <Check size={18} /> Accept &amp; Sign
-                  </span>
-                  <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.95 }}>
-                    {formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month
-                    {' '}= <strong>{formatGBP(discountedSubtotal + partnerSubtotal)} + VAT</strong>
-                  </span>
-                </>
-              ) : (
-                <><Check size={18} /> Accept &amp; Sign — {formatGBP(subtotal)} + VAT</>
-              )}
+            <button onClick={handleSign} className="btn" style={{ width: '100%', justifyContent: 'center', padding: '14px 20px', fontSize: 15, marginTop: 12, background: '#16A34A', flexDirection: 'column', gap: 4 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16 }}>
+                <Check size={18} /> Accept &amp; Sign
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.95 }}>
+                {partnerSelected ? (
+                  <>
+                    {formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month = <strong>{formatGBP(discountedSubtotal + partnerSubtotal)} + VAT</strong> <span style={{ opacity: 0.75 }}>· {incVat(discountedSubtotal + partnerSubtotal)} inc.</span>
+                  </>
+                ) : (
+                  <>
+                    <strong>{formatGBP(subtotal)} + VAT</strong> <span style={{ opacity: 0.75 }}>· {incVat(subtotal)} inc.</span>
+                  </>
+                )}
+              </span>
             </button>
           </div>
         )}
