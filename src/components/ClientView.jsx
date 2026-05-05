@@ -634,7 +634,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 }}>
                         <FutureRateCell label="Standard" value={formatGBP(standardRate) + '/min'} muted strike />
-                        <FutureRateCell label="Your Partner rate" value={formatGBP(futureRate) + '/min'} highlight />
+                        <FutureRateCell label="Partner rate" value={formatGBP(futureRate) + '/min'} highlight />
                         <FutureRateCell label="You save" value={futurePct + '% · ' + formatGBP(savingPerMin)} highlight />
                       </div>
                       {partnerExtraPerCredit > 0 && effectiveDiscount < partnerMaxDiscount && (
