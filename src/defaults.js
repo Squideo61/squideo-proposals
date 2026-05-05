@@ -62,6 +62,7 @@ export const DEFAULT_PROPOSAL = {
     { id: 'priority', label: 'Priority delivery - 4 week turnaround', price: 595, description: 'Prioritises your project in our schedule.' }
   ],
   processVideoUrl: 'https://vimeo.com/625502459',
+  showProcessVideo: true,
   vatRate: 0.20,
   validityDays: 28,
   paymentOptions: ['5050', 'full'],

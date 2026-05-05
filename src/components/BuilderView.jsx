@@ -188,7 +188,14 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       </Section>
 
       {/* ── Delivery Team ── */}
-      <Section title="Delivery Team" color="#0f766e" icon={Users}>
+      <Section
+        title="Delivery Team"
+        color="#0f766e"
+        icon={Users}
+        collapsible
+        defaultCollapsed
+        collapsedHint="Click to expand and edit team members"
+      >
         <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 16px' }}>Photos appear on the client proposal.</p>
         {data.team.map((m, i) => (
           <TeamMemberEditor
@@ -212,7 +219,22 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       </Section>
 
       {/* ── Production Process ── */}
-      <Section title="Production Process" color="#c2410c" icon={Video}>
+      <Section
+        title="Production Process"
+        color="#c2410c"
+        icon={Video}
+        collapsible
+        defaultCollapsed
+        collapsedHint="Click to expand and edit the production-process video"
+      >
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={data.showProcessVideo !== false}
+            onChange={(e) => update({ showProcessVideo: e.target.checked })}
+          />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Show production-process video on this proposal</span>
+        </label>
         <Field label="Video URL">
           <input
             className="input"
@@ -221,7 +243,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             placeholder="YouTube or Vimeo URL — leave blank to hide this section"
           />
         </Field>
-        <p style={{ fontSize: 12, color: BRAND.muted, margin: '4px 0 0' }}>Paste a YouTube or Vimeo link. The section will only appear on the proposal if a URL is set.</p>
+        <p style={{ fontSize: 12, color: BRAND.muted, margin: '4px 0 0' }}>Paste a YouTube or Vimeo link. The section appears on the proposal only when this is set <em>and</em> the checkbox above is ticked.</p>
       </Section>
 
       {/* ── Pricing ── */}

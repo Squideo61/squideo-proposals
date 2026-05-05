@@ -531,7 +531,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           </>
         )}
 
-        {data.processVideoUrl && (() => {
+        {data.showProcessVideo !== false && data.processVideoUrl && (() => {
           const embedUrl = getEmbedUrl(data.processVideoUrl);
           return (
             <div style={{ marginBottom: 32 }}>

@@ -1,5 +1,5 @@
-import React, { useEffect, useId } from 'react';
-import { Check, Phone } from 'lucide-react';
+import React, { useEffect, useId, useState } from 'react';
+import { Check, ChevronDown, Phone } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { formatGBP, useIsMobile } from '../utils.js';
@@ -20,9 +20,12 @@ export function Logo({ size, dark }) {
   );
 }
 
-export function Section({ title, children, color, icon: Icon, badge }) {
+export function Section({ title, children, color, icon: Icon, badge, collapsible = false, defaultCollapsed = false, collapsedHint }) {
   const isMobile = useIsMobile();
   const accent = color || BRAND.blue;
+  const [collapsed, setCollapsed] = useState(collapsible ? defaultCollapsed : false);
+  const toggle = collapsible ? () => setCollapsed(c => !c) : undefined;
+
   return (
     <div style={{
       background: 'white',
@@ -35,24 +38,52 @@ export function Section({ title, children, color, icon: Icon, badge }) {
       overflow: 'hidden',
       boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
     }}>
-      <div style={{
-        padding: isMobile ? '11px 14px' : '12px 20px',
-        background: accent + '12',
-        borderBottom: '1px solid ' + BRAND.border,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
-      }}>
+      <div
+        onClick={toggle}
+        role={collapsible ? 'button' : undefined}
+        tabIndex={collapsible ? 0 : undefined}
+        onKeyDown={collapsible ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } } : undefined}
+        aria-expanded={collapsible ? !collapsed : undefined}
+        style={{
+          padding: isMobile ? '11px 14px' : '12px 20px',
+          background: accent + '12',
+          borderBottom: collapsed ? 'none' : '1px solid ' + BRAND.border,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          cursor: collapsible ? 'pointer' : 'default',
+          userSelect: collapsible ? 'none' : 'auto',
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {Icon && <Icon size={14} color={accent} strokeWidth={2.5} />}
           <h2 className="section-label" style={{ margin: 0, fontSize: 11, fontWeight: 700, color: accent, letterSpacing: 0.7, textTransform: 'uppercase' }}>{title}</h2>
         </div>
-        {badge}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {badge}
+          {collapsible && (
+            <ChevronDown
+              size={16}
+              color={accent}
+              style={{ transition: 'transform 150ms ease', transform: collapsed ? 'rotate(-90deg)' : 'none' }}
+            />
+          )}
+        </div>
       </div>
-      <div style={{ padding: isMobile ? 14 : 20 }}>
-        {children}
-      </div>
+      {!collapsed && (
+        <div style={{ padding: isMobile ? 14 : 20 }}>
+          {children}
+        </div>
+      )}
+      {collapsed && collapsedHint && (
+        <div
+          onClick={toggle}
+          style={{ padding: '10px 20px', fontSize: 12, color: BRAND.muted, fontStyle: 'italic', cursor: 'pointer', background: 'white' }}
+        >
+          {collapsedHint}
+        </div>
+      )}
     </div>
   );
 }
