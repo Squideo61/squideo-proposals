@@ -34,9 +34,6 @@ export default async function handler(req, res) {
     }
     const ua = h['user-agent'] || null;
 
-    const existing = await sql`SELECT 1 FROM proposal_views WHERE proposal_id = ${id} LIMIT 1`;
-    const isFirstEver = existing.length === 0;
-
     await sql`
       INSERT INTO proposal_views
         (proposal_id, session_id, opened_at, last_active_at, duration_seconds,
@@ -48,6 +45,18 @@ export default async function handler(req, res) {
         last_active_at   = NOW(),
         duration_seconds = GREATEST(proposal_views.duration_seconds, EXCLUDED.duration_seconds)
     `;
+
+    // Race-safe claim: only one caller can flip first_view_emailed_at from
+    // NULL to NOW(). Concurrent POSTs that lose the race get 0 rows back and
+    // skip the email. Old proposals with the column NULL still get a single
+    // email on the next view; that's acceptable.
+    const claim = await sql`
+      UPDATE proposals
+      SET first_view_emailed_at = NOW()
+      WHERE id = ${id} AND first_view_emailed_at IS NULL
+      RETURNING id
+    `;
+    const isFirstEver = claim.length > 0;
 
     if (isFirstEver) {
       try {
