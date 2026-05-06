@@ -5,50 +5,107 @@ export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  // [[...slug]] is an optional catch-all — `slug` is undefined for the
+  // collection route (/api/proposals) and an array like ['abc'] for the
+  // item route (/api/proposals/abc).
+  const raw = req.query.slug;
+  const id = Array.isArray(raw) ? raw[0] : (typeof raw === 'string' ? raw : null);
+
+  // ── Collection routes (/api/proposals) ──────────────────────────────────
+  if (!id) {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    if (req.method === 'GET' && req.query.view === 'leaderboard') {
+      return leaderboard(req, res);
+    }
+
+    if (req.method === 'GET') {
+      const rows = await sql`
+        SELECT p.id, p.data, p.created_at, p.updated_at,
+               p.number_year, p.number_seq,
+               COALESCE(v.opens, 0)    AS view_opens,
+               COALESCE(v.duration, 0) AS view_duration,
+               v.last_active_at        AS view_last_active
+        FROM proposals p
+        LEFT JOIN (
+          SELECT proposal_id,
+                 COUNT(*)               AS opens,
+                 SUM(duration_seconds)  AS duration,
+                 MAX(last_active_at)    AS last_active_at
+          FROM proposal_views
+          GROUP BY proposal_id
+        ) v ON v.proposal_id = p.id
+        ORDER BY p.created_at DESC
+      `;
+      const proposals = {};
+      for (const row of rows) {
+        proposals[row.id] = {
+          ...row.data,
+          _createdAt: row.created_at,
+          _number: row.number_year && row.number_seq
+            ? { year: row.number_year, seq: row.number_seq }
+            : null,
+          _views: {
+            opens: Number(row.view_opens) || 0,
+            duration: Number(row.view_duration) || 0,
+            lastActiveAt: row.view_last_active || null,
+          },
+        };
+      }
+      return res.status(200).json(proposals);
+    }
+
+    return res.status(405).end();
+  }
+
+  // ── Item routes (/api/proposals/:id) ────────────────────────────────────
+
+  // GET is public so clients can view their proposal
+  if (req.method === 'GET') {
+    const rows = await sql`
+      SELECT data, number_year, number_seq
+      FROM proposals WHERE id = ${id}
+    `;
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = rows[0];
+    return res.status(200).json({
+      ...r.data,
+      _number: r.number_year && r.number_seq ? { year: r.number_year, seq: r.number_seq } : null,
+    });
+  }
+
   const user = await requireAuth(req, res);
   if (!user) return;
 
-  if (req.method === 'GET' && req.query.view === 'leaderboard') {
-    return leaderboard(req, res);
-  }
-
-  if (req.method === 'GET') {
-    const rows = await sql`
-      SELECT p.id, p.data, p.created_at, p.updated_at,
-             p.number_year, p.number_seq,
-             COALESCE(v.opens, 0)    AS view_opens,
-             COALESCE(v.duration, 0) AS view_duration,
-             v.last_active_at        AS view_last_active
-      FROM proposals p
-      LEFT JOIN (
-        SELECT proposal_id,
-               COUNT(*)               AS opens,
-               SUM(duration_seconds)  AS duration,
-               MAX(last_active_at)    AS last_active_at
-        FROM proposal_views
-        GROUP BY proposal_id
-      ) v ON v.proposal_id = p.id
-      ORDER BY p.created_at DESC
+  if (req.method === 'PUT') {
+    const data = req.body;
+    const y = new Date().getFullYear();
+    await sql`
+      INSERT INTO proposals (id, data, updated_at, number_year, number_seq)
+      VALUES (
+        ${id}, ${JSON.stringify(data)}, NOW(), ${y},
+        COALESCE(
+          (SELECT MAX(number_seq) + 1 FROM proposals WHERE number_year = ${y}),
+          1
+        )
+      )
+      ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
     `;
-    const proposals = {};
-    for (const row of rows) {
-      proposals[row.id] = {
-        ...row.data,
-        _createdAt: row.created_at,
-        _number: row.number_year && row.number_seq
-          ? { year: row.number_year, seq: row.number_seq }
-          : null,
-        _views: {
-          opens: Number(row.view_opens) || 0,
-          duration: Number(row.view_duration) || 0,
-          lastActiveAt: row.view_last_active || null,
-        },
-      };
-    }
-    return res.status(200).json(proposals);
+    const rows = await sql`SELECT number_year, number_seq FROM proposals WHERE id = ${id}`;
+    const n = rows[0];
+    return res.status(200).json({
+      ok: true,
+      number: n && n.number_year && n.number_seq ? { year: n.number_year, seq: n.number_seq } : null,
+    });
   }
 
-  res.status(405).end();
+  if (req.method === 'DELETE') {
+    await sql`DELETE FROM proposals WHERE id = ${id}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).end();
 }
 
 async function leaderboard(req, res) {
