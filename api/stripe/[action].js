@@ -9,6 +9,7 @@ import {
   lineItemsForPartnerFirstMonth,
   lineItemsForPartnerMonthly,
   depositLineItems,
+  formatProposalNumber,
 } from '../_lib/xeroMappers.js';
 
 function billingToContact(billing, fallbackEmail) {
@@ -42,10 +43,12 @@ async function pushInitialXeroInvoice({ proposalId, isDeposit, isPartner }) {
     }
 
     const [proposalRows, sigRows] = await Promise.all([
-      sql`SELECT data FROM proposals WHERE id = ${proposalId}`,
+      sql`SELECT data, number_year, number_seq FROM proposals WHERE id = ${proposalId}`,
       sql`SELECT name, email, data FROM signatures WHERE proposal_id = ${proposalId}`,
     ]);
-    const proposal = proposalRows[0]?.data || {};
+    const proposalRow = proposalRows[0];
+    const proposal = proposalRow?.data || {};
+    const proposalNumber = formatProposalNumber(proposalRow?.number_year, proposalRow?.number_seq);
     const sigRow = sigRows[0];
     if (!sigRow) {
       console.warn('[xero] no signature for proposal, skipping invoice', { proposalId });
@@ -63,17 +66,19 @@ async function pushInitialXeroInvoice({ proposalId, isDeposit, isPartner }) {
     let lineItems;
     if (isPartner) {
       lineItems = [
-        ...lineItemsForDiscountedProject(proposal, signed),
-        ...lineItemsForPartnerFirstMonth(proposal, signed),
+        ...lineItemsForDiscountedProject(proposal, signed, proposalNumber),
+        ...lineItemsForPartnerFirstMonth(proposal, signed, proposalNumber),
       ];
     } else if (isDeposit) {
-      lineItems = depositLineItems(proposal, signed, 0.5);
+      lineItems = depositLineItems(proposal, signed, 0.5, proposalNumber);
     } else {
-      lineItems = lineItemsForProject(proposal, signed);
+      lineItems = lineItemsForProject(proposal, signed, proposalNumber);
     }
 
     const dueDate = new Date(Date.now() + 14 * 86400_000).toISOString().slice(0, 10);
-    const reference = (proposal.proposalTitle || proposal.clientName || proposalId).slice(0, 60);
+    const paymentLabel = isDeposit ? '50% deposit' : (isPartner ? 'Project + Partner first month' : 'Full payment');
+    const referenceBase = proposalNumber || (proposal.proposalTitle || proposal.clientName || proposalId);
+    const reference = `${referenceBase} — ${paymentLabel}`.slice(0, 80);
     const invoiceId = await createInvoice({
       contactId,
       lineItems,
@@ -171,12 +176,14 @@ async function pushRecurringXeroInvoice({ stripe, invoice }) {
 
     const [billingRow, proposalRows, sigRows, countRows] = await Promise.all([
       sql`SELECT billing FROM proposal_billing WHERE proposal_id = ${proposalId}`,
-      sql`SELECT data FROM proposals WHERE id = ${proposalId}`,
+      sql`SELECT data, number_year, number_seq FROM proposals WHERE id = ${proposalId}`,
       sql`SELECT name, email, data FROM signatures WHERE proposal_id = ${proposalId}`,
       sql`SELECT COUNT(*)::int AS n FROM partner_invoices WHERE proposal_id = ${proposalId}`,
     ]);
     const billing = billingRow?.billing;
-    const proposal = proposalRows[0]?.data || {};
+    const proposalRow = proposalRows[0];
+    const proposal = proposalRow?.data || {};
+    const proposalNumber = formatProposalNumber(proposalRow?.number_year, proposalRow?.number_seq);
     const sigRow = sigRows[0];
     if (!billing || !sigRow) {
       console.warn('[xero] missing billing or signature for recurring invoice', { proposalId });
@@ -188,7 +195,7 @@ async function pushRecurringXeroInvoice({ stripe, invoice }) {
 
     // Months are 2-indexed (month 1 was the first-month line on the initial invoice).
     const monthNumber = (countRows[0]?.n || 0) + 2;
-    const lineItems = lineItemsForPartnerMonthly(proposal, signed, monthNumber);
+    const lineItems = lineItemsForPartnerMonthly(proposal, signed, monthNumber, proposalNumber);
 
     const amount = invoice.amount_paid ? invoice.amount_paid / 100 : null;
     await sql`
@@ -198,10 +205,11 @@ async function pushRecurringXeroInvoice({ stripe, invoice }) {
     `;
 
     const dueDate = new Date().toISOString().slice(0, 10);
+    const referenceBase = proposalNumber || (proposal.proposalTitle || proposal.clientName || proposalId);
     const xeroInvoiceId = await createInvoice({
       contactId,
       lineItems,
-      reference: `Partner month ${monthNumber} — ${proposal.proposalTitle || proposal.clientName || proposalId}`.slice(0, 80),
+      reference: `${referenceBase} — Partner month ${monthNumber}`.slice(0, 80),
       dueDate,
       status: 'AUTHORISED',
     });
@@ -209,6 +217,31 @@ async function pushRecurringXeroInvoice({ stripe, invoice }) {
 
     try { await emailInvoice(xeroInvoiceId); }
     catch (err) { console.error('[xero] recurring emailInvoice failed', err); }
+
+    // Team notification — Adam wants to know each time a recurring partner
+    // payment lands and an invoice is mirrored into Xero. Best-effort only;
+    // failure here mustn't block the webhook from 200ing.
+    try {
+      const users = await sql`SELECT email FROM users`;
+      const recipients = users.map(u => u.email).filter(Boolean);
+      const ownerEmail = proposal.preparedByEmail || null;
+      const to = ownerEmail ? [ownerEmail, ...recipients.filter(e => e !== ownerEmail)] : recipients;
+      const title = proposal.proposalTitle || proposal.clientName || proposalId;
+      const link = `${APP_URL}/?proposal=${proposalId}`;
+      if (to.length && amount != null) {
+        await sendMail({
+          to,
+          subject: `🔁 Partner month ${monthNumber} paid: ${title}`,
+          html: `<p>Stripe just collected month ${monthNumber} of the Partner Programme for <strong>${title}</strong>.</p>
+                 <p>Amount: <strong>£${amount.toFixed(2)}</strong></p>
+                 <p>A matching Xero invoice (${referenceBase} — Partner month ${monthNumber}) has been issued AUTHORISED and emailed to the billing contact.</p>
+                 <p><a href="${link}">Open the proposal</a></p>`,
+          text: `Partner month ${monthNumber} of "${title}" paid (£${amount.toFixed(2)}). Xero invoice issued. ${link}`,
+        });
+      }
+    } catch (err) {
+      console.error('[xero] recurring team notification failed', err);
+    }
   } catch (err) {
     console.error('[xero] pushRecurringXeroInvoice failed', err);
   }

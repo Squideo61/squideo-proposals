@@ -13,6 +13,7 @@ import {
   lineItemsForDiscountedProject,
   lineItemsForPartnerFirstMonth,
   depositLineItems,
+  formatProposalNumber,
 } from '../_lib/xeroMappers.js';
 
 const AUTHORIZE_URL = 'https://login.xero.com/identity/connect/authorize';
@@ -159,10 +160,12 @@ export default async function handler(req, res) {
     }
 
     const [proposalRows, sigRows] = await Promise.all([
-      sql`SELECT data FROM proposals WHERE id = ${proposalId}`,
+      sql`SELECT data, number_year, number_seq FROM proposals WHERE id = ${proposalId}`,
       sql`SELECT name, email, data FROM signatures WHERE proposal_id = ${proposalId}`,
     ]);
-    const proposal = proposalRows[0]?.data;
+    const proposalRow = proposalRows[0];
+    const proposal = proposalRow?.data;
+    const proposalNumber = formatProposalNumber(proposalRow?.number_year, proposalRow?.number_seq);
     const sigRow = sigRows[0];
     if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
     if (!sigRow) return res.status(409).json({ error: 'Proposal must be signed first' });
@@ -193,17 +196,19 @@ export default async function handler(req, res) {
       let lineItems;
       if (isPartner) {
         lineItems = [
-          ...lineItemsForDiscountedProject(proposal, signed),
-          ...lineItemsForPartnerFirstMonth(proposal, signed),
+          ...lineItemsForDiscountedProject(proposal, signed, proposalNumber),
+          ...lineItemsForPartnerFirstMonth(proposal, signed, proposalNumber),
         ];
       } else if (isDeposit) {
-        lineItems = depositLineItems(proposal, signed, 0.5);
+        lineItems = depositLineItems(proposal, signed, 0.5, proposalNumber);
       } else {
-        lineItems = lineItemsForProject(proposal, signed);
+        lineItems = lineItemsForProject(proposal, signed, proposalNumber);
       }
 
       const dueDate = new Date(Date.now() + 14 * 86400_000).toISOString().slice(0, 10);
-      const reference = (proposal.proposalTitle || proposal.clientName || proposalId).slice(0, 60);
+      const paymentLabel = isDeposit ? '50% deposit' : (isPartner ? 'Project + Partner first month' : 'Full payment');
+      const referenceBase = proposalNumber || (proposal.proposalTitle || proposal.clientName || proposalId);
+      const reference = `${referenceBase} — ${paymentLabel}`.slice(0, 80);
       invoiceId = await createInvoice({
         contactId,
         lineItems,
