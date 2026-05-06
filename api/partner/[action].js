@@ -9,6 +9,7 @@
 //   DELETE /api/partner/subscriptions?id=<stripe_subscription_id>  — delete manual subscription
 //
 // All routes require auth.
+import Stripe from 'stripe';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 
@@ -51,6 +52,13 @@ export default async function handler(req, res) {
       if (req.method === 'PATCH')  return await patchManualSubscription(req, res, subId);
       if (req.method === 'DELETE') return await deleteManualSubscription(res, subId);
       return res.status(405).end();
+    }
+
+    if (action === 'cancel-subscription') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const subId = req.query.id ? String(req.query.id) : null;
+      if (!subId) return res.status(400).json({ error: 'id required' });
+      return await cancelSubscription(res, subId);
     }
 
     return res.status(404).json({ error: 'Unknown action' });
@@ -321,6 +329,16 @@ async function logAllocation(req, res, user) {
   const kind = kindIn === 'adjustment' ? 'adjustment' : 'work';
   const proposalId = body.proposalId ? String(body.proposalId) : null;
   const notes = body.notes ? String(body.notes).trim() : null;
+  // Optional past-date support: accept ISO date (YYYY-MM-DD) or full
+  // datetime. Bare dates are anchored at midday UTC so they don't shift
+  // across timezones.
+  let allocatedAt = null;
+  if (body.allocatedAt) {
+    const raw = String(body.allocatedAt);
+    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+    const d = new Date(isDateOnly ? raw + 'T12:00:00Z' : raw);
+    if (!isNaN(d.getTime())) allocatedAt = d.toISOString();
+  }
 
   if (!clientKey)         return res.status(400).json({ error: 'clientKey required' });
   if (!description)       return res.status(400).json({ error: 'description required' });
@@ -341,9 +359,10 @@ async function logAllocation(req, res, user) {
 
   const [row] = await sql`
     INSERT INTO credit_allocations
-      (client_key, proposal_id, description, credit_cost, kind, allocated_by, notes)
+      (client_key, proposal_id, description, credit_cost, kind, allocated_by, notes, allocated_at)
     VALUES
-      (${clientKey}, ${proposalId}, ${description}, ${creditCost}, ${kind}, ${user.email || null}, ${notes})
+      (${clientKey}, ${proposalId}, ${description}, ${creditCost}, ${kind}, ${user.email || null}, ${notes},
+       COALESCE(${allocatedAt}::TIMESTAMPTZ, NOW()))
     RETURNING id, client_key, proposal_id, description, credit_cost, kind,
               allocated_at, allocated_by, notes
   `;
@@ -457,6 +476,42 @@ async function patchManualSubscription(req, res, subId) {
   }
 
   for (const q of updates) await q;
+  return res.status(200).json({ ok: true });
+}
+
+// Cancel a partner subscription. Manual subs are flipped to 'canceled' in
+// our DB. Stripe-tracked subs additionally call the Stripe API to stop
+// future billing immediately; the customer.subscription.deleted webhook
+// will land shortly and refresh canceled_at.
+async function cancelSubscription(res, subId) {
+  const [row] = await sql`
+    SELECT stripe_subscription_id, status FROM partner_subscriptions
+    WHERE stripe_subscription_id = ${subId}
+  `;
+  if (!row) return res.status(404).json({ error: 'subscription not found' });
+  if (row.status === 'canceled') return res.status(200).json({ ok: true, alreadyCanceled: true });
+
+  const isManual = subId.startsWith('manual_');
+
+  if (!isManual) {
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return res.status(500).json({ error: 'STRIPE_SECRET_KEY not configured' });
+    }
+    try {
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+      await stripe.subscriptions.cancel(subId);
+    } catch (err) {
+      console.error('[partner] stripe cancel failed', err);
+      return res.status(502).json({ error: 'Stripe cancellation failed: ' + (err?.message || 'unknown') });
+    }
+  }
+
+  await sql`
+    UPDATE partner_subscriptions
+    SET status = 'canceled', canceled_at = NOW(), updated_at = NOW()
+    WHERE stripe_subscription_id = ${subId}
+  `;
+
   return res.status(200).json({ ok: true });
 }
 

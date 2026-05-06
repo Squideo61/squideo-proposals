@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Coins, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Ban, Coins, Pencil, Plus, Trash2 } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, useIsMobile } from '../utils.js';
@@ -132,7 +132,7 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
                       : (s.currentPeriodEnd ? 'Renews ' + fmtDate(s.currentPeriodEnd) : '—')}
                     {s.canceledAt && <div>Cancelled {fmtDate(s.canceledAt)}</div>}
                   </td>
-                  <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  <td style={{ padding: '10px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                     {s.isManual && (
                       <button
                         onClick={() => setEditingSub(s)}
@@ -140,6 +140,25 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
                         aria-label="Edit subscription"
                         title="Edit subscription"
                       ><Pencil size={14} /></button>
+                    )}
+                    {s.status === 'active' && (
+                      <button
+                        onClick={async () => {
+                          const which = s.isManual ? 'this manual subscription' : "this Stripe subscription (this will stop future billing in Stripe)";
+                          if (!confirm('Cancel ' + which + '?')) return;
+                          try {
+                            await actions.cancelPartnerSubscription(s.stripeSubscriptionId);
+                            await actions.fetchPartnerCreditDetail(clientKey);
+                            showMsg('Subscription cancelled');
+                          } catch (err) {
+                            showMsg(err?.message || 'Failed to cancel');
+                          }
+                        }}
+                        className="btn-icon"
+                        aria-label="Cancel subscription"
+                        title="Cancel subscription"
+                        style={{ marginLeft: 4, color: '#B91C1C' }}
+                      ><Ban size={14} /></button>
                     )}
                   </td>
                 </tr>
@@ -296,8 +315,10 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
 }
 
 function AllocationForm({ proposalOptions, onSubmit }) {
+  const today = new Date().toISOString().slice(0, 10);
   const [description, setDescription] = useState('');
   const [creditCost, setCreditCost] = useState('');
+  const [allocatedAt, setAllocatedAt] = useState(today);
   const [notes, setNotes] = useState('');
   const [proposalId, setProposalId] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -314,11 +335,13 @@ function AllocationForm({ proposalOptions, onSubmit }) {
         creditCost: cost,
         notes: notes.trim() || undefined,
         proposalId: proposalId || undefined,
+        allocatedAt: allocatedAt || undefined,
       });
       setDescription('');
       setCreditCost('');
       setNotes('');
       setProposalId('');
+      setAllocatedAt(new Date().toISOString().slice(0, 10));
     } catch {
       // surfaced via showMsg in caller
     } finally {
@@ -328,13 +351,20 @@ function AllocationForm({ proposalOptions, onSubmit }) {
 
   return (
     <form onSubmit={submit} style={{ display: 'grid', gap: 10 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 120px', gap: 10 }}>
         <input
           className="input"
           placeholder="What was done? (e.g. Tipper Operations video, 2hr editing tweak)"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           required
+        />
+        <input
+          className="input"
+          type="date"
+          value={allocatedAt}
+          onChange={(e) => setAllocatedAt(e.target.value)}
+          title="Date the work was done"
         />
         <input
           className="input"
@@ -458,8 +488,10 @@ function Empty({ children }) {
 }
 
 function AdjustmentForm({ onSubmit }) {
+  const today = new Date().toISOString().slice(0, 10);
   const [description, setDescription] = useState('');
   const [creditCost, setCreditCost] = useState('');
+  const [allocatedAt, setAllocatedAt] = useState(today);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -474,10 +506,12 @@ function AdjustmentForm({ onSubmit }) {
         description: description.trim(),
         creditCost: cost,
         notes: notes.trim() || undefined,
+        allocatedAt: allocatedAt || undefined,
       });
       setDescription('');
       setCreditCost('');
       setNotes('');
+      setAllocatedAt(new Date().toISOString().slice(0, 10));
     } catch {
       // surfaced via showMsg in caller
     } finally {
@@ -491,13 +525,20 @@ function AdjustmentForm({ onSubmit }) {
         Use a <strong>positive</strong> number to add credits (e.g. monthly top-up, bonus)
         or a <strong>negative</strong> number to remove them (e.g. clawback).
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 120px', gap: 10 }}>
         <input
           className="input"
           placeholder="Reason (e.g. May 2026 payment received, bonus credit, clawback)"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           required
+        />
+        <input
+          className="input"
+          type="date"
+          value={allocatedAt}
+          onChange={(e) => setAllocatedAt(e.target.value)}
+          title="Date this adjustment applies to"
         />
         <input
           className="input"

@@ -303,6 +303,11 @@ export function StoreProvider({ children }) {
         setState(s => ({ ...s, partnerCreditsList: null, partnerCreditDetail: {} }));
       });
     },
+    cancelPartnerSubscription(subId) {
+      return api.post('/api/partner/cancel-subscription?id=' + encodeURIComponent(subId), {}).then(() => {
+        setState(s => ({ ...s, partnerCreditsList: null, partnerCreditDetail: {} }));
+      });
+    },
     deleteAllocation(clientKey, id) {
       return api.delete('/api/partner/allocations?id=' + encodeURIComponent(id)).then(() => {
         setState(s => {
