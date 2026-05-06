@@ -402,29 +402,6 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     }
   };
 
-  const handleConfirmPo = async ({ billing }) => {
-    if (isPreview) {
-      showMsg('PO confirmation simulated - preview only, not saved');
-      return;
-    }
-    try {
-      const res = await fetch('/api/xero/po', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ proposalId: id, billing }),
-      });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        throw new Error(txt || ('PO confirm failed: ' + res.status));
-      }
-      showMsg('Quote sent. Pending your PO.');
-    } catch (err) {
-      console.error('[po confirm]', err);
-      showMsg(err?.message ? 'Could not send quote: ' + err.message : 'Could not send quote. Please try again.');
-      throw err;
-    }
-  };
-
   const confirmStripeSim = async () => {
     const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
     const isDeposit = signed.paymentOption === '5050';
@@ -924,7 +901,6 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
             onPayNow={handlePayNow}
             onChooseInvoice={() => setPaymentChoice('invoice')}
             onUndoInvoice={() => setPaymentChoice(null)}
-            onConfirmPo={handleConfirmPo}
             onConfirmInvoice={handleConfirmInvoice}
             onDownloadReceipt={payment ? () => openReceiptWindow(data, signed, payment) : undefined}
             onDownloadSignedProposal={signed ? () => openPrintWindow(data, printOptionsForSigned(signed, payment)) : undefined}
