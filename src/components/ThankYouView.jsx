@@ -106,10 +106,10 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
     if (!billingValid) return;
     setPoSubmitting(true);
     try {
-      const res = await fetch(`/api/po/${proposalId}`, {
+      const res = await fetch('/api/xero/po', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ billing }),
+        body: JSON.stringify({ proposalId, billing }),
       });
       if (!res.ok) {
         const txt = await res.text().catch(() => '');

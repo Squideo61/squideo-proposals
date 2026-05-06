@@ -8,7 +8,21 @@ export default async function handler(req, res) {
   const user = await requireAuth(req, res);
   if (!user) return;
 
-  const { id } = req.query;
+  // [[...slug]] is an optional catch-all — `slug` is undefined for the
+  // collection route (/api/templates) and an array like ['abc'] for the
+  // item route (/api/templates/abc).
+  const slug = req.query.slug;
+  const id = Array.isArray(slug) ? slug[0] : (typeof slug === 'string' ? slug : null);
+
+  if (!id) {
+    if (req.method === 'GET') {
+      const rows = await sql`SELECT id, data FROM templates ORDER BY created_at DESC`;
+      const templates = {};
+      for (const row of rows) templates[row.id] = row.data;
+      return res.status(200).json(templates);
+    }
+    return res.status(405).end();
+  }
 
   if (req.method === 'PUT') {
     const data = req.body;

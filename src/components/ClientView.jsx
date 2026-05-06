@@ -385,10 +385,10 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
       return;
     }
     try {
-      const res = await fetch(`/api/po/${id}`, {
+      const res = await fetch('/api/xero/po', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ billing }),
+        body: JSON.stringify({ proposalId: id, billing }),
       });
       if (!res.ok) {
         const txt = await res.text().catch(() => '');
