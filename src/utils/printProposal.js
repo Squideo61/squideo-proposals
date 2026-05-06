@@ -187,7 +187,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       ${data.contactBusinessName ? `<div style="font-size:14px;color:#6B7785;margin-top:8px;">${esc(data.contactBusinessName)}</div>` : ''}
     </div>` : '';
 
-  const partnerBlock = data.partnerProgramme.enabled ? (() => {
+  const partnerBlock = (data.partnerProgramme.enabled && (signable || partnerSelected)) ? (() => {
     const box = signable
       ? `<input type="checkbox" ${partnerSelected ? 'checked' : ''} style="margin-top:2px;flex-shrink:0;" />`
       : `<div style="width:14px;height:14px;border:2px solid #C7CFD8;border-radius:3px;flex-shrink:0;background:${partnerSelected ? '#2BB8E6' : 'white'};"></div>`;
@@ -434,16 +434,29 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   </div>` : ''}
 
   <!-- Payment options -->
-  <h2 class="page-title">Payment Options</h2>
+  <h2 class="page-title">${signable ? 'Payment Options' : 'Selected Payment Option'}</h2>
   <div style="display:grid;gap:10px;margin-bottom:28px;">
-    <div style="border:2px solid ${paymentOption === '5050' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === '5050' ? '#F0F9FF' : 'white'};">
-      <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === '5050' ? '✓ ' : ''}50/50 split</div>
-      <div style="font-size:13px;color:#6B7785;">50% deposit to start, balance invoiced when you approve the final video.</div>
-    </div>
-    <div style="border:2px solid ${paymentOption === 'full' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === 'full' ? '#F0F9FF' : 'white'};">
-      <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'full' ? '✓ ' : ''}${partnerSelected ? 'Pay in full' : 'Pay in full - get a free subtitled version (worth £125)'}</div>
-      <div style="font-size:13px;color:#6B7785;">Pay upfront via card or BACS.</div>
-    </div>
+    ${(() => {
+      const blocks = {
+        '5050': `
+          <div style="border:2px solid ${paymentOption === '5050' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === '5050' ? '#F0F9FF' : 'white'};">
+            <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === '5050' ? '✓ ' : ''}50/50 split</div>
+            <div style="font-size:13px;color:#6B7785;">50% deposit to start, balance invoiced when you approve the final video.</div>
+          </div>`,
+        'full': `
+          <div style="border:2px solid ${paymentOption === 'full' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === 'full' ? '#F0F9FF' : 'white'};">
+            <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'full' ? '✓ ' : ''}${partnerSelected ? 'Pay in full' : 'Pay in full - get a free subtitled version (worth £125)'}</div>
+            <div style="font-size:13px;color:#6B7785;">Pay upfront via card or BACS.</div>
+          </div>`,
+        'po': `
+          <div style="border:2px solid ${paymentOption === 'po' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === 'po' ? '#F0F9FF' : 'white'};">
+            <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'po' ? '✓ ' : ''}Purchase Order</div>
+            <div style="font-size:13px;color:#6B7785;">Raise a Purchase Order - our team will be in touch to set up supplier details and confirm payment.</div>
+          </div>`,
+      };
+      const keys = signable ? ['5050', 'full'] : [paymentOption];
+      return keys.map(k => blocks[k] || '').join('');
+    })()}
   </div>
 
   ${sigBlock}
