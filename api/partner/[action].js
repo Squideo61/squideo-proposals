@@ -226,7 +226,11 @@ async function clientDetail(res, key) {
     const start = new Date(startISO);
     const end = endISO ? new Date(endISO) : new Date();
     if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
-    const months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+    // Day-aware month diff — matches Postgres AGE() so detail and list
+    // views stay in sync. If we haven't yet reached the start day-of-month
+    // in the current calendar month, the current month doesn't count.
+    let months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+    if (end.getDate() < start.getDate()) months--;
     return Math.max(0, months);
   };
 
