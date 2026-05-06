@@ -31,9 +31,11 @@ export function lineItemsForProject(proposal, signed, proposalNumber) {
 
   const chosen = Array.isArray(signed?.selectedExtras) ? signed.selectedExtras : [];
   for (const extra of chosen) {
+    const baseDesc = extra.label || extra.id;
+    const description = extra.languages ? `${baseDesc} — ${extra.languages}` : baseDesc;
     lines.push({
-      description: extra.label || extra.id,
-      quantity: 1,
+      description,
+      quantity: Math.max(1, Number(extra.quantity) || 1),
       unitAmount: Number(extra.price) || 0,
       taxType,
       accountCode: SALES_ACCOUNT,

@@ -67,22 +67,38 @@ const PAYMENT_OPTION_LABEL = {
 
 export function printOptionsForSigned(signed, payment) {
   if (!signed) return { signable: true };
-  const selectedExtras = (signed.selectedExtras || []).reduce((acc, e) => {
-    if (e && e.id) acc[e.id] = true;
-    return acc;
-  }, {});
+  const selectedExtras = {};
+  const selectedExtrasMeta = {};
+  for (const e of signed.selectedExtras || []) {
+    if (!e || !e.id) continue;
+    selectedExtras[e.id] = true;
+    if (e.quantity != null || e.languages != null) {
+      selectedExtrasMeta[e.id] = {
+        quantity: Math.max(1, Number(e.quantity) || 1),
+        languages: e.languages || '',
+      };
+    }
+  }
   return {
     signable: false,
     signed,
     payment: payment || null,
     selectedExtras,
+    selectedExtrasMeta,
     partnerSelected: !!signed.partnerSelected,
     paymentOption: signed.paymentOption || '5050',
   };
 }
 
-function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOption = '5050', partnerSelected = false, signed = null, payment = null } = {}) {
-  const extrasTotal = data.optionalExtras.reduce((s, e) => selectedExtras[e.id] ? s + e.price : s, 0);
+function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedExtrasMeta = {}, paymentOption = '5050', partnerSelected = false, signed = null, payment = null } = {}) {
+  const getQty = (e) => {
+    if (!e.variantsEnabled) return 1;
+    return Math.max(1, Number(selectedExtrasMeta[e.id]?.quantity) || 1);
+  };
+  const extrasTotal = data.optionalExtras.reduce((s, e) => {
+    if (!selectedExtras[e.id]) return s;
+    return s + e.price * getQty(e);
+  }, 0);
   const subtotal = data.basePrice + extrasTotal;
   const vat = subtotal * data.vatRate;
   const total = subtotal + vat;
@@ -139,14 +155,28 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, paymentOp
     const box = signable
       ? `<input type="checkbox" ${checked ? 'checked' : ''} style="margin-top:2px;flex-shrink:0;" />`
       : `<div style="width:14px;height:14px;border:2px solid #C7CFD8;border-radius:3px;flex-shrink:0;background:${checked ? '#2BB8E6' : 'white'};"></div>`;
+    const qty = getQty(e);
+    const languages = selectedExtrasMeta[e.id]?.languages || '';
+    const showVariantSummary = e.variantsEnabled && checked;
+    const labelExtra = showVariantSummary && qty > 1 ? ` <span style="color:#6B7785;font-weight:500;">× ${qty}</span>` : '';
+    const languagesLine = showVariantSummary && languages
+      ? `<div style="font-size:12px;color:#6B7785;margin-top:2px;">Languages: ${esc(languages)}</div>`
+      : '';
+    const priceCell = showVariantSummary
+      ? `<div style="text-align:right;white-space:nowrap;">
+           <div style="font-weight:600;">${formatGBP(e.price * qty)}</div>
+           <div style="font-size:11px;color:#6B7785;font-weight:500;">${formatGBP(e.price)} × ${qty}</div>
+         </div>`
+      : `<div style="font-weight:600;white-space:nowrap;">${formatGBP(e.price)}</div>`;
     return `
       <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #E5E9EE;font-size:13px;">
         ${box}
         <div style="flex:1;">
-          <div style="font-weight:500;">${esc(e.label)}</div>
+          <div style="font-weight:500;">${esc(e.label)}${labelExtra}</div>
           ${e.description ? `<div style="font-size:12px;color:#6B7785;margin-top:2px;">${esc(e.description)}</div>` : ''}
+          ${languagesLine}
         </div>
-        <div style="font-weight:600;white-space:nowrap;">${formatGBP(e.price)}</div>
+        ${priceCell}
       </div>`;
   }).join('');
 

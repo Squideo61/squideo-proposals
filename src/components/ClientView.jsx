@@ -245,6 +245,9 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
   }, [id, data, useRealStripe]);
 
   const [selectedExtras, setSelectedExtras] = useState({});
+  const [extrasMeta, setExtrasMeta] = useState({});
+  const getMeta = (eid) => extrasMeta[eid] || { quantity: 1, languages: '' };
+  const setMeta = (eid, patch) => setExtrasMeta(prev => ({ ...prev, [eid]: { ...getMeta(eid), ...patch } }));
   const [partnerSelected, setPartnerSelected] = useState(false);
   const [partnerCredits, setPartnerCredits] = useState(1);
   const [paymentOption, setPaymentOption] = useState(() => {
@@ -291,7 +294,11 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     return pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1);
   };
 
-  const extrasTotal = data.optionalExtras.reduce((s, e) => selectedExtras[e.id] ? s + e.price : s, 0);
+  const extrasTotal = data.optionalExtras.reduce((s, e) => {
+    if (!selectedExtras[e.id]) return s;
+    const qty = e.variantsEnabled ? Math.max(1, Number(getMeta(e.id).quantity) || 1) : 1;
+    return s + e.price * qty;
+  }, 0);
   const subtotal = data.basePrice + extrasTotal;
   const vat = subtotal * data.vatRate;
   const total = subtotal + vat;
@@ -332,7 +339,11 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
       name: sigName,
       email: sigEmail,
       signedAt: new Date().toISOString(),
-      selectedExtras: data.optionalExtras.filter((e) => selectedExtras[e.id]),
+      selectedExtras: data.optionalExtras
+        .filter((e) => selectedExtras[e.id])
+        .map((e) => e.variantsEnabled
+          ? { ...e, quantity: Math.max(1, Number(getMeta(e.id).quantity) || 1), languages: getMeta(e.id).languages || '' }
+          : e),
       partnerSelected,
       partnerCredits,
       paymentOption,
@@ -432,7 +443,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
               data,
               signed
                 ? printOptionsForSigned(signed, payment)
-                : { signable: true, selectedExtras, paymentOption, partnerSelected }
+                : { signable: true, selectedExtras, selectedExtrasMeta: extrasMeta, paymentOption, partnerSelected }
             )}
             className="btn-ghost"
             style={{ fontSize: 13 }}
@@ -601,16 +612,57 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
 
         <PageTitle>Optional Extras</PageTitle>
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden', marginBottom: 24 }}>
-          {data.optionalExtras.map((extra, i) => (
-            <label key={extra.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', borderBottom: i < data.optionalExtras.length - 1 ? '1px solid ' + BRAND.border : 'none', cursor: signed ? 'default' : 'pointer', background: selectedExtras[extra.id] ? '#F0F9FF' : 'white' }}>
-              <input type="checkbox" checked={!!selectedExtras[extra.id]} onChange={(e) => setSelectedExtras({ ...selectedExtras, [extra.id]: e.target.checked })} disabled={!!signed} style={{ marginTop: 3 }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 500 }}>{extra.label}</div>
-                {extra.description && <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.5, marginTop: 4 }}>{extra.description}</div>}
+          {data.optionalExtras.map((extra, i) => {
+            const isSelected = !!selectedExtras[extra.id];
+            const meta = getMeta(extra.id);
+            const qty = extra.variantsEnabled ? Math.max(1, Number(meta.quantity) || 1) : 1;
+            const showVariants = extra.variantsEnabled && isSelected;
+            return (
+              <div key={extra.id} style={{ borderBottom: i < data.optionalExtras.length - 1 ? '1px solid ' + BRAND.border : 'none', background: isSelected ? '#F0F9FF' : 'white' }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', cursor: signed ? 'default' : 'pointer' }}>
+                  <input type="checkbox" checked={isSelected} onChange={(e) => setSelectedExtras({ ...selectedExtras, [extra.id]: e.target.checked })} disabled={!!signed} style={{ marginTop: 3 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500 }}>{extra.label}</div>
+                    {extra.description && <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.5, marginTop: 4 }}>{extra.description}</div>}
+                  </div>
+                  <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0, textAlign: 'right' }}>
+                    {extra.variantsEnabled
+                      ? (isSelected
+                          ? <>{formatGBP(extra.price * qty)}<div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>{formatGBP(extra.price)} × {qty}</div></>
+                          : <>{formatGBP(extra.price)}<div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>per language</div></>)
+                      : formatGBP(extra.price)}
+                  </span>
+                </label>
+                {showVariants && (
+                  <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', padding: '0 16px 14px 44px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 12, color: BRAND.muted }}>How many languages?</span>
+                      <button type="button" disabled={!!signed || qty <= 1} onClick={() => setMeta(extra.id, { quantity: qty - 1 })} className="btn-icon" aria-label="Decrease languages">−</button>
+                      <input
+                        type="number"
+                        min={1}
+                        value={qty}
+                        disabled={!!signed}
+                        onChange={(e) => setMeta(extra.id, { quantity: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                        className="input"
+                        style={{ width: 56, textAlign: 'center', padding: '4px 6px' }}
+                      />
+                      <button type="button" disabled={!!signed} onClick={() => setMeta(extra.id, { quantity: qty + 1 })} className="btn-icon" aria-label="Increase languages">+</button>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Which languages? (optional, e.g. French, German, Spanish)"
+                      value={meta.languages || ''}
+                      disabled={!!signed}
+                      onChange={(e) => setMeta(extra.id, { languages: e.target.value })}
+                      className="input"
+                      style={{ flex: '1 1 240px', minWidth: 200, fontSize: 13 }}
+                    />
+                  </div>
+                )}
               </div>
-              <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0 }}>{formatGBP(extra.price)}</span>
-            </label>
-          ))}
+            );
+          })}
         </div>
 
         {data.partnerProgramme.enabled && (

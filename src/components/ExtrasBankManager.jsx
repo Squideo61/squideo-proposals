@@ -66,6 +66,14 @@ export function ExtrasBankManager({ onClose }) {
               onChange={(e) => update(i, { description: e.target.value })}
               placeholder="Description shown to client"
             />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={!!item.variantsEnabled}
+                onChange={(e) => update(i, { variantsEnabled: e.target.checked })}
+              />
+              Per-language pricing {item.variantsEnabled && <span style={{ color: BRAND.muted }}>— price above is charged per language</span>}
+            </label>
           </div>
         ))}
       </div>
