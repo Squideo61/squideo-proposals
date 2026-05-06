@@ -248,7 +248,7 @@ export function StoreProvider({ children }) {
       }).catch(() => []);
     },
     fetchPartnerCreditDetail(clientKey) {
-      return api.get('/api/partner/clients/' + encodeURIComponent(clientKey))
+      return api.get('/api/partner/clients?key=' + encodeURIComponent(clientKey))
         .then((data) => {
           setState(s => ({
             ...s,
@@ -287,7 +287,7 @@ export function StoreProvider({ children }) {
       });
     },
     deleteAllocation(clientKey, id) {
-      return api.delete('/api/partner/allocations/' + id).then(() => {
+      return api.delete('/api/partner/allocations?id=' + encodeURIComponent(id)).then(() => {
         setState(s => {
           const detail = s.partnerCreditDetail?.[clientKey];
           if (!detail) return s;

@@ -1,5 +1,8 @@
 {
   "functions": {
     "api/**/*.js": { "maxDuration": 10 }
-  }
+  },
+  "rewrites": [
+    { "source": "/api/invites", "destination": "/api/users?_kind=invites" }
+  ]
 }
