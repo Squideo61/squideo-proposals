@@ -99,6 +99,33 @@ CREATE TABLE settings (
 );
 
 INSERT INTO settings DEFAULT VALUES;
+
+-- Partner Programme — subscription status & credit allocations
+CREATE TABLE partner_subscriptions (
+  stripe_subscription_id TEXT PRIMARY KEY,
+  proposal_id            TEXT REFERENCES proposals(id) ON DELETE SET NULL,
+  client_key             TEXT NOT NULL,
+  client_name            TEXT,
+  credits_per_month      NUMERIC(10,2) NOT NULL DEFAULT 1,
+  status                 TEXT NOT NULL DEFAULT 'active',
+  current_period_end     TIMESTAMPTZ,
+  canceled_at            TIMESTAMPTZ,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_partner_subscriptions_client ON partner_subscriptions(client_key);
+
+CREATE TABLE credit_allocations (
+  id           SERIAL PRIMARY KEY,
+  client_key   TEXT NOT NULL,
+  proposal_id  TEXT REFERENCES proposals(id) ON DELETE SET NULL,
+  description  TEXT NOT NULL,
+  credit_cost  NUMERIC(10,2) NOT NULL,
+  allocated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  allocated_by TEXT,
+  notes        TEXT
+);
+CREATE INDEX idx_credit_allocations_client ON credit_allocations(client_key, allocated_at DESC);
 ```
 
 You should see a success message. Your database is now ready.
@@ -137,6 +164,49 @@ You should see a success message. Your database is now ready.
 >   PRIMARY KEY (proposal_id, session_id)
 > );
 > CREATE INDEX idx_proposal_views_opened ON proposal_views(proposal_id, opened_at DESC);
+>
+> -- Partner Programme: subscription status + credit allocations
+> CREATE TABLE IF NOT EXISTS partner_subscriptions (
+>   stripe_subscription_id TEXT PRIMARY KEY,
+>   proposal_id            TEXT REFERENCES proposals(id) ON DELETE SET NULL,
+>   client_key             TEXT NOT NULL,
+>   client_name            TEXT,
+>   credits_per_month      NUMERIC(10,2) NOT NULL DEFAULT 1,
+>   status                 TEXT NOT NULL DEFAULT 'active',
+>   current_period_end     TIMESTAMPTZ,
+>   canceled_at            TIMESTAMPTZ,
+>   created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+> );
+> CREATE INDEX IF NOT EXISTS idx_partner_subscriptions_client ON partner_subscriptions(client_key);
+>
+> CREATE TABLE IF NOT EXISTS credit_allocations (
+>   id           SERIAL PRIMARY KEY,
+>   client_key   TEXT NOT NULL,
+>   proposal_id  TEXT REFERENCES proposals(id) ON DELETE SET NULL,
+>   description  TEXT NOT NULL,
+>   credit_cost  NUMERIC(10,2) NOT NULL,
+>   allocated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   allocated_by TEXT,
+>   notes        TEXT
+> );
+> CREATE INDEX IF NOT EXISTS idx_credit_allocations_client ON credit_allocations(client_key, allocated_at DESC);
+>
+> -- One-time backfill: seed partner_subscriptions from existing payments
+> INSERT INTO partner_subscriptions
+>   (stripe_subscription_id, proposal_id, client_key, client_name, credits_per_month, status)
+> SELECT
+>   p.partner_subscription_id,
+>   p.proposal_id,
+>   LOWER(TRIM(COALESCE(NULLIF(pb.billing->>'companyName', ''), s.email, p.proposal_id))),
+>   COALESCE(NULLIF(pb.billing->>'companyName', ''), s.email),
+>   COALESCE((s.data->>'partnerCredits')::NUMERIC, 1),
+>   'active'
+> FROM payments p
+> LEFT JOIN proposal_billing pb ON pb.proposal_id = p.proposal_id
+> LEFT JOIN signatures s        ON s.proposal_id  = p.proposal_id
+> WHERE p.partner_subscription_id IS NOT NULL
+> ON CONFLICT (stripe_subscription_id) DO NOTHING;
 > ```
 
 6. Click **Dashboard** in the top left, then find the **"Connection string"** section

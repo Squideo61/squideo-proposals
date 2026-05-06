@@ -16,6 +16,8 @@ function emptyStore() {
     extrasBank: [],
     inclusionsBank: [],
     leaderboard: null,
+    partnerCreditsList: null,
+    partnerCreditDetail: {},
     session: null,
     loading: true,
   };
@@ -237,6 +239,79 @@ export function StoreProvider({ children }) {
     saveInclusionsBank(list) {
       setState(s => ({ ...s, inclusionsBank: list }));
       api.put('/api/settings', { inclusionsBank: list }).catch(() => {});
+    },
+    fetchPartnerCreditsList() {
+      return api.get('/api/partner/credits').then((rows) => {
+        const list = Array.isArray(rows) ? rows : [];
+        setState(s => ({ ...s, partnerCreditsList: list }));
+        return list;
+      }).catch(() => []);
+    },
+    fetchPartnerCreditDetail(clientKey) {
+      return api.get('/api/partner/clients/' + encodeURIComponent(clientKey))
+        .then((data) => {
+          setState(s => ({
+            ...s,
+            partnerCreditDetail: { ...(s.partnerCreditDetail || {}), [clientKey]: data },
+          }));
+          return data;
+        });
+    },
+    logAllocation(input) {
+      return api.post('/api/partner/allocations', input).then((row) => {
+        const key = input.clientKey;
+        setState(s => {
+          const detail = s.partnerCreditDetail?.[key];
+          if (!detail) return s;
+          const allocations = [row, ...(detail.allocations || [])];
+          const used = allocations.reduce((acc, a) => acc + (Number(a.creditCost) || 0), 0);
+          const issued = detail.totals.issued;
+          return {
+            ...s,
+            partnerCreditDetail: {
+              ...s.partnerCreditDetail,
+              [key]: {
+                ...detail,
+                allocations,
+                totals: {
+                  ...detail.totals,
+                  used,
+                  remaining: issued - used,
+                  usagePct: issued > 0 ? Math.min(100, Math.round((used / issued) * 1000) / 10) : 0,
+                },
+              },
+            },
+          };
+        });
+        return row;
+      });
+    },
+    deleteAllocation(clientKey, id) {
+      return api.delete('/api/partner/allocations/' + id).then(() => {
+        setState(s => {
+          const detail = s.partnerCreditDetail?.[clientKey];
+          if (!detail) return s;
+          const allocations = (detail.allocations || []).filter(a => a.id !== id);
+          const used = allocations.reduce((acc, a) => acc + (Number(a.creditCost) || 0), 0);
+          const issued = detail.totals.issued;
+          return {
+            ...s,
+            partnerCreditDetail: {
+              ...s.partnerCreditDetail,
+              [clientKey]: {
+                ...detail,
+                allocations,
+                totals: {
+                  ...detail.totals,
+                  used,
+                  remaining: issued - used,
+                  usagePct: issued > 0 ? Math.min(100, Math.round((used / issued) * 1000) / 10) : 0,
+                },
+              },
+            },
+          };
+        });
+      });
     },
   }), []);
 

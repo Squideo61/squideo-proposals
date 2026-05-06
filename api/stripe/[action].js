@@ -12,6 +12,72 @@ import {
   formatProposalNumber,
 } from '../_lib/xeroMappers.js';
 
+// Normalise a company name (or fallback email/proposalId) into a stable lookup
+// key. Used to aggregate partner subscriptions and credit allocations across
+// multiple proposals from the same client.
+function deriveClientKey(billing, signedEmail, proposalId) {
+  const name = billing?.companyName?.trim();
+  if (name) return name.toLowerCase();
+  const email = (signedEmail || '').trim().toLowerCase();
+  if (email) return email;
+  return String(proposalId || '').toLowerCase();
+}
+
+function deriveClientName(billing, signedEmail, proposalId) {
+  return billing?.companyName?.trim() || signedEmail || proposalId || null;
+}
+
+// Mirror Stripe subscription state into our partner_subscriptions table so the
+// admin Credits dashboard has a fast, stable source of truth without round-
+// tripping Stripe on every page load. Pulls credits_per_month + billing
+// company name from the linked proposal.
+async function upsertPartnerSubscription({ subscription, proposalId, statusOverride }) {
+  try {
+    if (!subscription?.id) return;
+    if (subscription.metadata?.kind && subscription.metadata.kind !== 'partner-programme') return;
+    const pid = proposalId || subscription.metadata?.proposalId;
+    if (!pid) return;
+
+    const [billingRow, sigRows] = await Promise.all([
+      sql`SELECT billing FROM proposal_billing WHERE proposal_id = ${pid}`,
+      sql`SELECT email, data FROM signatures WHERE proposal_id = ${pid}`,
+    ]);
+    const billing = billingRow?.billing || {};
+    const sig = sigRows[0] || {};
+    const sigData = sig.data || {};
+    const clientKey = deriveClientKey(billing, sig.email, pid);
+    const clientName = deriveClientName(billing, sig.email, pid);
+    const creditsPerMonth = Number(sigData.partnerCredits) || 1;
+    const status = statusOverride || subscription.status || 'active';
+    const currentPeriodEnd = subscription.current_period_end
+      ? new Date(subscription.current_period_end * 1000).toISOString()
+      : null;
+    const canceledAt = subscription.canceled_at
+      ? new Date(subscription.canceled_at * 1000).toISOString()
+      : (status === 'canceled' ? new Date().toISOString() : null);
+
+    await sql`
+      INSERT INTO partner_subscriptions
+        (stripe_subscription_id, proposal_id, client_key, client_name,
+         credits_per_month, status, current_period_end, canceled_at)
+      VALUES
+        (${subscription.id}, ${pid}, ${clientKey}, ${clientName},
+         ${creditsPerMonth}, ${status}, ${currentPeriodEnd}, ${canceledAt})
+      ON CONFLICT (stripe_subscription_id) DO UPDATE SET
+        proposal_id        = COALESCE(EXCLUDED.proposal_id, partner_subscriptions.proposal_id),
+        client_key         = EXCLUDED.client_key,
+        client_name        = COALESCE(EXCLUDED.client_name, partner_subscriptions.client_name),
+        credits_per_month  = EXCLUDED.credits_per_month,
+        status             = EXCLUDED.status,
+        current_period_end = EXCLUDED.current_period_end,
+        canceled_at        = COALESCE(EXCLUDED.canceled_at, partner_subscriptions.canceled_at),
+        updated_at         = NOW()
+    `;
+  } catch (err) {
+    console.error('[stripe] upsertPartnerSubscription failed', err);
+  }
+}
+
 function billingToContact(billing, fallbackEmail) {
   if (!billing) return null;
   return {
@@ -156,6 +222,10 @@ async function setupPartnerSubscription({ stripe, session, proposalId }) {
             stripe_customer_id = COALESCE(stripe_customer_id, ${session.customer})
         WHERE proposal_id = ${proposalId}
     `;
+
+    // Mirror to partner_subscriptions immediately so the dashboard reflects
+    // new subs without waiting for the customer.subscription.created webhook.
+    await upsertPartnerSubscription({ subscription, proposalId });
   } catch (err) {
     console.error('[stripe] setupPartnerSubscription failed', err);
   }
@@ -380,6 +450,18 @@ export default async function handler(req, res) {
       // each monthly subscription invoice. We mirror it into Xero as an
       // AUTHORISED invoice and email it to the billing contact.
       await pushRecurringXeroInvoice({ stripe, invoice: event.data.object });
+    }
+
+    if (event.type === 'customer.subscription.created'
+        || event.type === 'customer.subscription.updated') {
+      await upsertPartnerSubscription({ subscription: event.data.object });
+    }
+
+    if (event.type === 'customer.subscription.deleted') {
+      await upsertPartnerSubscription({
+        subscription: event.data.object,
+        statusOverride: 'canceled',
+      });
     }
 
     return res.status(200).json({ received: true });

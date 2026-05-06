@@ -13,6 +13,8 @@ import { PublicClientShell } from './components/PublicClientShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
 import { TemplatesView } from './components/TemplatesView.jsx';
 import { LeaderboardView } from './components/LeaderboardView.jsx';
+import { PartnerCreditsView } from './components/PartnerCreditsView.jsx';
+import { PartnerCreditDetailView } from './components/PartnerCreditDetailView.jsx';
 import { UserManager } from './components/UserManager.jsx';
 import { NotificationSettings } from './components/NotificationSettings.jsx';
 import { AccountSettings } from './components/AccountSettings.jsx';
@@ -176,10 +178,23 @@ function AppShell() {
           onManageAccount={() => setModal({ type: 'account' })}
           onManageTemplates={() => setView('templates')}
           onManageLeaderboard={() => setView('leaderboard')}
+          onManagePartnerCredits={() => setView('partner-credits')}
         />
       )}
       {view === 'leaderboard' && (
         <LeaderboardView onBack={() => setView('list')} />
+      )}
+      {view === 'partner-credits' && (
+        <PartnerCreditsView
+          onBack={() => setView('list')}
+          onOpen={(clientKey) => { setActiveId(clientKey); setView('partner-credit-detail'); }}
+        />
+      )}
+      {view === 'partner-credit-detail' && activeId && (
+        <PartnerCreditDetailView
+          clientKey={activeId}
+          onBack={() => { setView('partner-credits'); setActiveId(null); }}
+        />
       )}
       {view === 'templates' && (
         <TemplatesView

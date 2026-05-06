@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BarChart3, Check, Clock, Copy, Download, Eye, FileText, LayoutTemplate, Link2, Mail, MoreVertical, Plus, Search, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
+import { BarChart3, Check, Clock, Copy, Coins, Download, Eye, FileText, LayoutTemplate, Link2, Mail, MoreVertical, Plus, Search, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, useIsMobile } from '../utils.js';
@@ -7,7 +7,7 @@ import { openPrintWindow, printOptionsForSigned } from '../utils/printProposal.j
 import { Badge, Logo } from './ui.jsx';
 import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onLogout, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onLogout, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   const [analyticsId, setAnalyticsId] = useState(null);
@@ -54,6 +54,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button onClick={onManageLeaderboard} className="btn-ghost"><Trophy size={14} /> Leaderboard</button>
+          <button onClick={onManagePartnerCredits} className="btn-ghost"><Coins size={14} /> Partner Credits</button>
           <button onClick={onManageTemplates} className="btn-ghost"><LayoutTemplate size={14} /> Templates</button>
           <button onClick={onManageNotifications} className="btn-ghost"><Mail size={14} /> Notifications</button>
           <button onClick={onManageUsers} className="btn-ghost"><Users size={14} /> Users</button>
