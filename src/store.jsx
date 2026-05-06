@@ -23,6 +23,47 @@ function emptyStore() {
   };
 }
 
+// Recompute partner-credit totals from raw subscription + allocation data.
+// Mirrors the math in api/partner/[action].js clientDetail() — issued comes
+// from sub accrual + positive adjustments; used comes from work + the
+// magnitude of any negative adjustments.
+function computePartnerTotals(subs, allocations) {
+  const subIssued  = (subs || []).reduce((s, x) => s + (Number(x.creditsIssuedFromSub) || 0), 0);
+  const adjAdded   = (allocations || []).filter(a => a.kind === 'adjustment' && a.creditCost > 0)
+                       .reduce((s, a) => s + a.creditCost, 0);
+  const adjRemoved = (allocations || []).filter(a => a.kind === 'adjustment' && a.creditCost < 0)
+                       .reduce((s, a) => s + (-a.creditCost), 0);
+  const workUsed   = (allocations || []).filter(a => a.kind === 'work')
+                       .reduce((s, a) => s + a.creditCost, 0);
+  const issued = subIssued + adjAdded;
+  const used = workUsed + adjRemoved;
+  const remaining = issued - used;
+  const usagePct = issued > 0 ? Math.min(100, Math.round((used / issued) * 1000) / 10) : 0;
+  return { issued, used, remaining, usagePct };
+}
+
+// Apply a transformation to the cached allocations for one client and
+// recompute totals correctly. Used by logAllocation and deleteAllocation
+// for instant optimistic updates without round-tripping the server.
+function applyOptimisticAllocationChange(setState, clientKey, transform) {
+  setState(s => {
+    const detail = s.partnerCreditDetail?.[clientKey];
+    if (!detail) return s;
+    const allocations = transform(detail.allocations || []);
+    return {
+      ...s,
+      partnerCreditDetail: {
+        ...s.partnerCreditDetail,
+        [clientKey]: {
+          ...detail,
+          allocations,
+          totals: computePartnerTotals(detail.subscriptions, allocations),
+        },
+      },
+    };
+  });
+}
+
 function sessionFromToken() {
   try {
     const token = getToken();
@@ -259,30 +300,7 @@ export function StoreProvider({ children }) {
     },
     logAllocation(input) {
       return api.post('/api/partner/allocations', input).then((row) => {
-        const key = input.clientKey;
-        setState(s => {
-          const detail = s.partnerCreditDetail?.[key];
-          if (!detail) return s;
-          const allocations = [row, ...(detail.allocations || [])];
-          const used = allocations.reduce((acc, a) => acc + (Number(a.creditCost) || 0), 0);
-          const issued = detail.totals.issued;
-          return {
-            ...s,
-            partnerCreditDetail: {
-              ...s.partnerCreditDetail,
-              [key]: {
-                ...detail,
-                allocations,
-                totals: {
-                  ...detail.totals,
-                  used,
-                  remaining: issued - used,
-                  usagePct: issued > 0 ? Math.min(100, Math.round((used / issued) * 1000) / 10) : 0,
-                },
-              },
-            },
-          };
-        });
+        applyOptimisticAllocationChange(setState, input.clientKey, (allocations) => [row, ...allocations]);
         return row;
       });
     },
@@ -310,29 +328,7 @@ export function StoreProvider({ children }) {
     },
     deleteAllocation(clientKey, id) {
       return api.delete('/api/partner/allocations?id=' + encodeURIComponent(id)).then(() => {
-        setState(s => {
-          const detail = s.partnerCreditDetail?.[clientKey];
-          if (!detail) return s;
-          const allocations = (detail.allocations || []).filter(a => a.id !== id);
-          const used = allocations.reduce((acc, a) => acc + (Number(a.creditCost) || 0), 0);
-          const issued = detail.totals.issued;
-          return {
-            ...s,
-            partnerCreditDetail: {
-              ...s.partnerCreditDetail,
-              [clientKey]: {
-                ...detail,
-                allocations,
-                totals: {
-                  ...detail.totals,
-                  used,
-                  remaining: issued - used,
-                  usagePct: issued > 0 ? Math.min(100, Math.round((used / issued) * 1000) / 10) : 0,
-                },
-              },
-            },
-          };
-        });
+        applyOptimisticAllocationChange(setState, clientKey, (allocations) => allocations.filter(a => a.id !== id));
       });
     },
   }), []);
