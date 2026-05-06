@@ -279,6 +279,14 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
   };
 
   if (!data) {
+    if (state.loading) {
+      return (
+        <div style={{ minHeight: '60vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 60, gap: 20 }}>
+          <img src={SQUIDEO_LOGO} alt="Squideo" style={{ width: 140, height: 'auto', opacity: 0.95, animation: 'squideo-pulse 1.6s ease-in-out infinite' }} />
+          <style>{`@keyframes squideo-pulse { 0%, 100% { opacity: 0.55; transform: scale(0.98); } 50% { opacity: 1; transform: scale(1); } }`}</style>
+        </div>
+      );
+    }
     return (
       <div style={{ padding: 60, textAlign: 'center' }}>
         Proposal not found.
