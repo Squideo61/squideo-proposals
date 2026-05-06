@@ -1,0 +1,186 @@
+// Xero API client backed by a Web App OAuth integration with offline_access.
+// The one-off bootstrap (api/xero/connect → /callback) writes a refresh
+// token + tenant ID into the xero_tokens table; from then on every API call
+// silently refreshes when the access token expires. Refresh tokens rotate
+// on each refresh — we persist the new one immediately.
+
+import sql from './db.js';
+
+const TOKEN_URL = 'https://identity.xero.com/connect/token';
+const API_BASE = 'https://api.xero.com';
+
+let cached = null; // { accessToken, expiresAt, tenantId }
+
+function isConfigured() {
+  return Boolean(process.env.XERO_CLIENT_ID && process.env.XERO_CLIENT_SECRET);
+}
+
+async function loadStoredToken() {
+  const rows = await sql`SELECT refresh_token, tenant_id FROM xero_tokens WHERE id = 'singleton' LIMIT 1`;
+  if (!rows.length) {
+    throw new Error('[xero] no stored refresh token — visit /api/xero/connect to bootstrap');
+  }
+  return { refreshToken: rows[0].refresh_token, tenantId: rows[0].tenant_id };
+}
+
+async function refreshAccessToken() {
+  if (!isConfigured()) {
+    throw new Error('[xero] missing XERO_CLIENT_ID / XERO_CLIENT_SECRET');
+  }
+  const { refreshToken, tenantId } = await loadStoredToken();
+  const basic = Buffer
+    .from(`${process.env.XERO_CLIENT_ID}:${process.env.XERO_CLIENT_SECRET}`)
+    .toString('base64');
+
+  const res = await fetch(TOKEN_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${basic}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    }).toString(),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`[xero] refresh failed ${res.status}: ${text}`);
+  }
+  const json = await res.json();
+
+  // Xero rotates the refresh token on each refresh — persist the new one
+  // before doing anything else, otherwise we lock ourselves out on next call.
+  await sql`
+    UPDATE xero_tokens
+      SET refresh_token = ${json.refresh_token},
+          updated_at = NOW()
+      WHERE id = 'singleton'
+  `;
+
+  cached = {
+    accessToken: json.access_token,
+    expiresAt: Date.now() + (json.expires_in * 1000),
+    tenantId,
+  };
+  return cached;
+}
+
+export async function getAccessToken() {
+  if (cached && cached.expiresAt - 30_000 > Date.now()) {
+    return cached;
+  }
+  return refreshAccessToken();
+}
+
+async function xeroFetch(path, opts = {}, retried = false) {
+  const { accessToken, tenantId } = await getAccessToken();
+  const res = await fetch(API_BASE + path, {
+    ...opts,
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Xero-tenant-id': tenantId,
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      ...(opts.headers || {}),
+    },
+  });
+  if (res.status === 401 && !retried) {
+    cached = null;
+    return xeroFetch(path, opts, true);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`[xero] ${opts.method || 'GET'} ${path} failed ${res.status}: ${text}`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+function escapeWhere(s) {
+  return String(s || '').replace(/"/g, '\\"');
+}
+
+export async function getOrCreateContact({ name, email, address, vatNumber }) {
+  const trimmedName = (name || '').trim();
+  if (!trimmedName) throw new Error('[xero] contact name is required');
+
+  const where = `Name=="${escapeWhere(trimmedName)}"`;
+  const search = await xeroFetch(`/api.xro/2.0/Contacts?where=${encodeURIComponent(where)}`);
+  if (search?.Contacts?.length) {
+    return search.Contacts[0].ContactID;
+  }
+
+  const addresses = address ? [{
+    AddressType: 'STREET',
+    AddressLine1: address.line1 || '',
+    AddressLine2: address.line2 || '',
+    City: address.city || '',
+    PostalCode: address.postcode || '',
+    Country: address.country || 'United Kingdom',
+  }] : undefined;
+
+  const payload = {
+    Name: trimmedName,
+    EmailAddress: email || undefined,
+    TaxNumber: vatNumber || undefined,
+    Addresses: addresses,
+  };
+  const created = await xeroFetch('/api.xro/2.0/Contacts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return created.Contacts[0].ContactID;
+}
+
+export async function createInvoice({ contactId, lineItems, reference, dueDate, status = 'AUTHORISED' }) {
+  const payload = {
+    Type: 'ACCREC',
+    Contact: { ContactID: contactId },
+    LineAmountTypes: 'Exclusive',
+    Status: status,
+    Reference: reference || undefined,
+    DueDate: dueDate || undefined,
+    LineItems: lineItems.map(li => ({
+      Description: li.description,
+      Quantity: li.quantity,
+      UnitAmount: li.unitAmount,
+      TaxType: li.taxType,
+      AccountCode: li.accountCode,
+    })),
+  };
+  const res = await xeroFetch('/api.xro/2.0/Invoices', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res.Invoices[0].InvoiceID;
+}
+
+export async function emailInvoice(invoiceId) {
+  await xeroFetch(`/api.xro/2.0/Invoices/${invoiceId}/Email`, {
+    method: 'POST',
+    body: '{}',
+  });
+}
+
+export async function createQuote({ contactId, lineItems, reference, status = 'SENT', expiryDate }) {
+  const payload = {
+    Contact: { ContactID: contactId },
+    LineAmountTypes: 'EXCLUSIVE',
+    Status: status,
+    Reference: reference || undefined,
+    ExpiryDate: expiryDate || undefined,
+    LineItems: lineItems.map(li => ({
+      Description: li.description,
+      Quantity: li.quantity,
+      UnitAmount: li.unitAmount,
+      TaxType: li.taxType,
+      AccountCode: li.accountCode,
+    })),
+  };
+  const res = await xeroFetch('/api.xro/2.0/Quotes', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res.Quotes[0].QuoteID;
+}

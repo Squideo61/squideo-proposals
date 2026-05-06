@@ -364,18 +364,41 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     else showMsg('Proposal accepted!');
   };
 
-  const handlePayNow = async () => {
+  const handlePayNow = async ({ billing } = {}) => {
     if (!useRealStripe) {
       showMsg('Payments are disabled in preview mode');
       return;
     }
     setPaymentChoice('processing');
     try {
-      await startStripeCheckout({ proposalId: id, signed });
+      await startStripeCheckout({ proposalId: id, signed, billing });
     } catch (err) {
       console.error('[stripe checkout]', err);
       setPaymentChoice(null);
       showMsg(err?.message ? 'Checkout error: ' + err.message : 'Could not start checkout. Please try again.');
+    }
+  };
+
+  const handleConfirmPo = async ({ billing }) => {
+    if (isPreview) {
+      showMsg('PO confirmation simulated - preview only, not saved');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/po/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ billing }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || ('PO confirm failed: ' + res.status));
+      }
+      showMsg('Quote sent. Pending your PO.');
+    } catch (err) {
+      console.error('[po confirm]', err);
+      showMsg(err?.message ? 'Could not send quote: ' + err.message : 'Could not send quote. Please try again.');
+      throw err;
     }
   };
 
@@ -878,6 +901,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
             onPayNow={handlePayNow}
             onChooseInvoice={() => setPaymentChoice('invoice')}
             onUndoInvoice={() => setPaymentChoice(null)}
+            onConfirmPo={handleConfirmPo}
             onDownloadReceipt={payment ? () => openReceiptWindow(data, signed, payment) : undefined}
             onDownloadSignedProposal={signed ? () => openPrintWindow(data, printOptionsForSigned(signed, payment)) : undefined}
           />

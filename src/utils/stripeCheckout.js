@@ -1,6 +1,6 @@
 // Kicks off Stripe Checkout for a signed proposal. Resolves never (redirects)
 // or rejects with an Error if the session couldn't be created.
-export async function startStripeCheckout({ proposalId, signed }) {
+export async function startStripeCheckout({ proposalId, signed, billing }) {
   const partnerCtx = signed.partnerSelected && signed.amountBreakdown ? {
     projectExVat: signed.amountBreakdown.projectExVat,
     partnerExVat: signed.amountBreakdown.partnerExVat,
@@ -16,6 +16,7 @@ export async function startStripeCheckout({ proposalId, signed }) {
       isDeposit: signed.paymentOption === '5050',
       customerEmail: signed.email,
       partner: partnerCtx,
+      billing: billing || null,
     }),
   });
   let payload = {};

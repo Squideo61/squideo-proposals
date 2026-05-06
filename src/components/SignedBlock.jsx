@@ -1,13 +1,30 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Check, Download, FileText } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { formatGBP } from '../utils.js';
+import { BillingFields, emptyBilling, isBillingValid } from './BillingFields.jsx';
 
-export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onDownloadReceipt, onDownloadSignedProposal }) {
+export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onConfirmPo, onDownloadReceipt, onDownloadSignedProposal }) {
   const isPO = signed.paymentOption === 'po';
   const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
   const isDeposit = signed.paymentOption === '5050';
   const totalExVat = vatRate ? signed.total / (1 + vatRate) : signed.total;
+
+  const [billing, setBilling] = useState(() => emptyBilling(signed.email));
+  const [poSubmitting, setPoSubmitting] = useState(false);
+  const [poConfirmed, setPoConfirmed] = useState(false);
+  const billingValid = isBillingValid(billing);
+
+  const submitPo = async () => {
+    if (!billingValid || !onConfirmPo) return;
+    setPoSubmitting(true);
+    try {
+      await onConfirmPo({ billing });
+      setPoConfirmed(true);
+    } finally {
+      setPoSubmitting(false);
+    }
+  };
 
   return (
     <div>
@@ -71,12 +88,34 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
         </div>
       )}
 
-      {!payment && isPO && (
+      {!payment && isPO && poConfirmed && (
         <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20 }}>
-          <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Purchase Order confirmed</h4>
+          <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Quote sent — pending your PO</h4>
           <p style={{ fontSize: 13, color: BRAND.muted, margin: 0, lineHeight: 1.5 }}>
-            Our team will be in touch within 24 hours to set up your supplier details and confirm the Purchase Order for {formatGBP(amountDue)}.
+            We've issued a formal quote to {billing.accountsEmail || signed.email} for {formatGBP(amountDue)}. Once your Purchase Order is set up we'll convert it into an invoice.
           </p>
+        </div>
+      )}
+
+      {!payment && isPO && !poConfirmed && (
+        <div style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24 }}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>Confirm your PO details</h3>
+          <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
+            Tell us where to send the formal quote. Once your Purchase Order is raised we'll convert this into an invoice.
+          </p>
+          <BillingFields
+            value={billing}
+            onChange={setBilling}
+            subtitle="Used on your formal quote and any subsequent invoice."
+          />
+          <button
+            onClick={submitPo}
+            disabled={!billingValid || poSubmitting}
+            className="btn"
+            style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}
+          >
+            {poSubmitting ? 'Sending quote…' : 'Send formal quote for ' + formatGBP(amountDue)}
+          </button>
         </div>
       )}
 
@@ -116,7 +155,18 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
             </div>
           </div>
 
-          <button onClick={onPayNow} disabled={paymentChoice === 'processing'} className="btn" style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}>
+          <BillingFields
+            value={billing}
+            onChange={setBilling}
+            subtitle="We'll issue your invoice to this contact in Xero once payment is taken."
+          />
+
+          <button
+            onClick={() => onPayNow({ billing })}
+            disabled={paymentChoice === 'processing' || !billingValid}
+            className="btn"
+            style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}
+          >
             {paymentChoice === 'processing' ? 'Connecting…' : 'Pay ' + formatGBP(amountDue) + ' now by card'}
           </button>
 

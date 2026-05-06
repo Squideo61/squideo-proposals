@@ -6,10 +6,15 @@ import { formatGBP } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
 import { startStripeCheckout } from '../utils/stripeCheckout.js';
 import { Logo } from './ui.jsx';
+import { BillingFields, emptyBilling, isBillingValid } from './BillingFields.jsx';
 
 export function ThankYouView({ proposalId, proposal, signed, payment, onViewProposal, useRealStripe = true, showMsg }) {
   const autoPrintFiredRef = useRef(false);
   const [paymentChoice, setPaymentChoice] = useState(null); // null | 'invoice' | 'processing'
+  const [billing, setBilling] = useState(() => emptyBilling(signed?.email));
+  const [poSubmitting, setPoSubmitting] = useState(false);
+  const [poConfirmed, setPoConfirmed] = useState(false);
+  const billingValid = isBillingValid(billing);
   const [celebrating] = useState(() =>
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).get('celebrate') === '1'
@@ -89,11 +94,34 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
     }
     setPaymentChoice('processing');
     try {
-      await startStripeCheckout({ proposalId, signed });
+      await startStripeCheckout({ proposalId, signed, billing });
     } catch (err) {
       console.error('[stripe checkout]', err);
       setPaymentChoice(null);
       showMsg && showMsg(err?.message ? 'Checkout error: ' + err.message : 'Could not start checkout. Please try again.');
+    }
+  };
+
+  const handleConfirmPo = async () => {
+    if (!billingValid) return;
+    setPoSubmitting(true);
+    try {
+      const res = await fetch(`/api/po/${proposalId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ billing }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || ('PO confirm failed: ' + res.status));
+      }
+      setPoConfirmed(true);
+      showMsg && showMsg('Quote sent. Pending your PO.');
+    } catch (err) {
+      console.error('[po confirm]', err);
+      showMsg && showMsg(err?.message ? 'Could not send quote: ' + err.message : 'Could not send quote. Please try again.');
+    } finally {
+      setPoSubmitting(false);
     }
   };
 
@@ -201,9 +229,15 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
               </div>
             </div>
 
+            <BillingFields
+              value={billing}
+              onChange={setBilling}
+              subtitle="We'll issue your invoice to this contact in Xero once payment is taken."
+            />
+
             <button
               onClick={handlePayNow}
-              disabled={paymentChoice === 'processing'}
+              disabled={paymentChoice === 'processing' || !billingValid}
               className="btn"
               style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}
             >
@@ -232,12 +266,34 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
           </div>
         )}
 
-        {signed && !payment && isPO && (
+        {signed && !payment && isPO && poConfirmed && (
           <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-            <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Purchase Order confirmed</h4>
+            <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Quote sent — pending your PO</h4>
             <p style={{ fontSize: 13, color: BRAND.muted, margin: 0, lineHeight: 1.5 }}>
-              Our team will be in touch within 24 hours to set up your supplier details and confirm the Purchase Order for {formatGBP(amountDue)}.
+              We've issued a formal quote to {billing.accountsEmail || signed.email} for {formatGBP(amountDue)}. Once your Purchase Order is set up we'll convert it into an invoice.
             </p>
+          </div>
+        )}
+
+        {signed && !payment && isPO && !poConfirmed && (
+          <div style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24, marginBottom: 20 }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>Confirm your PO details</h3>
+            <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
+              Tell us where to send the formal quote. Once your Purchase Order is raised we'll convert this into an invoice.
+            </p>
+            <BillingFields
+              value={billing}
+              onChange={setBilling}
+              subtitle="Used on your formal quote and any subsequent invoice."
+            />
+            <button
+              onClick={handleConfirmPo}
+              disabled={!billingValid || poSubmitting}
+              className="btn"
+              style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}
+            >
+              {poSubmitting ? 'Sending quote…' : 'Send formal quote for ' + formatGBP(amountDue)}
+            </button>
           </div>
         )}
 
