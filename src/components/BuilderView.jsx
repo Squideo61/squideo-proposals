@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, Lightbulb, List, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
+import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { useIsMobile } from '../utils.js';
@@ -9,6 +9,41 @@ import { TeamMemberEditor } from './TeamMemberEditor.jsx';
 import { ExtrasBankManager } from './ExtrasBankManager.jsx';
 import { extraHasVariants, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
+
+function reorderArray(arr, from, to) {
+  const next = [...arr];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
+function useReorderState() {
+  const [draggingIdx, setDraggingIdx] = useState(null);
+  const [overIdx, setOverIdx] = useState(null);
+  return {
+    draggingIdx,
+    overIdx,
+    start: (i) => setDraggingIdx(i),
+    over: (i) => setOverIdx(i),
+    reset: () => { setDraggingIdx(null); setOverIdx(null); },
+  };
+}
+
+function DragHandle({ onDragStart, onDragEnd }) {
+  return (
+    <span
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onMouseDown={(e) => e.stopPropagation()}
+      style={{ cursor: 'grab', color: '#9CA3AF', display: 'flex', alignItems: 'center', flexShrink: 0, padding: '4px 2px' }}
+      aria-label="Drag to reorder"
+      title="Drag to reorder"
+    >
+      <GripVertical size={16} />
+    </span>
+  );
+}
 
 function SectionStatus({ issues }) {
   if (!issues || issues.length === 0) return (
@@ -33,6 +68,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   const [showBankManager, setShowBankManager] = useState(false);
   const [showInclusionsPicker, setShowInclusionsPicker] = useState(false);
   const [showInclusionsManager, setShowInclusionsManager] = useState(false);
+  const inclusionsReorder = useReorderState();
+  const extrasReorder = useReorderState();
 
   const isMobile = useIsMobile();
 
@@ -331,8 +368,39 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       {/* ── What's Included ── */}
       <Section title="What's Included" color="#0e7490" icon={List}>
         {data.baseInclusions.map((inc, i) => (
-          <div key={i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 12, marginBottom: 10 }}>
+          <div
+            key={i}
+            onDragOver={(e) => {
+              if (inclusionsReorder.draggingIdx === null) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              if (inclusionsReorder.overIdx !== i) inclusionsReorder.over(i);
+            }}
+            onDrop={(e) => {
+              const from = inclusionsReorder.draggingIdx;
+              if (from === null) return;
+              e.preventDefault();
+              if (from !== i) update({ baseInclusions: reorderArray(data.baseInclusions, from, i) });
+              inclusionsReorder.reset();
+            }}
+            style={{
+              border: '1px solid ' + (inclusionsReorder.overIdx === i && inclusionsReorder.draggingIdx !== null && inclusionsReorder.draggingIdx !== i ? BRAND.blue : BRAND.border),
+              borderRadius: 10,
+              padding: 12,
+              marginBottom: 10,
+              opacity: inclusionsReorder.draggingIdx === i ? 0.4 : 1,
+              transition: 'border-color 120ms, opacity 120ms',
+            }}
+          >
             <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+              <DragHandle
+                onDragStart={(e) => {
+                  inclusionsReorder.start(i);
+                  e.dataTransfer.effectAllowed = 'move';
+                  try { e.dataTransfer.setData('text/plain', String(i)); } catch {}
+                }}
+                onDragEnd={inclusionsReorder.reset}
+              />
               <input
                 className="input"
                 style={{ flex: 1 }}
@@ -500,8 +568,39 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       {/* ── Optional Extras ── */}
       <Section title="Optional Extras" color="#be185d" icon={Package}>
         {data.optionalExtras.map((extra, i) => (
-          <div key={extra.id} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 12, marginBottom: 10 }}>
+          <div
+            key={extra.id}
+            onDragOver={(e) => {
+              if (extrasReorder.draggingIdx === null) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              if (extrasReorder.overIdx !== i) extrasReorder.over(i);
+            }}
+            onDrop={(e) => {
+              const from = extrasReorder.draggingIdx;
+              if (from === null) return;
+              e.preventDefault();
+              if (from !== i) update({ optionalExtras: reorderArray(data.optionalExtras, from, i) });
+              extrasReorder.reset();
+            }}
+            style={{
+              border: '1px solid ' + (extrasReorder.overIdx === i && extrasReorder.draggingIdx !== null && extrasReorder.draggingIdx !== i ? BRAND.blue : BRAND.border),
+              borderRadius: 10,
+              padding: 12,
+              marginBottom: 10,
+              opacity: extrasReorder.draggingIdx === i ? 0.4 : 1,
+              transition: 'border-color 120ms, opacity 120ms',
+            }}
+          >
             <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+              <DragHandle
+                onDragStart={(e) => {
+                  extrasReorder.start(i);
+                  e.dataTransfer.effectAllowed = 'move';
+                  try { e.dataTransfer.setData('text/plain', String(i)); } catch {}
+                }}
+                onDragEnd={extrasReorder.reset}
+              />
               <input className="input" style={{ flex: 1 }} value={extra.label} onChange={(e) => updateExtra(i, { label: e.target.value })} />
               <div style={{ position: 'relative', flexShrink: 0 }}>
                 <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: BRAND.muted, pointerEvents: 'none' }}>£</span>
