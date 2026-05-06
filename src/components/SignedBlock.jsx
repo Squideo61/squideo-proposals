@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Check, Download, FileText } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { formatGBP } from '../utils.js';
@@ -15,7 +15,25 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
   const [poConfirmed, setPoConfirmed] = useState(false);
   const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
   const [invoiceConfirmed, setInvoiceConfirmed] = useState(false);
+  const [highlightBilling, setHighlightBilling] = useState(false);
+  const invoicePanelRef = useRef(null);
   const billingValid = isBillingValid(billing);
+
+  // When the client clicks "Skip - send me an invoice", scroll the new
+  // billing panel into view and pulse a highlight ring on the form so it's
+  // obvious they still have to fill those fields in.
+  useEffect(() => {
+    if (paymentChoice !== 'invoice' || invoiceConfirmed) {
+      setHighlightBilling(false);
+      return;
+    }
+    const scrollT = setTimeout(() => {
+      invoicePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 60);
+    setHighlightBilling(true);
+    const offT = setTimeout(() => setHighlightBilling(false), 2600);
+    return () => { clearTimeout(scrollT); clearTimeout(offT); };
+  }, [paymentChoice, invoiceConfirmed]);
 
   const submitPo = async () => {
     if (!billingValid || !onConfirmPo) return;
@@ -142,16 +160,22 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
       )}
 
       {!payment && !isPO && paymentChoice === 'invoice' && !invoiceConfirmed && (
-        <div style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24 }}>
+        <div ref={invoicePanelRef} style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24, scrollMarginTop: 80 }}>
           <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>Where shall we send your invoice?</h3>
           <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
             Confirm your billing details and we'll issue an invoice for {formatGBP(amountDue)} straight away.
           </p>
-          <BillingFields
-            value={billing}
-            onChange={setBilling}
-            subtitle="The invoice will be sent to this address from our Xero account."
-          />
+          <div style={{
+            borderRadius: 12,
+            transition: 'box-shadow 0.6s ease',
+            boxShadow: highlightBilling ? '0 0 0 4px rgba(43, 184, 230, 0.55)' : '0 0 0 0 rgba(43, 184, 230, 0)',
+          }}>
+            <BillingFields
+              value={billing}
+              onChange={setBilling}
+              subtitle="The invoice will be sent to this address from our Xero account."
+            />
+          </div>
           <button
             onClick={submitInvoice}
             disabled={!billingValid || invoiceSubmitting}
