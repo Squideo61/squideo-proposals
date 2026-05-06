@@ -3,6 +3,7 @@ import { Plus, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { Modal } from './ui.jsx';
+import { VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 
 export function ExtrasBankManager({ onClose }) {
   const { state, actions, showMsg } = useStore();
@@ -66,14 +67,16 @@ export function ExtrasBankManager({ onClose }) {
               onChange={(e) => update(i, { description: e.target.value })}
               placeholder="Description shown to client"
             />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={!!item.variantsEnabled}
-                onChange={(e) => update(i, { variantsEnabled: e.target.checked })}
-              />
-              Per-language pricing {item.variantsEnabled && <span style={{ color: BRAND.muted }}>— price above is charged per language</span>}
-            </label>
+            {VARIANT_ELIGIBLE_IDS.has(item.id) && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={!!item.variantsEnabled}
+                  onChange={(e) => update(i, { variantsEnabled: e.target.checked })}
+                />
+                Per-language pricing {item.variantsEnabled && <span style={{ color: BRAND.muted }}>— price above is charged per language</span>}
+              </label>
+            )}
           </div>
         ))}
       </div>

@@ -1,11 +1,12 @@
 import { CONFIG } from './theme.js';
 export { SQUIDEO_LOGO } from './_logo_tmp.js';
 
-const VARIANT_ENABLED_DEFAULT_IDS = new Set(['translatedsubs', 'fulltranslate']);
+export const VARIANT_ELIGIBLE_IDS = new Set(['translatedsubs', 'fulltranslate']);
 export function extraHasVariants(extra) {
   if (!extra) return false;
+  if (!VARIANT_ELIGIBLE_IDS.has(extra.id)) return false;
   if (typeof extra.variantsEnabled === 'boolean') return extra.variantsEnabled;
-  return VARIANT_ENABLED_DEFAULT_IDS.has(extra.id);
+  return true;
 }
 
 export const NEXT_STEPS = [
