@@ -192,6 +192,13 @@ You should see a success message. Your database is now ready.
 > );
 > CREATE INDEX IF NOT EXISTS idx_credit_allocations_client ON credit_allocations(client_key, allocated_at DESC);
 >
+> -- Manual partner subscriptions + credit-adjustment kind
+> ALTER TABLE credit_allocations
+>   ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'work';
+> ALTER TABLE partner_subscriptions
+>   ADD COLUMN IF NOT EXISTS auto_credit BOOLEAN NOT NULL DEFAULT TRUE,
+>   ADD COLUMN IF NOT EXISTS start_date  DATE;
+>
 > -- One-time backfill: seed partner_subscriptions from existing payments
 > INSERT INTO partner_subscriptions
 >   (stripe_subscription_id, proposal_id, client_key, client_name, credits_per_month, status)

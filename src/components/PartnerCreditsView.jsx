@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Coins } from 'lucide-react';
+import { ArrowLeft, Coins, Plus } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { useIsMobile } from '../utils.js';
+import { Modal } from './ui.jsx';
 
 function fmtCredits(n) {
   const v = Number(n) || 0;
@@ -17,8 +18,9 @@ function fmtDate(s) {
 }
 
 export function PartnerCreditsView({ onBack, onOpen }) {
-  const { state, actions } = useStore();
+  const { state, actions, showMsg } = useStore();
   const [loading, setLoading] = useState(state.partnerCreditsList === null);
+  const [showAddModal, setShowAddModal] = useState(false);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -32,13 +34,32 @@ export function PartnerCreditsView({ onBack, onOpen }) {
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px' : '40px 24px' }}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
-        <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Coins size={22} color={BRAND.blue} />
-          <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Partner Programme Credits</h1>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, flexWrap: 'wrap', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Coins size={22} color={BRAND.blue} />
+            <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Partner Programme Credits</h1>
+          </div>
         </div>
+        <button onClick={() => setShowAddModal(true)} className="btn">
+          <Plus size={14} /> Add manual client
+        </button>
       </header>
+
+      {showAddModal && (
+        <AddManualClientModal
+          onClose={() => setShowAddModal(false)}
+          onCreated={async (clientKey) => {
+            setShowAddModal(false);
+            await actions.fetchPartnerCreditsList();
+            showMsg('Client added');
+            if (clientKey) onOpen(clientKey);
+          }}
+          showMsg={showMsg}
+          createManualSubscription={actions.createManualSubscription}
+        />
+      )}
 
       {loading && list.length === 0 ? (
         <Card><div style={{ padding: 60, textAlign: 'center', color: BRAND.muted }}>Loading clients…</div></Card>
@@ -142,6 +163,111 @@ function Card({ children }) {
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 0 }}>
       {children}
+    </div>
+  );
+}
+
+function AddManualClientModal({ onClose, onCreated, showMsg, createManualSubscription }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [clientName, setClientName] = useState('');
+  const [creditsPerMonth, setCreditsPerMonth] = useState('5');
+  const [startDate, setStartDate] = useState(today);
+  const [autoCredit, setAutoCredit] = useState(true);
+  const [initialBalance, setInitialBalance] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const cpm = parseFloat(creditsPerMonth);
+    if (!clientName.trim()) return;
+    if (!Number.isFinite(cpm) || cpm < 0) return;
+    setSubmitting(true);
+    try {
+      const ib = parseFloat(initialBalance);
+      const row = await createManualSubscription({
+        clientName: clientName.trim(),
+        creditsPerMonth: cpm,
+        startDate: startDate || null,
+        autoCredit,
+        initialBalance: Number.isFinite(ib) && ib !== 0 ? ib : undefined,
+      });
+      onCreated(row?.clientKey);
+    } catch (err) {
+      showMsg(err?.message || 'Failed to add client');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>Add manual partner client</h3>
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
+        For partner-programme clients who aren't billed via Stripe. You can still log work and adjust credits the same way.
+      </p>
+      <form onSubmit={submit} style={{ display: 'grid', gap: 12 }}>
+        <Field label="Client name">
+          <input
+            className="input"
+            autoFocus
+            value={clientName}
+            onChange={(e) => setClientName(e.target.value)}
+            placeholder="ASH Waste"
+            required
+          />
+        </Field>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Field label="Credits per month">
+            <input
+              className="input"
+              type="number"
+              step="0.01"
+              min="0"
+              value={creditsPerMonth}
+              onChange={(e) => setCreditsPerMonth(e.target.value)}
+              required
+            />
+          </Field>
+          <Field label="Start date">
+            <input
+              className="input"
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
+          </Field>
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+          <input type="checkbox" checked={autoCredit} onChange={(e) => setAutoCredit(e.target.checked)} />
+          Auto-credit each month from the start date
+        </label>
+        <Field label="Initial balance adjustment (optional)" hint="Use a positive number for credits already paid for; negative for a clawback. Leave blank for none.">
+          <input
+            className="input"
+            type="number"
+            step="0.01"
+            value={initialBalance}
+            onChange={(e) => setInitialBalance(e.target.value)}
+            placeholder="e.g. 12"
+          />
+        </Field>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+          <button type="submit" disabled={submitting} className="btn">
+            {submitting ? 'Adding…' : 'Add client'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function Field({ label, hint, children }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: BRAND.muted, marginBottom: 4 }}>{label}</div>
+      {children}
+      {hint && <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4, lineHeight: 1.4 }}>{hint}</div>}
     </div>
   );
 }

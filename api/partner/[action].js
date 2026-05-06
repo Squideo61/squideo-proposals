@@ -1,9 +1,12 @@
 // Single-file router for partner-programme admin endpoints.
 //
-//   GET    /api/partner/credits                  — list of clients with totals
-//   GET    /api/partner/clients?key=…            — per-client detail
-//   POST   /api/partner/allocations              — log a work allocation
-//   DELETE /api/partner/allocations?id=…         — remove a logged allocation
+//   GET    /api/partner/credits                                 — list of clients with totals
+//   GET    /api/partner/clients?key=…                           — per-client detail
+//   POST   /api/partner/allocations                             — log work / adjustment
+//   DELETE /api/partner/allocations?id=…                        — remove an allocation
+//   POST   /api/partner/subscriptions                           — create a manual subscription
+//   PATCH  /api/partner/subscriptions?id=<stripe_subscription_id>  — update manual subscription
+//   DELETE /api/partner/subscriptions?id=<stripe_subscription_id>  — delete manual subscription
 //
 // All routes require auth.
 import sql from '../_lib/db.js';
@@ -41,6 +44,15 @@ export default async function handler(req, res) {
       return res.status(405).end();
     }
 
+    if (action === 'subscriptions') {
+      if (req.method === 'POST')   return await createManualSubscription(req, res);
+      const subId = req.query.id ? String(req.query.id) : null;
+      if (!subId) return res.status(400).json({ error: 'id required' });
+      if (req.method === 'PATCH')  return await patchManualSubscription(req, res, subId);
+      if (req.method === 'DELETE') return await deleteManualSubscription(res, subId);
+      return res.status(405).end();
+    }
+
     return res.status(404).json({ error: 'Unknown action' });
   } catch (err) {
     console.error('[partner]', err);
@@ -48,21 +60,45 @@ export default async function handler(req, res) {
   }
 }
 
+// ─── Credit math ────────────────────────────────────────────────────────────
+// Stripe-tracked subs: 1 (initial month bundled in checkout) + count of
+//   recurring partner_invoices, all × credits_per_month.
+// Manual subs with auto_credit=true: months elapsed since start_date (or
+//   created_at) + 1, capped at canceled_at if cancelled, × credits_per_month.
+// Manual subs with auto_credit=false: 0 (admin tops up via adjustments).
+//
+// Adjustments: kind='adjustment' rows on credit_allocations. Positive
+//   credit_cost adds to "issued"; negative adds to "used".
+
 async function listCredits(res) {
-  // months_paid per subscription = 1 (first month bundled into the Stripe
-  // checkout) + the number of recurring partner_invoices captured since.
   const rows = await sql`
     WITH sub_totals AS (
       SELECT
         ps.client_key,
         ps.client_name,
-        ps.credits_per_month,
         ps.status,
         ps.proposal_id,
-        1 + COALESCE(
-          (SELECT COUNT(*) FROM partner_invoices pi WHERE pi.proposal_id = ps.proposal_id),
-          0
-        ) AS months_paid,
+        ps.stripe_subscription_id,
+        (
+          CASE
+            WHEN ps.stripe_subscription_id LIKE 'manual_%' THEN
+              CASE
+                WHEN ps.auto_credit IS TRUE THEN
+                  ps.credits_per_month * GREATEST(0,
+                    EXTRACT(YEAR  FROM AGE(COALESCE(ps.canceled_at, NOW()), COALESCE(ps.start_date, ps.created_at::date)))::INT * 12 +
+                    EXTRACT(MONTH FROM AGE(COALESCE(ps.canceled_at, NOW()), COALESCE(ps.start_date, ps.created_at::date)))::INT + 1
+                  )
+                ELSE 0
+              END
+            ELSE
+              ps.credits_per_month * (
+                1 + COALESCE(
+                  (SELECT COUNT(*) FROM partner_invoices pi WHERE pi.proposal_id = ps.proposal_id),
+                  0
+                )
+              )
+          END
+        )::NUMERIC AS issued_from_sub,
         (SELECT MAX(paid_at) FROM partner_invoices pi WHERE pi.proposal_id = ps.proposal_id) AS last_recurring,
         (SELECT paid_at FROM payments p WHERE p.proposal_id = ps.proposal_id) AS initial_paid
       FROM partner_subscriptions ps
@@ -73,14 +109,18 @@ async function listCredits(res) {
         MAX(client_name) AS client_name,
         COUNT(*)::INT AS sub_count,
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END)::INT AS sub_active_count,
-        COALESCE(SUM(credits_per_month * months_paid), 0)::NUMERIC AS credits_issued,
+        COALESCE(SUM(issued_from_sub), 0)::NUMERIC AS sub_issued,
         GREATEST(MAX(last_recurring), MAX(initial_paid)) AS last_payment_at,
         BOOL_OR(status = 'active') AS any_active
       FROM sub_totals
       GROUP BY client_key
     ),
-    used AS (
-      SELECT client_key, COALESCE(SUM(credit_cost), 0)::NUMERIC AS credits_used
+    movements AS (
+      SELECT
+        client_key,
+        COALESCE(SUM(CASE WHEN kind = 'adjustment' AND credit_cost > 0 THEN credit_cost ELSE 0 END), 0)::NUMERIC AS adj_added,
+        COALESCE(SUM(CASE WHEN kind = 'adjustment' AND credit_cost < 0 THEN -credit_cost ELSE 0 END), 0)::NUMERIC AS adj_removed,
+        COALESCE(SUM(CASE WHEN kind = 'work' THEN credit_cost ELSE 0 END), 0)::NUMERIC AS work_used
       FROM credit_allocations
       GROUP BY client_key
     )
@@ -89,13 +129,14 @@ async function listCredits(res) {
       s.client_name,
       s.sub_count,
       s.sub_active_count,
-      s.credits_issued,
-      COALESCE(u.credits_used, 0) AS credits_used,
-      (s.credits_issued - COALESCE(u.credits_used, 0)) AS credits_remaining,
+      (s.sub_issued + COALESCE(m.adj_added, 0))                                  AS credits_issued,
+      (COALESCE(m.work_used, 0) + COALESCE(m.adj_removed, 0))                    AS credits_used,
+      (s.sub_issued + COALESCE(m.adj_added, 0)
+        - COALESCE(m.work_used, 0) - COALESCE(m.adj_removed, 0))                 AS credits_remaining,
       s.last_payment_at,
       CASE WHEN s.any_active THEN 'active' ELSE 'inactive' END AS status
     FROM summary s
-    LEFT JOIN used u ON u.client_key = s.client_key
+    LEFT JOIN movements m ON m.client_key = s.client_key
     ORDER BY s.any_active DESC, s.client_name NULLS LAST
   `;
 
@@ -125,6 +166,8 @@ async function clientDetail(res, key) {
         ps.current_period_end,
         ps.canceled_at,
         ps.created_at,
+        ps.start_date,
+        ps.auto_credit,
         p.number_year,
         p.number_seq,
         (p.data->>'proposalTitle') AS proposal_title,
@@ -151,7 +194,7 @@ async function clientDetail(res, key) {
       ORDER BY p.paid_at ASC
     `,
     sql`
-      SELECT id, proposal_id, description, credit_cost,
+      SELECT id, proposal_id, description, credit_cost, kind,
              allocated_at, allocated_by, notes
       FROM credit_allocations
       WHERE client_key = ${key}
@@ -168,17 +211,48 @@ async function clientDetail(res, key) {
     return String(year) + '-' + String(seq).padStart(4, '0');
   };
 
-  const subs = subscriptions.map(s => ({
-    stripeSubscriptionId: s.stripe_subscription_id,
-    proposalId: s.proposal_id,
-    proposalNumber: formatProposalNumber(s.number_year, s.number_seq),
-    proposalTitle: s.proposal_title || s.proposal_client_name,
-    creditsPerMonth: Number(s.credits_per_month) || 0,
-    status: s.status,
-    currentPeriodEnd: s.current_period_end,
-    canceledAt: s.canceled_at,
-    createdAt: s.created_at,
-  }));
+  const isManual = (sid) => typeof sid === 'string' && sid.startsWith('manual_');
+
+  const monthsElapsed = (startISO, endISO) => {
+    if (!startISO) return 0;
+    const start = new Date(startISO);
+    const end = endISO ? new Date(endISO) : new Date();
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
+    const months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+    return Math.max(0, months);
+  };
+
+  const subs = subscriptions.map(s => {
+    const manual = isManual(s.stripe_subscription_id);
+    let issuedFromSub;
+    if (manual) {
+      if (s.auto_credit) {
+        const startISO = s.start_date || s.created_at;
+        const endISO   = s.canceled_at || null;
+        issuedFromSub = (Number(s.credits_per_month) || 0) * (monthsElapsed(startISO, endISO) + 1);
+      } else {
+        issuedFromSub = 0;
+      }
+    } else {
+      const recurringCount = recurring.filter(r => r.proposal_id === s.proposal_id).length;
+      issuedFromSub = (Number(s.credits_per_month) || 0) * (1 + recurringCount);
+    }
+    return {
+      stripeSubscriptionId: s.stripe_subscription_id,
+      proposalId: s.proposal_id,
+      proposalNumber: formatProposalNumber(s.number_year, s.number_seq),
+      proposalTitle: s.proposal_title || s.proposal_client_name,
+      creditsPerMonth: Number(s.credits_per_month) || 0,
+      status: s.status,
+      currentPeriodEnd: s.current_period_end,
+      canceledAt: s.canceled_at,
+      createdAt: s.created_at,
+      startDate: s.start_date,
+      autoCredit: !!s.auto_credit,
+      isManual: manual,
+      creditsIssuedFromSub: issuedFromSub,
+    };
+  });
 
   const initialPayments = initial.map(p => ({
     paidAt: p.paid_at,
@@ -202,13 +276,20 @@ async function clientDetail(res, key) {
     proposalId: a.proposal_id,
     description: a.description,
     creditCost: Number(a.credit_cost) || 0,
+    kind: a.kind || 'work',
     allocatedAt: a.allocated_at,
     allocatedBy: a.allocated_by,
     notes: a.notes,
   }));
 
-  const issued = payments.reduce((s, p) => s + p.creditsAdded, 0);
-  const used = allocationList.reduce((s, a) => s + a.creditCost, 0);
+  // Totals: sub-issued + positive adjustments → issued; work + |negative
+  // adjustments| → used.
+  const subIssued = subs.reduce((s, x) => s + (x.creditsIssuedFromSub || 0), 0);
+  const adjAdded   = allocationList.filter(a => a.kind === 'adjustment' && a.creditCost > 0).reduce((s, a) => s + a.creditCost, 0);
+  const adjRemoved = allocationList.filter(a => a.kind === 'adjustment' && a.creditCost < 0).reduce((s, a) => s + (-a.creditCost), 0);
+  const workUsed   = allocationList.filter(a => a.kind === 'work').reduce((s, a) => s + a.creditCost, 0);
+  const issued = subIssued + adjAdded;
+  const used = workUsed + adjRemoved;
   const remaining = issued - used;
   const usagePct = issued > 0 ? Math.min(100, Math.round((used / issued) * 1000) / 10) : 0;
 
@@ -236,13 +317,21 @@ async function logAllocation(req, res, user) {
   const clientKey = (body.clientKey || '').trim().toLowerCase();
   const description = (body.description || '').trim();
   const creditCost = Number(body.creditCost);
+  const kindIn = String(body.kind || 'work').toLowerCase();
+  const kind = kindIn === 'adjustment' ? 'adjustment' : 'work';
   const proposalId = body.proposalId ? String(body.proposalId) : null;
   const notes = body.notes ? String(body.notes).trim() : null;
 
   if (!clientKey)         return res.status(400).json({ error: 'clientKey required' });
   if (!description)       return res.status(400).json({ error: 'description required' });
-  if (!Number.isFinite(creditCost) || creditCost <= 0) {
-    return res.status(400).json({ error: 'creditCost must be a positive number' });
+  if (!Number.isFinite(creditCost)) {
+    return res.status(400).json({ error: 'creditCost must be a number' });
+  }
+  if (kind === 'work' && creditCost <= 0) {
+    return res.status(400).json({ error: 'work credit cost must be positive' });
+  }
+  if (kind === 'adjustment' && creditCost === 0) {
+    return res.status(400).json({ error: 'adjustment cannot be zero' });
   }
 
   const [exists] = await sql`
@@ -252,10 +341,10 @@ async function logAllocation(req, res, user) {
 
   const [row] = await sql`
     INSERT INTO credit_allocations
-      (client_key, proposal_id, description, credit_cost, allocated_by, notes)
+      (client_key, proposal_id, description, credit_cost, kind, allocated_by, notes)
     VALUES
-      (${clientKey}, ${proposalId}, ${description}, ${creditCost}, ${user.email || null}, ${notes})
-    RETURNING id, client_key, proposal_id, description, credit_cost,
+      (${clientKey}, ${proposalId}, ${description}, ${creditCost}, ${kind}, ${user.email || null}, ${notes})
+    RETURNING id, client_key, proposal_id, description, credit_cost, kind,
               allocated_at, allocated_by, notes
   `;
 
@@ -265,6 +354,7 @@ async function logAllocation(req, res, user) {
     proposalId: row.proposal_id,
     description: row.description,
     creditCost: Number(row.credit_cost) || 0,
+    kind: row.kind,
     allocatedAt: row.allocated_at,
     allocatedBy: row.allocated_by,
     notes: row.notes,
@@ -281,4 +371,102 @@ async function deleteAllocation(res, id) {
   if (result.length === 0) return res.status(404).json({ error: 'not found' });
 
   return res.status(200).json({ ok: true, id: result[0].id });
+}
+
+// ─── Manual subscriptions ───────────────────────────────────────────────────
+
+function newManualSubId() {
+  return 'manual_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+}
+
+async function createManualSubscription(req, res) {
+  let body = req.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch { body = {}; }
+  }
+  body = body || {};
+
+  const clientName = (body.clientName || '').trim();
+  if (!clientName) return res.status(400).json({ error: 'clientName required' });
+  const clientKey = clientName.toLowerCase();
+  const creditsPerMonth = Number(body.creditsPerMonth);
+  if (!Number.isFinite(creditsPerMonth) || creditsPerMonth < 0) {
+    return res.status(400).json({ error: 'creditsPerMonth must be a non-negative number' });
+  }
+  const startDate = body.startDate ? String(body.startDate).slice(0, 10) : null;
+  const autoCredit = body.autoCredit !== false; // default true
+  const initialBalance = Number(body.initialBalance);
+
+  const subId = newManualSubId();
+
+  await sql`
+    INSERT INTO partner_subscriptions
+      (stripe_subscription_id, proposal_id, client_key, client_name,
+       credits_per_month, status, start_date, auto_credit)
+    VALUES
+      (${subId}, NULL, ${clientKey}, ${clientName},
+       ${creditsPerMonth}, 'active', ${startDate}, ${autoCredit})
+  `;
+
+  if (Number.isFinite(initialBalance) && initialBalance !== 0) {
+    await sql`
+      INSERT INTO credit_allocations
+        (client_key, proposal_id, description, credit_cost, kind, allocated_by, notes)
+      VALUES
+        (${clientKey}, NULL, 'Opening balance', ${initialBalance}, 'adjustment', NULL, 'Set when manual subscription was created')
+    `;
+  }
+
+  return res.status(201).json({ ok: true, stripeSubscriptionId: subId, clientKey });
+}
+
+async function patchManualSubscription(req, res, subId) {
+  if (!subId.startsWith('manual_')) {
+    return res.status(400).json({ error: 'only manual subscriptions can be patched' });
+  }
+  let body = req.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch { body = {}; }
+  }
+  body = body || {};
+
+  // We deliberately do NOT change client_key on rename — that would orphan
+  // past allocations. Only the display name (client_name) is editable.
+
+  const updates = [];
+  if (typeof body.creditsPerMonth === 'number' && Number.isFinite(body.creditsPerMonth) && body.creditsPerMonth >= 0) {
+    updates.push(sql`UPDATE partner_subscriptions SET credits_per_month = ${body.creditsPerMonth}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);
+  }
+  if (typeof body.autoCredit === 'boolean') {
+    updates.push(sql`UPDATE partner_subscriptions SET auto_credit = ${body.autoCredit}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);
+  }
+  if ('startDate' in body) {
+    const sd = body.startDate ? String(body.startDate).slice(0, 10) : null;
+    updates.push(sql`UPDATE partner_subscriptions SET start_date = ${sd}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);
+  }
+  if (typeof body.status === 'string' && ['active', 'canceled', 'inactive'].includes(body.status)) {
+    const cancelTs = body.status === 'canceled' ? new Date().toISOString() : null;
+    updates.push(sql`UPDATE partner_subscriptions SET status = ${body.status}, canceled_at = ${cancelTs}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);
+  }
+  if (typeof body.clientName === 'string' && body.clientName.trim()) {
+    updates.push(sql`UPDATE partner_subscriptions SET client_name = ${body.clientName.trim()}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);
+  }
+
+  if (updates.length === 0) {
+    return res.status(400).json({ error: 'no patchable fields supplied' });
+  }
+
+  for (const q of updates) await q;
+  return res.status(200).json({ ok: true });
+}
+
+async function deleteManualSubscription(res, subId) {
+  if (!subId.startsWith('manual_')) {
+    return res.status(400).json({ error: 'only manual subscriptions can be deleted' });
+  }
+  const result = await sql`
+    DELETE FROM partner_subscriptions WHERE stripe_subscription_id = ${subId} RETURNING stripe_subscription_id
+  `;
+  if (result.length === 0) return res.status(404).json({ error: 'not found' });
+  return res.status(200).json({ ok: true });
 }

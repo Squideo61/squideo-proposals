@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Coins, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Coins, Pencil, Plus, Trash2 } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, useIsMobile } from '../utils.js';
+import { Modal } from './ui.jsx';
 
 function fmtCredits(n) {
   const v = Number(n) || 0;
@@ -28,6 +29,7 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
   const cached = state.partnerCreditDetail?.[clientKey];
   const [loading, setLoading] = useState(!cached);
   const [error, setError] = useState(null);
+  const [editingSub, setEditingSub] = useState(null);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -100,26 +102,46 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ color: BRAND.muted, textAlign: 'left', borderBottom: '1px solid ' + BRAND.border }}>
-                <Th>Proposal</Th>
+                <Th>Proposal / Type</Th>
                 <Th align="right">Credits / month</Th>
+                <Th align="center">Auto-credit</Th>
                 <Th align="center">Status</Th>
-                <Th>Period ends</Th>
-                <Th>Cancelled</Th>
+                <Th>Start / period</Th>
+                <Th />
               </tr>
             </thead>
             <tbody>
               {subscriptions.map(s => (
                 <tr key={s.stripeSubscriptionId} style={{ borderBottom: '1px solid ' + BRAND.border }}>
                   <td style={{ padding: '10px 8px' }}>
-                    <div style={{ fontWeight: 600 }}>{s.proposalTitle || '—'}</div>
-                    {s.proposalNumber && <div style={{ fontSize: 11, color: BRAND.muted }}>#{s.proposalNumber}</div>}
+                    <div style={{ fontWeight: 600 }}>{s.proposalTitle || (s.isManual ? 'Manual subscription' : '—')}</div>
+                    <div style={{ fontSize: 11, color: BRAND.muted }}>
+                      {s.isManual ? 'Manual' : (s.proposalNumber ? '#' + s.proposalNumber : 'Stripe-tracked')}
+                    </div>
                   </td>
                   <td style={{ padding: '10px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtCredits(s.creditsPerMonth)}</td>
+                  <td style={{ padding: '10px 8px', textAlign: 'center', color: BRAND.muted, fontSize: 12 }}>
+                    {s.isManual ? (s.autoCredit ? 'On' : 'Off') : 'Stripe'}
+                  </td>
                   <td style={{ padding: '10px 8px', textAlign: 'center' }}>
                     <StatusPill status={s.status} />
                   </td>
-                  <td style={{ padding: '10px 8px', color: BRAND.muted }}>{fmtDate(s.currentPeriodEnd)}</td>
-                  <td style={{ padding: '10px 8px', color: BRAND.muted }}>{fmtDate(s.canceledAt)}</td>
+                  <td style={{ padding: '10px 8px', color: BRAND.muted, fontSize: 12 }}>
+                    {s.isManual
+                      ? (s.startDate ? 'Started ' + fmtDate(s.startDate) : 'Started ' + fmtDate(s.createdAt))
+                      : (s.currentPeriodEnd ? 'Renews ' + fmtDate(s.currentPeriodEnd) : '—')}
+                    {s.canceledAt && <div>Cancelled {fmtDate(s.canceledAt)}</div>}
+                  </td>
+                  <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                    {s.isManual && (
+                      <button
+                        onClick={() => setEditingSub(s)}
+                        className="btn-icon"
+                        aria-label="Edit subscription"
+                        title="Edit subscription"
+                      ><Pencil size={14} /></button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -159,14 +181,13 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
         )}
       </Section>
 
-      {/* Allocation form */}
+      {/* Log work form */}
       <Section title="Log work against credits">
         <AllocationForm
-          clientKey={clientKey}
           proposalOptions={proposalOptions}
           onSubmit={async (input) => {
             try {
-              await actions.logAllocation({ clientKey, ...input });
+              await actions.logAllocation({ clientKey, kind: 'work', ...input });
               showMsg('Allocation logged');
             } catch (err) {
               showMsg(err?.message || 'Failed to log allocation');
@@ -176,15 +197,31 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
         />
       </Section>
 
-      {/* Allocation ledger */}
-      <Section title="Allocations">
+      {/* Manual adjustment form */}
+      <Section title="Adjust credits manually">
+        <AdjustmentForm
+          onSubmit={async (input) => {
+            try {
+              await actions.logAllocation({ clientKey, kind: 'adjustment', ...input });
+              showMsg('Adjustment recorded');
+            } catch (err) {
+              showMsg(err?.message || 'Failed to record adjustment');
+              throw err;
+            }
+          }}
+        />
+      </Section>
+
+      {/* Allocation + adjustment ledger */}
+      <Section title="Credit movements">
         {allocations.length === 0 ? (
-          <Empty>No work allocated yet.</Empty>
+          <Empty>No movements recorded yet.</Empty>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ color: BRAND.muted, textAlign: 'left', borderBottom: '1px solid ' + BRAND.border }}>
                 <Th>Date</Th>
+                <Th>Type</Th>
                 <Th>Description</Th>
                 {!isMobile && <Th>Logged by</Th>}
                 <Th align="right">Credits</Th>
@@ -192,33 +229,68 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
               </tr>
             </thead>
             <tbody>
-              {allocations.map(a => (
-                <tr key={a.id} style={{ borderBottom: '1px solid ' + BRAND.border }}>
-                  <td style={{ padding: '10px 8px', whiteSpace: 'nowrap' }}>{fmtDate(a.allocatedAt)}</td>
-                  <td style={{ padding: '10px 8px' }}>
-                    <div style={{ fontWeight: 500 }}>{a.description}</div>
-                    {a.notes && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{a.notes}</div>}
-                  </td>
-                  {!isMobile && <td style={{ padding: '10px 8px', color: BRAND.muted, fontSize: 12 }}>{a.allocatedBy || '—'}</td>}
-                  <td style={{ padding: '10px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>−{fmtCredits(a.creditCost)}</td>
-                  <td style={{ padding: '10px 8px', textAlign: 'right' }}>
-                    <button
-                      onClick={async () => {
-                        if (!confirm('Remove this allocation?')) return;
-                        try { await actions.deleteAllocation(clientKey, a.id); }
-                        catch (err) { showMsg(err?.message || 'Failed to delete'); }
-                      }}
-                      className="btn-icon"
-                      aria-label="Delete allocation"
-                      title="Delete allocation"
-                    ><Trash2 size={14} /></button>
-                  </td>
-                </tr>
-              ))}
+              {allocations.map(a => {
+                const isAdj = a.kind === 'adjustment';
+                const sign = isAdj ? (a.creditCost >= 0 ? '+' : '−') : '−';
+                const magnitude = Math.abs(a.creditCost);
+                const color = isAdj
+                  ? (a.creditCost >= 0 ? '#15803D' : '#B91C1C')
+                  : '#0F2A3D';
+                return (
+                  <tr key={a.id} style={{ borderBottom: '1px solid ' + BRAND.border }}>
+                    <td style={{ padding: '10px 8px', whiteSpace: 'nowrap' }}>{fmtDate(a.allocatedAt)}</td>
+                    <td style={{ padding: '10px 8px' }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 999, background: isAdj ? '#FEF3C7' : '#DBEAFE', color: isAdj ? '#92400E' : '#1E40AF' }}>
+                        {isAdj ? 'Adjustment' : 'Work'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '10px 8px' }}>
+                      <div style={{ fontWeight: 500 }}>{a.description}</div>
+                      {a.notes && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{a.notes}</div>}
+                    </td>
+                    {!isMobile && <td style={{ padding: '10px 8px', color: BRAND.muted, fontSize: 12 }}>{a.allocatedBy || '—'}</td>}
+                    <td style={{ padding: '10px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color }}>
+                      {sign}{fmtCredits(magnitude)}
+                    </td>
+                    <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Remove this entry?')) return;
+                          try { await actions.deleteAllocation(clientKey, a.id); }
+                          catch (err) { showMsg(err?.message || 'Failed to delete'); }
+                        }}
+                        className="btn-icon"
+                        aria-label="Delete entry"
+                        title="Delete entry"
+                      ><Trash2 size={14} /></button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
       </Section>
+
+      {editingSub && (
+        <EditSubscriptionModal
+          subscription={editingSub}
+          onClose={() => setEditingSub(null)}
+          onSaved={async () => {
+            setEditingSub(null);
+            await actions.fetchPartnerCreditDetail(clientKey);
+            showMsg('Subscription updated');
+          }}
+          onDeleted={async () => {
+            setEditingSub(null);
+            await actions.fetchPartnerCreditDetail(clientKey);
+            showMsg('Subscription removed');
+          }}
+          patch={actions.patchManualSubscription}
+          remove={actions.deleteManualSubscription}
+          showMsg={showMsg}
+        />
+      )}
     </Shell>
   );
 }
@@ -383,6 +455,173 @@ function Th({ children, align }) {
 
 function Empty({ children }) {
   return <div style={{ padding: 24, color: BRAND.muted, textAlign: 'center', fontSize: 13 }}>{children}</div>;
+}
+
+function AdjustmentForm({ onSubmit }) {
+  const [description, setDescription] = useState('');
+  const [creditCost, setCreditCost] = useState('');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const cost = parseFloat(creditCost);
+    if (!description.trim()) return;
+    if (!Number.isFinite(cost) || cost === 0) return;
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        description: description.trim(),
+        creditCost: cost,
+        notes: notes.trim() || undefined,
+      });
+      setDescription('');
+      setCreditCost('');
+      setNotes('');
+    } catch {
+      // surfaced via showMsg in caller
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} style={{ display: 'grid', gap: 10 }}>
+      <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.5 }}>
+        Use a <strong>positive</strong> number to add credits (e.g. monthly top-up, bonus)
+        or a <strong>negative</strong> number to remove them (e.g. clawback).
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: 10 }}>
+        <input
+          className="input"
+          placeholder="Reason (e.g. May 2026 payment received, bonus credit, clawback)"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          required
+        />
+        <input
+          className="input"
+          type="number"
+          step="0.01"
+          placeholder="±Credits"
+          value={creditCost}
+          onChange={(e) => setCreditCost(e.target.value)}
+          required
+        />
+      </div>
+      <textarea
+        className="input"
+        rows={2}
+        placeholder="Notes (optional)"
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        style={{ fontSize: 13 }}
+      />
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button type="submit" disabled={submitting} className="btn">
+          <Plus size={14} /> {submitting ? 'Saving…' : 'Record adjustment'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function EditSubscriptionModal({ subscription, onClose, onSaved, onDeleted, patch, remove, showMsg }) {
+  const s = subscription;
+  const [clientName, setClientName] = useState(s.proposalTitle || '');
+  const [creditsPerMonth, setCreditsPerMonth] = useState(String(s.creditsPerMonth ?? ''));
+  const [startDate, setStartDate] = useState((s.startDate || s.createdAt || '').slice(0, 10));
+  const [autoCredit, setAutoCredit] = useState(!!s.autoCredit);
+  const [status, setStatus] = useState(s.status || 'active');
+  const [submitting, setSubmitting] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const cpm = parseFloat(creditsPerMonth);
+    if (!Number.isFinite(cpm) || cpm < 0) return;
+    setSubmitting(true);
+    try {
+      await patch(s.stripeSubscriptionId, {
+        clientName: clientName.trim() || undefined,
+        creditsPerMonth: cpm,
+        startDate: startDate || null,
+        autoCredit,
+        status,
+      });
+      onSaved();
+    } catch (err) {
+      showMsg(err?.message || 'Failed to save');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm('Permanently remove this manual subscription? Credit movements will stay on file.')) return;
+    setRemoving(true);
+    try {
+      await remove(s.stripeSubscriptionId);
+      onDeleted();
+    } catch (err) {
+      showMsg(err?.message || 'Failed to remove');
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>Edit manual subscription</h3>
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted }}>
+        Settings here only affect this subscription's auto-crediting. Past credit movements stay untouched.
+      </p>
+      <form onSubmit={submit} style={{ display: 'grid', gap: 12 }}>
+        <DetailField label="Display name">
+          <input className="input" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="ASH Waste" />
+        </DetailField>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <DetailField label="Credits per month">
+            <input className="input" type="number" step="0.01" min="0" value={creditsPerMonth} onChange={(e) => setCreditsPerMonth(e.target.value)} />
+          </DetailField>
+          <DetailField label="Start date">
+            <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          </DetailField>
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+          <input type="checkbox" checked={autoCredit} onChange={(e) => setAutoCredit(e.target.checked)} />
+          Auto-credit each month from the start date
+        </label>
+        <DetailField label="Status">
+          <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="active">Active</option>
+            <option value="canceled">Cancelled</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </DetailField>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 4 }}>
+          <button type="button" onClick={handleDelete} disabled={removing} className="btn-ghost" style={{ color: '#B91C1C' }}>
+            <Trash2 size={14} /> {removing ? 'Removing…' : 'Delete subscription'}
+          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+            <button type="submit" disabled={submitting} className="btn">
+              {submitting ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function DetailField({ label, children }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: BRAND.muted, marginBottom: 4 }}>{label}</div>
+      {children}
+    </div>
+  );
 }
 
 function StatusPill({ status }) {

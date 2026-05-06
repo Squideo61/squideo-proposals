@@ -286,6 +286,23 @@ export function StoreProvider({ children }) {
         return row;
       });
     },
+    createManualSubscription(input) {
+      return api.post('/api/partner/subscriptions', input).then((row) => {
+        setState(s => ({ ...s, partnerCreditsList: null, partnerCreditDetail: {} }));
+        return row;
+      });
+    },
+    patchManualSubscription(subId, patch) {
+      return api.patch('/api/partner/subscriptions?id=' + encodeURIComponent(subId), patch).then((row) => {
+        setState(s => ({ ...s, partnerCreditsList: null, partnerCreditDetail: {} }));
+        return row;
+      });
+    },
+    deleteManualSubscription(subId) {
+      return api.delete('/api/partner/subscriptions?id=' + encodeURIComponent(subId)).then(() => {
+        setState(s => ({ ...s, partnerCreditsList: null, partnerCreditDetail: {} }));
+      });
+    },
     deleteAllocation(clientKey, id) {
       return api.delete('/api/partner/allocations?id=' + encodeURIComponent(id)).then(() => {
         setState(s => {
