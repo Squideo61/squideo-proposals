@@ -4,7 +4,7 @@ import { BRAND } from '../theme.js';
 import { formatGBP } from '../utils.js';
 import { BillingFields, emptyBilling, isBillingValid } from './BillingFields.jsx';
 
-export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onConfirmPo, onDownloadReceipt, onDownloadSignedProposal }) {
+export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onConfirmPo, onConfirmInvoice, onDownloadReceipt, onDownloadSignedProposal }) {
   const isPO = signed.paymentOption === 'po';
   const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
   const isDeposit = signed.paymentOption === '5050';
@@ -13,6 +13,8 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
   const [billing, setBilling] = useState(() => emptyBilling(signed.email));
   const [poSubmitting, setPoSubmitting] = useState(false);
   const [poConfirmed, setPoConfirmed] = useState(false);
+  const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
+  const [invoiceConfirmed, setInvoiceConfirmed] = useState(false);
   const billingValid = isBillingValid(billing);
 
   const submitPo = async () => {
@@ -23,6 +25,17 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
       setPoConfirmed(true);
     } finally {
       setPoSubmitting(false);
+    }
+  };
+
+  const submitInvoice = async () => {
+    if (!billingValid || !onConfirmInvoice) return;
+    setInvoiceSubmitting(true);
+    try {
+      await onConfirmInvoice({ billing });
+      setInvoiceConfirmed(true);
+    } finally {
+      setInvoiceSubmitting(false);
     }
   };
 
@@ -119,13 +132,35 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
         </div>
       )}
 
-      {!payment && !isPO && paymentChoice === 'invoice' && (
+      {!payment && !isPO && paymentChoice === 'invoice' && invoiceConfirmed && (
         <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20 }}>
-          <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Invoice on its way</h4>
+          <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Invoice sent</h4>
           <p style={{ fontSize: 13, color: BRAND.muted, margin: 0, lineHeight: 1.5 }}>
-            We'll send an invoice for {formatGBP(amountDue)} to {signed.email} within 24 hours.
+            We've issued an invoice for {formatGBP(amountDue)} to {billing.accountsEmail || signed.email}. Please check your inbox — payment terms are 14 days.
           </p>
-          <button onClick={onUndoInvoice} className="btn-ghost" style={{ marginTop: 12, fontSize: 12 }}>
+        </div>
+      )}
+
+      {!payment && !isPO && paymentChoice === 'invoice' && !invoiceConfirmed && (
+        <div style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24 }}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>Where shall we send your invoice?</h3>
+          <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
+            Confirm your billing details and we'll issue an invoice for {formatGBP(amountDue)} straight away.
+          </p>
+          <BillingFields
+            value={billing}
+            onChange={setBilling}
+            subtitle="The invoice will be sent to this address from our Xero account."
+          />
+          <button
+            onClick={submitInvoice}
+            disabled={!billingValid || invoiceSubmitting}
+            className="btn"
+            style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}
+          >
+            {invoiceSubmitting ? 'Issuing invoice…' : 'Issue invoice for ' + formatGBP(amountDue)}
+          </button>
+          <button onClick={onUndoInvoice} className="btn-ghost" style={{ marginTop: 12, fontSize: 12, width: '100%', textAlign: 'center' }}>
             Changed your mind? Pay now instead
           </button>
         </div>

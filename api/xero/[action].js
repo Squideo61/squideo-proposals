@@ -7,8 +7,13 @@
 import sql from '../_lib/db.js';
 import { cors } from '../_lib/middleware.js';
 import { sendMail, APP_URL } from '../_lib/email.js';
-import { getOrCreateContact, createQuote } from '../_lib/xero.js';
-import { lineItemsForProject, lineItemsForDiscountedProject, lineItemsForPartnerFirstMonth } from '../_lib/xeroMappers.js';
+import { getOrCreateContact, createQuote, createInvoice, emailInvoice } from '../_lib/xero.js';
+import {
+  lineItemsForProject,
+  lineItemsForDiscountedProject,
+  lineItemsForPartnerFirstMonth,
+  depositLineItems,
+} from '../_lib/xeroMappers.js';
 
 const AUTHORIZE_URL = 'https://login.xero.com/identity/connect/authorize';
 const TOKEN_URL = 'https://identity.xero.com/connect/token';
@@ -238,6 +243,107 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json({ ok: true, quoteId });
+  }
+
+  // --- /api/xero/invoice ---
+  // Client signed but doesn't want to pay by card today — they want an
+  // emailed invoice. Mirrors the Stripe-paid path's invoice creation but is
+  // triggered directly here (no Stripe involved). Issues an AUTHORISED Xero
+  // invoice and emails it. Idempotent on proposal_billing.xero_invoice_id.
+  if (action === 'invoice') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const { proposalId, billing } = req.body || {};
+    if (!proposalId) return res.status(400).json({ error: 'proposalId required' });
+    if (!billing?.companyName?.trim() || !billing?.addressLine1?.trim() || !billing?.accountsEmail?.trim()) {
+      return res.status(400).json({ error: 'billing.companyName, addressLine1 and accountsEmail are required' });
+    }
+
+    const [proposalRows, sigRows] = await Promise.all([
+      sql`SELECT data FROM proposals WHERE id = ${proposalId}`,
+      sql`SELECT name, email, data FROM signatures WHERE proposal_id = ${proposalId}`,
+    ]);
+    const proposal = proposalRows[0]?.data;
+    const sigRow = sigRows[0];
+    if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+    if (!sigRow) return res.status(409).json({ error: 'Proposal must be signed first' });
+    const signed = { name: sigRow.name, email: sigRow.email, ...(sigRow.data || {}) };
+    if (signed.paymentOption === 'po') {
+      return res.status(409).json({ error: 'Use the PO route for purchase orders' });
+    }
+
+    await sql`
+      INSERT INTO proposal_billing (proposal_id, billing)
+      VALUES (${proposalId}, ${JSON.stringify(billing)})
+      ON CONFLICT (proposal_id) DO UPDATE
+        SET billing = EXCLUDED.billing, updated_at = NOW()
+    `;
+
+    const [existing] = await sql`SELECT xero_invoice_id FROM proposal_billing WHERE proposal_id = ${proposalId}`;
+    if (existing?.xero_invoice_id) {
+      return res.status(200).json({ ok: true, invoiceId: existing.xero_invoice_id, deduped: true });
+    }
+
+    const isDeposit = signed.paymentOption === '5050';
+    const isPartner = !!signed.partnerSelected && !!signed.amountBreakdown;
+
+    let invoiceId;
+    try {
+      const contactId = await getOrCreateContact(billingToContact(billing, signed.email));
+
+      let lineItems;
+      if (isPartner) {
+        lineItems = [
+          ...lineItemsForDiscountedProject(proposal, signed),
+          ...lineItemsForPartnerFirstMonth(proposal, signed),
+        ];
+      } else if (isDeposit) {
+        lineItems = depositLineItems(proposal, signed, 0.5);
+      } else {
+        lineItems = lineItemsForProject(proposal, signed);
+      }
+
+      const dueDate = new Date(Date.now() + 14 * 86400_000).toISOString().slice(0, 10);
+      const reference = (proposal.proposalTitle || proposal.clientName || proposalId).slice(0, 60);
+      invoiceId = await createInvoice({
+        contactId,
+        lineItems,
+        reference,
+        dueDate,
+        status: 'AUTHORISED',
+      });
+
+      await sql`UPDATE proposal_billing SET xero_invoice_id = ${invoiceId} WHERE proposal_id = ${proposalId}`;
+
+      try { await emailInvoice(invoiceId); }
+      catch (err) { console.error('[xero] emailInvoice failed (invoice still authorised)', err); }
+    } catch (err) {
+      console.error('[xero] invoice action failed', err);
+      return res.status(502).json({ error: 'Could not create invoice: ' + (err.message || 'unknown') });
+    }
+
+    try {
+      const users = await sql`SELECT email FROM users`;
+      const recipients = users.map(u => u.email).filter(Boolean);
+      const ownerEmail = proposal.preparedByEmail || null;
+      const to = ownerEmail ? [ownerEmail, ...recipients.filter(e => e !== ownerEmail)] : recipients;
+      const title = proposal.proposalTitle || proposal.clientName || proposalId;
+      const link = `${APP_URL}/?proposal=${proposalId}`;
+      if (to.length) {
+        await sendMail({
+          to,
+          subject: `📄 Invoice issued: ${title}`,
+          html: `<p>${signed.name || 'A client'} (${signed.email || ''}) chose the email-me-an-invoice route for <strong>${title}</strong>.</p>
+                 <p>Billing company: <strong>${billing.companyName}</strong> (${billing.accountsEmail || ''})</p>
+                 <p>An invoice ${isDeposit ? '(50% deposit)' : '(full payment)'} has been issued from Xero and emailed to the client.</p>
+                 <p><a href="${link}">Open the proposal</a></p>`,
+          text: `${signed.name || 'A client'} chose invoice route for "${title}". Xero invoice issued. ${link}`,
+        });
+      }
+    } catch (err) {
+      console.error('[invoice] notification email failed', err);
+    }
+
+    return res.status(200).json({ ok: true, invoiceId });
   }
 
   return res.status(404).send('Not found');

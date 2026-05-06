@@ -14,6 +14,8 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
   const [billing, setBilling] = useState(() => emptyBilling(signed?.email));
   const [poSubmitting, setPoSubmitting] = useState(false);
   const [poConfirmed, setPoConfirmed] = useState(false);
+  const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
+  const [invoiceConfirmed, setInvoiceConfirmed] = useState(false);
   const billingValid = isBillingValid(billing);
   const [celebrating] = useState(() =>
     typeof window !== 'undefined' &&
@@ -99,6 +101,29 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
       console.error('[stripe checkout]', err);
       setPaymentChoice(null);
       showMsg && showMsg(err?.message ? 'Checkout error: ' + err.message : 'Could not start checkout. Please try again.');
+    }
+  };
+
+  const handleConfirmInvoice = async () => {
+    if (!billingValid) return;
+    setInvoiceSubmitting(true);
+    try {
+      const res = await fetch('/api/xero/invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposalId, billing }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || ('Invoice issue failed: ' + res.status));
+      }
+      setInvoiceConfirmed(true);
+      showMsg && showMsg('Invoice sent.');
+    } catch (err) {
+      console.error('[invoice issue]', err);
+      showMsg && showMsg(err?.message ? 'Could not issue invoice: ' + err.message : 'Could not issue invoice. Please try again.');
+    } finally {
+      setInvoiceSubmitting(false);
     }
   };
 
@@ -254,13 +279,35 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
           </div>
         )}
 
-        {showPaymentPanel && paymentChoice === 'invoice' && (
+        {showPaymentPanel && paymentChoice === 'invoice' && invoiceConfirmed && (
           <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-            <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Invoice on its way</h4>
+            <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Invoice sent</h4>
             <p style={{ fontSize: 13, color: BRAND.muted, margin: 0, lineHeight: 1.5 }}>
-              We'll send an invoice for {formatGBP(amountDue)} to {signed.email} within 24 hours.
+              We've issued an invoice for {formatGBP(amountDue)} to {billing.accountsEmail || signed.email}. Please check your inbox — payment terms are 14 days.
             </p>
-            <button onClick={() => setPaymentChoice(null)} className="btn-ghost" style={{ marginTop: 12, fontSize: 12 }}>
+          </div>
+        )}
+
+        {showPaymentPanel && paymentChoice === 'invoice' && !invoiceConfirmed && (
+          <div style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24, marginBottom: 20 }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>Where shall we send your invoice?</h3>
+            <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
+              Confirm your billing details and we'll issue an invoice for {formatGBP(amountDue)} straight away.
+            </p>
+            <BillingFields
+              value={billing}
+              onChange={setBilling}
+              subtitle="The invoice will be sent to this address from our Xero account."
+            />
+            <button
+              onClick={handleConfirmInvoice}
+              disabled={!billingValid || invoiceSubmitting}
+              className="btn"
+              style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}
+            >
+              {invoiceSubmitting ? 'Issuing invoice…' : 'Issue invoice for ' + formatGBP(amountDue)}
+            </button>
+            <button onClick={() => setPaymentChoice(null)} className="btn-ghost" style={{ marginTop: 12, fontSize: 12, width: '100%', textAlign: 'center' }}>
               Changed your mind? Pay now instead
             </button>
           </div>

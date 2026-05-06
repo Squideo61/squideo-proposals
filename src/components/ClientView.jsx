@@ -379,6 +379,29 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     }
   };
 
+  const handleConfirmInvoice = async ({ billing }) => {
+    if (isPreview) {
+      showMsg('Invoice issuance simulated - preview only, not saved');
+      return;
+    }
+    try {
+      const res = await fetch('/api/xero/invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposalId: id, billing }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || ('Invoice issue failed: ' + res.status));
+      }
+      showMsg('Invoice sent.');
+    } catch (err) {
+      console.error('[invoice issue]', err);
+      showMsg(err?.message ? 'Could not issue invoice: ' + err.message : 'Could not issue invoice. Please try again.');
+      throw err;
+    }
+  };
+
   const handleConfirmPo = async ({ billing }) => {
     if (isPreview) {
       showMsg('PO confirmation simulated - preview only, not saved');
@@ -902,6 +925,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
             onChooseInvoice={() => setPaymentChoice('invoice')}
             onUndoInvoice={() => setPaymentChoice(null)}
             onConfirmPo={handleConfirmPo}
+            onConfirmInvoice={handleConfirmInvoice}
             onDownloadReceipt={payment ? () => openReceiptWindow(data, signed, payment) : undefined}
             onDownloadSignedProposal={signed ? () => openPrintWindow(data, printOptionsForSigned(signed, payment)) : undefined}
           />
