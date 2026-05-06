@@ -7,6 +7,7 @@ import { Field, Modal, Section } from './ui.jsx';
 import { LogoUploader } from './LogoUploader.jsx';
 import { TeamMemberEditor } from './TeamMemberEditor.jsx';
 import { ExtrasBankManager } from './ExtrasBankManager.jsx';
+import { extraHasVariants } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 
 function SectionStatus({ issues }) {
@@ -520,14 +521,19 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               <button onClick={() => update({ optionalExtras: data.optionalExtras.filter((_, idx) => idx !== i) })} aria-label="Remove extra" className="btn-icon"><X size={14} /></button>
             </div>
             <textarea className="input" style={{ minHeight: 50, fontSize: 13 }} value={extra.description || ''} onChange={(e) => updateExtra(i, { description: e.target.value })} placeholder="Description shown to client" />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={!!extra.variantsEnabled}
-                onChange={(e) => updateExtra(i, { variantsEnabled: e.target.checked })}
-              />
-              Per-language pricing {extra.variantsEnabled && <span style={{ color: BRAND.muted }}>— price above is charged per language</span>}
-            </label>
+            {(() => {
+              const variantsOn = extraHasVariants(extra);
+              return (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={variantsOn}
+                    onChange={(e) => updateExtra(i, { variantsEnabled: e.target.checked })}
+                  />
+                  Per-language pricing {variantsOn && <span style={{ color: BRAND.muted }}>— price above is charged per language</span>}
+                </label>
+              );
+            })()}
           </div>
         ))}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

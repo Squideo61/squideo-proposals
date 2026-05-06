@@ -1,4 +1,4 @@
-import { SQUIDEO_LOGO } from '../defaults.js';
+import { SQUIDEO_LOGO, extraHasVariants } from '../defaults.js';
 import { CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { formatGBP } from '../utils.js';
 
@@ -92,7 +92,7 @@ export function printOptionsForSigned(signed, payment) {
 
 function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedExtrasMeta = {}, paymentOption = '5050', partnerSelected = false, signed = null, payment = null } = {}) {
   const getQty = (e) => {
-    if (!e.variantsEnabled) return 1;
+    if (!extraHasVariants(e)) return 1;
     return Math.max(1, Number(selectedExtrasMeta[e.id]?.quantity) || 1);
   };
   const extrasTotal = data.optionalExtras.reduce((s, e) => {
@@ -157,7 +157,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       : `<div style="width:14px;height:14px;border:2px solid #C7CFD8;border-radius:3px;flex-shrink:0;background:${checked ? '#2BB8E6' : 'white'};"></div>`;
     const qty = getQty(e);
     const languages = selectedExtrasMeta[e.id]?.languages || '';
-    const showVariantSummary = e.variantsEnabled && checked;
+    const showVariantSummary = extraHasVariants(e) && checked;
     const labelExtra = showVariantSummary && qty > 1 ? ` <span style="color:#6B7785;font-weight:500;">× ${qty}</span>` : '';
     const languagesLine = showVariantSummary && languages
       ? `<div style="font-size:12px;color:#6B7785;margin-top:2px;">Languages: ${esc(languages)}</div>`

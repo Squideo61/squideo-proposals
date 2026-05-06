@@ -5,7 +5,7 @@ import {
   RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
 } from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
-import { SQUIDEO_LOGO, NEXT_STEPS } from '../defaults.js';
+import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants } from '../defaults.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
@@ -304,7 +304,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
 
   const extrasTotal = data.optionalExtras.reduce((s, e) => {
     if (!selectedExtras[e.id]) return s;
-    const qty = e.variantsEnabled ? Math.max(1, Number(getMeta(e.id).quantity) || 1) : 1;
+    const qty = extraHasVariants(e) ? Math.max(1, Number(getMeta(e.id).quantity) || 1) : 1;
     return s + e.price * qty;
   }, 0);
   const subtotal = data.basePrice + extrasTotal;
@@ -349,8 +349,8 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
       signedAt: new Date().toISOString(),
       selectedExtras: data.optionalExtras
         .filter((e) => selectedExtras[e.id])
-        .map((e) => e.variantsEnabled
-          ? { ...e, quantity: Math.max(1, Number(getMeta(e.id).quantity) || 1), languages: getMeta(e.id).languages || '' }
+        .map((e) => extraHasVariants(e)
+          ? { ...e, variantsEnabled: true, quantity: Math.max(1, Number(getMeta(e.id).quantity) || 1), languages: getMeta(e.id).languages || '' }
           : e),
       partnerSelected,
       partnerCredits,
@@ -623,8 +623,9 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           {data.optionalExtras.map((extra, i) => {
             const isSelected = !!selectedExtras[extra.id];
             const meta = getMeta(extra.id);
-            const qty = extra.variantsEnabled ? Math.max(1, Number(meta.quantity) || 1) : 1;
-            const showVariants = extra.variantsEnabled && isSelected;
+            const variantsOn = extraHasVariants(extra);
+            const qty = variantsOn ? Math.max(1, Number(meta.quantity) || 1) : 1;
+            const showVariants = variantsOn && isSelected;
             return (
               <div key={extra.id} style={{ borderBottom: i < data.optionalExtras.length - 1 ? '1px solid ' + BRAND.border : 'none', background: isSelected ? '#F0F9FF' : 'white' }}>
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', cursor: signed ? 'default' : 'pointer' }}>
@@ -634,7 +635,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                     {extra.description && <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.5, marginTop: 4 }}>{extra.description}</div>}
                   </div>
                   <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0, textAlign: 'right' }}>
-                    {extra.variantsEnabled
+                    {variantsOn
                       ? (isSelected
                           ? <>{formatGBP(extra.price * qty)}<div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>{formatGBP(extra.price)} × {qty}</div></>
                           : <>{formatGBP(extra.price)}<div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>per language</div></>)

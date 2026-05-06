@@ -1,6 +1,13 @@
 import { CONFIG } from './theme.js';
 export { SQUIDEO_LOGO } from './_logo_tmp.js';
 
+const VARIANT_ENABLED_DEFAULT_IDS = new Set(['translatedsubs', 'fulltranslate']);
+export function extraHasVariants(extra) {
+  if (!extra) return false;
+  if (typeof extra.variantsEnabled === 'boolean') return extra.variantsEnabled;
+  return VARIANT_ENABLED_DEFAULT_IDS.has(extra.id);
+}
+
 export const NEXT_STEPS = [
   'Accept this quote to guarantee a production slot in our creative schedule.',
   "We'll invoice your initial payment or arrange supplier setup with you for Purchase Orders.",
