@@ -1027,6 +1027,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           partnerSelected={partnerSelected}
           phone={CONFIG.company.phone}
           email={data.preparedByEmail}
+          emailName={data.preparedBy ? String(data.preparedBy).trim().split(/\s+/)[0] : null}
           onSign={scrollToSign}
         />
       )}

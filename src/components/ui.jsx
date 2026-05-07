@@ -186,7 +186,7 @@ export function Modal({ children, onClose }) {
   );
 }
 
-export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, phone, email, onSign }) {
+export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, phone, email, emailName, onSign }) {
   const isMobile = useIsMobile();
   const telHref = phone ? 'tel:' + String(phone).replace(/[^+\d]/g, '') : null;
   return (
@@ -236,7 +236,7 @@ export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, ph
               style={{ textDecoration: 'none', whiteSpace: 'nowrap', fontWeight: 600 }}
               aria-label="Call us"
             >
-              <Phone size={14} />{!isMobile && <span>Contact</span>}
+              <Phone size={14} />{!isMobile && <span>Call us</span>}
             </a>
           )}
           {email && (
@@ -244,9 +244,9 @@ export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, ph
               href={'mailto:' + email}
               className="btn-ghost"
               style={{ textDecoration: 'none', whiteSpace: 'nowrap', fontWeight: 600 }}
-              aria-label="Email us"
+              aria-label={emailName ? 'Email ' + emailName : 'Email us'}
             >
-              <Mail size={14} />{!isMobile && <span>Email</span>}
+              <Mail size={14} />{!isMobile && <span>{emailName ? 'Email ' + emailName : 'Email'}</span>}
             </a>
           )}
           <button
