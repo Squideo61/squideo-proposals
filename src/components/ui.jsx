@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useState } from 'react';
-import { Check, ChevronDown, Phone } from 'lucide-react';
+import { Check, ChevronDown, Mail, Phone } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { formatGBP, useIsMobile } from '../utils.js';
@@ -186,7 +186,7 @@ export function Modal({ children, onClose }) {
   );
 }
 
-export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, phone, onSign }) {
+export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, phone, email, onSign }) {
   const isMobile = useIsMobile();
   const telHref = phone ? 'tel:' + String(phone).replace(/[^+\d]/g, '') : null;
   return (
@@ -237,6 +237,16 @@ export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, ph
               aria-label="Call us"
             >
               <Phone size={14} />{!isMobile && <span>Contact</span>}
+            </a>
+          )}
+          {email && (
+            <a
+              href={'mailto:' + email}
+              className="btn-ghost"
+              style={{ textDecoration: 'none', whiteSpace: 'nowrap', fontWeight: 600 }}
+              aria-label="Email us"
+            >
+              <Mail size={14} />{!isMobile && <span>Email</span>}
             </a>
           )}
           <button

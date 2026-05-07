@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Archive, Award, CalendarClock, Calendar, Captions, Check, ChevronLeft, Download,
-  FileDown, FileText, Globe, LayoutGrid, Mic, Music, Palette, PenLine, Phone,
+  FileDown, FileText, Globe, LayoutGrid, Link2, Mic, Music, Palette, PenLine, Phone,
   RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
 } from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
@@ -446,18 +446,32 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           <div style={{ fontSize: 12, color: '#92400E', fontWeight: 700, letterSpacing: 0.5 }}>
             PREVIEW MODE
           </div>
-          <button
-            onClick={() => openPrintWindow(
-              data,
-              signed
-                ? printOptionsForSigned(signed, payment)
-                : { signable: true, selectedExtras, selectedExtrasMeta: extrasMeta, paymentOption, partnerSelected }
-            )}
-            className="btn-ghost"
-            style={{ fontSize: 13 }}
-          >
-            <FileDown size={14} /> {signed ? 'Download signed copy' : 'Download PDF'}
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => {
+                const url = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + id;
+                navigator.clipboard.writeText(url)
+                  .then(() => showMsg('Link copied to clipboard'))
+                  .catch(() => showMsg('Copy failed — link: ' + url));
+              }}
+              className="btn-ghost"
+              style={{ fontSize: 13 }}
+            >
+              <Link2 size={14} /> Copy link
+            </button>
+            <button
+              onClick={() => openPrintWindow(
+                data,
+                signed
+                  ? printOptionsForSigned(signed, payment)
+                  : { signable: true, selectedExtras, selectedExtrasMeta: extrasMeta, paymentOption, partnerSelected }
+              )}
+              className="btn-ghost"
+              style={{ fontSize: 13 }}
+            >
+              <FileDown size={14} /> {signed ? 'Download signed copy' : 'Download PDF'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -1012,6 +1026,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           partnerMonthlyExVat={partnerSubtotal}
           partnerSelected={partnerSelected}
           phone={CONFIG.company.phone}
+          email={data.preparedByEmail}
           onSign={scrollToSign}
         />
       )}
