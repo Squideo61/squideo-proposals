@@ -374,10 +374,22 @@ async function dealsRoute(req, res, id, action, user) {
     const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const deal = serialiseDeal(rows[0]);
-    const [proposals, events, tasks] = await Promise.all([
+    const [proposals, events, tasks, emails] = await Promise.all([
       sql`SELECT id, data, number_year, number_seq, created_at FROM proposals WHERE deal_id = ${id} ORDER BY created_at DESC`,
       sql`SELECT id, deal_id, event_type, payload, actor_email, occurred_at FROM deal_events WHERE deal_id = ${id} ORDER BY occurred_at DESC LIMIT 100`,
       sql`SELECT * FROM tasks WHERE deal_id = ${id} ORDER BY done_at NULLS FIRST, due_at ASC NULLS LAST LIMIT 50`,
+      // Every email_message attached to this deal via the M:N join. The most
+      // recent 50 keep the timeline manageable; older ones can be paged later.
+      sql`
+        SELECT em.gmail_message_id, em.gmail_thread_id, em.from_email,
+               em.to_emails, em.cc_emails, em.subject, em.snippet,
+               em.direction, em.sent_at, em.user_email
+        FROM email_messages em
+        JOIN email_thread_deals etd ON etd.gmail_thread_id = em.gmail_thread_id
+        WHERE etd.deal_id = ${id} AND em.internal_only = FALSE
+        ORDER BY em.sent_at DESC
+        LIMIT 50
+      `,
     ]);
     return res.status(200).json({
       ...deal,
@@ -397,6 +409,18 @@ async function dealsRoute(req, res, id, action, user) {
         occurredAt: e.occurred_at,
       })),
       tasks: tasks.map(serialiseTask),
+      emails: emails.map(em => ({
+        gmailMessageId: em.gmail_message_id,
+        gmailThreadId: em.gmail_thread_id,
+        fromEmail: em.from_email || null,
+        toEmails: em.to_emails || [],
+        ccEmails: em.cc_emails || [],
+        subject: em.subject || null,
+        snippet: em.snippet || null,
+        direction: em.direction,
+        sentAt: em.sent_at,
+        userEmail: em.user_email,
+      })),
     });
   }
 

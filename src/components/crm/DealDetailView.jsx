@@ -40,6 +40,19 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
   const proposals = detail?.proposals || [];
   const events = detail?.events || [];
   const tasks = detail?.tasks || [];
+  const emails = detail?.emails || [];
+
+  // Merge events + emails into one chronological timeline. Emails carry
+  // sentAt; deal_events carry occurredAt. Tag each item with its kind so the
+  // renderer can pick the right component and icon.
+  const timeline = useMemo(() => {
+    const items = [
+      ...events.map(e => ({ kind: 'event', when: e.occurredAt, data: e })),
+      ...emails.map(em => ({ kind: 'email', when: em.sentAt, data: em })),
+    ];
+    items.sort((a, b) => new Date(b.when) - new Date(a.when));
+    return items;
+  }, [events, emails]);
 
   const handleStageChange = (next) => {
     if (next === 'lost') {
@@ -129,10 +142,13 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
           ))}
         </Card>
 
-        <Card title="Timeline" count={events.length}>
-          {events.length === 0 && <Empty text="No events yet" />}
+        <Card title="Timeline" count={timeline.length}>
+          {timeline.length === 0 && <Empty text="No activity yet" />}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {events.map(e => <EventRow key={e.id} event={e} users={state.users} />)}
+            {timeline.map((item, i) => item.kind === 'email'
+              ? <EmailRow key={'em_' + item.data.gmailMessageId} email={item.data} />
+              : <EventRow key={'ev_' + item.data.id} event={item.data} users={state.users} />
+            )}
           </div>
         </Card>
       </div>
@@ -230,6 +246,45 @@ function EventRow({ event, users }) {
         <div>{label}</div>
         <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
           {formatRelativeTime(event.occurredAt)}{actor ? ' · ' + (actor.name || event.actorEmail) : (event.actorEmail ? ' · ' + event.actorEmail : '')}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmailRow({ email }) {
+  const inbound = email.direction === 'inbound';
+  const arrow = inbound ? '↓' : '↑';
+  const accent = inbound ? '#16A34A' : '#2BB8E6';
+  const counterparty = inbound ? email.fromEmail : (email.toEmails?.[0] || '');
+  return (
+    <div style={{ display: 'flex', gap: 8, fontSize: 13 }}>
+      <div
+        style={{
+          flexShrink: 0, width: 14, height: 14,
+          marginTop: 3,
+          background: accent + '22',
+          color: accent,
+          borderRadius: 3,
+          fontSize: 10,
+          fontWeight: 700,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+        title={inbound ? 'Inbound email' : 'Outbound email'}
+      >
+        {arrow}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {email.subject || <span style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no subject)</span>}
+        </div>
+        {email.snippet && (
+          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {email.snippet}
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
+          {formatRelativeTime(email.sentAt)}{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}
         </div>
       </div>
     </div>
