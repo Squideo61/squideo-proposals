@@ -5,7 +5,9 @@
   "rewrites": [
     { "source": "/api/invites", "destination": "/api/users?_kind=invites" },
     { "source": "/api/proposals", "destination": "/api/proposals/_root" },
-    { "source": "/api/templates", "destination": "/api/templates/_root" }
+    { "source": "/api/templates", "destination": "/api/templates/_root" },
+    { "source": "/api/crm/:resource/:id/:action", "destination": "/api/crm/:resource?_id=:id&_action=:action" },
+    { "source": "/api/crm/:resource/:id", "destination": "/api/crm/:resource?_id=:id" }
   ],
   "crons": [
     { "path": "/api/crm/cron/task-reminders", "schedule": "0 9 * * *" }

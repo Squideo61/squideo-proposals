@@ -50,19 +50,27 @@ export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Parse path segments from req.url directly. Vercel's req.query.slug has
-  // proved unreliable for non-optional catch-all routes — sometimes empty
-  // even when the URL clearly has segments. Splitting ourselves avoids that.
+  // Parse the path. Vercel's [...slug] catch-all in this project only matches
+  // SINGLE-segment paths reliably (multi-segment 404s), so vercel.json
+  // rewrites flatten /api/crm/:resource/:id/:action into
+  // /api/crm/:resource?_id=:id&_action=:action and we recover id/action from
+  // the query string here. Direct calls (e.g. /api/crm/companies, no id)
+  // also work because the rewrites are conditional on having extra segments.
   const urlPath = (req.url || '').split('?')[0];
+  const qs = (req.url || '').split('?')[1] || '';
+  const queryParams = new URLSearchParams(qs);
   const segs = urlPath.split('/').filter(Boolean).slice(2); // strip 'api', 'crm'
-  const [resource, id, action] = segs;
+  const resource = segs[0] || null;
+  const id = segs[1] || queryParams.get('_id') || null;
+  const action = segs[2] || queryParams.get('_action') || null;
 
   if (!resource) return res.status(404).json({ error: 'Not found' });
 
   // Cron sweep — auth via shared secret in Authorization header so the route
-  // can be hit by Vercel cron without a JWT.
+  // can be hit by Vercel cron without a JWT. After the rewrite, the cron
+  // task name lands in `id` (e.g. /api/crm/cron/task-reminders → id='task-reminders').
   if (resource === 'cron') {
-    return cronHandler(req, res, action);
+    return cronHandler(req, res, id || action);
   }
 
   // Gmail OAuth callback is hit by Google after consent — no JWT to send,
