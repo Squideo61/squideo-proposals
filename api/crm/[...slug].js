@@ -13,6 +13,8 @@ import {
   exchangeCode,
   refreshAccessToken,
   fetchGmailAddress,
+  registerWatch,
+  stopWatch,
 } from '../_lib/gmailTokens.js';
 
 const GMAIL_SCOPES = [
@@ -681,14 +683,22 @@ async function gmailRoute(req, res, id, action, user) {
       FROM gmail_accounts WHERE user_email = ${user.email} AND disconnected_at IS NULL
     `;
     if (rows.length) {
-      // Best-effort revoke — Google will reject the token next call regardless,
-      // but courteous to clean up on their side too.
+      // Best-effort cleanup at Google's end. Revoking the refresh token also
+      // invalidates any access token, but we proactively call users.stop too
+      // so they tear down the Pub/Sub watch immediately rather than waiting
+      // for it to expire.
       try {
         const refreshToken = decryptToken({
           enc: rows[0].refresh_token_enc,
           iv: rows[0].refresh_token_iv,
           tag: rows[0].refresh_token_tag,
         });
+        try {
+          const accessToken = await getFreshAccessToken(user.email);
+          await stopWatch(accessToken);
+        } catch (err) {
+          console.warn('[gmail disconnect] users.stop failed (ignoring)', err.message);
+        }
         await fetch('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(refreshToken), {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -699,7 +709,10 @@ async function gmailRoute(req, res, id, action, user) {
     }
     await sql`
       UPDATE gmail_accounts
-         SET disconnected_at = NOW(), updated_at = NOW()
+         SET disconnected_at = NOW(),
+             history_id = NULL,
+             watch_expires_at = NULL,
+             updated_at = NOW()
        WHERE user_email = ${user.email}
     `;
     return res.status(200).json({ ok: true });
@@ -779,16 +792,37 @@ async function gmailCallback(req, res) {
   const { enc, iv, tag } = encryptToken(tokens.refresh_token);
   const accessExpiresAt = new Date(Date.now() + (Number(tokens.expires_in || 3600) - 60) * 1000).toISOString();
 
+  // Register a Gmail push subscription on the configured Pub/Sub topic so
+  // we receive a notification whenever new mail arrives. Best-effort — if
+  // it fails (e.g. topic not configured) we still persist the tokens so the
+  // user can at least send email; the daily cron will retry.
+  let historyId = null;
+  let watchExpiresAt = null;
+  let pubsubTopic = process.env.GMAIL_PUBSUB_TOPIC || null;
+  if (pubsubTopic) {
+    try {
+      const watch = await registerWatch(tokens.access_token, pubsubTopic);
+      historyId = watch.historyId || null;
+      watchExpiresAt = watch.expiration ? new Date(watch.expiration).toISOString() : null;
+    } catch (err) {
+      console.error('[gmail callback] users.watch failed', err.message);
+    }
+  } else {
+    console.warn('[gmail callback] GMAIL_PUBSUB_TOPIC not set — skipping watch registration');
+  }
+
   await sql`
     INSERT INTO gmail_accounts (
       user_email, gmail_address,
       refresh_token_enc, refresh_token_iv, refresh_token_tag,
       access_token, access_token_expires_at,
+      history_id, watch_expires_at, pubsub_topic,
       scopes, connected_at, disconnected_at, updated_at
     ) VALUES (
       ${userEmail}, ${gmailAddress},
       ${enc}, ${iv}, ${tag},
       ${tokens.access_token}, ${accessExpiresAt},
+      ${historyId}, ${watchExpiresAt}, ${pubsubTopic},
       ${tokens.scope || GMAIL_SCOPES.join(' ')}, NOW(), NULL, NOW()
     )
     ON CONFLICT (user_email) DO UPDATE SET
@@ -798,6 +832,9 @@ async function gmailCallback(req, res) {
       refresh_token_tag = EXCLUDED.refresh_token_tag,
       access_token = EXCLUDED.access_token,
       access_token_expires_at = EXCLUDED.access_token_expires_at,
+      history_id = COALESCE(EXCLUDED.history_id, gmail_accounts.history_id),
+      watch_expires_at = COALESCE(EXCLUDED.watch_expires_at, gmail_accounts.watch_expires_at),
+      pubsub_topic = COALESCE(EXCLUDED.pubsub_topic, gmail_accounts.pubsub_topic),
       scopes = EXCLUDED.scopes,
       connected_at = NOW(),
       disconnected_at = NULL,
@@ -806,7 +843,7 @@ async function gmailCallback(req, res) {
 
   return renderResult(
     'Gmail connected',
-    `<h1>Gmail connected ✓</h1><p><strong>${escapeHtml(gmailAddress)}</strong> is now linked to your Squideo account. You can close this tab.</p>`
+    `<h1>Gmail connected ✓</h1><p><strong>${escapeHtml(gmailAddress)}</strong> is now linked to your Squideo account.</p><p>${historyId ? 'Inbound sync is active — new mail will appear on the matching deal automatically.' : 'Inbound sync could not be activated (Pub/Sub may need attention) — outbound send still works.'}</p><p>You can close this tab.</p>`
   );
 }
 

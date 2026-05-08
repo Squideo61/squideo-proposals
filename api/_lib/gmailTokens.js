@@ -110,3 +110,40 @@ export function buildAuthUrl({ state, redirectUri, scopes }) {
   });
   return 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
 }
+
+// Subscribe the user's mailbox to a Pub/Sub topic so Gmail will push us a
+// notification whenever new mail arrives. Returns { historyId, expiration }.
+// `expiration` is Unix milliseconds (Gmail's watches expire ~7 days out, so
+// a daily cron must call this again before then).
+export async function registerWatch(accessToken, topicName) {
+  const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/watch', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + accessToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      topicName,
+      labelIds: ['INBOX', 'SENT'],
+      labelFilterBehavior: 'INCLUDE',
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Gmail users.watch failed (${res.status}): ${body}`);
+  }
+  const json = await res.json();
+  return {
+    historyId: json.historyId,
+    expiration: json.expiration ? Number(json.expiration) : null,
+  };
+}
+
+// Cancel an existing Gmail watch. Best-effort — Gmail will let it expire on
+// its own anyway.
+export async function stopWatch(accessToken) {
+  await fetch('https://gmail.googleapis.com/gmail/v1/users/me/stop', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken },
+  });
+}

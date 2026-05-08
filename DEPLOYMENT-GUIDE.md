@@ -365,6 +365,56 @@ You should see a success message. Your database is now ready.
 > CREATE INDEX IF NOT EXISTS idx_oauth_states_created ON oauth_states(created_at);
 > ```
 
+> **CRM Phase 3 (Gmail inbound sync via Pub/Sub)** — Adds tables that hold every email thread + message synced from Gmail and the M:N join that links threads to deals (boxes). Plus two columns on `gmail_accounts` for the poll-fallback cron and backfill bookkeeping. Run once in Neon.
+> ```sql
+> CREATE TABLE IF NOT EXISTS email_threads (
+>   gmail_thread_id    TEXT PRIMARY KEY,
+>   user_email         TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+>   subject            TEXT,
+>   last_message_at    TIMESTAMPTZ,
+>   participant_emails TEXT[] DEFAULT '{}',
+>   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+> );
+> CREATE INDEX IF NOT EXISTS idx_email_threads_user_last ON email_threads(user_email, last_message_at DESC);
+>
+> CREATE TABLE IF NOT EXISTS email_messages (
+>   gmail_message_id    TEXT PRIMARY KEY,
+>   gmail_thread_id     TEXT NOT NULL REFERENCES email_threads(gmail_thread_id) ON DELETE CASCADE,
+>   user_email          TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+>   message_id_header   TEXT,
+>   in_reply_to         TEXT,
+>   refs                TEXT[] DEFAULT '{}',
+>   from_email          TEXT,
+>   to_emails           TEXT[] DEFAULT '{}',
+>   cc_emails           TEXT[] DEFAULT '{}',
+>   subject             TEXT,
+>   snippet             TEXT,
+>   body_html           TEXT,
+>   body_text           TEXT,
+>   direction           TEXT NOT NULL,                   -- 'inbound' | 'outbound'
+>   unmatched           BOOLEAN NOT NULL DEFAULT FALSE,
+>   internal_only       BOOLEAN NOT NULL DEFAULT FALSE,
+>   source              TEXT,                             -- 'pubsub' | 'extension-snapshot' | 'compose-helper'
+>   sent_at             TIMESTAMPTZ NOT NULL,
+>   ingested_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+> );
+> CREATE INDEX IF NOT EXISTS idx_email_messages_thread ON email_messages(gmail_thread_id, sent_at);
+> CREATE INDEX IF NOT EXISTS idx_email_messages_unmatched ON email_messages(user_email) WHERE unmatched;
+> CREATE INDEX IF NOT EXISTS idx_email_messages_msgid ON email_messages(message_id_header);
+>
+> CREATE TABLE IF NOT EXISTS email_thread_deals (
+>   gmail_thread_id  TEXT NOT NULL REFERENCES email_threads(gmail_thread_id) ON DELETE CASCADE,
+>   deal_id          TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+>   resolved_by      TEXT,                                -- 'header' | 'thread' | 'in-reply-to' | 'contact' | 'domain' | 'manual' | 'extension'
+>   resolved_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   PRIMARY KEY (gmail_thread_id, deal_id)
+> );
+> CREATE INDEX IF NOT EXISTS idx_email_thread_deals_deal ON email_thread_deals(deal_id);
+>
+> ALTER TABLE gmail_accounts ADD COLUMN IF NOT EXISTS last_pushed_at TIMESTAMPTZ;
+> ALTER TABLE gmail_accounts ADD COLUMN IF NOT EXISTS backfill_completed_at TIMESTAMPTZ;
+> ```
+
 6. Click **Dashboard** in the top left, then find the **"Connection string"** section
 7. Copy the connection string — it looks like:
    ```
