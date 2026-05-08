@@ -3,6 +3,7 @@ import sql from '../_lib/db.js';
 import { cors } from '../_lib/middleware.js';
 import { sendMail, paidHtml, clientPaidThanksHtml, APP_URL } from '../_lib/email.js';
 import { getOrCreateContact, createInvoice, emailInvoice } from '../_lib/xero.js';
+import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 import {
   lineItemsForProject,
   lineItemsForDiscountedProject,
@@ -397,6 +398,16 @@ export default async function handler(req, res) {
             await setupPartnerSubscription({ stripe, session, proposalId });
           }
 
+          // CRM: advance the linked deal to 'paid'. Best-effort.
+          try {
+            const dealId = await dealIdForProposal(proposalId);
+            if (dealId) {
+              await advanceStage(dealId, 'paid', { payload: { proposalId, amount, paymentType: isDeposit ? 'deposit' : 'full', source: 'stripe-webhook' } });
+            }
+          } catch (err) {
+            console.error('[stripe webhook] advanceStage failed', err);
+          }
+
           // Best-effort emails — failures here mustn't affect the webhook's
           // 200 response (Stripe would retry and we'd risk duplicates).
           try {
@@ -621,6 +632,17 @@ export default async function handler(req, res) {
       RETURNING (xmax = 0) AS inserted
     `;
     const isFirstWrite = upserted[0]?.inserted === true;
+
+    // CRM: advance the linked deal to 'paid'. Best-effort. The webhook may
+    // race ahead — advanceStage's ratchet keeps that idempotent.
+    try {
+      const dealId = await dealIdForProposal(proposalId);
+      if (dealId) {
+        await advanceStage(dealId, 'paid', { payload: { proposalId, amount: payment.amount, paymentType: payment.paymentType, source: 'stripe-verify' } });
+      }
+    } catch (err) {
+      console.error('[stripe verify] advanceStage failed', err);
+    }
 
     if (isFirstWrite) {
       try {

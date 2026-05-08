@@ -18,6 +18,10 @@ import { PartnerCreditDetailView } from './components/PartnerCreditDetailView.js
 import { UserManager } from './components/UserManager.jsx';
 import { NotificationSettings } from './components/NotificationSettings.jsx';
 import { AccountSettings } from './components/AccountSettings.jsx';
+import { PipelineView } from './components/crm/PipelineView.jsx';
+import { DealDetailView } from './components/crm/DealDetailView.jsx';
+import { ContactsView } from './components/crm/ContactsView.jsx';
+import { TasksView } from './components/crm/TasksView.jsx';
 
 function AppShell() {
   const { state, actions, showMsg, toast } = useStore();
@@ -179,6 +183,31 @@ function AppShell() {
           onManageTemplates={() => setView('templates')}
           onManageLeaderboard={() => setView('leaderboard')}
           onManagePartnerCredits={() => setView('partner-credits')}
+          onManagePipeline={() => setView('pipeline')}
+          onManageContacts={() => setView('contacts')}
+          onManageTasks={() => setView('tasks')}
+        />
+      )}
+      {view === 'pipeline' && (
+        <PipelineView
+          onBack={() => setView('list')}
+          onOpenDeal={(id) => { setActiveId(id); setView('deal'); }}
+        />
+      )}
+      {view === 'deal' && activeId && (
+        <DealDetailView
+          dealId={activeId}
+          onBack={() => { setView('pipeline'); setActiveId(null); }}
+          onOpenProposal={(id) => { setActiveId(id); setView('builder'); }}
+        />
+      )}
+      {view === 'contacts' && (
+        <ContactsView onBack={() => setView('list')} />
+      )}
+      {view === 'tasks' && (
+        <TasksView
+          onBack={() => setView('list')}
+          onOpenDeal={(id) => { setActiveId(id); setView('deal'); }}
         />
       )}
       {view === 'leaderboard' && (

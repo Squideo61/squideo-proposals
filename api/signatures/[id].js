@@ -1,6 +1,7 @@
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, signedHtml, clientSignedThanksHtml, APP_URL } from '../_lib/email.js';
+import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -36,6 +37,16 @@ export default async function handler(req, res) {
       INSERT INTO signatures (proposal_id, name, email, signed_at, data)
       VALUES (${id}, ${name}, ${email}, ${signedAt}, ${JSON.stringify(rest)})
     `;
+
+    // CRM: advance the linked deal to 'signed'. Best-effort.
+    try {
+      const dealId = await dealIdForProposal(id);
+      if (dealId) {
+        await advanceStage(dealId, 'signed', { payload: { proposalId: id, signerName: name, signerEmail: email } });
+      }
+    } catch (err) {
+      console.error('[signatures] advanceStage failed', err);
+    }
 
     try {
       const [users, proposals] = await Promise.all([

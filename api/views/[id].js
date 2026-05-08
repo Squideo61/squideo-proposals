@@ -3,6 +3,7 @@
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, firstViewHtml, APP_URL } from '../_lib/email.js';
+import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -78,6 +79,17 @@ export default async function handler(req, res) {
       } catch (err) {
         console.error('[views] first-view email failed', err);
       }
+    }
+
+    // CRM: advance deal to 'viewed' on every view. The ratchet rule prevents
+    // downgrading a deal that's already further along (signed/paid).
+    try {
+      const dealId = await dealIdForProposal(id);
+      if (dealId) {
+        await advanceStage(dealId, 'viewed', { payload: { proposalId: id, sessionId } });
+      }
+    } catch (err) {
+      console.error('[views] advanceStage failed', err);
     }
 
     return res.status(200).json({ ok: true });

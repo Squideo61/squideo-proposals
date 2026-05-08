@@ -216,6 +216,127 @@ You should see a success message. Your database is now ready.
 > ON CONFLICT (stripe_subscription_id) DO NOTHING;
 > ```
 
+> **CRM Phase 1 (deals, contacts, companies, tasks)** — Adds the Streak-style sales pipeline. Run once in Neon's SQL Editor. Idempotent.
+> ```sql
+> CREATE TABLE IF NOT EXISTS companies (
+>   id          TEXT PRIMARY KEY,
+>   name        TEXT NOT NULL,
+>   domain      TEXT,
+>   notes       TEXT,
+>   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+> );
+> CREATE INDEX IF NOT EXISTS idx_companies_domain ON companies(LOWER(domain));
+>
+> CREATE TABLE IF NOT EXISTS contacts (
+>   id          TEXT PRIMARY KEY,
+>   email       TEXT,
+>   name        TEXT,
+>   phone       TEXT,
+>   title       TEXT,
+>   company_id  TEXT REFERENCES companies(id) ON DELETE SET NULL,
+>   notes       TEXT,
+>   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+> );
+> CREATE INDEX IF NOT EXISTS idx_contacts_email   ON contacts(LOWER(email));
+> CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company_id);
+>
+> CREATE TABLE IF NOT EXISTS deals (
+>   id                  TEXT PRIMARY KEY,
+>   title               TEXT NOT NULL,
+>   company_id          TEXT REFERENCES companies(id) ON DELETE SET NULL,
+>   primary_contact_id  TEXT REFERENCES contacts(id) ON DELETE SET NULL,
+>   owner_email         TEXT REFERENCES users(email) ON DELETE SET NULL,
+>   stage               TEXT NOT NULL DEFAULT 'lead',
+>   stage_changed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   value               NUMERIC(10,2),
+>   expected_close_at   DATE,
+>   lost_reason         TEXT,
+>   notes               TEXT,
+>   last_activity_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+> );
+> CREATE INDEX IF NOT EXISTS idx_deals_stage   ON deals(stage, stage_changed_at DESC);
+> CREATE INDEX IF NOT EXISTS idx_deals_owner   ON deals(owner_email);
+> CREATE INDEX IF NOT EXISTS idx_deals_company ON deals(company_id);
+>
+> CREATE TABLE IF NOT EXISTS deal_contacts (
+>   deal_id     TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+>   contact_id  TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+>   role        TEXT,
+>   PRIMARY KEY (deal_id, contact_id)
+> );
+>
+> CREATE TABLE IF NOT EXISTS deal_events (
+>   id           BIGSERIAL PRIMARY KEY,
+>   deal_id      TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+>   event_type   TEXT NOT NULL,
+>   payload      JSONB NOT NULL DEFAULT '{}',
+>   actor_email  TEXT,
+>   occurred_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+> );
+> CREATE INDEX IF NOT EXISTS idx_deal_events_deal ON deal_events(deal_id, occurred_at DESC);
+>
+> CREATE TABLE IF NOT EXISTS tasks (
+>   id              TEXT PRIMARY KEY,
+>   deal_id         TEXT REFERENCES deals(id) ON DELETE CASCADE,
+>   contact_id      TEXT REFERENCES contacts(id) ON DELETE SET NULL,
+>   title           TEXT NOT NULL,
+>   notes           TEXT,
+>   due_at          TIMESTAMPTZ,
+>   assignee_email  TEXT REFERENCES users(email) ON DELETE SET NULL,
+>   done_at         TIMESTAMPTZ,
+>   reminded_at     TIMESTAMPTZ,
+>   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   created_by      TEXT
+> );
+> CREATE INDEX IF NOT EXISTS idx_tasks_due      ON tasks(due_at) WHERE done_at IS NULL;
+> CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_email, due_at) WHERE done_at IS NULL;
+> CREATE INDEX IF NOT EXISTS idx_tasks_deal     ON tasks(deal_id);
+>
+> ALTER TABLE proposals ADD COLUMN IF NOT EXISTS deal_id TEXT REFERENCES deals(id) ON DELETE SET NULL;
+> CREATE INDEX IF NOT EXISTS idx_proposals_deal ON proposals(deal_id);
+>
+> -- One-time backfill: create a deal for every existing proposal that doesn't
+> -- have one. Stage is inferred from existing signals (paid/signed/viewed) so
+> -- the pipeline reflects current state without manual data entry.
+> INSERT INTO deals (id, title, owner_email, stage, stage_changed_at, value, last_activity_at, created_at, updated_at)
+> SELECT
+>   'deal_' || p.id,
+>   COALESCE(
+>     NULLIF(p.data->>'contactBusinessName', ''),
+>     NULLIF(p.data->>'clientName', ''),
+>     'Untitled deal'
+>   ),
+>   NULLIF(p.data->>'preparedByEmail', ''),
+>   CASE
+>     WHEN pay.proposal_id IS NOT NULL THEN 'paid'
+>     WHEN s.proposal_id   IS NOT NULL THEN 'signed'
+>     WHEN v.proposal_id   IS NOT NULL THEN 'viewed'
+>     ELSE 'quoting'
+>   END,
+>   COALESCE(pay.paid_at, s.signed_at, v.first_at, p.created_at),
+>   COALESCE((p.data->>'basePrice')::NUMERIC, NULL),
+>   COALESCE(pay.paid_at, s.signed_at, v.first_at, p.updated_at, p.created_at),
+>   p.created_at,
+>   p.updated_at
+> FROM proposals p
+> LEFT JOIN payments   pay ON pay.proposal_id = p.id
+> LEFT JOIN signatures s   ON s.proposal_id   = p.id
+> LEFT JOIN (
+>   SELECT proposal_id, MIN(opened_at) AS first_at FROM proposal_views GROUP BY proposal_id
+> ) v ON v.proposal_id = p.id
+> WHERE p.deal_id IS NULL
+> ON CONFLICT (id) DO NOTHING;
+>
+> UPDATE proposals p
+>    SET deal_id = 'deal_' || p.id
+>  WHERE p.deal_id IS NULL
+>    AND EXISTS (SELECT 1 FROM deals d WHERE d.id = 'deal_' || p.id);
+> ```
+
 6. Click **Dashboard** in the top left, then find the **"Connection string"** section
 7. Copy the connection string — it looks like:
    ```

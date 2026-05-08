@@ -4,5 +4,8 @@
   },
   "rewrites": [
     { "source": "/api/invites", "destination": "/api/users?_kind=invites" }
+  ],
+  "crons": [
+    { "path": "/api/crm/cron/task-reminders", "schedule": "0 9 * * *" }
   ]
 }

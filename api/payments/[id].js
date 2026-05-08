@@ -1,5 +1,6 @@
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
+import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -27,6 +28,17 @@ export default async function handler(req, res) {
             customer_email = EXCLUDED.customer_email,
             receipt_url = COALESCE(EXCLUDED.receipt_url, payments.receipt_url)
     `;
+
+    // CRM: advance the linked deal to 'paid'. Best-effort.
+    try {
+      const dealId = await dealIdForProposal(id);
+      if (dealId) {
+        await advanceStage(dealId, 'paid', { actorEmail: user.email || null, payload: { proposalId: id, amount, paymentType } });
+      }
+    } catch (err) {
+      console.error('[payments] advanceStage failed', err);
+    }
+
     return res.status(201).json({ ok: true });
   }
 

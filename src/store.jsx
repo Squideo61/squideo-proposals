@@ -12,6 +12,12 @@ function emptyStore() {
     signatures: {},
     viewSessions: {},
     payments: {},
+    // CRM
+    deals: {},
+    contacts: {},
+    companies: {},
+    tasks: [],
+    dealDetail: {},
     notificationRecipients: [],
     extrasBank: [],
     inclusionsBank: [],
@@ -64,6 +70,14 @@ function applyOptimisticAllocationChange(setState, clientKey, transform) {
   });
 }
 
+// Strip the detail-only nested fields from a deal-detail response so the
+// tidier deal record can sit in state.deals (the Kanban list).
+function stripDetail(d) {
+  if (!d) return d;
+  const { proposals, events, tasks, ...rest } = d;
+  return rest;
+}
+
 function sessionFromToken() {
   try {
     const token = getToken();
@@ -93,12 +107,26 @@ export function StoreProvider({ children }) {
       api.get('/api/templates').catch(() => ({})),
       api.get('/api/settings').catch(() => ({})),
       api.get('/api/users').catch(() => ({})),
-    ]).then(([proposals, templates, settings, users]) => {
+      api.get('/api/crm/deals').catch(() => []),
+      api.get('/api/crm/contacts').catch(() => []),
+      api.get('/api/crm/companies').catch(() => []),
+      api.get('/api/crm/tasks?scope=open').catch(() => []),
+    ]).then(([proposals, templates, settings, users, deals, contacts, companies, tasks]) => {
+      const dealsMap = {};
+      for (const d of (Array.isArray(deals) ? deals : [])) dealsMap[d.id] = d;
+      const contactsMap = {};
+      for (const c of (Array.isArray(contacts) ? contacts : [])) contactsMap[c.id] = c;
+      const companiesMap = {};
+      for (const c of (Array.isArray(companies) ? companies : [])) companiesMap[c.id] = c;
       setState(s => ({
         ...s,
         proposals: proposals || {},
         templates: templates || {},
         users: users || {},
+        deals: dealsMap,
+        contacts: contactsMap,
+        companies: companiesMap,
+        tasks: Array.isArray(tasks) ? tasks : [],
         extrasBank: settings?.extrasBank?.length ? settings.extrasBank : JSON.parse(JSON.stringify(DEFAULT_PROPOSAL.optionalExtras)),
         inclusionsBank: settings?.inclusionsBank?.length ? settings.inclusionsBank : DEFAULT_PROPOSAL.baseInclusions.map((inc, i) => ({ id: 'incl_default_' + i, title: inc.title, description: inc.description || '' })),
         notificationRecipients: settings?.notificationRecipients || [],
@@ -330,6 +358,150 @@ export function StoreProvider({ children }) {
       return api.delete('/api/partner/allocations?id=' + encodeURIComponent(id)).then(() => {
         applyOptimisticAllocationChange(setState, clientKey, (allocations) => allocations.filter(a => a.id !== id));
       });
+    },
+
+    // ---------- CRM ----------
+    refreshDeals() {
+      return api.get('/api/crm/deals').then((rows) => {
+        const map = {};
+        for (const d of (Array.isArray(rows) ? rows : [])) map[d.id] = d;
+        setState(s => ({ ...s, deals: map }));
+        return map;
+      }).catch(() => ({}));
+    },
+    loadDealDetail(dealId) {
+      return api.get('/api/crm/deals/' + encodeURIComponent(dealId)).then((data) => {
+        if (!data || data.error) return null;
+        setState(s => ({
+          ...s,
+          dealDetail: { ...s.dealDetail, [dealId]: data },
+          deals: { ...s.deals, [dealId]: { ...(s.deals[dealId] || {}), ...stripDetail(data) } },
+        }));
+        return data;
+      }).catch(() => null);
+    },
+    createDeal(input) {
+      return api.post('/api/crm/deals', input).then((deal) => {
+        if (deal && deal.id) {
+          setState(s => ({ ...s, deals: { ...s.deals, [deal.id]: deal } }));
+        }
+        return deal;
+      });
+    },
+    saveDeal(dealId, patch) {
+      // Optimistic merge — Kanban drag-and-edit feels instant.
+      setState(s => {
+        const cur = s.deals[dealId];
+        if (!cur) return s;
+        return { ...s, deals: { ...s.deals, [dealId]: { ...cur, ...patch } } };
+      });
+      return api.patch('/api/crm/deals/' + encodeURIComponent(dealId), patch).then((deal) => {
+        if (deal && deal.id) {
+          setState(s => ({ ...s, deals: { ...s.deals, [deal.id]: deal } }));
+        }
+        return deal;
+      }).catch(() => {});
+    },
+    moveDealStage(dealId, stage, lostReason) {
+      setState(s => {
+        const cur = s.deals[dealId];
+        if (!cur) return s;
+        return { ...s, deals: { ...s.deals, [dealId]: { ...cur, stage, stageChangedAt: new Date().toISOString(), lostReason: lostReason || null } } };
+      });
+      return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/stage', { stage, lostReason }).then((resp) => {
+        if (resp?.deal) {
+          setState(s => ({ ...s, deals: { ...s.deals, [dealId]: resp.deal } }));
+        }
+        return resp;
+      }).catch(() => {});
+    },
+    deleteDeal(dealId) {
+      setState(s => {
+        const deals = { ...s.deals }; delete deals[dealId];
+        const dealDetail = { ...s.dealDetail }; delete dealDetail[dealId];
+        return { ...s, deals, dealDetail };
+      });
+      return api.delete('/api/crm/deals/' + encodeURIComponent(dealId)).catch(() => {});
+    },
+    createContact(input) {
+      return api.post('/api/crm/contacts', input).then((c) => {
+        if (c && c.id) setState(s => ({ ...s, contacts: { ...s.contacts, [c.id]: c } }));
+        return c;
+      });
+    },
+    saveContact(contactId, patch) {
+      setState(s => {
+        const cur = s.contacts[contactId];
+        if (!cur) return s;
+        return { ...s, contacts: { ...s.contacts, [contactId]: { ...cur, ...patch } } };
+      });
+      return api.patch('/api/crm/contacts/' + encodeURIComponent(contactId), patch).then((c) => {
+        if (c && c.id) setState(s => ({ ...s, contacts: { ...s.contacts, [c.id]: c } }));
+        return c;
+      }).catch(() => {});
+    },
+    deleteContact(contactId) {
+      setState(s => {
+        const contacts = { ...s.contacts }; delete contacts[contactId];
+        return { ...s, contacts };
+      });
+      return api.delete('/api/crm/contacts/' + encodeURIComponent(contactId)).catch(() => {});
+    },
+    createCompany(input) {
+      return api.post('/api/crm/companies', input).then((c) => {
+        if (c && c.id) setState(s => ({ ...s, companies: { ...s.companies, [c.id]: c } }));
+        return c;
+      });
+    },
+    saveCompany(companyId, patch) {
+      setState(s => {
+        const cur = s.companies[companyId];
+        if (!cur) return s;
+        return { ...s, companies: { ...s.companies, [companyId]: { ...cur, ...patch } } };
+      });
+      return api.patch('/api/crm/companies/' + encodeURIComponent(companyId), patch).then((c) => {
+        if (c && c.id) setState(s => ({ ...s, companies: { ...s.companies, [c.id]: c } }));
+        return c;
+      }).catch(() => {});
+    },
+    deleteCompany(companyId) {
+      setState(s => {
+        const companies = { ...s.companies }; delete companies[companyId];
+        return { ...s, companies };
+      });
+      return api.delete('/api/crm/companies/' + encodeURIComponent(companyId)).catch(() => {});
+    },
+    refreshTasks(scope = 'open') {
+      return api.get('/api/crm/tasks?scope=' + encodeURIComponent(scope)).then((rows) => {
+        const list = Array.isArray(rows) ? rows : [];
+        setState(s => ({ ...s, tasks: list }));
+        return list;
+      }).catch(() => []);
+    },
+    createTask(input) {
+      return api.post('/api/crm/tasks', input).then((t) => {
+        if (t && t.id) setState(s => ({ ...s, tasks: [t, ...s.tasks] }));
+        return t;
+      });
+    },
+    saveTask(taskId, patch) {
+      setState(s => ({ ...s, tasks: s.tasks.map(t => t.id === taskId ? { ...t, ...patch } : t) }));
+      return api.patch('/api/crm/tasks/' + encodeURIComponent(taskId), patch).then((t) => {
+        if (t && t.id) setState(s => ({ ...s, tasks: s.tasks.map(x => x.id === t.id ? t : x) }));
+        return t;
+      }).catch(() => {});
+    },
+    completeTask(taskId) {
+      const nowIso = new Date().toISOString();
+      setState(s => ({ ...s, tasks: s.tasks.map(t => t.id === taskId ? { ...t, doneAt: nowIso } : t) }));
+      return api.post('/api/crm/tasks/' + encodeURIComponent(taskId) + '/done', {}).then((t) => {
+        if (t && t.id) setState(s => ({ ...s, tasks: s.tasks.map(x => x.id === t.id ? t : x) }));
+        return t;
+      }).catch(() => {});
+    },
+    deleteTask(taskId) {
+      setState(s => ({ ...s, tasks: s.tasks.filter(t => t.id !== taskId) }));
+      return api.delete('/api/crm/tasks/' + encodeURIComponent(taskId)).catch(() => {});
     },
   }), []);
 
