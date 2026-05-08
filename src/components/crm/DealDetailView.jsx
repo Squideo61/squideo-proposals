@@ -5,6 +5,7 @@ import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile, formatProposalNumber } from '../../utils.js';
 import { Modal } from '../ui.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
+import { TaskFormModal } from './TaskFormModal.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
@@ -13,6 +14,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
   const [composingEmail, setComposingEmail] = useState(false);
   const [askLost, setAskLost] = useState(false);
 
@@ -117,7 +119,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
           <button onClick={() => setCreatingTask(true)} className="btn-ghost"><Plus size={12} /> Task</button>
         }>
           {tasks.length === 0 && <Empty text="No tasks yet" />}
-          {tasks.map(t => <TaskRow key={t.id} task={t} onToggle={() => actions.toggleTask(t.id)} />)}
+          {tasks.map(t => (
+            <TaskRow
+              key={t.id}
+              task={t}
+              onToggle={() => actions.toggleTask(t.id)}
+              onEdit={() => setEditingTask(t)}
+            />
+          ))}
         </Card>
 
         <Card title="Timeline" count={events.length}>
@@ -129,7 +138,20 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
       </div>
 
       {editing && <EditDealModal deal={deal} onClose={() => setEditing(false)} />}
-      {creatingTask && <NewTaskModal dealId={dealId} onClose={() => setCreatingTask(false)} onCreated={() => { setCreatingTask(false); actions.loadDealDetail(dealId); }} />}
+      {creatingTask && (
+        <TaskFormModal
+          defaults={{ dealId }}
+          onClose={() => setCreatingTask(false)}
+          onSaved={() => { setCreatingTask(false); actions.loadDealDetail(dealId); }}
+        />
+      )}
+      {editingTask && (
+        <TaskFormModal
+          task={editingTask}
+          onClose={() => setEditingTask(null)}
+          onSaved={() => { setEditingTask(null); actions.loadDealDetail(dealId); }}
+        />
+      )}
       {composingEmail && (
         <EmailComposerModal
           deal={deal}
@@ -178,16 +200,22 @@ function Empty({ text }) {
   return <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>{text}</div>;
 }
 
-function TaskRow({ task, onToggle }) {
+function TaskRow({ task, onToggle, onEdit }) {
   const done = !!task.doneAt;
   const Icon = done ? CheckSquare : Square;
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 4px', borderTop: '1px solid ' + BRAND.border }}>
-      <button onClick={onToggle} className="btn-icon" style={{ padding: 4, border: 'none', background: 'transparent' }}><Icon size={16} color={done ? '#16A34A' : BRAND.muted} /></button>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <button onClick={onToggle} className="btn-icon" style={{ padding: 4, border: 'none', background: 'transparent' }} aria-label={done ? 'Mark not done' : 'Mark done'}>
+        <Icon size={16} color={done ? '#16A34A' : BRAND.muted} />
+      </button>
+      <button
+        onClick={onEdit}
+        title="Edit task"
+        style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}
+      >
         <div style={{ fontSize: 13, fontWeight: 500, textDecoration: done ? 'line-through' : 'none', color: done ? BRAND.muted : BRAND.ink }}>{task.title}</div>
         {task.dueAt && <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>Due {new Date(task.dueAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div>}
-      </div>
+      </button>
     </div>
   );
 }
@@ -315,52 +343,6 @@ function EditDealModal({ deal, onClose }) {
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
           <button type="submit" className="btn" disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-function NewTaskModal({ dealId, onClose, onCreated }) {
-  const { state, actions } = useStore();
-  const [title, setTitle] = useState('');
-  const [notes, setNotes] = useState('');
-  const [dueAt, setDueAt] = useState(localTomorrow());
-  const [assigneeEmail, setAssigneeEmail] = useState(state.session?.email || '');
-  const [submitting, setSubmitting] = useState(false);
-
-  const users = Object.values(state.users || {});
-
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!title.trim() || submitting) return;
-    setSubmitting(true);
-    await actions.createTask({
-      title: title.trim(),
-      notes: notes || null,
-      dueAt: dueAt ? new Date(dueAt).toISOString() : null,
-      assigneeEmail: assigneeEmail || null,
-      dealId: dealId || null,
-    });
-    setSubmitting(false);
-    onCreated?.();
-  };
-
-  return (
-    <Modal onClose={onClose}>
-      <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>New task</h2>
-      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <FormRow label="Title"><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Call Sarah re: storyboard" autoFocus required /></FormRow>
-        <FormRow label="Due"><input className="input" type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} /></FormRow>
-        <FormRow label="Assignee">
-          <select className="input" value={assigneeEmail} onChange={(e) => setAssigneeEmail(e.target.value)}>
-            {users.map(u => <option key={u.email} value={u.email}>{u.name || u.email}</option>)}
-          </select>
-        </FormRow>
-        <FormRow label="Notes (optional)"><textarea className="input" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ fontFamily: 'inherit', resize: 'vertical' }} /></FormRow>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
-          <button type="submit" className="btn" disabled={!title.trim() || submitting}>{submitting ? 'Creating…' : 'Create'}</button>
         </div>
       </form>
     </Modal>
@@ -497,10 +479,3 @@ function bodyToHtml(text) {
     + '</div>';
 }
 
-function localTomorrow() {
-  const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  d.setHours(9, 0, 0, 0);
-  // datetime-local needs YYYY-MM-DDTHH:MM (local time, no Z)
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
