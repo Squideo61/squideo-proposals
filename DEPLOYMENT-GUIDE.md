@@ -337,6 +337,34 @@ You should see a success message. Your database is now ready.
 >    AND EXISTS (SELECT 1 FROM deals d WHERE d.id = 'deal_' || p.id);
 > ```
 
+> **CRM Phase 2 (Gmail OAuth)** — Adds per-user Gmail authentication and a short-lived OAuth state table. Refresh tokens are stored encrypted (AES-256-GCM); the encryption key lives in the `GMAIL_TOKEN_KEY` env var. Run once in Neon.
+> ```sql
+> CREATE TABLE IF NOT EXISTS gmail_accounts (
+>   user_email                TEXT PRIMARY KEY REFERENCES users(email) ON DELETE CASCADE,
+>   gmail_address             TEXT NOT NULL,
+>   refresh_token_enc         BYTEA NOT NULL,
+>   refresh_token_iv          BYTEA NOT NULL,
+>   refresh_token_tag         BYTEA NOT NULL,
+>   access_token              TEXT,
+>   access_token_expires_at   TIMESTAMPTZ,
+>   history_id                TEXT,
+>   watch_expires_at          TIMESTAMPTZ,
+>   pubsub_topic              TEXT,
+>   scopes                    TEXT,
+>   connected_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   disconnected_at           TIMESTAMPTZ,
+>   updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+> );
+>
+> CREATE TABLE IF NOT EXISTS oauth_states (
+>   state       TEXT PRIMARY KEY,
+>   user_email  TEXT NOT NULL,
+>   purpose     TEXT NOT NULL,                  -- 'gmail-connect' for now
+>   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+> );
+> CREATE INDEX IF NOT EXISTS idx_oauth_states_created ON oauth_states(created_at);
+> ```
+
 6. Click **Dashboard** in the top left, then find the **"Connection string"** section
 7. Copy the connection string — it looks like:
    ```

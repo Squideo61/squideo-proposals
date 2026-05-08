@@ -13,6 +13,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
+  const [composingEmail, setComposingEmail] = useState(false);
   const [askLost, setAskLost] = useState(false);
 
   useEffect(() => {
@@ -52,6 +53,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Pipeline</button>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={() => setComposingEmail(true)} className="btn"><Mail size={14} /> Send email</button>
           <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
           <button
             onClick={() => {
@@ -128,6 +130,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
 
       {editing && <EditDealModal deal={deal} onClose={() => setEditing(false)} />}
       {creatingTask && <NewTaskModal dealId={dealId} onClose={() => setCreatingTask(false)} onCreated={() => { setCreatingTask(false); actions.loadDealDetail(dealId); }} />}
+      {composingEmail && (
+        <EmailComposerModal
+          deal={deal}
+          contact={contact}
+          onClose={() => setComposingEmail(false)}
+          onSent={() => { setComposingEmail(false); actions.loadDealDetail(dealId); }}
+        />
+      )}
       {askLost && (
         <LostReasonModal
           onClose={() => setAskLost(false)}
@@ -384,6 +394,105 @@ function FormRow({ label, children }) {
       {children}
     </label>
   );
+}
+
+function EmailComposerModal({ deal, contact, onClose, onSent }) {
+  const { state, actions, showMsg } = useStore();
+  const gmailConnected = state.gmailAccount && state.gmailAccount.connected;
+  const defaultSubject = deal?.title ? `Re: ${deal.title}` : '';
+  const [to, setTo] = useState(contact?.email || '');
+  const [cc, setCc] = useState('');
+  const [subject, setSubject] = useState(defaultSubject);
+  const [body, setBody] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!to.trim() || !subject.trim() || !body.trim() || sending) return;
+    setError('');
+    setSending(true);
+    try {
+      const resp = await actions.sendGmail({
+        to: to.split(',').map(s => s.trim()).filter(Boolean),
+        cc: cc ? cc.split(',').map(s => s.trim()).filter(Boolean) : [],
+        subject: subject.trim(),
+        text: body,
+        html: bodyToHtml(body),
+        dealId: deal.id,
+      });
+      if (!resp?.ok) throw new Error('Send failed');
+      showMsg('Email sent');
+      onSent?.();
+    } catch (err) {
+      const msg = err?.message || 'Failed to send';
+      if (msg.toLowerCase().includes('not connected') || msg.toLowerCase().includes('reauth') || msg.toLowerCase().includes('expired')) {
+        setError(msg + ' Open Account → Gmail integration to connect.');
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Send email</h2>
+      {!gmailConnected && (
+        <div style={{ background: '#FEF3C7', color: '#92400E', fontSize: 13, padding: '10px 12px', borderRadius: 6, marginBottom: 14 }}>
+          Gmail isn't connected for your account yet. Connect it from Account → Gmail integration before sending.
+        </div>
+      )}
+      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <FormRow label="To">
+          <input className="input" type="text" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" autoFocus required />
+        </FormRow>
+        <FormRow label="Cc (optional)">
+          <input className="input" type="text" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="comma,separated@example.com" />
+        </FormRow>
+        <FormRow label="Subject">
+          <input className="input" type="text" value={subject} onChange={(e) => setSubject(e.target.value)} required />
+        </FormRow>
+        <FormRow label="Message">
+          <textarea
+            className="input"
+            rows={8}
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            style={{ fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.5 }}
+            required
+          />
+        </FormRow>
+        {error && (
+          <div style={{ background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '8px 10px', borderRadius: 6 }}>
+            {error}
+          </div>
+        )}
+        <div style={{ fontSize: 12, color: BRAND.muted }}>
+          Sent from {state.gmailAccount?.gmailAddress || 'your connected Gmail'}. The deal will be tagged via the X-Squideo-Deal header so replies thread back automatically (Phase 3).
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+          <button type="submit" className="btn" disabled={!gmailConnected || sending || !to.trim() || !subject.trim() || !body.trim()}>
+            {sending ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function bodyToHtml(text) {
+  // Minimal text→HTML: escape and turn newlines into <br>. Keeps the email
+  // simple — Phase 5 templates will give us proper rich content.
+  const escaped = String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:14px;line-height:1.6;color:#0F2A3D;">'
+    + escaped.replace(/\n/g, '<br>')
+    + '</div>';
 }
 
 function localTomorrow() {

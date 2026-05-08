@@ -1,10 +1,33 @@
-// CRM endpoints — companies, contacts, deals, tasks, plus the cron sweep
-// for task reminders. One slug-routed function file to stay within the
-// Vercel Hobby 12-function cap.
+// CRM endpoints — companies, contacts, deals, tasks, Gmail OAuth + send,
+// plus the cron sweep for task reminders. One slug-routed function file to
+// stay within the Vercel Hobby 12-function cap.
+import crypto from 'node:crypto';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, APP_URL } from '../_lib/email.js';
 import { advanceStage, isValidStage, STAGES } from '../_lib/dealStage.js';
+import {
+  buildAuthUrl,
+  encryptToken,
+  decryptToken,
+  exchangeCode,
+  refreshAccessToken,
+  fetchGmailAddress,
+} from '../_lib/gmailTokens.js';
+
+const GMAIL_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.metadata',
+];
+
+function gmailRedirectUri(req) {
+  // Use the request's host so localhost dev and Vercel deploys both work.
+  const proto = req.headers['x-forwarded-proto'] || 'https';
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  return `${proto}://${host}/api/crm/gmail/callback`;
+}
 
 const makeId = (prefix) => prefix + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
@@ -42,6 +65,12 @@ export default async function handler(req, res) {
     return cronHandler(req, res, action);
   }
 
+  // Gmail OAuth callback is hit by Google after consent — no JWT to send,
+  // CSRF protection comes from the `state` token we stored before redirect.
+  if (resource === 'gmail' && id === 'callback') {
+    return gmailCallback(req, res);
+  }
+
   const user = await requireAuth(req, res);
   if (!user) return;
 
@@ -51,6 +80,7 @@ export default async function handler(req, res) {
       case 'contacts':  return contactsRoute(req, res, id, action, user);
       case 'deals':     return dealsRoute(req, res, id, action, user);
       case 'tasks':     return tasksRoute(req, res, id, action, user);
+      case 'gmail':     return gmailRoute(req, res, id, action, user);
       default:          return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {
@@ -580,4 +610,360 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
+}
+
+// -------------------- Gmail OAuth + send --------------------
+
+async function gmailRoute(req, res, id, action, user) {
+  // /api/crm/gmail               GET   — current connection status for the user
+  // /api/crm/gmail/connect       GET   — returns Google auth URL to redirect to
+  // /api/crm/gmail/disconnect    POST  — revoke + clear stored token
+  // /api/crm/gmail/send          POST  — send an email via Gmail API
+  // /api/crm/gmail/callback      GET   — public, handled in top-level dispatch
+
+  if (!id) {
+    if (req.method !== 'GET') return res.status(405).end();
+    const rows = await sql`
+      SELECT gmail_address, scopes, connected_at, disconnected_at, history_id
+      FROM gmail_accounts WHERE user_email = ${user.email}
+    `;
+    if (!rows.length || rows[0].disconnected_at) {
+      return res.status(200).json({ connected: false });
+    }
+    return res.status(200).json({
+      connected: true,
+      gmailAddress: rows[0].gmail_address,
+      scopes: rows[0].scopes,
+      connectedAt: rows[0].connected_at,
+    });
+  }
+
+  if (id === 'connect') {
+    if (req.method !== 'GET') return res.status(405).end();
+    // CSRF-safe state token. We bind it to the user's email so an attacker
+    // can't trade somebody else's authorisation code for their own account.
+    const state = crypto.randomBytes(32).toString('base64url');
+    await sql`
+      INSERT INTO oauth_states (state, user_email, purpose)
+      VALUES (${state}, ${user.email}, 'gmail-connect')
+    `;
+    // Best-effort cleanup of states older than 10 minutes.
+    await sql`DELETE FROM oauth_states WHERE created_at < NOW() - INTERVAL '10 minutes'`;
+    const url = buildAuthUrl({
+      state,
+      redirectUri: gmailRedirectUri(req),
+      scopes: GMAIL_SCOPES,
+    });
+    return res.status(200).json({ url });
+  }
+
+  if (id === 'disconnect') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const rows = await sql`
+      SELECT refresh_token_enc, refresh_token_iv, refresh_token_tag
+      FROM gmail_accounts WHERE user_email = ${user.email} AND disconnected_at IS NULL
+    `;
+    if (rows.length) {
+      // Best-effort revoke — Google will reject the token next call regardless,
+      // but courteous to clean up on their side too.
+      try {
+        const refreshToken = decryptToken({
+          enc: rows[0].refresh_token_enc,
+          iv: rows[0].refresh_token_iv,
+          tag: rows[0].refresh_token_tag,
+        });
+        await fetch('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(refreshToken), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        });
+      } catch (err) {
+        console.warn('[gmail disconnect] revoke failed (ignoring)', err.message);
+      }
+    }
+    await sql`
+      UPDATE gmail_accounts
+         SET disconnected_at = NOW(), updated_at = NOW()
+       WHERE user_email = ${user.email}
+    `;
+    return res.status(200).json({ ok: true });
+  }
+
+  if (id === 'send') {
+    if (req.method !== 'POST') return res.status(405).end();
+    return gmailSend(req, res, user);
+  }
+
+  return res.status(404).json({ error: 'Unknown gmail action: ' + id });
+}
+
+async function gmailCallback(req, res) {
+  if (req.method !== 'GET') return res.status(405).end();
+
+  // Parse query params from req.url since req.query parsing was unreliable
+  // for the catch-all routing earlier.
+  const qs = (req.url || '').split('?')[1] || '';
+  const params = new URLSearchParams(qs);
+  const code = params.get('code');
+  const state = params.get('state');
+  const error = params.get('error');
+
+  const renderResult = (title, body) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.status(200).end(`<!doctype html>
+<html><head><meta charset="utf-8"><title>${title}</title>
+<style>body{font-family:-apple-system,system-ui,sans-serif;background:#FAFBFC;color:#0F2A3D;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}main{background:#fff;border:1px solid #E5E9EE;border-radius:12px;padding:32px;max-width:440px;text-align:center;box-shadow:0 4px 20px rgba(15,42,61,0.06)}h1{font-size:18px;margin:0 0 12px}p{color:#6B7785;font-size:14px;margin:0 0 18px;line-height:1.5}a{display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-size:14px}</style></head>
+<body><main>${body}<p style="margin-top:18px"><a href="${APP_URL}/">Back to Squideo</a></p></main></body></html>`);
+  };
+
+  if (error) {
+    return renderResult('Connection cancelled', `<h1>Connection cancelled</h1><p>${escapeHtml(error)}</p>`);
+  }
+  if (!code || !state) {
+    return renderResult('Connection failed', `<h1>Connection failed</h1><p>Missing code or state in the callback. Try again.</p>`);
+  }
+
+  // Validate state and look up which user it belongs to.
+  const stateRows = await sql`
+    SELECT user_email, purpose, created_at FROM oauth_states WHERE state = ${state}
+  `;
+  if (!stateRows.length) {
+    return renderResult('Connection failed', `<h1>Connection failed</h1><p>State token unknown or expired. Try connecting again.</p>`);
+  }
+  const ageMs = Date.now() - new Date(stateRows[0].created_at).getTime();
+  if (stateRows[0].purpose !== 'gmail-connect' || ageMs > 10 * 60 * 1000) {
+    await sql`DELETE FROM oauth_states WHERE state = ${state}`;
+    return renderResult('Connection failed', `<h1>Connection failed</h1><p>State token expired. Try connecting again.</p>`);
+  }
+  const userEmail = stateRows[0].user_email;
+  await sql`DELETE FROM oauth_states WHERE state = ${state}`;
+
+  // Exchange the auth code for tokens.
+  let tokens;
+  try {
+    tokens = await exchangeCode(code, gmailRedirectUri(req));
+  } catch (err) {
+    console.error('[gmail callback] code exchange failed', err);
+    return renderResult('Connection failed', `<h1>Connection failed</h1><p>${escapeHtml(err.message || 'Token exchange error.')}</p>`);
+  }
+
+  if (!tokens.refresh_token) {
+    return renderResult('Connection failed', `<h1>Connection failed</h1><p>Google did not return a refresh token. Disconnect any prior connection from your Google account, then try again.</p>`);
+  }
+
+  // Confirm the access token is valid and grab the Gmail address.
+  let gmailAddress;
+  try {
+    gmailAddress = await fetchGmailAddress(tokens.access_token);
+  } catch (err) {
+    console.error('[gmail callback] profile fetch failed', err);
+    return renderResult('Connection failed', `<h1>Connection failed</h1><p>${escapeHtml(err.message || 'Could not read Gmail profile.')}</p>`);
+  }
+
+  const { enc, iv, tag } = encryptToken(tokens.refresh_token);
+  const accessExpiresAt = new Date(Date.now() + (Number(tokens.expires_in || 3600) - 60) * 1000).toISOString();
+
+  await sql`
+    INSERT INTO gmail_accounts (
+      user_email, gmail_address,
+      refresh_token_enc, refresh_token_iv, refresh_token_tag,
+      access_token, access_token_expires_at,
+      scopes, connected_at, disconnected_at, updated_at
+    ) VALUES (
+      ${userEmail}, ${gmailAddress},
+      ${enc}, ${iv}, ${tag},
+      ${tokens.access_token}, ${accessExpiresAt},
+      ${tokens.scope || GMAIL_SCOPES.join(' ')}, NOW(), NULL, NOW()
+    )
+    ON CONFLICT (user_email) DO UPDATE SET
+      gmail_address = EXCLUDED.gmail_address,
+      refresh_token_enc = EXCLUDED.refresh_token_enc,
+      refresh_token_iv = EXCLUDED.refresh_token_iv,
+      refresh_token_tag = EXCLUDED.refresh_token_tag,
+      access_token = EXCLUDED.access_token,
+      access_token_expires_at = EXCLUDED.access_token_expires_at,
+      scopes = EXCLUDED.scopes,
+      connected_at = NOW(),
+      disconnected_at = NULL,
+      updated_at = NOW()
+  `;
+
+  return renderResult(
+    'Gmail connected',
+    `<h1>Gmail connected ✓</h1><p><strong>${escapeHtml(gmailAddress)}</strong> is now linked to your Squideo account. You can close this tab.</p>`
+  );
+}
+
+// Fetch a fresh access token, refreshing via Google if the cached one is
+// stale. Persists the new access_token + expiry. Throws if the user isn't
+// connected or Google has revoked the refresh token.
+async function getFreshAccessToken(userEmail) {
+  const rows = await sql`
+    SELECT refresh_token_enc, refresh_token_iv, refresh_token_tag,
+           access_token, access_token_expires_at
+    FROM gmail_accounts
+    WHERE user_email = ${userEmail} AND disconnected_at IS NULL
+  `;
+  if (!rows.length) {
+    const err = new Error('Gmail not connected');
+    err.code = 'NOT_CONNECTED';
+    throw err;
+  }
+  const row = rows[0];
+  const expiresAt = row.access_token_expires_at ? new Date(row.access_token_expires_at).getTime() : 0;
+  if (row.access_token && expiresAt > Date.now() + 30_000) {
+    return row.access_token;
+  }
+  const refreshToken = decryptToken({
+    enc: row.refresh_token_enc,
+    iv: row.refresh_token_iv,
+    tag: row.refresh_token_tag,
+  });
+  let refreshed;
+  try {
+    refreshed = await refreshAccessToken(refreshToken);
+  } catch (err) {
+    if (String(err.message).includes('invalid_grant')) {
+      // Token was revoked at Google's end — flag the account so the UI can
+      // prompt the user to reconnect.
+      await sql`
+        UPDATE gmail_accounts
+           SET disconnected_at = NOW(), updated_at = NOW()
+         WHERE user_email = ${userEmail}
+      `;
+      const e = new Error('Gmail authorisation expired. Reconnect to continue.');
+      e.code = 'REAUTH';
+      throw e;
+    }
+    throw err;
+  }
+  await sql`
+    UPDATE gmail_accounts
+       SET access_token = ${refreshed.accessToken},
+           access_token_expires_at = ${refreshed.expiresAt.toISOString()},
+           updated_at = NOW()
+     WHERE user_email = ${userEmail}
+  `;
+  return refreshed.accessToken;
+}
+
+async function gmailSend(req, res, user) {
+  const body = req.body || {};
+  const to = Array.isArray(body.to) ? body.to.filter(Boolean) : (body.to ? [body.to] : []);
+  const cc = Array.isArray(body.cc) ? body.cc.filter(Boolean) : [];
+  const bcc = Array.isArray(body.bcc) ? body.bcc.filter(Boolean) : [];
+  const subject = trimOrNull(body.subject);
+  const html = body.html || '';
+  const text = body.text || '';
+  const dealId = trimOrNull(body.dealId);
+  const threadId = trimOrNull(body.gmailThreadId);
+
+  if (!to.length) return res.status(400).json({ error: 'to is required' });
+  if (!subject) return res.status(400).json({ error: 'subject is required' });
+  if (!html && !text) return res.status(400).json({ error: 'html or text body is required' });
+
+  let accessToken;
+  try {
+    accessToken = await getFreshAccessToken(user.email);
+  } catch (err) {
+    if (err.code === 'NOT_CONNECTED' || err.code === 'REAUTH') {
+      return res.status(409).json({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
+
+  const fromAddress = (await sql`
+    SELECT gmail_address FROM gmail_accounts WHERE user_email = ${user.email}
+  `)[0]?.gmail_address;
+
+  // Build the RFC 2822 message. Add the X-Squideo-Deal header so server-side
+  // sync (Phase 3) can thread continuity even if the recipient drops it.
+  const fromName = user.name || fromAddress;
+  const fromHeader = fromName && fromName !== fromAddress
+    ? `${quoteHeader(fromName)} <${fromAddress}>`
+    : fromAddress;
+  const headers = [
+    `From: ${fromHeader}`,
+    `To: ${to.join(', ')}`,
+    cc.length ? `Cc: ${cc.join(', ')}` : null,
+    bcc.length ? `Bcc: ${bcc.join(', ')}` : null,
+    `Subject: ${encodeMimeHeader(subject)}`,
+    'MIME-Version: 1.0',
+    dealId ? `X-Squideo-Deal: ${dealId}` : null,
+  ].filter(Boolean);
+
+  let mime;
+  if (html && text) {
+    const boundary = 'sqd_' + crypto.randomBytes(8).toString('hex');
+    headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+    mime = headers.join('\r\n') + '\r\n\r\n'
+      + `--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${text}\r\n`
+      + `--${boundary}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${html}\r\n`
+      + `--${boundary}--\r\n`;
+  } else if (html) {
+    headers.push('Content-Type: text/html; charset=UTF-8');
+    mime = headers.join('\r\n') + '\r\n\r\n' + html;
+  } else {
+    headers.push('Content-Type: text/plain; charset=UTF-8');
+    mime = headers.join('\r\n') + '\r\n\r\n' + text;
+  }
+
+  const raw = Buffer.from(mime, 'utf8').toString('base64url');
+
+  const sendBody = { raw };
+  if (threadId) sendBody.threadId = threadId;
+
+  const sendRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + accessToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(sendBody),
+  });
+  if (!sendRes.ok) {
+    const errBody = await sendRes.text();
+    console.error('[gmail send] failed', sendRes.status, errBody);
+    return res.status(502).json({ error: `Gmail send failed (${sendRes.status})` });
+  }
+  const sent = await sendRes.json();
+
+  // Log to the deal timeline so the user sees what they sent.
+  if (dealId) {
+    try {
+      await sql`
+        INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+        VALUES (
+          ${dealId}, 'email_sent',
+          ${JSON.stringify({
+            messageId: sent.id,
+            threadId: sent.threadId,
+            to, cc, subject,
+            fromAddress,
+          })},
+          ${user.email}
+        )
+      `;
+      await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${dealId}`;
+    } catch (err) {
+      console.error('[gmail send] deal_events insert failed', err);
+    }
+  }
+
+  return res.status(200).json({
+    ok: true,
+    messageId: sent.id,
+    threadId: sent.threadId,
+  });
+}
+
+// Encode a header value with RFC 2047 if it contains non-ASCII.
+function encodeMimeHeader(value) {
+  if (/^[\x20-\x7E]*$/.test(value)) return value;
+  return `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
+}
+
+function quoteHeader(name) {
+  // Quote display names that contain special chars; otherwise leave bare.
+  if (/^[\w \-.]+$/.test(name)) return name;
+  return `"${name.replace(/"/g, '\\"')}"`;
 }

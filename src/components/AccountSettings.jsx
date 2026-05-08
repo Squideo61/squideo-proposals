@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { Mail, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { resizeImage } from '../utils.js';
@@ -126,6 +126,11 @@ export function AccountSettings({ onClose }) {
 
       <div style={{ borderTop: '1px solid ' + BRAND.border, marginBottom: 24 }} />
 
+      {/* Gmail connection */}
+      <GmailConnectSection />
+
+      <div style={{ borderTop: '1px solid ' + BRAND.border, marginBottom: 24 }} />
+
       {/* Change password */}
       <div>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: BRAND.ink }}>Change password</div>
@@ -174,5 +179,96 @@ export function AccountSettings({ onClose }) {
         </button>
       </div>
     </Modal>
+  );
+}
+
+function GmailConnectSection() {
+  const { state, actions, showMsg } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const account = state.gmailAccount;
+  const connected = !!(account && account.connected);
+
+  const connect = async () => {
+    setError('');
+    setBusy(true);
+    try {
+      const url = await actions.connectGmail();
+      if (!url) throw new Error('No auth URL returned');
+      // Open in a popup so we don't lose any unsaved state in the modal.
+      const popup = window.open(url, 'squideo_gmail_oauth', 'width=520,height=640');
+      if (!popup) {
+        // Popup blocker — fall back to a same-tab navigation.
+        window.location.href = url;
+        return;
+      }
+      // Poll for the popup closing, then refresh the connection status.
+      const timer = setInterval(async () => {
+        if (popup.closed) {
+          clearInterval(timer);
+          await actions.refreshGmailAccount();
+          setBusy(false);
+        }
+      }, 500);
+    } catch (err) {
+      setError(err?.message || 'Could not start Gmail connection');
+      setBusy(false);
+    }
+  };
+
+  const disconnect = async () => {
+    if (!window.confirm('Disconnect Gmail? Outbound emails from Squideo will fall back to the system sender.')) return;
+    setBusy(true);
+    try {
+      await actions.disconnectGmail();
+      await actions.refreshGmailAccount();
+      showMsg('Gmail disconnected');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: BRAND.ink }}>Gmail integration</div>
+      <div style={{ background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <div style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 8, background: connected ? '#DCFCE7' : '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Mail size={18} color={connected ? '#16A34A' : BRAND.muted} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {connected ? (
+              <>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{account.gmailAddress}</div>
+                <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>
+                  Squideo can send email on your behalf and (in Phase 3) sync replies into the right deal.
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Not connected</div>
+                <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>
+                  Connect your Gmail to send deal emails directly from Squideo.
+                </div>
+              </>
+            )}
+          </div>
+          {connected ? (
+            <button onClick={disconnect} disabled={busy} className="btn-ghost" style={{ flexShrink: 0 }}>
+              {busy ? '…' : 'Disconnect'}
+            </button>
+          ) : (
+            <button onClick={connect} disabled={busy} className="btn" style={{ flexShrink: 0 }}>
+              {busy ? 'Connecting…' : 'Connect Gmail'}
+            </button>
+          )}
+        </div>
+        {error && (
+          <div style={{ marginTop: 10, background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '8px 10px', borderRadius: 6 }}>
+            {error}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

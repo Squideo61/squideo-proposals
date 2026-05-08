@@ -18,6 +18,7 @@ function emptyStore() {
     companies: {},
     tasks: [],
     dealDetail: {},
+    gmailAccount: null,
     notificationRecipients: [],
     extrasBank: [],
     inclusionsBank: [],
@@ -111,7 +112,8 @@ export function StoreProvider({ children }) {
       api.get('/api/crm/contacts').catch(() => []),
       api.get('/api/crm/companies').catch(() => []),
       api.get('/api/crm/tasks?scope=open').catch(() => []),
-    ]).then(([proposals, templates, settings, users, deals, contacts, companies, tasks]) => {
+      api.get('/api/crm/gmail').catch(() => null),
+    ]).then(([proposals, templates, settings, users, deals, contacts, companies, tasks, gmailAccount]) => {
       const dealsMap = {};
       for (const d of (Array.isArray(deals) ? deals : [])) dealsMap[d.id] = d;
       const contactsMap = {};
@@ -127,6 +129,7 @@ export function StoreProvider({ children }) {
         contacts: contactsMap,
         companies: companiesMap,
         tasks: Array.isArray(tasks) ? tasks : [],
+        gmailAccount: gmailAccount || null,
         extrasBank: settings?.extrasBank?.length ? settings.extrasBank : JSON.parse(JSON.stringify(DEFAULT_PROPOSAL.optionalExtras)),
         inclusionsBank: settings?.inclusionsBank?.length ? settings.inclusionsBank : DEFAULT_PROPOSAL.baseInclusions.map((inc, i) => ({ id: 'incl_default_' + i, title: inc.title, description: inc.description || '' })),
         notificationRecipients: settings?.notificationRecipients || [],
@@ -502,6 +505,26 @@ export function StoreProvider({ children }) {
     deleteTask(taskId) {
       setState(s => ({ ...s, tasks: s.tasks.filter(t => t.id !== taskId) }));
       return api.delete('/api/crm/tasks/' + encodeURIComponent(taskId)).catch(() => {});
+    },
+
+    // ---------- Gmail integration ----------
+    refreshGmailAccount() {
+      return api.get('/api/crm/gmail').then((data) => {
+        setState(s => ({ ...s, gmailAccount: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    connectGmail() {
+      // Returns a URL the caller should redirect/open to begin OAuth.
+      return api.get('/api/crm/gmail/connect').then((data) => data?.url);
+    },
+    disconnectGmail() {
+      setState(s => ({ ...s, gmailAccount: { connected: false } }));
+      return api.post('/api/crm/gmail/disconnect', {}).catch(() => {});
+    },
+    sendGmail(payload) {
+      // payload: { to: string|string[], cc?, bcc?, subject, html, text, dealId? }
+      return api.post('/api/crm/gmail/send', payload);
     },
   }), []);
 
