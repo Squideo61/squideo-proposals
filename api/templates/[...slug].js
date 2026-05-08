@@ -8,11 +8,13 @@ export default async function handler(req, res) {
   const user = await requireAuth(req, res);
   if (!user) return;
 
-  // [...slug] is a non-optional catch-all. The parent route /api/templates
-  // is rewritten in vercel.json to /api/templates/_root, so we treat that
-  // sentinel as the collection request.
-  const slug = req.query.slug;
-  const first = Array.isArray(slug) ? slug[0] : (typeof slug === 'string' ? slug : null);
+  // Parse the template id from req.url directly (Vercel's req.query.slug has
+  // proven unreliable for non-optional catch-all routes). The parent route
+  // /api/templates is rewritten in vercel.json to /api/templates/_root, which
+  // we treat as the no-id collection request.
+  const urlPath = (req.url || '').split('?')[0];
+  const segs = urlPath.split('/').filter(Boolean).slice(2); // strip 'api', 'templates'
+  const first = segs[0] || null;
   const id = first === '_root' ? null : first;
 
   if (!id) {

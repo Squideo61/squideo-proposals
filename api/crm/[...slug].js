@@ -27,10 +27,11 @@ export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Slug parsing — `[[...slug]]` makes `slug` an array like ['deals', 'abc', 'stage']
-  // for /api/crm/deals/abc/stage, or undefined for /api/crm.
-  const raw = req.query.slug;
-  const segs = Array.isArray(raw) ? raw : (typeof raw === 'string' ? [raw] : []);
+  // Parse path segments from req.url directly. Vercel's req.query.slug has
+  // proved unreliable for non-optional catch-all routes — sometimes empty
+  // even when the URL clearly has segments. Splitting ourselves avoids that.
+  const urlPath = (req.url || '').split('?')[0];
+  const segs = urlPath.split('/').filter(Boolean).slice(2); // strip 'api', 'crm'
   const [resource, id, action] = segs;
 
   if (!resource) return res.status(404).json({ error: 'Not found' });

@@ -11,11 +11,13 @@ export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // [...path] is a non-optional catch-all. The parent route /api/proposals
-  // is rewritten in vercel.json to /api/proposals/_root, so we treat that
-  // sentinel as the collection request.
-  const path = req.query.path;
-  const first = Array.isArray(path) ? path[0] : (typeof path === 'string' ? path : null);
+  // Parse the proposal id from req.url directly (Vercel's req.query.path has
+  // proven unreliable for non-optional catch-all routes). The parent route
+  // /api/proposals is rewritten in vercel.json to /api/proposals/_root, which
+  // we treat as the no-id collection request.
+  const urlPath = (req.url || '').split('?')[0];
+  const segs = urlPath.split('/').filter(Boolean).slice(2); // strip 'api', 'proposals'
+  const first = segs[0] || null;
   const id = first === '_root' ? null : first;
 
   // --- Collection routes (no id) ---
