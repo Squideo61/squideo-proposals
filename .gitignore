@@ -4,4 +4,5 @@ dist
 .env*.local
 .vercel
 
-.vercel
+# Claude Code internal artifacts
+.claude/worktrees/
