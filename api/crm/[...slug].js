@@ -490,27 +490,26 @@ async function tasksRoute(req, res, id, action, user) {
 
   if (action === 'done') {
     if (req.method !== 'POST') return res.status(405).end();
-    // Race-safe transition: only the first call that flips done_at from NULL
-    // gets RETURNING rows back. Subsequent clicks are no-ops, so we don't
-    // pollute the timeline with duplicate task_done events.
+    // Atomic toggle: flip done_at between NULL and NOW(). The CASE makes
+    // this race-safe at the DB level — concurrent clicks won't flip-flop.
+    // We then log task_done or task_reopened depending on direction.
     const transitioned = await sql`
       UPDATE tasks
-         SET done_at = NOW()
-       WHERE id = ${id} AND done_at IS NULL
-       RETURNING deal_id, title
+         SET done_at = CASE WHEN done_at IS NULL THEN NOW() ELSE NULL END
+       WHERE id = ${id}
+       RETURNING done_at, deal_id, title
     `;
-    if (transitioned.length) {
-      const { deal_id, title } = transitioned[0];
-      if (deal_id) {
-        await sql`
-          INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
-          VALUES (${deal_id}, 'task_done', ${JSON.stringify({ taskId: id, title })}, ${user.email || null})
-        `;
-        await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${deal_id}`;
-      }
+    if (!transitioned.length) return res.status(404).json({ error: 'Not found' });
+    const { done_at, deal_id, title } = transitioned[0];
+    const eventType = done_at ? 'task_done' : 'task_reopened';
+    if (deal_id) {
+      await sql`
+        INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+        VALUES (${deal_id}, ${eventType}, ${JSON.stringify({ taskId: id, title })}, ${user.email || null})
+      `;
+      await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${deal_id}`;
     }
     const rows = await sql`SELECT * FROM tasks WHERE id = ${id}`;
-    if (!rows.length) return res.status(404).json({ error: 'Not found' });
     return res.status(200).json(serialiseTask(rows[0]));
   }
 

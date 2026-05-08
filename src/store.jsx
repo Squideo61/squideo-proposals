@@ -533,27 +533,27 @@ export function StoreProvider({ children }) {
         return t;
       }).catch(() => {});
     },
-    completeTask(taskId) {
-      // Short-circuit if already done — prevents repeat clicks from racing
-      // when the optimistic update hasn't rendered yet.
-      let alreadyDone = false;
-      const nowIso = new Date().toISOString();
+    toggleTask(taskId) {
+      // Bidirectional toggle: ticks an open task done, unticks a done task.
+      // Optimistic update, then API call (atomic on the server), then a
+      // background reload of the affected deal to refresh its timeline.
+      let dealIdForReload = null;
       setState(s => {
         const cur = s.tasks.find(t => t.id === taskId)
           || Object.values(s.dealDetail || {}).flatMap(d => d?.tasks || []).find(t => t.id === taskId);
-        if (cur?.doneAt) { alreadyDone = true; return s; }
-        return withTaskUpdate(s, taskId, (t) => ({ ...t, doneAt: nowIso }));
+        if (!cur) return s;
+        dealIdForReload = cur.dealId || null;
+        const nextDoneAt = cur.doneAt ? null : new Date().toISOString();
+        return withTaskUpdate(s, taskId, (t) => ({ ...t, doneAt: nextDoneAt }));
       });
-      if (alreadyDone) return Promise.resolve(null);
       return api.post('/api/crm/tasks/' + encodeURIComponent(taskId) + '/done', {}).then((t) => {
         if (t && t.id) {
           setState(s => withTaskUpdate(s, t.id, () => t));
-          // Refresh the deal's timeline so the new task_done event appears
-          // (we updated tasks optimistically but events come from the server).
-          if (t.dealId) {
-            api.get('/api/crm/deals/' + encodeURIComponent(t.dealId)).then((data) => {
+          const dId = t.dealId || dealIdForReload;
+          if (dId) {
+            api.get('/api/crm/deals/' + encodeURIComponent(dId)).then((data) => {
               if (data && data.id) {
-                setState(s => ({ ...s, dealDetail: { ...s.dealDetail, [t.dealId]: data } }));
+                setState(s => ({ ...s, dealDetail: { ...s.dealDetail, [dId]: data } }));
               }
             }).catch(() => {});
           }

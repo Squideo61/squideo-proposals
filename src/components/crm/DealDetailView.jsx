@@ -117,7 +117,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
           <button onClick={() => setCreatingTask(true)} className="btn-ghost"><Plus size={12} /> Task</button>
         }>
           {tasks.length === 0 && <Empty text="No tasks yet" />}
-          {tasks.map(t => <TaskRow key={t.id} task={t} onToggle={() => actions.completeTask(t.id)} />)}
+          {tasks.map(t => <TaskRow key={t.id} task={t} onToggle={() => actions.toggleTask(t.id)} />)}
         </Card>
 
         <Card title="Timeline" count={events.length}>
@@ -215,6 +215,7 @@ function describeEvent(e) {
     case 'stage_change':  return `Stage: ${labelForStage(p.from)} → ${labelForStage(p.to)}` + (p.manual ? '' : ' (auto)');
     case 'task_created':  return `Task created: ${p.title || ''}`;
     case 'task_done':     return `Task completed: ${p.title || ''}`;
+    case 'task_reopened': return `Task reopened: ${p.title || ''}`;
     case 'email_sent':    return p.subject ? `Email sent: ${p.subject}` : 'Email sent';
     case 'note':          return p.text || 'Note added';
     default:              return e.eventType;

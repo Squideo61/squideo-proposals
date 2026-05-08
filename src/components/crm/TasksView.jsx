@@ -73,7 +73,7 @@ function TaskRow({ task, actions, state, onOpenDeal }) {
   const deal = task.dealId ? state.deals[task.dealId] : null;
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 16px', borderTop: '1px solid ' + BRAND.border }}>
-      <button onClick={() => actions.completeTask(task.id)} className="btn-icon" style={{ padding: 4, border: 'none', background: 'transparent' }} aria-label={done ? 'Done' : 'Mark done'}>
+      <button onClick={() => actions.toggleTask(task.id)} className="btn-icon" style={{ padding: 4, border: 'none', background: 'transparent' }} aria-label={done ? 'Mark not done' : 'Mark done'}>
         <Icon size={16} color={done ? '#16A34A' : BRAND.muted} />
       </button>
       <div style={{ flex: 1, minWidth: 0 }}>
