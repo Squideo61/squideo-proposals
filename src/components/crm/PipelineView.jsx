@@ -55,12 +55,11 @@ export function PipelineView({ onBack, onOpenDeal }) {
 
       <div style={{
         display: 'flex',
+        flexDirection: 'column',
         gap: 12,
-        overflowX: 'auto',
-        paddingBottom: 12,
       }}>
         {PIPELINE_STAGES.map(s => (
-          <Column
+          <StageRow
             key={s.id}
             stage={s}
             deals={grouped[s.id] || []}
@@ -75,8 +74,9 @@ export function PipelineView({ onBack, onOpenDeal }) {
   );
 }
 
-function Column({ stage, deals, onDrop, onOpenDeal }) {
+function StageRow({ stage, deals, onDrop, onOpenDeal }) {
   const [hover, setHover] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const total = deals.reduce((s, d) => s + (Number(d.value) || 0), 0);
   return (
     <div
@@ -91,31 +91,57 @@ function Column({ stage, deals, onDrop, onOpenDeal }) {
         } catch {}
       }}
       style={{
-        flex: '0 0 280px',
         background: hover ? '#F0F9FF' : '#F8FAFC',
         border: hover ? '1px dashed ' + BRAND.blue : '1px solid ' + BRAND.border,
-        borderTop: '3px solid ' + stage.color,
+        borderLeft: '4px solid ' + stage.color,
         borderRadius: 10,
-        padding: 10,
-        minHeight: 200,
+        padding: 12,
         transition: 'background 100ms, border-color 100ms',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10, padding: '0 4px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: stage.color, textTransform: 'uppercase', letterSpacing: 0.4 }}>{stage.label}</span>
+      <button
+        onClick={() => setCollapsed(c => !c)}
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 8,
+          width: '100%',
+          padding: '0 2px',
+          marginBottom: collapsed ? 0 : 10,
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          textAlign: 'left',
+        }}
+        aria-expanded={!collapsed}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: stage.color, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            {stage.label}
+          </span>
           <span style={{ fontSize: 12, color: BRAND.muted }}>· {deals.length}</span>
+          {total > 0 && (
+            <span style={{ fontSize: 12, color: BRAND.muted, fontVariantNumeric: 'tabular-nums' }}>· {formatGBP(total)}</span>
+          )}
         </div>
-        {total > 0 && <span style={{ fontSize: 11, color: BRAND.muted, fontVariantNumeric: 'tabular-nums' }}>{formatGBP(total)}</span>}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {deals.map(d => <DealCard key={d.id} deal={d} onOpen={() => onOpenDeal(d.id)} />)}
-        {deals.length === 0 && (
-          <div style={{ padding: '20px 8px', textAlign: 'center', color: BRAND.muted, fontSize: 12, fontStyle: 'italic' }}>
-            No deals
-          </div>
-        )}
-      </div>
+        <span style={{ fontSize: 11, color: BRAND.muted }}>{collapsed ? 'Show' : 'Hide'}</span>
+      </button>
+      {!collapsed && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+          gap: 8,
+        }}>
+          {deals.map(d => <DealCard key={d.id} deal={d} onOpen={() => onOpenDeal(d.id)} />)}
+          {deals.length === 0 && (
+            <div style={{ padding: '16px 8px', color: BRAND.muted, fontSize: 12, fontStyle: 'italic' }}>
+              No deals
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
