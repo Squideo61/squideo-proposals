@@ -222,15 +222,21 @@ function NewDealModal({ onClose, onCreated }) {
     e.preventDefault();
     if (!title.trim() || submitting) return;
     setSubmitting(true);
-    const deal = await actions.createDeal({
-      title: title.trim(),
-      stage,
-      value: value === '' ? null : Number(value),
-      companyId: companyId || null,
-      primaryContactId: primaryContactId || null,
-    });
-    setSubmitting(false);
-    onCreated?.(deal);
+    try {
+      const deal = await actions.createDeal({
+        title: title.trim(),
+        stage,
+        value: value === '' ? null : Number(value),
+        companyId: companyId || null,
+        primaryContactId: primaryContactId || null,
+      });
+      onCreated?.(deal);
+    } catch (err) {
+      console.error('createDeal failed', err);
+      window.alert('Failed to create deal: ' + (err?.message || 'unknown error'));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
