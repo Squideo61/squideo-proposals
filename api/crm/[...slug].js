@@ -105,6 +105,7 @@ export default async function handler(req, res) {
       case 'deals':     return dealsRoute(req, res, id, action, user);
       case 'tasks':     return tasksRoute(req, res, id, action, user);
       case 'gmail':     return gmailRoute(req, res, id, action, user);
+      case 'triage':    return triageRoute(req, res, id, action, user);
       default:          return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {
@@ -604,10 +605,80 @@ function serialiseTask(r) {
   };
 }
 
+// -------------------- Triage (unmatched email messages) --------------------
+
+async function triageRoute(req, res, id, action, user) {
+  if (!id) {
+    if (req.method !== 'GET') return res.status(405).end();
+    // List the recent unmatched, non-internal messages for this user. Newest
+    // first; cap at 100 so the UI can paginate later if needed.
+    const rows = await sql`
+      SELECT em.gmail_message_id, em.gmail_thread_id, em.from_email,
+             em.to_emails, em.cc_emails, em.subject, em.snippet,
+             em.direction, em.sent_at, em.user_email
+      FROM email_messages em
+      WHERE em.unmatched = TRUE
+        AND em.internal_only = FALSE
+        AND em.user_email = ${user.email}
+        AND NOT EXISTS (
+          SELECT 1 FROM email_thread_deals etd WHERE etd.gmail_thread_id = em.gmail_thread_id
+        )
+      ORDER BY em.sent_at DESC
+      LIMIT 100
+    `;
+    return res.status(200).json(rows.map(em => ({
+      gmailMessageId: em.gmail_message_id,
+      gmailThreadId: em.gmail_thread_id,
+      fromEmail: em.from_email || null,
+      toEmails: em.to_emails || [],
+      ccEmails: em.cc_emails || [],
+      subject: em.subject || null,
+      snippet: em.snippet || null,
+      direction: em.direction,
+      sentAt: em.sent_at,
+      userEmail: em.user_email,
+    })));
+  }
+
+  // /api/crm/triage/<gmail_thread_id>/assign
+  if (action === 'assign') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const { dealId } = req.body || {};
+    if (!dealId) return res.status(400).json({ error: 'dealId required' });
+
+    const deal = (await sql`SELECT id FROM deals WHERE id = ${dealId}`)[0];
+    if (!deal) return res.status(404).json({ error: 'Deal not found' });
+
+    // Idempotent attach. id here is the gmail_thread_id (URL: /triage/<thread>/assign).
+    await sql`
+      INSERT INTO email_thread_deals (gmail_thread_id, deal_id, resolved_by)
+      VALUES (${id}, ${dealId}, 'manual')
+      ON CONFLICT (gmail_thread_id, deal_id) DO NOTHING
+    `;
+    // Clear unmatched flag on every message in this thread.
+    await sql`
+      UPDATE email_messages SET unmatched = FALSE
+      WHERE gmail_thread_id = ${id}
+    `;
+    await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${dealId}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  if (action === 'dismiss') {
+    if (req.method !== 'POST') return res.status(405).end();
+    // Mark every message in the thread as no-longer-unmatched without
+    // attaching to any deal. Useful for spam/personal mail that landed in
+    // the triage queue.
+    await sql`UPDATE email_messages SET unmatched = FALSE WHERE gmail_thread_id = ${id}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(404).json({ error: 'Unknown triage action' });
+}
+
 // -------------------- Cron: task reminders --------------------
 
 async function cronHandler(req, res, action) {
-  if (action !== 'task-reminders') return res.status(404).json({ error: 'Unknown cron action' });
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
 
   // Vercel cron requests carry a Bearer token equal to CRON_SECRET. Reject
@@ -622,6 +693,14 @@ async function cronHandler(req, res, action) {
     return res.status(401).json({ error: 'Unauthorised' });
   }
 
+  switch (action) {
+    case 'task-reminders':  return cronTaskReminders(res);
+    case 'gmail-watch-renew': return cronGmailWatchRenew(res);
+    default:                return res.status(404).json({ error: 'Unknown cron action: ' + action });
+  }
+}
+
+async function cronTaskReminders(res) {
   // Daily 9am UTC sweep — pick up everything due in the next 24 hours that
   // hasn't been reminded yet. Granularity is intentionally coarse to fit
   // Vercel Hobby's 1-cron-per-day limit; on Pro this can move to */15.
@@ -661,6 +740,44 @@ async function cronHandler(req, res, action) {
   }
 
   return res.status(200).json({ ok: true, found: due.length, sent });
+}
+
+// Renew Gmail watches that are within 24 hours of expiring (Gmail watches
+// last ~7 days). Spreads the work daily so we never have a flood. Best-
+// effort per account so one failure doesn't block the others.
+async function cronGmailWatchRenew(res) {
+  const due = await sql`
+    SELECT user_email, pubsub_topic
+    FROM gmail_accounts
+    WHERE disconnected_at IS NULL
+      AND (watch_expires_at IS NULL OR watch_expires_at < NOW() + INTERVAL '24 hours')
+  `;
+  let renewed = 0;
+  let failed = 0;
+  for (const row of due) {
+    const topic = row.pubsub_topic || process.env.GMAIL_PUBSUB_TOPIC;
+    if (!topic) {
+      console.warn('[cron watch-renew] no topic configured for', row.user_email);
+      continue;
+    }
+    try {
+      const accessToken = await getFreshAccessToken(row.user_email);
+      const watch = await registerWatch(accessToken, topic);
+      await sql`
+        UPDATE gmail_accounts
+           SET watch_expires_at = ${watch.expiration ? new Date(watch.expiration).toISOString() : null},
+               history_id = COALESCE(history_id, ${watch.historyId}),
+               pubsub_topic = ${topic},
+               updated_at = NOW()
+         WHERE user_email = ${row.user_email}
+      `;
+      renewed++;
+    } catch (err) {
+      console.error('[cron watch-renew] failed for', row.user_email, err.message);
+      failed++;
+    }
+  }
+  return res.status(200).json({ ok: true, considered: due.length, renewed, failed });
 }
 
 function escapeHtml(s) {

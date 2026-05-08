@@ -19,6 +19,7 @@ function emptyStore() {
     tasks: [],
     dealDetail: {},
     gmailAccount: null,
+    triage: [],
     notificationRecipients: [],
     extrasBank: [],
     inclusionsBank: [],
@@ -138,7 +139,8 @@ export function StoreProvider({ children }) {
       api.get('/api/crm/companies').catch(() => []),
       api.get('/api/crm/tasks?scope=open').catch(() => []),
       api.get('/api/crm/gmail').catch(() => null),
-    ]).then(([proposals, templates, settings, users, deals, contacts, companies, tasks, gmailAccount]) => {
+      api.get('/api/crm/triage').catch(() => []),
+    ]).then(([proposals, templates, settings, users, deals, contacts, companies, tasks, gmailAccount, triage]) => {
       const dealsMap = {};
       for (const d of (Array.isArray(deals) ? deals : [])) dealsMap[d.id] = d;
       const contactsMap = {};
@@ -155,6 +157,7 @@ export function StoreProvider({ children }) {
         companies: companiesMap,
         tasks: Array.isArray(tasks) ? tasks : [],
         gmailAccount: gmailAccount || null,
+        triage: Array.isArray(triage) ? triage : [],
         extrasBank: settings?.extrasBank?.length ? settings.extrasBank : JSON.parse(JSON.stringify(DEFAULT_PROPOSAL.optionalExtras)),
         inclusionsBank: settings?.inclusionsBank?.length ? settings.inclusionsBank : DEFAULT_PROPOSAL.baseInclusions.map((inc, i) => ({ id: 'incl_default_' + i, title: inc.title, description: inc.description || '' })),
         notificationRecipients: settings?.notificationRecipients || [],
@@ -584,6 +587,37 @@ export function StoreProvider({ children }) {
     sendGmail(payload) {
       // payload: { to: string|string[], cc?, bcc?, subject, html, text, dealId? }
       return api.post('/api/crm/gmail/send', payload);
+    },
+
+    // ---------- Triage (unmatched email messages) ----------
+    refreshTriage() {
+      return api.get('/api/crm/triage').then((rows) => {
+        const list = Array.isArray(rows) ? rows : [];
+        setState(s => ({ ...s, triage: list }));
+        return list;
+      }).catch(() => []);
+    },
+    triageAssign(gmailThreadId, dealId) {
+      // Optimistic: drop every triage row in this thread.
+      setState(s => ({ ...s, triage: s.triage.filter(m => m.gmailThreadId !== gmailThreadId) }));
+      return api.post('/api/crm/triage/' + encodeURIComponent(gmailThreadId) + '/assign', { dealId })
+        .then(() => {
+          // Refresh the deal's detail in the background so the newly-attached
+          // thread shows up on its timeline next time it's viewed.
+          api.get('/api/crm/deals/' + encodeURIComponent(dealId)).then((data) => {
+            if (data && data.id) {
+              setState(s => s.dealDetail[dealId]
+                ? { ...s, dealDetail: { ...s.dealDetail, [dealId]: data } }
+                : s);
+            }
+          }).catch(() => {});
+        })
+        .catch(() => {});
+    },
+    triageDismiss(gmailThreadId) {
+      setState(s => ({ ...s, triage: s.triage.filter(m => m.gmailThreadId !== gmailThreadId) }));
+      return api.post('/api/crm/triage/' + encodeURIComponent(gmailThreadId) + '/dismiss', {})
+        .catch(() => {});
     },
   }), []);
 

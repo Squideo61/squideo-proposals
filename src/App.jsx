@@ -22,6 +22,7 @@ import { PipelineView } from './components/crm/PipelineView.jsx';
 import { DealDetailView } from './components/crm/DealDetailView.jsx';
 import { ContactsView } from './components/crm/ContactsView.jsx';
 import { TasksView } from './components/crm/TasksView.jsx';
+import { TriageView } from './components/crm/TriageView.jsx';
 
 function AppShell() {
   const { state, actions, showMsg, toast } = useStore();
@@ -186,6 +187,7 @@ function AppShell() {
           onManagePipeline={() => setView('pipeline')}
           onManageContacts={() => setView('contacts')}
           onManageTasks={() => setView('tasks')}
+          onManageTriage={() => setView('triage')}
         />
       )}
       {view === 'pipeline' && (
@@ -206,6 +208,12 @@ function AppShell() {
       )}
       {view === 'tasks' && (
         <TasksView
+          onBack={() => setView('list')}
+          onOpenDeal={(id) => { setActiveId(id); setView('deal'); }}
+        />
+      )}
+      {view === 'triage' && (
+        <TriageView
           onBack={() => setView('list')}
           onOpenDeal={(id) => { setActiveId(id); setView('deal'); }}
         />

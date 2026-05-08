@@ -10,6 +10,7 @@
     { "source": "/api/crm/:resource/:id", "destination": "/api/crm/:resource?_id=:id" }
   ],
   "crons": [
-    { "path": "/api/crm/cron/task-reminders", "schedule": "0 9 * * *" }
+    { "path": "/api/crm/cron/task-reminders", "schedule": "0 9 * * *" },
+    { "path": "/api/crm/cron/gmail-watch-renew", "schedule": "0 5 * * *" }
   ]
 }
