@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
@@ -43,6 +43,83 @@ function DragHandle({ onDragStart, onDragEnd }) {
       <GripVertical size={16} />
     </span>
   );
+}
+
+// Section metadata used to drive the mobile nav strip + collapsed-state hints.
+// Order matches the rendering order in the JSX below; ids match the keys
+// passed to sectionProps()/jumpToSection() throughout BuilderView.
+function buildSectionMeta(data, isTemplate, issues) {
+  const formatGBPint = (n) => '£' + (Number(n) || 0).toLocaleString('en-GB', { maximumFractionDigits: 0 });
+  const truncate = (s, max = 60) => {
+    if (!s) return '';
+    const trimmed = String(s).trim();
+    return trimmed.length > max ? trimmed.slice(0, max).trimEnd() + '…' : trimmed;
+  };
+  const list = [
+    {
+      id: 'client',
+      label: isTemplate ? 'Template' : 'Client',
+      hint: isTemplate
+        ? data.name?.trim() || 'Untitled template'
+        : [data.clientName, data.contactBusinessName].filter(s => s?.trim()).join(' · ') || 'Tap to fill in',
+      hasIssues: (issues.client || []).length > 0,
+    },
+    {
+      id: 'vision',
+      label: 'Vision',
+      hint: truncate(data.requirement) || 'Empty',
+      hasIssues: (issues.vision || []).length > 0,
+    },
+    {
+      id: 'team',
+      label: 'Team',
+      hint: `${(data.team || []).length} member${(data.team || []).length === 1 ? '' : 's'}`,
+      hasIssues: false,
+    },
+    {
+      id: 'process',
+      label: 'Process',
+      hint: data.processVideoUrl ? truncate(data.processVideoUrl, 50) : 'No process video',
+      hasIssues: false,
+    },
+    {
+      id: 'pricing',
+      label: 'Pricing',
+      hint: data.basePrice > 0 ? formatGBPint(data.basePrice) + ' + VAT' : 'Set a price',
+      hasIssues: (issues.pricing || []).length > 0,
+    },
+    {
+      id: 'payment',
+      label: 'Payment',
+      hint: (() => {
+        const opts = data.paymentOptions || ['5050', 'full'];
+        const map = { '5050': '50/50', full: 'Full', po: 'PO' };
+        return opts.map(o => map[o] || o).join(', ') || 'No options';
+      })(),
+      hasIssues: false,
+    },
+    {
+      id: 'inclusions',
+      label: 'Included',
+      hint: `${(data.baseInclusions || []).length} inclusion${(data.baseInclusions || []).length === 1 ? '' : 's'}`,
+      hasIssues: false,
+    },
+    {
+      id: 'partner',
+      label: 'Partner',
+      hint: data.partnerProgramme?.enabled
+        ? `Enabled · ${Math.round((data.partnerProgramme.discountRate || 0) * 100)}%`
+        : 'Disabled',
+      hasIssues: false,
+    },
+    {
+      id: 'extras',
+      label: 'Extras',
+      hint: `${(data.optionalExtras || []).length} extra${(data.optionalExtras || []).length === 1 ? '' : 's'}`,
+      hasIssues: false,
+    },
+  ];
+  return list;
 }
 
 function SectionStatus({ issues }) {
@@ -121,8 +198,33 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
     ? 'Template: ' + (data.name || 'Untitled')
     : [data.clientName, data.contactBusinessName].filter(Boolean).join(' · ') || 'New Proposal';
 
+  // Mobile section state + nav. Each Section is keyed and gets a ref so the
+  // nav strip can scrollIntoView and force-expand. On desktop this state is
+  // ignored (Section receives no controlled `collapsed` prop and behaves as
+  // it always has).
+  const sectionRefs = useRef({});
+  const [collapsedMap, setCollapsedMap] = useState({});
+  const sectionMeta = useMemo(() => buildSectionMeta(data, isTemplate, issues), [data, isTemplate, issues]);
+  const setCollapsed = (id, value) => setCollapsedMap(m => ({ ...m, [id]: value }));
+  const sectionProps = (id) => isMobile
+    ? {
+        ref: (el) => { sectionRefs.current[id] = el; },
+        collapsible: true,
+        collapsed: collapsedMap[id] !== undefined ? collapsedMap[id] : true, // default collapsed on mobile
+        onCollapsedChange: (v) => setCollapsed(id, v),
+      }
+    : {
+        ref: (el) => { sectionRefs.current[id] = el; },
+      };
+  const jumpToSection = (id) => {
+    setCollapsed(id, false);
+    requestAnimationFrame(() => {
+      sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: isMobile ? 12 : 24 }}>
+    <div style={{ maxWidth: 900, margin: '0 auto', padding: isMobile ? '12px 12px 96px' : 24 }}>
 
       {/* ── Sticky header ── */}
       <div style={{
@@ -135,22 +237,32 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
           <ChevronLeft size={16} /> Back
         </button>
 
-        {!isMobile && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flex: 1, minWidth: 0, padding: '0 12px' }}>
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: isMobile ? 'flex-start' : 'center',
+          gap: 2,
+          flex: 1,
+          minWidth: 0,
+          padding: '0 12px',
+          order: isMobile ? 3 : 0,
+          width: isMobile ? '100%' : 'auto',
+        }}>
+          {!isMobile && (
             <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
               {proposalLabel}
             </div>
-            {totalIssues > 0 ? (
-              <div style={{ fontSize: 11, color: '#92400E', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
-                ⚠ {totalIssues} field{totalIssues !== 1 ? 's' : ''} incomplete
-              </div>
-            ) : (
-              <div style={{ fontSize: 11, color: '#15803d', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <Check size={10} strokeWidth={3} /> Ready to send · auto-saved
-              </div>
-            )}
-          </div>
-        )}
+          )}
+          {totalIssues > 0 ? (
+            <div style={{ fontSize: 11, color: '#92400E', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+              ⚠ {totalIssues} field{totalIssues !== 1 ? 's' : ''} incomplete
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: '#15803d', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Check size={10} strokeWidth={3} /> Ready to send · auto-saved
+            </div>
+          )}
+        </div>
 
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
           {!isMobile && !isTemplate && (
@@ -158,10 +270,51 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               <Save size={14} /> Save as template
             </button>
           )}
-          {!isTemplate && <button onClick={onPreview} className="btn"><Eye size={14} /> Preview</button>}
-          {isTemplate && <button onClick={onBack} className="btn"><Check size={14} /> Done</button>}
+          {!isMobile && !isTemplate && <button onClick={onPreview} className="btn"><Eye size={14} /> Preview</button>}
+          {!isMobile && isTemplate && <button onClick={onBack} className="btn"><Check size={14} /> Done</button>}
         </div>
       </div>
+
+      {/* ── Section nav strip (mobile only) ── */}
+      {isMobile && (
+        <div style={{
+          display: 'flex',
+          gap: 6,
+          overflowX: 'auto',
+          padding: '8px 2px 12px',
+          marginBottom: 4,
+          WebkitOverflowScrolling: 'touch',
+          scrollbarWidth: 'none',
+        }}>
+          {sectionMeta.map(s => (
+            <button
+              key={s.id}
+              onClick={() => jumpToSection(s.id)}
+              style={{
+                flexShrink: 0,
+                background: 'white',
+                border: '1px solid ' + (s.hasIssues ? '#FDBA74' : BRAND.border),
+                borderRadius: 999,
+                padding: '6px 12px',
+                fontSize: 12,
+                fontWeight: 600,
+                color: BRAND.ink,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                cursor: 'pointer',
+              }}
+            >
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: s.hasIssues ? '#F59E0B' : '#22C55E',
+                flexShrink: 0,
+              }} />
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── Client Details / Template Info ── */}
       <Section
@@ -169,6 +322,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         color="#0369a1"
         icon={Building2}
         badge={isTemplate ? null : <SectionStatus issues={issues.client} />}
+        collapsedHint={sectionMeta.find(s => s.id === 'client')?.hint}
+        {...sectionProps('client')}
       >
         {isTemplate ? (
           <Field label="Template name">
@@ -209,7 +364,14 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       </Section>
 
       {/* ── Project Vision ── */}
-      <Section title="Project Vision" color="#7c3aed" icon={Lightbulb} badge={<SectionStatus issues={issues.vision} />}>
+      <Section
+        title="Project Vision"
+        color="#7c3aed"
+        icon={Lightbulb}
+        badge={<SectionStatus issues={issues.vision} />}
+        collapsedHint={sectionMeta.find(s => s.id === 'vision')?.hint}
+        {...sectionProps('vision')}
+      >
         <Field label="Requirement" error={!data.requirement?.trim()}>
           <textarea
             rows={10}
@@ -232,7 +394,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         icon={Users}
         collapsible
         defaultCollapsed
-        collapsedHint="Click to expand and edit team members"
+        collapsedHint={isMobile ? sectionMeta.find(s => s.id === 'team')?.hint : 'Click to expand and edit team members'}
+        {...sectionProps('team')}
       >
         <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 16px' }}>Photos appear on the client proposal.</p>
         {data.team.map((m, i) => (
@@ -263,7 +426,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         icon={Video}
         collapsible
         defaultCollapsed
-        collapsedHint="Click to expand and edit the production-process video"
+        collapsedHint={isMobile ? sectionMeta.find(s => s.id === 'process')?.hint : 'Click to expand and edit the production-process video'}
+        {...sectionProps('process')}
       >
         <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, cursor: 'pointer' }}>
           <input
@@ -285,18 +449,25 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       </Section>
 
       {/* ── Pricing ── */}
-      <Section title="Pricing" color="#15803d" icon={PoundSterling} badge={<SectionStatus issues={issues.pricing} />}>
+      <Section
+        title="Pricing"
+        color="#15803d"
+        icon={PoundSterling}
+        badge={<SectionStatus issues={issues.pricing} />}
+        collapsedHint={sectionMeta.find(s => s.id === 'pricing')?.hint}
+        {...sectionProps('pricing')}
+      >
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
           <Field label="Project base price (ex VAT)" error={!(data.basePrice > 0)}>
-            <input type="number" className="input" value={data.basePrice} onChange={(e) => update({ basePrice: parseFloat(e.target.value) || 0 })} />
+            <input type="number" inputMode="decimal" className="input" value={data.basePrice} onChange={(e) => update({ basePrice: parseFloat(e.target.value) || 0 })} />
           </Field>
           <Field label="VAT rate (%)">
-            <input type="number" step="1" className="input" value={Math.round(data.vatRate * 100)} onChange={(e) => update({ vatRate: (parseFloat(e.target.value) || 0) / 100 })} />
+            <input type="number" inputMode="numeric" step="1" className="input" value={Math.round(data.vatRate * 100)} onChange={(e) => update({ vatRate: (parseFloat(e.target.value) || 0) / 100 })} />
           </Field>
         </div>
         <Field label="Standard rate per minute (£/min)">
           <input
-            type="number" min="0" step="1"
+            type="number" inputMode="decimal" min="0" step="1"
             className="input"
             value={data.partnerProgramme?.standardRatePerMin ?? data.basePrice ?? ''}
             onChange={(e) => update({
@@ -318,7 +489,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       </Section>
 
       {/* ── Payment Options ── */}
-      <Section title="Payment Options" color="#1d4ed8" icon={CreditCard}>
+      <Section
+        title="Payment Options"
+        color="#1d4ed8"
+        icon={CreditCard}
+        collapsedHint={sectionMeta.find(s => s.id === 'payment')?.hint}
+        {...sectionProps('payment')}
+      >
         <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 12px' }}>Select which payment options are available to the client. At least one must be selected.</p>
         {(() => {
           const subtitlesPrice = data.optionalExtras.find(e => e.id === 'subtitles')?.price ?? 125;
@@ -366,7 +543,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       </Section>
 
       {/* ── What's Included ── */}
-      <Section title="What's Included" color="#0e7490" icon={List}>
+      <Section
+        title="What's Included"
+        color="#0e7490"
+        icon={List}
+        collapsedHint={sectionMeta.find(s => s.id === 'inclusions')?.hint}
+        {...sectionProps('inclusions')}
+      >
         {data.baseInclusions.map((inc, i) => (
           <div
             key={i}
@@ -484,7 +667,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       </Section>
 
       {/* ── Partner Programme ── */}
-      <Section title="Partner Programme" color="#b45309" icon={Star}>
+      <Section
+        title="Partner Programme"
+        color="#b45309"
+        icon={Star}
+        collapsedHint={sectionMeta.find(s => s.id === 'partner')?.hint}
+        {...sectionProps('partner')}
+      >
         <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, cursor: 'pointer' }}>
           <input type="checkbox" checked={data.partnerProgramme.enabled} onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, enabled: e.target.checked } })} />
           <span style={{ fontSize: 14, fontWeight: 600 }}>Show Partner Programme on this proposal</span>
@@ -521,7 +710,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                   <div>
                     <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Base (%)</div>
                     <input
-                      type="number" className="input" min="0" max="100"
+                      type="number" inputMode="decimal" className="input" min="0" max="100"
                       value={((data.partnerProgramme.discountRate || 0) * 100).toFixed(0)}
                       onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, discountRate: (parseFloat(e.target.value) || 0) / 100 } })}
                     />
@@ -529,7 +718,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                   <div>
                     <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Per extra credit (%)</div>
                     <input
-                      type="number" className="input" min="0" max="100" step="0.5"
+                      type="number" inputMode="decimal" className="input" min="0" max="100" step="0.5"
                       value={((data.partnerProgramme.extraDiscountPerCredit || 0) * 100).toFixed(2).replace(/\.?0+$/, '')}
                       onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, extraDiscountPerCredit: (parseFloat(e.target.value) || 0) / 100 } })}
                     />
@@ -537,7 +726,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                   <div>
                     <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Max (%)</div>
                     <input
-                      type="number" className="input" min="0" max="100"
+                      type="number" inputMode="decimal" className="input" min="0" max="100"
                       value={((data.partnerProgramme.maxDiscount || 0) * 100).toFixed(0)}
                       onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, maxDiscount: (parseFloat(e.target.value) || 0) / 100 } })}
                     />
@@ -566,7 +755,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       </Section>
 
       {/* ── Optional Extras ── */}
-      <Section title="Optional Extras" color="#be185d" icon={Package}>
+      <Section
+        title="Optional Extras"
+        color="#be185d"
+        icon={Package}
+        collapsedHint={sectionMeta.find(s => s.id === 'extras')?.hint}
+        {...sectionProps('extras')}
+      >
         {data.optionalExtras.map((extra, i) => (
           <div
             key={extra.id}
@@ -604,7 +799,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               <input className="input" style={{ flex: 1 }} value={extra.label} onChange={(e) => updateExtra(i, { label: e.target.value })} />
               <div style={{ position: 'relative', flexShrink: 0 }}>
                 <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: BRAND.muted, pointerEvents: 'none' }}>£</span>
-                <input type="number" className="input" style={{ width: 90, paddingLeft: 22 }} value={extra.price} onChange={(e) => updateExtra(i, { price: parseFloat(e.target.value) || 0 })} />
+                <input type="number" inputMode="decimal" className="input" style={{ width: 90, paddingLeft: 22 }} value={extra.price} onChange={(e) => updateExtra(i, { price: parseFloat(e.target.value) || 0 })} />
               </div>
               <button
                 onClick={() => {
@@ -710,15 +905,41 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         </Modal>
       )}
 
-      {/* Mobile: save-as-template accessible from bottom */}
-      {isMobile && !isTemplate && (
-        <button
-          onClick={() => { setTplName(data.contactBusinessName ? data.contactBusinessName + ' template' : ''); setShowSaveTpl(true); }}
-          className="btn-ghost"
-          style={{ width: '100%', justifyContent: 'center', marginBottom: 32 }}
-        >
-          <Save size={14} /> Save as template
-        </button>
+      {/* Mobile: sticky bottom action bar */}
+      {isMobile && (
+        <div style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          background: 'white',
+          borderTop: '1px solid ' + BRAND.border,
+          padding: '10px 14px',
+          display: 'flex',
+          gap: 8,
+          zIndex: 20,
+          boxShadow: '0 -2px 8px rgba(0,0,0,0.05)',
+        }}>
+          {!isTemplate && (
+            <button
+              onClick={() => { setTplName(data.contactBusinessName ? data.contactBusinessName + ' template' : ''); setShowSaveTpl(true); }}
+              className="btn-ghost"
+              style={{ flex: 1, justifyContent: 'center' }}
+            >
+              <Save size={14} /> Template
+            </button>
+          )}
+          {!isTemplate && (
+            <button onClick={onPreview} className="btn" style={{ flex: 1, justifyContent: 'center' }}>
+              <Eye size={14} /> Preview
+            </button>
+          )}
+          {isTemplate && (
+            <button onClick={onBack} className="btn" style={{ flex: 1, justifyContent: 'center' }}>
+              <Check size={14} /> Done
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

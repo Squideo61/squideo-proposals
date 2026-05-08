@@ -20,14 +20,24 @@ export function Logo({ size, dark }) {
   );
 }
 
-export function Section({ title, children, color, icon: Icon, badge, collapsible = false, defaultCollapsed = false, collapsedHint }) {
+export const Section = React.forwardRef(function Section(
+  { title, children, color, icon: Icon, badge, collapsible = false, defaultCollapsed = false, collapsedHint, collapsed: controlledCollapsed, onCollapsedChange },
+  ref
+) {
   const isMobile = useIsMobile();
   const accent = color || BRAND.blue;
-  const [collapsed, setCollapsed] = useState(collapsible ? defaultCollapsed : false);
+  const [internalCollapsed, setInternalCollapsed] = useState(collapsible ? defaultCollapsed : false);
+  const isControlled = controlledCollapsed !== undefined;
+  const collapsed = isControlled ? controlledCollapsed : internalCollapsed;
+  const setCollapsed = (next) => {
+    const value = typeof next === 'function' ? next(collapsed) : next;
+    if (onCollapsedChange) onCollapsedChange(value);
+    if (!isControlled) setInternalCollapsed(value);
+  };
   const toggle = collapsible ? () => setCollapsed(c => !c) : undefined;
 
   return (
-    <div style={{
+    <div ref={ref} style={{
       background: 'white',
       borderTop: '1px solid ' + BRAND.border,
       borderRight: '1px solid ' + BRAND.border,
@@ -37,6 +47,7 @@ export function Section({ title, children, color, icon: Icon, badge, collapsible
       marginBottom: 20,
       overflow: 'hidden',
       boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+      scrollMarginTop: 84,
     }}>
       <div
         onClick={toggle}
@@ -86,7 +97,7 @@ export function Section({ title, children, color, icon: Icon, badge, collapsible
       )}
     </div>
   );
-}
+});
 
 export function Field({ label, children, htmlFor, error }) {
   const fallbackId = useId();
