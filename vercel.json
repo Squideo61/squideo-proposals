@@ -3,7 +3,9 @@
     "api/**/*.js": { "maxDuration": 10 }
   },
   "rewrites": [
-    { "source": "/api/invites", "destination": "/api/users?_kind=invites" }
+    { "source": "/api/invites", "destination": "/api/users?_kind=invites" },
+    { "source": "/api/proposals", "destination": "/api/proposals/_root" },
+    { "source": "/api/templates", "destination": "/api/templates/_root" }
   ],
   "crons": [
     { "path": "/api/crm/cron/task-reminders", "schedule": "0 9 * * *" }

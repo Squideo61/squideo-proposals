@@ -11,11 +11,12 @@ export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // [[...path]] is an optional catch-all — `path` is undefined for the
-  // collection route (/api/proposals) and an array like ['abc'] for the
-  // item route (/api/proposals/abc).
+  // [...path] is a non-optional catch-all. The parent route /api/proposals
+  // is rewritten in vercel.json to /api/proposals/_root, so we treat that
+  // sentinel as the collection request.
   const path = req.query.path;
-  const id = Array.isArray(path) ? path[0] : (typeof path === 'string' ? path : null);
+  const first = Array.isArray(path) ? path[0] : (typeof path === 'string' ? path : null);
+  const id = first === '_root' ? null : first;
 
   // --- Collection routes (no id) ---
   if (!id) {

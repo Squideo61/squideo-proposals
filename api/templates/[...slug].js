@@ -8,11 +8,12 @@ export default async function handler(req, res) {
   const user = await requireAuth(req, res);
   if (!user) return;
 
-  // [[...slug]] is an optional catch-all — `slug` is undefined for the
-  // collection route (/api/templates) and an array like ['abc'] for the
-  // item route (/api/templates/abc).
+  // [...slug] is a non-optional catch-all. The parent route /api/templates
+  // is rewritten in vercel.json to /api/templates/_root, so we treat that
+  // sentinel as the collection request.
   const slug = req.query.slug;
-  const id = Array.isArray(slug) ? slug[0] : (typeof slug === 'string' ? slug : null);
+  const first = Array.isArray(slug) ? slug[0] : (typeof slug === 'string' ? slug : null);
+  const id = first === '_root' ? null : first;
 
   if (!id) {
     if (req.method === 'GET') {
