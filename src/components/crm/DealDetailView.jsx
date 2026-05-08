@@ -215,6 +215,7 @@ function describeEvent(e) {
     case 'stage_change':  return `Stage: ${labelForStage(p.from)} → ${labelForStage(p.to)}` + (p.manual ? '' : ' (auto)');
     case 'task_created':  return `Task created: ${p.title || ''}`;
     case 'task_done':     return `Task completed: ${p.title || ''}`;
+    case 'email_sent':    return p.subject ? `Email sent: ${p.subject}` : 'Email sent';
     case 'note':          return p.text || 'Note added';
     default:              return e.eventType;
   }

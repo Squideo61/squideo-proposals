@@ -79,6 +79,31 @@ function stripDetail(d) {
   return rest;
 }
 
+// Apply a transformation to a task across BOTH state.tasks and any cached
+// state.dealDetail[*].tasks that contains it. Returning null from `transform`
+// removes the task. Used by completeTask/saveTask/deleteTask so dealDetail
+// stays in sync without a network round-trip.
+function withTaskUpdate(state, taskId, transform) {
+  const updateList = (list) => {
+    if (!list) return list;
+    const out = [];
+    for (const t of list) {
+      if (t.id !== taskId) { out.push(t); continue; }
+      const u = transform(t);
+      if (u !== null && u !== undefined) out.push(u);
+    }
+    return out;
+  };
+  const newDealDetail = {};
+  for (const k of Object.keys(state.dealDetail || {})) {
+    const detail = state.dealDetail[k];
+    newDealDetail[k] = detail?.tasks
+      ? { ...detail, tasks: updateList(detail.tasks) }
+      : detail;
+  }
+  return { ...state, tasks: updateList(state.tasks), dealDetail: newDealDetail };
+}
+
 function sessionFromToken() {
   try {
     const token = getToken();
@@ -483,27 +508,61 @@ export function StoreProvider({ children }) {
     },
     createTask(input) {
       return api.post('/api/crm/tasks', input).then((t) => {
-        if (t && t.id) setState(s => ({ ...s, tasks: [t, ...s.tasks] }));
+        if (t && t.id) {
+          setState(s => {
+            const next = { ...s, tasks: [t, ...s.tasks] };
+            if (t.dealId && s.dealDetail[t.dealId]) {
+              next.dealDetail = {
+                ...s.dealDetail,
+                [t.dealId]: {
+                  ...s.dealDetail[t.dealId],
+                  tasks: [t, ...(s.dealDetail[t.dealId].tasks || [])],
+                },
+              };
+            }
+            return next;
+          });
+        }
         return t;
       });
     },
     saveTask(taskId, patch) {
-      setState(s => ({ ...s, tasks: s.tasks.map(t => t.id === taskId ? { ...t, ...patch } : t) }));
+      setState(s => withTaskUpdate(s, taskId, (t) => ({ ...t, ...patch })));
       return api.patch('/api/crm/tasks/' + encodeURIComponent(taskId), patch).then((t) => {
-        if (t && t.id) setState(s => ({ ...s, tasks: s.tasks.map(x => x.id === t.id ? t : x) }));
+        if (t && t.id) setState(s => withTaskUpdate(s, t.id, () => t));
         return t;
       }).catch(() => {});
     },
     completeTask(taskId) {
+      // Short-circuit if already done — prevents repeat clicks from racing
+      // when the optimistic update hasn't rendered yet.
+      let alreadyDone = false;
       const nowIso = new Date().toISOString();
-      setState(s => ({ ...s, tasks: s.tasks.map(t => t.id === taskId ? { ...t, doneAt: nowIso } : t) }));
+      setState(s => {
+        const cur = s.tasks.find(t => t.id === taskId)
+          || Object.values(s.dealDetail || {}).flatMap(d => d?.tasks || []).find(t => t.id === taskId);
+        if (cur?.doneAt) { alreadyDone = true; return s; }
+        return withTaskUpdate(s, taskId, (t) => ({ ...t, doneAt: nowIso }));
+      });
+      if (alreadyDone) return Promise.resolve(null);
       return api.post('/api/crm/tasks/' + encodeURIComponent(taskId) + '/done', {}).then((t) => {
-        if (t && t.id) setState(s => ({ ...s, tasks: s.tasks.map(x => x.id === t.id ? t : x) }));
+        if (t && t.id) {
+          setState(s => withTaskUpdate(s, t.id, () => t));
+          // Refresh the deal's timeline so the new task_done event appears
+          // (we updated tasks optimistically but events come from the server).
+          if (t.dealId) {
+            api.get('/api/crm/deals/' + encodeURIComponent(t.dealId)).then((data) => {
+              if (data && data.id) {
+                setState(s => ({ ...s, dealDetail: { ...s.dealDetail, [t.dealId]: data } }));
+              }
+            }).catch(() => {});
+          }
+        }
         return t;
       }).catch(() => {});
     },
     deleteTask(taskId) {
-      setState(s => ({ ...s, tasks: s.tasks.filter(t => t.id !== taskId) }));
+      setState(s => withTaskUpdate(s, taskId, () => null));
       return api.delete('/api/crm/tasks/' + encodeURIComponent(taskId)).catch(() => {});
     },
 
