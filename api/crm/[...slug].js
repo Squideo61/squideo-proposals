@@ -22,11 +22,14 @@ import {
   syncHistory,
 } from '../_lib/gmailSync.js';
 
+// gmail.readonly + gmail.modify give us message bodies + label updates.
+// gmail.metadata is INTENTIONALLY OMITTED — it's mutually exclusive with
+// gmail.readonly, and requesting both causes Google to grant the narrower
+// metadata-only access (which then 403s on format=full reads).
 const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/gmail.readonly',
-  'https://www.googleapis.com/auth/gmail.metadata',
 ];
 
 function gmailRedirectUri(req) {
