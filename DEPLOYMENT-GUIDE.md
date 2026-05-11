@@ -443,6 +443,34 @@ You should see a success message. Your database is now ready.
 > ALTER TABLE gmail_accounts ADD COLUMN IF NOT EXISTS backfill_ingested    INTEGER NOT NULL DEFAULT 0;
 > ```
 
+> **CRM Phase 4 (Chrome extension foundations)** — Two new tables that prep the database for the Gmail extension. `extension_tokens` holds the long-lived JWTs the extension uses to talk back to the API (issued via a one-time auth code flow from the `/extension-auth` page). `crm_email_templates` stores team-shared reply templates that the extension's compose helper can drop into a Gmail draft. Both are independent of any other Phase 4 code — running this migration early is harmless.
+> ```sql
+> CREATE TABLE IF NOT EXISTS extension_tokens (
+>   token        TEXT PRIMARY KEY,
+>   user_email   TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+>   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   last_seen_at TIMESTAMPTZ,
+>   expires_at   TIMESTAMPTZ NOT NULL,
+>   user_agent   TEXT,
+>   revoked_at   TIMESTAMPTZ
+> );
+> CREATE INDEX IF NOT EXISTS idx_extension_tokens_user ON extension_tokens(user_email) WHERE revoked_at IS NULL;
+> CREATE INDEX IF NOT EXISTS idx_extension_tokens_expires ON extension_tokens(expires_at) WHERE revoked_at IS NULL;
+>
+> CREATE TABLE IF NOT EXISTS crm_email_templates (
+>   id          TEXT PRIMARY KEY,
+>   name        TEXT NOT NULL,
+>   subject     TEXT,
+>   body_html   TEXT,
+>   body_text   TEXT,
+>   stage       TEXT,                                  -- optional: suggest for this pipeline stage
+>   created_by  TEXT REFERENCES users(email) ON DELETE SET NULL,
+>   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+> );
+> CREATE INDEX IF NOT EXISTS idx_crm_email_templates_stage ON crm_email_templates(stage) WHERE stage IS NOT NULL;
+> ```
+
 6. Click **Dashboard** in the top left, then find the **"Connection string"** section
 7. Copy the connection string — it looks like:
    ```
