@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "description": "Squideo CRM in-Gmail extension",
+  "type": "module",
   "scripts": {
-    "build": "vite build",
-    "watch": "vite build --watch"
+    "build": "node build.js",
+    "watch": "node build.js"
   },
   "dependencies": {
     "@inboxsdk/core": "^2.1.7",
