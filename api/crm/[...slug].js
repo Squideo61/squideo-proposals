@@ -20,6 +20,7 @@ import {
   verifyPushJwt,
   parsePushBody,
   syncHistory,
+  ingestMessage,
 } from '../_lib/gmailSync.js';
 
 // gmail.readonly + gmail.modify give us message bodies + label updates.
@@ -93,6 +94,18 @@ export default async function handler(req, res) {
   // handler verifies it itself, so no app-level auth.
   if (resource === 'gmail' && id === 'push') {
     return gmailPush(req, res);
+  }
+
+  // Backfill self-chain. The first invocation runs under the user's session
+  // via gmailRoute() below; subsequent pages are invoked from the server
+  // itself (fire-and-forget fetch) and authenticate with CRON_SECRET because
+  // there's no session in those background calls.
+  if (resource === 'gmail' && id === 'backfill') {
+    const auth = req.headers.authorization || '';
+    if (auth === 'Bearer ' + (process.env.CRON_SECRET || '')) {
+      return gmailBackfill(req, res, /* userFromSession */ null);
+    }
+    // No CRON_SECRET → fall through to the authenticated user path below.
   }
 
   const user = await requireAuth(req, res);
@@ -952,7 +965,8 @@ async function gmailRoute(req, res, id, action, user) {
   if (!id) {
     if (req.method !== 'GET') return res.status(405).end();
     const rows = await sql`
-      SELECT gmail_address, scopes, connected_at, disconnected_at, history_id
+      SELECT gmail_address, scopes, connected_at, disconnected_at, history_id,
+             backfill_started_at, backfill_completed_at, backfill_ingested
       FROM gmail_accounts WHERE user_email = ${user.email}
     `;
     if (!rows.length || rows[0].disconnected_at) {
@@ -963,6 +977,9 @@ async function gmailRoute(req, res, id, action, user) {
       gmailAddress: rows[0].gmail_address,
       scopes: rows[0].scopes,
       connectedAt: rows[0].connected_at,
+      backfillStartedAt: rows[0].backfill_started_at || null,
+      backfillCompletedAt: rows[0].backfill_completed_at || null,
+      backfillIngested: rows[0].backfill_ingested ?? 0,
     });
   }
 
@@ -1030,6 +1047,11 @@ async function gmailRoute(req, res, id, action, user) {
   if (id === 'send') {
     if (req.method !== 'POST') return res.status(405).end();
     return gmailSend(req, res, user);
+  }
+
+  if (id === 'backfill') {
+    if (req.method !== 'POST') return res.status(405).end();
+    return gmailBackfill(req, res, user);
   }
 
   return res.status(404).json({ error: 'Unknown gmail action: ' + id });
@@ -1150,9 +1172,22 @@ async function gmailCallback(req, res) {
       updated_at = NOW()
   `;
 
+  // Fire-and-forget the 30-day backfill so the user's deal timelines start
+  // populating immediately. Authenticated via CRON_SECRET because there's no
+  // session to ride on in this background request.
+  if (process.env.CRON_SECRET) {
+    const proto = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const backfillUrl = `${proto}://${host}/api/crm/gmail/backfill?userEmail=${encodeURIComponent(userEmail)}`;
+    fetch(backfillUrl, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + process.env.CRON_SECRET },
+    }).catch(err => console.warn('[gmail callback] backfill kick-off failed (ignoring)', err.message));
+  }
+
   return renderResult(
     'Gmail connected',
-    `<h1>Gmail connected ✓</h1><p><strong>${escapeHtml(gmailAddress)}</strong> is now linked to your Squideo account.</p><p>${historyId ? 'Inbound sync is active — new mail will appear on the matching deal automatically.' : 'Inbound sync could not be activated (Pub/Sub may need attention) — outbound send still works.'}</p><p>You can close this tab.</p>`
+    `<h1>Gmail connected ✓</h1><p><strong>${escapeHtml(gmailAddress)}</strong> is now linked to your Squideo account.</p><p>${historyId ? 'Inbound sync is active — new mail will appear on the matching deal automatically.' : 'Inbound sync could not be activated (Pub/Sub may need attention) — outbound send still works.'}</p><p>The last 30 days of mail are being backfilled in the background. You can close this tab.</p>`
   );
 }
 
@@ -1316,6 +1351,122 @@ async function gmailSend(req, res, user) {
     ok: true,
     messageId: sent.id,
     threadId: sent.threadId,
+  });
+}
+
+// 30-day Gmail backfill. Runs in chained pages so each invocation fits inside
+// the Vercel Hobby 10s timeout. The first call comes from the user (or from
+// gmailCallback as fire-and-forget); subsequent pages are kicked off by this
+// function itself via fetch() with a CRON_SECRET Bearer so the recursive call
+// can authenticate.
+//
+// Caller contract:
+//   POST /api/crm/gmail/backfill                            (user-authed first page)
+//   POST /api/crm/gmail/backfill?userEmail=X&pageToken=Y&total=N
+//     with Authorization: Bearer CRON_SECRET                (self-chained page)
+//
+// Idempotent: ingestMessage upserts on gmail_message_id, so retrying any page
+// just no-ops the already-ingested rows.
+const BACKFILL_PAGE_SIZE = 30;     // ~ messages.get calls in parallel per page
+const BACKFILL_MAX_TOTAL = 600;    // hard cap so we don't drain quota for a huge mailbox
+const BACKFILL_MAX_PAGES = 30;     // belt and braces in case nextPageToken loops
+
+async function gmailBackfill(req, res, user) {
+  const qs = (req.url || '').split('?')[1] || '';
+  const params = new URLSearchParams(qs);
+  const userEmail = user?.email || params.get('userEmail');
+  const pageToken = params.get('pageToken') || null;
+  const total = Number(params.get('total') || 0);
+  const pageIndex = Number(params.get('page') || 0);
+
+  if (!userEmail) return res.status(400).json({ error: 'userEmail required' });
+
+  // Acquire access token. Throws REAUTH if Google has revoked the refresh
+  // token — we mark the account disconnected and bail.
+  let accessToken;
+  try {
+    accessToken = await getFreshAccessToken(userEmail);
+  } catch (err) {
+    console.warn('[gmail backfill] cannot get access token', err.message);
+    return res.status(200).json({ ok: false, reason: err.code || err.message });
+  }
+
+  // Mark backfill in progress on the first page so the UI can show a state.
+  if (!pageToken && pageIndex === 0) {
+    await sql`
+      UPDATE gmail_accounts
+         SET backfill_started_at = NOW(),
+             backfill_completed_at = NULL,
+             backfill_ingested = 0,
+             updated_at = NOW()
+       WHERE user_email = ${userEmail}
+    `;
+  }
+
+  // List one page of message ids for the last 30 days.
+  const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
+  listUrl.searchParams.set('q', 'newer_than:30d');
+  listUrl.searchParams.set('maxResults', String(BACKFILL_PAGE_SIZE));
+  if (pageToken) listUrl.searchParams.set('pageToken', pageToken);
+
+  const listRes = await fetch(listUrl.toString(), { headers: { Authorization: 'Bearer ' + accessToken } });
+  if (!listRes.ok) {
+    console.error('[gmail backfill] messages.list failed', listRes.status, await listRes.text());
+    return res.status(500).json({ error: 'messages.list failed' });
+  }
+  const listJson = await listRes.json();
+  const messageIds = (listJson.messages || []).map(m => m.id);
+  const nextPageToken = listJson.nextPageToken || null;
+
+  // Ingest this page in parallel. Each ingestMessage handles its own
+  // ON CONFLICT DO NOTHING so any duplicate from Pub/Sub is harmless.
+  const results = await Promise.allSettled(
+    messageIds.map(id => ingestMessage({ userEmail, accessToken, messageId: id }))
+  );
+  const ok = results.filter(r => r.status === 'fulfilled').length;
+  const failed = results.length - ok;
+  if (failed) {
+    console.warn('[gmail backfill] some messages failed to ingest', { failed, page: pageIndex });
+  }
+
+  const newTotal = total + ok;
+  await sql`
+    UPDATE gmail_accounts
+       SET backfill_ingested = ${newTotal},
+           updated_at = NOW()
+     WHERE user_email = ${userEmail}
+  `;
+
+  const hitCap = newTotal >= BACKFILL_MAX_TOTAL || pageIndex + 1 >= BACKFILL_MAX_PAGES;
+  const moreToFetch = !!nextPageToken && !hitCap;
+
+  if (moreToFetch) {
+    // Fire-and-forget the next page. We deliberately don't await — if Vercel
+    // tears us down at 10s the next page is already on its way.
+    const proto = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const nextUrl = `${proto}://${host}/api/crm/gmail/backfill?userEmail=${encodeURIComponent(userEmail)}&pageToken=${encodeURIComponent(nextPageToken)}&total=${newTotal}&page=${pageIndex + 1}`;
+    fetch(nextUrl, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + (process.env.CRON_SECRET || '') },
+    }).catch(err => console.error('[gmail backfill] self-chain failed', err.message));
+  } else {
+    await sql`
+      UPDATE gmail_accounts
+         SET backfill_completed_at = NOW(),
+             updated_at = NOW()
+       WHERE user_email = ${userEmail}
+    `;
+  }
+
+  return res.status(200).json({
+    ok: true,
+    page: pageIndex,
+    ingestedThisPage: ok,
+    failedThisPage: failed,
+    totalIngested: newTotal,
+    chainedNext: moreToFetch,
+    completed: !moreToFetch,
   });
 }
 

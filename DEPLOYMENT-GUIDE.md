@@ -437,6 +437,12 @@ You should see a success message. Your database is now ready.
 > -- ALTER TABLE tasks DROP COLUMN IF EXISTS assignee_email;
 > ```
 
+> **CRM Phase 3.6 (Gmail backfill bookkeeping)** — Adds two columns to `gmail_accounts` so we can track an in-progress 30-day backfill (kicked off automatically when a user connects Gmail; chains itself across multiple function invocations to stay under the 10s Hobby timeout). Idempotent on `gmail_message_id` so re-runs are safe.
+> ```sql
+> ALTER TABLE gmail_accounts ADD COLUMN IF NOT EXISTS backfill_started_at  TIMESTAMPTZ;
+> ALTER TABLE gmail_accounts ADD COLUMN IF NOT EXISTS backfill_ingested    INTEGER NOT NULL DEFAULT 0;
+> ```
+
 6. Click **Dashboard** in the top left, then find the **"Connection string"** section
 7. Copy the connection string — it looks like:
    ```

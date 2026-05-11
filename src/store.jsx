@@ -589,6 +589,17 @@ export function StoreProvider({ children }) {
       // payload: { to: string|string[], cc?, bcc?, subject, html, text, dealId? }
       return api.post('/api/crm/gmail/send', payload);
     },
+    backfillGmail() {
+      // Re-trigger the 30-day backfill manually. Idempotent on the server —
+      // already-ingested messages no-op via ON CONFLICT.
+      return api.post('/api/crm/gmail/backfill', {}).then((r) => {
+        // Refresh the status so the UI flips into "Backfilling…" state.
+        api.get('/api/crm/gmail').then((data) => {
+          setState(s => ({ ...s, gmailAccount: data || null }));
+        }).catch(() => {});
+        return r;
+      });
+    },
 
     // ---------- Triage (unmatched email messages) ----------
     refreshTriage() {

@@ -361,6 +361,23 @@ function GmailConnectSection() {
     }
   };
 
+  // Backfill state derived from the server response. "In progress" means it's
+  // either never been run OR was started but not yet stamped complete.
+  const backfillInProgress = connected
+    && account.backfillStartedAt
+    && !account.backfillCompletedAt;
+  const backfillNeverRun = connected && !account.backfillStartedAt;
+
+  const runBackfill = async () => {
+    setError('');
+    try {
+      await actions.backfillGmail();
+      showMsg('Backfill started');
+    } catch (err) {
+      setError(err?.message || 'Backfill failed to start');
+    }
+  };
+
   return (
     <div style={{ marginBottom: 24 }}>
       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: BRAND.ink }}>Gmail integration</div>
@@ -374,7 +391,7 @@ function GmailConnectSection() {
               <>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{account.gmailAddress}</div>
                 <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>
-                  Squideo can send email on your behalf and (in Phase 3) sync replies into the right deal.
+                  Squideo can send email on your behalf and syncs replies into the right deal.
                 </div>
               </>
             ) : (
@@ -396,6 +413,16 @@ function GmailConnectSection() {
             </button>
           )}
         </div>
+        {connected && (
+          <div style={{ marginTop: 10, fontSize: 12, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {backfillInProgress && <span>Backfilling last 30 days… <strong>{account.backfillIngested}</strong> messages so far.</span>}
+            {!backfillInProgress && account.backfillCompletedAt && <span>Backfilled <strong>{account.backfillIngested}</strong> messages from the last 30 days.</span>}
+            {backfillNeverRun && <span>Backfill hasn't run yet on this account.</span>}
+            <button onClick={runBackfill} className="btn-ghost" style={{ fontSize: 12, padding: '2px 8px' }}>
+              {backfillInProgress ? 'Retry backfill' : 'Backfill 30 days'}
+            </button>
+          </div>
+        )}
         {error && (
           <div style={{ marginTop: 10, background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '8px 10px', borderRadius: 6 }}>
             {error}
