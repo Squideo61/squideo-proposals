@@ -142,7 +142,7 @@ function LinkedView({ deals, gmailThreadId, counterpartyEmail, onChanged }) {
         </div>
       </Section>
 
-      {detail && <DealDetail detail={detail} gmailThreadId={gmailThreadId} />}
+      {detail && <DealDetail detail={detail} gmailThreadId={gmailThreadId} onChanged={onChanged} />}
 
       <AddAnotherDeal
         gmailThreadId={gmailThreadId}
@@ -222,7 +222,7 @@ function UnlinkedView({ gmailThreadId, counterpartyEmail, onChanged }) {
 
 // -------------------- Deal detail panel (when linked) --------------------
 
-function DealDetail({ detail, gmailThreadId }) {
+function DealDetail({ detail, gmailThreadId, onChanged }) {
   // Recent activity = last 5 items from events + emails merged.
   const timeline = useMemo(() => {
     const events = (detail.events || []).map(e => ({ kind: 'event', when: e.occurredAt, data: e }));
@@ -269,14 +269,13 @@ function DealDetail({ detail, gmailThreadId }) {
         </a>
       </Section>
 
-      {openTasks.length > 0 && (
-        <Section>
-          <Label>Open tasks</Label>
-          <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {openTasks.map(t => <TaskRow key={t.id} task={t} />)}
-          </div>
-        </Section>
-      )}
+      <Section>
+        <Label>Open tasks</Label>
+        <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {openTasks.map(t => <TaskRow key={t.id} task={t} />)}
+        </div>
+        <AddTaskForm dealId={detail.id} onAdded={onChanged} />
+      </Section>
 
       {timeline.length > 0 && (
         <Section>
@@ -316,6 +315,71 @@ function TaskRow({ task }) {
         {task.dueAt && <div style={{ fontSize: 11, color: BRAND.muted }}>Due {new Date(task.dueAt).toLocaleDateString('en-GB')}</div>}
       </div>
     </div>
+  );
+}
+
+function AddTaskForm({ dealId, onAdded }) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState('');
+  const [dueAt, setDueAt] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!title.trim()) return;
+    setBusy(true);
+    setErr('');
+    try {
+      await api.post('/api/crm/tasks', {
+        dealId,
+        title: title.trim(),
+        dueAt: dueAt ? new Date(dueAt).toISOString() : undefined,
+      });
+      setTitle('');
+      setDueAt('');
+      setOpen(false);
+      onAdded();
+    } catch (e) {
+      setErr(e.message || 'Could not add task');
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} style={{ ...ghostBtn, marginTop: 8, width: '100%' }}>
+        + Add task
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <input
+        autoFocus
+        value={title}
+        onChange={e => setTitle(e.target.value)}
+        placeholder="Task title"
+        required
+        style={{ ...inputStyle, marginTop: 0 }}
+      />
+      <input
+        type="date"
+        value={dueAt}
+        onChange={e => setDueAt(e.target.value)}
+        style={{ ...inputStyle, marginTop: 0 }}
+      />
+      {err && <Err msg={err} />}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button type="submit" disabled={busy || !title.trim()} style={{ ...primaryBtn, flex: 1 }}>
+          {busy ? 'Adding…' : 'Add'}
+        </button>
+        <button type="button" onClick={() => { setOpen(false); setTitle(''); setDueAt(''); setErr(''); }} style={ghostBtn}>
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -560,6 +624,12 @@ const ghostBtn = {
   border: '1px solid ' + BRAND.border,
   padding: '6px 12px', borderRadius: 6, fontSize: 12,
   cursor: 'pointer', fontFamily: 'inherit',
+};
+
+const inputStyle = {
+  width: '100%', padding: '5px 8px', marginTop: 6,
+  border: '1px solid ' + BRAND.border, borderRadius: 6,
+  fontSize: 12, fontFamily: 'inherit', boxSizing: 'border-box',
 };
 
 const input = {
