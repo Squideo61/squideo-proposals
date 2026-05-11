@@ -8,7 +8,8 @@ import InboxSDK from '@inboxsdk/core';
 import { Sidebar } from './Sidebar.jsx';
 import { chipResolver } from './chipResolver.js';
 import { installBoxesNav } from './BoxesNav.jsx';
-import { auth } from '../lib/api.js';
+import { ComposeBar } from './ComposeBar.jsx';
+import { api, auth } from '../lib/api.js';
 
 // Pipeline-stage palette mirrored from src/theme.js. Used by the inbox-row
 // chip colouring so the chip's tint immediately conveys the deal's stage.
@@ -137,6 +138,118 @@ async function main() {
 
     root.render(<Sidebar gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} />);
     threadView.on('destroy', () => root.unmount());
+  });
+
+  // -------- Compose helpers --------
+  // Every compose window (new, reply, forward) gets a status bar with a
+  // deal picker + template dropdown. On send, if a deal is selected, we
+  // attach the freshly-sent message to it as soon as Gmail emits its
+  // thread/message IDs.
+  if (status.connected) {
+    sdk.Compose.registerComposeViewHandler((composeView) => {
+      installComposeBar(composeView).catch(err =>
+        console.warn('[Squideo] ComposeBar install failed', err));
+    });
+  }
+}
+
+async function installComposeBar(composeView) {
+  // Resolve a sensible default deal for the compose:
+  //   - Reply: use the thread's currently-linked deal (if any).
+  //   - New compose: try to match the To recipient against a deal contact.
+  let initialDealId = null;
+  let initialDealTitle = null;
+  let initialDealStage = null;
+
+  if (composeView.isReply && composeView.isReply()) {
+    try {
+      const threadId = composeView.getThreadID && composeView.getThreadID();
+      if (threadId) {
+        const r = await api.get('/api/crm/threads/by-thread-ids?ids=' + encodeURIComponent(threadId));
+        const deals = Array.isArray(r?.[threadId]) ? r[threadId] : [];
+        if (deals.length) {
+          initialDealId = deals[0].dealId;
+          initialDealTitle = deals[0].title;
+          initialDealStage = deals[0].stage;
+        }
+      }
+    } catch { /* best effort */ }
+  }
+  if (!initialDealId) {
+    try {
+      const recipients = composeView.getToRecipients() || [];
+      const firstEmail = recipients[0]?.emailAddress;
+      if (firstEmail) {
+        const matches = await api.get('/api/crm/threads/by-contact?email=' + encodeURIComponent(firstEmail));
+        if (Array.isArray(matches) && matches.length) {
+          initialDealId = matches[0].id;
+          initialDealTitle = matches[0].title;
+          initialDealStage = matches[0].stage;
+        }
+      }
+    } catch { /* best effort */ }
+  }
+
+  // Status bar mount. height ~36 fits one row of pill + button comfortably.
+  const statusBar = composeView.addStatusBar({ height: 36, orderHint: 100 });
+  const el = statusBar.el || statusBar.getElement?.();
+  if (!el) return;
+  const root = createRoot(el);
+  const controllerRef = { current: null };
+
+  root.render(
+    <ComposeBar
+      initialDealId={initialDealId}
+      initialDealTitle={initialDealTitle}
+      initialDealStage={initialDealStage}
+      controllerRef={controllerRef}
+      insertHTML={(html) => composeView.insertHTMLIntoBodyAtCursor(html)}
+    />
+  );
+
+  composeView.on('destroy', () => {
+    try { root.unmount(); } catch {}
+  });
+
+  // After send: if a deal is selected, attach the new message to it.
+  // event.data.getThreadID() / getMessageID() return the IDs Gmail assigned
+  // to the sent message; we POST those to /api/crm/threads so the timeline
+  // updates immediately rather than waiting on Pub/Sub.
+  composeView.getEventStream().filter(e => e.eventName === 'sent').onValue(async (event) => {
+    try {
+      const dealId = controllerRef.current?.getSelectedDealId();
+      if (!dealId) return;
+      const [gmailThreadId, gmailMessageId] = await Promise.all([
+        event.data?.getThreadID(),
+        event.data?.getMessageID(),
+      ]);
+      if (!gmailThreadId || !gmailMessageId) return;
+
+      // Recipient info for the snapshot. Best-effort — server's auto-link
+      // resolver will overwrite when Pub/Sub delivers the real message.
+      let toEmails = [];
+      let ccEmails = [];
+      let subject = null;
+      try {
+        toEmails = (composeView.getToRecipients() || []).map(r => r.emailAddress).filter(Boolean);
+        ccEmails = (composeView.getCcRecipients() || []).map(r => r.emailAddress).filter(Boolean);
+        subject = composeView.getSubject ? composeView.getSubject() : null;
+      } catch {}
+
+      await api.post('/api/crm/threads', {
+        gmailThreadId,
+        gmailMessageId,
+        dealId,
+        direction: 'outbound',
+        toEmails,
+        ccEmails,
+        subject,
+        sentAt: new Date().toISOString(),
+      });
+      chipResolver.invalidate(gmailThreadId);
+    } catch (err) {
+      console.warn('[Squideo] post-send attach failed', err);
+    }
   });
 }
 
