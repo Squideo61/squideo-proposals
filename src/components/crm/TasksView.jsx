@@ -86,6 +86,7 @@ function TaskRow({ task, actions, state, onOpenDeal, onEdit }) {
   const Icon = done ? CheckSquare : Square;
   const deal = task.dealId ? state.deals[task.dealId] : null;
   const stop = (e) => e.stopPropagation();
+  const overdue = !done && task.dueAt && new Date(task.dueAt).getTime() < Date.now();
   const assignees = Array.isArray(task.assigneeEmails) && task.assigneeEmails.length
     ? task.assigneeEmails
     : (task.assigneeEmail ? [task.assigneeEmail] : []);
@@ -99,9 +100,22 @@ function TaskRow({ task, actions, state, onOpenDeal, onEdit }) {
         title="Edit task"
         style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}
       >
-        <div style={{ fontSize: 14, fontWeight: 500, textDecoration: done ? 'line-through' : 'none', color: done ? BRAND.muted : BRAND.ink }}>{task.title}</div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          {task.dueAt && <span>Due {new Date(task.dueAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</span>}
+        <div style={{ fontSize: 14, fontWeight: 500, textDecoration: done ? 'line-through' : 'none', color: done ? BRAND.muted : BRAND.ink, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span>{task.title}</span>
+          {overdue && (
+            <span style={{
+              display: 'inline-block', padding: '1px 6px', borderRadius: 3,
+              background: '#FEE2E2', color: '#DC2626',
+              fontSize: 10, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase',
+            }}>Overdue</span>
+          )}
+        </div>
+        <div style={{ fontSize: 12, marginTop: 2, display: 'flex', gap: 10, flexWrap: 'wrap', color: BRAND.muted }}>
+          {task.dueAt && (
+            <span style={{ color: overdue ? '#DC2626' : BRAND.muted, fontWeight: overdue ? 600 : 400 }}>
+              Due {new Date(task.dueAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
+            </span>
+          )}
           {deal && (
             <span
               role="link"

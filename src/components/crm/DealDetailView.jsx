@@ -228,6 +228,7 @@ function Empty({ text }) {
 function TaskRow({ task, onToggle, onEdit }) {
   const done = !!task.doneAt;
   const Icon = done ? CheckSquare : Square;
+  const overdue = isTaskOverdue(task);
   const assignees = Array.isArray(task.assigneeEmails) && task.assigneeEmails.length
     ? task.assigneeEmails
     : (task.assigneeEmail ? [task.assigneeEmail] : []);
@@ -241,8 +242,15 @@ function TaskRow({ task, onToggle, onEdit }) {
         title="Edit task"
         style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}
       >
-        <div style={{ fontSize: 13, fontWeight: 500, textDecoration: done ? 'line-through' : 'none', color: done ? BRAND.muted : BRAND.ink }}>{task.title}</div>
-        {task.dueAt && <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>Due {new Date(task.dueAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div>}
+        <div style={{ fontSize: 13, fontWeight: 500, textDecoration: done ? 'line-through' : 'none', color: done ? BRAND.muted : BRAND.ink, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span>{task.title}</span>
+          {overdue && <OverdueBadge />}
+        </div>
+        {task.dueAt && (
+          <div style={{ fontSize: 11, color: overdue ? '#DC2626' : BRAND.muted, fontWeight: overdue ? 600 : 400, marginTop: 2 }}>
+            Due {new Date(task.dueAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
+          </div>
+        )}
       </button>
       {assignees.length > 0 && (
         <div style={{ flexShrink: 0, marginTop: 4 }}>
@@ -251,6 +259,28 @@ function TaskRow({ task, onToggle, onEdit }) {
       )}
     </div>
   );
+}
+
+function OverdueBadge() {
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '1px 6px',
+      borderRadius: 3,
+      background: '#FEE2E2',
+      color: '#DC2626',
+      fontSize: 10,
+      fontWeight: 700,
+      letterSpacing: 0.3,
+      textTransform: 'uppercase',
+    }}>Overdue</span>
+  );
+}
+
+function isTaskOverdue(task) {
+  if (task.doneAt) return false;
+  if (!task.dueAt) return false;
+  return new Date(task.dueAt).getTime() < Date.now();
 }
 
 function EventRow({ event, users }) {
