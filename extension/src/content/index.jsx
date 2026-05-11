@@ -71,16 +71,16 @@ async function main() {
       el,
     });
 
-    // Pull thread context. getThreadIDIfStableAsync resolves to null on
-    // "dirty" threads (e.g. drafts), where we have no anchor to attach to.
+    // Pull thread context. getThreadIDAsync resolves once Gmail's URL parses
+    // into a known thread (works even for threads opened from search/labels).
     let gmailThreadId = null;
     try {
-      gmailThreadId = await threadView.getThreadIDIfStableAsync();
+      gmailThreadId = await threadView.getThreadIDAsync();
     } catch (err) {
       console.warn('[Squideo] thread id resolution failed', err);
     }
     if (!gmailThreadId) {
-      renderConnectedFallback(root, 'This thread can\'t be attached yet (still being drafted).');
+      renderConnectedFallback(root, 'Squideo couldn\'t identify this thread — try refreshing.');
       threadView.on('destroy', () => root.unmount());
       return;
     }

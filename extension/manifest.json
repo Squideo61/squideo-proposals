@@ -14,7 +14,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["pageWorld.js"],
+      "resources": ["pageWorld.js", "icon-16.png", "icon-48.png", "icon-128.png"],
       "matches": ["https://mail.google.com/*"]
     }
   ],
