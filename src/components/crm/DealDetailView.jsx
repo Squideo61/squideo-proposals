@@ -45,17 +45,15 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
   const tasks = detail?.tasks || [];
   const emails = detail?.emails || [];
 
-  // Merge events + emails into one chronological timeline. Emails carry
-  // sentAt; deal_events carry occurredAt. Tag each item with its kind so the
-  // renderer can pick the right component and icon.
-  const timeline = useMemo(() => {
-    const items = [
-      ...events.map(e => ({ kind: 'event', when: e.occurredAt, data: e })),
-      ...emails.map(em => ({ kind: 'email', when: em.sentAt, data: em })),
-    ];
-    items.sort((a, b) => new Date(b.when) - new Date(a.when));
-    return items;
-  }, [events, emails]);
+  const timeline = useMemo(() =>
+    [...events]
+      .map(e => ({ kind: 'event', when: e.occurredAt, data: e }))
+      .sort((a, b) => new Date(b.when) - new Date(a.when)),
+  [events]);
+
+  const sortedEmails = useMemo(() =>
+    [...emails].sort((a, b) => new Date(b.sentAt) - new Date(a.sentAt)),
+  [emails]);
 
   const handleStageChange = (next) => {
     if (next === 'lost') {
@@ -145,13 +143,25 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
           ))}
         </Card>
 
-        <Card title="Timeline" count={timeline.length}>
+        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+          <Card title="Emails" count={sortedEmails.length} action={
+            <button onClick={() => setComposingEmail(true)} className="btn-ghost"><Mail size={12} /> Send email</button>
+          }>
+            {sortedEmails.length === 0 && <Empty text="No emails yet" />}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {sortedEmails.map(em => (
+                <EmailRow key={em.gmailMessageId} email={em} onOpen={() => setOpenEmailId(em.gmailMessageId)} />
+              ))}
+            </div>
+          </Card>
+        </div>
+
+        <Card title="Activity" count={timeline.length}>
           {timeline.length === 0 && <Empty text="No activity yet" />}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {timeline.map((item, i) => item.kind === 'email'
-              ? <EmailRow key={'em_' + item.data.gmailMessageId} email={item.data} onOpen={() => setOpenEmailId(item.data.gmailMessageId)} />
-              : <EventRow key={'ev_' + item.data.id} event={item.data} users={state.users} />
-            )}
+            {timeline.map((item) => (
+              <EventRow key={'ev_' + item.data.id} event={item.data} users={state.users} />
+            ))}
           </div>
         </Card>
       </div>
