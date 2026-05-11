@@ -42,9 +42,16 @@ async function main() {
   console.log('[Squideo] auth status', status);
 
   paintDebugBanner('Squideo loading InboxSDK…', '#2BB8E6');
-  const sdk = await InboxSDK.load(2, INBOXSDK_APP_ID, {
-    suppressAddonTitle: 'Squideo',
-  });
+  // InboxSDK.load downloads its platform runtime from inboxsdk.com. If that's
+  // blocked (CSP, network filter, enterprise policy) the promise hangs
+  // forever. A timeout race forces a visible failure so we know WHY it stuck.
+  const sdk = await Promise.race([
+    InboxSDK.load(2, INBOXSDK_APP_ID, { suppressAddonTitle: 'Squideo' }),
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error('InboxSDK.load timed out after 15s — check network/CSP for inboxsdk.com')),
+      15000,
+    )),
+  ]);
   console.log('[Squideo] InboxSDK loaded');
   paintDebugBanner('Squideo InboxSDK loaded — waiting for thread to open', '#16A34A');
 
