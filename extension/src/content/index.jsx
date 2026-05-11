@@ -139,26 +139,25 @@ async function main() {
 
     root.render(<Sidebar gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} />);
 
-    // Quick-add task toolbar button. Resolve the linked deal once so the
-    // popover can pre-fill the deal name without an extra fetch on click.
-    try {
-      const linkResp = await api.get('/api/crm/threads/by-thread-ids?ids=' + encodeURIComponent(gmailThreadId));
-      const links = Array.isArray(linkResp?.[gmailThreadId]) ? linkResp[gmailThreadId] : [];
-      const primaryDealId = links[0]?.dealId || null;
-      const primaryDealTitle = links[0]?.title || null;
-
-      if (primaryDealId) {
-        threadView.addToolbarButton({
-          title: 'Add Squideo task',
-          iconUrl: chrome.runtime.getURL('icon-16.png'),
-          onClick: () => openQuickAddTask({
-            dealId: primaryDealId,
-            dealTitle: primaryDealTitle,
-            gmailThreadId,
-          }),
-        });
-      }
-    } catch { /* best effort — toolbar button is optional */ }
+    // Quick-add task toolbar button. Must be registered before the toolbar
+    // is finalised by InboxSDK, so we add it immediately and do the deal
+    // lookup lazily on click rather than up front.
+    threadView.addToolbarButton({
+      title: 'Add Squideo task',
+      iconUrl: chrome.runtime.getURL('icon-16.png'),
+      onClick: async () => {
+        try {
+          const linkResp = await api.get('/api/crm/threads/by-thread-ids?ids=' + encodeURIComponent(gmailThreadId));
+          const links = Array.isArray(linkResp?.[gmailThreadId]) ? linkResp[gmailThreadId] : [];
+          const primaryDealId = links[0]?.dealId || null;
+          const primaryDealTitle = links[0]?.title || null;
+          if (!primaryDealId) return; // thread not linked yet — sidebar handles that
+          openQuickAddTask({ dealId: primaryDealId, dealTitle: primaryDealTitle, gmailThreadId });
+        } catch (err) {
+          console.warn('[Squideo] toolbar button: deal lookup failed', err);
+        }
+      },
+    });
 
     threadView.on('destroy', () => root.unmount());
   });
