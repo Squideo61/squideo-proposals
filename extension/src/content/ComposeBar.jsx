@@ -10,6 +10,7 @@
 // picks up the fresh list anyway.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../lib/api.js';
 
 const BRAND = {
@@ -45,6 +46,10 @@ export function ComposeBar({
   const [dealStage, setDealStage] = useState(initialDealStage);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const dealBtnRef = useRef(null);
+  const templatesBtnRef = useRef(null);
+  const [dealAnchorRect, setDealAnchorRect] = useState(null);
+  const [templatesAnchorRect, setTemplatesAnchorRect] = useState(null);
 
   // Keep the controller pointing at the latest values so external callers
   // (the sent-event handler) always read fresh state.
@@ -81,7 +86,11 @@ export function ComposeBar({
       {/* Deal pill / picker trigger */}
       {dealId ? (
         <button
-          onClick={() => setPickerOpen(o => !o)}
+          ref={dealBtnRef}
+          onClick={() => {
+            setDealAnchorRect(dealBtnRef.current?.getBoundingClientRect());
+            setPickerOpen(o => !o);
+          }}
           title="Change linked deal"
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -103,7 +112,11 @@ export function ComposeBar({
         </button>
       ) : (
         <button
-          onClick={() => setPickerOpen(o => !o)}
+          ref={dealBtnRef}
+          onClick={() => {
+            setDealAnchorRect(dealBtnRef.current?.getBoundingClientRect());
+            setPickerOpen(o => !o);
+          }}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             padding: '3px 10px', borderRadius: 999,
@@ -120,7 +133,11 @@ export function ComposeBar({
       <span style={{ flex: 1 }} />
 
       <button
-        onClick={() => setTemplatesOpen(o => !o)}
+        ref={templatesBtnRef}
+        onClick={() => {
+          setTemplatesAnchorRect(templatesBtnRef.current?.getBoundingClientRect());
+          setTemplatesOpen(o => !o);
+        }}
         style={{
           padding: '3px 10px', borderRadius: 6,
           background: 'white', border: '1px solid ' + BRAND.border,
@@ -131,15 +148,17 @@ export function ComposeBar({
         📋 Templates
       </button>
 
-      {pickerOpen && (
+      {pickerOpen && dealAnchorRect && (
         <DealPickerPopover
+          anchorRect={dealAnchorRect}
           stage={dealStage}
           onPick={pickDeal}
           onClose={() => setPickerOpen(false)}
         />
       )}
-      {templatesOpen && (
+      {templatesOpen && templatesAnchorRect && (
         <TemplatePopover
+          anchorRect={templatesAnchorRect}
           dealStage={dealStage}
           onPick={(template) => {
             if (template.bodyHtml) insertHTML(template.bodyHtml);
@@ -153,7 +172,7 @@ export function ComposeBar({
   );
 }
 
-function DealPickerPopover({ onPick, onClose }) {
+function DealPickerPopover({ anchorRect, onPick, onClose }) {
   const [deals, setDeals] = useState(null);
   const [query, setQuery] = useState('');
   const [err, setErr] = useState(null);
@@ -176,7 +195,7 @@ function DealPickerPopover({ onPick, onClose }) {
   }, [deals, query]);
 
   return (
-    <Popover onClose={onClose}>
+    <Popover anchorRect={anchorRect} onClose={onClose}>
       <input
         autoFocus
         value={query}
@@ -209,7 +228,7 @@ function DealPickerPopover({ onPick, onClose }) {
   );
 }
 
-function TemplatePopover({ dealStage, onPick, onClose }) {
+function TemplatePopover({ anchorRect, dealStage, onPick, onClose }) {
   const [templates, setTemplates] = useState(null);
   const [err, setErr] = useState(null);
 
@@ -225,7 +244,7 @@ function TemplatePopover({ dealStage, onPick, onClose }) {
   }, [dealStage]);
 
   return (
-    <Popover onClose={onClose} right>
+    <Popover anchorRect={anchorRect} onClose={onClose} right>
       {!templates && <div style={popoverMuted}>Loading templates…</div>}
       {err && <div style={{ ...popoverMuted, color: '#DC2626' }}>{err}</div>}
       {templates && templates.length === 0 && (
@@ -251,10 +270,9 @@ function TemplatePopover({ dealStage, onPick, onClose }) {
   );
 }
 
-function Popover({ children, onClose, right }) {
-  // Click-outside-to-close. Implemented at component level so we don't
-  // need a separate listener registration in Gmail's DOM (which is
-  // virtualised and re-renders aggressively).
+function Popover({ children, anchorRect, onClose, right }) {
+  // Renders into document.body as a fixed-position portal so it isn't
+  // clipped by Gmail's compose window overflow:hidden ancestors.
   const ref = useRef(null);
   useEffect(() => {
     const onDocClick = (e) => {
@@ -263,22 +281,31 @@ function Popover({ children, onClose, right }) {
     setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [onClose]);
-  return (
+
+  // Position above the trigger button, left- or right-aligned to it.
+  const top = anchorRect ? anchorRect.top - 4 : 0;
+  const left = right
+    ? (anchorRect ? anchorRect.right - 340 : 0)
+    : (anchorRect ? anchorRect.left : 0);
+
+  return createPortal(
     <div
       ref={ref}
       style={{
-        position: 'absolute',
-        bottom: 'calc(100% + 4px)',
-        ...(right ? { right: 12 } : { left: 12 }),
+        position: 'fixed',
+        top: 0, left: 0,
+        transform: `translate(${left}px, ${top}px) translateY(-100%)`,
         background: 'white', border: '1px solid ' + BRAND.border,
         borderRadius: 8, boxShadow: '0 4px 16px rgba(15,42,61,0.12)',
         padding: 8, minWidth: 260, maxWidth: 340,
         maxHeight: 320, overflowY: 'auto',
-        zIndex: 99999,
+        zIndex: 2147483647,
+        fontFamily: '-apple-system, system-ui, sans-serif',
       }}
     >
       {children}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
