@@ -3,6 +3,8 @@ import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { api } from '../api.js';
 import { Field, Logo } from './ui.jsx';
+import { TwoFactorChallenge } from './TwoFactorChallenge.jsx';
+import { TwoFactorEnrolment } from './TwoFactorEnrolment.jsx';
 
 export function AuthScreen() {
   const { actions, showMsg } = useStore();
@@ -16,6 +18,8 @@ export function AuthScreen() {
   const [busy, setBusy] = useState(false);
   const [invitePreview, setInvitePreview] = useState(null);
   const [inviteState, setInviteState] = useState(inviteToken ? 'loading' : 'none'); // none | loading | valid | invalid
+  const [challengeToken, setChallengeToken] = useState(null);
+  const [enrolmentToken, setEnrolmentToken] = useState(null);
 
   useEffect(() => {
     if (!inviteToken) return;
@@ -53,17 +57,27 @@ export function AuthScreen() {
     try {
       if (mode === 'signup') {
         const e = (invitePreview?.email || email).toLowerCase().trim();
-        const { token, user } = await api.post('/api/auth/signup', {
+        const resp = await api.post('/api/auth/signup', {
           email: e, name: name.trim(), password, inviteToken,
         });
-        actions.signup(user, token);
         stripInviteFromUrl();
-        showMsg('Welcome, ' + user.name);
+        if (resp.requiresEnrolment) {
+          setEnrolmentToken(resp.enrolment_token);
+        } else if (resp.token && resp.user) {
+          actions.signup(resp.user, resp.token);
+          showMsg('Welcome, ' + resp.user.name);
+        }
       } else {
         const e = email.toLowerCase().trim();
-        const { token, user } = await api.post('/api/auth/login', { email: e, password });
-        actions.login(user, token);
-        showMsg('Welcome back, ' + user.name);
+        const resp = await api.post('/api/auth/login', { email: e, password });
+        if (resp.requires2fa) {
+          setChallengeToken(resp.challenge_token);
+        } else if (resp.requiresEnrolment) {
+          setEnrolmentToken(resp.enrolment_token);
+        } else if (resp.token && resp.user) {
+          actions.login(resp.user, resp.token);
+          showMsg('Welcome back, ' + resp.user.name);
+        }
       }
     } catch (err) {
       setError(err.message || 'Something went wrong');
@@ -71,6 +85,44 @@ export function AuthScreen() {
       setBusy(false);
     }
   };
+
+  const cancel2fa = () => {
+    setChallengeToken(null);
+    setEnrolmentToken(null);
+    setPassword('');
+  };
+
+  if (challengeToken) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+        <TwoFactorChallenge
+          challengeToken={challengeToken}
+          onSuccess={({ token, user }) => {
+            setChallengeToken(null);
+            actions.login(user, token);
+            showMsg('Welcome back, ' + user.name);
+          }}
+          onCancel={cancel2fa}
+        />
+      </div>
+    );
+  }
+
+  if (enrolmentToken) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+        <TwoFactorEnrolment
+          enrolmentToken={enrolmentToken}
+          onSuccess={({ token, user }) => {
+            setEnrolmentToken(null);
+            actions.login(user, token);
+            showMsg('Welcome, ' + user.name);
+          }}
+          onCancel={cancel2fa}
+        />
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>

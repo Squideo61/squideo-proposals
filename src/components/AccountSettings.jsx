@@ -3,6 +3,7 @@ import { Mail, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { resizeImage } from '../utils.js';
+import { api } from '../api.js';
 import { Field, Modal } from './ui.jsx';
 
 function AvatarCircle({ avatar, name, size = 80 }) {
@@ -178,7 +179,139 @@ export function AccountSettings({ onClose }) {
           {pwBusy ? 'Saving…' : 'Update password'}
         </button>
       </div>
+
+      <div style={{ borderTop: '1px solid ' + BRAND.border, margin: '24px 0' }} />
+
+      <TwoFactorSection onResetDone={onClose} />
     </Modal>
+  );
+}
+
+function TwoFactorSection({ onResetDone }) {
+  const { actions, showMsg } = useStore();
+  const [mode, setMode] = useState(null); // null | 'reset' | 'regen'
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [codes, setCodes] = useState(null);
+
+  const cancel = () => { setMode(null); setPassword(''); setError(''); setCodes(null); };
+
+  const reset = async () => {
+    if (!password) { setError('Enter your current password'); return; }
+    setBusy(true); setError('');
+    try {
+      await api.post('/api/auth/2fa-reset', { password });
+      showMsg('Two-step verification reset. Signing out…');
+      setTimeout(() => actions.logout(), 800);
+      onResetDone?.();
+    } catch (err) {
+      setError(err.message || 'Could not reset');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const regenerate = async () => {
+    if (!password) { setError('Enter your current password'); return; }
+    setBusy(true); setError('');
+    try {
+      const { backup_codes } = await api.post('/api/auth/2fa-regenerate-backup', { password });
+      setCodes(backup_codes);
+      setPassword('');
+    } catch (err) {
+      setError(err.message || 'Could not regenerate codes');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const download = () => {
+    const blob = new Blob(
+      ['Squideo Proposals backup codes\n\n' + codes.join('\n') + '\n\nStore these somewhere safe. Each code works once.\n'],
+      { type: 'text/plain' }
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'squideo-backup-codes.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: BRAND.ink }}>Two-step verification</div>
+
+      {!mode && (
+        <div style={{ background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 13, marginBottom: 10 }}>
+            Authenticator app + email codes are enabled on your account.
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={() => setMode('regen')} className="btn-ghost" style={{ fontSize: 13 }}>
+              Regenerate backup codes
+            </button>
+            <button onClick={() => setMode('reset')} className="btn-ghost" style={{ fontSize: 13, color: '#DC2626' }}>
+              Reset authenticator
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mode && !codes && (
+        <div style={{ background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 13, marginBottom: 10 }}>
+            {mode === 'reset'
+              ? 'Resetting removes your authenticator and backup codes. You\'ll be signed out and asked to set up two-step verification again on your next login.'
+              : 'Generate a fresh set of 10 backup codes. Your old codes will stop working immediately.'}
+          </div>
+          <Field label="Current password">
+            <input
+              className="input"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoFocus
+              onKeyDown={(e) => { if (e.key === 'Enter') (mode === 'reset' ? reset() : regenerate()); }}
+            />
+          </Field>
+          {error && (
+            <div style={{ background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '10px 12px', borderRadius: 6, marginBottom: 10 }}>
+              {error}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={mode === 'reset' ? reset : regenerate}
+              disabled={busy}
+              className="btn"
+              style={{ flex: 1, justifyContent: 'center' }}
+            >
+              {busy ? 'Working…' : mode === 'reset' ? 'Reset authenticator' : 'Regenerate codes'}
+            </button>
+            <button onClick={cancel} disabled={busy} className="btn-ghost">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {codes && (
+        <div style={{ background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 13, marginBottom: 10 }}>
+            <strong>Save these now.</strong> They won't be shown again.
+          </div>
+          <div style={{ background: '#F1F4F7', border: '1px solid ' + BRAND.border, borderRadius: 6, padding: 12, marginBottom: 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontFamily: 'monospace', fontSize: 13 }}>
+              {codes.map(c => <div key={c}>{c}</div>)}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={download} className="btn-ghost" style={{ flex: 1, justifyContent: 'center' }}>Download as .txt</button>
+            <button onClick={cancel} className="btn">Done</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

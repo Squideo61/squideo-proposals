@@ -108,6 +108,23 @@ export function clientPaidThanksHtml({ proposal, clientName, signedProposalLink,
   return shell(inner);
 }
 
+export function twoFactorCodeHtml({ code, minutes = 10, purpose = 'login' }) {
+  const headline = purpose === 'enrol'
+    ? 'Confirm your email for two-step verification'
+    : 'Your sign-in verification code';
+  const intro = purpose === 'enrol'
+    ? 'Use the code below to confirm this email address while setting up two-step verification.'
+    : 'Use the code below to finish signing in to Squideo Proposals.';
+  const inner = `
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">${headline}</h2>
+    <p style="margin:0 0 16px;">${intro}</p>
+    <div style="font-family:'Courier New',monospace;font-size:28px;font-weight:700;letter-spacing:6px;background:#F1F4F7;border:1px solid #E5E9EE;border-radius:8px;padding:16px 20px;text-align:center;margin:0 0 16px;">${escapeHtml(code)}</div>
+    <p style="margin:0 0 8px;font-size:13px;color:#6B7785;">This code expires in ${minutes} minutes.</p>
+    <p style="margin:0;font-size:13px;color:#6B7785;">If you didn't try to sign in, ignore this email and consider changing your password.</p>
+  `;
+  return shell(inner);
+}
+
 export function inviteHtml({ inviterName, link, expiresInDays = 7 }) {
   const inner = `
     <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">You've been invited to Squideo Proposals</h2>
