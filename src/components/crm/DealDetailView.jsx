@@ -107,7 +107,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
         <Card title="Proposals" count={proposals.length}>
           {proposals.length === 0 && <Empty text="No proposals attached yet" />}
           {proposals.map(p => (
@@ -257,8 +257,13 @@ function EmailRow({ email }) {
   const arrow = inbound ? '↓' : '↑';
   const accent = inbound ? '#16A34A' : '#2BB8E6';
   const counterparty = inbound ? email.fromEmail : (email.toEmails?.[0] || '');
+  // Hard cap snippet length even before CSS truncation, in case Gmail returned
+  // a long one with embedded newlines that defeat single-line nowrap.
+  const snippetTrim = email.snippet
+    ? email.snippet.replace(/\s+/g, ' ').trim().slice(0, 140)
+    : null;
   return (
-    <div style={{ display: 'flex', gap: 8, fontSize: 13 }}>
+    <div style={{ display: 'flex', gap: 8, fontSize: 13, minWidth: 0 }}>
       <div
         style={{
           flexShrink: 0, width: 14, height: 14,
@@ -274,13 +279,31 @@ function EmailRow({ email }) {
       >
         {arrow}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }} title={email.subject || ''}>
+        <div style={{
+          fontWeight: 500,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          display: '-webkit-box',
+          WebkitLineClamp: 1,
+          WebkitBoxOrient: 'vertical',
+          wordBreak: 'break-word',
+        }}>
           {email.subject || <span style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no subject)</span>}
         </div>
-        {email.snippet && (
-          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {email.snippet}
+        {snippetTrim && (
+          <div style={{
+            fontSize: 12,
+            color: BRAND.muted,
+            marginTop: 2,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            display: '-webkit-box',
+            WebkitLineClamp: 1,
+            WebkitBoxOrient: 'vertical',
+            wordBreak: 'break-word',
+          }}>
+            {snippetTrim}
           </div>
         )}
         <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
