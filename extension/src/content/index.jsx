@@ -10,17 +10,47 @@ import { auth } from '../lib/api.js';
 
 const INBOXSDK_APP_ID = 'sdk_squideo_crm_0_1';
 
+// Proof-of-life beacon. If we see this in the console, the content script
+// is being injected. If we don't, Chrome isn't running content.js at all.
+console.log('[Squideo] content script booted', { url: location.href });
+
+// Visible DOM beacon so we know the script ran even without devtools.
+// Removed after the first sidebar renders successfully.
+function paintDebugBanner(text, colour) {
+  let el = document.getElementById('squideo-debug-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'squideo-debug-banner';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999999;padding:6px 10px;font:600 12px -apple-system,system-ui,sans-serif;color:white;text-align:center;';
+    document.body.appendChild(el);
+  }
+  el.style.background = colour;
+  el.textContent = text;
+}
+function removeDebugBanner() {
+  const el = document.getElementById('squideo-debug-banner');
+  if (el) el.remove();
+}
+
+paintDebugBanner('Squideo content script loaded — initialising…', '#2BB8E6');
+
 async function main() {
   // Soft-check auth state. Sidebar still renders if disconnected — it just
   // shows a prompt to click the extension icon to sign in. The threadView
   // handler below short-circuits the API calls when disconnected.
   const status = await auth.status().catch(() => ({ connected: false }));
+  console.log('[Squideo] auth status', status);
 
+  paintDebugBanner('Squideo loading InboxSDK…', '#2BB8E6');
   const sdk = await InboxSDK.load(2, INBOXSDK_APP_ID, {
     suppressAddonTitle: 'Squideo',
   });
+  console.log('[Squideo] InboxSDK loaded');
+  paintDebugBanner('Squideo InboxSDK loaded — waiting for thread to open', '#16A34A');
 
   sdk.Conversations.registerThreadViewHandler(async (threadView) => {
+    console.log('[Squideo] threadView handler firing');
+    removeDebugBanner();
     // Each rendered DOM container is owned by its sidebar React root, so
     // we capture both and tear them down when InboxSDK destroys the panel
     // (happens on thread close or navigation).
@@ -83,4 +113,5 @@ function renderConnectedFallback(root, message) {
 
 main().catch((err) => {
   console.error('[Squideo extension] failed to start', err);
+  paintDebugBanner('Squideo failed to start: ' + (err?.message || err), '#DC2626');
 });
