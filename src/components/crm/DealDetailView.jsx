@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Building2, Calendar, CheckSquare, Edit2, ExternalLink, FileText, Mail, Phone, Plus, Square, Trash2, User, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Mail, Phone, Plus, Square, Trash2, User, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -20,6 +20,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
   const [composingEmail, setComposingEmail] = useState(false);
   const [openEmailId, setOpenEmailId] = useState(null);
   const [askLost, setAskLost] = useState(false);
+  const [prefillTitle, setPrefillTitle] = useState('');
 
   useEffect(() => {
     if (dealId) actions.loadDealDetail(dealId);
@@ -44,6 +45,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
   const events = detail?.events || [];
   const tasks = detail?.tasks || [];
   const emails = detail?.emails || [];
+
+  const overdueTasks  = tasks.filter(t => isTaskOverdue(t));
+  const upcomingTasks = tasks.filter(t => !t.doneAt && !isTaskOverdue(t));
+  const doneTasks     = tasks.filter(t => !!t.doneAt);
 
   const timeline = useMemo(() =>
     [...events]
@@ -129,18 +134,36 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
           ))}
         </Card>
 
-        <Card title="Tasks" count={tasks.filter(t => !t.doneAt).length} action={
-          <button onClick={() => setCreatingTask(true)} className="btn-ghost"><Plus size={12} /> Task</button>
-        }>
+        <Card title="Tasks" count={tasks.filter(t => !t.doneAt).length}>
+          <QuickAddTask
+            dealId={dealId}
+            onSchedule={(title) => { setPrefillTitle(title); setCreatingTask(true); }}
+          />
           {tasks.length === 0 && <Empty text="No tasks yet" />}
-          {tasks.map(t => (
-            <TaskRow
-              key={t.id}
-              task={t}
-              onToggle={() => actions.toggleTask(t.id)}
-              onEdit={() => setEditingTask(t)}
-            />
-          ))}
+          {overdueTasks.length > 0 && (
+            <>
+              <TaskSection label="Overdue" color="#DC2626" />
+              {overdueTasks.map(t => (
+                <TaskRow key={t.id} task={t} onToggle={() => actions.toggleTask(t.id)} onEdit={() => setEditingTask(t)} />
+              ))}
+            </>
+          )}
+          {upcomingTasks.length > 0 && (
+            <>
+              <TaskSection label="Upcoming" color={BRAND.muted} />
+              {upcomingTasks.map(t => (
+                <TaskRow key={t.id} task={t} onToggle={() => actions.toggleTask(t.id)} onEdit={() => setEditingTask(t)} />
+              ))}
+            </>
+          )}
+          {doneTasks.length > 0 && (
+            <>
+              <TaskSection label="Done" color="#16A34A" />
+              {doneTasks.map(t => (
+                <TaskRow key={t.id} task={t} onToggle={() => actions.toggleTask(t.id)} onEdit={() => setEditingTask(t)} />
+              ))}
+            </>
+          )}
         </Card>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
@@ -169,9 +192,9 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
       {editing && <EditDealModal deal={deal} onClose={() => setEditing(false)} />}
       {creatingTask && (
         <TaskFormModal
-          defaults={{ dealId }}
-          onClose={() => setCreatingTask(false)}
-          onSaved={() => { setCreatingTask(false); actions.loadDealDetail(dealId); }}
+          defaults={{ dealId, title: prefillTitle }}
+          onClose={() => { setCreatingTask(false); setPrefillTitle(''); }}
+          onSaved={() => { setCreatingTask(false); setPrefillTitle(''); actions.loadDealDetail(dealId); }}
         />
       )}
       {editingTask && (
@@ -267,6 +290,59 @@ function TaskRow({ task, onToggle, onEdit }) {
           <AvatarGroup emails={assignees} max={3} size={22} />
         </div>
       )}
+    </div>
+  );
+}
+
+function TaskSection({ label, color }) {
+  return (
+    <div style={{ fontSize: 11, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 10, marginBottom: 2 }}>
+      {label}
+    </div>
+  );
+}
+
+function QuickAddTask({ dealId, onSchedule }) {
+  const { state, actions } = useStore();
+  const [title, setTitle] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    const t = title.trim();
+    if (!t || saving) return;
+    setSaving(true);
+    const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    d.setHours(8, 0, 0, 0);
+    await actions.createTask({
+      title: t,
+      dealId: dealId || null,
+      dueAt: d.toISOString(),
+      assigneeEmails: state.session?.email ? [state.session.email] : [],
+      notes: null,
+    });
+    setTitle('');
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid ' + BRAND.border, paddingBottom: 8, marginBottom: 4 }}>
+      <Plus size={14} color={BRAND.muted} style={{ flexShrink: 0 }} />
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+        placeholder="Add a task"
+        disabled={saving}
+        style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 13, color: BRAND.ink, fontFamily: 'inherit' }}
+      />
+      <button
+        type="button"
+        onClick={() => onSchedule(title.trim())}
+        title="Schedule with full details"
+        style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex', lineHeight: 1 }}
+      >
+        <Clock size={14} />
+      </button>
     </div>
   );
 }

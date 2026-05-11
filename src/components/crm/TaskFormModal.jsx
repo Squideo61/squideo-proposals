@@ -15,7 +15,7 @@ import { BRAND } from '../../theme.js';
 export function TaskFormModal({ task, defaults, onClose, onSaved }) {
   const { state, actions } = useStore();
   const editing = !!task;
-  const [title, setTitle] = useState(task?.title || '');
+  const [title, setTitle] = useState(task?.title || defaults?.title || '');
   const [notes, setNotes] = useState(task?.notes || '');
   const [dueAt, setDueAt] = useState(task?.dueAt ? isoToLocalInput(task.dueAt) : localTomorrow());
   const initialAssignees = useMemo(() => {
@@ -192,7 +192,7 @@ function isoToLocalInput(iso) {
 
 function localTomorrow() {
   const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  d.setHours(9, 0, 0, 0);
+  d.setHours(8, 0, 0, 0);
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
