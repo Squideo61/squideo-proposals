@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Mail, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
@@ -367,6 +367,24 @@ function GmailConnectSection() {
     && account.backfillStartedAt
     && !account.backfillCompletedAt;
   const backfillNeverRun = connected && !account.backfillStartedAt;
+
+  // While a backfill is running, poll the status every 3 seconds so the user
+  // sees the message count climb live. Fire a toast on the in_progress→done
+  // transition. The wasInProgress ref guards against double-firing across
+  // re-renders.
+  const wasInProgress = useRef(backfillInProgress);
+  useEffect(() => {
+    if (wasInProgress.current && !backfillInProgress && account?.backfillCompletedAt) {
+      showMsg(`Gmail backfill complete — ${account.backfillIngested || 0} messages added`);
+    }
+    wasInProgress.current = backfillInProgress;
+  }, [backfillInProgress, account?.backfillCompletedAt, account?.backfillIngested, showMsg]);
+
+  useEffect(() => {
+    if (!backfillInProgress) return undefined;
+    const timer = setInterval(() => { actions.refreshGmailAccount(); }, 3000);
+    return () => clearInterval(timer);
+  }, [backfillInProgress, actions]);
 
   const runBackfill = async () => {
     setError('');
