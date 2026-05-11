@@ -8,7 +8,7 @@ import InboxSDK from '@inboxsdk/core';
 import { Sidebar } from './Sidebar.jsx';
 import { auth } from '../lib/api.js';
 
-const INBOXSDK_APP_ID = 'sdk_squideo_crm_0_1';
+const INBOXSDK_APP_ID = 'sdk_SquideoCRM_398be07a2b';
 
 // Proof-of-life beacon. If we see this in the console, the content script
 // is being injected. If we don't, Chrome isn't running content.js at all.
