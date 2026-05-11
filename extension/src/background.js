@@ -1,11 +1,18 @@
-// Service worker. Two jobs:
-//   1. Run the chrome.identity OAuth-like handshake against our /extension-auth
-//      page and store the resulting extension token in chrome.storage.local.
-//   2. Forward authenticated API requests from the content script and popup,
+// Service worker. Three jobs:
+//   1. Inject InboxSDK's pageWorld.js into Gmail when the content script
+//      asks for it (MV3 requires the background to call chrome.scripting
+//      with world:'MAIN' because content scripts can't do it themselves).
+//      Importing @inboxsdk/core/background registers this listener.
+//   2. Run the chrome.identity OAuth-like handshake against our
+//      /extension-auth page and store the resulting extension token in
+//      chrome.storage.local.
+//   3. Forward authenticated API requests from the content script and popup,
 //      so neither has to worry about CORS or sticking the bearer header in.
 //
 // Manifest V3 service workers can be killed and restarted at any time, so we
 // keep all persistent state in chrome.storage (not in module variables).
+
+import '@inboxsdk/core/background.js';
 
 const API_BASE = 'https://squideo-proposals-tu96.vercel.app';
 const TOKEN_KEY = 'squideoExtensionToken';

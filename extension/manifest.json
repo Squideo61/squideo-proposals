@@ -5,11 +5,18 @@
   "description": "Squideo CRM sidebar, deal chips, and compose helpers inside Gmail.",
   "permissions": [
     "storage",
-    "identity"
+    "identity",
+    "scripting"
   ],
   "host_permissions": [
     "https://mail.google.com/*",
     "https://squideo-proposals-tu96.vercel.app/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["pageWorld.js"],
+      "matches": ["https://mail.google.com/*"]
+    }
   ],
   "background": {
     "service_worker": "background.js",

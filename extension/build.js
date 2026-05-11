@@ -69,6 +69,15 @@ async function main() {
     }
   }
 
+  // InboxSDK's pageWorld.js must be a standalone file at the extension root
+  // so the background can call chrome.scripting.executeScript({ files:
+  // ['pageWorld.js'] }) with world:'MAIN'. It must also be in
+  // web_accessible_resources (see manifest.json).
+  copyFileSync(
+    join(root, 'node_modules/@inboxsdk/core/pageWorld.js'),
+    join(dist, 'pageWorld.js'),
+  );
+
   console.log('\nBuilt extension to', dist);
 }
 
