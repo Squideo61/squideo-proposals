@@ -77,7 +77,7 @@ function applyOptimisticAllocationChange(setState, clientKey, transform) {
 // tidier deal record can sit in state.deals (the Kanban list).
 function stripDetail(d) {
   if (!d) return d;
-  const { proposals, events, tasks, ...rest } = d;
+  const { proposals, events, tasks, files, ...rest } = d;
   return rest;
 }
 
@@ -650,6 +650,51 @@ export function StoreProvider({ children }) {
         }
         return data;
       });
+    },
+
+    // ---------- Deal files ----------
+    uploadDealFile(dealId, file) {
+      const token = getToken();
+      return fetch('/api/crm/deals/' + encodeURIComponent(dealId) + '/files', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + token,
+          'Content-Type': file.type || 'application/octet-stream',
+          'X-Filename': encodeURIComponent(file.name),
+        },
+        body: file,
+      }).then(async (res) => {
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
+        const newFile = await res.json();
+        setState(s => {
+          const detail = s.dealDetail[dealId];
+          if (!detail) return s;
+          return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, files: [newFile, ...(detail.files || [])] } } };
+        });
+        return newFile;
+      });
+    },
+
+    deleteDealFile(dealId, fileId) {
+      setState(s => {
+        const detail = s.dealDetail[dealId];
+        if (!detail) return s;
+        return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, files: (detail.files || []).filter(f => f.id !== fileId) } } };
+      });
+      return api.delete('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/' + encodeURIComponent(fileId))
+        .catch(() => actions.loadDealDetail(dealId));
+    },
+
+    addDealFileFromEmail(dealId, payload) {
+      return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/from-email', payload)
+        .then((newFile) => {
+          setState(s => {
+            const detail = s.dealDetail[dealId];
+            if (!detail) return s;
+            return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, files: [newFile, ...(detail.files || [])] } } };
+          });
+          return newFile;
+        });
     },
   }), []);
 

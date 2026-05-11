@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
+    "@vercel/blob": "^2.3.3",
     "@vercel/functions": "^3.5.1",
     "bcryptjs": "^3.0.3",
     "canvas-confetti": "^1.9.4",

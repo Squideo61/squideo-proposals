@@ -5,7 +5,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile, formatProposalNumber } from '../../utils.js';
 import { Modal } from '../ui.jsx';
-import { AvatarGroup } from '../Avatar.jsx';
+import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 
@@ -179,6 +179,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
           </Card>
         </div>
 
+        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+          <FilesCard dealId={dealId} files={detail?.files || []} />
+        </div>
+
         <Card title="Activity" count={timeline.length}>
           {timeline.length === 0 && <Empty text="No activity yet" />}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -221,6 +225,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
       {openEmailId && (
         <EmailViewerModal
           gmailMessageId={openEmailId}
+          dealId={dealId}
           onClose={() => setOpenEmailId(null)}
         />
       )}
@@ -465,7 +470,7 @@ function EmailRow({ email, onOpen }) {
 // fetch on open and cache by gmail_message_id in the store so re-opens are
 // instant. HTML is sanitized with DOMPurify before render — emails are an
 // untrusted source.
-function EmailViewerModal({ gmailMessageId, onClose }) {
+function EmailViewerModal({ gmailMessageId, dealId, onClose }) {
   const { state, actions } = useStore();
   const cached = state.emailBodies?.[gmailMessageId] || null;
   const [data, setData] = useState(cached);
@@ -546,6 +551,16 @@ function EmailViewerModal({ gmailMessageId, onClose }) {
                 : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body stored — open in Gmail to read)</div>
           )}
         </div>
+        {data?.attachments?.length > 0 && (
+          <div style={{ marginTop: 12, borderTop: '1px solid ' + BRAND.border, paddingTop: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+              Attachments · {data.attachments.length}
+            </div>
+            {data.attachments.map(att => (
+              <AttachmentRow key={att.attachmentId} attachment={att} dealId={dealId} gmailMessageId={gmailMessageId} />
+            ))}
+          </div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid ' + BRAND.border, paddingTop: 12 }}>
           {gmailLink
             ? <a href={gmailLink} target="_blank" rel="noopener noreferrer" className="btn-ghost" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}><ExternalLink size={12} /> Open in Gmail</a>
@@ -554,6 +569,147 @@ function EmailViewerModal({ gmailMessageId, onClose }) {
         </div>
       </div>
     </Modal>
+  );
+}
+
+function fileSizeLabel(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function FileTypeTag({ mimeType }) {
+  if (!mimeType) return <FileText size={14} color={BRAND.muted} />;
+  if (mimeType.startsWith('image/')) return <span style={{ fontSize: 10, fontWeight: 700, color: '#7C3AED' }}>IMG</span>;
+  if (mimeType === 'application/pdf') return <span style={{ fontSize: 10, fontWeight: 700, color: '#DC2626' }}>PDF</span>;
+  if (mimeType.includes('sheet') || mimeType.includes('excel') || mimeType.includes('csv'))
+    return <span style={{ fontSize: 10, fontWeight: 700, color: '#16A34A' }}>XLS</span>;
+  if (mimeType.includes('word') || mimeType.includes('document'))
+    return <span style={{ fontSize: 10, fontWeight: 700, color: '#2563EB' }}>DOC</span>;
+  return <FileText size={14} color={BRAND.muted} />;
+}
+
+function FilesCard({ dealId, files }) {
+  const { actions, showMsg } = useStore();
+  const isMobile = useIsMobile();
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const inputRef = React.useRef(null);
+
+  const handleFiles = async (fileList) => {
+    const file = fileList[0];
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) { showMsg('File too large (max 20 MB)'); return; }
+    setUploading(true);
+    try {
+      await actions.uploadDealFile(dealId, file);
+      showMsg('File uploaded');
+    } catch (err) {
+      showMsg(err.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  const handleDelete = async (fileId, filename) => {
+    if (!window.confirm(`Delete "${filename}"?`)) return;
+    await actions.deleteDealFile(dealId, fileId);
+    showMsg('File deleted');
+  };
+
+  return (
+    <Card title="Files" count={files.length} action={
+      <button className="btn-ghost" onClick={() => inputRef.current?.click()} disabled={uploading}>
+        <Plus size={12} /> {uploading ? 'Uploading…' : 'Upload'}
+      </button>
+    }>
+      <input ref={inputRef} type="file" style={{ display: 'none' }}
+        onChange={(e) => handleFiles(e.target.files)} />
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!uploading) handleFiles(e.dataTransfer.files); }}
+        onClick={() => { if (!uploading) inputRef.current?.click(); }}
+        style={{
+          border: '2px dashed ' + (dragOver ? BRAND.blue : BRAND.border),
+          borderRadius: 8, padding: '8px 14px', fontSize: 12,
+          color: dragOver ? BRAND.blue : BRAND.muted,
+          background: dragOver ? BRAND.blue + '0A' : 'transparent',
+          cursor: uploading ? 'not-allowed' : 'pointer',
+          textAlign: 'center', marginBottom: files.length ? 10 : 0,
+        }}
+      >
+        {uploading ? 'Uploading…' : 'Drop a file here or click Upload'}
+      </div>
+      {files.length === 0 && !uploading && <Empty text="No files attached yet" />}
+      {files.map(f => (
+        <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', borderTop: '1px solid ' + BRAND.border }}>
+          <div style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 6, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <FileTypeTag mimeType={f.mimeType} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.filename}</div>
+            <div style={{ fontSize: 11, color: BRAND.muted }}>
+              {fileSizeLabel(f.sizeBytes)}{f.sizeBytes ? ' · ' : ''}{formatRelativeTime(f.createdAt)}{f.source === 'email' ? ' · from email' : ''}
+            </div>
+          </div>
+          {f.uploadedBy && <Avatar email={f.uploadedBy} size={20} />}
+          <a href={f.blobUrl} download={f.filename} target="_blank" rel="noopener noreferrer"
+            style={{ padding: 4, color: BRAND.muted, display: 'flex' }} title="Download">
+            <ExternalLink size={13} />
+          </a>
+          <button onClick={() => handleDelete(f.id, f.filename)}
+            style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
+            title="Delete file">
+            <Trash2 size={13} />
+          </button>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
+function AttachmentRow({ attachment, dealId, gmailMessageId }) {
+  const { actions, showMsg } = useStore();
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const handleAdd = async () => {
+    if (!dealId || saving || saved) return;
+    setSaving(true);
+    try {
+      await actions.addDealFileFromEmail(dealId, {
+        gmailMessageId,
+        attachmentId: attachment.attachmentId,
+        filename: attachment.filename,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+      });
+      setSaved(true);
+      showMsg(`"${attachment.filename}" added to files`);
+    } catch (err) {
+      showMsg(err.message || 'Failed to add attachment');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+      <FileText size={14} color={BRAND.muted} style={{ flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attachment.filename}</div>
+        {attachment.size && <div style={{ fontSize: 11, color: BRAND.muted }}>{fileSizeLabel(attachment.size)}</div>}
+      </div>
+      {dealId && (
+        <button onClick={handleAdd} disabled={saving || saved} className="btn-ghost"
+          style={{ fontSize: 11, padding: '3px 8px', flexShrink: 0 }}>
+          {saved ? 'Added ✓' : saving ? 'Adding…' : '+ Add to files'}
+        </button>
+      )}
+    </div>
   );
 }
 

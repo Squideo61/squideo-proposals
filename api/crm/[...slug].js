@@ -3,6 +3,7 @@
 // stay within the Vercel Hobby 12-function cap.
 import crypto from 'node:crypto';
 import { waitUntil } from '@vercel/functions';
+import { put, del } from '@vercel/blob';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, APP_URL } from '../_lib/email.js';
@@ -75,6 +76,7 @@ export default async function handler(req, res) {
   const resource = segs[0] || null;
   const id = segs[1] || queryParams.get('_id') || null;
   const action = segs[2] || queryParams.get('_action') || null;
+  const subaction = queryParams.get('_subaction') || null;
 
   if (!resource) return res.status(404).json({ error: 'Not found' });
 
@@ -116,7 +118,7 @@ export default async function handler(req, res) {
     switch (resource) {
       case 'companies': return companiesRoute(req, res, id, action, user);
       case 'contacts':  return contactsRoute(req, res, id, action, user);
-      case 'deals':     return dealsRoute(req, res, id, action, user);
+      case 'deals':     return dealsRoute(req, res, id, action, user, subaction);
       case 'tasks':     return tasksRoute(req, res, id, action, user);
       case 'gmail':     return gmailRoute(req, res, id, action, user);
       case 'triage':    return triageRoute(req, res, id, action, user);
@@ -279,7 +281,7 @@ function serialiseContact(r) {
 
 // -------------------- Deals --------------------
 
-async function dealsRoute(req, res, id, action, user) {
+async function dealsRoute(req, res, id, action, user, subaction = null) {
   if (!id) {
     if (req.method === 'GET') {
       // Optional filter by stage, owner. Default: everything (Kanban renders
@@ -408,12 +410,110 @@ async function dealsRoute(req, res, id, action, user) {
     })));
   }
 
+  // /deals/:id/files — upload a new file (POST) or list (unused, GET falls through)
+  if (action === 'files' && !subaction && req.method === 'POST') {
+    if (!process.env.BLOB_READ_WRITE_TOKEN)
+      return res.status(503).json({ error: 'File storage not configured' });
+
+    const filename = decodeURIComponent(req.headers['x-filename'] || 'upload');
+    const mimeType = req.headers['content-type'] || 'application/octet-stream';
+
+    let fileBuffer = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : null;
+    if (!fileBuffer) {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      fileBuffer = Buffer.concat(chunks);
+    }
+    if (!fileBuffer || fileBuffer.length === 0)
+      return res.status(400).json({ error: 'No file data received' });
+    if (fileBuffer.length > 20 * 1024 * 1024)
+      return res.status(413).json({ error: 'File too large (max 20 MB)' });
+
+    const fileId = crypto.randomUUID();
+    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blob = await put(`deal-files/${id}/${fileId}/${safeName}`, fileBuffer, {
+      access: 'public', contentType: mimeType,
+    });
+
+    await sql`
+      INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by, source)
+      VALUES (${fileId}, ${id}, ${filename}, ${mimeType}, ${fileBuffer.length},
+              ${blob.url}, ${blob.pathname}, ${user.email}, 'upload')
+    `;
+    return res.status(201).json({
+      id: fileId, filename, mimeType, sizeBytes: fileBuffer.length,
+      blobUrl: blob.url, uploadedBy: user.email, source: 'upload',
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  // /deals/:id/files/:fileId — delete a file
+  if (action === 'files' && subaction && subaction !== 'from-email' && req.method === 'DELETE') {
+    const rows = await sql`
+      SELECT blob_url FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}
+    `;
+    if (!rows.length) return res.status(404).json({ error: 'File not found' });
+    try { await del(rows[0].blob_url); } catch (err) {
+      console.error('[deal files] blob delete failed', err.message);
+    }
+    await sql`DELETE FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  // /deals/:id/files/from-email — copy an email attachment into deal files
+  if (action === 'files' && subaction === 'from-email' && req.method === 'POST') {
+    if (!process.env.BLOB_READ_WRITE_TOKEN)
+      return res.status(503).json({ error: 'File storage not configured' });
+
+    const { gmailMessageId, attachmentId, filename, mimeType, size } = req.body || {};
+    if (!gmailMessageId || !attachmentId || !filename)
+      return res.status(400).json({ error: 'gmailMessageId, attachmentId, filename required' });
+
+    const msgRows = await sql`
+      SELECT em.user_email FROM email_messages em
+      JOIN email_thread_deals etd ON etd.gmail_thread_id = em.gmail_thread_id
+      WHERE em.gmail_message_id = ${gmailMessageId} AND etd.deal_id = ${id}
+      LIMIT 1
+    `;
+    if (!msgRows.length) return res.status(403).json({ error: 'Email not linked to this deal' });
+
+    const accessToken = await getFreshAccessToken(msgRows[0].user_email);
+
+    const attRes = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(gmailMessageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+      { headers: { Authorization: 'Bearer ' + accessToken } }
+    );
+    if (!attRes.ok) return res.status(502).json({ error: `Gmail fetch failed (${attRes.status})` });
+    const { data } = await attRes.json();
+    const attBuffer = Buffer.from(data, 'base64url');
+
+    if (attBuffer.length > 20 * 1024 * 1024)
+      return res.status(413).json({ error: 'Attachment too large (max 20 MB)' });
+
+    const fileId = crypto.randomUUID();
+    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blob = await put(`deal-files/${id}/${fileId}/${safeName}`, attBuffer, {
+      access: 'public', contentType: mimeType || 'application/octet-stream',
+    });
+
+    await sql`
+      INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by, source)
+      VALUES (${fileId}, ${id}, ${filename}, ${mimeType || null}, ${attBuffer.length},
+              ${blob.url}, ${blob.pathname}, ${user.email}, 'email')
+    `;
+    return res.status(201).json({
+      id: fileId, filename, mimeType: mimeType || null, sizeBytes: attBuffer.length,
+      blobUrl: blob.url, uploadedBy: user.email, source: 'email',
+      createdAt: new Date().toISOString(),
+    });
+  }
+
   // /deals/:id (no action)
   if (req.method === 'GET') {
     const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const deal = serialiseDeal(rows[0]);
-    const [proposals, events, tasks, emails] = await Promise.all([
+    const [proposals, events, tasks, emails, files] = await Promise.all([
       sql`SELECT id, data, number_year, number_seq, created_at FROM proposals WHERE deal_id = ${id} ORDER BY created_at DESC`,
       sql`SELECT id, deal_id, event_type, payload, actor_email, occurred_at FROM deal_events WHERE deal_id = ${id} ORDER BY occurred_at DESC LIMIT 100`,
       sql`
@@ -437,6 +537,9 @@ async function dealsRoute(req, res, id, action, user) {
         ORDER BY em.sent_at DESC
         LIMIT 50
       `,
+      sql`SELECT id, filename, mime_type, size_bytes, blob_url,
+               uploaded_by, source, created_at
+          FROM deal_files WHERE deal_id = ${id} ORDER BY created_at DESC LIMIT 100`,
     ]);
     return res.status(200).json({
       ...deal,
@@ -467,6 +570,12 @@ async function dealsRoute(req, res, id, action, user) {
         direction: em.direction,
         sentAt: em.sent_at,
         userEmail: em.user_email,
+      })),
+      files: files.map(f => ({
+        id: f.id, filename: f.filename, mimeType: f.mime_type || null,
+        sizeBytes: f.size_bytes || null, blobUrl: f.blob_url,
+        uploadedBy: f.uploaded_by || null, source: f.source,
+        createdAt: f.created_at,
       })),
     });
   }
@@ -822,7 +931,7 @@ async function emailsRoute(req, res, id, action, user) {
     SELECT em.gmail_message_id, em.gmail_thread_id, em.user_email,
            em.from_email, em.to_emails, em.cc_emails,
            em.subject, em.snippet, em.body_html, em.body_text,
-           em.direction, em.sent_at
+           em.direction, em.sent_at, em.gmail_attachments
     FROM email_messages em
     WHERE em.gmail_message_id = ${id}
   `;
@@ -849,6 +958,7 @@ async function emailsRoute(req, res, id, action, user) {
     bodyText: em.body_text || null,
     direction: em.direction,
     sentAt: em.sent_at,
+    attachments: em.gmail_attachments || [],
   });
 }
 

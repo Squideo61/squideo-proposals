@@ -142,6 +142,7 @@ export async function ingestMessage({ userEmail, accessToken, messageId }) {
   }
 
   const { html, text } = extractBody(msg.payload);
+  const attachments = extractAttachments(msg.payload);
 
   const participants = allAddresses;
 
@@ -177,13 +178,14 @@ export async function ingestMessage({ userEmail, accessToken, messageId }) {
       message_id_header, in_reply_to, refs,
       from_email, to_emails, cc_emails, subject, snippet,
       body_html, body_text,
-      direction, unmatched, internal_only, source, sent_at
+      direction, unmatched, internal_only, source, sent_at, gmail_attachments
     ) VALUES (
       ${messageId}, ${msg.threadId}, ${userEmail},
       ${messageIdHeader || null}, ${inReplyTo || null}, ${refs},
       ${fromEmail || null}, ${toEmails}, ${ccEmails}, ${subject || null}, ${snippet || null},
       ${html ? html.slice(0, 8 * 1024) : null}, ${text ? text.slice(0, 8 * 1024) : null},
-      ${direction}, ${!resolved.dealId}, ${internalOnly}, 'pubsub', ${sentAt}
+      ${direction}, ${!resolved.dealId}, ${internalOnly}, 'pubsub', ${sentAt},
+      ${attachments.length ? JSON.stringify(attachments) : null}
     )
     ON CONFLICT (gmail_message_id) DO NOTHING
   `;
@@ -328,6 +330,24 @@ function extractBody(payload) {
   };
   walk(payload);
   return { html, text };
+}
+
+function extractAttachments(payload) {
+  const results = [];
+  const walk = (part) => {
+    if (!part) return;
+    if (part.filename && part.body?.attachmentId) {
+      results.push({
+        filename: part.filename,
+        mimeType: part.mimeType || null,
+        size: part.body.size || null,
+        attachmentId: part.body.attachmentId,
+      });
+    }
+    if (Array.isArray(part.parts)) part.parts.forEach(walk);
+  };
+  walk(payload);
+  return results;
 }
 
 function decodeBase64Url(s) {
