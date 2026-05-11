@@ -500,24 +500,28 @@ function labelForStage(id) {
 }
 
 export function StagePicker({ stage, onChange }) {
+  const activeIdx = PIPELINE_STAGES.findIndex(s => s.id === stage);
   return (
-    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-      {PIPELINE_STAGES.map(s => {
+    <div style={{ display: 'flex', flexWrap: 'wrap', borderRadius: 8, overflow: 'hidden', border: '1px solid ' + BRAND.border }}>
+      {PIPELINE_STAGES.map((s, i) => {
         const active = s.id === stage;
+        const past = i < activeIdx;
         return (
           <button
             key={s.id}
             onClick={() => onChange(s.id)}
             style={{
-              padding: '6px 12px',
-              borderRadius: 999,
-              border: '1px solid ' + (active ? s.color : BRAND.border),
-              background: active ? s.color : 'white',
-              color: active ? 'white' : BRAND.ink,
-              fontSize: 12,
-              fontWeight: 600,
+              flex: '1 1 auto',
+              padding: '7px 10px',
+              border: 'none',
+              borderLeft: i > 0 ? '1px solid rgba(0,0,0,0.12)' : 'none',
+              background: active ? s.color : past ? s.color + '33' : '#F1F5F9',
+              color: active ? 'white' : past ? s.color : BRAND.muted,
+              fontSize: 11,
+              fontWeight: active ? 700 : 500,
               cursor: 'pointer',
               fontFamily: 'inherit',
+              whiteSpace: 'nowrap',
             }}
           >
             {s.label}

@@ -438,7 +438,15 @@ export function StoreProvider({ children }) {
       setState(s => {
         const cur = s.deals[dealId];
         if (!cur) return s;
-        return { ...s, deals: { ...s.deals, [dealId]: { ...cur, stage, stageChangedAt: new Date().toISOString(), lostReason: lostReason || null } } };
+        const patch = { stage, stageChangedAt: new Date().toISOString(), lostReason: lostReason || null };
+        const existingDetail = s.dealDetail[dealId];
+        return {
+          ...s,
+          deals: { ...s.deals, [dealId]: { ...cur, ...patch } },
+          dealDetail: existingDetail
+            ? { ...s.dealDetail, [dealId]: { ...existingDetail, ...patch } }
+            : s.dealDetail,
+        };
       });
       return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/stage', { stage, lostReason }).then((resp) => {
         if (resp?.deal) {
