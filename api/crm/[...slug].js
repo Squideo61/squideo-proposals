@@ -121,6 +121,8 @@ export default async function handler(req, res) {
       case 'gmail':     return gmailRoute(req, res, id, action, user);
       case 'triage':    return triageRoute(req, res, id, action, user);
       case 'emails':    return emailsRoute(req, res, id, action, user);
+      case 'threads':   return threadsRoute(req, res, id, action, user);
+      case 'templates': return templatesRoute(req, res, id, action, user);
       default:          return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {
@@ -382,6 +384,27 @@ async function dealsRoute(req, res, id, action, user) {
       payload: r.payload || {},
       actorEmail: r.actor_email || null,
       occurredAt: r.occurred_at,
+    })));
+  }
+
+  // Used by the in-Gmail Boxes RouteView — every thread attached to this deal.
+  if (action === 'threads') {
+    if (req.method !== 'GET') return res.status(405).end();
+    const rows = await sql`
+      SELECT et.gmail_thread_id, et.subject, et.last_message_at, et.participant_emails,
+             (SELECT COUNT(*) FROM email_messages em WHERE em.gmail_thread_id = et.gmail_thread_id)::int AS message_count
+      FROM email_threads et
+      JOIN email_thread_deals etd ON etd.gmail_thread_id = et.gmail_thread_id
+      WHERE etd.deal_id = ${id}
+      ORDER BY et.last_message_at DESC NULLS LAST
+      LIMIT 200
+    `;
+    return res.status(200).json(rows.map(r => ({
+      gmailThreadId: r.gmail_thread_id,
+      subject: r.subject || null,
+      lastMessageAt: r.last_message_at,
+      participantEmails: r.participant_emails || [],
+      messageCount: r.message_count || 0,
     })));
   }
 
@@ -827,6 +850,236 @@ async function emailsRoute(req, res, id, action, user) {
     direction: em.direction,
     sentAt: em.sent_at,
   });
+}
+
+// -------------------- Threads (extension snapshot ingest + lookups) --------------------
+
+// Endpoints the Chrome extension needs to talk to. Routes:
+//   POST   /api/crm/threads                    — snapshot ingest from extension
+//   GET    /api/crm/threads/by-contact?email=  — find deal(s) for a sender
+//   GET    /api/crm/threads/by-thread-ids?ids= — bulk lookup for inbox chips
+//   DELETE /api/crm/threads/:threadId?dealId=  — detach a thread from a deal
+async function threadsRoute(req, res, id, action, user) {
+  if (!id) {
+    if (req.method !== 'POST') return res.status(405).end();
+    // Snapshot ingest. Body shape mirrors the extension's collected thread
+    // metadata — we don't trust it blindly; we just persist what's given and
+    // let the auto-link resolver's normal idempotency rules apply.
+    const body = req.body || {};
+    const gmailThreadId = trimOrNull(body.gmailThreadId);
+    const gmailMessageId = trimOrNull(body.gmailMessageId);
+    const dealId = trimOrNull(body.dealId);
+    if (!gmailThreadId || !gmailMessageId) {
+      return res.status(400).json({ error: 'gmailThreadId and gmailMessageId required' });
+    }
+    if (dealId) {
+      const dealRow = (await sql`SELECT id FROM deals WHERE id = ${dealId}`)[0];
+      if (!dealRow) return res.status(404).json({ error: 'Deal not found' });
+    }
+
+    const fromEmail = lowerOrNull(body.fromEmail);
+    const toEmails = Array.isArray(body.toEmails) ? body.toEmails.map(s => String(s).toLowerCase()) : [];
+    const ccEmails = Array.isArray(body.ccEmails) ? body.ccEmails.map(s => String(s).toLowerCase()) : [];
+    const participants = Array.isArray(body.participantEmails) && body.participantEmails.length
+      ? body.participantEmails.map(s => String(s).toLowerCase())
+      : Array.from(new Set([fromEmail, ...toEmails, ...ccEmails].filter(Boolean)));
+    const subject = trimOrNull(body.subject);
+    const snippet = trimOrNull(body.snippet);
+    const direction = body.direction === 'outbound' ? 'outbound' : 'inbound';
+    const sentAt = body.sentAt ? new Date(body.sentAt).toISOString() : new Date().toISOString();
+
+    // Upsert the thread row first so the FK on email_messages is satisfied.
+    await sql`
+      INSERT INTO email_threads (gmail_thread_id, user_email, subject, last_message_at, participant_emails)
+      VALUES (${gmailThreadId}, ${user.email}, ${subject}, ${sentAt}, ${participants})
+      ON CONFLICT (gmail_thread_id) DO UPDATE SET
+        subject = COALESCE(email_threads.subject, EXCLUDED.subject),
+        last_message_at = GREATEST(COALESCE(email_threads.last_message_at, '-infinity'::timestamptz), EXCLUDED.last_message_at),
+        participant_emails = (
+          SELECT COALESCE(array_agg(DISTINCT p), '{}')
+          FROM unnest(COALESCE(email_threads.participant_emails, '{}') || EXCLUDED.participant_emails) AS p
+        )
+    `;
+
+    // Idempotent on gmail_message_id — if Pub/Sub got here first, the
+    // extension snapshot just no-ops which is exactly what we want.
+    await sql`
+      INSERT INTO email_messages (
+        gmail_message_id, gmail_thread_id, user_email,
+        from_email, to_emails, cc_emails, subject, snippet,
+        direction, unmatched, internal_only, source, sent_at
+      ) VALUES (
+        ${gmailMessageId}, ${gmailThreadId}, ${user.email},
+        ${fromEmail}, ${toEmails}, ${ccEmails}, ${subject}, ${snippet},
+        ${direction}, ${!dealId}, FALSE, 'extension-snapshot', ${sentAt}
+      )
+      ON CONFLICT (gmail_message_id) DO NOTHING
+    `;
+
+    if (dealId) {
+      await sql`
+        INSERT INTO email_thread_deals (gmail_thread_id, deal_id, resolved_by)
+        VALUES (${gmailThreadId}, ${dealId}, 'extension')
+        ON CONFLICT (gmail_thread_id, deal_id) DO NOTHING
+      `;
+      // Clear unmatched on every message in the thread now that it's linked.
+      await sql`UPDATE email_messages SET unmatched = FALSE WHERE gmail_thread_id = ${gmailThreadId}`;
+      await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${dealId}`;
+    }
+
+    return res.status(200).json({ ok: true, gmailThreadId, dealId: dealId || null });
+  }
+
+  // Sub-routes accessed via /api/crm/threads/<id-or-action>
+  if (id === 'by-contact') {
+    if (req.method !== 'GET') return res.status(405).end();
+    const email = String(req.query.email || '').toLowerCase().trim();
+    if (!email) return res.status(400).json({ error: 'email required' });
+    // Match any non-lost deal where this email is the primary contact or
+    // attached via deal_contacts. Ordered by recency so the sidebar can pick
+    // the most relevant first if multiple match.
+    const rows = await sql`
+      SELECT DISTINCT d.id, d.title, d.stage, d.stage_changed_at, d.value,
+                      d.last_activity_at, d.owner_email
+      FROM deals d
+      LEFT JOIN contacts pc ON pc.id = d.primary_contact_id
+      LEFT JOIN deal_contacts dc ON dc.deal_id = d.id
+      LEFT JOIN contacts c ON c.id = dc.contact_id
+      WHERE d.stage <> 'lost'
+        AND (LOWER(pc.email) = ${email} OR LOWER(c.email) = ${email})
+      ORDER BY d.last_activity_at DESC NULLS LAST
+      LIMIT 10
+    `;
+    return res.status(200).json(rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      stage: r.stage,
+      stageChangedAt: r.stage_changed_at,
+      value: r.value === null ? null : Number(r.value),
+      lastActivityAt: r.last_activity_at,
+      ownerEmail: r.owner_email || null,
+    })));
+  }
+
+  if (id === 'by-thread-ids') {
+    if (req.method !== 'GET') return res.status(405).end();
+    const idsParam = String(req.query.ids || '').trim();
+    if (!idsParam) return res.status(200).json({});
+    const threadIds = idsParam.split(',').map(s => s.trim()).filter(Boolean);
+    if (!threadIds.length) return res.status(200).json({});
+    // Bulk resolver — the extension calls this once per inbox render to
+    // decorate every visible thread row with its deal chip(s).
+    const links = await sql`
+      SELECT etd.gmail_thread_id, etd.deal_id, d.title, d.stage
+      FROM email_thread_deals etd
+      JOIN deals d ON d.id = etd.deal_id
+      WHERE etd.gmail_thread_id = ANY(${threadIds})
+    `;
+    const byThread = {};
+    for (const link of links) {
+      if (!byThread[link.gmail_thread_id]) byThread[link.gmail_thread_id] = [];
+      byThread[link.gmail_thread_id].push({
+        dealId: link.deal_id,
+        title: link.title,
+        stage: link.stage,
+      });
+    }
+    return res.status(200).json(byThread);
+  }
+
+  // /api/crm/threads/:gmailThreadId  (DELETE with dealId in query)
+  if (req.method === 'DELETE') {
+    const dealId = trimOrNull(req.query.dealId);
+    if (!dealId) return res.status(400).json({ error: 'dealId query param required' });
+    await sql`
+      DELETE FROM email_thread_deals
+      WHERE gmail_thread_id = ${id} AND deal_id = ${dealId}
+    `;
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).end();
+}
+
+// -------------------- Email templates (CRUD) --------------------
+
+async function templatesRoute(req, res, id, action, user) {
+  if (!id) {
+    if (req.method === 'GET') {
+      // Optional ?stage=… filter — returns templates either pinned to that
+      // stage or stage-agnostic (NULL stage = always-shown).
+      const stage = trimOrNull(req.query.stage);
+      const rows = stage
+        ? await sql`
+            SELECT * FROM crm_email_templates
+            WHERE stage = ${stage} OR stage IS NULL
+            ORDER BY stage DESC NULLS LAST, name ASC
+          `
+        : await sql`SELECT * FROM crm_email_templates ORDER BY name ASC`;
+      return res.status(200).json(rows.map(serialiseTemplate));
+    }
+    if (req.method === 'POST') {
+      const body = req.body || {};
+      const name = trimOrNull(body.name);
+      if (!name) return res.status(400).json({ error: 'name is required' });
+      const newId = body.id || makeId('tpl');
+      await sql`
+        INSERT INTO crm_email_templates (id, name, subject, body_html, body_text, stage, created_by)
+        VALUES (${newId}, ${name}, ${trimOrNull(body.subject)},
+                ${trimOrNull(body.bodyHtml)}, ${trimOrNull(body.bodyText)},
+                ${trimOrNull(body.stage)}, ${user.email})
+      `;
+      const rows = await sql`SELECT * FROM crm_email_templates WHERE id = ${newId}`;
+      return res.status(201).json(serialiseTemplate(rows[0]));
+    }
+    return res.status(405).end();
+  }
+
+  if (req.method === 'PATCH') {
+    const body = req.body || {};
+    const cur = (await sql`SELECT * FROM crm_email_templates WHERE id = ${id}`)[0];
+    if (!cur) return res.status(404).json({ error: 'Not found' });
+    const next = {
+      name:      'name'     in body ? (trimOrNull(body.name) || cur.name) : cur.name,
+      subject:   'subject'  in body ? trimOrNull(body.subject) : cur.subject,
+      body_html: 'bodyHtml' in body ? trimOrNull(body.bodyHtml) : cur.body_html,
+      body_text: 'bodyText' in body ? trimOrNull(body.bodyText) : cur.body_text,
+      stage:     'stage'    in body ? trimOrNull(body.stage) : cur.stage,
+    };
+    await sql`
+      UPDATE crm_email_templates SET
+        name = ${next.name},
+        subject = ${next.subject},
+        body_html = ${next.body_html},
+        body_text = ${next.body_text},
+        stage = ${next.stage},
+        updated_at = NOW()
+      WHERE id = ${id}
+    `;
+    const rows = await sql`SELECT * FROM crm_email_templates WHERE id = ${id}`;
+    return res.status(200).json(serialiseTemplate(rows[0]));
+  }
+
+  if (req.method === 'DELETE') {
+    await sql`DELETE FROM crm_email_templates WHERE id = ${id}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).end();
+}
+
+function serialiseTemplate(r) {
+  return {
+    id: r.id,
+    name: r.name,
+    subject: r.subject || null,
+    bodyHtml: r.body_html || null,
+    bodyText: r.body_text || null,
+    stage: r.stage || null,
+    createdBy: r.created_by || null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
 }
 
 // -------------------- Cron: task reminders --------------------
