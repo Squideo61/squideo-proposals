@@ -24,9 +24,20 @@ export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  // Vercel rewrites preserve the SOURCE URL in req.url, so visiting the
+  // friendly /extension-auth path lands here with urlPath='/extension-auth'
+  // rather than the rewritten /api/extension/auth-page. Map both forms to
+  // the canonical action name.
   const urlPath = (req.url || '').split('?')[0];
-  const segs = urlPath.split('/').filter(Boolean).slice(2); // strip 'api', 'extension'
-  const action = segs[0] || null;
+  const segs = urlPath.split('/').filter(Boolean);
+  let action;
+  if (urlPath === '/extension-auth') {
+    action = 'auth-page';
+  } else if (segs[0] === 'api' && segs[1] === 'extension') {
+    action = segs[2] || null;
+  } else {
+    action = segs[segs.length - 1] || null;
+  }
 
   try {
     switch (action) {
