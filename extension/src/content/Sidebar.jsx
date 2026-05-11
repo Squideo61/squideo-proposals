@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api.js';
+import { chipResolver } from './chipResolver.js';
 
 // Brand palette mirrored from src/theme.js so the in-Gmail sidebar feels
 // like the web app. Kept inline (not imported) to avoid pulling the whole
@@ -37,8 +38,11 @@ export function Sidebar({ gmailThreadId, counterpartyEmail }) {
   if (state.phase === 'error') return <Box><Err msg={state.message} /></Box>;
 
   // Reload helper passed to action handlers so the sidebar re-fetches itself
-  // after attach/detach/create operations.
+  // after attach/detach/create operations. Also invalidates the chip
+  // resolver's cache so the inbox-row chip updates within seconds rather
+  // than waiting for the 60s TTL.
   const reload = () => {
+    chipResolver.invalidate(gmailThreadId);
     setState({ phase: 'loading' });
     loadInitial({ gmailThreadId, counterpartyEmail })
       .then(setState)

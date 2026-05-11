@@ -6,7 +6,21 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import InboxSDK from '@inboxsdk/core';
 import { Sidebar } from './Sidebar.jsx';
+import { chipResolver } from './chipResolver.js';
 import { auth } from '../lib/api.js';
+
+// Pipeline-stage palette mirrored from src/theme.js. Used by the inbox-row
+// chip colouring so the chip's tint immediately conveys the deal's stage.
+const STAGE_COLOURS = {
+  lead:      { bg: '#F1F5F9', fg: '#475569' },
+  qualified: { bg: '#FEF3C7', fg: '#92400E' },
+  quoting:   { bg: '#DBEAFE', fg: '#1E40AF' },
+  sent:      { bg: '#E0F2FE', fg: '#075985' },
+  viewed:    { bg: '#CFFAFE', fg: '#0E7490' },
+  signed:    { bg: '#DCFCE7', fg: '#166534' },
+  paid:      { bg: '#D1FAE5', fg: '#065F46' },
+  lost:      { bg: '#FEE2E2', fg: '#991B1B' },
+};
 
 const INBOXSDK_APP_ID = 'sdk_SquideoCRM_398be07a2b';
 
@@ -54,6 +68,37 @@ async function main() {
   ]);
   console.log('[Squideo] InboxSDK loaded');
   paintDebugBanner('Squideo InboxSDK loaded — waiting for thread to open', '#16A34A');
+
+  // -------- Inbox-row chips --------
+  // Every thread row in any inbox/search/label view gets its deal chip(s)
+  // resolved through the batching cache. Without batching this would fire
+  // ~50 API calls per inbox render; with it, one bulk lookup per ~150ms.
+  if (status.connected) {
+    sdk.Lists.registerThreadRowViewHandler(async (threadRowView) => {
+      try {
+        const threadId = await threadRowView.getThreadIDAsync();
+        if (!threadId) return;
+        const deals = await chipResolver.resolve(threadId);
+        if (!deals || !deals.length) return;
+        // Up to 2 chips per row to avoid clutter. The sidebar shows the rest
+        // when the user actually opens the thread.
+        for (const deal of deals.slice(0, 2)) {
+          const c = STAGE_COLOURS[deal.stage] || STAGE_COLOURS.lead;
+          try {
+            threadRowView.addLabel({
+              title: deal.title,
+              foregroundColor: c.fg,
+              backgroundColor: c.bg,
+            });
+          } catch (err) {
+            // ThreadRowView may have been destroyed between resolve and add.
+          }
+        }
+      } catch (err) {
+        // Swallow per-row errors so one bad row doesn't break the inbox.
+      }
+    });
+  }
 
   sdk.Conversations.registerThreadViewHandler(async (threadView) => {
     console.log('[Squideo] threadView handler firing');
