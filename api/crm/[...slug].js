@@ -2,6 +2,7 @@
 // plus the cron sweep for task reminders. One slug-routed function file to
 // stay within the Vercel Hobby 12-function cap.
 import crypto from 'node:crypto';
+import { waitUntil } from '@vercel/functions';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, APP_URL } from '../_lib/email.js';
@@ -1172,17 +1173,20 @@ async function gmailCallback(req, res) {
       updated_at = NOW()
   `;
 
-  // Fire-and-forget the 30-day backfill so the user's deal timelines start
-  // populating immediately. Authenticated via CRON_SECRET because there's no
-  // session to ride on in this background request.
+  // Kick off the 30-day backfill so the user's deal timelines populate
+  // immediately. waitUntil keeps Vercel from killing the request before it
+  // actually leaves the box (plain fire-and-forget gets cut off when the
+  // function returns).
   if (process.env.CRON_SECRET) {
     const proto = req.headers['x-forwarded-proto'] || 'https';
     const host = req.headers['x-forwarded-host'] || req.headers.host;
     const backfillUrl = `${proto}://${host}/api/crm/gmail/backfill?userEmail=${encodeURIComponent(userEmail)}`;
-    fetch(backfillUrl, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + process.env.CRON_SECRET },
-    }).catch(err => console.warn('[gmail callback] backfill kick-off failed (ignoring)', err.message));
+    waitUntil(
+      fetch(backfillUrl, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + process.env.CRON_SECRET },
+      }).catch(err => console.warn('[gmail callback] backfill kick-off failed (ignoring)', err.message))
+    );
   }
 
   return renderResult(
@@ -1367,22 +1371,21 @@ async function gmailSend(req, res, user) {
 //
 // Idempotent: ingestMessage upserts on gmail_message_id, so retrying any page
 // just no-ops the already-ingested rows.
-const BACKFILL_PAGE_SIZE = 30;     // ~ messages.get calls in parallel per page
+const BACKFILL_PAGE_SIZE = 30;     // messages.get calls in parallel per page
 const BACKFILL_MAX_TOTAL = 600;    // hard cap so we don't drain quota for a huge mailbox
 const BACKFILL_MAX_PAGES = 30;     // belt and braces in case nextPageToken loops
+const BACKFILL_BUDGET_MS = 7000;   // time budget per function call (Hobby is 10s)
 
 async function gmailBackfill(req, res, user) {
   const qs = (req.url || '').split('?')[1] || '';
   const params = new URLSearchParams(qs);
   const userEmail = user?.email || params.get('userEmail');
-  const pageToken = params.get('pageToken') || null;
-  const total = Number(params.get('total') || 0);
-  const pageIndex = Number(params.get('page') || 0);
+  let pageToken = params.get('pageToken') || null;
+  let total = Number(params.get('total') || 0);
+  let pageIndex = Number(params.get('page') || 0);
 
   if (!userEmail) return res.status(400).json({ error: 'userEmail required' });
 
-  // Acquire access token. Throws REAUTH if Google has revoked the refresh
-  // token — we mark the account disconnected and bail.
   let accessToken;
   try {
     accessToken = await getFreshAccessToken(userEmail);
@@ -1391,7 +1394,8 @@ async function gmailBackfill(req, res, user) {
     return res.status(200).json({ ok: false, reason: err.code || err.message });
   }
 
-  // Mark backfill in progress on the first page so the UI can show a state.
+  // First call (no pageToken) — reset progress markers so a manual retry from
+  // a half-done state starts cleanly.
   if (!pageToken && pageIndex === 0) {
     await sql`
       UPDATE gmail_accounts
@@ -1403,71 +1407,94 @@ async function gmailBackfill(req, res, user) {
     `;
   }
 
-  // List one page of message ids for the last 30 days.
-  const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
-  listUrl.searchParams.set('q', 'newer_than:30d');
-  listUrl.searchParams.set('maxResults', String(BACKFILL_PAGE_SIZE));
-  if (pageToken) listUrl.searchParams.set('pageToken', pageToken);
+  const startedAt = Date.now();
+  let ingestedThisCall = 0;
+  let failedThisCall = 0;
 
-  const listRes = await fetch(listUrl.toString(), { headers: { Authorization: 'Bearer ' + accessToken } });
-  if (!listRes.ok) {
-    console.error('[gmail backfill] messages.list failed', listRes.status, await listRes.text());
-    return res.status(500).json({ error: 'messages.list failed' });
-  }
-  const listJson = await listRes.json();
-  const messageIds = (listJson.messages || []).map(m => m.id);
-  const nextPageToken = listJson.nextPageToken || null;
+  // Loop pages within this function call until we hit either the time budget,
+  // the message cap, or the end of the user's last-30-days mailbox. This is
+  // dramatically more reliable than one-page-per-call because every chain
+  // handoff is a fragile boundary; fewer handoffs, fewer points of failure.
+  while (true) {
+    const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
+    listUrl.searchParams.set('q', 'newer_than:30d');
+    listUrl.searchParams.set('maxResults', String(BACKFILL_PAGE_SIZE));
+    if (pageToken) listUrl.searchParams.set('pageToken', pageToken);
 
-  // Ingest this page in parallel. Each ingestMessage handles its own
-  // ON CONFLICT DO NOTHING so any duplicate from Pub/Sub is harmless.
-  const results = await Promise.allSettled(
-    messageIds.map(id => ingestMessage({ userEmail, accessToken, messageId: id }))
-  );
-  const ok = results.filter(r => r.status === 'fulfilled').length;
-  const failed = results.length - ok;
-  if (failed) {
-    console.warn('[gmail backfill] some messages failed to ingest', { failed, page: pageIndex });
-  }
+    const listRes = await fetch(listUrl.toString(), { headers: { Authorization: 'Bearer ' + accessToken } });
+    if (!listRes.ok) {
+      console.error('[gmail backfill] messages.list failed', listRes.status, await listRes.text());
+      return res.status(500).json({ error: 'messages.list failed' });
+    }
+    const listJson = await listRes.json();
+    const messageIds = (listJson.messages || []).map(m => m.id);
+    const nextPageToken = listJson.nextPageToken || null;
 
-  const newTotal = total + ok;
-  await sql`
-    UPDATE gmail_accounts
-       SET backfill_ingested = ${newTotal},
-           updated_at = NOW()
-     WHERE user_email = ${userEmail}
-  `;
+    const results = await Promise.allSettled(
+      messageIds.map(id => ingestMessage({ userEmail, accessToken, messageId: id }))
+    );
+    const ok = results.filter(r => r.status === 'fulfilled').length;
+    const failed = results.length - ok;
+    ingestedThisCall += ok;
+    failedThisCall += failed;
+    total += ok;
+    pageIndex++;
 
-  const hitCap = newTotal >= BACKFILL_MAX_TOTAL || pageIndex + 1 >= BACKFILL_MAX_PAGES;
-  const moreToFetch = !!nextPageToken && !hitCap;
-
-  if (moreToFetch) {
-    // Fire-and-forget the next page. We deliberately don't await — if Vercel
-    // tears us down at 10s the next page is already on its way.
-    const proto = req.headers['x-forwarded-proto'] || 'https';
-    const host = req.headers['x-forwarded-host'] || req.headers.host;
-    const nextUrl = `${proto}://${host}/api/crm/gmail/backfill?userEmail=${encodeURIComponent(userEmail)}&pageToken=${encodeURIComponent(nextPageToken)}&total=${newTotal}&page=${pageIndex + 1}`;
-    fetch(nextUrl, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + (process.env.CRON_SECRET || '') },
-    }).catch(err => console.error('[gmail backfill] self-chain failed', err.message));
-  } else {
+    // Persist progress after every page so the UI's polling sees the climb.
     await sql`
       UPDATE gmail_accounts
-         SET backfill_completed_at = NOW(),
+         SET backfill_ingested = ${total},
              updated_at = NOW()
        WHERE user_email = ${userEmail}
     `;
-  }
 
-  return res.status(200).json({
-    ok: true,
-    page: pageIndex,
-    ingestedThisPage: ok,
-    failedThisPage: failed,
-    totalIngested: newTotal,
-    chainedNext: moreToFetch,
-    completed: !moreToFetch,
-  });
+    if (failed) {
+      console.warn('[gmail backfill] some messages failed to ingest', { failed, page: pageIndex - 1 });
+    }
+
+    pageToken = nextPageToken;
+    const hitCap = total >= BACKFILL_MAX_TOTAL || pageIndex >= BACKFILL_MAX_PAGES;
+    const noMore = !pageToken;
+    const overBudget = Date.now() - startedAt > BACKFILL_BUDGET_MS;
+
+    if (noMore || hitCap) {
+      // Done — stamp completion.
+      await sql`
+        UPDATE gmail_accounts
+           SET backfill_completed_at = NOW(),
+               updated_at = NOW()
+         WHERE user_email = ${userEmail}
+      `;
+      return res.status(200).json({
+        ok: true, completed: true,
+        pagesThisCall: pageIndex,
+        ingestedThisCall, failedThisCall,
+        totalIngested: total,
+      });
+    }
+
+    if (overBudget) {
+      // Hand off to the next function invocation. waitUntil keeps Vercel
+      // around long enough for the fetch to actually leave the box, which
+      // plain fire-and-forget does NOT guarantee on serverless.
+      const proto = req.headers['x-forwarded-proto'] || 'https';
+      const host = req.headers['x-forwarded-host'] || req.headers.host;
+      const nextUrl = `${proto}://${host}/api/crm/gmail/backfill?userEmail=${encodeURIComponent(userEmail)}&pageToken=${encodeURIComponent(pageToken)}&total=${total}&page=${pageIndex}`;
+      waitUntil(
+        fetch(nextUrl, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + (process.env.CRON_SECRET || '') },
+        }).catch(err => console.error('[gmail backfill] self-chain failed', err.message))
+      );
+      return res.status(200).json({
+        ok: true, completed: false, chainedNext: true,
+        pagesThisCall: pageIndex,
+        ingestedThisCall, failedThisCall,
+        totalIngested: total,
+      });
+    }
+    // Loop continues for another page within this same invocation.
+  }
 }
 
 // Pub/Sub push receiver. Google calls this whenever the user has new Gmail
