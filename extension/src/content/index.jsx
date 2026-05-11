@@ -9,6 +9,7 @@ import { Sidebar } from './Sidebar.jsx';
 import { chipResolver } from './chipResolver.js';
 import { installBoxesNav } from './BoxesNav.jsx';
 import { ComposeBar } from './ComposeBar.jsx';
+import { openQuickAddTask } from './QuickAddTask.jsx';
 import { api, auth } from '../lib/api.js';
 
 // Pipeline-stage palette mirrored from src/theme.js. Used by the inbox-row
@@ -137,6 +138,28 @@ async function main() {
     }
 
     root.render(<Sidebar gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} />);
+
+    // Quick-add task toolbar button. Resolve the linked deal once so the
+    // popover can pre-fill the deal name without an extra fetch on click.
+    try {
+      const linkResp = await api.get('/api/crm/threads/by-thread-ids?ids=' + encodeURIComponent(gmailThreadId));
+      const links = Array.isArray(linkResp?.[gmailThreadId]) ? linkResp[gmailThreadId] : [];
+      const primaryDealId = links[0]?.dealId || null;
+      const primaryDealTitle = links[0]?.title || null;
+
+      if (primaryDealId) {
+        threadView.addToolbarButton({
+          title: 'Add Squideo task',
+          iconUrl: chrome.runtime.getURL('icon-16.png'),
+          onClick: () => openQuickAddTask({
+            dealId: primaryDealId,
+            dealTitle: primaryDealTitle,
+            gmailThreadId,
+          }),
+        });
+      }
+    } catch { /* best effort — toolbar button is optional */ }
+
     threadView.on('destroy', () => root.unmount());
   });
 
