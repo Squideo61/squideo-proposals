@@ -1,4 +1,5 @@
 import { verifyToken } from './auth.js';
+import { lookupExtensionToken } from './extension.js';
 
 export function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -13,12 +14,21 @@ export async function requireAuth(req, res) {
     res.status(401).json({ error: 'Unauthorised' });
     return null;
   }
+  // 1. Try as a session JWT (the normal web-app path).
   try {
     return await verifyToken(token);
-  } catch {
-    res.status(401).json({ error: 'Invalid token' });
-    return null;
+  } catch { /* fall through */ }
+  // 2. Fall back to a stored extension token. Adds one DB query but only for
+  //    callers that don't have a valid JWT; web-app traffic still short-circuits
+  //    on the JWT verify above.
+  try {
+    const ext = await lookupExtensionToken(token);
+    if (ext) return ext;
+  } catch (err) {
+    console.warn('[requireAuth] extension token lookup failed', err.message);
   }
+  res.status(401).json({ error: 'Invalid token' });
+  return null;
 }
 
 export async function requireAdmin(req, res) {
