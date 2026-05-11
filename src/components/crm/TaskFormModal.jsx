@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Trash2, X, Plus } from 'lucide-react';
 import { Modal } from '../ui.jsx';
+import { Avatar } from '../Avatar.jsx';
 import { useStore } from '../../store.jsx';
+import { BRAND } from '../../theme.js';
 
 // Single modal used for both creating and editing a task.
 //   - Pass `task` to edit (the form pre-fills from it).
@@ -16,13 +18,25 @@ export function TaskFormModal({ task, defaults, onClose, onSaved }) {
   const [title, setTitle] = useState(task?.title || '');
   const [notes, setNotes] = useState(task?.notes || '');
   const [dueAt, setDueAt] = useState(task?.dueAt ? isoToLocalInput(task.dueAt) : localTomorrow());
-  const [assigneeEmail, setAssigneeEmail] = useState(task?.assigneeEmail || state.session?.email || '');
+  const initialAssignees = useMemo(() => {
+    if (Array.isArray(task?.assigneeEmails) && task.assigneeEmails.length) return task.assigneeEmails;
+    if (task?.assigneeEmail) return [task.assigneeEmail];
+    if (!editing && state.session?.email) return [state.session.email];
+    return [];
+  }, [task, editing, state.session?.email]);
+  const [assigneeEmails, setAssigneeEmails] = useState(initialAssignees);
   const [dealId, setDealId] = useState(task?.dealId || defaults?.dealId || '');
   const [submitting, setSubmitting] = useState(false);
 
-  const users = Object.values(state.users || {});
+  const allUsers = Object.values(state.users || {});
   const deals = Object.values(state.deals || {});
   const showDealPicker = !(defaults?.dealId);
+
+  const toggleAssignee = (email) => {
+    setAssigneeEmails(prev =>
+      prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]
+    );
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -32,7 +46,7 @@ export function TaskFormModal({ task, defaults, onClose, onSaved }) {
       title: title.trim(),
       notes: notes.trim() || null,
       dueAt: dueAt ? new Date(dueAt).toISOString() : null,
-      assigneeEmail: assigneeEmail || null,
+      assigneeEmails,
       dealId: dealId || null,
     };
     let result;
@@ -59,11 +73,12 @@ export function TaskFormModal({ task, defaults, onClose, onSaved }) {
         <Row label="Due">
           <input className="input" type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} />
         </Row>
-        <Row label="Assignee">
-          <select className="input" value={assigneeEmail} onChange={(e) => setAssigneeEmail(e.target.value)}>
-            <option value="">— Unassigned —</option>
-            {users.map(u => <option key={u.email} value={u.email}>{u.name || u.email}</option>)}
-          </select>
+        <Row label="Assignees">
+          <AssigneePicker
+            users={allUsers}
+            selected={assigneeEmails}
+            onToggle={toggleAssignee}
+          />
         </Row>
         {showDealPicker && (
           <Row label="Deal (optional)">
@@ -89,6 +104,71 @@ export function TaskFormModal({ task, defaults, onClose, onSaved }) {
         </div>
       </form>
     </Modal>
+  );
+}
+
+// Chip-style multi-select. Selected users are pills with an × to remove;
+// unselected users live in a compact "Add…" row below. Stays simple — we
+// never have more than a handful of teammates so no typeahead is needed.
+function AssigneePicker({ users, selected, onToggle }) {
+  const selectedSet = new Set(selected);
+  const selectedUsers = users.filter(u => selectedSet.has(u.email));
+  const remaining = users.filter(u => !selectedSet.has(u.email));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', gap: 6,
+        padding: selectedUsers.length ? 6 : 10,
+        border: '1px solid ' + BRAND.border, borderRadius: 8, minHeight: 38,
+        alignItems: 'center', background: 'white',
+      }}>
+        {selectedUsers.length === 0 && (
+          <span style={{ fontSize: 12, color: BRAND.muted }}>No one assigned</span>
+        )}
+        {selectedUsers.map(u => (
+          <button
+            key={u.email}
+            type="button"
+            onClick={() => onToggle(u.email)}
+            title={`Remove ${u.name || u.email}`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '3px 8px 3px 3px', borderRadius: 999,
+              background: '#F0F9FF', border: '1px solid #BAE6FD',
+              fontSize: 12, fontWeight: 500, color: BRAND.ink,
+              cursor: 'pointer',
+            }}
+          >
+            <Avatar email={u.email} size={20} ring={false} />
+            <span>{u.name || u.email}</span>
+            <X size={12} style={{ opacity: 0.6 }} />
+          </button>
+        ))}
+      </div>
+      {remaining.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {remaining.map(u => (
+            <button
+              key={u.email}
+              type="button"
+              onClick={() => onToggle(u.email)}
+              title={`Assign ${u.name || u.email}`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '3px 8px', borderRadius: 999,
+                background: 'white', border: '1px dashed ' + BRAND.border,
+                fontSize: 12, color: BRAND.muted, cursor: 'pointer',
+              }}
+            >
+              <Plus size={12} />
+              <Avatar email={u.email} size={18} ring={false} />
+              <span>{u.name || u.email}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

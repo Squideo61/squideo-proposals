@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Building2, Calendar, CheckSquare, Edit2, ExternalLink, FileText, Mail, Phone, Plus, Square, Trash2, User } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, Edit2, ExternalLink, FileText, Mail, Phone, Plus, Square, Trash2, User, X } from 'lucide-react';
+import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile, formatProposalNumber } from '../../utils.js';
 import { Modal } from '../ui.jsx';
+import { AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 
@@ -16,6 +18,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
   const [creatingTask, setCreatingTask] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [composingEmail, setComposingEmail] = useState(false);
+  const [openEmailId, setOpenEmailId] = useState(null);
   const [askLost, setAskLost] = useState(false);
 
   useEffect(() => {
@@ -146,7 +149,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
           {timeline.length === 0 && <Empty text="No activity yet" />}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {timeline.map((item, i) => item.kind === 'email'
-              ? <EmailRow key={'em_' + item.data.gmailMessageId} email={item.data} />
+              ? <EmailRow key={'em_' + item.data.gmailMessageId} email={item.data} onOpen={() => setOpenEmailId(item.data.gmailMessageId)} />
               : <EventRow key={'ev_' + item.data.id} event={item.data} users={state.users} />
             )}
           </div>
@@ -180,6 +183,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
         <LostReasonModal
           onClose={() => setAskLost(false)}
           onSubmit={(reason) => { setAskLost(false); actions.moveDealStage(dealId, 'lost', reason); showMsg('Marked as lost'); }}
+        />
+      )}
+      {openEmailId && (
+        <EmailViewerModal
+          gmailMessageId={openEmailId}
+          onClose={() => setOpenEmailId(null)}
         />
       )}
     </div>
@@ -219,6 +228,9 @@ function Empty({ text }) {
 function TaskRow({ task, onToggle, onEdit }) {
   const done = !!task.doneAt;
   const Icon = done ? CheckSquare : Square;
+  const assignees = Array.isArray(task.assigneeEmails) && task.assigneeEmails.length
+    ? task.assigneeEmails
+    : (task.assigneeEmail ? [task.assigneeEmail] : []);
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 4px', borderTop: '1px solid ' + BRAND.border }}>
       <button onClick={onToggle} className="btn-icon" style={{ padding: 4, border: 'none', background: 'transparent' }} aria-label={done ? 'Mark not done' : 'Mark done'}>
@@ -232,6 +244,11 @@ function TaskRow({ task, onToggle, onEdit }) {
         <div style={{ fontSize: 13, fontWeight: 500, textDecoration: done ? 'line-through' : 'none', color: done ? BRAND.muted : BRAND.ink }}>{task.title}</div>
         {task.dueAt && <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>Due {new Date(task.dueAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div>}
       </button>
+      {assignees.length > 0 && (
+        <div style={{ flexShrink: 0, marginTop: 4 }}>
+          <AvatarGroup emails={assignees} max={3} size={22} />
+        </div>
+      )}
     </div>
   );
 }
@@ -252,7 +269,7 @@ function EventRow({ event, users }) {
   );
 }
 
-function EmailRow({ email }) {
+function EmailRow({ email, onOpen }) {
   const inbound = email.direction === 'inbound';
   const arrow = inbound ? '↓' : '↑';
   const accent = inbound ? '#16A34A' : '#2BB8E6';
@@ -262,8 +279,22 @@ function EmailRow({ email }) {
   const snippetTrim = email.snippet
     ? email.snippet.replace(/\s+/g, ' ').trim().slice(0, 140)
     : null;
+  const [hover, setHover] = useState(false);
   return (
-    <div style={{ display: 'flex', gap: 8, fontSize: 13, minWidth: 0 }}>
+    <button
+      type="button"
+      onClick={onOpen}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title="Open email"
+      style={{
+        display: 'flex', gap: 8, fontSize: 13, minWidth: 0,
+        textAlign: 'left', width: '100%', padding: '4px 6px',
+        margin: '-4px -6px', border: 'none', borderRadius: 6,
+        background: hover ? '#F4F8FB' : 'transparent',
+        cursor: 'pointer', fontFamily: 'inherit', color: 'inherit',
+      }}
+    >
       <div
         style={{
           flexShrink: 0, width: 14, height: 14,
@@ -310,7 +341,103 @@ function EmailRow({ email }) {
           {formatRelativeTime(email.sentAt)}{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}
         </div>
       </div>
-    </div>
+    </button>
+  );
+}
+
+// Lazy-loaded full email body viewer. Bodies aren't in the deal payload so we
+// fetch on open and cache by gmail_message_id in the store so re-opens are
+// instant. HTML is sanitized with DOMPurify before render — emails are an
+// untrusted source.
+function EmailViewerModal({ gmailMessageId, onClose }) {
+  const { state, actions } = useStore();
+  const cached = state.emailBodies?.[gmailMessageId] || null;
+  const [data, setData] = useState(cached);
+  const [loading, setLoading] = useState(!cached);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (cached) return;
+    let cancelled = false;
+    actions.loadEmailBody(gmailMessageId)
+      .then((res) => { if (!cancelled) { setData(res); setLoading(false); } })
+      .catch((err) => { if (!cancelled) { setError(err?.message || 'Failed to load email'); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [gmailMessageId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sanitized = useMemo(() => {
+    if (!data?.bodyHtml) return null;
+    // Strip inline styles + scripting vectors so a sender can't break our
+    // modal layout or run code. Wrap in a constrained container at render.
+    return DOMPurify.sanitize(data.bodyHtml, {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form'],
+      FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
+    });
+  }, [data?.bodyHtml]);
+
+  const inbound = data?.direction === 'inbound';
+  const gmailLink = data?.gmailThreadId
+    ? `https://mail.google.com/mail/u/0/#all/${data.gmailThreadId}`
+    : null;
+
+  return (
+    <Modal onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, wordBreak: 'break-word', flex: 1 }}>
+            {data?.subject || (loading ? 'Loading…' : '(no subject)')}
+          </h2>
+          <button onClick={onClose} className="btn-ghost" style={{ padding: 4 }} aria-label="Close"><X size={16} /></button>
+        </div>
+        {data && (
+          <div style={{ fontSize: 12, color: BRAND.muted, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div>
+              <span style={{
+                display: 'inline-block', padding: '1px 6px', borderRadius: 3, marginRight: 6,
+                background: (inbound ? '#16A34A' : '#2BB8E6') + '22',
+                color: inbound ? '#16A34A' : '#2BB8E6',
+                fontSize: 10, fontWeight: 700,
+              }}>{inbound ? 'IN' : 'OUT'}</span>
+              <span>{new Date(data.sentAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+            </div>
+            {data.fromEmail && <div><strong>From:</strong> {data.fromEmail}</div>}
+            {data.toEmails?.length > 0 && <div><strong>To:</strong> {data.toEmails.join(', ')}</div>}
+            {data.ccEmails?.length > 0 && <div><strong>Cc:</strong> {data.ccEmails.join(', ')}</div>}
+          </div>
+        )}
+        <div style={{
+          borderTop: '1px solid ' + BRAND.border,
+          paddingTop: 12,
+          maxHeight: '60vh',
+          overflowY: 'auto',
+          fontSize: 13,
+          lineHeight: 1.5,
+        }}>
+          {loading && <div style={{ color: BRAND.muted }}>Loading email…</div>}
+          {error && <div style={{ color: '#DC2626' }}>{error}</div>}
+          {!loading && !error && data && (
+            sanitized
+              ? (
+                <div
+                  style={{ wordBreak: 'break-word' }}
+                  className="email-body"
+                  dangerouslySetInnerHTML={{ __html: sanitized }}
+                />
+              )
+              : data.bodyText
+                ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{data.bodyText}</pre>
+                : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body stored — open in Gmail to read)</div>
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid ' + BRAND.border, paddingTop: 12 }}>
+          {gmailLink
+            ? <a href={gmailLink} target="_blank" rel="noopener noreferrer" className="btn-ghost" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}><ExternalLink size={12} /> Open in Gmail</a>
+            : <span />}
+          <button onClick={onClose} className="btn">Close</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

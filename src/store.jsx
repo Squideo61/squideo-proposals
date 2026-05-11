@@ -20,6 +20,7 @@ function emptyStore() {
     dealDetail: {},
     gmailAccount: null,
     triage: [],
+    emailBodies: {},
     notificationRecipients: [],
     extrasBank: [],
     inclusionsBank: [],
@@ -618,6 +619,18 @@ export function StoreProvider({ children }) {
       setState(s => ({ ...s, triage: s.triage.filter(m => m.gmailThreadId !== gmailThreadId) }));
       return api.post('/api/crm/triage/' + encodeURIComponent(gmailThreadId) + '/dismiss', {})
         .catch(() => {});
+    },
+
+    // ---------- Email body lookup (lazy-loaded for the viewer modal) ----------
+    loadEmailBody(gmailMessageId) {
+      // Cached: re-opens are instant. The cache key is the immutable message
+      // id, so we never need to invalidate.
+      return api.get('/api/crm/emails/' + encodeURIComponent(gmailMessageId)).then((data) => {
+        if (data && data.gmailMessageId) {
+          setState(s => ({ ...s, emailBodies: { ...s.emailBodies, [data.gmailMessageId]: data } }));
+        }
+        return data;
+      });
     },
   }), []);
 

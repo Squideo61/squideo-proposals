@@ -106,6 +106,7 @@ export default async function handler(req, res) {
       case 'tasks':     return tasksRoute(req, res, id, action, user);
       case 'gmail':     return gmailRoute(req, res, id, action, user);
       case 'triage':    return triageRoute(req, res, id, action, user);
+      case 'emails':    return emailsRoute(req, res, id, action, user);
       default:          return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {
@@ -378,7 +379,15 @@ async function dealsRoute(req, res, id, action, user) {
     const [proposals, events, tasks, emails] = await Promise.all([
       sql`SELECT id, data, number_year, number_seq, created_at FROM proposals WHERE deal_id = ${id} ORDER BY created_at DESC`,
       sql`SELECT id, deal_id, event_type, payload, actor_email, occurred_at FROM deal_events WHERE deal_id = ${id} ORDER BY occurred_at DESC LIMIT 100`,
-      sql`SELECT * FROM tasks WHERE deal_id = ${id} ORDER BY done_at NULLS FIRST, due_at ASC NULLS LAST LIMIT 50`,
+      sql`
+        SELECT t.*,
+          (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')
+           FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
+        FROM tasks t
+        WHERE t.deal_id = ${id}
+        ORDER BY done_at NULLS FIRST, due_at ASC NULLS LAST
+        LIMIT 50
+      `,
       // Every email_message attached to this deal via the M:N join. The most
       // recent 50 keep the timeline manageable; older ones can be paged later.
       sql`
@@ -484,17 +493,84 @@ function serialiseDeal(r) {
 
 // -------------------- Tasks --------------------
 
+// Accept either the new array field (`assigneeEmails`) or the legacy single
+// (`assigneeEmail`) for one release so old clients don't break mid-deploy.
+function readAssigneeEmails(body, fallback) {
+  if (Array.isArray(body.assigneeEmails)) {
+    const cleaned = body.assigneeEmails.map(trimOrNull).filter(Boolean);
+    return cleaned.length ? Array.from(new Set(cleaned)) : (fallback ? [fallback] : []);
+  }
+  if ('assigneeEmail' in body) {
+    const v = trimOrNull(body.assigneeEmail);
+    return v ? [v] : (fallback ? [fallback] : []);
+  }
+  return fallback ? [fallback] : [];
+}
+
+async function setTaskAssignees(taskId, emails) {
+  await sql`DELETE FROM task_assignees WHERE task_id = ${taskId}`;
+  if (emails.length) {
+    await sql`
+      INSERT INTO task_assignees (task_id, user_email)
+      SELECT ${taskId}, unnest(${emails}::text[])
+      ON CONFLICT DO NOTHING
+    `;
+  }
+}
+
+async function loadTask(id) {
+  const rows = await sql`
+    SELECT t.*,
+      (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')
+       FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
+    FROM tasks t
+    WHERE t.id = ${id}
+  `;
+  return rows.length ? serialiseTask(rows[0]) : null;
+}
+
 async function tasksRoute(req, res, id, action, user) {
   if (!id) {
     if (req.method === 'GET') {
       const scope = String(req.query.scope || 'open');
+      // Same correlated subquery in every variant so the serialiser sees
+      // assignee_emails consistently.
       const rows = scope === 'all'
-        ? await sql`SELECT * FROM tasks ORDER BY done_at NULLS FIRST, due_at ASC NULLS LAST LIMIT 500`
+        ? await sql`
+            SELECT t.*,
+              (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')
+               FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
+            FROM tasks t
+            ORDER BY done_at NULLS FIRST, due_at ASC NULLS LAST
+            LIMIT 500
+          `
         : scope === 'overdue'
-        ? await sql`SELECT * FROM tasks WHERE done_at IS NULL AND due_at IS NOT NULL AND due_at < NOW() ORDER BY due_at ASC`
+        ? await sql`
+            SELECT t.*,
+              (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')
+               FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
+            FROM tasks t
+            WHERE done_at IS NULL AND due_at IS NOT NULL AND due_at < NOW()
+            ORDER BY due_at ASC
+          `
         : scope === 'today'
-        ? await sql`SELECT * FROM tasks WHERE done_at IS NULL AND due_at::date = CURRENT_DATE ORDER BY due_at ASC`
-        : await sql`SELECT * FROM tasks WHERE done_at IS NULL ORDER BY due_at ASC NULLS LAST LIMIT 500`;
+        ? await sql`
+            SELECT t.*,
+              (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')
+               FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
+            FROM tasks t
+            WHERE done_at IS NULL AND due_at::date = CURRENT_DATE
+            ORDER BY due_at ASC
+          `
+        : await sql`
+            SELECT t.*,
+              (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')
+               FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
+            FROM tasks t
+            WHERE done_at IS NULL
+            ORDER BY due_at ASC NULLS LAST
+            LIMIT 500
+          `;
       return res.status(200).json(rows.map(serialiseTask));
     }
     if (req.method === 'POST') {
@@ -502,6 +578,10 @@ async function tasksRoute(req, res, id, action, user) {
       const title = trimOrNull(body.title);
       if (!title) return res.status(400).json({ error: 'title is required' });
       const newId = body.id || makeId('task');
+      const assignees = readAssigneeEmails(body, user.email);
+      // Keep the legacy column populated with the first assignee for one
+      // release so older code paths (e.g. cached UIs) still see a value.
+      const legacyAssignee = assignees[0] || null;
       await sql`
         INSERT INTO tasks (id, deal_id, contact_id, title, notes, due_at, assignee_email, created_by)
         VALUES (
@@ -511,10 +591,11 @@ async function tasksRoute(req, res, id, action, user) {
           ${title},
           ${trimOrNull(body.notes)},
           ${body.dueAt ? new Date(body.dueAt).toISOString() : null},
-          ${trimOrNull(body.assigneeEmail) || user.email},
+          ${legacyAssignee},
           ${user.email || null}
         )
       `;
+      await setTaskAssignees(newId, assignees);
       // Surface task creation on the deal's timeline.
       if (body.dealId) {
         await sql`
@@ -523,8 +604,7 @@ async function tasksRoute(req, res, id, action, user) {
         `;
         await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${body.dealId}`;
       }
-      const rows = await sql`SELECT * FROM tasks WHERE id = ${newId}`;
-      return res.status(201).json(serialiseTask(rows[0]));
+      return res.status(201).json(await loadTask(newId));
     }
     return res.status(405).end();
   }
@@ -550,19 +630,25 @@ async function tasksRoute(req, res, id, action, user) {
       `;
       await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${deal_id}`;
     }
-    const rows = await sql`SELECT * FROM tasks WHERE id = ${id}`;
-    return res.status(200).json(serialiseTask(rows[0]));
+    return res.status(200).json(await loadTask(id));
   }
 
   if (req.method === 'PATCH') {
     const body = req.body || {};
     const cur = (await sql`SELECT * FROM tasks WHERE id = ${id}`)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
+    // Only touch assignees if the caller explicitly sent the field — partial
+    // PATCHes that omit it must not wipe assignments.
+    const assigneeKeyPresent = 'assigneeEmails' in body || 'assigneeEmail' in body;
+    const nextAssignees = assigneeKeyPresent ? readAssigneeEmails(body, null) : null;
+    const legacyAssigneeNext = assigneeKeyPresent
+      ? (nextAssignees[0] || null)
+      : cur.assignee_email;
     const next = {
       title:           'title'         in body ? (trimOrNull(body.title) || cur.title) : cur.title,
       notes:           'notes'         in body ? trimOrNull(body.notes) : cur.notes,
       due_at:          'dueAt'         in body ? (body.dueAt ? new Date(body.dueAt).toISOString() : null) : cur.due_at,
-      assignee_email:  'assigneeEmail' in body ? (trimOrNull(body.assigneeEmail) || null) : cur.assignee_email,
+      assignee_email:  legacyAssigneeNext,
       contact_id:      'contactId'     in body ? (trimOrNull(body.contactId) || null) : cur.contact_id,
       done_at:         'done'          in body ? (body.done ? (cur.done_at || new Date().toISOString()) : null) : cur.done_at,
     };
@@ -577,8 +663,10 @@ async function tasksRoute(req, res, id, action, user) {
         reminded_at = CASE WHEN ${next.due_at} IS DISTINCT FROM ${cur.due_at} THEN NULL ELSE reminded_at END
       WHERE id = ${id}
     `;
-    const rows = await sql`SELECT * FROM tasks WHERE id = ${id}`;
-    return res.status(200).json(serialiseTask(rows[0]));
+    if (assigneeKeyPresent) {
+      await setTaskAssignees(id, nextAssignees);
+    }
+    return res.status(200).json(await loadTask(id));
   }
 
   if (req.method === 'DELETE') {
@@ -590,6 +678,10 @@ async function tasksRoute(req, res, id, action, user) {
 }
 
 function serialiseTask(r) {
+  const joined = Array.isArray(r.assignee_emails) ? r.assignee_emails.filter(Boolean) : [];
+  // Fallback to the legacy column only when the join table is empty for this
+  // task. The cleanup migration drops the column once this branch goes cold.
+  const emails = joined.length ? joined : (r.assignee_email ? [r.assignee_email] : []);
   return {
     id: r.id,
     dealId: r.deal_id || null,
@@ -597,7 +689,8 @@ function serialiseTask(r) {
     title: r.title,
     notes: r.notes || null,
     dueAt: r.due_at || null,
-    assigneeEmail: r.assignee_email || null,
+    assigneeEmails: emails,
+    assigneeEmail: emails[0] || null, // legacy field for one release
     doneAt: r.done_at || null,
     remindedAt: r.reminded_at || null,
     createdAt: r.created_at,
@@ -676,6 +769,52 @@ async function triageRoute(req, res, id, action, user) {
   return res.status(404).json({ error: 'Unknown triage action' });
 }
 
+// -------------------- Emails (full body lookup) --------------------
+
+// GET /api/crm/emails/:gmailMessageId — returns one full email message
+// including body_html / body_text. Lazy-loaded by the deal detail UI when the
+// user clicks an email row, so we don't bloat the deal payload with N×8KB
+// HTML bodies. Authorization: caller must own the message OR the message's
+// thread must be attached to at least one deal (workspace is single-tenant,
+// so any deal access = visibility).
+async function emailsRoute(req, res, id, action, user) {
+  if (req.method !== 'GET') return res.status(405).end();
+  if (!id) return res.status(400).json({ error: 'gmailMessageId required' });
+
+  const rows = await sql`
+    SELECT em.gmail_message_id, em.gmail_thread_id, em.user_email,
+           em.from_email, em.to_emails, em.cc_emails,
+           em.subject, em.snippet, em.body_html, em.body_text,
+           em.direction, em.sent_at
+    FROM email_messages em
+    WHERE em.gmail_message_id = ${id}
+  `;
+  if (!rows.length) return res.status(404).json({ error: 'Not found' });
+  const em = rows[0];
+
+  if (em.user_email !== user.email) {
+    const linked = await sql`
+      SELECT 1 FROM email_thread_deals WHERE gmail_thread_id = ${em.gmail_thread_id} LIMIT 1
+    `;
+    if (!linked.length) return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  return res.status(200).json({
+    gmailMessageId: em.gmail_message_id,
+    gmailThreadId: em.gmail_thread_id,
+    userEmail: em.user_email,
+    fromEmail: em.from_email || null,
+    toEmails: em.to_emails || [],
+    ccEmails: em.cc_emails || [],
+    subject: em.subject || null,
+    snippet: em.snippet || null,
+    bodyHtml: em.body_html || null,
+    bodyText: em.body_text || null,
+    direction: em.direction,
+    sentAt: em.sent_at,
+  });
+}
+
 // -------------------- Cron: task reminders --------------------
 
 async function cronHandler(req, res, action) {
@@ -706,7 +845,9 @@ async function cronTaskReminders(res) {
   // Vercel Hobby's 1-cron-per-day limit; on Pro this can move to */15.
   const due = await sql`
     SELECT t.id, t.title, t.due_at, t.assignee_email, t.deal_id, t.notes,
-           d.title AS deal_title
+           d.title AS deal_title,
+           (SELECT COALESCE(ARRAY_AGG(ta.user_email), '{}')
+            FROM task_assignees ta WHERE ta.task_id = t.id) AS assignees
     FROM tasks t
     LEFT JOIN deals d ON d.id = t.deal_id
     WHERE t.done_at IS NULL
@@ -719,7 +860,11 @@ async function cronTaskReminders(res) {
 
   let sent = 0;
   for (const t of due) {
-    if (!t.assignee_email) continue;
+    // Prefer the join table; fall back to legacy single column for any task
+    // that pre-dates the multi-assignee migration and hasn't been re-saved.
+    const joined = Array.isArray(t.assignees) ? t.assignees.filter(Boolean) : [];
+    const recipients = joined.length ? joined : (t.assignee_email ? [t.assignee_email] : []);
+    if (!recipients.length) continue;
     const dueLabel = new Date(t.due_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
     const dealLink = t.deal_id ? `${APP_URL}/?deal=${encodeURIComponent(t.deal_id)}` : APP_URL;
     const subject = `Reminder: ${t.title}`;
@@ -730,12 +875,21 @@ async function cronTaskReminders(res) {
       <p style="margin:16px 0 0;"><a href="${dealLink}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open in Squideo</a></p>
     `;
     const text = `Reminder: ${t.title} — due ${dueLabel}${t.deal_title ? ' (deal: ' + t.deal_title + ')' : ''}. ${dealLink}`;
-    try {
-      await sendMail({ to: t.assignee_email, subject, html, text });
+    // Fan out in parallel — Resend rate limits are well above our team size.
+    const results = await Promise.allSettled(
+      recipients.map(to => sendMail({ to, subject, html, text }))
+    );
+    const anySent = results.some(r => r.status === 'fulfilled');
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') {
+        console.error('[cron task-reminders] send failed', { taskId: t.id, to: recipients[i], err: r.reason });
+      }
+    });
+    if (anySent) {
+      // Stamp once per task — we don't track per-assignee delivery state on
+      // purpose; if one address bounces, the team coordinates in-app.
       await sql`UPDATE tasks SET reminded_at = NOW() WHERE id = ${t.id}`;
       sent++;
-    } catch (err) {
-      console.error('[cron task-reminders] send failed', { taskId: t.id, err });
     }
   }
 

@@ -415,6 +415,28 @@ You should see a success message. Your database is now ready.
 > ALTER TABLE gmail_accounts ADD COLUMN IF NOT EXISTS backfill_completed_at TIMESTAMPTZ;
 > ```
 
+> **CRM Phase 3.5 (multi-assignee tasks)** — Replaces the single `tasks.assignee_email` column with a join table so a task can have any number of assignees. Backfills the existing single-assignment data into the join table. `tasks.assignee_email` is retained for one release as a read fallback; drop it in a follow-up migration (commented out below) once you've confirmed the new UI is deployed and stable.
+> ```sql
+> CREATE TABLE IF NOT EXISTS task_assignees (
+>   task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+>   user_email  TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+>   assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+>   PRIMARY KEY (task_id, user_email)
+> );
+> CREATE INDEX IF NOT EXISTS idx_task_assignees_user ON task_assignees(user_email);
+>
+> -- Backfill existing single-assignee rows into the join table.
+> INSERT INTO task_assignees (task_id, user_email)
+> SELECT id, assignee_email
+> FROM tasks
+> WHERE assignee_email IS NOT NULL
+> ON CONFLICT DO NOTHING;
+>
+> -- Follow-up migration (run AFTER the new UI has been live for a release):
+> -- DROP INDEX IF EXISTS idx_tasks_assignee;
+> -- ALTER TABLE tasks DROP COLUMN IF EXISTS assignee_email;
+> ```
+
 6. Click **Dashboard** in the top left, then find the **"Connection string"** section
 7. Copy the connection string — it looks like:
    ```

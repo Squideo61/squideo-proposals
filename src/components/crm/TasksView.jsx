@@ -3,6 +3,7 @@ import { ArrowLeft, CheckSquare, Plus, Square, Trash2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
+import { AvatarGroup } from '../Avatar.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 
 export function TasksView({ onBack, onOpenDeal }) {
@@ -85,6 +86,9 @@ function TaskRow({ task, actions, state, onOpenDeal, onEdit }) {
   const Icon = done ? CheckSquare : Square;
   const deal = task.dealId ? state.deals[task.dealId] : null;
   const stop = (e) => e.stopPropagation();
+  const assignees = Array.isArray(task.assigneeEmails) && task.assigneeEmails.length
+    ? task.assigneeEmails
+    : (task.assigneeEmail ? [task.assigneeEmail] : []);
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 16px', borderTop: '1px solid ' + BRAND.border }}>
       <button onClick={() => actions.toggleTask(task.id)} className="btn-icon" style={{ padding: 4, border: 'none', background: 'transparent' }} aria-label={done ? 'Mark not done' : 'Mark done'}>
@@ -107,10 +111,14 @@ function TaskRow({ task, actions, state, onOpenDeal, onEdit }) {
               · {deal.title}
             </span>
           )}
-          {task.assigneeEmail && <span>· {task.assigneeEmail}</span>}
         </div>
         {task.notes && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>{task.notes}</div>}
       </button>
+      {assignees.length > 0 && (
+        <div style={{ flexShrink: 0, alignSelf: 'center' }}>
+          <AvatarGroup emails={assignees} max={3} size={24} />
+        </div>
+      )}
       <button
         onClick={(e) => { stop(e); if (window.confirm('Delete this task?')) actions.deleteTask(task.id); }}
         className="btn-icon is-danger"
