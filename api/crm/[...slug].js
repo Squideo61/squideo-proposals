@@ -910,42 +910,125 @@ async function cronTaskReminders(res) {
   return res.status(200).json({ ok: true, found: due.length, sent });
 }
 
-// Renew Gmail watches that are within 24 hours of expiring (Gmail watches
-// last ~7 days). Spreads the work daily so we never have a flood. Best-
-// effort per account so one failure doesn't block the others.
+// Daily Gmail housekeeping: (1) renew watches within 24h of expiring (Gmail
+// watches die at ~7 days), and (2) run a poll-fallback sync for any account
+// whose Pub/Sub push has gone quiet for >2h. Both jobs share an iteration of
+// `gmail_accounts` so we don't pay for two separate crons (Hobby cap = 1/day
+// per cron, and we'd rather not consume two slots).
+//
+// Best-effort per account — one user's failure doesn't block the rest.
 async function cronGmailWatchRenew(res) {
-  const due = await sql`
-    SELECT user_email, pubsub_topic
+  const accounts = await sql`
+    SELECT user_email, pubsub_topic, history_id, watch_expires_at, last_pushed_at
     FROM gmail_accounts
     WHERE disconnected_at IS NULL
-      AND (watch_expires_at IS NULL OR watch_expires_at < NOW() + INTERVAL '24 hours')
   `;
+
   let renewed = 0;
-  let failed = 0;
-  for (const row of due) {
-    const topic = row.pubsub_topic || process.env.GMAIL_PUBSUB_TOPIC;
-    if (!topic) {
-      console.warn('[cron watch-renew] no topic configured for', row.user_email);
+  let renewFailed = 0;
+  let polled = 0;
+  let pollFailed = 0;
+  let pollIngested = 0;
+
+  for (const row of accounts) {
+    const watchDue = !row.watch_expires_at || new Date(row.watch_expires_at).getTime() < Date.now() + 24 * 60 * 60 * 1000;
+    const pushStale = !row.last_pushed_at || (Date.now() - new Date(row.last_pushed_at).getTime()) > 2 * 60 * 60 * 1000;
+
+    if (!watchDue && !pushStale) continue;
+
+    let accessToken;
+    try {
+      accessToken = await getFreshAccessToken(row.user_email);
+    } catch (err) {
+      console.error('[cron gmail housekeeping] cannot acquire access token', { user: row.user_email, err: err.message });
+      renewFailed++;
       continue;
     }
-    try {
-      const accessToken = await getFreshAccessToken(row.user_email);
-      const watch = await registerWatch(accessToken, topic);
-      await sql`
-        UPDATE gmail_accounts
-           SET watch_expires_at = ${watch.expiration ? new Date(watch.expiration).toISOString() : null},
-               history_id = COALESCE(history_id, ${watch.historyId}),
-               pubsub_topic = ${topic},
-               updated_at = NOW()
-         WHERE user_email = ${row.user_email}
-      `;
-      renewed++;
-    } catch (err) {
-      console.error('[cron watch-renew] failed for', row.user_email, err.message);
-      failed++;
+
+    // ---- 1. Watch renewal ----
+    if (watchDue) {
+      const topic = row.pubsub_topic || process.env.GMAIL_PUBSUB_TOPIC;
+      if (!topic) {
+        console.warn('[cron watch-renew] no topic configured for', row.user_email);
+      } else {
+        try {
+          const watch = await registerWatch(accessToken, topic);
+          await sql`
+            UPDATE gmail_accounts
+               SET watch_expires_at = ${watch.expiration ? new Date(watch.expiration).toISOString() : null},
+                   history_id = COALESCE(history_id, ${watch.historyId}),
+                   pubsub_topic = ${topic},
+                   updated_at = NOW()
+             WHERE user_email = ${row.user_email}
+          `;
+          renewed++;
+        } catch (err) {
+          console.error('[cron watch-renew] failed for', row.user_email, err.message);
+          renewFailed++;
+        }
+      }
+    }
+
+    // ---- 2. Poll-fallback (only if Pub/Sub looks dead and we have a watermark) ----
+    if (pushStale && row.history_id) {
+      try {
+        const result = await syncHistory({
+          userEmail: row.user_email,
+          accessToken,
+          fromHistoryId: row.history_id,
+        });
+        // Advance the watermark so the next sync doesn't reprocess.
+        if (result.latestHistoryId && result.latestHistoryId !== row.history_id) {
+          await sql`
+            UPDATE gmail_accounts
+               SET history_id = ${result.latestHistoryId},
+                   last_pushed_at = NOW(),
+                   updated_at = NOW()
+             WHERE user_email = ${row.user_email}
+          `;
+        }
+        polled++;
+        pollIngested += result.ingested || 0;
+      } catch (err) {
+        if (err.code === 'HISTORY_GONE') {
+          // Watermark expired (Gmail keeps ~7 days of history). The watch
+          // renew above will have just set a fresh historyId, but if we
+          // skipped renewal for some reason, force a fresh registration so
+          // the next push has a valid starting point.
+          console.warn('[cron poll-fallback] history gone — resetting watermark for', row.user_email);
+          try {
+            const topic = row.pubsub_topic || process.env.GMAIL_PUBSUB_TOPIC;
+            if (topic) {
+              const watch = await registerWatch(accessToken, topic);
+              await sql`
+                UPDATE gmail_accounts
+                   SET history_id = ${watch.historyId},
+                       watch_expires_at = ${watch.expiration ? new Date(watch.expiration).toISOString() : null},
+                       updated_at = NOW()
+                 WHERE user_email = ${row.user_email}
+              `;
+            }
+          } catch (innerErr) {
+            console.error('[cron poll-fallback] watch reset failed', innerErr.message);
+            pollFailed++;
+          }
+        } else {
+          console.error('[cron poll-fallback] failed for', row.user_email, err.message);
+          pollFailed++;
+        }
+      }
     }
   }
-  return res.status(200).json({ ok: true, considered: due.length, renewed, failed });
+
+  return res.status(200).json({
+    ok: true,
+    considered: accounts.length,
+    watchRenewed: renewed,
+    watchFailed: renewFailed,
+    polled,
+    pollIngested,
+    pollFailed,
+  });
 }
 
 function escapeHtml(s) {
@@ -967,20 +1050,60 @@ async function gmailRoute(req, res, id, action, user) {
     if (req.method !== 'GET') return res.status(405).end();
     const rows = await sql`
       SELECT gmail_address, scopes, connected_at, disconnected_at, history_id,
-             backfill_started_at, backfill_completed_at, backfill_ingested
+             backfill_started_at, backfill_completed_at, backfill_ingested,
+             last_pushed_at
       FROM gmail_accounts WHERE user_email = ${user.email}
     `;
     if (!rows.length || rows[0].disconnected_at) {
       return res.status(200).json({ connected: false });
     }
+    const row = rows[0];
+
+    // Opportunistic poll-fallback: if a push hasn't arrived for >2h, kick off
+    // a background sync so this user sees fresh mail within ~5 seconds even
+    // if Pub/Sub silently dropped them. We rate-limit by stamping
+    // last_pushed_at on success so we don't spam Gmail's history API.
+    const pushAgeMs = row.last_pushed_at
+      ? Date.now() - new Date(row.last_pushed_at).getTime()
+      : Infinity;
+    if (row.history_id && pushAgeMs > 2 * 60 * 60 * 1000) {
+      waitUntil((async () => {
+        try {
+          const accessToken = await getFreshAccessToken(user.email);
+          const result = await syncHistory({
+            userEmail: user.email,
+            accessToken,
+            fromHistoryId: row.history_id,
+          });
+          if (result.latestHistoryId && result.latestHistoryId !== row.history_id) {
+            await sql`
+              UPDATE gmail_accounts
+                 SET history_id = ${result.latestHistoryId},
+                     last_pushed_at = NOW(),
+                     updated_at = NOW()
+               WHERE user_email = ${user.email}
+            `;
+          } else {
+            // Even if no new messages, stamp last_pushed_at so we don't poll
+            // again on the next request — the next sweep gives Pub/Sub another
+            // 2 hours to deliver before we bother Gmail's API again.
+            await sql`UPDATE gmail_accounts SET last_pushed_at = NOW() WHERE user_email = ${user.email}`;
+          }
+        } catch (err) {
+          console.warn('[gmail inline poll-fallback]', user.email, err.message);
+        }
+      })());
+    }
+
     return res.status(200).json({
       connected: true,
-      gmailAddress: rows[0].gmail_address,
-      scopes: rows[0].scopes,
-      connectedAt: rows[0].connected_at,
-      backfillStartedAt: rows[0].backfill_started_at || null,
-      backfillCompletedAt: rows[0].backfill_completed_at || null,
-      backfillIngested: rows[0].backfill_ingested ?? 0,
+      gmailAddress: row.gmail_address,
+      scopes: row.scopes,
+      connectedAt: row.connected_at,
+      backfillStartedAt: row.backfill_started_at || null,
+      backfillCompletedAt: row.backfill_completed_at || null,
+      backfillIngested: row.backfill_ingested ?? 0,
+      lastPushedAt: row.last_pushed_at || null,
     });
   }
 
