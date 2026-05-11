@@ -7,6 +7,7 @@ import { createRoot } from 'react-dom/client';
 import InboxSDK from '@inboxsdk/core';
 import { Sidebar } from './Sidebar.jsx';
 import { chipResolver } from './chipResolver.js';
+import { installBoxesNav } from './BoxesNav.jsx';
 import { auth } from '../lib/api.js';
 
 // Pipeline-stage palette mirrored from src/theme.js. Used by the inbox-row
@@ -68,6 +69,13 @@ async function main() {
   ]);
   console.log('[Squideo] InboxSDK loaded');
   paintDebugBanner('Squideo InboxSDK loaded — waiting for thread to open', '#16A34A');
+
+  // -------- Boxes left-nav + per-deal RouteView --------
+  // Adds a "Squideo Deals" section to Gmail's left nav listing all open
+  // deals, plus a custom in-Gmail route that shows every thread on a deal.
+  if (status.connected) {
+    installBoxesNav(sdk).catch(err => console.warn('[Squideo] BoxesNav install failed', err));
+  }
 
   // -------- Inbox-row chips --------
   // Every thread row in any inbox/search/label view gets its deal chip(s)
