@@ -25,41 +25,14 @@ const STAGE_COLOURS = {
 
 const INBOXSDK_APP_ID = 'sdk_SquideoCRM_398be07a2b';
 
-// Proof-of-life beacon. If we see this in the console, the content script
-// is being injected. If we don't, Chrome isn't running content.js at all.
-console.log('[Squideo] content script booted', { url: location.href });
-
-// Visible DOM beacon so we know the script ran even without devtools.
-// Removed after the first sidebar renders successfully.
-function paintDebugBanner(text, colour) {
-  let el = document.getElementById('squideo-debug-banner');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'squideo-debug-banner';
-    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999999;padding:6px 10px;font:600 12px -apple-system,system-ui,sans-serif;color:white;text-align:center;';
-    document.body.appendChild(el);
-  }
-  el.style.background = colour;
-  el.textContent = text;
-}
-function removeDebugBanner() {
-  const el = document.getElementById('squideo-debug-banner');
-  if (el) el.remove();
-}
-
-paintDebugBanner('Squideo content script loaded — initialising…', '#2BB8E6');
-
 async function main() {
   // Soft-check auth state. Sidebar still renders if disconnected — it just
   // shows a prompt to click the extension icon to sign in. The threadView
   // handler below short-circuits the API calls when disconnected.
   const status = await auth.status().catch(() => ({ connected: false }));
-  console.log('[Squideo] auth status', status);
 
-  paintDebugBanner('Squideo loading InboxSDK…', '#2BB8E6');
-  // InboxSDK.load downloads its platform runtime from inboxsdk.com. If that's
-  // blocked (CSP, network filter, enterprise policy) the promise hangs
-  // forever. A timeout race forces a visible failure so we know WHY it stuck.
+  // 15s race so a hung InboxSDK.load (CSP/network/firewall on inboxsdk.com)
+  // fails loudly instead of silently waiting forever.
   const sdk = await Promise.race([
     InboxSDK.load(2, INBOXSDK_APP_ID, { suppressAddonTitle: 'Squideo' }),
     new Promise((_, reject) => setTimeout(
@@ -67,8 +40,6 @@ async function main() {
       15000,
     )),
   ]);
-  console.log('[Squideo] InboxSDK loaded');
-  paintDebugBanner('Squideo InboxSDK loaded — waiting for thread to open', '#16A34A');
 
   // -------- Boxes left-nav + per-deal RouteView --------
   // Adds a "Squideo Deals" section to Gmail's left nav listing all open
@@ -86,7 +57,16 @@ async function main() {
       try {
         const threadId = await threadRowView.getThreadIDAsync();
         if (!threadId) return;
-        const deals = await chipResolver.resolve(threadId);
+        // Sender emails are pulled synchronously off the DOM so we always
+        // have them in time for the batch flush. Used by the server as a
+        // contact-match fallback when there's no explicit thread→deal row.
+        let senderEmails = [];
+        try {
+          senderEmails = (threadRowView.getContacts() || [])
+            .map(c => c?.emailAddress)
+            .filter(Boolean);
+        } catch { /* getContacts isn't available in every Gmail UI variant */ }
+        const deals = await chipResolver.resolve(threadId, senderEmails);
         if (!deals || !deals.length) return;
         // Up to 2 chips per row to avoid clutter. The sidebar shows the rest
         // when the user actually opens the thread.
@@ -109,8 +89,6 @@ async function main() {
   }
 
   sdk.Conversations.registerThreadViewHandler(async (threadView) => {
-    console.log('[Squideo] threadView handler firing');
-    removeDebugBanner();
     // Each rendered DOM container is owned by its sidebar React root, so
     // we capture both and tear them down when InboxSDK destroys the panel
     // (happens on thread close or navigation).
@@ -173,5 +151,4 @@ function renderConnectedFallback(root, message) {
 
 main().catch((err) => {
   console.error('[Squideo extension] failed to start', err);
-  paintDebugBanner('Squideo failed to start: ' + (err?.message || err), '#DC2626');
 });

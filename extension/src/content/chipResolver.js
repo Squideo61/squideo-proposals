@@ -4,8 +4,13 @@
 // handler once per row, so naive "one fetch per row" would hammer the
 // server with 50 parallel requests on every inbox render. This resolver
 // collects requests in a short debounce window and issues a single
-// /api/crm/threads/by-thread-ids?ids=... batch call, then distributes the
-// results to all callers.
+// POST /api/crm/threads/resolve batch call, then distributes the results
+// to all callers.
+//
+// Each call passes both the gmail thread id AND the row's sender emails.
+// The server tries explicit links first; if none, falls back to "is this
+// sender on a contact attached to a deal?" — so every inbox row from a
+// known contact gets a chip, not just ones that were already attached.
 //
 // Cache: per-threadId results are memoised for `cacheTtlMs`. After a
 // mutation (attach/detach via the sidebar), call `invalidate(threadId)` so
@@ -15,7 +20,7 @@ import { api } from '../lib/api.js';
 
 export function createChipResolver({ debounceMs = 150, maxBatch = 50, cacheTtlMs = 60_000 } = {}) {
   const cache = new Map();        // threadId -> { result, fetchedAt }
-  const pending = new Map();      // threadId -> [resolve fn, ...]
+  const pending = new Map();      // threadId -> { senderEmails: Set, callbacks: [fn] }
   let flushTimer = null;
 
   function scheduleFlush() {
@@ -36,36 +41,45 @@ export function createChipResolver({ debounceMs = 150, maxBatch = 50, cacheTtlMs
     if (!batchPending.size) return;
     // Swap to a fresh map for the next batch BEFORE awaiting so requests
     // arriving while we're in flight queue up cleanly.
-    const batch = Array.from(batchPending.keys());
+    const items = Array.from(batchPending, ([threadId, entry]) => ({
+      threadId,
+      senderEmails: Array.from(entry.senderEmails),
+    }));
+    const callbacksByThread = new Map(
+      Array.from(batchPending, ([id, entry]) => [id, entry.callbacks])
+    );
     pending.clear();
     try {
-      const url = '/api/crm/threads/by-thread-ids?ids=' + batch.map(encodeURIComponent).join(',');
-      const result = await api.get(url) || {};
+      const result = await api.post('/api/crm/threads/resolve', { items }) || {};
       const now = Date.now();
-      for (const id of batch) {
-        const deals = Array.isArray(result[id]) ? result[id] : [];
-        cache.set(id, { result: deals, fetchedAt: now });
-        for (const cb of (batchPending.get(id) || [])) cb(deals);
+      for (const { threadId } of items) {
+        const deals = Array.isArray(result[threadId]) ? result[threadId] : [];
+        cache.set(threadId, { result: deals, fetchedAt: now });
+        for (const cb of (callbacksByThread.get(threadId) || [])) cb(deals);
       }
     } catch (err) {
       console.warn('[Squideo] chip resolver flush failed', err);
       // Resolve with empty arrays so consumers fall through gracefully.
-      for (const [, cbs] of batchPending) {
+      for (const [, cbs] of callbacksByThread) {
         for (const cb of cbs) cb([]);
       }
     }
   }
 
   return {
-    resolve(threadId) {
+    resolve(threadId, senderEmails = []) {
       const cached = cache.get(threadId);
       if (cached && (Date.now() - cached.fetchedAt) < cacheTtlMs) {
         return Promise.resolve(cached.result);
       }
       return new Promise((resolve) => {
-        const arr = pending.get(threadId) || [];
-        arr.push(resolve);
-        pending.set(threadId, arr);
+        let entry = pending.get(threadId);
+        if (!entry) {
+          entry = { senderEmails: new Set(), callbacks: [] };
+          pending.set(threadId, entry);
+        }
+        for (const e of senderEmails) if (e) entry.senderEmails.add(String(e).toLowerCase());
+        entry.callbacks.push(resolve);
         scheduleFlush();
       });
     },

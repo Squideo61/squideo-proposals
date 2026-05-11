@@ -987,6 +987,82 @@ async function threadsRoute(req, res, id, action, user) {
     return res.status(200).json(byThread);
   }
 
+  // Richer resolver used by the extension's chip renderer. Accepts a list
+  // of { threadId, senderEmails } items in the POST body. For threads with
+  // an explicit email_thread_deals row, returns that link (source:'explicit').
+  // For threads without a link but whose sender emails match a contact on
+  // an open deal, returns the matched deal(s) (source:'contact'). This is
+  // what gives the inbox a chip on EVERY email from a known contact, like
+  // Streak — without requiring every message to first pass through the
+  // auto-link resolver at ingestion time.
+  if (id === 'resolve') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!items.length) return res.status(200).json({});
+
+    const threadIds = items.map(i => i?.threadId).filter(Boolean);
+    const byThread = {};
+    const linkedThreads = new Set();
+
+    if (threadIds.length) {
+      const links = await sql`
+        SELECT etd.gmail_thread_id, etd.deal_id, d.title, d.stage
+        FROM email_thread_deals etd
+        JOIN deals d ON d.id = etd.deal_id
+        WHERE etd.gmail_thread_id = ANY(${threadIds})
+      `;
+      for (const link of links) {
+        if (!byThread[link.gmail_thread_id]) byThread[link.gmail_thread_id] = [];
+        byThread[link.gmail_thread_id].push({
+          dealId: link.deal_id, title: link.title, stage: link.stage, source: 'explicit',
+        });
+        linkedThreads.add(link.gmail_thread_id);
+      }
+    }
+
+    // Contact-based fallback for any thread that wasn't explicitly linked.
+    const unlinked = items.filter(i =>
+      i && i.threadId && !linkedThreads.has(i.threadId) &&
+      Array.isArray(i.senderEmails) && i.senderEmails.length
+    );
+    if (unlinked.length) {
+      const allEmails = Array.from(new Set(
+        unlinked.flatMap(i => i.senderEmails.map(e => String(e).toLowerCase()))
+      ));
+      const matches = await sql`
+        SELECT DISTINCT ON (LOWER(c.email), d.id)
+               LOWER(c.email) AS email,
+               d.id, d.title, d.stage, d.last_activity_at
+        FROM deals d
+        LEFT JOIN contacts pc ON pc.id = d.primary_contact_id
+        LEFT JOIN deal_contacts dc ON dc.deal_id = d.id
+        LEFT JOIN contacts c ON c.id = pc.id OR c.id = dc.contact_id
+        WHERE d.stage <> 'lost'
+          AND c.email IS NOT NULL
+          AND LOWER(c.email) = ANY(${allEmails})
+        ORDER BY LOWER(c.email), d.id, d.last_activity_at DESC NULLS LAST
+      `;
+      const dealsByEmail = {};
+      for (const m of matches) {
+        if (!dealsByEmail[m.email]) dealsByEmail[m.email] = [];
+        dealsByEmail[m.email].push({
+          dealId: m.id, title: m.title, stage: m.stage, source: 'contact',
+        });
+      }
+      for (const item of unlinked) {
+        const seen = new Map();
+        for (const email of item.senderEmails) {
+          for (const d of (dealsByEmail[String(email).toLowerCase()] || [])) {
+            if (!seen.has(d.dealId)) seen.set(d.dealId, d);
+          }
+        }
+        if (seen.size) byThread[item.threadId] = Array.from(seen.values()).slice(0, 3);
+      }
+    }
+
+    return res.status(200).json(byThread);
+  }
+
   // /api/crm/threads/:gmailThreadId  (DELETE with dealId in query)
   if (req.method === 'DELETE') {
     const dealId = trimOrNull(req.query.dealId);
