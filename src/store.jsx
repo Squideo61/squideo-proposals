@@ -77,7 +77,7 @@ function applyOptimisticAllocationChange(setState, clientKey, transform) {
 // tidier deal record can sit in state.deals (the Kanban list).
 function stripDetail(d) {
   if (!d) return d;
-  const { proposals, events, tasks, files, ...rest } = d;
+  const { proposals, events, tasks, files, comments, ...rest } = d;
   return rest;
 }
 
@@ -576,6 +576,38 @@ export function StoreProvider({ children }) {
     deleteTask(taskId) {
       setState(s => withTaskUpdate(s, taskId, () => null));
       return api.delete('/api/crm/tasks/' + encodeURIComponent(taskId)).catch(() => {});
+    },
+
+    // ---------- Deal comments ----------
+    createDealComment(dealId, body, parentId, mentions) {
+      return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/comments', { body, parentId: parentId || null, mentions: mentions || [] })
+        .then(comment => {
+          setState(s => {
+            const detail = s.dealDetail[dealId];
+            if (!detail) return s;
+            return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, comments: [...(detail.comments || []), comment] } } };
+          });
+          return comment;
+        });
+    },
+    editDealComment(commentId, dealId, body, mentions) {
+      return api.patch('/api/crm/comments/' + encodeURIComponent(commentId), { body, mentions: mentions || [] })
+        .then(updated => {
+          setState(s => {
+            const detail = s.dealDetail[dealId];
+            if (!detail) return s;
+            return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, comments: (detail.comments || []).map(c => c.id === commentId ? updated : c) } } };
+          });
+          return updated;
+        });
+    },
+    deleteDealComment(commentId, dealId) {
+      setState(s => {
+        const detail = s.dealDetail[dealId];
+        if (!detail) return s;
+        return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, comments: (detail.comments || []).filter(c => c.id !== commentId) } } };
+      });
+      return api.delete('/api/crm/comments/' + encodeURIComponent(commentId)).catch(() => {});
     },
 
     // ---------- Gmail integration ----------

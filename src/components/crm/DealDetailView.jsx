@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Mail, Phone, Plus, Square, Trash2, User, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Mail, MessageSquare, Phone, Plus, Square, Trash2, User, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -21,6 +21,8 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
   const [openEmailId, setOpenEmailId] = useState(null);
   const [askLost, setAskLost] = useState(false);
   const [prefillTitle, setPrefillTitle] = useState('');
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [editingCommentId, setEditingCommentId] = useState(null);
 
   useEffect(() => {
     if (dealId) actions.loadDealDetail(dealId);
@@ -45,6 +47,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
   const events = detail?.events || [];
   const tasks = detail?.tasks || [];
   const emails = detail?.emails || [];
+  const comments = detail?.comments || [];
 
   const overdueTasks  = tasks.filter(t => isTaskOverdue(t));
   const upcomingTasks = tasks.filter(t => !t.doneAt && !isTaskOverdue(t));
@@ -191,6 +194,44 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
             ))}
           </div>
         </Card>
+
+        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+          <Card title="Comments" count={comments.length}>
+            <CommentThread
+              comments={comments}
+              session={state.session}
+              replyingTo={replyingTo}
+              editingCommentId={editingCommentId}
+              onReply={(id) => { setReplyingTo(id); setEditingCommentId(null); }}
+              onCancelReply={() => setReplyingTo(null)}
+              onEdit={(id) => { setEditingCommentId(id); setReplyingTo(null); }}
+              onCancelEdit={() => setEditingCommentId(null)}
+              onSubmitEdit={(commentId, body, mentions) => {
+                actions.editDealComment(commentId, dealId, body, mentions)
+                  .then(() => setEditingCommentId(null))
+                  .catch(() => {});
+              }}
+              onDelete={(commentId) => {
+                if (window.confirm('Delete this comment?')) {
+                  actions.deleteDealComment(commentId, dealId);
+                }
+              }}
+              onSubmitReply={(body, mentions) => {
+                actions.createDealComment(dealId, body, replyingTo, mentions)
+                  .then(() => setReplyingTo(null))
+                  .catch(() => {});
+              }}
+              dealId={dealId}
+            />
+            <div style={{ marginTop: comments.length > 0 ? 12 : 0, paddingTop: comments.length > 0 ? 12 : 0, borderTop: comments.length > 0 ? '1px solid ' + BRAND.border : 'none' }}>
+              <CommentInput
+                users={state.users}
+                placeholder="Add a comment…"
+                onSubmit={(body, mentions) => actions.createDealComment(dealId, body, null, mentions)}
+              />
+            </div>
+          </Card>
+        </div>
       </div>
 
       {editing && <EditDealModal deal={deal} onClose={() => setEditing(false)} />}
@@ -720,6 +761,329 @@ function AttachmentRow({ attachment, dealId, gmailMessageId }) {
           {saved ? 'Added ✓' : saving ? 'Adding…' : '+ Add to files'}
         </button>
       )}
+    </div>
+  );
+}
+
+// -------------------- Comments --------------------
+
+function renderCommentBody(body, mentions) {
+  if (!mentions || !mentions.length) return body;
+  // Highlight @Name tokens that correspond to a mentioned email's name.
+  // We split on word boundaries around @ so plain text is preserved.
+  const parts = body.split(/(@\S+)/g);
+  return parts.map((part, i) => {
+    if (!part.startsWith('@')) return part;
+    const nameToken = part.slice(1).toLowerCase();
+    const matched = mentions.some(email => {
+      const name = email.split('@')[0].toLowerCase();
+      return nameToken.startsWith(name.replace(/\./g, '').slice(0, 5));
+    });
+    if (!matched) return part;
+    return (
+      <span key={i} style={{ color: BRAND.blue, fontWeight: 600 }}>{part}</span>
+    );
+  });
+}
+
+function CommentRow({ comment, session, isReply, replyingTo, editingCommentId, onReply, onCancelReply, onEdit, onCancelEdit, onSubmitEdit, onDelete, onSubmitReply, users }) {
+  const [hover, setHover] = useState(false);
+  const isMine = session?.email === comment.createdBy;
+  const isAdmin = session?.role === 'admin';
+  const isEditing = editingCommentId === comment.id;
+  const isReplying = replyingTo === comment.id;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 8,
+        paddingLeft: isReply ? 28 : 0,
+        borderLeft: isReply ? '2px solid ' + BRAND.border : 'none',
+        marginLeft: isReply ? 16 : 0,
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <div style={{ flexShrink: 0, marginTop: 2 }}>
+        <Avatar email={comment.createdBy} size={24} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{comment.authorName || comment.createdBy}</span>
+          <span style={{ fontSize: 11, color: BRAND.muted }}>{formatRelativeTime(comment.createdAt)}{comment.updatedAt ? ' · edited' : ''}</span>
+          {(hover || isEditing || isReplying) && !isEditing && (
+            <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+              {!isReply && (
+                <button
+                  onClick={() => isReplying ? onCancelReply() : onReply(comment.id)}
+                  style={{ padding: '2px 6px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 11, color: BRAND.muted, fontFamily: 'inherit', borderRadius: 4 }}
+                  title="Reply"
+                >
+                  Reply
+                </button>
+              )}
+              {(isMine || isAdmin) && (
+                <>
+                  <button
+                    onClick={() => onEdit(comment.id)}
+                    style={{ padding: '2px 6px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 11, color: BRAND.muted, fontFamily: 'inherit', borderRadius: 4 }}
+                    title="Edit"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => onDelete(comment.id)}
+                    style={{ padding: '2px 6px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 11, color: '#DC2626', fontFamily: 'inherit', borderRadius: 4 }}
+                    title="Delete"
+                  >
+                    Delete
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+        {isEditing ? (
+          <CommentInput
+            users={users}
+            initialBody={comment.body}
+            initialMentions={comment.mentions || []}
+            placeholder="Edit comment…"
+            submitLabel="Save"
+            onSubmit={(body, mentions) => onSubmitEdit(comment.id, body, mentions)}
+            onCancel={onCancelEdit}
+          />
+        ) : (
+          <div style={{ fontSize: 13, color: BRAND.ink, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {renderCommentBody(comment.body, comment.mentions)}
+          </div>
+        )}
+        {isReplying && (
+          <div style={{ marginTop: 8 }}>
+            <CommentInput
+              users={users}
+              placeholder={'Reply to ' + (comment.authorName || comment.createdBy) + '…'}
+              submitLabel="Reply"
+              onSubmit={onSubmitReply}
+              onCancel={onCancelReply}
+              autoFocus
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CommentThread({ comments, session, replyingTo, editingCommentId, onReply, onCancelReply, onEdit, onCancelEdit, onSubmitEdit, onDelete, onSubmitReply, dealId }) {
+  const { state } = useStore();
+  const topLevel = comments.filter(c => !c.parentId);
+  const replies = comments.filter(c => !!c.parentId);
+
+  if (comments.length === 0) return <Empty text="No comments yet — be the first!" />;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {topLevel.map(comment => {
+        const childReplies = replies.filter(r => r.parentId === comment.id);
+        return (
+          <div key={comment.id}>
+            <CommentRow
+              comment={comment}
+              session={session}
+              isReply={false}
+              replyingTo={replyingTo}
+              editingCommentId={editingCommentId}
+              onReply={onReply}
+              onCancelReply={onCancelReply}
+              onEdit={onEdit}
+              onCancelEdit={onCancelEdit}
+              onSubmitEdit={onSubmitEdit}
+              onDelete={onDelete}
+              onSubmitReply={onSubmitReply}
+              users={state.users}
+            />
+            {childReplies.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+                {childReplies.map(reply => (
+                  <CommentRow
+                    key={reply.id}
+                    comment={reply}
+                    session={session}
+                    isReply={true}
+                    replyingTo={replyingTo}
+                    editingCommentId={editingCommentId}
+                    onReply={onReply}
+                    onCancelReply={onCancelReply}
+                    onEdit={onEdit}
+                    onCancelEdit={onCancelEdit}
+                    onSubmitEdit={onSubmitEdit}
+                    onDelete={onDelete}
+                    onSubmitReply={onSubmitReply}
+                    users={state.users}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function CommentInput({ users, placeholder = 'Add a comment…', initialBody = '', initialMentions = [], submitLabel = 'Comment', onSubmit, onCancel, autoFocus = false }) {
+  const [body, setBody] = useState(initialBody);
+  const [mentions, setMentions] = useState(initialMentions);
+  const [mentionQuery, setMentionQuery] = useState(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const textareaRef = useRef(null);
+
+  useEffect(() => {
+    if (autoFocus && textareaRef.current) textareaRef.current.focus();
+  }, [autoFocus]);
+
+  const userList = Object.values(users || {});
+
+  const filteredUsers = mentionQuery !== null
+    ? userList.filter(u => {
+        const q = mentionQuery.toLowerCase();
+        return (u.name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
+      }).slice(0, 5)
+    : [];
+
+  const handleChange = (e) => {
+    const val = e.target.value;
+    setBody(val);
+    const caret = e.target.selectionStart;
+    const textUpToCaret = val.slice(0, caret);
+    const match = textUpToCaret.match(/@(\w*)$/);
+    if (match) {
+      setMentionQuery(match[1]);
+      setMentionIndex(0);
+    } else {
+      setMentionQuery(null);
+    }
+  };
+
+  const insertMention = (selectedUser) => {
+    const caret = textareaRef.current?.selectionStart ?? body.length;
+    const textUpToCaret = body.slice(0, caret);
+    const textAfterCaret = body.slice(caret);
+    const replaced = textUpToCaret.replace(/@(\w*)$/, '@' + (selectedUser.name || selectedUser.email).split(' ')[0] + ' ');
+    setBody(replaced + textAfterCaret);
+    setMentions(prev => prev.includes(selectedUser.email) ? prev : [...prev, selectedUser.email]);
+    setMentionQuery(null);
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        const pos = replaced.length;
+        textareaRef.current.setSelectionRange(pos, pos);
+      }
+    }, 0);
+  };
+
+  const handleKeyDown = (e) => {
+    if (mentionQuery !== null && filteredUsers.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex(i => Math.min(i + 1, filteredUsers.length - 1)); return; }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setMentionIndex(i => Math.max(i - 1, 0)); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insertMention(filteredUsers[mentionIndex]); return; }
+      if (e.key === 'Escape') { setMentionQuery(null); return; }
+    }
+    if (e.key === 'Escape' && onCancel) { onCancel(); return; }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit(); }
+  };
+
+  const handleSubmit = async () => {
+    const trimmed = body.trim();
+    if (!trimmed || submitting) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(trimmed, mentions);
+      setBody('');
+      setMentions([]);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <textarea
+        ref={textareaRef}
+        value={body}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        rows={2}
+        disabled={submitting}
+        style={{
+          width: '100%',
+          border: '1px solid ' + BRAND.border,
+          borderRadius: 6,
+          padding: '8px 10px',
+          fontSize: 13,
+          fontFamily: 'inherit',
+          resize: 'vertical',
+          outline: 'none',
+          background: 'white',
+          color: BRAND.ink,
+          boxSizing: 'border-box',
+        }}
+      />
+      {mentionQuery !== null && filteredUsers.length > 0 && (
+        <div style={{
+          position: 'absolute',
+          bottom: '100%',
+          left: 0,
+          zIndex: 100,
+          background: 'white',
+          border: '1px solid ' + BRAND.border,
+          borderRadius: 6,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+          minWidth: 220,
+          overflow: 'hidden',
+          marginBottom: 4,
+        }}>
+          {filteredUsers.map((u, i) => (
+            <button
+              key={u.email}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); insertMention(u); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                width: '100%', padding: '8px 10px', border: 'none',
+                background: i === mentionIndex ? '#F0F7FF' : 'white',
+                cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+              }}
+            >
+              <Avatar email={u.email} size={20} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{u.name || u.email}</div>
+                {u.name && <div style={{ fontSize: 11, color: BRAND.muted }}>{u.email}</div>}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 6 }}>
+        {onCancel && (
+          <button type="button" onClick={onCancel} className="btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }}>
+            Cancel
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={!body.trim() || submitting}
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px' }}
+        >
+          {submitting ? 'Saving…' : submitLabel}
+        </button>
+      </div>
     </div>
   );
 }
