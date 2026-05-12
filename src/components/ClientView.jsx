@@ -587,7 +587,29 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
         </div>
 
         <PageTitle>Your Requirement</PageTitle>
-        <p style={{ fontSize: 14, lineHeight: 1.7, marginBottom: 12, fontWeight: 500, whiteSpace: 'pre-wrap' }}>{data.requirement}</p>
+        {videoOptions ? (
+          <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden', marginBottom: 16 }}>
+            {videoOptions.map((opt, i) => (
+              <label key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', borderBottom: i < videoOptions.length - 1 ? '1px solid ' + BRAND.border : 'none', cursor: signed ? 'default' : 'pointer', background: selectedVideoOptionIdx === i ? '#F0F9FF' : 'white' }}>
+                <input
+                  type="radio"
+                  name="videoOption"
+                  checked={selectedVideoOptionIdx === i}
+                  onChange={() => setSelectedVideoOptionIdx(i)}
+                  disabled={!!signed}
+                  style={{ marginTop: 3, flexShrink: 0 }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14, marginBottom: opt.description ? 6 : 0 }}>{opt.label || `Option ${i + 1}`}</div>
+                  {opt.description && <p style={{ fontSize: 14, lineHeight: 1.7, margin: 0, whiteSpace: 'pre-wrap', color: BRAND.text }}>{opt.description}</p>}
+                </div>
+                <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0, paddingTop: 2 }}>{formatGBP(opt.price)} <span style={{ fontWeight: 400, fontSize: 12, color: BRAND.muted }}>+ VAT</span></span>
+              </label>
+            ))}
+          </div>
+        ) : (
+          <p style={{ fontSize: 14, lineHeight: 1.7, marginBottom: 12, fontWeight: 500, whiteSpace: 'pre-wrap' }}>{data.requirement}</p>
+        )}
         {data.projectVision && (
           <>
             <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 20, marginBottom: 8 }}>Project Vision</h3>
@@ -615,24 +637,6 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
         })()}
 
         <PageTitle>Your Quote</PageTitle>
-        {videoOptions && (
-          <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 16 }}>
-            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>Choose your video option:</div>
-            {videoOptions.map((opt, i) => (
-              <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: i < videoOptions.length - 1 ? '1px solid ' + BRAND.border : 'none', cursor: signed ? 'default' : 'pointer' }}>
-                <input
-                  type="radio"
-                  name="videoOption"
-                  checked={selectedVideoOptionIdx === i}
-                  onChange={() => setSelectedVideoOptionIdx(i)}
-                  disabled={!!signed}
-                />
-                <span style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{opt.label || `Option ${i + 1}`}</span>
-                <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0 }}>{formatGBP(opt.price)} <span style={{ fontWeight: 400, fontSize: 12, color: BRAND.muted }}>+ VAT</span></span>
-              </label>
-            ))}
-          </div>
-        )}
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>What's included:</h3>
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 16 }}>
           {data.baseInclusions.map((inc, i) => {

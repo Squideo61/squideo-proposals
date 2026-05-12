@@ -67,7 +67,7 @@ function buildSectionMeta(data, isTemplate, issues) {
     {
       id: 'vision',
       label: 'Vision',
-      hint: truncate(data.requirement) || 'Empty',
+      hint: (data.videoOptions || []).length >= 2 ? `${data.videoOptions.length} options` : (truncate(data.requirement) || 'Empty'),
       hasIssues: (issues.vision || []).length > 0,
     },
     {
@@ -186,7 +186,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       !data.contactBusinessName?.trim() && 'Business name',
     ].filter(Boolean),
     vision: [
-      !data.requirement?.trim() && 'Requirement',
+      (data.videoOptions || []).length < 2 && !data.requirement?.trim() && 'Requirement',
     ].filter(Boolean),
     pricing: [
       !(data.basePrice > 0) && 'Base price must be greater than 0',
@@ -372,16 +372,95 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         collapsedHint={sectionMeta.find(s => s.id === 'vision')?.hint}
         {...sectionProps('vision')}
       >
-        <Field label="Requirement" error={!data.requirement?.trim()}>
-          <textarea
-            rows={10}
-            className="input"
-            style={{ minHeight: isMobile ? 100 : 200, resize: 'vertical' }}
-            value={data.requirement}
-            onChange={(e) => update({ requirement: e.target.value })}
-            placeholder={"1 x HD Animated explainer video - up to 60 seconds\n1 x Short social cutdown - 15 seconds"}
-          />
-        </Field>
+        {(data.videoOptions || []).length >= 2 ? (
+          <>
+            {data.videoOptions.map((opt, i) => (
+              <div key={i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, marginBottom: 12, background: BRAND.paper }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: BRAND.text }}>Option {i + 1}</div>
+                <Field label="Label (shown on radio button)">
+                  <input
+                    className="input"
+                    placeholder="e.g. 1-minute video"
+                    value={opt.label}
+                    onChange={(e) => {
+                      const next = [...data.videoOptions];
+                      next[i] = { ...next[i], label: e.target.value };
+                      update({ videoOptions: next });
+                    }}
+                  />
+                </Field>
+                <Field label="Description (free text shown to client)">
+                  <textarea
+                    rows={6}
+                    className="input"
+                    style={{ minHeight: isMobile ? 80 : 120, resize: 'vertical' }}
+                    placeholder={"1 x HD Animated explainer video - up to 60 seconds\n1 x Short social cutdown - 15 seconds"}
+                    value={opt.description}
+                    onChange={(e) => {
+                      const next = [...data.videoOptions];
+                      next[i] = { ...next[i], description: e.target.value };
+                      update({ videoOptions: next });
+                    }}
+                  />
+                </Field>
+                <Field label="Price (ex VAT)">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 13, color: BRAND.muted }}>£</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      className="input"
+                      placeholder="0"
+                      value={opt.price}
+                      onChange={(e) => {
+                        const next = [...data.videoOptions];
+                        next[i] = { ...next[i], price: parseFloat(e.target.value) || 0 };
+                        update({ videoOptions: next });
+                      }}
+                    />
+                  </div>
+                </Field>
+              </div>
+            ))}
+            <button
+              className="btn-ghost"
+              style={{ fontSize: 12, color: BRAND.muted }}
+              onClick={() => {
+                update({
+                  requirement: data.videoOptions[0]?.description || '',
+                  videoOptions: [],
+                });
+              }}
+            >
+              <X size={13} /> Switch back to single requirement
+            </button>
+          </>
+        ) : (
+          <>
+            <Field label="Requirement" error={!data.requirement?.trim()}>
+              <textarea
+                rows={10}
+                className="input"
+                style={{ minHeight: isMobile ? 100 : 200, resize: 'vertical' }}
+                value={data.requirement}
+                onChange={(e) => update({ requirement: e.target.value })}
+                placeholder={"1 x HD Animated explainer video - up to 60 seconds\n1 x Short social cutdown - 15 seconds"}
+              />
+            </Field>
+            <button
+              className="btn-ghost"
+              style={{ fontSize: 12, marginTop: 4 }}
+              onClick={() => update({
+                videoOptions: [
+                  { label: 'Option 1', description: data.requirement || '', price: data.basePrice || 0 },
+                  { label: 'Option 2', description: '', price: data.basePrice || 0 },
+                ],
+              })}
+            >
+              <Plus size={13} /> Offer the client two options
+            </button>
+          </>
+        )}
         <Field label="Vision (problem and solution)">
           <textarea className="input" style={{ minHeight: 100 }} value={data.projectVision} onChange={(e) => update({ projectVision: e.target.value })} placeholder="Describe the problem and how the videos will solve it…" />
         </Field>
@@ -487,75 +566,11 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
           </div>
         )}
 
-        {/* ── Video Options ── */}
-        <div style={{ marginTop: 20, borderTop: '1px solid ' + BRAND.border, paddingTop: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>Video Options</div>
-            {(data.videoOptions || []).length === 0 && (
-              <button
-                className="btn-ghost"
-                style={{ fontSize: 12 }}
-                onClick={() => update({ videoOptions: [{ label: '', price: data.basePrice || 0 }] })}
-              >
-                <Plus size={13} /> Add video option
-              </button>
-            )}
+        {(data.videoOptions || []).length >= 2 && (
+          <div style={{ background: '#f0f4ff', border: '1px solid #c7d2fe', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#3730a3', marginTop: 8 }}>
+            Option mode active — prices are set per option in the Project Vision section above.
           </div>
-          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5 }}>
-            {(data.videoOptions || []).length >= 2
-              ? 'The client will see radio buttons to choose one option. Base price above is overridden by whichever option they select.'
-              : 'Add 2+ options (e.g. 60s vs 2-minute video) so the client can choose a package.'}
-          </div>
-          {(data.videoOptions || []).map((opt, i) => (
-            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
-              <input
-                className="input"
-                style={{ flex: 2 }}
-                placeholder="e.g. 60-second video"
-                value={opt.label}
-                onChange={(e) => {
-                  const next = [...data.videoOptions];
-                  next[i] = { ...next[i], label: e.target.value };
-                  update({ videoOptions: next });
-                }}
-              />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
-                <span style={{ fontSize: 13, color: BRAND.muted, flexShrink: 0 }}>£</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  className="input"
-                  placeholder="0"
-                  value={opt.price}
-                  onChange={(e) => {
-                    const next = [...data.videoOptions];
-                    next[i] = { ...next[i], price: parseFloat(e.target.value) || 0 };
-                    update({ videoOptions: next });
-                  }}
-                />
-              </div>
-              <button
-                className="btn-icon"
-                aria-label="Remove option"
-                onClick={() => {
-                  const next = data.videoOptions.filter((_, idx) => idx !== i);
-                  update({ videoOptions: next });
-                }}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          ))}
-          {(data.videoOptions || []).length >= 1 && (
-            <button
-              className="btn-ghost"
-              style={{ fontSize: 12, marginTop: 4 }}
-              onClick={() => update({ videoOptions: [...(data.videoOptions || []), { label: '', price: data.basePrice || 0 }] })}
-            >
-              <Plus size={13} /> Add another option
-            </button>
-          )}
-        </div>
+        )}
       </Section>
 
       {/* ── Payment Options ── */}
