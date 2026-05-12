@@ -17,6 +17,6 @@
   "devDependencies": {
     "@types/chrome": "^0.0.270",
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^5.4.21"
+    "vite": "^8.0.12"
   }
 }
