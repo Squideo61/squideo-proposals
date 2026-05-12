@@ -7,6 +7,30 @@
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 
+// Allowlist of fields the public client view (ClientView + ThankYouView +
+// SignedBlock + printProposal) actually consumes. The full `data` JSONB on
+// `proposals` is auth-only — anything not enumerated here must not leak to the
+// unauthenticated GET. Add new fields explicitly as the client viewer evolves.
+const PUBLIC_PROPOSAL_FIELDS = [
+  'clientName', 'contactBusinessName', 'clientLogo',
+  'proposalTitle', 'date', 'expiryDate', 'validityDays',
+  'preparedBy', 'preparedByTitle', 'preparedByEmail',
+  'intro', 'team', 'requirement', 'projectVision',
+  'basePrice', 'videoOptions', 'baseInclusions', 'optionalExtras',
+  'partnerProgramme',
+  'processVideoUrl', 'showProcessVideo',
+  'vatRate', 'paymentOptions', 'paymentOptionDescs',
+];
+
+function publicProposalView(data) {
+  const src = data || {};
+  const out = {};
+  for (const k of PUBLIC_PROPOSAL_FIELDS) {
+    if (src[k] !== undefined) out[k] = src[k];
+  }
+  return out;
+}
+
 export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -40,7 +64,7 @@ export default async function handler(req, res) {
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const r = rows[0];
     return res.status(200).json({
-      ...r.data,
+      ...publicProposalView(r.data),
       _number: r.number_year && r.number_seq ? { year: r.number_year, seq: r.number_seq } : null,
       _dealId: r.deal_id || null,
     });

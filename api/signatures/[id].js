@@ -3,6 +3,26 @@ import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, signedHtml, clientSignedThanksHtml, APP_URL } from '../_lib/email.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 
+// Allowlist of fields from `signatures.data` that the public client view
+// actually consumes (SignedBlock, ClientView post-sign branch, ThankYouView,
+// printProposal/Receipt, stripeCheckout). The full `data` JSONB is auth-only —
+// anything else stays server-side. Update explicitly as the client viewer
+// gains new signature-derived fields.
+const PUBLIC_SIGNATURE_FIELDS = [
+  'paymentOption', 'total', 'partnerSelected', 'partnerCredits',
+  'partnerTotal', 'amountBreakdown',
+  'selectedExtras', 'selectedVideoOption',
+];
+
+function publicSignatureView(data) {
+  const src = data || {};
+  const out = {};
+  for (const k of PUBLIC_SIGNATURE_FIELDS) {
+    if (src[k] !== undefined) out[k] = src[k];
+  }
+  return out;
+}
+
 export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -21,7 +41,12 @@ export default async function handler(req, res) {
     const rows = await sql`SELECT name, email, signed_at, data FROM signatures WHERE proposal_id = ${id}`;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const row = rows[0];
-    return res.status(200).json({ name: row.name, email: row.email, signedAt: row.signed_at, ...row.data });
+    return res.status(200).json({
+      name: row.name,
+      email: row.email,
+      signedAt: row.signed_at,
+      ...publicSignatureView(row.data),
+    });
   }
 
   if (req.method === 'POST') {
