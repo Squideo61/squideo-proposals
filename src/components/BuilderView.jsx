@@ -348,9 +348,20 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             <Field label="Client logo (optional)">
               <LogoUploader logo={data.clientLogo} onChange={(logo) => update({ clientLogo: logo })} showMsg={showMsg} />
             </Field>
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: 12 }}>
               <Field label="Date">
                 <input className="input" value={data.date} onChange={(e) => update({ date: e.target.value })} />
+              </Field>
+              <Field label="Valid for (days)">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min="1"
+                  step="1"
+                  className="input"
+                  value={data.validityDays ?? 28}
+                  onChange={(e) => update({ validityDays: parseInt(e.target.value, 10) || 28 })}
+                />
               </Field>
               <Field label="Prepared by">
                 <input className="input" value={data.preparedBy} onChange={(e) => update({ preparedBy: e.target.value })} />
