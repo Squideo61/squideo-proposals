@@ -439,15 +439,31 @@ export function StoreProvider({ children }) {
       });
     },
     saveDeal(dealId, patch) {
-      // Optimistic merge — Kanban drag-and-edit feels instant.
+      // Optimistic merge — Kanban drag-and-edit feels instant. Also patch
+      // dealDetail so an open DealDetailView reflects the change immediately;
+      // it reads from dealDetail first and falls back to deals only when no
+      // detail has been loaded.
       setState(s => {
         const cur = s.deals[dealId];
         if (!cur) return s;
-        return { ...s, deals: { ...s.deals, [dealId]: { ...cur, ...patch } } };
+        const existingDetail = s.dealDetail[dealId];
+        return {
+          ...s,
+          deals: { ...s.deals, [dealId]: { ...cur, ...patch } },
+          dealDetail: existingDetail
+            ? { ...s.dealDetail, [dealId]: { ...existingDetail, ...patch } }
+            : s.dealDetail,
+        };
       });
       return api.patch('/api/crm/deals/' + encodeURIComponent(dealId), patch).then((deal) => {
         if (deal && deal.id) {
-          setState(s => ({ ...s, deals: { ...s.deals, [deal.id]: deal } }));
+          setState(s => ({
+            ...s,
+            deals: { ...s.deals, [deal.id]: deal },
+            dealDetail: s.dealDetail[deal.id]
+              ? { ...s.dealDetail, [deal.id]: { ...s.dealDetail[deal.id], ...deal } }
+              : s.dealDetail,
+          }));
         }
         return deal;
       }).catch(() => {});
