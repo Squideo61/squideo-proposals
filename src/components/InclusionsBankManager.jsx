@@ -24,7 +24,7 @@ export function InclusionsBankManager({ onClose }) {
   ]);
 
   const save = () => {
-    actions.saveInclusionsBank(items);
+    actions.saveInclusionsBank(items, { oldBank: state.inclusionsBank, proposals: state.proposals });
     showMsg('Inclusions bank saved');
     onClose();
   };

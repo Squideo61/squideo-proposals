@@ -337,9 +337,27 @@ export function StoreProvider({ children }) {
       setState(s => ({ ...s, extrasBank: list }));
       api.put('/api/settings', { extrasBank: list }).catch(() => {});
     },
-    saveInclusionsBank(list) {
-      setState(s => ({ ...s, inclusionsBank: list }));
+    saveInclusionsBank(list, { oldBank = [], proposals = {} } = {}) {
+      const removedTitles = new Set(
+        oldBank.map(b => b.title).filter(t => !list.some(b => b.title === t))
+      );
+      const affectedProposals = {};
+      if (removedTitles.size > 0) {
+        for (const [id, p] of Object.entries(proposals)) {
+          const filtered = (p.baseInclusions || []).filter(inc => !removedTitles.has(inc.title));
+          if (filtered.length !== (p.baseInclusions || []).length) {
+            affectedProposals[id] = { ...p, baseInclusions: filtered };
+          }
+        }
+      }
+      setState(s => ({ ...s, inclusionsBank: list, proposals: { ...s.proposals, ...affectedProposals } }));
       api.put('/api/settings', { inclusionsBank: list }).catch(() => {});
+      for (const [id, data] of Object.entries(affectedProposals)) {
+        clearTimeout(saveTimers.current[id]);
+        const payload = { ...data };
+        delete payload._number; delete payload._views; delete payload._createdAt;
+        api.put('/api/proposals/' + id, payload).catch(() => {});
+      }
     },
     fetchPartnerCreditsList() {
       return api.get('/api/partner/credits').then((rows) => {
