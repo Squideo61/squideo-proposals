@@ -410,6 +410,29 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     }
   };
 
+  const handlePoConfirm = async ({ billing }) => {
+    if (isPreview) {
+      showMsg('PO quote issuance simulated - preview only, not saved');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/po/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ billing }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || ('PO quote failed: ' + res.status));
+      }
+      showMsg('PO quote sent.');
+    } catch (err) {
+      console.error('[po confirm]', err);
+      showMsg(err?.message ? 'Could not issue quote: ' + err.message : 'Could not issue quote. Please try again.');
+      throw err;
+    }
+  };
+
   const handleConfirmInvoice = async ({ billing }) => {
     if (isPreview) {
       showMsg('Invoice issuance simulated - preview only, not saved');
@@ -1013,6 +1036,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
             onChooseInvoice={() => setPaymentChoice('invoice')}
             onUndoInvoice={() => setPaymentChoice(null)}
             onConfirmInvoice={handleConfirmInvoice}
+            onPoConfirm={handlePoConfirm}
             onDownloadReceipt={payment ? () => openReceiptWindow(data, signed, payment) : undefined}
             onDownloadSignedProposal={signed ? () => openPrintWindow(data, printOptionsForSigned(signed, payment)) : undefined}
           />

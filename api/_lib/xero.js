@@ -162,3 +162,24 @@ export async function emailInvoice(invoiceId) {
     body: '{}',
   });
 }
+
+export async function createQuote({ contactId, lineItems, reference, status = 'SENT' }) {
+  const payload = {
+    Contact: { ContactID: contactId },
+    LineAmountTypes: 'Exclusive',
+    Status: status,
+    Reference: reference || undefined,
+    LineItems: lineItems.map(li => ({
+      Description: li.description,
+      Quantity: li.quantity,
+      UnitAmount: li.unitAmount,
+      TaxType: li.taxType,
+      AccountCode: li.accountCode,
+    })),
+  };
+  const res = await xeroFetch('/api.xro/2.0/Quotes', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res.Quotes[0].QuoteID;
+}

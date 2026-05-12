@@ -4,7 +4,7 @@ import { BRAND } from '../theme.js';
 import { formatGBP } from '../utils.js';
 import { BillingFields, emptyBilling, isBillingValid } from './BillingFields.jsx';
 
-export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onConfirmInvoice, onDownloadReceipt, onDownloadSignedProposal }) {
+export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onConfirmInvoice, onPoConfirm, onDownloadReceipt, onDownloadSignedProposal }) {
   const isPO = signed.paymentOption === 'po';
   const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
   const isDeposit = signed.paymentOption === '5050';
@@ -38,6 +38,17 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
     setInvoiceSubmitting(true);
     try {
       await onConfirmInvoice({ billing });
+      setInvoiceConfirmed(true);
+    } finally {
+      setInvoiceSubmitting(false);
+    }
+  };
+
+  const submitPO = async () => {
+    if (!billingValid || !onPoConfirm) return;
+    setInvoiceSubmitting(true);
+    try {
+      await onPoConfirm({ billing });
       setInvoiceConfirmed(true);
     } finally {
       setInvoiceSubmitting(false);
@@ -106,12 +117,34 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
         </div>
       )}
 
-      {!payment && isPO && (
+      {!payment && isPO && invoiceConfirmed && (
         <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20 }}>
-          <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Purchase Order confirmed</h4>
+          <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Quote sent — pending your PO</h4>
           <p style={{ fontSize: 13, color: BRAND.muted, margin: 0, lineHeight: 1.5 }}>
-            Our team will be in touch within 24 hours to set up your supplier details and confirm the Purchase Order for {formatGBP(amountDue)}.
+            We've issued a Xero quote for {formatGBP(amountDue)} to {billing.accountsEmail || signed.email}. Please raise your Purchase Order against it and our team will be in touch to confirm.
           </p>
+        </div>
+      )}
+
+      {!payment && isPO && !invoiceConfirmed && (
+        <div style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24 }}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>Your billing details</h3>
+          <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
+            Confirm your billing details and we'll issue a Xero quote for {formatGBP(amountDue)} so you can raise your Purchase Order.
+          </p>
+          <BillingFields
+            value={billing}
+            onChange={setBilling}
+            subtitle="We'll issue a quote to this contact in Xero with reference 'Pending PO'."
+          />
+          <button
+            onClick={submitPO}
+            disabled={!billingValid || invoiceSubmitting}
+            className="btn"
+            style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}
+          >
+            {invoiceSubmitting ? 'Issuing quote…' : 'Send PO quote for ' + formatGBP(amountDue)}
+          </button>
         </div>
       )}
 
