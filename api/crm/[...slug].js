@@ -15,6 +15,7 @@ import {
   exchangeCode,
   refreshAccessToken,
   fetchGmailAddress,
+  fetchGmailSignature,
   registerWatch,
   stopWatch,
 } from '../_lib/gmailTokens.js';
@@ -561,8 +562,9 @@ async function dealsRoute(req, res, id, action, user, subaction = null) {
         ORDER BY done_at NULLS FIRST, due_at ASC NULLS LAST
         LIMIT 50
       `,
-      // Every email_message attached to this deal via the M:N join. The most
-      // recent 50 keep the timeline manageable; older ones can be paged later.
+      // Every email_message attached to this deal via the M:N join. Cap at
+      // 200 so we don't truncate long threads — Gmail's API itself caps
+      // typical conversations at well under that.
       sql`
         SELECT em.gmail_message_id, em.gmail_thread_id, em.from_email,
                em.to_emails, em.cc_emails, em.subject, em.snippet,
@@ -571,7 +573,7 @@ async function dealsRoute(req, res, id, action, user, subaction = null) {
         JOIN email_thread_deals etd ON etd.gmail_thread_id = em.gmail_thread_id
         WHERE etd.deal_id = ${id} AND em.internal_only = FALSE
         ORDER BY em.sent_at DESC
-        LIMIT 50
+        LIMIT 200
       `,
       sql`SELECT id, filename, mime_type, size_bytes, blob_url,
                uploaded_by, source, created_at
@@ -1714,6 +1716,22 @@ async function gmailRoute(req, res, id, action, user) {
     return gmailSend(req, res, user);
   }
 
+  if (id === 'signature') {
+    if (req.method !== 'GET') return res.status(405).end();
+    const rows = await sql`
+      SELECT signature_html, signature_fetched_at
+      FROM gmail_accounts
+      WHERE user_email = ${user.email} AND disconnected_at IS NULL
+    `;
+    if (!rows.length) {
+      return res.status(200).json({ signatureHtml: null, fetchedAt: null });
+    }
+    return res.status(200).json({
+      signatureHtml: rows[0].signature_html || null,
+      fetchedAt: rows[0].signature_fetched_at || null,
+    });
+  }
+
   if (id === 'backfill') {
     if (req.method !== 'POST') return res.status(405).end();
     return gmailBackfill(req, res, user);
@@ -1837,6 +1855,10 @@ async function gmailCallback(req, res) {
       updated_at = NOW()
   `;
 
+  // Pull the user's Gmail signature in the background so the next CRM-sent
+  // email mirrors it. Fire-and-forget — connecting must not block on this.
+  waitUntil(refreshSignatureCache(userEmail));
+
   // Kick off the 30-day backfill so the user's deal timelines populate
   // immediately. waitUntil keeps Vercel from killing the request before it
   // actually leaves the box (plain fire-and-forget gets cut off when the
@@ -1857,6 +1879,26 @@ async function gmailCallback(req, res) {
     'Gmail connected',
     `<h1>Gmail connected ✓</h1><p><strong>${escapeHtml(gmailAddress)}</strong> is now linked to your Squideo account.</p><p>${historyId ? 'Inbound sync is active — new mail will appear on the matching deal automatically.' : 'Inbound sync could not be activated (Pub/Sub may need attention) — outbound send still works.'}</p><p>The last 30 days of mail are being backfilled in the background. You can close this tab.</p>`
   );
+}
+
+// Pull the user's current Gmail signature via the API and persist it on the
+// gmail_accounts row. Best-effort — caller should fire-and-forget so a
+// signature outage never blocks send/connect. Reuses getFreshAccessToken so
+// the access token gets refreshed if it had expired.
+async function refreshSignatureCache(userEmail) {
+  try {
+    const accessToken = await getFreshAccessToken(userEmail);
+    const sig = await fetchGmailSignature(accessToken);
+    await sql`
+      UPDATE gmail_accounts
+         SET signature_html = ${sig},
+             signature_fetched_at = NOW(),
+             updated_at = NOW()
+       WHERE user_email = ${userEmail}
+    `;
+  } catch (err) {
+    console.warn('[gmail signature refresh]', userEmail, err.message);
+  }
 }
 
 // Fetch a fresh access token, refreshing via Google if the cached one is
@@ -1937,9 +1979,31 @@ async function gmailSend(req, res, user) {
     throw err;
   }
 
-  const fromAddress = (await sql`
-    SELECT gmail_address FROM gmail_accounts WHERE user_email = ${user.email}
-  `)[0]?.gmail_address;
+  const acctRow = (await sql`
+    SELECT gmail_address, signature_html, signature_fetched_at
+    FROM gmail_accounts WHERE user_email = ${user.email}
+  `)[0] || {};
+  const fromAddress = acctRow.gmail_address;
+  const signatureHtml = acctRow.signature_html || '';
+
+  // Refresh the cached signature in the background if it's stale (>1h old or
+  // never fetched). Don't await — the current send uses the cached value.
+  const sigFetchedAt = acctRow.signature_fetched_at
+    ? new Date(acctRow.signature_fetched_at).getTime()
+    : 0;
+  if (Date.now() - sigFetchedAt > 60 * 60 * 1000) {
+    waitUntil(refreshSignatureCache(user.email));
+  }
+
+  // Append the signature to both the HTML and text bodies so multipart
+  // recipients see it in either rendering path. Gmail returns sanitised HTML
+  // for the signature already, so we trust it here.
+  let htmlOut = html || '';
+  let textOut = text || '';
+  if (signatureHtml) {
+    if (htmlOut) htmlOut = htmlOut + '<br><br>' + signatureHtml;
+    if (textOut) textOut = textOut + '\n\n' + signatureHtml.replace(/<[^>]+>/g, '').replace(/\s+\n/g, '\n').trim();
+  }
 
   // Build the RFC 2822 message. Add the X-Squideo-Deal header so server-side
   // sync (Phase 3) can thread continuity even if the recipient drops it.
@@ -1958,19 +2022,19 @@ async function gmailSend(req, res, user) {
   ].filter(Boolean);
 
   let mime;
-  if (html && text) {
+  if (htmlOut && textOut) {
     const boundary = 'sqd_' + crypto.randomBytes(8).toString('hex');
     headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
     mime = headers.join('\r\n') + '\r\n\r\n'
-      + `--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${text}\r\n`
-      + `--${boundary}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${html}\r\n`
+      + `--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${textOut}\r\n`
+      + `--${boundary}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${htmlOut}\r\n`
       + `--${boundary}--\r\n`;
-  } else if (html) {
+  } else if (htmlOut) {
     headers.push('Content-Type: text/html; charset=UTF-8');
-    mime = headers.join('\r\n') + '\r\n\r\n' + html;
+    mime = headers.join('\r\n') + '\r\n\r\n' + htmlOut;
   } else {
     headers.push('Content-Type: text/plain; charset=UTF-8');
-    mime = headers.join('\r\n') + '\r\n\r\n' + text;
+    mime = headers.join('\r\n') + '\r\n\r\n' + textOut;
   }
 
   const raw = Buffer.from(mime, 'utf8').toString('base64url');

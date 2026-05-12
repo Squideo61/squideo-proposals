@@ -59,9 +59,29 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
       .sort((a, b) => new Date(b.when) - new Date(a.when)),
   [events]);
 
-  const sortedEmails = useMemo(() =>
-    [...emails].sort((a, b) => new Date(b.sentAt) - new Date(a.sentAt)),
-  [emails]);
+  // Group emails by Gmail thread so the UI shows one row per conversation
+  // (collapsed by default, expanded to show every message in order). Threads
+  // are sorted newest-first by their most recent message; messages within a
+  // thread read oldest→newest like a Gmail conversation.
+  const threadGroups = useMemo(() => {
+    const byThread = new Map();
+    for (const em of emails) {
+      const tid = em.gmailThreadId || em.gmailMessageId;
+      if (!byThread.has(tid)) byThread.set(tid, []);
+      byThread.get(tid).push(em);
+    }
+    const groups = Array.from(byThread.entries()).map(([threadId, msgs]) => {
+      const sorted = msgs.slice().sort((a, b) => new Date(a.sentAt) - new Date(b.sentAt));
+      return {
+        threadId,
+        messages: sorted,
+        latestSentAt: sorted[sorted.length - 1]?.sentAt || null,
+      };
+    });
+    groups.sort((a, b) => new Date(b.latestSentAt) - new Date(a.latestSentAt));
+    return groups;
+  }, [emails]);
+  const totalEmails = emails.length;
 
   const handleStageChange = (next) => {
     if (next === 'lost') {
@@ -170,13 +190,18 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
         </Card>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <Card title="Emails" count={sortedEmails.length} action={
+          <Card title="Emails" count={totalEmails} action={
             <button onClick={() => setComposingEmail(true)} className="btn-ghost"><Mail size={12} /> Send email</button>
           }>
-            {sortedEmails.length === 0 && <Empty text="No emails yet" />}
+            {threadGroups.length === 0 && <Empty text="No emails yet" />}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {sortedEmails.map(em => (
-                <EmailRow key={em.gmailMessageId} email={em} onOpen={() => setOpenEmailId(em.gmailMessageId)} />
+              {threadGroups.map(group => (
+                <ThreadRow
+                  key={group.threadId}
+                  messages={group.messages}
+                  dealId={dealId}
+                  onOpenMessage={(id) => setOpenEmailId(id)}
+                />
               ))}
             </div>
           </Card>
@@ -431,7 +456,7 @@ function EventRow({ event, users }) {
   );
 }
 
-function EmailRow({ email, onOpen }) {
+function EmailRow({ email, onOpen, threadCount, expanded }) {
   const inbound = email.direction === 'inbound';
   const arrow = inbound ? '↓' : '↑';
   const accent = inbound ? '#16A34A' : '#2BB8E6';
@@ -442,13 +467,14 @@ function EmailRow({ email, onOpen }) {
     ? email.snippet.replace(/\s+/g, ' ').trim().slice(0, 140)
     : null;
   const [hover, setHover] = useState(false);
+  const hasThreadChip = typeof threadCount === 'number' && threadCount > 1;
   return (
     <button
       type="button"
       onClick={onOpen}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      title="Open email"
+      title={hasThreadChip ? (expanded ? 'Collapse thread' : 'Expand thread') : 'Open email'}
       style={{
         display: 'flex', gap: 8, fontSize: 13, minWidth: 0,
         textAlign: 'left', width: '100%', padding: '4px 6px',
@@ -503,7 +529,137 @@ function EmailRow({ email, onOpen }) {
           {formatRelativeTime(email.sentAt)}{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}
         </div>
       </div>
+      {hasThreadChip && (
+        <div style={{ flexShrink: 0, alignSelf: 'center', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: BRAND.muted,
+            background: '#EEF2F6', padding: '2px 6px', borderRadius: 999,
+            letterSpacing: 0.3,
+          }}>{threadCount} msgs</span>
+          <span style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1 }}>{expanded ? '▾' : '▸'}</span>
+        </div>
+      )}
     </button>
+  );
+}
+
+// Gmail-style conversation row. Collapsed: shows the latest message in the
+// thread with a "(N messages)" chip when applicable. Expanded: stacks every
+// message oldest→newest with its body inlined (lazy-loaded). Single-message
+// threads keep the original click-to-modal behaviour.
+function ThreadRow({ messages, dealId, onOpenMessage }) {
+  const [expanded, setExpanded] = useState(false);
+  const isMulti = messages.length > 1;
+  const latest = messages[messages.length - 1];
+  const threadId = latest.gmailThreadId || latest.gmailMessageId;
+  const gmailLink = latest.gmailThreadId
+    ? `https://mail.google.com/mail/u/0/#all/${latest.gmailThreadId}`
+    : null;
+
+  const handleHeaderClick = () => {
+    if (isMulti) {
+      setExpanded(e => !e);
+    } else {
+      onOpenMessage(latest.gmailMessageId);
+    }
+  };
+
+  return (
+    <div>
+      <EmailRow
+        email={latest}
+        onOpen={handleHeaderClick}
+        threadCount={isMulti ? messages.length : null}
+        expanded={isMulti ? expanded : false}
+      />
+      {expanded && isMulti && (
+        <div style={{ marginTop: 8, marginLeft: 22, paddingLeft: 12, borderLeft: '2px solid ' + BRAND.border, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {messages.map((m) => (
+            <ExpandedMessage
+              key={m.gmailMessageId}
+              email={m}
+              onOpenFull={() => onOpenMessage(m.gmailMessageId)}
+            />
+          ))}
+          {gmailLink && (
+            <a href={gmailLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: BRAND.muted, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'flex-start' }}>
+              <ExternalLink size={11} /> Open thread in Gmail
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One message inside an expanded thread. Loads its body on mount (cached in
+// the store so re-opens are free), sanitises HTML, and falls back to plain
+// text. Click the header to open the standalone modal.
+function ExpandedMessage({ email, onOpenFull }) {
+  const { state, actions } = useStore();
+  const cached = state.emailBodies?.[email.gmailMessageId] || null;
+  const [data, setData] = useState(cached);
+  const [loading, setLoading] = useState(!cached);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (cached) return;
+    let cancelled = false;
+    actions.loadEmailBody(email.gmailMessageId)
+      .then((res) => { if (!cancelled) { setData(res); setLoading(false); } })
+      .catch((err) => { if (!cancelled) { setError(err?.message || 'Failed to load'); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [email.gmailMessageId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sanitized = useMemo(() => {
+    if (!data?.bodyHtml) return null;
+    return DOMPurify.sanitize(data.bodyHtml, {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form'],
+      FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
+    });
+  }, [data?.bodyHtml]);
+
+  const inbound = email.direction === 'inbound';
+  const accent = inbound ? '#16A34A' : '#2BB8E6';
+  const counterparty = inbound ? email.fromEmail : (email.toEmails?.[0] || '');
+
+  return (
+    <div style={{ background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12 }}>
+      <button
+        type="button"
+        onClick={onOpenFull}
+        title="Open full message"
+        style={{
+          width: '100%', background: 'transparent', border: 'none', padding: 0,
+          textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', color: 'inherit',
+          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
+        }}
+      >
+        <span style={{
+          display: 'inline-block', padding: '1px 5px', borderRadius: 3,
+          background: accent + '22', color: accent,
+          fontSize: 10, fontWeight: 700, flexShrink: 0,
+        }}>{inbound ? 'IN' : 'OUT'}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {inbound ? 'From' : 'To'} <strong>{counterparty || '—'}</strong>
+        </span>
+        <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>
+          {formatRelativeTime(email.sentAt)}
+        </span>
+      </button>
+      <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8, fontSize: 13, lineHeight: 1.5, maxHeight: 320, overflowY: 'auto', wordBreak: 'break-word' }}>
+        {loading && <div style={{ color: BRAND.muted, fontSize: 12 }}>Loading…</div>}
+        {error && <div style={{ color: '#DC2626', fontSize: 12 }}>{error}</div>}
+        {!loading && !error && data && (
+          sanitized
+            ? <div className="email-body" dangerouslySetInnerHTML={{ __html: sanitized }} />
+            : data.bodyText
+              ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{data.bodyText}</pre>
+              : <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 12 }}>(no body stored — open in Gmail to read)</div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1246,6 +1402,25 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [signature, setSignature] = useState(null); // null = loading, '' = none
+
+  useEffect(() => {
+    if (!gmailConnected) { setSignature(''); return; }
+    let cancelled = false;
+    actions.getGmailSignature()
+      .then(r => { if (!cancelled) setSignature(r?.signatureHtml || ''); })
+      .catch(() => { if (!cancelled) setSignature(''); });
+    return () => { cancelled = true; };
+  }, [gmailConnected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sanitizedSignature = useMemo(() => {
+    if (!signature) return null;
+    return DOMPurify.sanitize(signature, {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form'],
+      FORBID_ATTR: ['onerror', 'onload', 'onclick'],
+    });
+  }, [signature]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -1304,13 +1479,35 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
             required
           />
         </FormRow>
+        {gmailConnected && (
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+              Signature (synced from Gmail)
+            </div>
+            {signature === null && (
+              <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Loading signature…</div>
+            )}
+            {signature === '' && (
+              <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>
+                No Gmail signature found — set one in Gmail and reconnect to apply it here.
+              </div>
+            )}
+            {sanitizedSignature && (
+              <div
+                className="email-body"
+                style={{ background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 6, padding: 10, fontSize: 12, lineHeight: 1.5, maxHeight: 160, overflowY: 'auto', wordBreak: 'break-word' }}
+                dangerouslySetInnerHTML={{ __html: sanitizedSignature }}
+              />
+            )}
+          </div>
+        )}
         {error && (
           <div style={{ background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '8px 10px', borderRadius: 6 }}>
             {error}
           </div>
         )}
-        <div style={{ fontSize: 12, color: BRAND.muted }}>
-          Sent from {state.gmailAccount?.gmailAddress || 'your connected Gmail'}. The deal will be tagged via the X-Squideo-Deal header so replies thread back automatically (Phase 3).
+        <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.5 }}>
+          Sent from {state.gmailAccount?.gmailAddress || 'your connected Gmail'} via the Gmail API — this message will appear in your Gmail Sent folder. The deal is tagged via the X-Squideo-Deal header so replies thread back automatically.
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>

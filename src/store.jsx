@@ -647,6 +647,11 @@ export function StoreProvider({ children }) {
       // payload: { to: string|string[], cc?, bcc?, subject, html, text, dealId? }
       return api.post('/api/crm/gmail/send', payload);
     },
+    getGmailSignature() {
+      // Returns { signatureHtml, fetchedAt } from the cached gmail_accounts row.
+      // The server refreshes this from users.settings.sendAs in the background.
+      return api.get('/api/crm/gmail/signature');
+    },
     backfillGmail() {
       // Re-trigger the 30-day backfill manually. Idempotent on the server —
       // already-ingested messages no-op via ON CONFLICT.

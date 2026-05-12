@@ -147,3 +147,21 @@ export async function stopWatch(accessToken) {
     headers: { Authorization: 'Bearer ' + accessToken },
   });
 }
+
+// Fetch the user's primary Gmail signature via users.settings.sendAs.
+// Requires the gmail.modify scope (already granted alongside .readonly).
+// Returns the raw HTML string, or null if no signature is set / call fails.
+export async function fetchGmailSignature(accessToken) {
+  const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs', {
+    headers: { Authorization: 'Bearer ' + accessToken },
+  });
+  if (!res.ok) {
+    console.warn('[gmail signature] sendAs fetch failed', res.status);
+    return null;
+  }
+  const json = await res.json();
+  const list = Array.isArray(json.sendAs) ? json.sendAs : [];
+  // Prefer the primary identity, then the default-reply identity, then first.
+  const primary = list.find(s => s.isPrimary) || list.find(s => s.isDefault) || list[0];
+  return primary?.signature || null;
+}
