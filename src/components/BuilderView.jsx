@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
@@ -134,6 +134,31 @@ function buildSectionMeta(data, isTemplate, issues) {
     },
   ];
   return list;
+}
+
+function PriceInput({ value, onChange, ...props }) {
+  const [raw, setRaw] = useState(value == null ? '' : String(value));
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) setRaw(value == null ? '' : String(value));
+  }, [value]);
+  return (
+    <input
+      type="number"
+      inputMode="decimal"
+      value={raw}
+      onChange={(e) => setRaw(e.target.value)}
+      onFocus={() => { focused.current = true; }}
+      onBlur={() => {
+        focused.current = false;
+        const n = parseFloat(raw);
+        const final = isNaN(n) ? 0 : n;
+        setRaw(String(final));
+        onChange(final);
+      }}
+      {...props}
+    />
+  );
 }
 
 function SectionStatus({ issues }) {
@@ -437,15 +462,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                 <Field label="Price (ex VAT)">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ fontSize: 13, color: BRAND.muted }}>£</span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
+                    <PriceInput
                       className="input"
                       placeholder="0"
                       value={opt.price}
-                      onChange={(e) => {
+                      onChange={(n) => {
                         const next = [...data.videoOptions];
-                        next[i] = { ...next[i], price: parseFloat(e.target.value) || 0 };
+                        next[i] = { ...next[i], price: n };
                         update({ videoOptions: next });
                       }}
                     />
@@ -581,21 +604,21 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       >
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
           <Field label="Project base price (ex VAT)" error={!(data.basePrice > 0)}>
-            <input type="number" inputMode="decimal" className="input" value={data.basePrice} onChange={(e) => update({ basePrice: parseFloat(e.target.value) || 0 })} />
+            <PriceInput className="input" value={data.basePrice} onChange={(n) => update({ basePrice: n })} />
           </Field>
           <Field label="VAT rate (%)">
-            <input type="number" inputMode="numeric" step="1" className="input" value={Math.round(data.vatRate * 100)} onChange={(e) => update({ vatRate: (parseFloat(e.target.value) || 0) / 100 })} />
+            <PriceInput step="1" className="input" value={Math.round(data.vatRate * 100)} onChange={(n) => update({ vatRate: n / 100 })} />
           </Field>
         </div>
         <Field label="Standard rate per minute (£/min)">
-          <input
-            type="number" inputMode="decimal" min="0" step="1"
+          <PriceInput
+            min="0" step="1"
             className="input"
-            value={data.partnerProgramme?.standardRatePerMin ?? data.basePrice ?? ''}
-            onChange={(e) => update({
+            value={data.partnerProgramme?.standardRatePerMin ?? data.basePrice ?? 0}
+            onChange={(n) => update({
               partnerProgramme: {
                 ...data.partnerProgramme,
-                standardRatePerMin: parseFloat(e.target.value) || 0,
+                standardRatePerMin: n,
               },
             })}
           />
@@ -837,26 +860,26 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                   <div>
                     <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Base (%)</div>
-                    <input
-                      type="number" inputMode="decimal" className="input" min="0" max="100"
+                    <PriceInput
+                      className="input" min="0" max="100"
                       value={((data.partnerProgramme.discountRate || 0) * 100).toFixed(0)}
-                      onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, discountRate: (parseFloat(e.target.value) || 0) / 100 } })}
+                      onChange={(n) => update({ partnerProgramme: { ...data.partnerProgramme, discountRate: n / 100 } })}
                     />
                   </div>
                   <div>
                     <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Per extra credit (%)</div>
-                    <input
-                      type="number" inputMode="decimal" className="input" min="0" max="100" step="0.5"
+                    <PriceInput
+                      className="input" min="0" max="100" step="0.5"
                       value={((data.partnerProgramme.extraDiscountPerCredit || 0) * 100).toFixed(2).replace(/\.?0+$/, '')}
-                      onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, extraDiscountPerCredit: (parseFloat(e.target.value) || 0) / 100 } })}
+                      onChange={(n) => update({ partnerProgramme: { ...data.partnerProgramme, extraDiscountPerCredit: n / 100 } })}
                     />
                   </div>
                   <div>
                     <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Max (%)</div>
-                    <input
-                      type="number" inputMode="decimal" className="input" min="0" max="100"
+                    <PriceInput
+                      className="input" min="0" max="100"
                       value={((data.partnerProgramme.maxDiscount || 0) * 100).toFixed(0)}
-                      onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, maxDiscount: (parseFloat(e.target.value) || 0) / 100 } })}
+                      onChange={(n) => update({ partnerProgramme: { ...data.partnerProgramme, maxDiscount: n / 100 } })}
                     />
                   </div>
                 </div>
@@ -927,7 +950,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               <input className="input" style={{ flex: 1 }} value={extra.label} onChange={(e) => updateExtra(i, { label: e.target.value })} />
               <div style={{ position: 'relative', flexShrink: 0 }}>
                 <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: BRAND.muted, pointerEvents: 'none' }}>£</span>
-                <input type="number" inputMode="decimal" className="input" style={{ width: 90, paddingLeft: 22 }} value={extra.price} onChange={(e) => updateExtra(i, { price: parseFloat(e.target.value) || 0 })} />
+                <PriceInput className="input" style={{ width: 90, paddingLeft: 22 }} value={extra.price} onChange={(n) => updateExtra(i, { price: n })} />
               </div>
               <button
                 onClick={() => {
