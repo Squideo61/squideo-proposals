@@ -78,7 +78,7 @@ export default async function handler(req, res) {
         const value = Number.isFinite(Number(data.basePrice)) ? Number(data.basePrice) : null;
         const inserted = await sql`
           INSERT INTO deals (id, title, owner_email, stage, value, last_activity_at)
-          VALUES (${dealId}, ${title}, ${ownerEmail}, 'quoting', ${value}, NOW())
+          VALUES (${dealId}, ${title}, ${ownerEmail}, 'proposal_sent', ${value}, NOW())
           ON CONFLICT (id) DO NOTHING
           RETURNING id
         `;

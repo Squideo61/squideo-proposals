@@ -6,11 +6,10 @@ import { formatGBP, useIsMobile } from '../../utils.js';
 import { Modal } from '../ui.jsx';
 
 export const PIPELINE_STAGES = [
-  { id: 'lead',      label: 'Lead',      color: '#94A3B8' },
-  { id: 'qualified', label: 'Qualified', color: '#7C3AED' },
-  { id: 'quoting',   label: 'Quoting',   color: '#0EA5E9' },
-  { id: 'sent',      label: 'Sent',      color: '#F59E0B' },
-  { id: 'viewed',    label: 'Viewed',    color: '#FB923C' },
+  { id: 'lead',          label: 'Lead',          color: '#94A3B8' },
+  { id: 'responded',     label: 'Responded',     color: '#7C3AED' },
+  { id: 'proposal_sent', label: 'Proposal Sent', color: '#0EA5E9' },
+  { id: 'viewed',        label: 'Viewed',        color: '#FB923C' },
   { id: 'signed',    label: 'Signed',    color: '#2BB8E6' },
   { id: 'paid',      label: 'Paid',      color: '#16A34A' },
   { id: 'lost',      label: 'Lost',      color: '#94A3B8' },

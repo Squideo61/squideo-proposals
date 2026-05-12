@@ -3,7 +3,7 @@
 // view event from downgrading a signed deal back to "viewed".
 import sql from './db.js';
 
-export const STAGES = ['lead', 'qualified', 'quoting', 'sent', 'viewed', 'signed', 'paid', 'lost'];
+export const STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'signed', 'paid', 'lost'];
 
 export function isValidStage(stage) {
   return STAGES.includes(stage);
