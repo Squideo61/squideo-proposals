@@ -6,13 +6,19 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    # Security updates are always opened. Non-security updates batched weekly
-    # so the PR queue doesn't drown the rest of the work.
     groups:
       non-major-deps:
         update-types:
           - minor
           - patch
+    # Ignore major bumps — they need real testing (Recharts API changes,
+    # Vite/React compatibility, SDK rewrites). We'll handle majors manually
+    # when we have time to verify each one. Security advisories still open
+    # immediately regardless of this filter.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
 
   # Chrome extension package
   - package-ecosystem: npm
@@ -25,6 +31,10 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
 
   # GitHub Actions (if/when added)
   - package-ecosystem: github-actions
