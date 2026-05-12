@@ -598,13 +598,14 @@ function FilesCard({ dealId, files }) {
   const inputRef = React.useRef(null);
 
   const handleFiles = async (fileList) => {
-    const file = fileList[0];
-    if (!file) return;
-    if (file.size > 20 * 1024 * 1024) { showMsg('File too large (max 20 MB)'); return; }
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    const tooBig = files.find(f => f.size > 20 * 1024 * 1024);
+    if (tooBig) { showMsg(`"${tooBig.name}" is too large (max 20 MB)`); return; }
     setUploading(true);
     try {
-      await actions.uploadDealFile(dealId, file);
-      showMsg('File uploaded');
+      await Promise.all(files.map(f => actions.uploadDealFile(dealId, f)));
+      showMsg(files.length === 1 ? 'File uploaded' : `${files.length} files uploaded`);
     } catch (err) {
       showMsg(err.message || 'Upload failed');
     } finally {
@@ -634,7 +635,7 @@ function FilesCard({ dealId, files }) {
         <Plus size={12} /> {uploading ? 'Uploading…' : 'Upload'}
       </button>
     }>
-      <input ref={inputRef} type="file" style={{ display: 'none' }}
+      <input ref={inputRef} type="file" multiple style={{ display: 'none' }}
         onChange={(e) => handleFiles(e.target.files)} />
       <div
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -650,7 +651,7 @@ function FilesCard({ dealId, files }) {
           textAlign: 'center', marginBottom: files.length ? 10 : 0,
         }}
       >
-        {uploading ? 'Uploading…' : 'Drop a file here or click Upload'}
+        {uploading ? 'Uploading…' : 'Drop files here or click Upload'}
       </div>
       {files.length === 0 && !uploading && <Empty text="No files attached yet" />}
       {files.map(f => (
