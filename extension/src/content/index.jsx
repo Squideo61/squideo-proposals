@@ -14,14 +14,14 @@ import { api, auth } from '../lib/api.js';
 // Pipeline-stage palette mirrored from src/theme.js. Used by the inbox-row
 // chip colouring so the chip's tint immediately conveys the deal's stage.
 const STAGE_COLOURS = {
-  lead:      { bg: '#F1F5F9', fg: '#475569' },
-  qualified: { bg: '#FEF3C7', fg: '#92400E' },
-  quoting:   { bg: '#DBEAFE', fg: '#1E40AF' },
-  sent:      { bg: '#E0F2FE', fg: '#075985' },
-  viewed:    { bg: '#CFFAFE', fg: '#0E7490' },
-  signed:    { bg: '#DCFCE7', fg: '#166534' },
-  paid:      { bg: '#D1FAE5', fg: '#065F46' },
-  lost:      { bg: '#FEE2E2', fg: '#991B1B' },
+  lead:          { bg: '#F1F5F9', fg: '#475569' },
+  responded:     { bg: '#EDE9FE', fg: '#5B21B6' },
+  proposal_sent: { bg: '#E0F2FE', fg: '#0369A1' },
+  viewed:        { bg: '#FFF7ED', fg: '#C2410C' },
+  signed:        { bg: '#E0F9FF', fg: '#0284C7' },
+  paid:          { bg: '#DCFCE7', fg: '#166534' },
+  long_term:     { bg: '#F5F3FF', fg: '#6D28D9' },
+  lost:          { bg: '#FEE2E2', fg: '#991B1B' },
 };
 
 const INBOXSDK_APP_ID = 'sdk_SquideoCRM_398be07a2b';
