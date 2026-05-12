@@ -27,6 +27,21 @@ vercel dev             # http://localhost:3000
 
 Edit files, browser hot-reloads, commit, `git push` deploys via Vercel.
 
+## Tests
+
+Unit tests live in [tests/](tests/) and run on Vitest. They cover the
+load-bearing API modules (`advanceStage`, `resolveDealForMessage`, the Xero
+line-item mappers, `requireAuth`) with the Neon `sql` tagged template mocked
+so the suite runs fully offline.
+
+```bash
+npm test
+```
+
+The same command runs in CI on every PR via
+[.github/workflows/dependabot-automerge.yml](.github/workflows/dependabot-automerge.yml)
+— Dependabot auto-merge waits for it to go green before merging.
+
 ## Deployment
 
 See [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md) for Neon + Vercel setup. New

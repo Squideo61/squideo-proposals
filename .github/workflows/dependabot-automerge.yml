@@ -4,10 +4,11 @@ name: Dependabot auto-merge
 # patch and minor updates; majors don't reach here because dependabot.yml is
 # configured to ignore them entirely.
 #
-# Safety net: this enables GitHub's built-in "merge when ready" mode rather
-# than merging immediately, so if a CI check fails the merge never happens.
-# The only required check today is Vercel's preview build — add more here
-# (a test suite, lint) and they automatically gate auto-merge too.
+# The `test` job runs on every PR (not just Dependabot's) so the unit suite
+# in tests/ gates every change. `automerge` `needs: test`, so a Dependabot PR
+# only reaches `gh pr merge --auto` once the test job has gone green. Vercel's
+# preview-build status check still gates the eventual auto-merge alongside
+# this job — both must succeed for GitHub to actually merge.
 
 on: pull_request
 
@@ -16,8 +17,20 @@ permissions:
   pull-requests: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm test
+
   automerge:
     runs-on: ubuntu-latest
+    needs: test
     if: github.actor == 'dependabot[bot]'
     steps:
       - name: Fetch update metadata

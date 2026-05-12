@@ -204,7 +204,7 @@ export async function ingestMessage({ userEmail, accessToken, messageId }) {
 
 // Auto-link rules in priority order. Returns { dealId, resolvedBy } or
 // { dealId: null } if no match.
-async function resolveDealForMessage({
+export async function resolveDealForMessage({
   userEmail, threadId, fromEmail, toEmails, ccEmails, inReplyTo, refs, xSquideoDeal, internalOnly,
 }) {
   // Internal team-only — don't auto-link, but also don't leave it unmatched.
@@ -287,7 +287,7 @@ function parseHeaders(arr) {
   return out;
 }
 
-function extractEmail(value) {
+export function extractEmail(value) {
   if (!value) return null;
   // "Name <addr@ex.com>" or just "addr@ex.com"
   const m = String(value).match(/<([^>]+)>/);
@@ -296,7 +296,7 @@ function extractEmail(value) {
   return /@/.test(trimmed) ? trimmed : null;
 }
 
-function parseAddressList(value) {
+export function parseAddressList(value) {
   if (!value) return [];
   return String(value)
     .split(',')
@@ -304,7 +304,7 @@ function parseAddressList(value) {
     .filter(Boolean);
 }
 
-function unwrapAngled(value) {
+export function unwrapAngled(value) {
   if (!value) return null;
   const m = String(value).trim().match(/^<(.+)>$/);
   return (m ? m[1] : String(value).trim()) || null;
