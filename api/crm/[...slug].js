@@ -116,15 +116,15 @@ export default async function handler(req, res) {
 
   try {
     switch (resource) {
-      case 'companies': return companiesRoute(req, res, id, action, user);
-      case 'contacts':  return contactsRoute(req, res, id, action, user);
-      case 'deals':     return dealsRoute(req, res, id, action, user, subaction);
-      case 'tasks':     return tasksRoute(req, res, id, action, user);
-      case 'gmail':     return gmailRoute(req, res, id, action, user);
-      case 'triage':    return triageRoute(req, res, id, action, user);
-      case 'emails':    return emailsRoute(req, res, id, action, user);
-      case 'threads':   return threadsRoute(req, res, id, action, user);
-      case 'templates': return templatesRoute(req, res, id, action, user);
+      case 'companies': return await companiesRoute(req, res, id, action, user);
+      case 'contacts':  return await contactsRoute(req, res, id, action, user);
+      case 'deals':     return await dealsRoute(req, res, id, action, user, subaction);
+      case 'tasks':     return await tasksRoute(req, res, id, action, user);
+      case 'gmail':     return await gmailRoute(req, res, id, action, user);
+      case 'triage':    return await triageRoute(req, res, id, action, user);
+      case 'emails':    return await emailsRoute(req, res, id, action, user);
+      case 'threads':   return await threadsRoute(req, res, id, action, user);
+      case 'templates': return await templatesRoute(req, res, id, action, user);
       default:          return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {
