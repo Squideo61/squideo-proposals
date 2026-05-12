@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { BRAND } from './theme.js';
 import { DEFAULT_PROPOSAL } from './defaults.js';
 import { StoreProvider, useStore } from './store.jsx';
@@ -6,23 +6,34 @@ import { makeId } from './utils.js';
 import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 import { Toast } from './components/ui.jsx';
 import { AuthScreen } from './components/AuthScreen.jsx';
-import { ListView } from './components/ListView.jsx';
-import { BuilderView } from './components/BuilderView.jsx';
 import { ClientView } from './components/ClientView.jsx';
 import { PublicClientShell } from './components/PublicClientShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
-import { TemplatesView } from './components/TemplatesView.jsx';
-import { LeaderboardView } from './components/LeaderboardView.jsx';
-import { PartnerCreditsView } from './components/PartnerCreditsView.jsx';
-import { PartnerCreditDetailView } from './components/PartnerCreditDetailView.jsx';
-import { UserManager } from './components/UserManager.jsx';
 import { NotificationSettings } from './components/NotificationSettings.jsx';
-import { AccountSettings } from './components/AccountSettings.jsx';
-import { PipelineView } from './components/crm/PipelineView.jsx';
-import { DealDetailView } from './components/crm/DealDetailView.jsx';
-import { ContactsView } from './components/crm/ContactsView.jsx';
-import { TasksView } from './components/crm/TasksView.jsx';
-import { TriageView } from './components/crm/TriageView.jsx';
+
+const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: m[name] })));
+
+const ListView = lazyNamed(() => import('./components/ListView.jsx'), 'ListView');
+const BuilderView = lazyNamed(() => import('./components/BuilderView.jsx'), 'BuilderView');
+const TemplatesView = lazyNamed(() => import('./components/TemplatesView.jsx'), 'TemplatesView');
+const LeaderboardView = lazyNamed(() => import('./components/LeaderboardView.jsx'), 'LeaderboardView');
+const PartnerCreditsView = lazyNamed(() => import('./components/PartnerCreditsView.jsx'), 'PartnerCreditsView');
+const PartnerCreditDetailView = lazyNamed(() => import('./components/PartnerCreditDetailView.jsx'), 'PartnerCreditDetailView');
+const UserManager = lazyNamed(() => import('./components/UserManager.jsx'), 'UserManager');
+const AccountSettings = lazyNamed(() => import('./components/AccountSettings.jsx'), 'AccountSettings');
+const PipelineView = lazyNamed(() => import('./components/crm/PipelineView.jsx'), 'PipelineView');
+const DealDetailView = lazyNamed(() => import('./components/crm/DealDetailView.jsx'), 'DealDetailView');
+const ContactsView = lazyNamed(() => import('./components/crm/ContactsView.jsx'), 'ContactsView');
+const TasksView = lazyNamed(() => import('./components/crm/TasksView.jsx'), 'TasksView');
+const TriageView = lazyNamed(() => import('./components/crm/TriageView.jsx'), 'TriageView');
+
+function ViewFallback() {
+  return (
+    <div style={{ minHeight: '100vh', background: BRAND.paper, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ fontSize: 14, color: BRAND.muted }}>Loading…</div>
+    </div>
+  );
+}
 
 function parseHash() {
   const raw = window.location.hash.slice(2); // drop '#/'
@@ -189,6 +200,7 @@ function AppShell() {
 
   return (
     <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
+      <Suspense fallback={<ViewFallback />}>
       {view === 'list' && (
         <ListView
           onCreate={createNew}
@@ -281,17 +293,18 @@ function AppShell() {
           onBack={() => navigate('list')}
         />
       )}
+      </Suspense>
       {modal && modal.type === 'templates' && (
         <TemplatePicker templates={templates} onPick={(t) => createFrom(t || DEFAULT_PROPOSAL)} onClose={() => setModal(null)} />
-      )}
-      {modal && modal.type === 'users' && (
-        <UserManager onClose={() => setModal(null)} />
       )}
       {modal && modal.type === 'notifications' && (
         <NotificationSettings onClose={() => setModal(null)} />
       )}
-      {modal && modal.type === 'account' && (
-        <AccountSettings onClose={() => setModal(null)} onLogout={logout} />
+      {modal && (modal.type === 'users' || modal.type === 'account') && (
+        <Suspense fallback={null}>
+          {modal.type === 'users' && <UserManager onClose={() => setModal(null)} />}
+          {modal.type === 'account' && <AccountSettings onClose={() => setModal(null)} onLogout={logout} />}
+        </Suspense>
       )}
       <Toast msg={toast} />
     </div>
