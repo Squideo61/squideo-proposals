@@ -106,6 +106,93 @@ function withTaskUpdate(state, taskId, transform) {
   return { ...state, tasks: updateList(state.tasks), dealDetail: newDealDetail };
 }
 
+// Apply one tagged optimistic patch and return the updated state.
+// The patch descriptor's `kind` decides which slice(s) of state are touched:
+//   { kind:'deal',    id, patch }      → patches state.deals[id] AND state.dealDetail[id] if cached
+//   { kind:'deal',    id, delete:true } → removes both
+//   { kind:'contact', id, patch }      → patches state.contacts[id]
+//   { kind:'contact', id, delete:true } → removes it
+//   { kind:'company', id, patch }      → patches state.companies[id]
+//   { kind:'company', id, delete:true } → removes it
+//   { kind:'task',    id, patch }      → via withTaskUpdate, syncs state.tasks AND every dealDetail.tasks
+//   { kind:'task',    id, delete:true } → removes from both
+//   { kind:'task',    create:taskObj }  → prepends to state.tasks AND the relevant dealDetail.tasks
+// `patch` may be a function (current → next) — used by toggleTask which reads the current doneAt.
+// A descriptor with no recognised kind is a no-op (used by createTask to carry an errorMsg only).
+function applyOne(state, p) {
+  if (!p) return state;
+  switch (p.kind) {
+    case 'deal': {
+      if (p.delete) {
+        if (!state.deals[p.id] && !state.dealDetail[p.id]) return state;
+        const deals = { ...state.deals }; delete deals[p.id];
+        const dealDetail = { ...state.dealDetail }; delete dealDetail[p.id];
+        return { ...state, deals, dealDetail };
+      }
+      const cur = state.deals[p.id];
+      if (!cur) return state;
+      const detail = state.dealDetail[p.id];
+      return {
+        ...state,
+        deals: { ...state.deals, [p.id]: { ...cur, ...p.patch } },
+        dealDetail: detail
+          ? { ...state.dealDetail, [p.id]: { ...detail, ...p.patch } }
+          : state.dealDetail,
+      };
+    }
+    case 'contact': {
+      if (p.delete) {
+        if (!state.contacts[p.id]) return state;
+        const contacts = { ...state.contacts }; delete contacts[p.id];
+        return { ...state, contacts };
+      }
+      const cur = state.contacts[p.id];
+      if (!cur) return state;
+      return { ...state, contacts: { ...state.contacts, [p.id]: { ...cur, ...p.patch } } };
+    }
+    case 'company': {
+      if (p.delete) {
+        if (!state.companies[p.id]) return state;
+        const companies = { ...state.companies }; delete companies[p.id];
+        return { ...state, companies };
+      }
+      const cur = state.companies[p.id];
+      if (!cur) return state;
+      return { ...state, companies: { ...state.companies, [p.id]: { ...cur, ...p.patch } } };
+    }
+    case 'task': {
+      if (p.create) {
+        const t = p.create;
+        const tasks = [t, ...state.tasks];
+        let dealDetail = state.dealDetail;
+        if (t.dealId && state.dealDetail[t.dealId]) {
+          dealDetail = {
+            ...state.dealDetail,
+            [t.dealId]: {
+              ...state.dealDetail[t.dealId],
+              tasks: [t, ...(state.dealDetail[t.dealId].tasks || [])],
+            },
+          };
+        }
+        return { ...state, tasks, dealDetail };
+      }
+      if (p.delete) return withTaskUpdate(state, p.id, () => null);
+      const transform = typeof p.patch === 'function' ? p.patch : (t) => ({ ...t, ...p.patch });
+      return withTaskUpdate(state, p.id, transform);
+    }
+    default:
+      return state;
+  }
+}
+
+function applyPatches(state, patches) {
+  if (!patches) return state;
+  const list = Array.isArray(patches) ? patches : [patches];
+  let s = state;
+  for (const p of list) s = applyOne(s, p);
+  return s;
+}
+
 function sessionFromToken() {
   try {
     const token = getToken();
@@ -183,6 +270,40 @@ export function StoreProvider({ children }) {
     }
     fetchAll();
   }, [fetchAll]);
+
+  // mutate: the one place CRM-style optimistic actions live.
+  // - `patches` is a tagged descriptor (or array). applyOne handles the dual-cache
+  //   logic so deals/tasks always stay in sync with dealDetail without each
+  //   action having to remember.
+  // - On API failure we snapshot-rollback and toast. Snapshot is whole-state for
+  //   simplicity — the prior swallow-on-error code lost the bug entirely, so
+  //   even an over-aggressive rollback is a strict improvement for the rare
+  //   case of two mutations in flight at once.
+  // - If `onSuccess` is omitted, the response (assumed to be the server-canonical
+  //   record with `id`) is applied as a patch of the same kind. saveDeal etc.
+  //   then need no explicit success handler.
+  const mutate = useCallback((patches, apiCall, onSuccess) => {
+    const first = Array.isArray(patches) ? patches[0] : patches;
+    const errorMsg = first?.errorMsg || 'Action failed';
+    let snapshot = null;
+    setState(s => {
+      snapshot = s;
+      return applyPatches(s, patches);
+    });
+    return apiCall().then((resp) => {
+      if (onSuccess) {
+        setState(s => onSuccess(s, resp) ?? s);
+      } else if (resp && resp.id && first && !first.delete && !first.create) {
+        if (first.kind === 'deal' || first.kind === 'contact' || first.kind === 'company' || first.kind === 'task') {
+          setState(s => applyOne(s, { kind: first.kind, id: resp.id, patch: resp }));
+        }
+      }
+      return resp;
+    }).catch(() => {
+      if (snapshot) setState(snapshot);
+      showMsg(errorMsg);
+    });
+  }, [showMsg]);
 
   const actions = useMemo(() => ({
     login(user, token) {
@@ -439,63 +560,26 @@ export function StoreProvider({ children }) {
       });
     },
     saveDeal(dealId, patch) {
-      // Optimistic merge — Kanban drag-and-edit feels instant. Also patch
-      // dealDetail so an open DealDetailView reflects the change immediately;
-      // it reads from dealDetail first and falls back to deals only when no
-      // detail has been loaded.
-      setState(s => {
-        const cur = s.deals[dealId];
-        if (!cur) return s;
-        const existingDetail = s.dealDetail[dealId];
-        return {
-          ...s,
-          deals: { ...s.deals, [dealId]: { ...cur, ...patch } },
-          dealDetail: existingDetail
-            ? { ...s.dealDetail, [dealId]: { ...existingDetail, ...patch } }
-            : s.dealDetail,
-        };
-      });
-      return api.patch('/api/crm/deals/' + encodeURIComponent(dealId), patch).then((deal) => {
-        if (deal && deal.id) {
-          setState(s => ({
-            ...s,
-            deals: { ...s.deals, [deal.id]: deal },
-            dealDetail: s.dealDetail[deal.id]
-              ? { ...s.dealDetail, [deal.id]: { ...s.dealDetail[deal.id], ...deal } }
-              : s.dealDetail,
-          }));
-        }
-        return deal;
-      }).catch(() => {});
+      return mutate(
+        { kind: 'deal', id: dealId, patch, errorMsg: 'Failed to save deal' },
+        () => api.patch('/api/crm/deals/' + encodeURIComponent(dealId), patch),
+      );
     },
     moveDealStage(dealId, stage, lostReason) {
-      setState(s => {
-        const cur = s.deals[dealId];
-        if (!cur) return s;
-        const patch = { stage, stageChangedAt: new Date().toISOString(), lostReason: lostReason || null };
-        const existingDetail = s.dealDetail[dealId];
-        return {
-          ...s,
-          deals: { ...s.deals, [dealId]: { ...cur, ...patch } },
-          dealDetail: existingDetail
-            ? { ...s.dealDetail, [dealId]: { ...existingDetail, ...patch } }
-            : s.dealDetail,
-        };
-      });
-      return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/stage', { stage, lostReason }).then((resp) => {
-        if (resp?.deal) {
-          setState(s => ({ ...s, deals: { ...s.deals, [dealId]: resp.deal } }));
-        }
-        return resp;
-      }).catch(() => {});
+      const patch = { stage, stageChangedAt: new Date().toISOString(), lostReason: lostReason || null };
+      return mutate(
+        { kind: 'deal', id: dealId, patch, errorMsg: 'Failed to move deal' },
+        () => api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/stage', { stage, lostReason }),
+        (s, resp) => resp?.deal
+          ? applyOne(s, { kind: 'deal', id: resp.deal.id, patch: resp.deal })
+          : s,
+      );
     },
     deleteDeal(dealId) {
-      setState(s => {
-        const deals = { ...s.deals }; delete deals[dealId];
-        const dealDetail = { ...s.dealDetail }; delete dealDetail[dealId];
-        return { ...s, deals, dealDetail };
-      });
-      return api.delete('/api/crm/deals/' + encodeURIComponent(dealId)).catch(() => {});
+      return mutate(
+        { kind: 'deal', id: dealId, delete: true, errorMsg: 'Failed to delete deal' },
+        () => api.delete('/api/crm/deals/' + encodeURIComponent(dealId)),
+      );
     },
     createContact(input) {
       return api.post('/api/crm/contacts', input).then((c) => {
@@ -504,22 +588,16 @@ export function StoreProvider({ children }) {
       });
     },
     saveContact(contactId, patch) {
-      setState(s => {
-        const cur = s.contacts[contactId];
-        if (!cur) return s;
-        return { ...s, contacts: { ...s.contacts, [contactId]: { ...cur, ...patch } } };
-      });
-      return api.patch('/api/crm/contacts/' + encodeURIComponent(contactId), patch).then((c) => {
-        if (c && c.id) setState(s => ({ ...s, contacts: { ...s.contacts, [c.id]: c } }));
-        return c;
-      }).catch(() => {});
+      return mutate(
+        { kind: 'contact', id: contactId, patch, errorMsg: 'Failed to save contact' },
+        () => api.patch('/api/crm/contacts/' + encodeURIComponent(contactId), patch),
+      );
     },
     deleteContact(contactId) {
-      setState(s => {
-        const contacts = { ...s.contacts }; delete contacts[contactId];
-        return { ...s, contacts };
-      });
-      return api.delete('/api/crm/contacts/' + encodeURIComponent(contactId)).catch(() => {});
+      return mutate(
+        { kind: 'contact', id: contactId, delete: true, errorMsg: 'Failed to delete contact' },
+        () => api.delete('/api/crm/contacts/' + encodeURIComponent(contactId)),
+      );
     },
     createCompany(input) {
       return api.post('/api/crm/companies', input).then((c) => {
@@ -528,22 +606,16 @@ export function StoreProvider({ children }) {
       });
     },
     saveCompany(companyId, patch) {
-      setState(s => {
-        const cur = s.companies[companyId];
-        if (!cur) return s;
-        return { ...s, companies: { ...s.companies, [companyId]: { ...cur, ...patch } } };
-      });
-      return api.patch('/api/crm/companies/' + encodeURIComponent(companyId), patch).then((c) => {
-        if (c && c.id) setState(s => ({ ...s, companies: { ...s.companies, [c.id]: c } }));
-        return c;
-      }).catch(() => {});
+      return mutate(
+        { kind: 'company', id: companyId, patch, errorMsg: 'Failed to save company' },
+        () => api.patch('/api/crm/companies/' + encodeURIComponent(companyId), patch),
+      );
     },
     deleteCompany(companyId) {
-      setState(s => {
-        const companies = { ...s.companies }; delete companies[companyId];
-        return { ...s, companies };
-      });
-      return api.delete('/api/crm/companies/' + encodeURIComponent(companyId)).catch(() => {});
+      return mutate(
+        { kind: 'company', id: companyId, delete: true, errorMsg: 'Failed to delete company' },
+        () => api.delete('/api/crm/companies/' + encodeURIComponent(companyId)),
+      );
     },
     refreshTasks(scope = 'open') {
       return api.get('/api/crm/tasks?scope=' + encodeURIComponent(scope)).then((rows) => {
@@ -553,63 +625,57 @@ export function StoreProvider({ children }) {
       }).catch(() => []);
     },
     createTask(input) {
-      return api.post('/api/crm/tasks', input).then((t) => {
-        if (t && t.id) {
-          setState(s => {
-            const next = { ...s, tasks: [t, ...s.tasks] };
-            if (t.dealId && s.dealDetail[t.dealId]) {
-              next.dealDetail = {
-                ...s.dealDetail,
-                [t.dealId]: {
-                  ...s.dealDetail[t.dealId],
-                  tasks: [t, ...(s.dealDetail[t.dealId].tasks || [])],
-                },
-              };
-            }
-            return next;
-          });
-        }
-        return t;
-      });
+      // No optimistic insert — id is server-assigned. Use mutate purely for
+      // the rollback/toast scaffolding; onSuccess applies the new row to both
+      // state.tasks and the relevant dealDetail.tasks via applyOne.
+      return mutate(
+        { errorMsg: 'Failed to create task' },
+        () => api.post('/api/crm/tasks', input),
+        (s, t) => (t && t.id) ? applyOne(s, { kind: 'task', create: t }) : s,
+      );
     },
     saveTask(taskId, patch) {
-      setState(s => withTaskUpdate(s, taskId, (t) => ({ ...t, ...patch })));
-      return api.patch('/api/crm/tasks/' + encodeURIComponent(taskId), patch).then((t) => {
-        if (t && t.id) setState(s => withTaskUpdate(s, t.id, () => t));
-        return t;
-      }).catch(() => {});
+      return mutate(
+        { kind: 'task', id: taskId, patch, errorMsg: 'Failed to save task' },
+        () => api.patch('/api/crm/tasks/' + encodeURIComponent(taskId), patch),
+      );
     },
     toggleTask(taskId) {
       // Bidirectional toggle: ticks an open task done, unticks a done task.
-      // Optimistic update, then API call (atomic on the server), then a
-      // background reload of the affected deal to refresh its timeline.
+      // The patch is a function so it sees the live doneAt at update time.
+      // After API success, refetch the deal in the background so its event
+      // timeline picks up the new "task completed" entry.
       let dealIdForReload = null;
-      setState(s => {
-        const cur = s.tasks.find(t => t.id === taskId)
-          || Object.values(s.dealDetail || {}).flatMap(d => d?.tasks || []).find(t => t.id === taskId);
-        if (!cur) return s;
-        dealIdForReload = cur.dealId || null;
-        const nextDoneAt = cur.doneAt ? null : new Date().toISOString();
-        return withTaskUpdate(s, taskId, (t) => ({ ...t, doneAt: nextDoneAt }));
-      });
-      return api.post('/api/crm/tasks/' + encodeURIComponent(taskId) + '/done', {}).then((t) => {
-        if (t && t.id) {
-          setState(s => withTaskUpdate(s, t.id, () => t));
+      return mutate(
+        {
+          kind: 'task',
+          id: taskId,
+          patch: (t) => {
+            dealIdForReload = t.dealId || null;
+            return { ...t, doneAt: t.doneAt ? null : new Date().toISOString() };
+          },
+          errorMsg: 'Failed to update task',
+        },
+        () => api.post('/api/crm/tasks/' + encodeURIComponent(taskId) + '/done', {}),
+        (s, t) => {
+          if (!t || !t.id) return s;
           const dId = t.dealId || dealIdForReload;
           if (dId) {
             api.get('/api/crm/deals/' + encodeURIComponent(dId)).then((data) => {
               if (data && data.id) {
-                setState(s => ({ ...s, dealDetail: { ...s.dealDetail, [dId]: data } }));
+                setState(st => ({ ...st, dealDetail: { ...st.dealDetail, [dId]: data } }));
               }
             }).catch(() => {});
           }
-        }
-        return t;
-      }).catch(() => {});
+          return withTaskUpdate(s, t.id, () => t);
+        },
+      );
     },
     deleteTask(taskId) {
-      setState(s => withTaskUpdate(s, taskId, () => null));
-      return api.delete('/api/crm/tasks/' + encodeURIComponent(taskId)).catch(() => {});
+      return mutate(
+        { kind: 'task', id: taskId, delete: true, errorMsg: 'Failed to delete task' },
+        () => api.delete('/api/crm/tasks/' + encodeURIComponent(taskId)),
+      );
     },
 
     // ---------- Deal comments ----------
