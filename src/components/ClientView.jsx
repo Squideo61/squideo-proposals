@@ -160,7 +160,11 @@ function renderDescriptionMarkup(text) {
   });
 }
 
-function validityLabel(dateStr, days) {
+function validityLabel(dateStr, days, expiryDateISO) {
+  if (expiryDateISO) {
+    const d = new Date(expiryDateISO);
+    if (!isNaN(d)) return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
   const start = parseDateUK(dateStr);
   if (!start || !days) return null;
   const expiry = new Date(start);
@@ -512,7 +516,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 14, opacity: 0.85 }}>{data.date}</span>
               {(() => {
-                const expiry = validityLabel(data.date, data.validityDays);
+                const expiry = validityLabel(data.date, data.validityDays, data.expiryDate);
                 if (!expiry) return null;
                 return (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.35)', color: 'white', padding: '3px 10px', borderRadius: 999 }}>
@@ -958,7 +962,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
         })()}
 
         {(() => {
-          const expiry = validityLabel(data.date, data.validityDays);
+          const expiry = validityLabel(data.date, data.validityDays, data.expiryDate);
           if (!expiry) return null;
           return (
             <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>

@@ -272,7 +272,9 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       </div>
       <p style="font-size:11px;color:#6B7785;margin:20px 0 0;line-height:1.5;">
         Please return the signed copy to <strong>hello@squideo.com</strong> or post to Squideo Ltd, Hull, HU1.
-        This proposal is valid for ${data.validityDays || 28} days from the date above.
+        ${data.expiryDate
+          ? `This proposal expires on ${new Date(data.expiryDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}.`
+          : `This proposal is valid for ${data.validityDays || 28} days from the date above.`}
       </p>
     </div>`;
 

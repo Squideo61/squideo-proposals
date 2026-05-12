@@ -29,6 +29,20 @@ function useReorderState() {
   };
 }
 
+function ukDateToISO(dateStr) {
+  const m = String(dateStr || '').match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})/);
+  if (!m) return '';
+  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  return isNaN(d) ? '' : d.toISOString().slice(0, 10);
+}
+
+function defaultExpiryISO(proposalDate, validityDays) {
+  const base = ukDateToISO(proposalDate) || new Date().toISOString().slice(0, 10);
+  const d = new Date(base);
+  d.setDate(d.getDate() + (Number(validityDays) || 28));
+  return d.toISOString().slice(0, 10);
+}
+
 function DragHandle({ onDragStart, onDragEnd }) {
   return (
     <span
@@ -352,15 +366,12 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               <Field label="Date">
                 <input className="input" value={data.date} onChange={(e) => update({ date: e.target.value })} />
               </Field>
-              <Field label="Valid for (days)">
+              <Field label="Expires">
                 <input
-                  type="number"
-                  inputMode="numeric"
-                  min="1"
-                  step="1"
+                  type="date"
                   className="input"
-                  value={data.validityDays ?? 28}
-                  onChange={(e) => update({ validityDays: parseInt(e.target.value, 10) || 28 })}
+                  value={data.expiryDate || defaultExpiryISO(data.date, data.validityDays)}
+                  onChange={(e) => update({ expiryDate: e.target.value })}
                 />
               </Field>
               <Field label="Prepared by">
