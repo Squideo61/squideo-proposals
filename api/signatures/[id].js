@@ -12,6 +12,7 @@ export default async function handler(req, res) {
   if (req.method === 'DELETE') {
     const user = await requireAuth(req, res);
     if (!user) return;
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
     await sql`DELETE FROM signatures WHERE proposal_id = ${id}`;
     return res.status(200).json({ ok: true });
   }

@@ -106,6 +106,8 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'DELETE') {
+    // Destructive — admin-only. Members can edit (team write) but not destroy.
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
     await sql`DELETE FROM proposals WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }

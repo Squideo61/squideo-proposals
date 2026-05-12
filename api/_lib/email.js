@@ -12,7 +12,11 @@ function getClient() {
   return client;
 }
 
-export async function sendMail({ to, subject, html, text }) {
+// Sends a transactional email. Failures are caught and logged so the calling
+// API route doesn't 500 on a transient SMTP issue. Callers that need to know
+// whether the send succeeded (e.g. the 2FA code flow) should pass
+// `{ throwOnError: true }` and handle the rejection.
+export async function sendMail({ to, subject, html, text, throwOnError = false }) {
   const c = getClient();
   const recipients = (Array.isArray(to) ? to : [to])
     .map(r => (typeof r === 'string' ? r.trim() : r))
@@ -20,12 +24,14 @@ export async function sendMail({ to, subject, html, text }) {
   if (!recipients.length) return;
   if (!c) {
     console.warn('[email] RESEND_API_KEY missing — skipping send', { subject, to: recipients });
+    if (throwOnError) throw new Error('Email transport not configured');
     return;
   }
   try {
     await c.emails.send({ from: FROM, to: recipients, subject, html, text });
   } catch (err) {
-    console.error('[email] send failed', err);
+    console.error('[email] send failed', { subject, to: recipients, err: err.message });
+    if (throwOnError) throw err;
   }
 }
 

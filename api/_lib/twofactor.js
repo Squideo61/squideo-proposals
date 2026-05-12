@@ -64,8 +64,13 @@ export function generateBackupCodes(count = 10) {
 }
 
 export function hashBackupCode(code) {
+  // Peppered SHA-256. The pepper lives in JWT_SECRET (server-only), making a
+  // DB-only leak insufficient to brute-force the 4-byte code space. Existing
+  // hashes from before the pepper landed will fail to match — those users
+  // need to regenerate their backup codes via the 2fa-regenerate-backup route.
   const normalised = String(code).replace(/[\s-]/g, '').toUpperCase();
-  return crypto.createHash('sha256').update(normalised).digest('hex');
+  const pepper = process.env.JWT_SECRET || '';
+  return crypto.createHash('sha256').update(normalised + ':' + pepper).digest('hex');
 }
 
 export function consumeBackupCode(existingHashes, code) {

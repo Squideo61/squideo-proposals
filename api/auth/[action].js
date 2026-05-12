@@ -26,6 +26,45 @@ import {
 
 const OTP_TTL_MINUTES = 10;
 const OTP_MAX_ATTEMPTS = 5;
+const BCRYPT_COST = 12;
+
+// Login rate-limit: 5 failed attempts per (email, IP) within 10 minutes
+// triggers a lockout. Resets on successful login. The 10-minute window
+// rolls forward as long as attempts keep arriving.
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MINUTES = 10;
+
+function clientIp(req) {
+  return ((req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+       || req.headers['x-real-ip']
+       || 'unknown');
+}
+
+async function isLoginLocked(email, ip) {
+  // INTERVAL literal must be a constant string in the SQL, hence the 10
+  // hard-coded here matching LOGIN_LOCKOUT_MINUTES. If you change the
+  // constant, change the interval too.
+  const rows = await sql`
+    SELECT attempts, last_at FROM failed_logins
+    WHERE email = ${email} AND ip = ${ip}
+      AND last_at > NOW() - INTERVAL '10 minutes'
+  `;
+  return rows.length > 0 && rows[0].attempts >= LOGIN_MAX_ATTEMPTS;
+}
+
+async function recordFailedLogin(email, ip) {
+  await sql`
+    INSERT INTO failed_logins (email, ip, attempts, first_at, last_at)
+    VALUES (${email}, ${ip}, 1, NOW(), NOW())
+    ON CONFLICT (email, ip) DO UPDATE SET
+      attempts = failed_logins.attempts + 1,
+      last_at  = NOW()
+  `;
+}
+
+async function clearFailedLogins(email, ip) {
+  await sql`DELETE FROM failed_logins WHERE email = ${email} AND ip = ${ip}`;
+}
 
 async function loadUser(email) {
   const rows = await sql`
@@ -76,6 +115,8 @@ async function issueEmailOtp(email, purpose) {
           expires_at = EXCLUDED.expires_at,
           created_at = NOW()
   `;
+  // 2FA codes MUST surface delivery failure — a silent fail would leave the
+  // user stuck on the verify screen with no code coming.
   await sendMail({
     to: email,
     subject: purpose === 'enrol'
@@ -83,6 +124,7 @@ async function issueEmailOtp(email, purpose) {
       : 'Your Squideo verification code',
     html: twoFactorCodeHtml({ code, minutes: OTP_TTL_MINUTES, purpose }),
     text: `Your Squideo verification code is ${code}. It expires in ${OTP_TTL_MINUTES} minutes.`,
+    throwOnError: true,
   });
 }
 
@@ -125,11 +167,25 @@ export default async function handler(req, res) {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'email and password are required' });
 
+    const ip = clientIp(req);
+    if (await isLoginLocked(email, ip)) {
+      return res.status(429).json({ error: 'Too many failed attempts. Try again in 10 minutes.' });
+    }
+
     const user = await loadUser(email);
-    if (!user) return res.status(401).json({ error: 'Invalid email or password' });
+    if (!user) {
+      await recordFailedLogin(email, ip);
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
 
     const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
+    if (!valid) {
+      await recordFailedLogin(email, ip);
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Password verified — clear the (email, IP) rate-limit slot.
+    await clearFailedLogins(email, ip);
 
     const tdCookie = parseCookie(req.headers.cookie, 'sq_td');
     if (tdCookie && (await consumeTrustedDevice(tdCookie, user.email))) {
@@ -174,7 +230,7 @@ export default async function handler(req, res) {
     if (!consumed.length) return res.status(409).json({ error: 'Invite already used' });
     const role = consumed[0].role || 'member';
 
-    const password_hash = await bcrypt.hash(password, 10);
+    const password_hash = await bcrypt.hash(password, BCRYPT_COST);
     await sql`INSERT INTO users (email, name, password_hash, role) VALUES (${email}, ${name}, ${password_hash}, ${role})`;
 
     const enrolment_token = await signEnrolmentToken({ email });

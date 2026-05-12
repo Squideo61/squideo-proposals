@@ -19,7 +19,11 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'PUT') {
-    const { extrasBank, inclusionsBank, notificationRecipients } = req.body;
+    // Global settings — admin only. A compromised member account shouldn't
+    // be able to redirect signed/paid notifications or pollute every new
+    // proposal's defaults.
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    const { extrasBank, inclusionsBank, notificationRecipients } = req.body || {};
     await sql`
       UPDATE settings SET
         extras_bank             = COALESCE(${extrasBank ? JSON.stringify(extrasBank) : null}::jsonb, extras_bank),

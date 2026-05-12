@@ -347,6 +347,11 @@ export default async function handler(req, res) {
         process.env.STRIPE_WEBHOOK_SECRET
       );
     } catch (err) {
+      // Surface signature failures — could be a probe or a mis-configured
+      // webhook secret. Vercel log only; no PII in the message.
+      const sigPrefix = String(req.headers['stripe-signature'] || '').slice(0, 16);
+      const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || null;
+      console.warn('[stripe webhook] signature verify failed', { ip, sigPrefix, err: err.message });
       return res.status(400).json({ error: 'Webhook signature failed: ' + err.message });
     }
 
@@ -488,28 +493,38 @@ export default async function handler(req, res) {
   if (action === 'checkout') {
     if (req.method !== 'POST') return res.status(405).end();
     const { proposalId, amount, isDeposit, customerEmail, partner, billing } = body;
-    if (!proposalId || !amount) return res.status(400).json({ error: 'proposalId and amount required' });
+    if (!proposalId || typeof proposalId !== 'string' || proposalId.length > 128) {
+      return res.status(400).json({ error: 'proposalId required' });
+    }
+    if (!amount || typeof amount !== 'number' || amount <= 0 || amount > 1_000_000) {
+      return res.status(400).json({ error: 'amount required and must be a positive number' });
+    }
 
     const validEmail = typeof customerEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail.trim())
       ? customerEmail.trim()
       : undefined;
 
     // Persist billing JSON keyed by proposalId so the webhook can build a Xero
-    // contact + invoice without needing every billing field round-tripped via
-    // Stripe metadata.
-    if (billing) {
+    // contact + invoice. Allowlist the keys we know about so a hostile client
+    // can't store arbitrary nested JSON; cap string lengths to 256.
+    if (billing && typeof billing === 'object') {
+      const BILLING_KEYS = ['companyName', 'accountsEmail', 'vatNumber', 'addressLine1', 'addressLine2', 'city', 'postcode', 'country'];
+      const cleanBilling = {};
+      for (const k of BILLING_KEYS) {
+        if (typeof billing[k] === 'string') cleanBilling[k] = billing[k].slice(0, 256);
+      }
       await sql`
         INSERT INTO proposal_billing (proposal_id, billing)
-        VALUES (${proposalId}, ${JSON.stringify(billing)})
+        VALUES (${proposalId}, ${JSON.stringify(cleanBilling)})
         ON CONFLICT (proposal_id) DO UPDATE
           SET billing = EXCLUDED.billing, updated_at = NOW()
       `;
     }
 
     try {
-      const successUrl = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId
-                       + '&session_id={CHECKOUT_SESSION_ID}';
-      const cancelUrl = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposalId + '&thanks=1';
+      const baseUrl = APP_URL.replace(/\/$/, '');
+      const successUrl = baseUrl + '/?proposal=' + proposalId + '&session_id={CHECKOUT_SESSION_ID}';
+      const cancelUrl = baseUrl + '/?proposal=' + proposalId + '&thanks=1';
 
       // Partner Programme: charge project + first-month partner combined as a
       // single one-off payment. Stripe Checkout doesn't support mixing one-off

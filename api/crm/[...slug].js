@@ -183,6 +183,7 @@ async function companiesRoute(req, res, id, action, user) {
     return res.status(200).json(serialiseCompany(rows[0]));
   }
   if (req.method === 'DELETE') {
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
     await sql`DELETE FROM companies WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }
@@ -261,6 +262,7 @@ async function contactsRoute(req, res, id, action, user) {
     return res.status(200).json(serialiseContact(rows[0]));
   }
   if (req.method === 'DELETE') {
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
     await sql`DELETE FROM contacts WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }
@@ -487,9 +489,12 @@ async function dealsRoute(req, res, id, action, user, subaction = null) {
 
   if (action === 'files' && subaction && subaction !== 'from-email' && req.method === 'DELETE') {
     const rows = await sql`
-      SELECT blob_url FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}
+      SELECT blob_url, uploaded_by FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}
     `;
     if (!rows.length) return res.status(404).json({ error: 'File not found' });
+    if (user.role !== 'admin' && rows[0].uploaded_by !== user.email) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     try { await del(rows[0].blob_url); } catch (err) {
       console.error('[deal files] blob delete failed', err.message);
     }
@@ -659,6 +664,7 @@ async function dealsRoute(req, res, id, action, user, subaction = null) {
   }
 
   if (req.method === 'DELETE') {
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
     await sql`DELETE FROM deals WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }
@@ -920,6 +926,17 @@ async function tasksRoute(req, res, id, action, user) {
   }
 
   if (req.method === 'DELETE') {
+    // Creator, current assignee, or admin can delete. Anyone else is rejected.
+    const rows = await sql`
+      SELECT t.created_by,
+        (SELECT COALESCE(ARRAY_AGG(ta.user_email), '{}') FROM task_assignees ta WHERE ta.task_id = t.id) AS assignees
+      FROM tasks t WHERE t.id = ${id}
+    `;
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const allowed = user.role === 'admin'
+      || rows[0].created_by === user.email
+      || (Array.isArray(rows[0].assignees) && rows[0].assignees.includes(user.email));
+    if (!allowed) return res.status(403).json({ error: 'Forbidden' });
     await sql`DELETE FROM tasks WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }
@@ -1351,6 +1368,7 @@ async function templatesRoute(req, res, id, action, user) {
   }
 
   if (req.method === 'DELETE') {
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
     await sql`DELETE FROM crm_email_templates WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }
@@ -1390,10 +1408,22 @@ async function cronHandler(req, res, action) {
   }
 
   switch (action) {
-    case 'task-reminders':  return cronTaskReminders(res);
+    case 'task-reminders':    return cronTaskReminders(res);
     case 'gmail-watch-renew': return cronGmailWatchRenew(res);
-    default:                return res.status(404).json({ error: 'Unknown cron action: ' + action });
+    case 'prune-views':       return cronPruneViews(res);
+    default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
+}
+
+// GDPR retention: proposal_views collects IP + UA per open, which is personal
+// data under UK/EU rules. Keep 12 months max; clients aren't told their IP is
+// being captured so a long retention window is hard to justify.
+async function cronPruneViews(res) {
+  const result = await sql`
+    DELETE FROM proposal_views WHERE opened_at < NOW() - INTERVAL '12 months'
+  `;
+  console.log('[cron prune-views] deleted', { count: result.count || result.rowCount || 0 });
+  return res.status(200).json({ ok: true, deleted: result.count || result.rowCount || 0 });
 }
 
 async function cronTaskReminders(res) {
@@ -1954,18 +1984,27 @@ async function getFreshAccessToken(userEmail) {
   return refreshed.accessToken;
 }
 
+const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function cleanEmailList(value) {
+  const raw = Array.isArray(value) ? value : (value ? [value] : []);
+  return raw
+    .filter(v => typeof v === 'string')
+    .map(v => v.trim())
+    .filter(v => EMAIL_RX.test(v));
+}
+
 async function gmailSend(req, res, user) {
   const body = req.body || {};
-  const to = Array.isArray(body.to) ? body.to.filter(Boolean) : (body.to ? [body.to] : []);
-  const cc = Array.isArray(body.cc) ? body.cc.filter(Boolean) : [];
-  const bcc = Array.isArray(body.bcc) ? body.bcc.filter(Boolean) : [];
+  const to = cleanEmailList(body.to);
+  const cc = cleanEmailList(body.cc);
+  const bcc = cleanEmailList(body.bcc);
   const subject = trimOrNull(body.subject);
   const html = body.html || '';
   const text = body.text || '';
   const dealId = trimOrNull(body.dealId);
   const threadId = trimOrNull(body.gmailThreadId);
 
-  if (!to.length) return res.status(400).json({ error: 'to is required' });
+  if (!to.length) return res.status(400).json({ error: 'to is required and must contain at least one valid email' });
   if (!subject) return res.status(400).json({ error: 'subject is required' });
   if (!html && !text) return res.status(400).json({ error: 'html or text body is required' });
 
@@ -2236,6 +2275,8 @@ async function gmailPush(req, res) {
   // push — we 401 without doing any work.
   const authHeader = req.headers.authorization || '';
   if (!authHeader.startsWith('Bearer ')) {
+    const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || null;
+    console.warn('[gmail push] missing bearer token', { ip });
     return res.status(401).json({ error: 'Missing bearer token' });
   }
   const token = authHeader.slice(7);
@@ -2244,7 +2285,8 @@ async function gmailPush(req, res) {
   try {
     await verifyPushJwt(token, expectedAudience);
   } catch (err) {
-    console.error('[gmail push] JWT verification failed', err.message);
+    const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || null;
+    console.warn('[gmail push] JWT verification failed', { ip, err: err.message });
     return res.status(401).json({ error: 'Invalid JWT' });
   }
 
