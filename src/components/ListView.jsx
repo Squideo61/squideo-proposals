@@ -7,7 +7,7 @@ import { openPrintWindow, printOptionsForSigned } from '../utils/printProposal.j
 import { Badge, Logo } from './ui.jsx';
 import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onLogout, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   const openTasksDue = (state.tasks || []).filter(t => !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= Date.now() + 24 * 60 * 60 * 1000).length;
@@ -80,16 +80,16 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
           <button onClick={onManageTemplates} className="btn-ghost"><LayoutTemplate size={14} /> Templates</button>
           <button onClick={onManageNotifications} className="btn-ghost"><Mail size={14} /> Notifications</button>
           <button onClick={onManageUsers} className="btn-ghost"><Users size={14} /> Users</button>
-          <button onClick={onLogout} className="btn-ghost">Sign out</button>
           <button
             onClick={onManageAccount}
-            aria-label="My account"
-            style={{ width: 36, height: 36, borderRadius: '50%', border: 'none', padding: 0, cursor: 'pointer', overflow: 'hidden', flexShrink: 0 }}
+            className="btn-ghost"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 12px 4px 6px', borderRadius: 20 }}
           >
             {user.avatar
-              ? <img src={user.avatar} alt={user.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              : <div style={{ width: '100%', height: '100%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 15 }}>{(user.name || '?')[0].toUpperCase()}</div>
+              ? <img src={user.avatar} alt={user.name} style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
+              : <div style={{ width: 24, height: 24, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11 }}>{(user.name || '?')[0].toUpperCase()}</div>
             }
+            Account
           </button>
           <button onClick={onCreate} className="btn"><Plus size={16} /> New Proposal</button>
         </div>

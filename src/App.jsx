@@ -177,7 +177,6 @@ function AppShell() {
           onPreview={(id) => { setActiveId(id); setView('client'); }}
           onDelete={deleteProposal}
           onDuplicate={duplicateProposal}
-          onLogout={logout}
           onManageUsers={() => setModal({ type: 'users' })}
           onManageNotifications={() => setModal({ type: 'notifications' })}
           onManageAccount={() => setModal({ type: 'account' })}
@@ -273,7 +272,7 @@ function AppShell() {
         <NotificationSettings onClose={() => setModal(null)} />
       )}
       {modal && modal.type === 'account' && (
-        <AccountSettings onClose={() => setModal(null)} />
+        <AccountSettings onClose={() => setModal(null)} onLogout={logout} />
       )}
       <Toast msg={toast} />
     </div>

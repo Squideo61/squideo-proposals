@@ -28,7 +28,7 @@ function AvatarCircle({ avatar, name, size = 80 }) {
   );
 }
 
-export function AccountSettings({ onClose }) {
+export function AccountSettings({ onClose, onLogout }) {
   const { state, actions, showMsg } = useStore();
   const user = state.session;
   const fileRef = useRef(null);
@@ -183,6 +183,12 @@ export function AccountSettings({ onClose }) {
       <div style={{ borderTop: '1px solid ' + BRAND.border, margin: '24px 0' }} />
 
       <TwoFactorSection onResetDone={onClose} />
+
+      <div style={{ borderTop: '1px solid ' + BRAND.border, marginTop: 24, paddingTop: 20 }}>
+        <button className="btn-ghost" onClick={onLogout} style={{ color: '#DC2626', width: '100%', justifyContent: 'center' }}>
+          Sign out
+        </button>
+      </div>
     </Modal>
   );
 }
