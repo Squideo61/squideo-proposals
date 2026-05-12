@@ -3,7 +3,7 @@
 // view event from downgrading a signed deal back to "viewed".
 import sql from './db.js';
 
-export const STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'signed', 'paid', 'lost'];
+export const STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'signed', 'paid', 'long_term', 'lost'];
 
 export function isValidStage(stage) {
   return STAGES.includes(stage);
@@ -15,7 +15,8 @@ function rank(stage) {
 }
 
 // Advance a deal's stage forward, no-op if `toStage` is earlier than the
-// current one. `lost` is the only stage that can be set from anywhere.
+// current one. `lost` and `long_term` can be set from anywhere, and a deal
+// in `long_term` can move to any stage (bidirectional parking lane).
 // Writes a `stage_change` event to deal_events when an actual transition
 // occurs. All hooks are best-effort — failures must not break the calling
 // API route, so the caller wraps this in try/catch.
@@ -29,7 +30,8 @@ export async function advanceStage(dealId, toStage, { actorEmail = null, payload
 
   const isForward = rank(toStage) > rank(current);
   const isLost = toStage === 'lost';
-  if (!isForward && !isLost) return { changed: false, reason: 'no-advance', current };
+  const isLongTerm = toStage === 'long_term' || current === 'long_term';
+  if (!isForward && !isLost && !isLongTerm) return { changed: false, reason: 'no-advance', current };
   if (current === toStage) return { changed: false, reason: 'same-stage' };
 
   await sql`

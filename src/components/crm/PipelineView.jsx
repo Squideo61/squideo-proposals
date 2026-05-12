@@ -10,9 +10,10 @@ export const PIPELINE_STAGES = [
   { id: 'responded',     label: 'Responded',     color: '#7C3AED' },
   { id: 'proposal_sent', label: 'Proposal Sent', color: '#0EA5E9' },
   { id: 'viewed',        label: 'Viewed',        color: '#FB923C' },
-  { id: 'signed',    label: 'Signed',    color: '#2BB8E6' },
-  { id: 'paid',      label: 'Paid',      color: '#16A34A' },
-  { id: 'lost',      label: 'Lost',      color: '#94A3B8' },
+  { id: 'signed',        label: 'Signed',        color: '#2BB8E6' },
+  { id: 'paid',          label: 'Paid',          color: '#16A34A' },
+  { id: 'long_term',     label: 'Long-term',     color: '#A78BFA', defaultCollapsed: true },
+  { id: 'lost',          label: 'Lost',          color: '#94A3B8', defaultCollapsed: true },
 ];
 
 const STAGE_BY_ID = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s]));
@@ -57,15 +58,26 @@ export function PipelineView({ onBack, onOpenDeal }) {
         flexDirection: 'column',
         gap: 12,
       }}>
-        {PIPELINE_STAGES.map(s => (
-          <StageRow
-            key={s.id}
-            stage={s}
-            deals={grouped[s.id] || []}
-            onDrop={(deal) => handleDrop(deal, s.id)}
-            onOpenDeal={onOpenDeal}
-          />
-        ))}
+        {PIPELINE_STAGES.map((s, i) => {
+          const isFirstExit = s.defaultCollapsed && !PIPELINE_STAGES[i - 1]?.defaultCollapsed;
+          return (
+            <React.Fragment key={s.id}>
+              {isFirstExit && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 0' }}>
+                  <div style={{ flex: 1, height: 1, background: BRAND.border }} />
+                  <span style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>Parked &amp; closed</span>
+                  <div style={{ flex: 1, height: 1, background: BRAND.border }} />
+                </div>
+              )}
+              <StageRow
+                stage={s}
+                deals={grouped[s.id] || []}
+                onDrop={(deal) => handleDrop(deal, s.id)}
+                onOpenDeal={onOpenDeal}
+              />
+            </React.Fragment>
+          );
+        })}
       </div>
 
       {creating && <NewDealModal onClose={() => setCreating(false)} onCreated={(d) => { setCreating(false); if (d) onOpenDeal(d.id); }} />}
@@ -75,7 +87,7 @@ export function PipelineView({ onBack, onOpenDeal }) {
 
 function StageRow({ stage, deals, onDrop, onOpenDeal }) {
   const [hover, setHover] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(stage.defaultCollapsed ?? false);
   const total = deals.reduce((s, d) => s + (Number(d.value) || 0), 0);
   return (
     <div
