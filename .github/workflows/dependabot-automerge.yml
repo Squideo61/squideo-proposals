@@ -1,0 +1,34 @@
+name: Dependabot auto-merge
+
+# Auto-merges Dependabot PRs once all required checks pass. Only fires for
+# patch and minor updates; majors don't reach here because dependabot.yml is
+# configured to ignore them entirely.
+#
+# Safety net: this enables GitHub's built-in "merge when ready" mode rather
+# than merging immediately, so if a CI check fails the merge never happens.
+# The only required check today is Vercel's preview build — add more here
+# (a test suite, lint) and they automatically gate auto-merge too.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch update metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for patch + minor
+        if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
