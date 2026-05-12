@@ -1,8 +1,6 @@
 {
   "functions": {
-    "api/**/*.js": { "maxDuration": 10 },
-    "api/crm/*.js": { "maxDuration": 60 },
-    "api/stripe/*.js": { "maxDuration": 30 }
+    "api/**/*.js": { "maxDuration": 60 }
   },
   "rewrites": [
     { "source": "/api/invites", "destination": "/api/users?_kind=invites" },
