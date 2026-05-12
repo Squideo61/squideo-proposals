@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BRAND } from './theme.js';
 import { DEFAULT_PROPOSAL } from './defaults.js';
 import { StoreProvider, useStore } from './store.jsx';
@@ -24,12 +24,41 @@ import { ContactsView } from './components/crm/ContactsView.jsx';
 import { TasksView } from './components/crm/TasksView.jsx';
 import { TriageView } from './components/crm/TriageView.jsx';
 
+function parseHash() {
+  const raw = window.location.hash.slice(2); // drop '#/'
+  if (!raw) return { view: 'list', activeId: null };
+  const sep = raw.indexOf('/');
+  if (sep === -1) return { view: raw, activeId: null };
+  return { view: raw.slice(0, sep), activeId: decodeURIComponent(raw.slice(sep + 1)) || null };
+}
+
+function buildHash(view, id) {
+  if (view === 'list') return '#/';
+  return '#/' + view + (id ? '/' + encodeURIComponent(id) : '');
+}
+
 function AppShell() {
   const { state, actions, showMsg, toast } = useStore();
   const user = state.session;
-  const [view, setView] = useState('list');
-  const [activeId, setActiveId] = useState(null);
+  const [view, setView] = useState(() => parseHash().view);
+  const [activeId, setActiveId] = useState(() => parseHash().activeId);
   const [modal, setModal] = useState(null);
+
+  useEffect(() => {
+    const onPop = () => {
+      const { view: v, activeId: id } = parseHash();
+      setView(v);
+      setActiveId(id);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const navigate = useCallback((newView, newId = null) => {
+    window.history.pushState(null, '', buildHash(newView, newId));
+    setView(newView);
+    setActiveId(newId);
+  }, []);
 
   if (state.loading) {
     return (
@@ -74,8 +103,6 @@ function AppShell() {
       createdAt: Date.now()
     };
     // Default the Partner Programme monthly rate to 20% off the project base price.
-    // The team can adjust either value in the BuilderView; the relationship is
-    // recomputed dynamically from current values for client-facing display.
     if (data.partnerProgramme && typeof data.basePrice === 'number') {
       data.partnerProgramme = {
         ...data.partnerProgramme,
@@ -83,8 +110,7 @@ function AppShell() {
       };
     }
     actions.saveProposal(id, data);
-    setActiveId(id);
-    setView('builder');
+    navigate('builder', id);
     setModal(null);
   };
 
@@ -114,13 +140,11 @@ function AppShell() {
     tpl.name = 'New template';
     tpl.createdAt = Date.now();
     actions.saveTemplate(id, tpl);
-    setActiveId(id);
-    setView('template-builder');
+    navigate('template-builder', id);
   };
 
   const editTemplate = (id) => {
-    setActiveId(id);
-    setView('template-builder');
+    navigate('template-builder', id);
   };
 
   const deleteProposal = (id) => {
@@ -133,13 +157,10 @@ function AppShell() {
     if (!source) return;
     const newId = makeId();
     const copy = JSON.parse(JSON.stringify(source));
-    // Strip server-managed metadata so the new row starts fresh.
     delete copy.id;
     delete copy._number;
     delete copy._views;
     delete copy._createdAt;
-    // Re-stamp ownership and timestamps. Client/project content is preserved
-    // verbatim — that's the point of a duplicate.
     const data = {
       ...copy,
       preparedBy: user.name || copy.preparedBy || 'Adam Shelton',
@@ -148,8 +169,7 @@ function AppShell() {
       createdAt: Date.now(),
     };
     actions.saveProposal(newId, data);
-    setActiveId(newId);
-    setView('builder');
+    navigate('builder', newId);
     showMsg('Proposal duplicated');
   };
 
@@ -160,8 +180,7 @@ function AppShell() {
 
   const logout = () => {
     actions.logout();
-    setView('list');
-    setActiveId(null);
+    navigate('list');
   };
 
   const templates = Object.entries(state.templates)
@@ -173,68 +192,68 @@ function AppShell() {
       {view === 'list' && (
         <ListView
           onCreate={createNew}
-          onOpen={(id) => { setActiveId(id); setView('builder'); }}
-          onPreview={(id) => { setActiveId(id); setView('client'); }}
+          onOpen={(id) => navigate('builder', id)}
+          onPreview={(id) => navigate('client', id)}
           onDelete={deleteProposal}
           onDuplicate={duplicateProposal}
           onManageUsers={() => setModal({ type: 'users' })}
           onManageNotifications={() => setModal({ type: 'notifications' })}
           onManageAccount={() => setModal({ type: 'account' })}
-          onManageTemplates={() => setView('templates')}
-          onManageLeaderboard={() => setView('leaderboard')}
-          onManagePartnerCredits={() => setView('partner-credits')}
-          onManagePipeline={() => setView('pipeline')}
-          onManageContacts={() => setView('contacts')}
-          onManageTasks={() => setView('tasks')}
-          onManageTriage={() => setView('triage')}
+          onManageTemplates={() => navigate('templates')}
+          onManageLeaderboard={() => navigate('leaderboard')}
+          onManagePartnerCredits={() => navigate('partner-credits')}
+          onManagePipeline={() => navigate('pipeline')}
+          onManageContacts={() => navigate('contacts')}
+          onManageTasks={() => navigate('tasks')}
+          onManageTriage={() => navigate('triage')}
         />
       )}
       {view === 'pipeline' && (
         <PipelineView
-          onBack={() => setView('list')}
-          onOpenDeal={(id) => { setActiveId(id); setView('deal'); }}
+          onBack={() => navigate('list')}
+          onOpenDeal={(id) => navigate('deal', id)}
         />
       )}
       {view === 'deal' && activeId && (
         <DealDetailView
           dealId={activeId}
-          onBack={() => { setView('pipeline'); setActiveId(null); }}
-          onOpenProposal={(id) => { setActiveId(id); setView('builder'); }}
+          onBack={() => navigate('pipeline')}
+          onOpenProposal={(id) => navigate('builder', id)}
         />
       )}
       {view === 'contacts' && (
-        <ContactsView onBack={() => setView('list')} />
+        <ContactsView onBack={() => navigate('list')} />
       )}
       {view === 'tasks' && (
         <TasksView
-          onBack={() => setView('list')}
-          onOpenDeal={(id) => { setActiveId(id); setView('deal'); }}
+          onBack={() => navigate('list')}
+          onOpenDeal={(id) => navigate('deal', id)}
         />
       )}
       {view === 'triage' && (
         <TriageView
-          onBack={() => setView('list')}
-          onOpenDeal={(id) => { setActiveId(id); setView('deal'); }}
+          onBack={() => navigate('list')}
+          onOpenDeal={(id) => navigate('deal', id)}
         />
       )}
       {view === 'leaderboard' && (
-        <LeaderboardView onBack={() => setView('list')} />
+        <LeaderboardView onBack={() => navigate('list')} />
       )}
       {view === 'partner-credits' && (
         <PartnerCreditsView
-          onBack={() => setView('list')}
-          onOpen={(clientKey) => { setActiveId(clientKey); setView('partner-credit-detail'); }}
+          onBack={() => navigate('list')}
+          onOpen={(clientKey) => navigate('partner-credit-detail', clientKey)}
         />
       )}
       {view === 'partner-credit-detail' && activeId && (
         <PartnerCreditDetailView
           clientKey={activeId}
-          onBack={() => { setView('partner-credits'); setActiveId(null); }}
+          onBack={() => navigate('partner-credits')}
         />
       )}
       {view === 'templates' && (
         <TemplatesView
-          onBack={() => setView('list')}
+          onBack={() => navigate('list')}
           onUse={(t) => createFrom(t)}
           onEdit={editTemplate}
           onCreate={createTemplate}
@@ -244,8 +263,8 @@ function AppShell() {
       {view === 'builder' && activeId && (
         <BuilderView
           id={activeId}
-          onBack={() => { setView('list'); setActiveId(null); }}
-          onPreview={() => setView('client')}
+          onBack={() => navigate('list')}
+          onPreview={() => navigate('client', activeId)}
           onSaveAsTemplate={saveAsTemplate}
         />
       )}
@@ -253,13 +272,13 @@ function AppShell() {
         <BuilderView
           id={activeId}
           mode="template"
-          onBack={() => { setView('templates'); setActiveId(null); }}
+          onBack={() => navigate('templates')}
         />
       )}
       {view === 'client' && activeId && (
         <ClientView
           id={activeId}
-          onBack={() => { setView('list'); setActiveId(null); }}
+          onBack={() => navigate('list')}
         />
       )}
       {modal && modal.type === 'templates' && (
