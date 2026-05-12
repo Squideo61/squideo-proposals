@@ -37,7 +37,7 @@ Gmail tab to pick up content-script changes.
 ```
 extension/
   manifest.json          # MV3 manifest, content-script targets mail.google.com
-  vite.config.js         # builds three independent bundles: content, background, popup
+  build.js               # builds three independent bundles: content, background, popup
   public/
     popup.html           # popup HTML shell (toolbar icon)
     icon-{16,48,128}.png # placeholder icons — replace before Web Store submission

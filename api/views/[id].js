@@ -17,8 +17,8 @@ export default async function handler(req, res) {
       try { body = JSON.parse(body); } catch { body = {}; }
     }
     body = body || {};
-    const sessionId = body.sessionId;
-    const durationSeconds = Number(body.durationSeconds) || 0;
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId.slice(0, 64) : null;
+    const durationSeconds = Math.max(0, Math.min(86400, Number(body.durationSeconds) || 0));
     if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
 
     const h = req.headers;

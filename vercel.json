@@ -1,6 +1,8 @@
 {
   "functions": {
-    "api/**/*.js": { "maxDuration": 10 }
+    "api/**/*.js": { "maxDuration": 10 },
+    "api/crm/[...slug].js": { "maxDuration": 60 },
+    "api/stripe/[action].js": { "maxDuration": 30 }
   },
   "rewrites": [
     { "source": "/api/invites", "destination": "/api/users?_kind=invites" },
@@ -13,6 +15,7 @@
   ],
   "crons": [
     { "path": "/api/crm/cron/task-reminders", "schedule": "0 9 * * *" },
-    { "path": "/api/crm/cron/gmail-watch-renew", "schedule": "0 5 * * *" }
+    { "path": "/api/crm/cron/gmail-watch-renew", "schedule": "0 5 * * *" },
+    { "path": "/api/crm/cron/prune-views", "schedule": "0 3 * * 1" }
   ]
 }

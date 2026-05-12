@@ -1,0 +1,33 @@
+version: 2
+updates:
+  # Web app + API (root package.json)
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # Security updates are always opened. Non-security updates batched weekly
+    # so the PR queue doesn't drown the rest of the work.
+    groups:
+      non-major-deps:
+        update-types:
+          - minor
+          - patch
+
+  # Chrome extension package
+  - package-ecosystem: npm
+    directory: "/extension"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      non-major-deps:
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions (if/when added)
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
