@@ -613,6 +613,15 @@ function FilesCard({ dealId, files }) {
     }
   };
 
+  const handleDownload = async (fileId, filename) => {
+    try {
+      const { downloadUrl } = await actions.getFileDownloadUrl(dealId, fileId);
+      window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+    } catch {
+      showMsg('Could not generate download link');
+    }
+  };
+
   const handleDelete = async (fileId, filename) => {
     if (!window.confirm(`Delete "${filename}"?`)) return;
     await actions.deleteDealFile(dealId, fileId);
@@ -656,10 +665,11 @@ function FilesCard({ dealId, files }) {
             </div>
           </div>
           {f.uploadedBy && <Avatar email={f.uploadedBy} size={20} />}
-          <a href={f.blobUrl} download={f.filename} target="_blank" rel="noopener noreferrer"
-            style={{ padding: 4, color: BRAND.muted, display: 'flex' }} title="Download">
+          <button onClick={() => handleDownload(f.id, f.filename)}
+            style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
+            title="Download">
             <ExternalLink size={13} />
-          </a>
+          </button>
           <button onClick={() => handleDelete(f.id, f.filename)}
             style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
             title="Delete file">

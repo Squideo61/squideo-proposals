@@ -685,6 +685,10 @@ export function StoreProvider({ children }) {
         .catch(() => actions.loadDealDetail(dealId));
     },
 
+    getFileDownloadUrl(dealId, fileId) {
+      return api.get('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/' + encodeURIComponent(fileId));
+    },
+
     addDealFileFromEmail(dealId, payload) {
       return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/from-email', payload)
         .then((newFile) => {

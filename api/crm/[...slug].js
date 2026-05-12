@@ -3,7 +3,7 @@
 // stay within the Vercel Hobby 12-function cap.
 import crypto from 'node:crypto';
 import { waitUntil } from '@vercel/functions';
-import { put, del } from '@vercel/blob';
+import { put, del, getDownloadUrl } from '@vercel/blob';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, APP_URL } from '../_lib/email.js';
@@ -432,7 +432,7 @@ async function dealsRoute(req, res, id, action, user, subaction = null) {
     const fileId = crypto.randomUUID();
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const blob = await put(`deal-files/${id}/${fileId}/${safeName}`, fileBuffer, {
-      access: 'public', contentType: mimeType,
+      access: 'private', contentType: mimeType,
     });
 
     await sql`
@@ -442,12 +442,21 @@ async function dealsRoute(req, res, id, action, user, subaction = null) {
     `;
     return res.status(201).json({
       id: fileId, filename, mimeType, sizeBytes: fileBuffer.length,
-      blobUrl: blob.url, uploadedBy: user.email, source: 'upload',
+      uploadedBy: user.email, source: 'upload',
       createdAt: new Date().toISOString(),
     });
   }
 
-  // /deals/:id/files/:fileId — delete a file
+  // /deals/:id/files/:fileId — generate a signed download URL (GET) or delete (DELETE)
+  if (action === 'files' && subaction && subaction !== 'from-email' && req.method === 'GET') {
+    const rows = await sql`
+      SELECT blob_url, filename FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}
+    `;
+    if (!rows.length) return res.status(404).json({ error: 'File not found' });
+    const downloadUrl = await getDownloadUrl(rows[0].blob_url);
+    return res.status(200).json({ downloadUrl, filename: rows[0].filename });
+  }
+
   if (action === 'files' && subaction && subaction !== 'from-email' && req.method === 'DELETE') {
     const rows = await sql`
       SELECT blob_url FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}
@@ -493,7 +502,7 @@ async function dealsRoute(req, res, id, action, user, subaction = null) {
     const fileId = crypto.randomUUID();
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const blob = await put(`deal-files/${id}/${fileId}/${safeName}`, attBuffer, {
-      access: 'public', contentType: mimeType || 'application/octet-stream',
+      access: 'private', contentType: mimeType || 'application/octet-stream',
     });
 
     await sql`
@@ -503,7 +512,7 @@ async function dealsRoute(req, res, id, action, user, subaction = null) {
     `;
     return res.status(201).json({
       id: fileId, filename, mimeType: mimeType || null, sizeBytes: attBuffer.length,
-      blobUrl: blob.url, uploadedBy: user.email, source: 'email',
+      uploadedBy: user.email, source: 'email',
       createdAt: new Date().toISOString(),
     });
   }
