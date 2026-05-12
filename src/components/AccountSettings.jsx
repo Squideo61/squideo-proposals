@@ -30,7 +30,9 @@ function AvatarCircle({ avatar, name, size = 80 }) {
 
 export function AccountSettings({ onClose, onLogout }) {
   const { state, actions, showMsg } = useStore();
-  const user = state.session;
+  const sessionUser = state.session;
+  const userRecord = state.users?.[sessionUser?.email];
+  const user = { ...sessionUser, avatar: sessionUser?.avatar ?? userRecord?.avatar ?? null };
   const fileRef = useRef(null);
 
   const [avatarBusy, setAvatarBusy] = useState(false);
