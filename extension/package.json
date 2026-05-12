@@ -15,7 +15,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/chrome": "^0.0.270",
+    "@types/chrome": "^0.1.42",
     "@vitejs/plugin-react": "^4.3.4",
     "vite": "^5.4.21"
   }
