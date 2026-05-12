@@ -486,6 +486,76 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             Total inc. VAT: £{(data.basePrice * (1 + data.vatRate)).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
         )}
+
+        {/* ── Video Options ── */}
+        <div style={{ marginTop: 20, borderTop: '1px solid ' + BRAND.border, paddingTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>Video Options</div>
+            {(data.videoOptions || []).length === 0 && (
+              <button
+                className="btn-ghost"
+                style={{ fontSize: 12 }}
+                onClick={() => update({ videoOptions: [{ label: '', price: data.basePrice || 0 }] })}
+              >
+                <Plus size={13} /> Add video option
+              </button>
+            )}
+          </div>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5 }}>
+            {(data.videoOptions || []).length >= 2
+              ? 'The client will see radio buttons to choose one option. Base price above is overridden by whichever option they select.'
+              : 'Add 2+ options (e.g. 60s vs 2-minute video) so the client can choose a package.'}
+          </div>
+          {(data.videoOptions || []).map((opt, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
+              <input
+                className="input"
+                style={{ flex: 2 }}
+                placeholder="e.g. 60-second video"
+                value={opt.label}
+                onChange={(e) => {
+                  const next = [...data.videoOptions];
+                  next[i] = { ...next[i], label: e.target.value };
+                  update({ videoOptions: next });
+                }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
+                <span style={{ fontSize: 13, color: BRAND.muted, flexShrink: 0 }}>£</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  className="input"
+                  placeholder="0"
+                  value={opt.price}
+                  onChange={(e) => {
+                    const next = [...data.videoOptions];
+                    next[i] = { ...next[i], price: parseFloat(e.target.value) || 0 };
+                    update({ videoOptions: next });
+                  }}
+                />
+              </div>
+              <button
+                className="btn-icon"
+                aria-label="Remove option"
+                onClick={() => {
+                  const next = data.videoOptions.filter((_, idx) => idx !== i);
+                  update({ videoOptions: next });
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+          {(data.videoOptions || []).length >= 1 && (
+            <button
+              className="btn-ghost"
+              style={{ fontSize: 12, marginTop: 4 }}
+              onClick={() => update({ videoOptions: [...(data.videoOptions || []), { label: '', price: data.basePrice || 0 }] })}
+            >
+              <Plus size={13} /> Add another option
+            </button>
+          )}
+        </div>
       </Section>
 
       {/* ── Payment Options ── */}

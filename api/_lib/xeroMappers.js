@@ -24,7 +24,7 @@ export function lineItemsForProject(proposal, signed, proposalNumber) {
   const lines = [{
     description: prefix + title,
     quantity: 1,
-    unitAmount: Number(proposal.basePrice) || 0,
+    unitAmount: Number(signed?.selectedVideoOption?.price ?? proposal.basePrice) || 0,
     taxType,
     accountCode: SALES_ACCOUNT,
   }];

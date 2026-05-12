@@ -28,6 +28,7 @@ export const DEFAULT_PROPOSAL = {
   requirement: '1 x HD Animated explainer video - up to 60 seconds in length',
   projectVision: '',
   basePrice: 1250,
+  videoOptions: [],
   baseInclusions: [
     { title: 'Complete creative support', description: '' },
     { title: 'Team creative meeting', description: '' },

@@ -244,6 +244,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     };
   }, [id, data, useRealStripe]);
 
+  const [selectedVideoOptionIdx, setSelectedVideoOptionIdx] = useState(0);
   const [selectedExtras, setSelectedExtras] = useState({});
   const [extrasMeta, setExtrasMeta] = useState({});
   const getMeta = (eid) => extrasMeta[eid] || { quantity: 1, languages: '' };
@@ -302,12 +303,18 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     return pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1);
   };
 
+  const videoOptions = Array.isArray(data.videoOptions) && data.videoOptions.length >= 2
+    ? data.videoOptions : null;
+  const effectiveBasePrice = videoOptions
+    ? (videoOptions[selectedVideoOptionIdx]?.price ?? data.basePrice)
+    : data.basePrice;
+
   const extrasTotal = data.optionalExtras.reduce((s, e) => {
     if (!selectedExtras[e.id]) return s;
     const qty = extraHasVariants(e) ? Math.max(1, Number(getMeta(e.id).quantity) || 1) : 1;
     return s + e.price * qty;
   }, 0);
-  const subtotal = data.basePrice + extrasTotal;
+  const subtotal = effectiveBasePrice + extrasTotal;
   const vat = subtotal * data.vatRate;
   const total = subtotal + vat;
   // Tiered project-discount ladder: base + (extra * (credits-1)), capped at max.
@@ -352,6 +359,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
         .map((e) => extraHasVariants(e)
           ? { ...e, variantsEnabled: true, quantity: Math.max(1, Number(getMeta(e.id).quantity) || 1), languages: getMeta(e.id).languages || '' }
           : e),
+      ...(videoOptions ? { selectedVideoOption: videoOptions[selectedVideoOptionIdx] } : {}),
       partnerSelected,
       partnerCredits,
       paymentOption,
@@ -607,6 +615,24 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
         })()}
 
         <PageTitle>Your Quote</PageTitle>
+        {videoOptions && (
+          <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>Choose your video option:</div>
+            {videoOptions.map((opt, i) => (
+              <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: i < videoOptions.length - 1 ? '1px solid ' + BRAND.border : 'none', cursor: signed ? 'default' : 'pointer' }}>
+                <input
+                  type="radio"
+                  name="videoOption"
+                  checked={selectedVideoOptionIdx === i}
+                  onChange={() => setSelectedVideoOptionIdx(i)}
+                  disabled={!!signed}
+                />
+                <span style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{opt.label || `Option ${i + 1}`}</span>
+                <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0 }}>{formatGBP(opt.price)} <span style={{ fontWeight: 400, fontSize: 12, color: BRAND.muted }}>+ VAT</span></span>
+              </label>
+            ))}
+          </div>
+        )}
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>What's included:</h3>
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 16 }}>
           {data.baseInclusions.map((inc, i) => {
@@ -628,8 +654,10 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 16px', border: '1px solid ' + BRAND.border, borderRadius: 10, fontSize: 16, fontWeight: 700 }}>
-          <span>Project base price</span>
-          <span>{formatGBP(data.basePrice)} <span style={{ fontWeight: 500, fontSize: 13, color: BRAND.muted }}>+ VAT</span></span>
+          <span>
+            {videoOptions ? (videoOptions[selectedVideoOptionIdx]?.label || `Option ${selectedVideoOptionIdx + 1}`) : 'Project base price'}
+          </span>
+          <span>{formatGBP(effectiveBasePrice)} <span style={{ fontWeight: 500, fontSize: 13, color: BRAND.muted }}>+ VAT</span></span>
         </div>
 
         <PageTitle>Optional Extras</PageTitle>
