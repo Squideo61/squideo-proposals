@@ -81,7 +81,7 @@ function buildSectionMeta(data, isTemplate, issues) {
     {
       id: 'vision',
       label: 'Vision',
-      hint: (data.videoOptions || []).length >= 2 ? `${data.videoOptions.length} options` : (truncate(data.requirement) || 'Empty'),
+      hint: (data.videoOptions || []).length > 0 ? `${data.videoOptions.length} option${data.videoOptions.length === 1 ? '' : 's'}` : (truncate(data.requirement) || 'Empty'),
       hasIssues: (issues.vision || []).length > 0,
     },
     {
@@ -394,11 +394,20 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         collapsedHint={sectionMeta.find(s => s.id === 'vision')?.hint}
         {...sectionProps('vision')}
       >
-        {(data.videoOptions || []).length >= 2 ? (
+        {(data.videoOptions || []).length > 0 ? (
           <>
             {data.videoOptions.map((opt, i) => (
               <div key={i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, marginBottom: 12, background: BRAND.paper }}>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: BRAND.text }}>Option {i + 1}</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: BRAND.text }}>Option {i + 1}</div>
+                  <button
+                    className="btn-ghost"
+                    style={{ fontSize: 11, color: BRAND.muted, padding: '2px 6px' }}
+                    onClick={() => update({ videoOptions: data.videoOptions.filter((_, idx) => idx !== i) })}
+                  >
+                    <X size={11} /> Remove
+                  </button>
+                </div>
                 <Field label="Label (shown on radio button)">
                   <input
                     className="input"
@@ -446,7 +455,19 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             ))}
             <button
               className="btn-ghost"
-              style={{ fontSize: 12, color: BRAND.muted }}
+              style={{ fontSize: 12, marginTop: 4 }}
+              onClick={() => update({
+                videoOptions: [
+                  ...data.videoOptions,
+                  { label: `Option ${data.videoOptions.length + 1}`, description: '', price: data.basePrice || 0 },
+                ],
+              })}
+            >
+              <Plus size={13} /> Add option
+            </button>
+            <button
+              className="btn-ghost"
+              style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}
               onClick={() => {
                 update({
                   requirement: data.videoOptions[0]?.description || '',
@@ -479,7 +500,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                 ],
               })}
             >
-              <Plus size={13} /> Offer the client two options
+              <Plus size={13} /> Activate Option Mode
             </button>
           </>
         )}
@@ -588,7 +609,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
           </div>
         )}
 
-        {(data.videoOptions || []).length >= 2 && (
+        {(data.videoOptions || []).length > 0 && (
           <div style={{ background: '#f0f4ff', border: '1px solid #c7d2fe', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#3730a3', marginTop: 8 }}>
             Option mode active — prices are set per option in the Project Vision section above.
           </div>

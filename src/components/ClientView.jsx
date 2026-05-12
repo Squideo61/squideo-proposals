@@ -307,7 +307,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     return pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1);
   };
 
-  const videoOptions = Array.isArray(data.videoOptions) && data.videoOptions.length >= 2
+  const videoOptions = Array.isArray(data.videoOptions) && data.videoOptions.length > 0
     ? data.videoOptions : null;
   const effectiveBasePrice = videoOptions
     ? (videoOptions[selectedVideoOptionIdx]?.price ?? data.basePrice)
