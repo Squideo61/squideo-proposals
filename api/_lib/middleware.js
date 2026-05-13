@@ -1,3 +1,15 @@
+// Error-response contract for the JSON API surface:
+//
+//   { error: string, code?: string }
+//
+// `error` is the human-readable message the frontend renders (src/api.js
+// reads this key, falling back to "Request failed"). `code` is optional and
+// only used where the caller needs to programmatically distinguish reasons
+// — e.g. the Gmail send route returns `code: 'gmail-not-connected'`.
+//
+// Browser-targeted OAuth callbacks (api/xero connect/callback) intentionally
+// respond with text/HTML because they're hit by a redirect, not an XHR.
+
 import { verifyToken } from './auth.js';
 import { lookupExtensionToken } from './extension.js';
 
