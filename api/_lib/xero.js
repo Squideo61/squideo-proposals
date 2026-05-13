@@ -163,6 +163,25 @@ export async function emailInvoice(invoiceId) {
   });
 }
 
+// Records a payment against an invoice via Xero's /Payments endpoint. When the
+// amount matches the invoice total, Xero transitions the invoice to PAID.
+// Callers must round Amount themselves to avoid floating-point drift —
+// Xero rejects payments that don't match the invoice total to the penny.
+export async function createPayment({ invoiceId, accountCode, amount, date, reference }) {
+  const payload = {
+    Invoice: { InvoiceID: invoiceId },
+    Account: { Code: accountCode },
+    Date: date,
+    Amount: Number(amount.toFixed(2)),
+    Reference: reference || undefined,
+  };
+  const res = await xeroFetch('/api.xro/2.0/Payments', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res.Payments[0].PaymentID;
+}
+
 export async function createQuote({ contactId, lineItems, reference, status = 'SENT' }) {
   const payload = {
     Contact: { ContactID: contactId },

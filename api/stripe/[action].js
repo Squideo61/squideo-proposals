@@ -2,7 +2,7 @@ import Stripe from 'stripe';
 import sql from '../_lib/db.js';
 import { cors } from '../_lib/middleware.js';
 import { sendMail, paidHtml, clientPaidThanksHtml, APP_URL } from '../_lib/email.js';
-import { getOrCreateContact, createInvoice, emailInvoice } from '../_lib/xero.js';
+import { getOrCreateContact, createInvoice, emailInvoice, createPayment } from '../_lib/xero.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 import {
   lineItemsForProject,
@@ -98,10 +98,10 @@ function billingToContact(billing, fallbackEmail) {
 // Best-effort Xero invoice creation for a checkout.session.completed event.
 // Persists xero_invoice_id on the payments row so retries are idempotent.
 // All errors are swallowed and logged so the webhook can still 200 to Stripe.
-async function pushInitialXeroInvoice({ proposalId, isDeposit, isPartner }) {
+async function pushInitialXeroInvoice({ proposalId, isDeposit, isPartner, paidAmount }) {
   try {
-    const [paymentRow] = await sql`SELECT xero_invoice_id FROM payments WHERE proposal_id = ${proposalId}`;
-    if (paymentRow?.xero_invoice_id) return; // already pushed
+    const [paymentRow] = await sql`SELECT xero_invoice_id, xero_payment_id FROM payments WHERE proposal_id = ${proposalId}`;
+    if (paymentRow?.xero_invoice_id && paymentRow?.xero_payment_id) return; // already pushed and paid
     const [billingRow] = await sql`SELECT billing FROM proposal_billing WHERE proposal_id = ${proposalId}`;
     const billing = billingRow?.billing;
     if (!billing) {
@@ -146,18 +146,48 @@ async function pushInitialXeroInvoice({ proposalId, isDeposit, isPartner }) {
     const paymentLabel = isDeposit ? '50% deposit' : (isPartner ? 'Project + Partner first month' : 'Full payment');
     const referenceBase = proposalNumber || (proposal.proposalTitle || proposal.clientName || proposalId);
     const reference = `${referenceBase} — ${paymentLabel}`.slice(0, 80);
-    const invoiceId = await createInvoice({
-      contactId,
-      lineItems,
-      reference,
-      dueDate,
-      status: 'AUTHORISED',
-    });
+    // Re-use the existing invoice if a prior retry already created one;
+    // otherwise create it fresh. Either way we may still need to record the
+    // payment below if the previous attempt failed between create and pay.
+    let invoiceId = paymentRow?.xero_invoice_id;
+    if (!invoiceId) {
+      invoiceId = await createInvoice({
+        contactId,
+        lineItems,
+        reference,
+        dueDate,
+        status: 'AUTHORISED',
+      });
+      await sql`UPDATE payments SET xero_invoice_id = ${invoiceId} WHERE proposal_id = ${proposalId}`;
+    }
 
-    await sql`UPDATE payments SET xero_invoice_id = ${invoiceId} WHERE proposal_id = ${proposalId}`;
+    // Mark the invoice PAID in Xero by recording a payment against a Stripe
+    // clearing account. Without this the emailed invoice carries a live
+    // "Pay now" button and the client can pay a second time by card.
+    if (!paymentRow?.xero_payment_id) {
+      const clearingCode = process.env.XERO_STRIPE_CLEARING_CODE;
+      if (!clearingCode) {
+        console.warn('[xero] XERO_STRIPE_CLEARING_CODE not set — invoice will remain AUTHORISED', { proposalId, invoiceId });
+      } else if (!Number.isFinite(paidAmount) || paidAmount <= 0) {
+        console.warn('[xero] paidAmount missing/invalid, skipping payment record', { proposalId, paidAmount });
+      } else {
+        try {
+          const paymentId = await createPayment({
+            invoiceId,
+            accountCode: clearingCode,
+            amount: paidAmount,
+            date: new Date().toISOString().slice(0, 10),
+            reference: `Stripe ${proposalId}`,
+          });
+          await sql`UPDATE payments SET xero_payment_id = ${paymentId} WHERE proposal_id = ${proposalId}`;
+        } catch (err) {
+          console.error('[xero] createPayment failed (invoice will remain AUTHORISED)', err);
+        }
+      }
+    }
 
     try { await emailInvoice(invoiceId); }
-    catch (err) { console.error('[xero] emailInvoice failed (invoice still authorised)', err); }
+    catch (err) { console.error('[xero] emailInvoice failed', err); }
   } catch (err) {
     console.error('[xero] pushInitialXeroInvoice failed', err);
   }
@@ -242,8 +272,8 @@ async function pushRecurringXeroInvoice({ stripe, invoice }) {
     const proposalId = sub.metadata?.proposalId;
     if (!proposalId) return;
 
-    const [existing] = await sql`SELECT xero_invoice_id FROM partner_invoices WHERE stripe_invoice_id = ${invoice.id}`;
-    if (existing?.xero_invoice_id) return;
+    const [existing] = await sql`SELECT xero_invoice_id, xero_payment_id FROM partner_invoices WHERE stripe_invoice_id = ${invoice.id}`;
+    if (existing?.xero_invoice_id && existing?.xero_payment_id) return;
 
     const [billingRow, proposalRows, sigRows, countRows] = await Promise.all([
       sql`SELECT billing FROM proposal_billing WHERE proposal_id = ${proposalId}`,
@@ -277,14 +307,42 @@ async function pushRecurringXeroInvoice({ stripe, invoice }) {
 
     const dueDate = new Date().toISOString().slice(0, 10);
     const referenceBase = proposalNumber || (proposal.proposalTitle || proposal.clientName || proposalId);
-    const xeroInvoiceId = await createInvoice({
-      contactId,
-      lineItems,
-      reference: `${referenceBase} — Partner month ${monthNumber}`.slice(0, 80),
-      dueDate,
-      status: 'AUTHORISED',
-    });
-    await sql`UPDATE partner_invoices SET xero_invoice_id = ${xeroInvoiceId} WHERE stripe_invoice_id = ${invoice.id}`;
+    let xeroInvoiceId = existing?.xero_invoice_id;
+    if (!xeroInvoiceId) {
+      xeroInvoiceId = await createInvoice({
+        contactId,
+        lineItems,
+        reference: `${referenceBase} — Partner month ${monthNumber}`.slice(0, 80),
+        dueDate,
+        status: 'AUTHORISED',
+      });
+      await sql`UPDATE partner_invoices SET xero_invoice_id = ${xeroInvoiceId} WHERE stripe_invoice_id = ${invoice.id}`;
+    }
+
+    // Stripe has already collected this subscription invoice — mark the
+    // mirrored Xero invoice PAID so the emailed copy is a receipt rather
+    // than a fresh card-pay request.
+    if (!existing?.xero_payment_id) {
+      const clearingCode = process.env.XERO_STRIPE_CLEARING_CODE;
+      if (!clearingCode) {
+        console.warn('[xero] XERO_STRIPE_CLEARING_CODE not set — recurring invoice will remain AUTHORISED', { proposalId, xeroInvoiceId });
+      } else if (!Number.isFinite(amount) || amount <= 0) {
+        console.warn('[xero] recurring amount missing/invalid, skipping payment record', { proposalId, amount });
+      } else {
+        try {
+          const paymentId = await createPayment({
+            invoiceId: xeroInvoiceId,
+            accountCode: clearingCode,
+            amount,
+            date: new Date().toISOString().slice(0, 10),
+            reference: `Stripe ${invoice.id}`,
+          });
+          await sql`UPDATE partner_invoices SET xero_payment_id = ${paymentId} WHERE stripe_invoice_id = ${invoice.id}`;
+        } catch (err) {
+          console.error('[xero] recurring createPayment failed (invoice will remain AUTHORISED)', err);
+        }
+      }
+    }
 
     try { await emailInvoice(xeroInvoiceId); }
     catch (err) { console.error('[xero] recurring emailInvoice failed', err); }
@@ -398,7 +456,7 @@ export default async function handler(req, res) {
           // Partner Programme card payers, set up the Stripe Subscription
           // that drives months 2+. Both are best-effort — we always 200 to
           // Stripe so the event isn't retried.
-          await pushInitialXeroInvoice({ proposalId, isDeposit, isPartner });
+          await pushInitialXeroInvoice({ proposalId, isDeposit, isPartner, paidAmount: amount });
           if (isPartner) {
             await setupPartnerSubscription({ stripe, session, proposalId });
           }
