@@ -9,7 +9,8 @@
     { "source": "/api/crm/:resource/:id/:action/:subaction", "destination": "/api/crm/:resource?_id=:id&_action=:action&_subaction=:subaction" },
     { "source": "/api/crm/:resource/:id/:action", "destination": "/api/crm/:resource?_id=:id&_action=:action" },
     { "source": "/api/crm/:resource/:id", "destination": "/api/crm/:resource?_id=:id" },
-    { "source": "/extension-auth", "destination": "/api/extension/auth-page" }
+    { "source": "/extension-auth", "destination": "/api/extension/auth-page" },
+    { "source": "/quote", "destination": "/quote.html" }
   ],
   "crons": [
     { "path": "/api/crm/cron/task-reminders", "schedule": "0 9 * * *" },
@@ -18,11 +19,22 @@
   ],
   "headers": [
     {
-      "source": "/((?!api/|extension-auth).*)",
+      "source": "/((?!api/|extension-auth|quote).*)",
       "headers": [
         {
           "key": "Content-Security-Policy",
           "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; frame-src https://www.youtube.com https://player.vimeo.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
+    },
+    {
+      "source": "/quote(.html)?",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://squideo.co.uk https://*.squideo.co.uk"
         },
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
