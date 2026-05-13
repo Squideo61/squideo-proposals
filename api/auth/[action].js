@@ -167,7 +167,7 @@ async function verifyEmailOtp(email, purpose, code) {
   return { ok: true };
 }
 
-async function realHandler(req, res) {
+export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
@@ -414,15 +414,4 @@ async function realHandler(req, res) {
   }
 
   res.status(404).end();
-}
-
-export default async function handler(req, res) {
-  try {
-    return await realHandler(req, res);
-  } catch (err) {
-    console.error('[auth handler crash]', { action: req.query?.action, method: req.method, msg: err?.message, stack: err?.stack });
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Auth handler crashed: ' + (err?.message || 'unknown') });
-    }
-  }
 }
