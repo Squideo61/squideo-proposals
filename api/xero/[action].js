@@ -40,7 +40,7 @@ const SCOPES = [
   'offline_access',
   'accounting.contacts',
   'accounting.invoices',
-  'accounting.transactions',
+  'accounting.payments',
 ].join(' ');
 
 function redirectUri() {
