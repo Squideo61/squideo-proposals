@@ -348,18 +348,21 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     ]);
 
     // Load reactions for all comments in one query and merge into comments.
+    // Wrapped in try/catch so a missing table (pre-migration) doesn't break the endpoint.
     const commentIds = comments.map(c => c.id);
-    const reactionRows = commentIds.length ? await sql`
-      SELECT comment_id, emoji, ARRAY_AGG(user_email) AS users, COUNT(*) AS cnt
-      FROM deal_comment_reactions
-      WHERE comment_id = ANY(${commentIds})
-      GROUP BY comment_id, emoji
-    ` : [];
     const reactionsMap = {};
-    for (const r of reactionRows) {
-      if (!reactionsMap[r.comment_id]) reactionsMap[r.comment_id] = {};
-      reactionsMap[r.comment_id][r.emoji] = { count: Number(r.cnt), users: r.users };
-    }
+    try {
+      const reactionRows = commentIds.length ? await sql`
+        SELECT comment_id, emoji, ARRAY_AGG(user_email) AS users, COUNT(*) AS cnt
+        FROM deal_comment_reactions
+        WHERE comment_id = ANY(${commentIds})
+        GROUP BY comment_id, emoji
+      ` : [];
+      for (const r of reactionRows) {
+        if (!reactionsMap[r.comment_id]) reactionsMap[r.comment_id] = {};
+        reactionsMap[r.comment_id][r.emoji] = { count: Number(r.cnt), users: r.users };
+      }
+    } catch (_) { /* table not yet migrated — reactions load as empty */ }
 
     return res.status(200).json({
       ...deal,
