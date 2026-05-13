@@ -126,7 +126,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
             ? 'All proposals'
             : memberFilter === state.session?.email
             ? 'My proposals'
-            : `${memberFilterName}'s proposals`}
+            : `${memberFilterName.split(' ')[0]}'s proposals`}
           {filtersActive && <span style={{ color: BRAND.blue, textTransform: 'none', letterSpacing: 0 }}> · {filtered.length} of {proposals.length}</span>}
         </h2>
         {proposals.length > 0 && (
