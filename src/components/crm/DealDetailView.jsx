@@ -14,7 +14,7 @@ import { InvoicesCard } from './InvoicesCard.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
-export function DealDetailView({ dealId, onBack, onOpenProposal }) {
+export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposal }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
@@ -140,7 +140,15 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
-        <Card title="Proposals" count={proposals.length}>
+        <Card
+          title="Proposals"
+          count={proposals.length}
+          action={onCreateProposal && (
+            <button onClick={() => onCreateProposal(dealId)} className="btn">
+              <Plus size={14} /> New proposal
+            </button>
+          )}
+        >
           {proposals.length === 0 && <Empty text="No proposals attached yet" />}
           {proposals.map(p => (
             <button

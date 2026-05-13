@@ -74,7 +74,13 @@ export default async function handler(req, res) {
   if (!user) return;
 
   if (req.method === 'PUT') {
-    const data = req.body || {};
+    const body = req.body || {};
+    // `_dealId` is a side-channel pre-link from the caller (e.g. the CRM
+    // "create proposal from deal" button). It's not part of the proposal's
+    // own data — pull it out before we persist.
+    const presetDealId = typeof body._dealId === 'string' && body._dealId ? body._dealId : null;
+    const data = { ...body };
+    delete data._dealId;
     const y = new Date().getFullYear();
     await sql`
       INSERT INTO proposals (id, data, updated_at, number_year, number_seq)
@@ -87,6 +93,14 @@ export default async function handler(req, res) {
       )
       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
     `;
+    // If the caller pre-linked a deal, set deal_id BEFORE the auto-create
+    // block below runs — that's what suppresses the auto-deal creation.
+    if (presetDealId) {
+      await sql`
+        UPDATE proposals SET deal_id = ${presetDealId}
+        WHERE id = ${id} AND deal_id IS NULL
+      `;
+    }
 
     // Auto-create-deal on first save, then keep the deal's value + title in
     // sync with the proposal on every subsequent save so editing basePrice

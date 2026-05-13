@@ -97,7 +97,15 @@ function AppShell() {
     else setModal({ type: 'templates' });
   };
 
-  const createFrom = (base) => {
+  // Create a proposal pre-linked to an existing deal, pre-filling client and
+  // company from the deal so the builder isn't blank.
+  const createProposalForDeal = (dealId) => {
+    const tpls = Object.values(state.templates);
+    if (tpls.length === 0) createFrom(DEFAULT_PROPOSAL, { dealId });
+    else setModal({ type: 'templates', dealId });
+  };
+
+  const createFrom = (base, { dealId } = {}) => {
     const id = makeId();
     const copy = JSON.parse(JSON.stringify(base));
     delete copy.id;
@@ -105,10 +113,24 @@ function AppShell() {
     delete copy._number;
     delete copy._views;
     delete copy._createdAt;
+
+    // When linking to a deal, pull contact + company names off the deal so
+    // the builder lands populated. Falls back to blanks when the deal hasn't
+    // got a contact/company yet.
+    let prefillClient = '';
+    let prefillBusiness = '';
+    if (dealId) {
+      const deal = state.deals[dealId];
+      const contact = deal?.primaryContactId ? state.contacts[deal.primaryContactId] : null;
+      const company = deal?.companyId ? state.companies[deal.companyId] : null;
+      prefillClient = contact?.name || '';
+      prefillBusiness = company?.name || deal?.title || '';
+    }
+
     const data = {
       ...copy,
-      clientName: '',
-      contactBusinessName: '',
+      clientName: prefillClient,
+      contactBusinessName: prefillBusiness,
       clientLogo: null,
       projectVision: '',
       preparedBy: user.name || 'Adam Shelton',
@@ -116,6 +138,7 @@ function AppShell() {
       date: new Date().toLocaleDateString('en-GB'),
       createdAt: Date.now()
     };
+    if (dealId) data._dealId = dealId;
     // Default the Partner Programme monthly rate to 20% off the project base price.
     if (data.partnerProgramme && typeof data.basePrice === 'number') {
       data.partnerProgramme = {
@@ -235,6 +258,7 @@ function AppShell() {
           dealId={activeId}
           onBack={() => navigate('pipeline')}
           onOpenProposal={(id) => navigate('builder', id)}
+          onCreateProposal={createProposalForDeal}
         />
       )}
       {view === 'contacts' && (
@@ -326,7 +350,7 @@ function AppShell() {
       )}
       </Suspense>
       {modal && modal.type === 'templates' && (
-        <TemplatePicker templates={templates} onPick={(t) => createFrom(t || DEFAULT_PROPOSAL)} onClose={() => setModal(null)} />
+        <TemplatePicker templates={templates} onPick={(t) => createFrom(t || DEFAULT_PROPOSAL, { dealId: modal.dealId })} onClose={() => setModal(null)} />
       )}
       {modal && modal.type === 'notifications' && (
         <NotificationSettings onClose={() => setModal(null)} />
