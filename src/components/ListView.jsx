@@ -7,9 +7,21 @@ import { openPrintWindow, printOptionsForSigned } from '../utils/printProposal.j
 import { Badge, Logo } from './ui.jsx';
 import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
+const TEAM_FILTER_STORAGE_KEY = 'squideo.dashboard.teamMemberFilter';
+
 export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
+  const [memberFilter, setMemberFilter] = useState(() => {
+    try {
+      const stored = localStorage.getItem(TEAM_FILTER_STORAGE_KEY);
+      if (stored !== null) return stored;
+    } catch {}
+    return state.session?.email || '';
+  });
+  useEffect(() => {
+    try { localStorage.setItem(TEAM_FILTER_STORAGE_KEY, memberFilter); } catch {}
+  }, [memberFilter]);
   const openTasksDue = (state.tasks || []).filter(t => !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= Date.now() + 24 * 60 * 60 * 1000).length;
   const triageCount = (state.triage || []).length;
   const [analyticsId, setAnalyticsId] = useState(null);
@@ -19,8 +31,16 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
     .map(([id, d]) => ({ id, ...d }))
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
+  const memberOptions = Object.entries(state.users || {})
+    .map(([email, u]) => ({ email, name: u.name || email }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const afterMember = memberFilter
+    ? proposals.filter((p) => p.preparedByEmail === memberFilter)
+    : proposals;
+
   const filtered = search.trim()
-    ? proposals.filter((p) => {
+    ? afterMember.filter((p) => {
         const q = search.toLowerCase();
         const num = p._number ? formatProposalNumber(p._number).toLowerCase() : '';
         return (
@@ -31,7 +51,12 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
           num.includes(q)
         );
       })
-    : proposals;
+    : afterMember;
+
+  const memberFilterName = memberFilter
+    ? (state.users?.[memberFilter]?.name || memberFilter)
+    : '';
+  const filtersActive = Boolean(search.trim() || memberFilter);
 
   const sessionUser = state.session;
   const userRecord = state.users[sessionUser?.email];
@@ -97,29 +122,43 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <h2 className="section-label" style={{ margin: 0 }}>
-          Proposals {search && <span style={{ color: BRAND.blue, textTransform: 'none', letterSpacing: 0 }}>· {filtered.length} of {proposals.length}</span>}
+          Proposals {filtersActive && <span style={{ color: BRAND.blue, textTransform: 'none', letterSpacing: 0 }}>· {filtered.length} of {proposals.length}</span>}
         </h2>
         {proposals.length > 0 && (
-          <div style={{ position: 'relative', width: isMobile ? '100%' : 260 }}>
-            <Search size={14} color={BRAND.muted} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by number, client, business..."
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
+            <select
+              value={memberFilter}
+              onChange={(e) => setMemberFilter(e.target.value)}
               className="input"
-              style={{ paddingLeft: 34, paddingRight: search ? 34 : 12 }}
-            />
-            {search && (
-              <button
-                onClick={() => setSearch('')}
-                aria-label="Clear search"
-                style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: BRAND.muted }}
-                title="Clear search"
-              >
-                <X size={14} />
-              </button>
-            )}
+              aria-label="Filter by team member"
+              style={{ width: isMobile ? '100%' : 200 }}
+            >
+              <option value="">All team members</option>
+              {memberOptions.map((m) => (
+                <option key={m.email} value={m.email}>{m.name}</option>
+              ))}
+            </select>
+            <div style={{ position: 'relative', width: isMobile ? '100%' : 260 }}>
+              <Search size={14} color={BRAND.muted} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by number, client, business..."
+                className="input"
+                style={{ paddingLeft: 34, paddingRight: search ? 34 : 12 }}
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  aria-label="Clear search"
+                  style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: BRAND.muted }}
+                  title="Clear search"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -136,7 +175,11 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
           <Search size={32} color={BRAND.muted} style={{ marginBottom: 8 }} />
           <h3 style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 600 }}>No matches</h3>
           <p style={{ color: BRAND.muted, fontSize: 13, margin: 0 }}>
-            No proposals match "<strong>{search}</strong>". Try a different search term.
+            {search.trim() && memberFilter
+              ? <>No proposals for <strong>{memberFilterName}</strong> match "<strong>{search}</strong>".</>
+              : search.trim()
+              ? <>No proposals match "<strong>{search}</strong>". Try a different search term.</>
+              : <>No proposals for <strong>{memberFilterName}</strong> yet.</>}
           </p>
         </div>
       ) : (
