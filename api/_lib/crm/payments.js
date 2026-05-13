@@ -58,7 +58,7 @@ export async function paymentsRoute(req, res, id, action, user) {
       sql`SELECT proposal_id, amount, payment_type, paid_at, stripe_session_id,
                  customer_email, receipt_url, xero_invoice_id, xero_payment_id
             FROM payments WHERE proposal_id = ANY(${proposalIds})`,
-      sql`SELECT id, stripe_invoice_id, proposal_id, amount, paid_at,
+      sql`SELECT stripe_invoice_id, proposal_id, amount, paid_at,
                  xero_invoice_id, xero_payment_id
             FROM partner_invoices WHERE proposal_id = ANY(${proposalIds})
             ORDER BY paid_at ASC`,
@@ -96,7 +96,7 @@ export async function paymentsRoute(req, res, id, action, user) {
       partnerCounts.set(r.proposal_id, n);
       const p = proposalMap.get(r.proposal_id);
       out.push({
-        id: 'partner:' + r.id,
+        id: 'partner:' + r.stripe_invoice_id,
         source: 'partner',
         proposalId: r.proposal_id,
         proposalTitle: proposalTitle(p),

@@ -33,11 +33,11 @@ export async function invoicesRoute(req, res, id, action, user) {
         sql`SELECT proposal_id, amount, paid_at, xero_invoice_id, xero_payment_id
               FROM payments
               WHERE proposal_id = ANY(${proposalIds}) AND xero_invoice_id IS NOT NULL`,
-        sql`SELECT id, proposal_id, amount, paid_at, xero_invoice_id, xero_payment_id
+        sql`SELECT stripe_invoice_id, proposal_id, amount, paid_at, xero_invoice_id, xero_payment_id
               FROM partner_invoices
               WHERE proposal_id = ANY(${proposalIds}) AND xero_invoice_id IS NOT NULL
               ORDER BY paid_at ASC`,
-        sql`SELECT proposal_id, xero_invoice_id, created_at
+        sql`SELECT proposal_id, xero_invoice_id, updated_at
               FROM proposal_billing
               WHERE proposal_id = ANY(${proposalIds}) AND xero_invoice_id IS NOT NULL`,
       ]);
@@ -87,7 +87,7 @@ export async function invoicesRoute(req, res, id, action, user) {
           proposalTitle: proposalTitle(r.proposal_id),
           amount: null,
           status: 'authorised',
-          issuedAt: r.created_at,
+          issuedAt: r.updated_at,
           pdfUrl: '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(r.xero_invoice_id),
         });
       }
