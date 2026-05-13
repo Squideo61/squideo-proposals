@@ -272,6 +272,38 @@ export function StoreProvider({ children }) {
     });
   }, [fetchAll]);
 
+  // Keep the inbox-style badge counts fresh without a manual reload. Polls
+  // every 60s while the tab is visible, and immediately refreshes when the
+  // tab regains focus. Scoped to lists that change from outside the app
+  // (quote requests, triage, tasks); the heavier fetchAll is left alone.
+  useEffect(() => {
+    if (!state.session) return undefined;
+    let cancelled = false;
+    const refresh = () => {
+      if (cancelled) return;
+      api.get('/api/quote-requests-admin?status=new').then((rows) => {
+        if (cancelled) return;
+        setState(s => ({ ...s, quoteRequests: Array.isArray(rows) ? rows : [] }));
+      }).catch(() => {});
+      api.get('/api/crm/triage').then((rows) => {
+        if (cancelled) return;
+        setState(s => ({ ...s, triage: Array.isArray(rows) ? rows : [] }));
+      }).catch(() => {});
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') refresh();
+    }, 60_000);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', refresh);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [state.session]);
+
   // mutate: the one place CRM-style optimistic actions live.
   // - `patches` is a tagged descriptor (or array). applyOne handles the dual-cache
   //   logic so deals/tasks always stay in sync with dealDetail without each
