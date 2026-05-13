@@ -16,13 +16,32 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       const owner = req.query.owner ? String(req.query.owner) : null;
       let rows;
       if (stage && owner) {
-        rows = await sql`SELECT * FROM deals WHERE stage = ${stage} AND owner_email = ${owner} ORDER BY stage_changed_at DESC`;
+        rows = await sql`
+          SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
+                 value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+          FROM deals WHERE stage = ${stage} AND owner_email = ${owner}
+          ORDER BY stage_changed_at DESC
+        `;
       } else if (stage) {
-        rows = await sql`SELECT * FROM deals WHERE stage = ${stage} ORDER BY stage_changed_at DESC`;
+        rows = await sql`
+          SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
+                 value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+          FROM deals WHERE stage = ${stage}
+          ORDER BY stage_changed_at DESC
+        `;
       } else if (owner) {
-        rows = await sql`SELECT * FROM deals WHERE owner_email = ${owner} ORDER BY stage_changed_at DESC`;
+        rows = await sql`
+          SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
+                 value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+          FROM deals WHERE owner_email = ${owner}
+          ORDER BY stage_changed_at DESC
+        `;
       } else {
-        rows = await sql`SELECT * FROM deals ORDER BY stage_changed_at DESC`;
+        rows = await sql`
+          SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
+                 value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+          FROM deals ORDER BY stage_changed_at DESC
+        `;
       }
 
       // Annotate with primary contact + linked-proposal counts so the Kanban
@@ -62,7 +81,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
         VALUES (${newId}, 'deal_created', ${JSON.stringify({ title, stage, source: 'manual' })}, ${user.email || null})
       `;
-      const rows = await sql`SELECT * FROM deals WHERE id = ${newId}`;
+      const rows = await sql`
+        SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
+               value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+        FROM deals WHERE id = ${newId}
+      `;
       return res.status(201).json(serialiseDeal(rows[0]));
     }
     return res.status(405).end();
@@ -92,7 +115,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
       VALUES (${id}, 'stage_change', ${JSON.stringify({ from: cur.stage, to: stage, manual: true, lostReason: lostReason || null })}, ${user.email || null})
     `;
-    const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
+    const rows = await sql`
+      SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
+             value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+      FROM deals WHERE id = ${id}
+    `;
     return res.status(200).json({ ok: true, changed: true, deal: serialiseDeal(rows[0]) });
   }
 
@@ -274,7 +301,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 
   // /deals/:id (no action)
   if (req.method === 'GET') {
-    const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
+    const rows = await sql`
+      SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
+             value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+      FROM deals WHERE id = ${id}
+    `;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const deal = serialiseDeal(rows[0]);
     const [proposals, events, tasks, emails, files, comments] = await Promise.all([
@@ -357,7 +388,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 
   if (req.method === 'PATCH') {
     const body = req.body || {};
-    const cur = (await sql`SELECT * FROM deals WHERE id = ${id}`)[0];
+    const cur = (await sql`
+      SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
+             value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+      FROM deals WHERE id = ${id}
+    `)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
     const next = {
       title:               'title'             in body ? (trimOrNull(body.title) || cur.title) : cur.title,
@@ -381,7 +416,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         updated_at = NOW()
       WHERE id = ${id}
     `;
-    const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
+    const rows = await sql`
+      SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
+             value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+      FROM deals WHERE id = ${id}
+    `;
     return res.status(200).json(serialiseDeal(rows[0]));
   }
 

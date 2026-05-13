@@ -9,11 +9,16 @@ export async function templatesRoute(req, res, id, action, user) {
       const stage = trimOrNull(req.query.stage);
       const rows = stage
         ? await sql`
-            SELECT * FROM crm_email_templates
+            SELECT id, name, subject, body_html, body_text, stage, created_by, created_at, updated_at
+            FROM crm_email_templates
             WHERE stage = ${stage} OR stage IS NULL
             ORDER BY stage DESC NULLS LAST, name ASC
           `
-        : await sql`SELECT * FROM crm_email_templates ORDER BY name ASC`;
+        : await sql`
+            SELECT id, name, subject, body_html, body_text, stage, created_by, created_at, updated_at
+            FROM crm_email_templates
+            ORDER BY name ASC
+          `;
       return res.status(200).json(rows.map(serialiseTemplate));
     }
     if (req.method === 'POST') {
@@ -27,7 +32,10 @@ export async function templatesRoute(req, res, id, action, user) {
                 ${trimOrNull(body.bodyHtml)}, ${trimOrNull(body.bodyText)},
                 ${trimOrNull(body.stage)}, ${user.email})
       `;
-      const rows = await sql`SELECT * FROM crm_email_templates WHERE id = ${newId}`;
+      const rows = await sql`
+        SELECT id, name, subject, body_html, body_text, stage, created_by, created_at, updated_at
+        FROM crm_email_templates WHERE id = ${newId}
+      `;
       return res.status(201).json(serialiseTemplate(rows[0]));
     }
     return res.status(405).end();
@@ -35,7 +43,10 @@ export async function templatesRoute(req, res, id, action, user) {
 
   if (req.method === 'PATCH') {
     const body = req.body || {};
-    const cur = (await sql`SELECT * FROM crm_email_templates WHERE id = ${id}`)[0];
+    const cur = (await sql`
+      SELECT id, name, subject, body_html, body_text, stage, created_by, created_at, updated_at
+      FROM crm_email_templates WHERE id = ${id}
+    `)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
     const next = {
       name:      'name'     in body ? (trimOrNull(body.name) || cur.name) : cur.name,
@@ -54,7 +65,10 @@ export async function templatesRoute(req, res, id, action, user) {
         updated_at = NOW()
       WHERE id = ${id}
     `;
-    const rows = await sql`SELECT * FROM crm_email_templates WHERE id = ${id}`;
+    const rows = await sql`
+      SELECT id, name, subject, body_html, body_text, stage, created_by, created_at, updated_at
+      FROM crm_email_templates WHERE id = ${id}
+    `;
     return res.status(200).json(serialiseTemplate(rows[0]));
   }
 

@@ -143,7 +143,10 @@ export async function tasksRoute(req, res, id, action, user) {
 
   if (req.method === 'PATCH') {
     const body = req.body || {};
-    const cur = (await sql`SELECT * FROM tasks WHERE id = ${id}`)[0];
+    const cur = (await sql`
+      SELECT title, notes, due_at, assignee_email, contact_id, done_at
+      FROM tasks WHERE id = ${id}
+    `)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
     // Only touch assignees if the caller explicitly sent the field — partial
     // PATCHes that omit it must not wipe assignments.

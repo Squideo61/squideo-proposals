@@ -26,7 +26,10 @@ export async function contactsRoute(req, res, id, action, user) {
           ${trimOrNull(body.notes)}
         )
       `;
-      const rows = await sql`SELECT * FROM contacts WHERE id = ${newId}`;
+      const rows = await sql`
+        SELECT id, email, name, phone, title, company_id, notes, created_at, updated_at
+        FROM contacts WHERE id = ${newId}
+      `;
       return res.status(201).json(serialiseContact(rows[0]));
     }
     return res.status(405).end();
@@ -35,7 +38,10 @@ export async function contactsRoute(req, res, id, action, user) {
   if (req.method === 'PATCH') {
     const body = req.body || {};
     // Read-modify-write keeps the SQL simple — this table is small.
-    const cur = (await sql`SELECT * FROM contacts WHERE id = ${id}`)[0];
+    const cur = (await sql`
+      SELECT id, email, name, phone, title, company_id, notes, created_at, updated_at
+      FROM contacts WHERE id = ${id}
+    `)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
     const next = {
       email:      'email'     in body ? lowerOrNull(body.email)     : cur.email,
@@ -56,7 +62,10 @@ export async function contactsRoute(req, res, id, action, user) {
              updated_at = NOW()
        WHERE id = ${id}
     `;
-    const rows = await sql`SELECT * FROM contacts WHERE id = ${id}`;
+    const rows = await sql`
+      SELECT id, email, name, phone, title, company_id, notes, created_at, updated_at
+      FROM contacts WHERE id = ${id}
+    `;
     return res.status(200).json(serialiseContact(rows[0]));
   }
   if (req.method === 'DELETE') {

@@ -20,7 +20,10 @@ export async function companiesRoute(req, res, id, action, user) {
         INSERT INTO companies (id, name, domain, notes)
         VALUES (${newId}, ${name}, ${lowerOrNull(body.domain)}, ${trimOrNull(body.notes)})
       `;
-      const rows = await sql`SELECT * FROM companies WHERE id = ${newId}`;
+      const rows = await sql`
+        SELECT id, name, domain, notes, created_at, updated_at
+        FROM companies WHERE id = ${newId}
+      `;
       return res.status(201).json(serialiseCompany(rows[0]));
     }
     return res.status(405).end();
@@ -28,7 +31,10 @@ export async function companiesRoute(req, res, id, action, user) {
 
   if (req.method === 'PATCH') {
     const body = req.body || {};
-    const cur = (await sql`SELECT * FROM companies WHERE id = ${id}`)[0];
+    const cur = (await sql`
+      SELECT id, name, domain, notes, created_at, updated_at
+      FROM companies WHERE id = ${id}
+    `)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
     const next = {
       name:   'name'   in body ? (trimOrNull(body.name) || cur.name) : cur.name,
@@ -43,7 +49,10 @@ export async function companiesRoute(req, res, id, action, user) {
              updated_at = NOW()
        WHERE id = ${id}
     `;
-    const rows = await sql`SELECT * FROM companies WHERE id = ${id}`;
+    const rows = await sql`
+      SELECT id, name, domain, notes, created_at, updated_at
+      FROM companies WHERE id = ${id}
+    `;
     return res.status(200).json(serialiseCompany(rows[0]));
   }
   if (req.method === 'DELETE') {
