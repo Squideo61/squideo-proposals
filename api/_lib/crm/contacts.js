@@ -35,6 +35,58 @@ export async function contactsRoute(req, res, id, action, user) {
     return res.status(405).end();
   }
 
+  // /contacts/:id/detail — contact + company + deals where they're primary
+  if (action === 'detail' && req.method === 'GET') {
+    const [contactRow] = await sql`
+      SELECT id, email, name, phone, title, company_id, notes, created_at, updated_at
+      FROM contacts WHERE id = ${id}
+    `;
+    if (!contactRow) return res.status(404).json({ error: 'Not found' });
+
+    const [companyRows, dealRows] = await Promise.all([
+      contactRow.company_id
+        ? sql`SELECT id, name, domain, notes, created_at, updated_at
+              FROM companies WHERE id = ${contactRow.company_id}`
+        : Promise.resolve([]),
+      sql`
+        SELECT d.id, d.title, d.company_id, d.primary_contact_id, d.owner_email,
+               d.stage, d.value, d.expected_close_at, d.stage_changed_at,
+               d.last_activity_at, d.created_at, d.updated_at,
+               (SELECT COUNT(*)::int FROM proposals p WHERE p.deal_id = d.id) AS proposal_count
+          FROM deals d
+          WHERE d.primary_contact_id = ${id}
+          ORDER BY d.stage_changed_at DESC
+      `,
+    ]);
+
+    return res.status(200).json({
+      ...serialiseContact(contactRow),
+      company: companyRows[0] ? {
+        id: companyRows[0].id,
+        name: companyRows[0].name,
+        domain: companyRows[0].domain || null,
+        notes: companyRows[0].notes || null,
+        createdAt: companyRows[0].created_at,
+        updatedAt: companyRows[0].updated_at,
+      } : null,
+      deals: dealRows.map(d => ({
+        id: d.id,
+        title: d.title,
+        companyId: d.company_id || null,
+        primaryContactId: d.primary_contact_id || null,
+        ownerEmail: d.owner_email || null,
+        stage: d.stage,
+        value: d.value != null ? Number(d.value) : null,
+        expectedCloseAt: d.expected_close_at || null,
+        stageChangedAt: d.stage_changed_at,
+        lastActivityAt: d.last_activity_at,
+        createdAt: d.created_at,
+        updatedAt: d.updated_at,
+        proposalCount: d.proposal_count || 0,
+      })),
+    });
+  }
+
   if (req.method === 'PATCH') {
     const body = req.body || {};
     // Read-modify-write keeps the SQL simple — this table is small.

@@ -1,7 +1,19 @@
 import { Resend } from 'resend';
+import sql from './db.js';
 
 const FROM = process.env.MAIL_FROM || 'Squideo Proposals <noreply@squideo.co.uk>';
 export const APP_URL = process.env.APP_URL || 'https://squideo-proposals-tu96.vercel.app';
+
+// Admin recipients for payment-received notifications, minus the proposal
+// owner (who gets their own copy of the same email).
+export async function adminEmailsExcluding(excludeEmail) {
+  const rows = await sql`SELECT email FROM users WHERE role = 'admin'`;
+  const drop = (excludeEmail || '').toLowerCase();
+  return rows
+    .map(r => r.email)
+    .filter(Boolean)
+    .filter(e => e.toLowerCase() !== drop);
+}
 
 let client = null;
 function getClient() {

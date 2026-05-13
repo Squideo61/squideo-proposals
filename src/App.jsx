@@ -24,6 +24,8 @@ const AccountSettings = lazyNamed(() => import('./components/AccountSettings.jsx
 const PipelineView = lazyNamed(() => import('./components/crm/PipelineView.jsx'), 'PipelineView');
 const DealDetailView = lazyNamed(() => import('./components/crm/DealDetailView.jsx'), 'DealDetailView');
 const ContactsView = lazyNamed(() => import('./components/crm/ContactsView.jsx'), 'ContactsView');
+const ContactDetailView = lazyNamed(() => import('./components/crm/ContactDetailView.jsx'), 'ContactDetailView');
+const CompanyDetailView = lazyNamed(() => import('./components/crm/CompanyDetailView.jsx'), 'CompanyDetailView');
 const TasksView = lazyNamed(() => import('./components/crm/TasksView.jsx'), 'TasksView');
 const TriageView = lazyNamed(() => import('./components/crm/TriageView.jsx'), 'TriageView');
 
@@ -234,7 +236,27 @@ function AppShell() {
         />
       )}
       {view === 'contacts' && (
-        <ContactsView onBack={() => navigate('list')} />
+        <ContactsView
+          onBack={() => navigate('list')}
+          onOpenContact={(id) => navigate('contact', id)}
+          onOpenCompany={(id) => navigate('company', id)}
+        />
+      )}
+      {view === 'contact' && activeId && (
+        <ContactDetailView
+          contactId={activeId}
+          onBack={() => navigate('contacts')}
+          onOpenDeal={(id) => navigate('deal', id)}
+          onOpenCompany={(id) => navigate('company', id)}
+        />
+      )}
+      {view === 'company' && activeId && (
+        <CompanyDetailView
+          companyId={activeId}
+          onBack={() => navigate('contacts')}
+          onOpenDeal={(id) => navigate('deal', id)}
+          onOpenContact={(id) => navigate('contact', id)}
+        />
       )}
       {view === 'tasks' && (
         <TasksView

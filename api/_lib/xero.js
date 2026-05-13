@@ -97,6 +97,31 @@ async function xeroFetch(path, opts = {}, retried = false) {
   return res.json();
 }
 
+// Variant of xeroFetch that returns the raw bytes — used for the PDF
+// passthrough where Xero returns application/pdf, not JSON.
+async function xeroFetchBytes(path, opts = {}, retried = false) {
+  const { accessToken, tenantId } = await getAccessToken();
+  const res = await fetch(API_BASE + path, {
+    ...opts,
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Xero-tenant-id': tenantId,
+      'Accept': 'application/pdf',
+      ...(opts.headers || {}),
+    },
+  });
+  if (res.status === 401 && !retried) {
+    cached = null;
+    return xeroFetchBytes(path, opts, true);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`[xero] ${opts.method || 'GET'} ${path} failed ${res.status}: ${text}`);
+  }
+  const ab = await res.arrayBuffer();
+  return Buffer.from(ab);
+}
+
 function escapeWhere(s) {
   return String(s || '').replace(/"/g, '\\"');
 }
@@ -167,6 +192,23 @@ export async function emailInvoice(invoiceId) {
 // amount matches the invoice total, Xero transitions the invoice to PAID.
 // Callers must round Amount themselves to avoid floating-point drift —
 // Xero rejects payments that don't match the invoice total to the penny.
+// Fetches the rendered PDF for an invoice. Returns a Buffer.
+export async function getInvoicePdf(invoiceId) {
+  return xeroFetchBytes(`/api.xro/2.0/Invoices/${encodeURIComponent(invoiceId)}`);
+}
+
+// Looks up the invoice number (e.g. INV-0042) for a given Xero invoice id.
+// Used to name the downloaded PDF; never throws — returns null on failure.
+export async function getInvoiceNumber(invoiceId) {
+  try {
+    const json = await xeroFetch(`/api.xro/2.0/Invoices/${encodeURIComponent(invoiceId)}`);
+    return json?.Invoices?.[0]?.InvoiceNumber || null;
+  } catch (err) {
+    console.warn('[xero] getInvoiceNumber failed', err.message);
+    return null;
+  }
+}
+
 export async function createPayment({ invoiceId, accountCode, amount, date, reference }) {
   const payload = {
     Invoice: { InvoiceID: invoiceId },

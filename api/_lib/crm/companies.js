@@ -29,6 +29,62 @@ export async function companiesRoute(req, res, id, action, user) {
     return res.status(405).end();
   }
 
+  // /companies/:id/detail — company + member contacts + deals at the company
+  if (action === 'detail' && req.method === 'GET') {
+    const [companyRow] = await sql`
+      SELECT id, name, domain, notes, created_at, updated_at
+      FROM companies WHERE id = ${id}
+    `;
+    if (!companyRow) return res.status(404).json({ error: 'Not found' });
+
+    const [contactRows, dealRows] = await Promise.all([
+      sql`
+        SELECT id, email, name, phone, title, company_id, notes, created_at, updated_at
+        FROM contacts WHERE company_id = ${id}
+        ORDER BY name ASC NULLS LAST, email ASC
+      `,
+      sql`
+        SELECT d.id, d.title, d.company_id, d.primary_contact_id, d.owner_email,
+               d.stage, d.value, d.expected_close_at, d.stage_changed_at,
+               d.last_activity_at, d.created_at, d.updated_at,
+               (SELECT COUNT(*)::int FROM proposals p WHERE p.deal_id = d.id) AS proposal_count
+          FROM deals d
+          WHERE d.company_id = ${id}
+          ORDER BY d.stage_changed_at DESC
+      `,
+    ]);
+
+    return res.status(200).json({
+      ...serialiseCompany(companyRow),
+      contacts: contactRows.map(c => ({
+        id: c.id,
+        email: c.email || null,
+        name: c.name || null,
+        phone: c.phone || null,
+        title: c.title || null,
+        companyId: c.company_id || null,
+        notes: c.notes || null,
+        createdAt: c.created_at,
+        updatedAt: c.updated_at,
+      })),
+      deals: dealRows.map(d => ({
+        id: d.id,
+        title: d.title,
+        companyId: d.company_id || null,
+        primaryContactId: d.primary_contact_id || null,
+        ownerEmail: d.owner_email || null,
+        stage: d.stage,
+        value: d.value != null ? Number(d.value) : null,
+        expectedCloseAt: d.expected_close_at || null,
+        stageChangedAt: d.stage_changed_at,
+        lastActivityAt: d.last_activity_at,
+        createdAt: d.created_at,
+        updatedAt: d.updated_at,
+        proposalCount: d.proposal_count || 0,
+      })),
+    });
+  }
+
   if (req.method === 'PATCH') {
     const body = req.body || {};
     const cur = (await sql`

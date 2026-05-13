@@ -5,9 +5,9 @@
 // on, api/_lib/xero.js uses the refresh-token flow automatically.
 
 import sql from '../_lib/db.js';
-import { cors } from '../_lib/middleware.js';
+import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, APP_URL } from '../_lib/email.js';
-import { getOrCreateContact, createInvoice, emailInvoice } from '../_lib/xero.js';
+import { getOrCreateContact, createInvoice, emailInvoice, getInvoicePdf, getInvoiceNumber } from '../_lib/xero.js';
 import {
   lineItemsForProject,
   lineItemsForDiscountedProject,
@@ -144,6 +144,44 @@ export default async function handler(req, res) {
     } catch (err) {
       console.error('[xero callback] failed', err);
       return res.status(500).send('Callback failed: ' + err.message);
+    }
+  }
+
+  // --- /api/xero/invoice-pdf?invoiceId=... ---
+  // Auth-gated passthrough that streams the rendered Xero invoice PDF back
+  // to the team. The invoice ID is allowlisted against our own payments /
+  // partner_invoices / proposal_billing tables so we never proxy arbitrary
+  // Xero IDs even if a request leaked.
+  if (action === 'invoice-pdf') {
+    if (req.method !== 'GET') return res.status(405).end();
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const invoiceId = (req.query.invoiceId || '').trim();
+    if (!invoiceId) return res.status(400).json({ error: 'invoiceId required' });
+
+    const allowed = await sql`
+      SELECT 1 AS ok FROM payments WHERE xero_invoice_id = ${invoiceId}
+      UNION ALL
+      SELECT 1 AS ok FROM partner_invoices WHERE xero_invoice_id = ${invoiceId}
+      UNION ALL
+      SELECT 1 AS ok FROM proposal_billing WHERE xero_invoice_id = ${invoiceId}
+      LIMIT 1
+    `;
+    if (!allowed.length) return res.status(404).json({ error: 'Unknown invoice' });
+
+    try {
+      const [pdf, number] = await Promise.all([
+        getInvoicePdf(invoiceId),
+        getInvoiceNumber(invoiceId),
+      ]);
+      const filename = `Invoice-${number || invoiceId}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'private, max-age=60');
+      return res.status(200).send(pdf);
+    } catch (err) {
+      console.error('[xero invoice-pdf] failed', err);
+      return res.status(502).json({ error: 'Could not fetch invoice from Xero' });
     }
   }
 

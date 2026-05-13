@@ -8,6 +8,9 @@ import { Modal } from '../ui.jsx';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
+import { Card, Empty } from './Card.jsx';
+import { PaymentsCard } from './PaymentsCard.jsx';
+import { InvoicesCard } from './InvoicesCard.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
@@ -189,6 +192,9 @@ export function DealDetailView({ dealId, onBack, onOpenProposal }) {
           )}
         </Card>
 
+        <PaymentsCard dealId={dealId} proposals={proposals} showAddButton />
+        <InvoicesCard dealId={dealId} proposals={proposals} />
+
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <Card title="Emails" count={totalEmails} action={
             <button onClick={() => setComposingEmail(true)} className="btn-ghost"><Mail size={12} /> Send email</button>
@@ -311,23 +317,6 @@ function Field({ icon: Icon, label, children }) {
   );
 }
 
-function Card({ title, count, action, children }) {
-  return (
-    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, minHeight: 120 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          {title}{typeof count === 'number' ? <span style={{ color: BRAND.blue, marginLeft: 6 }}>· {count}</span> : null}
-        </h3>
-        {action}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Empty({ text }) {
-  return <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>{text}</div>;
-}
 
 function TaskRow({ task, onToggle, onEdit }) {
   const done = !!task.doneAt;

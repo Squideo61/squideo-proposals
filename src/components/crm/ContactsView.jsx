@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Building2, Plus, Search, Trash2, User, X } from 'lucide-react';
+import { ArrowLeft, Building2, Edit2, Plus, Search, Trash2, User, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { Modal } from '../ui.jsx';
 
-export function ContactsView({ onBack }) {
+export function ContactsView({ onBack, onOpenContact, onOpenCompany }) {
   const { state } = useStore();
   const isMobile = useIsMobile();
   const [view, setView] = useState('contacts'); // 'contacts' | 'companies'
@@ -67,9 +67,23 @@ export function ContactsView({ onBack }) {
             {items.length === 0 ? `No ${view} yet` : 'No matches'}
           </div>
         ) : view === 'contacts' ? (
-          filtered.map(c => <ContactRow key={c.id} contact={c} onEdit={() => setEditing(c)} />)
+          filtered.map(c => (
+            <ContactRow
+              key={c.id}
+              contact={c}
+              onOpen={() => onOpenContact?.(c.id)}
+              onEdit={() => setEditing(c)}
+            />
+          ))
         ) : (
-          filtered.map(c => <CompanyRow key={c.id} company={c} onEdit={() => setEditing(c)} />)
+          filtered.map(c => (
+            <CompanyRow
+              key={c.id}
+              company={c}
+              onOpen={() => onOpenCompany?.(c.id)}
+              onEdit={() => setEditing(c)}
+            />
+          ))
         )}
       </div>
 
@@ -101,43 +115,63 @@ function Tab({ active, onClick, children }) {
   );
 }
 
-function ContactRow({ contact, onEdit }) {
+function ContactRow({ contact, onOpen, onEdit }) {
   const { state } = useStore();
   const company = contact.companyId ? state.companies[contact.companyId] : null;
   return (
-    <button
-      onClick={onEdit}
-      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', border: 'none', width: '100%' }}
-    >
-      <div style={{ width: 32, height: 32, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
-        {(contact.name || contact.email || '?')[0].toUpperCase()}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: 14 }}>{contact.name || contact.email || 'Unnamed'}</div>
-        <div style={{ fontSize: 12, color: BRAND.muted, display: 'flex', gap: 12, marginTop: 2, flexWrap: 'wrap' }}>
-          {contact.email && <span>{contact.email}</span>}
-          {company && <span>· {company.name}</span>}
-          {contact.title && <span>· {contact.title}</span>}
+    <div style={{ display: 'flex', alignItems: 'stretch', borderTop: '1px solid ' + BRAND.border, background: 'white' }}>
+      <button
+        onClick={onOpen}
+        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', border: 'none', flex: 1, background: 'transparent', minWidth: 0 }}
+      >
+        <div style={{ width: 32, height: 32, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+          {(contact.name || contact.email || '?')[0].toUpperCase()}
         </div>
-      </div>
-    </button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>{contact.name || contact.email || 'Unnamed'}</div>
+          <div style={{ fontSize: 12, color: BRAND.muted, display: 'flex', gap: 12, marginTop: 2, flexWrap: 'wrap' }}>
+            {contact.email && <span>{contact.email}</span>}
+            {company && <span>· {company.name}</span>}
+            {contact.title && <span>· {contact.title}</span>}
+          </div>
+        </div>
+      </button>
+      <button
+        onClick={onEdit}
+        title="Edit contact"
+        aria-label="Edit contact"
+        style={{ padding: '0 16px', background: 'transparent', border: 'none', cursor: 'pointer', color: BRAND.muted }}
+      >
+        <Edit2 size={14} />
+      </button>
+    </div>
   );
 }
 
-function CompanyRow({ company, onEdit }) {
+function CompanyRow({ company, onOpen, onEdit }) {
   return (
-    <button
-      onClick={onEdit}
-      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', border: 'none', width: '100%' }}
-    >
-      <div style={{ width: 32, height: 32, borderRadius: 8, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        <Building2 size={16} color={BRAND.muted} />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: 14 }}>{company.name}</div>
-        {company.domain && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{company.domain}</div>}
-      </div>
-    </button>
+    <div style={{ display: 'flex', alignItems: 'stretch', borderTop: '1px solid ' + BRAND.border, background: 'white' }}>
+      <button
+        onClick={onOpen}
+        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', border: 'none', flex: 1, background: 'transparent', minWidth: 0 }}
+      >
+        <div style={{ width: 32, height: 32, borderRadius: 8, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Building2 size={16} color={BRAND.muted} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>{company.name}</div>
+          {company.domain && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{company.domain}</div>}
+        </div>
+      </button>
+      <button
+        onClick={onEdit}
+        title="Edit company"
+        aria-label="Edit company"
+        style={{ padding: '0 16px', background: 'transparent', border: 'none', cursor: 'pointer', color: BRAND.muted }}
+      >
+        <Edit2 size={14} />
+      </button>
+    </div>
   );
 }
 

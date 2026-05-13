@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import sql from '../_lib/db.js';
 import { cors } from '../_lib/middleware.js';
-import { sendMail, paidHtml, clientPaidThanksHtml, APP_URL } from '../_lib/email.js';
+import { sendMail, paidHtml, clientPaidThanksHtml, APP_URL, adminEmailsExcluding } from '../_lib/email.js';
 import { getOrCreateContact, createInvoice, emailInvoice, createPayment } from '../_lib/xero.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 import {
@@ -12,17 +12,6 @@ import {
   depositLineItems,
   formatProposalNumber,
 } from '../_lib/xeroMappers.js';
-
-// Admin recipients for the payment-received notification, minus the proposal
-// owner (who already gets their own copy of the same email).
-async function adminEmailsExcluding(excludeEmail) {
-  const rows = await sql`SELECT email FROM users WHERE role = 'admin'`;
-  const drop = (excludeEmail || '').toLowerCase();
-  return rows
-    .map(r => r.email)
-    .filter(Boolean)
-    .filter(e => e.toLowerCase() !== drop);
-}
 
 // Normalise a company name (or fallback email/proposalId) into a stable lookup
 // key. Used to aggregate partner subscriptions and credit allocations across
