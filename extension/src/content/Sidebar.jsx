@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api.js';
 import { chipResolver } from './chipResolver.js';
+import { STAGE_COLOURS } from '../lib/stages.js';
 
 // Brand palette mirrored from src/theme.js so the in-Gmail sidebar feels
 // like the web app. Kept inline (not imported) to avoid pulling the whole
@@ -11,16 +12,6 @@ const BRAND = {
   paper:  '#FAFBFC',
   border: '#E5E9EE',
   muted:  '#6B7785',
-};
-const STAGE_COLOURS = {
-  lead:          { bg: '#F1F5F9', fg: '#475569' },
-  responded:     { bg: '#EDE9FE', fg: '#5B21B6' },
-  proposal_sent: { bg: '#E0F2FE', fg: '#0369A1' },
-  viewed:        { bg: '#FFF7ED', fg: '#C2410C' },
-  signed:        { bg: '#E0F9FF', fg: '#0284C7' },
-  paid:          { bg: '#DCFCE7', fg: '#166534' },
-  long_term:     { bg: '#F5F3FF', fg: '#6D28D9' },
-  lost:          { bg: '#FEE2E2', fg: '#991B1B' },
 };
 
 export function Sidebar({ gmailThreadId, counterpartyEmail }) {

@@ -4,17 +4,9 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
 import { Modal } from '../ui.jsx';
+import { PIPELINE_STAGES } from '../../lib/stages.js';
 
-export const PIPELINE_STAGES = [
-  { id: 'lead',          label: 'Lead',          color: '#94A3B8' },
-  { id: 'responded',     label: 'Responded',     color: '#7C3AED' },
-  { id: 'proposal_sent', label: 'Proposal Sent', color: '#0EA5E9' },
-  { id: 'viewed',        label: 'Viewed',        color: '#FB923C' },
-  { id: 'signed',        label: 'Signed',        color: '#2BB8E6' },
-  { id: 'paid',          label: 'Paid',          color: '#16A34A' },
-  { id: 'long_term',     label: 'Long-term',     color: '#A78BFA', defaultCollapsed: true },
-  { id: 'lost',          label: 'Lost',          color: '#94A3B8', defaultCollapsed: true },
-];
+export { PIPELINE_STAGES };
 
 const STAGE_BY_ID = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s]));
 

@@ -10,19 +10,7 @@ import { chipResolver } from './chipResolver.js';
 import { installBoxesNav } from './BoxesNav.jsx';
 import { ComposeBar } from './ComposeBar.jsx';
 import { api, auth } from '../lib/api.js';
-
-// Pipeline-stage palette mirrored from src/theme.js. Used by the inbox-row
-// chip colouring so the chip's tint immediately conveys the deal's stage.
-const STAGE_COLOURS = {
-  lead:          { bg: '#F1F5F9', fg: '#475569' },
-  responded:     { bg: '#EDE9FE', fg: '#5B21B6' },
-  proposal_sent: { bg: '#E0F2FE', fg: '#0369A1' },
-  viewed:        { bg: '#FFF7ED', fg: '#C2410C' },
-  signed:        { bg: '#E0F9FF', fg: '#0284C7' },
-  paid:          { bg: '#DCFCE7', fg: '#166534' },
-  long_term:     { bg: '#F5F3FF', fg: '#6D28D9' },
-  lost:          { bg: '#FEE2E2', fg: '#991B1B' },
-};
+import { STAGE_COLOURS } from '../lib/stages.js';
 
 const INBOXSDK_APP_ID = 'sdk_SquideoCRM_398be07a2b';
 
