@@ -610,15 +610,16 @@ export function QuoteRequestForm(props = {}) {
   };
 
   // ===== Personalised titles =====
+  // Step 1 always shows the time-based greeting. Later steps use the
+  // user's first name once we have it, falling back to the base title.
   const personalisedTitle = (which) => {
+    if (which === 'step1') return `${timeBasedGreeting()} ${cfg.step1Title}`;
     if (!userName) {
-      if (which === 'step1') return cfg.step1Title;
       if (which === 'step2') return cfg.step2Title;
       if (which === 'step3') return cfg.step3Title;
       if (which === 'step4') return cfg.step4Title;
       if (which === 'success') return cfg.successTitle;
     }
-    if (which === 'step1') return `${timeBasedGreeting()} ${cfg.step1Title}`;
     if (which === 'step2') return `Thanks ${userName}! Tell us about your project`;
     if (which === 'step3') return `Great ${userName}, now let's talk timeline and budget`;
     if (which === 'step4') return `Almost done ${userName}!`;
