@@ -20,6 +20,7 @@ function emptyStore() {
     dealDetail: {},
     gmailAccount: null,
     triage: [],
+    quoteRequests: [],
     emailBodies: {},
     notificationRecipients: [],
     extrasBank: [],
@@ -218,7 +219,8 @@ export function StoreProvider({ children }) {
       api.get('/api/crm/tasks?scope=open').catch(() => []),
       api.get('/api/crm/gmail').catch(() => null),
       api.get('/api/crm/triage').catch(() => []),
-    ]).then(([proposals, templates, settings, users, deals, contacts, companies, tasks, gmailAccount, triage]) => {
+      api.get('/api/quote-requests-admin?status=new').catch(() => []),
+    ]).then(([proposals, templates, settings, users, deals, contacts, companies, tasks, gmailAccount, triage, quoteRequests]) => {
       const dealsMap = {};
       for (const d of (Array.isArray(deals) ? deals : [])) dealsMap[d.id] = d;
       const contactsMap = {};
@@ -236,6 +238,7 @@ export function StoreProvider({ children }) {
         tasks: Array.isArray(tasks) ? tasks : [],
         gmailAccount: gmailAccount || null,
         triage: Array.isArray(triage) ? triage : [],
+        quoteRequests: Array.isArray(quoteRequests) ? quoteRequests : [],
         extrasBank: settings?.extrasBank?.length ? settings.extrasBank : JSON.parse(JSON.stringify(DEFAULT_PROPOSAL.optionalExtras)),
         inclusionsBank: settings?.inclusionsBank?.length ? settings.inclusionsBank : DEFAULT_PROPOSAL.baseInclusions.map((inc, i) => ({ id: 'incl_default_' + i, title: inc.title, description: inc.description || '' })),
         notificationRecipients: settings?.notificationRecipients || [],
@@ -775,6 +778,77 @@ export function StoreProvider({ children }) {
       setState(s => ({ ...s, triage: s.triage.filter(m => m.gmailThreadId !== gmailThreadId) }));
       return api.post('/api/crm/triage/' + encodeURIComponent(gmailThreadId) + '/dismiss', {})
         .catch(() => {});
+    },
+
+    // ---------- Quote requests ----------
+    refreshQuoteRequests(status = 'new') {
+      const qs = status ? '?status=' + encodeURIComponent(status) : '';
+      return api.get('/api/quote-requests-admin' + qs).then((rows) => {
+        const list = Array.isArray(rows) ? rows : [];
+        setState(s => ({ ...s, quoteRequests: list }));
+        return list;
+      }).catch(() => []);
+    },
+    reviewQuoteRequest(id) {
+      return api.post('/api/quote-requests-admin/' + encodeURIComponent(id) + '/review', {})
+        .then((resp) => {
+          if (resp && resp.request) {
+            setState(s => ({
+              ...s,
+              quoteRequests: s.quoteRequests.map(r => r.id === id ? resp.request : r),
+              // Stash provisional contact so the modal can show it; also cache in
+              // state.contacts is unnecessary (Contacts list filters provisional
+              // out server-side), so we deliberately skip that.
+            }));
+          }
+          return resp;
+        })
+        .catch(() => null);
+    },
+    qualifyQuoteRequest(id) {
+      return api.post('/api/quote-requests-admin/' + encodeURIComponent(id) + '/qualify', {})
+        .then((resp) => {
+          if (resp && resp.request) {
+            setState(s => {
+              const nextContacts = resp.contact
+                ? { ...s.contacts, [resp.contact.id]: resp.contact }
+                : s.contacts;
+              const nextDeals = resp.deal
+                ? { ...s.deals, [resp.deal.id]: resp.deal }
+                : s.deals;
+              return {
+                ...s,
+                quoteRequests: s.quoteRequests.map(r => r.id === id ? resp.request : r),
+                contacts: nextContacts,
+                deals: nextDeals,
+              };
+            });
+          }
+          return resp;
+        })
+        .catch(() => null);
+    },
+    disqualifyQuoteRequest(id) {
+      // Optimistic: drop the row and any provisional contact it linked to.
+      let provContactId = null;
+      setState(s => {
+        const req = s.quoteRequests.find(r => r.id === id);
+        provContactId = req?.contactId || null;
+        const contacts = provContactId ? { ...s.contacts } : s.contacts;
+        if (provContactId) delete contacts[provContactId];
+        return {
+          ...s,
+          quoteRequests: s.quoteRequests.filter(r => r.id !== id),
+          contacts,
+        };
+      });
+      return api.delete('/api/quote-requests-admin/' + encodeURIComponent(id))
+        .then(() => true)
+        .catch(() => {
+          // Best-effort refresh on failure so the UI re-syncs with the server.
+          fetchAllRef.current?.();
+          return false;
+        });
     },
 
     // ---------- Email body lookup (lazy-loaded for the viewer modal) ----------

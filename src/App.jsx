@@ -28,6 +28,7 @@ const ContactDetailView = lazyNamed(() => import('./components/crm/ContactDetail
 const CompanyDetailView = lazyNamed(() => import('./components/crm/CompanyDetailView.jsx'), 'CompanyDetailView');
 const TasksView = lazyNamed(() => import('./components/crm/TasksView.jsx'), 'TasksView');
 const TriageView = lazyNamed(() => import('./components/crm/TriageView.jsx'), 'TriageView');
+const QuoteRequestsView = lazyNamed(() => import('./components/crm/QuoteRequestsView.jsx'), 'QuoteRequestsView');
 
 function ViewFallback() {
   return (
@@ -220,6 +221,7 @@ function AppShell() {
           onManageContacts={() => navigate('contacts')}
           onManageTasks={() => navigate('tasks')}
           onManageTriage={() => navigate('triage')}
+          onManageQuoteRequests={() => navigate('quote-requests')}
         />
       )}
       {view === 'pipeline' && (
@@ -268,6 +270,13 @@ function AppShell() {
         <TriageView
           onBack={() => navigate('list')}
           onOpenDeal={(id) => navigate('deal', id)}
+        />
+      )}
+      {view === 'quote-requests' && (
+        <QuoteRequestsView
+          onBack={() => navigate('list')}
+          onOpenDeal={(id) => navigate('deal', id)}
+          onOpenContact={(id) => navigate('contact', id)}
         />
       )}
       {view === 'leaderboard' && (

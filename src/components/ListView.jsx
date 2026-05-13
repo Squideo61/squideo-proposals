@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BarChart3, Check, CheckSquare, Clock, Contact, Copy, Coins, Download, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MoreVertical, Plus, Search, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
+import { BarChart3, Check, CheckSquare, Clock, Contact, Copy, Coins, Download, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Search, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, useIsMobile } from '../utils.js';
@@ -9,7 +9,7 @@ import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
 const TEAM_FILTER_STORAGE_KEY = 'squideo.dashboard.teamMemberFilter';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage, onManageQuoteRequests }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   const [memberFilter, setMemberFilter] = useState(() => {
@@ -24,6 +24,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
   }, [memberFilter]);
   const openTasksDue = (state.tasks || []).filter(t => !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= Date.now() + 24 * 60 * 60 * 1000).length;
   const triageCount = (state.triage || []).length;
+  const newQuoteRequestsCount = (state.quoteRequests || []).filter(q => q.status === 'new').length;
   const [analyticsId, setAnalyticsId] = useState(null);
   const isMobile = useIsMobile();
 
@@ -98,6 +99,16 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
               <span style={{ background: '#FB923C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, marginLeft: 4 }}>
                 {triageCount}
               </span>
+            </button>
+          )}
+          {onManageQuoteRequests && (
+            <button onClick={onManageQuoteRequests} className="btn-ghost">
+              <MailQuestion size={14} /> Quote Requests
+              {newQuoteRequestsCount > 0 && (
+                <span style={{ background: '#FB923C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, marginLeft: 4 }}>
+                  {newQuoteRequestsCount}
+                </span>
+              )}
             </button>
           )}
           <button onClick={onManageLeaderboard} className="btn-ghost"><Trophy size={14} /> Leaderboard</button>

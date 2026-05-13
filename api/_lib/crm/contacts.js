@@ -5,8 +5,9 @@ export async function contactsRoute(req, res, id, action, user) {
   if (!id) {
     if (req.method === 'GET') {
       const rows = await sql`
-        SELECT id, email, name, phone, title, company_id, notes, created_at, updated_at
+        SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
         FROM contacts
+        WHERE provisional = FALSE
         ORDER BY name ASC NULLS LAST, email ASC
       `;
       return res.status(200).json(rows.map(serialiseContact));
@@ -27,7 +28,7 @@ export async function contactsRoute(req, res, id, action, user) {
         )
       `;
       const rows = await sql`
-        SELECT id, email, name, phone, title, company_id, notes, created_at, updated_at
+        SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
         FROM contacts WHERE id = ${newId}
       `;
       return res.status(201).json(serialiseContact(rows[0]));
@@ -38,7 +39,7 @@ export async function contactsRoute(req, res, id, action, user) {
   // /contacts/:id/detail — contact + company + deals where they're primary
   if (action === 'detail' && req.method === 'GET') {
     const [contactRow] = await sql`
-      SELECT id, email, name, phone, title, company_id, notes, created_at, updated_at
+      SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
       FROM contacts WHERE id = ${id}
     `;
     if (!contactRow) return res.status(404).json({ error: 'Not found' });
@@ -91,7 +92,7 @@ export async function contactsRoute(req, res, id, action, user) {
     const body = req.body || {};
     // Read-modify-write keeps the SQL simple — this table is small.
     const cur = (await sql`
-      SELECT id, email, name, phone, title, company_id, notes, created_at, updated_at
+      SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
       FROM contacts WHERE id = ${id}
     `)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
@@ -115,7 +116,7 @@ export async function contactsRoute(req, res, id, action, user) {
        WHERE id = ${id}
     `;
     const rows = await sql`
-      SELECT id, email, name, phone, title, company_id, notes, created_at, updated_at
+      SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
       FROM contacts WHERE id = ${id}
     `;
     return res.status(200).json(serialiseContact(rows[0]));
@@ -128,7 +129,7 @@ export async function contactsRoute(req, res, id, action, user) {
   return res.status(405).end();
 }
 
-function serialiseContact(r) {
+export function serialiseContact(r) {
   return {
     id: r.id,
     email: r.email || null,
@@ -137,6 +138,8 @@ function serialiseContact(r) {
     title: r.title || null,
     companyId: r.company_id || null,
     notes: r.notes || null,
+    provisional: r.provisional === true,
+    source: r.source || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

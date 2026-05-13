@@ -9,6 +9,8 @@
     { "source": "/api/crm/:resource/:id/:action/:subaction", "destination": "/api/crm/:resource?_id=:id&_action=:action&_subaction=:subaction" },
     { "source": "/api/crm/:resource/:id/:action", "destination": "/api/crm/:resource?_id=:id&_action=:action" },
     { "source": "/api/crm/:resource/:id", "destination": "/api/crm/:resource?_id=:id" },
+    { "source": "/api/quote-requests-admin/:id/:action", "destination": "/api/quote-requests-admin?_id=:id&_action=:action" },
+    { "source": "/api/quote-requests-admin/:id", "destination": "/api/quote-requests-admin?_id=:id" },
     { "source": "/extension-auth", "destination": "/api/extension/auth-page" },
     { "source": "/quote", "destination": "/quote.html" }
   ],
