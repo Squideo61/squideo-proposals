@@ -88,32 +88,44 @@ export default async function handler(req, res) {
       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
     `;
 
-    // Auto-create-deal on first save. We do this *after* the upsert so the
-    // proposal row exists for the FK. Idempotent: only fires when the
-    // proposal has no deal_id yet. Skips if there's nothing to anchor on.
+    // Auto-create-deal on first save, then keep the deal's value + title in
+    // sync with the proposal on every subsequent save so editing basePrice
+    // doesn't leave a stale £1,250 (the DEFAULT_PROPOSAL price) on the deal.
+    // We only sync when the deal id matches the auto-created form
+    // (`deal_<proposalId>`) so a manually-created deal that someone later
+    // linked to this proposal keeps its hand-set value.
     let createdDealId = null;
     try {
       const meta = await sql`SELECT deal_id FROM proposals WHERE id = ${id}`;
       const hasDeal = !!meta[0]?.deal_id;
+      const expectedAutoDealId = 'deal_' + id;
+      const title = (data.contactBusinessName || data.clientName || 'Untitled deal').toString().slice(0, 200);
+      const ownerEmail = data.preparedByEmail || user.email || null;
+      const value = Number.isFinite(Number(data.basePrice)) ? Number(data.basePrice) : null;
+
       if (!hasDeal) {
-        const dealId = 'deal_' + id;
-        const title = (data.contactBusinessName || data.clientName || 'Untitled deal').toString().slice(0, 200);
-        const ownerEmail = data.preparedByEmail || user.email || null;
-        const value = Number.isFinite(Number(data.basePrice)) ? Number(data.basePrice) : null;
         const inserted = await sql`
           INSERT INTO deals (id, title, owner_email, stage, value, last_activity_at)
-          VALUES (${dealId}, ${title}, ${ownerEmail}, 'proposal_sent', ${value}, NOW())
+          VALUES (${expectedAutoDealId}, ${title}, ${ownerEmail}, 'proposal_sent', ${value}, NOW())
           ON CONFLICT (id) DO NOTHING
           RETURNING id
         `;
         if (inserted.length) {
           await sql`
             INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
-            VALUES (${dealId}, 'deal_created', ${JSON.stringify({ source: 'proposal', proposalId: id, title })}, ${user.email || null})
+            VALUES (${expectedAutoDealId}, 'deal_created', ${JSON.stringify({ source: 'proposal', proposalId: id, title })}, ${user.email || null})
           `;
-          createdDealId = dealId;
+          createdDealId = expectedAutoDealId;
         }
-        await sql`UPDATE proposals SET deal_id = ${dealId} WHERE id = ${id} AND deal_id IS NULL`;
+        await sql`UPDATE proposals SET deal_id = ${expectedAutoDealId} WHERE id = ${id} AND deal_id IS NULL`;
+      } else if (meta[0].deal_id === expectedAutoDealId) {
+        await sql`
+          UPDATE deals
+             SET title = ${title},
+                 value = ${value},
+                 updated_at = NOW()
+           WHERE id = ${expectedAutoDealId}
+        `;
       }
     } catch (err) {
       console.error('[proposals] auto-create deal failed', err);
