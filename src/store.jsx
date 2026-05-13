@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_PROPOSAL } from './defaults.js';
-import { api, clearToken, getToken, setToken } from './api.js';
+import { api } from './api.js';
 
 const StoreContext = createContext(null);
 
@@ -193,20 +193,10 @@ function applyPatches(state, patches) {
   return s;
 }
 
-function sessionFromToken() {
-  try {
-    const token = getToken();
-    if (!token) return null;
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    if (payload.exp && payload.exp < Date.now() / 1000) { clearToken(); return null; }
-    return { email: payload.email, name: payload.name, role: payload.role || 'member' };
-  } catch {
-    return null;
-  }
-}
-
 export function StoreProvider({ children }) {
-  const [state, setState] = useState(() => ({ ...emptyStore(), session: sessionFromToken() }));
+  // Session is rehydrated from /api/auth/me on mount (the JWT lives in an
+  // HttpOnly cookie now). Until that resolves we render with loading: true.
+  const [state, setState] = useState(() => ({ ...emptyStore(), session: null }));
   const [toast, setToast] = useState(null);
   const saveTimers = useRef({});
   const fetchAllRef = useRef(null);
@@ -264,11 +254,19 @@ export function StoreProvider({ children }) {
   fetchAllRef.current = fetchAll;
 
   useEffect(() => {
-    if (!getToken()) {
+    // Ask the server who we are. If the cookie's missing or expired this 401s
+    // and we drop the user on the auth screen; otherwise we hydrate the
+    // session and kick off the normal fetchAll.
+    api.get('/api/auth/me').then((r) => {
+      if (r && r.user) {
+        setState(s => ({ ...s, session: { email: r.user.email, name: r.user.name, avatar: r.user.avatar ?? null, role: r.user.role || 'member' } }));
+        fetchAll();
+      } else {
+        setState(s => ({ ...s, loading: false }));
+      }
+    }).catch(() => {
       setState(s => ({ ...s, loading: false }));
-      return;
-    }
-    fetchAll();
+    });
   }, [fetchAll]);
 
   // mutate: the one place CRM-style optimistic actions live.
@@ -306,17 +304,19 @@ export function StoreProvider({ children }) {
   }, [showMsg]);
 
   const actions = useMemo(() => ({
-    login(user, token) {
-      if (token) setToken(token);
+    login(user) {
+      // The session cookie was set on the API response that produced this user.
       setState(s => ({ ...s, session: { email: user.email, name: user.name, avatar: user.avatar ?? null, role: user.role || 'member' }, loading: true }));
       fetchAllRef.current?.();
     },
     logout() {
-      clearToken();
+      // Fire-and-forget the server-side cookie clear; clearing local state
+      // first means the auth screen renders instantly even if the network's
+      // slow. The cookie is HttpOnly so we can't wipe it from JS.
+      api.post('/api/auth/logout', {}).catch(() => {});
       setState({ ...emptyStore(), loading: false });
     },
-    signup(user, token) {
-      if (token) setToken(token);
+    signup(user) {
       setState(s => ({ ...s, session: { email: user.email, name: user.name, avatar: null, role: user.role || 'member' }, users: { ...s.users, [user.email]: user }, loading: true }));
       fetchAllRef.current?.();
     },
@@ -791,11 +791,13 @@ export function StoreProvider({ children }) {
 
     // ---------- Deal files ----------
     uploadDealFile(dealId, file) {
-      const token = getToken();
+      // Sends the binary body raw (not JSON), so it can't go through the
+      // shared `api` wrapper. credentials: 'include' attaches the session
+      // cookie the same way the wrapper does.
       return fetch('/api/crm/deals/' + encodeURIComponent(dealId) + '/files', {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          Authorization: 'Bearer ' + token,
           'Content-Type': file.type || 'application/octet-stream',
           'X-Filename': encodeURIComponent(file.name),
         },

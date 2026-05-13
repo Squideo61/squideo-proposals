@@ -1,21 +1,8 @@
-const JWT_KEY = 'squideo.jwt';
-
-export function getToken() {
-  return localStorage.getItem(JWT_KEY);
-}
-
-export function setToken(token) {
-  localStorage.setItem(JWT_KEY, token);
-}
-
-export function clearToken() {
-  localStorage.removeItem(JWT_KEY);
-}
-
+// Session lives in an HttpOnly cookie (sq_session) set by the server on
+// successful login. The browser sends it automatically with same-origin
+// requests, so we never read or attach a token here.
 async function request(method, path, body) {
   const headers = { 'Content-Type': 'application/json' };
-  const token = getToken();
-  if (token) headers['Authorization'] = 'Bearer ' + token;
 
   const res = await fetch(path, {
     method,

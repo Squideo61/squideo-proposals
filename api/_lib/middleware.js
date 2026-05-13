@@ -7,9 +7,47 @@ export function cors(res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Filename');
 }
 
+const SESSION_COOKIE = 'sq_session';
+// Match the JWT lifetime configured in api/_lib/auth.js (30d).
+const SESSION_MAX_AGE = 60 * 60 * 24 * 30;
+
+export function sessionCookieHeader(jwt) {
+  return `${SESSION_COOKIE}=${jwt}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_MAX_AGE}`;
+}
+
+export function clearSessionCookieHeader() {
+  return `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
+}
+
+// Append one or more Set-Cookie strings without trampling whatever an earlier
+// step already wrote (e.g. issueTrustedDevice setting sq_td before we set
+// sq_session here). Node/Vercel accepts an array for multiple Set-Cookie lines.
+export function appendSetCookie(res, ...cookies) {
+  const next = cookies.filter(Boolean);
+  if (!next.length) return;
+  const existing = res.getHeader('Set-Cookie');
+  if (!existing) res.setHeader('Set-Cookie', next.length === 1 ? next[0] : next);
+  else if (Array.isArray(existing)) res.setHeader('Set-Cookie', [...existing, ...next]);
+  else res.setHeader('Set-Cookie', [existing, ...next]);
+}
+
+function readSessionCookie(cookieHeader) {
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(';')) {
+    const [k, ...rest] = part.trim().split('=');
+    if (k === SESSION_COOKIE) return decodeURIComponent(rest.join('='));
+  }
+  return null;
+}
+
 export async function requireAuth(req, res) {
+  // Prefer the HttpOnly session cookie set on web login. The Chrome extension
+  // runs cross-origin and cannot read or send our cookie, so it continues to
+  // pass its opaque token in the Authorization header.
+  const cookieJwt = readSessionCookie(req.headers.cookie);
   const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const bearer = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const token = cookieJwt || bearer;
   if (!token) {
     res.status(401).json({ error: 'Unauthorised' });
     return null;

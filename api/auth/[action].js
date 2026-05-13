@@ -7,7 +7,13 @@ import {
   signEnrolmentToken,
   verifyEnrolmentToken,
 } from '../_lib/auth.js';
-import { cors, requireAuth } from '../_lib/middleware.js';
+import {
+  cors,
+  requireAuth,
+  appendSetCookie,
+  sessionCookieHeader,
+  clearSessionCookieHeader,
+} from '../_lib/middleware.js';
 import { sendMail, twoFactorCodeHtml } from '../_lib/email.js';
 import {
   generateTotpSecret,
@@ -99,7 +105,13 @@ async function issueTrustedDevice(res, email, userAgent) {
     INSERT INTO trusted_devices (email, token_hash, user_agent, expires_at, last_used_at)
     VALUES (${email}, ${hash}, ${userAgent || null}, ${expiresAt.toISOString()}, NOW())
   `;
-  res.setHeader('Set-Cookie', trustedDeviceCookieHeader(raw));
+  appendSetCookie(res, trustedDeviceCookieHeader(raw));
+}
+
+async function issueSession(res, user) {
+  const jwt = await signToken({ email: user.email, name: user.name, role: user.role || 'member' });
+  appendSetCookie(res, sessionCookieHeader(jwt));
+  return jwt;
 }
 
 async function issueEmailOtp(email, purpose) {
@@ -158,9 +170,29 @@ async function verifyEmailOtp(email, purpose, code) {
 export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).end();
 
   const { action } = req.query;
+
+  // `me` is naturally a GET — the SPA hits it on every page load to rehydrate
+  // the session from the HttpOnly cookie. Everything else is POST.
+  if (action === 'me') {
+    if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
+    const payload = await requireAuth(req, res);
+    if (!payload) return;
+    const u = await loadUser(payload.email);
+    if (!u) return res.status(404).json({ error: 'User not found' });
+    return res.status(200).json({ user: publicUser(u) });
+  }
+
+  // `logout` clears the session cookie. Doesn't need auth — anyone hitting it
+  // just gets their own cookie wiped (idempotent).
+  if (action === 'logout') {
+    if (req.method !== 'POST') return res.status(405).end();
+    appendSetCookie(res, clearSessionCookieHeader());
+    return res.status(200).json({ ok: true });
+  }
+
+  if (req.method !== 'POST') return res.status(405).end();
 
   // ---------- login ----------
   if (action === 'login') {
@@ -189,8 +221,8 @@ export default async function handler(req, res) {
 
     const tdCookie = parseCookie(req.headers.cookie, 'sq_td');
     if (tdCookie && (await consumeTrustedDevice(tdCookie, user.email))) {
-      const token = await signToken({ email: user.email, name: user.name, role: user.role || 'member' });
-      return res.status(200).json({ token, user: publicUser(user) });
+      await issueSession(res, user);
+      return res.status(200).json({ user: publicUser(user) });
     }
 
     if (user.totp_enrolled) {
@@ -291,8 +323,8 @@ export default async function handler(req, res) {
     if (remember_device) {
       await issueTrustedDevice(res, email, req.headers['user-agent']);
     }
-    const jwt = await signToken({ email: user.email, name: user.name, role: user.role || 'member' });
-    return res.status(200).json({ token: jwt, user: publicUser(user) });
+    await issueSession(res, user);
+    return res.status(200).json({ user: publicUser(user) });
   }
 
   // ---------- 2fa-enrol-start ----------
@@ -342,8 +374,8 @@ export default async function handler(req, res) {
       SET totp_enrolled = TRUE, backup_code_hashes = ${hashes}
       WHERE email = ${email}
     `;
-    const jwt = await signToken({ email: user.email, name: user.name, role: user.role || 'member' });
-    return res.status(200).json({ token: jwt, user: publicUser(user), backup_codes: codes });
+    await issueSession(res, user);
+    return res.status(200).json({ user: publicUser(user), backup_codes: codes });
   }
 
   // ---------- 2fa-reset (authed) ----------

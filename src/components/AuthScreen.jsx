@@ -63,8 +63,8 @@ export function AuthScreen() {
         stripInviteFromUrl();
         if (resp.requiresEnrolment) {
           setEnrolmentToken(resp.enrolment_token);
-        } else if (resp.token && resp.user) {
-          actions.signup(resp.user, resp.token);
+        } else if (resp.user) {
+          actions.signup(resp.user);
           showMsg('Welcome, ' + resp.user.name);
         }
       } else {
@@ -74,8 +74,8 @@ export function AuthScreen() {
           setChallengeToken(resp.challenge_token);
         } else if (resp.requiresEnrolment) {
           setEnrolmentToken(resp.enrolment_token);
-        } else if (resp.token && resp.user) {
-          actions.login(resp.user, resp.token);
+        } else if (resp.user) {
+          actions.login(resp.user);
           showMsg('Welcome back, ' + resp.user.name);
         }
       }
@@ -97,9 +97,9 @@ export function AuthScreen() {
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
         <TwoFactorChallenge
           challengeToken={challengeToken}
-          onSuccess={({ token, user }) => {
+          onSuccess={({ user }) => {
             setChallengeToken(null);
-            actions.login(user, token);
+            actions.login(user);
             showMsg('Welcome back, ' + user.name);
           }}
           onCancel={cancel2fa}
@@ -113,9 +113,9 @@ export function AuthScreen() {
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
         <TwoFactorEnrolment
           enrolmentToken={enrolmentToken}
-          onSuccess={({ token, user }) => {
+          onSuccess={({ user }) => {
             setEnrolmentToken(null);
-            actions.login(user, token);
+            actions.login(user);
             showMsg('Welcome, ' + user.name);
           }}
           onCancel={cancel2fa}

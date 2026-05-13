@@ -1,14 +1,15 @@
 // Chrome extension authentication endpoints. Three sub-routes:
 //
 //   GET  /api/extension/auth-page?return=<chrome-cb-url>
-//      HTML page that runs in the user's browser, reads their session JWT
-//      from localStorage, exchanges it for a long-lived extension token, and
-//      redirects to the extension's callback URL with the token in the URL
-//      fragment. Triggered by chrome.identity.launchWebAuthFlow.
+//      HTML page that runs in the user's browser, calls the exchange endpoint
+//      (which reads the user's session via the HttpOnly sq_session cookie),
+//      and redirects to the extension's callback URL with the long-lived
+//      token in the URL fragment. Triggered by chrome.identity.launchWebAuthFlow.
 //
 //   POST /api/extension/exchange
 //      Mints a fresh 90-day extension token bound to the calling user.
-//      Auth: the caller's normal session JWT (Authorization: Bearer ...).
+//      Auth: the caller's normal session — either the sq_session cookie
+//      (same-origin) or a session JWT in Authorization: Bearer.
 //
 //   POST /api/extension/refresh
 //      Pushes the expiry of an extension token out by another 90 days.
@@ -82,18 +83,20 @@ a{display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;paddin
 <script>
 (async () => {
   const status = document.getElementById('status');
-  const jwt = localStorage.getItem('squideo.jwt');
   const returnTo = ${JSON.stringify(returnTo)};
-  if (!jwt) {
-    status.innerHTML = '<h1>Sign in first</h1><p>Open Squideo in this tab and sign in, then re-open the extension popup.</p><p><a href="/">Go to Squideo</a></p>';
-    return;
-  }
   try {
+    // Same-origin fetch: the sq_session HttpOnly cookie is sent automatically.
+    // If the user isn't signed in the server returns 401 and we tell them so.
     const r = await fetch('/api/extension/exchange', {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' },
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userAgent: navigator.userAgent.slice(0, 200) }),
     });
+    if (r.status === 401) {
+      status.innerHTML = '<h1>Sign in first</h1><p>Open Squideo in this tab and sign in, then re-open the extension popup.</p><p><a href="/">Go to Squideo</a></p>';
+      return;
+    }
     const data = await r.json();
     if (!r.ok || !data.token) throw new Error(data.error || 'Exchange failed');
     location.replace(returnTo + '#token=' + encodeURIComponent(data.token) + '&expiresAt=' + encodeURIComponent(data.expiresAt));
