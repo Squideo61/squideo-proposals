@@ -130,7 +130,7 @@ export function AuthScreen() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
           <Logo size={40} />
           <div>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>Squideo Proposals</div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>Squideo CRM</div>
             <div style={{ fontSize: 12, color: BRAND.muted }}>
               {mode === 'login' ? 'Sign in to your account' : 'Accept your invite'}
             </div>

@@ -312,7 +312,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       </div>
       ${paidLine}
       <p style="margin:20px 0 0;font-size:11px;color:#166534;line-height:1.5;font-style:italic;">
-        This document confirms electronic acceptance of the proposal via the Squideo Proposals portal. By typing their name on the acceptance form, the signatory provided their electronic signature.
+        This document confirms electronic acceptance of the proposal via the Squideo CRM portal. By typing their name on the acceptance form, the signatory provided their electronic signature.
       </p>
     </div>`;
   })() : '';

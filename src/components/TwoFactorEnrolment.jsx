@@ -56,7 +56,7 @@ export function TwoFactorEnrolment({ enrolmentToken, onSuccess, onCancel }) {
 
   const download = () => {
     const blob = new Blob(
-      ['Squideo Proposals backup codes\n\n' + backupCodes.join('\n') + '\n\nStore these somewhere safe. Each code works once.\n'],
+      ['Squideo CRM backup codes\n\n' + backupCodes.join('\n') + '\n\nStore these somewhere safe. Each code works once.\n'],
       { type: 'text/plain' }
     );
     const url = URL.createObjectURL(blob);

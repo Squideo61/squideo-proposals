@@ -148,9 +148,9 @@ async function invitesHandler(req, res) {
     const link = `${APP_URL}/?invite=${newToken}`;
     await sendMail({
       to: cleanEmail,
-      subject: `You're invited to Squideo Proposals`,
+      subject: `You're invited to Squideo CRM`,
       html: inviteHtml({ inviterName: admin.name, link, expiresInDays: INVITE_EXPIRY_DAYS }),
-      text: `${admin.name || 'A teammate'} has invited you to join Squideo Proposals. Accept here: ${link}`,
+      text: `${admin.name || 'A teammate'} has invited you to join Squideo CRM. Accept here: ${link}`,
     });
 
     return res.status(201).json({

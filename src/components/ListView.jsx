@@ -74,7 +74,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
             <Logo size={36} />
-            <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Squideo Proposals</h1>
+            <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Squideo CRM</h1>
           </div>
           <p style={{ fontSize: 14, color: BRAND.muted, margin: 0, marginLeft: 48 }}>
             Signed in as <strong style={{ color: BRAND.ink }}>{user.name}</strong> · Shared workspace

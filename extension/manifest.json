@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Squideo CRM",
+  "name": "Squideo CRM for Gmail",
   "version": "0.1.0",
-  "description": "Squideo CRM sidebar, deal chips, and compose helpers inside Gmail.",
+  "description": "Squideo CRM for Gmail — sidebar, deal chips, and compose helpers inside Gmail.",
   "permissions": [
     "storage",
     "identity",
@@ -30,7 +30,7 @@
     }
   ],
   "action": {
-    "default_title": "Squideo CRM",
+    "default_title": "Squideo CRM for Gmail",
     "default_popup": "popup.html"
   },
   "icons": {

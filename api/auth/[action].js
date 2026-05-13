@@ -132,10 +132,10 @@ async function issueEmailOtp(email, purpose) {
   await sendMail({
     to: email,
     subject: purpose === 'enrol'
-      ? 'Confirm your Squideo email'
-      : 'Your Squideo verification code',
+      ? 'Confirm your Squideo CRM email'
+      : 'Your Squideo CRM verification code',
     html: twoFactorCodeHtml({ code, minutes: OTP_TTL_MINUTES, purpose }),
-    text: `Your Squideo verification code is ${code}. It expires in ${OTP_TTL_MINUTES} minutes.`,
+    text: `Your Squideo CRM verification code is ${code}. It expires in ${OTP_TTL_MINUTES} minutes.`,
     throwOnError: true,
   });
 }

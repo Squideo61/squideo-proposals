@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { TOTP, Secret } from 'otpauth';
 import QRCode from 'qrcode';
 
-const ISSUER = 'Squideo Proposals';
+const ISSUER = 'Squideo CRM';
 
 export function generateTotpSecret() {
   return new Secret({ size: 20 }).base32;

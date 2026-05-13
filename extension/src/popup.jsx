@@ -45,7 +45,7 @@ function Popup() {
 
   return (
     <div style={{ width: 280, padding: 16, fontFamily: '-apple-system, system-ui, sans-serif', color: '#0F2A3D' }}>
-      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Squideo CRM</div>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Squideo CRM for Gmail</div>
 
       {status === null && <div style={{ fontSize: 13, color: '#6B7785' }}>Loading…</div>}
 

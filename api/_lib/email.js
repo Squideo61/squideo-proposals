@@ -1,7 +1,7 @@
 import { Resend } from 'resend';
 import sql from './db.js';
 
-const FROM = process.env.MAIL_FROM || 'Squideo Proposals <noreply@squideo.co.uk>';
+const FROM = process.env.MAIL_FROM || 'Squideo CRM <noreply@squideo.co.uk>';
 export const APP_URL = process.env.APP_URL || 'https://squideo-proposals-tu96.vercel.app';
 
 // Admin recipients for payment-received notifications, minus the proposal
@@ -62,7 +62,7 @@ function shell(innerHtml) {
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E9EE;border-radius:12px;overflow:hidden;">
         <tr><td style="padding:24px 28px;border-bottom:1px solid #E5E9EE;">
-          <div style="font-size:18px;font-weight:700;color:#0F2A3D;">Squideo Proposals</div>
+          <div style="font-size:18px;font-weight:700;color:#0F2A3D;">Squideo CRM</div>
         </td></tr>
         <tr><td style="padding:24px 28px;font-size:14px;line-height:1.55;color:#0F2A3D;">
           ${innerHtml}
@@ -132,7 +132,7 @@ export function twoFactorCodeHtml({ code, minutes = 10, purpose = 'login' }) {
     : 'Your sign-in verification code';
   const intro = purpose === 'enrol'
     ? 'Use the code below to confirm this email address while setting up two-step verification.'
-    : 'Use the code below to finish signing in to Squideo Proposals.';
+    : 'Use the code below to finish signing in to Squideo CRM.';
   const inner = `
     <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">${headline}</h2>
     <p style="margin:0 0 16px;">${intro}</p>
@@ -145,8 +145,8 @@ export function twoFactorCodeHtml({ code, minutes = 10, purpose = 'login' }) {
 
 export function inviteHtml({ inviterName, link, expiresInDays = 7 }) {
   const inner = `
-    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">You've been invited to Squideo Proposals</h2>
-    <p style="margin:0 0 12px;">${escapeHtml(inviterName || 'A teammate')} has invited you to join the Squideo Proposals workspace.</p>
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">You've been invited to Squideo CRM</h2>
+    <p style="margin:0 0 12px;">${escapeHtml(inviterName || 'A teammate')} has invited you to join the Squideo CRM workspace.</p>
     <p style="margin:0 0 20px;">Click the button below to set up your account. This invite expires in ${expiresInDays} days.</p>
     <p style="margin:0 0 20px;"><a href="${escapeHtml(link)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Accept invite</a></p>
     <p style="margin:0;color:#6B7785;font-size:12px;">If the button doesn't work, paste this link into your browser:<br/><span style="word-break:break-all;">${escapeHtml(link)}</span></p>
