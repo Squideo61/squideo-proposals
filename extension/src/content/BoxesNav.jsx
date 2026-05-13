@@ -24,6 +24,59 @@ const BOX_ROUTE_ID = 'squideo-box/:dealId';
 // through React props.
 let sharedSdk = null;
 
+// Reference to the current nav section so we can tear it down and rebuild
+// when the deal list changes (deletes, renames, new deals from the web app).
+let currentSection = null;
+let refreshTimer = null;
+let refreshing = false;
+
+async function rebuildDealsSection(sdk) {
+  if (refreshing) return;
+  refreshing = true;
+  try {
+    let deals;
+    try {
+      deals = await api.get('/api/crm/deals');
+    } catch (err) {
+      console.warn('[Squideo] could not load deals for nav', err);
+      return;
+    }
+    if (!Array.isArray(deals)) return;
+
+    const openDeals = deals
+      .filter(d => d.stage !== 'lost')
+      .sort((a, b) => new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0))
+      .slice(0, 50);
+
+    // Tear down the previous section before rebuilding. InboxSDK removes
+    // child nav items along with the parent.
+    if (currentSection) {
+      try { currentSection.remove(); } catch (err) { /* already gone */ }
+      currentSection = null;
+    }
+
+    if (!openDeals.length) return;
+
+    currentSection = sdk.NavMenu.addNavItem({
+      name: 'Squideo Deals',
+      iconUrl: chrome.runtime.getURL('icon-48.png'),
+      type: sdk.NavMenu.NavItemTypes?.NAVIGATION || 'NAVIGATION',
+    });
+
+    for (const deal of openDeals) {
+      const colours = STAGE_COLOURS[deal.stage] || STAGE_COLOURS.lead;
+      currentSection.addNavItem({
+        name: deal.title,
+        routeID: BOX_ROUTE_ID,
+        routeParams: { dealId: deal.id },
+        backgroundColor: colours.bg,
+      });
+    }
+  } finally {
+    refreshing = false;
+  }
+}
+
 export async function installBoxesNav(sdk) {
   sharedSdk = sdk;
 
@@ -41,43 +94,19 @@ export async function installBoxesNav(sdk) {
     routeView.on('destroy', () => root.unmount());
   });
 
-  // Now load deals and add nav items. Best-effort — if the API call fails
-  // (auth not connected, network) we just skip; nav re-attempts on next
-  // content-script load (Gmail tab refresh).
-  let deals;
-  try {
-    deals = await api.get('/api/crm/deals');
-  } catch (err) {
-    console.warn('[Squideo] could not load deals for nav', err);
-    return;
-  }
-  if (!Array.isArray(deals) || !deals.length) return;
+  // Initial load.
+  await rebuildDealsSection(sdk);
 
-  // Filter to non-lost deals; sort by recent activity. Mirrors the picker
-  // in the sidebar so the lists feel consistent.
-  const openDeals = deals
-    .filter(d => d.stage !== 'lost')
-    .sort((a, b) => new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0))
-    .slice(0, 50); // hard cap so we don't spam the nav with hundreds
-
-  const section = sdk.NavMenu.addNavItem({
-    name: 'Squideo Deals',
-    iconUrl: chrome.runtime.getURL('icon-48.png'),
-    type: sdk.NavMenu.NavItemTypes?.NAVIGATION || 'NAVIGATION',
+  // Re-sync when the user comes back to Gmail (typical flow: delete/rename
+  // a deal in the web app, switch back to Gmail). Also poll every 2 minutes
+  // as a fallback for cases where the focus event doesn't fire.
+  const onFocus = () => rebuildDealsSection(sdk);
+  window.addEventListener('focus', onFocus);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') rebuildDealsSection(sdk);
   });
-
-  for (const deal of openDeals) {
-    const colours = STAGE_COLOURS[deal.stage] || STAGE_COLOURS.lead;
-    section.addNavItem({
-      name: deal.title,
-      routeID: BOX_ROUTE_ID,
-      routeParams: { dealId: deal.id },
-      // Stage colour as a thin coloured square next to the name.
-      // accessory: undefined — Gmail's nav doesn't render rich accessories
-      // for sub-items, so the stage shows on the route page header instead.
-      backgroundColor: colours.bg,
-    });
-  }
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => rebuildDealsSection(sdk), 120_000);
 }
 
 function BoxRouteView({ dealId }) {
