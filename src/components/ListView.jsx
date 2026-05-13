@@ -81,6 +81,16 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {onManageQuoteRequests && (
+            <button onClick={onManageQuoteRequests} className="btn-ghost">
+              <MailQuestion size={14} /> Quote Requests
+              {newQuoteRequestsCount > 0 && (
+                <span style={{ background: '#FB923C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, marginLeft: 4 }}>
+                  {newQuoteRequestsCount}
+                </span>
+              )}
+            </button>
+          )}
           {onManagePipeline && <button onClick={onManagePipeline} className="btn-ghost"><KanbanSquare size={14} /> Pipeline</button>}
           {onManageContacts && <button onClick={onManageContacts} className="btn-ghost"><Contact size={14} /> Contacts</button>}
           {onManageTasks && (
@@ -99,16 +109,6 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
               <span style={{ background: '#FB923C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, marginLeft: 4 }}>
                 {triageCount}
               </span>
-            </button>
-          )}
-          {onManageQuoteRequests && (
-            <button onClick={onManageQuoteRequests} className="btn-ghost">
-              <MailQuestion size={14} /> Quote Requests
-              {newQuoteRequestsCount > 0 && (
-                <span style={{ background: '#FB923C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, marginLeft: 4 }}>
-                  {newQuoteRequestsCount}
-                </span>
-              )}
             </button>
           )}
           <button onClick={onManageLeaderboard} className="btn-ghost"><Trophy size={14} /> Leaderboard</button>
