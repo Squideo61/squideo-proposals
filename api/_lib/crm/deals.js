@@ -346,6 +346,21 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         ORDER BY c.created_at ASC
       `,
     ]);
+
+    // Load reactions for all comments in one query and merge into comments.
+    const commentIds = comments.map(c => c.id);
+    const reactionRows = commentIds.length ? await sql`
+      SELECT comment_id, emoji, ARRAY_AGG(user_email) AS users, COUNT(*) AS cnt
+      FROM deal_comment_reactions
+      WHERE comment_id = ANY(${commentIds})
+      GROUP BY comment_id, emoji
+    ` : [];
+    const reactionsMap = {};
+    for (const r of reactionRows) {
+      if (!reactionsMap[r.comment_id]) reactionsMap[r.comment_id] = {};
+      reactionsMap[r.comment_id][r.emoji] = { count: Number(r.cnt), users: r.users };
+    }
+
     return res.status(200).json({
       ...deal,
       proposals: proposals.map(p => ({
@@ -382,7 +397,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         uploadedBy: f.uploaded_by || null, source: f.source,
         createdAt: f.created_at,
       })),
-      comments: comments.map(serialiseComment),
+      comments: comments.map(c => serialiseComment(c, reactionsMap[c.id] || {})),
     });
   }
 

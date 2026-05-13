@@ -731,7 +731,8 @@ export function StoreProvider({ children }) {
           setState(s => {
             const detail = s.dealDetail[dealId];
             if (!detail) return s;
-            return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, comments: (detail.comments || []).map(c => c.id === commentId ? updated : c) } } };
+            // Preserve reactions — edit endpoint doesn't touch them.
+            return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, comments: (detail.comments || []).map(c => c.id === commentId ? { reactions: c.reactions || {}, ...updated } : c) } } };
           });
           return updated;
         });
@@ -743,6 +744,63 @@ export function StoreProvider({ children }) {
         return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, comments: (detail.comments || []).filter(c => c.id !== commentId) } } };
       });
       return api.delete('/api/crm/comments/' + encodeURIComponent(commentId)).catch(() => {});
+    },
+    reactToDealComment(commentId, dealId, emoji, userEmail) {
+      if (!userEmail) return Promise.resolve();
+      // Optimistic toggle — capture snapshot inside the updater so we can revert.
+      let snapshot = null;
+      setState(s => {
+        const detail = s.dealDetail[dealId];
+        if (!detail) return s;
+        snapshot = detail.comments;
+        return {
+          ...s,
+          dealDetail: {
+            ...s.dealDetail,
+            [dealId]: {
+              ...detail,
+              comments: (detail.comments || []).map(c => {
+                if (c.id !== commentId) return c;
+                const reactions = { ...(c.reactions || {}) };
+                if (reactions[emoji]) {
+                  const users = reactions[emoji].users || [];
+                  const alreadyReacted = users.includes(userEmail);
+                  const newUsers = alreadyReacted ? users.filter(u => u !== userEmail) : [...users, userEmail];
+                  if (newUsers.length === 0) delete reactions[emoji];
+                  else reactions[emoji] = { count: newUsers.length, users: newUsers };
+                } else {
+                  reactions[emoji] = { count: 1, users: [userEmail] };
+                }
+                return { ...c, reactions };
+              }),
+            },
+          },
+        };
+      });
+      return api.post('/api/crm/comments/' + encodeURIComponent(commentId) + '/react', { emoji })
+        .then(({ reactions }) => {
+          setState(s => {
+            const detail = s.dealDetail[dealId];
+            if (!detail) return s;
+            return {
+              ...s,
+              dealDetail: {
+                ...s.dealDetail,
+                [dealId]: {
+                  ...detail,
+                  comments: (detail.comments || []).map(c => c.id === commentId ? { ...c, reactions } : c),
+                },
+              },
+            };
+          });
+        })
+        .catch(() => {
+          setState(s => {
+            const detail = s.dealDetail[dealId];
+            if (!detail || !snapshot) return s;
+            return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, comments: snapshot } } };
+          });
+        });
     },
 
     // ---------- Gmail integration ----------

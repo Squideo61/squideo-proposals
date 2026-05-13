@@ -255,6 +255,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   actions.deleteDealComment(commentId, dealId);
                 }
               }}
+              onReact={(commentId, emoji) => actions.reactToDealComment(commentId, dealId, emoji, state.session?.email)}
               onSubmitReply={(body, mentions) => {
                 actions.createDealComment(dealId, body, replyingTo, mentions)
                   .then(() => setReplyingTo(null))
@@ -939,7 +940,81 @@ function renderCommentBody(body, mentions) {
   });
 }
 
-function CommentRow({ comment, session, isReply, replyingTo, editingCommentId, onReply, onCancelReply, onEdit, onCancelEdit, onSubmitEdit, onDelete, onSubmitReply, users }) {
+const REACTION_EMOJIS = ['👍', '👎', '❤️', '😂', '🎉', '👀'];
+
+function ReactionBar({ reactions = {}, userEmail, onReact }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const existing = Object.entries(reactions).sort(([a], [b]) => a.localeCompare(b));
+
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6, alignItems: 'center' }}>
+      {existing.map(([emoji, { count, users }]) => {
+        const mine = users.includes(userEmail);
+        return (
+          <button
+            key={emoji}
+            onClick={() => onReact(emoji)}
+            title={users.join(', ')}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              padding: '2px 7px', borderRadius: 12, border: '1px solid',
+              fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+              background: mine ? '#EFF6FF' : 'white',
+              borderColor: mine ? BRAND.blue : BRAND.border,
+              color: mine ? BRAND.blue : BRAND.ink,
+              fontWeight: mine ? 600 : 400,
+              lineHeight: 1.4,
+            }}
+          >
+            {emoji} <span style={{ fontSize: 11 }}>{count}</span>
+          </button>
+        );
+      })}
+      <div style={{ position: 'relative' }}>
+        <button
+          onClick={() => setPickerOpen(v => !v)}
+          title="Add reaction"
+          style={{
+            display: 'inline-flex', alignItems: 'center', padding: '2px 6px',
+            borderRadius: 12, border: '1px solid ' + BRAND.border,
+            fontSize: 12, cursor: 'pointer', background: 'white',
+            color: BRAND.muted, fontFamily: 'inherit', lineHeight: 1.4,
+          }}
+        >
+          +
+        </button>
+        {pickerOpen && (
+          <div
+            style={{
+              position: 'absolute', bottom: '100%', left: 0, marginBottom: 4,
+              display: 'flex', gap: 2, padding: '4px 6px',
+              background: 'white', border: '1px solid ' + BRAND.border,
+              borderRadius: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 10,
+            }}
+            onMouseLeave={() => setPickerOpen(false)}
+          >
+            {REACTION_EMOJIS.map(e => (
+              <button
+                key={e}
+                onClick={() => { onReact(e); setPickerOpen(false); }}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  fontSize: 18, padding: '2px 4px', borderRadius: 6,
+                  lineHeight: 1,
+                }}
+                title={e}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CommentRow({ comment, session, isReply, replyingTo, editingCommentId, onReply, onCancelReply, onEdit, onCancelEdit, onSubmitEdit, onDelete, onSubmitReply, onReact, users }) {
   const [hover, setHover] = useState(false);
   const isMine = session?.email === comment.createdBy;
   const isAdmin = session?.role === 'admin';
@@ -1008,9 +1083,18 @@ function CommentRow({ comment, session, isReply, replyingTo, editingCommentId, o
             onCancel={onCancelEdit}
           />
         ) : (
-          <div style={{ fontSize: 13, color: BRAND.ink, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            {renderCommentBody(comment.body, comment.mentions)}
-          </div>
+          <>
+            <div style={{ fontSize: 13, color: BRAND.ink, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {renderCommentBody(comment.body, comment.mentions)}
+            </div>
+            {onReact && (
+              <ReactionBar
+                reactions={comment.reactions || {}}
+                userEmail={session?.email}
+                onReact={(emoji) => onReact(comment.id, emoji)}
+              />
+            )}
+          </>
         )}
         {isReplying && (
           <div style={{ marginTop: 8 }}>
@@ -1029,7 +1113,7 @@ function CommentRow({ comment, session, isReply, replyingTo, editingCommentId, o
   );
 }
 
-function CommentThread({ comments, session, replyingTo, editingCommentId, onReply, onCancelReply, onEdit, onCancelEdit, onSubmitEdit, onDelete, onSubmitReply, dealId }) {
+function CommentThread({ comments, session, replyingTo, editingCommentId, onReply, onCancelReply, onEdit, onCancelEdit, onSubmitEdit, onDelete, onSubmitReply, onReact, dealId }) {
   const { state } = useStore();
   const topLevel = comments.filter(c => !c.parentId);
   const replies = comments.filter(c => !!c.parentId);
@@ -1055,6 +1139,7 @@ function CommentThread({ comments, session, replyingTo, editingCommentId, onRepl
               onSubmitEdit={onSubmitEdit}
               onDelete={onDelete}
               onSubmitReply={onSubmitReply}
+              onReact={onReact}
               users={state.users}
             />
             {childReplies.length > 0 && (
@@ -1074,6 +1159,7 @@ function CommentThread({ comments, session, replyingTo, editingCommentId, onRepl
                     onSubmitEdit={onSubmitEdit}
                     onDelete={onDelete}
                     onSubmitReply={onSubmitReply}
+                    onReact={onReact}
                     users={state.users}
                   />
                 ))}
