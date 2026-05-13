@@ -122,7 +122,12 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <h2 className="section-label" style={{ margin: 0 }}>
-          Proposals {filtersActive && <span style={{ color: BRAND.blue, textTransform: 'none', letterSpacing: 0 }}>· {filtered.length} of {proposals.length}</span>}
+          {!memberFilter
+            ? 'All proposals'
+            : memberFilter === state.session?.email
+            ? 'My proposals'
+            : `${memberFilterName}'s proposals`}
+          {filtersActive && <span style={{ color: BRAND.blue, textTransform: 'none', letterSpacing: 0 }}> · {filtered.length} of {proposals.length}</span>}
         </h2>
         {proposals.length > 0 && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
