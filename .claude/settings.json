@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build)",
+      "Bash(npm run build *)",
+      "Bash(npm test)",
+      "Bash(npm test *)",
+      "Bash(npm view *)",
+      "Bash(npm outdated)",
+      "Bash(npm outdated *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/alert-allowlist.mjs" }
+        ]
+      }
+    ]
+  }
+}
