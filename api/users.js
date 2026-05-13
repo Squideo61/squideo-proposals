@@ -51,7 +51,7 @@ async function usersHandler(req, res) {
       if (!rows[0]) return res.status(404).json({ error: 'User not found' });
       const valid = await bcrypt.compare(current_password, rows[0].password_hash);
       if (!valid) return res.status(400).json({ error: 'Current password is incorrect' });
-      const hash = await bcrypt.hash(new_password, 10);
+      const hash = await bcrypt.hash(new_password, 12);
       await sql`UPDATE users SET password_hash = ${hash} WHERE email = ${payload.email}`;
       return res.status(200).json({ ok: true });
     }
