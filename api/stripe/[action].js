@@ -13,6 +13,17 @@ import {
   formatProposalNumber,
 } from '../_lib/xeroMappers.js';
 
+// Admin recipients for the payment-received notification, minus the proposal
+// owner (who already gets their own copy of the same email).
+async function adminEmailsExcluding(excludeEmail) {
+  const rows = await sql`SELECT email FROM users WHERE role = 'admin'`;
+  const drop = (excludeEmail || '').toLowerCase();
+  return rows
+    .map(r => r.email)
+    .filter(Boolean)
+    .filter(e => e.toLowerCase() !== drop);
+}
+
 // Normalise a company name (or fallback email/proposalId) into a stable lookup
 // key. Used to aggregate partner subscriptions and credit allocations across
 // multiple proposals from the same client.
@@ -502,6 +513,27 @@ export default async function handler(req, res) {
               });
             }
 
+            if (isFirstWrite) {
+              const adminRecipients = await adminEmailsExcluding(ownerEmail);
+              if (adminRecipients.length) {
+                await sendMail({
+                  to: adminRecipients,
+                  subject: `💰 Payment received: ${title}`,
+                  html: paidHtml({
+                    proposal,
+                    signerName: sig.name || session.customer_details?.name,
+                    signerEmail: sig.email || session.customer_details?.email,
+                    amount,
+                    paymentType: isDeposit ? 'deposit' : 'full',
+                    paidAt: new Date().toISOString(),
+                    receiptUrl,
+                    link,
+                  }),
+                  text: `${sig.name || 'A client'} paid £${amount.toFixed(2)} (${isDeposit ? '50% deposit' : 'full payment'}) for "${title}".${receiptUrl ? ' Receipt: ' + receiptUrl : ''} ${link}`,
+                });
+              }
+            }
+
             const clientEmail = sig.email || session.customer_details?.email;
             if (isFirstWrite && clientEmail) {
               const signedProposalLink = `${APP_URL}/?proposal=${proposalId}&thanks=1&download=signed`;
@@ -732,6 +764,25 @@ export default async function handler(req, res) {
         if (ownerEmail) {
           await sendMail({
             to: ownerEmail,
+            subject: `💰 Payment received: ${title}`,
+            html: paidHtml({
+              proposal,
+              signerName: sig.name || session.customer_details?.name,
+              signerEmail: sig.email || session.customer_details?.email,
+              amount: payment.amount,
+              paymentType: payment.paymentType,
+              paidAt: payment.paidAt,
+              receiptUrl,
+              link,
+            }),
+            text: `${sig.name || 'A client'} paid £${payment.amount.toFixed(2)} (${isDeposit ? '50% deposit' : 'full payment'}) for "${title}".${receiptUrl ? ' Receipt: ' + receiptUrl : ''} ${link}`,
+          });
+        }
+
+        const adminRecipients = await adminEmailsExcluding(ownerEmail);
+        if (adminRecipients.length) {
+          await sendMail({
+            to: adminRecipients,
             subject: `💰 Payment received: ${title}`,
             html: paidHtml({
               proposal,
