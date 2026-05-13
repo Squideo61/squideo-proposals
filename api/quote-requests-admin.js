@@ -247,9 +247,11 @@ export default async function handler(req, res) {
 
       // Build deal.
       const dealId = makeId('deal');
-      const dealTitle = (loaded.row.name && loaded.row.name.trim())
-        ? `${loaded.row.name.trim()} — quote request`
-        : (loaded.row.email || 'Quote request');
+      const dealTitle =
+        trimOrNull(loaded.row.company)
+        || trimOrNull(loaded.row.name)
+        || loaded.row.email
+        || 'Quote request';
       const dealValue = parseBudgetLower(loaded.row.budget);
       const notesParts = [];
       if (loaded.row.project_details) notesParts.push(loaded.row.project_details);
