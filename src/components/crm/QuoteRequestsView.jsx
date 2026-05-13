@@ -11,6 +11,7 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
   const [filter, setFilter] = useState('new');
   const [active, setActive] = useState(null);
   const [reviewedContact, setReviewedContact] = useState(null);
+  const [reviewedIsExisting, setReviewedIsExisting] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
   useEffect(() => { actions.refreshQuoteRequests(filter); }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -37,7 +38,10 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
 
   const handleDisqualify = async (req) => {
     if (busyId) return;
-    if (!window.confirm(`Disqualify ${req.name || req.email || 'this lead'}? This deletes the request and the provisional contact.`)) return;
+    const contactNote = reviewedIsExisting
+      ? 'The existing CRM contact will not be deleted.'
+      : 'This deletes the request and the provisional contact.';
+    if (!window.confirm(`Disqualify ${req.name || req.email || 'this lead'}? ${contactNote}`)) return;
     setBusyId(req.id);
     const ok = await actions.disqualifyQuoteRequest(req.id);
     setBusyId(null);
@@ -52,9 +56,13 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
   const openDetail = async (req) => {
     setActive(req);
     setReviewedContact(null);
+    setReviewedIsExisting(false);
     if (req.status === 'new') {
       const r = await actions.reviewQuoteRequest(req.id);
-      if (r && r.contact) setReviewedContact(r.contact);
+      if (r && r.contact) {
+        setReviewedContact(r.contact);
+        setReviewedIsExisting(r.isExisting === true);
+      }
     }
   };
 
@@ -116,6 +124,7 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
         <DetailModal
           request={active}
           reviewedContact={reviewedContact}
+          reviewedIsExisting={reviewedIsExisting}
           busy={busyId === active.id}
           onClose={() => setActive(null)}
           onQualify={() => handleQualify(active)}
@@ -194,7 +203,7 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onO
   );
 }
 
-function DetailModal({ request, reviewedContact, busy, onClose, onQualify, onDisqualify, onOpenContact, onOpenDeal }) {
+function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClose, onQualify, onDisqualify, onOpenContact, onOpenDeal }) {
   const isQualified = request.status === 'qualified';
   const fullPhone = request.phone
     ? `${request.countryCode ? request.countryCode + ' ' : ''}${request.phone}`
@@ -251,10 +260,18 @@ function DetailModal({ request, reviewedContact, busy, onClose, onQualify, onDis
       )}
 
       {!isQualified && reviewedContact && (
-        <div style={{ marginTop: 16, padding: 10, border: '1px dashed ' + BRAND.border, borderRadius: 8, fontSize: 12, color: BRAND.muted }}>
-          Provisional contact created: <strong style={{ color: BRAND.ink }}>{reviewedContact.name || reviewedContact.email || reviewedContact.id}</strong>.
-          Qualifying will keep this contact and create a deal. Disqualifying will delete it.
-        </div>
+        reviewedIsExisting ? (
+          <div style={{ marginTop: 16, padding: 10, border: '1px solid #16A34A44', borderRadius: 8, fontSize: 12, background: '#F0FDF4', color: '#15803D', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Check size={13} />
+            Matched existing contact: <strong>{reviewedContact.name || reviewedContact.email || reviewedContact.id}</strong>.
+            Qualifying will create a deal linked to this contact.
+          </div>
+        ) : (
+          <div style={{ marginTop: 16, padding: 10, border: '1px dashed ' + BRAND.border, borderRadius: 8, fontSize: 12, color: BRAND.muted }}>
+            Provisional contact created: <strong style={{ color: BRAND.ink }}>{reviewedContact.name || reviewedContact.email || reviewedContact.id}</strong>.
+            Qualifying will keep this contact and create a deal. Disqualifying will delete it.
+          </div>
+        )
       )}
 
       {isQualified && request.contactId && (

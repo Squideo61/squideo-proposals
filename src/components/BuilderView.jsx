@@ -186,6 +186,30 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   const [showInclusionsManager, setShowInclusionsManager] = useState(false);
   const inclusionsReorder = useReorderState();
   const extrasReorder = useReorderState();
+  const [contactSuggestion, setContactSuggestion] = useState(null);
+  const [suggestionDismissed, setSuggestionDismissed] = useState(false);
+  const [linkedContactId, setLinkedContactId] = useState(null);
+
+  // Reset contact suggestion when switching proposals/templates.
+  useEffect(() => {
+    setContactSuggestion(null);
+    setSuggestionDismissed(false);
+    setLinkedContactId(null);
+  }, [id]);
+
+  // Match clientName against existing non-provisional contacts.
+  useEffect(() => {
+    if (!data || isTemplate || linkedContactId || suggestionDismissed) {
+      if (!linkedContactId) setContactSuggestion(null);
+      return;
+    }
+    const name = (data.clientName || '').trim().toLowerCase();
+    if (!name) { setContactSuggestion(null); return; }
+    const match = Object.values(state.contacts).find(
+      (c) => !c.provisional && c.name && c.name.trim().toLowerCase() === name
+    );
+    setContactSuggestion(match || null);
+  }, [data?.clientName, state.contacts, linkedContactId, suggestionDismissed, isTemplate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isMobile = useIsMobile();
 
@@ -204,6 +228,15 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
     } else {
       actions.saveProposal(id, { ...data, ...patch });
     }
+  };
+
+  const linkContact = (contact) => {
+    setLinkedContactId(contact.id);
+    setContactSuggestion(null);
+    const companyName = state.companies?.[contact.companyId]?.name;
+    const patch = { _contactId: contact.id };
+    if (companyName && !data.contactBusinessName?.trim()) patch.contactBusinessName = companyName;
+    update(patch);
   };
 
   const updateTeam = (i, patch) => {
@@ -378,6 +411,25 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             <Field label="Client name" error={!data.clientName?.trim()}>
               <input className="input" value={data.clientName} onChange={(e) => update({ clientName: e.target.value })} placeholder="e.g. John Smith" />
             </Field>
+            {contactSuggestion && !linkedContactId && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, fontSize: 12 }}>
+                <span style={{ flex: 1, color: '#92400E' }}>
+                  Already in CRM: <strong>{contactSuggestion.name}</strong>
+                  {contactSuggestion.email ? ` · ${contactSuggestion.email}` : ''}
+                </span>
+                <button onClick={() => linkContact(contactSuggestion)} className="btn" style={{ fontSize: 11, padding: '3px 10px' }}>Link contact</button>
+                <button onClick={() => setSuggestionDismissed(true)} className="btn-ghost" style={{ padding: '3px 6px', lineHeight: 1 }} title="Dismiss">×</button>
+              </div>
+            )}
+            {linkedContactId && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: 8, fontSize: 12 }}>
+                <Check size={12} color="#16A34A" />
+                <span style={{ flex: 1, color: '#15803D' }}>
+                  Linked to <strong>{state.contacts[linkedContactId]?.name || linkedContactId}</strong>
+                </span>
+                <button onClick={() => { setLinkedContactId(null); setSuggestionDismissed(false); update({ _contactId: null }); }} className="btn-ghost" style={{ fontSize: 11, padding: '3px 8px' }}>Unlink</button>
+              </div>
+            )}
             <Field label="Business name" error={!data.contactBusinessName?.trim()}>
               <input className="input" value={data.contactBusinessName} onChange={(e) => update({ contactBusinessName: e.target.value })} placeholder="e.g. Acme Ltd" />
             </Field>

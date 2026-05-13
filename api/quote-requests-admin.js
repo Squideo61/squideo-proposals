@@ -178,36 +178,69 @@ export default async function handler(req, res) {
     // ── Review (POST /:id/review) — lazy-create provisional contact ────────
     if (req.method === 'POST' && action === 'review') {
       let contactRow = loaded.row.contact_id ? await loadContact(loaded.row.contact_id) : null;
+      let isExisting = contactRow ? !contactRow.provisional : false;
+
       if (!contactRow) {
-        const newContactId = makeId('ct');
-        await sql`
-          INSERT INTO contacts (id, email, name, phone, title, company_id, notes, provisional, source)
-          VALUES (
-            ${newContactId},
-            ${lowerOrNull(loaded.row.email)},
-            ${trimOrNull(loaded.row.name)},
-            ${trimOrNull(loaded.row.phone ? `${loaded.row.country_code || ''} ${loaded.row.phone}`.trim() : null)},
-            ${null},
-            ${null},
-            ${trimOrNull(loaded.row.company ? `Company: ${loaded.row.company}` : null)},
-            TRUE,
-            'quote_request'
-          )
-        `;
-        await sql`
-          UPDATE quote_requests
-             SET contact_id = ${newContactId},
-                 reviewed_at = COALESCE(reviewed_at, NOW())
-           WHERE id = ${id}
-        `;
-        contactRow = await loadContact(newContactId);
+        // Check for an existing non-provisional contact with the same email before
+        // creating a provisional one — prevents duplicates when the requester is
+        // already in the CRM.
+        const email = lowerOrNull(loaded.row.email);
+        let existingRow = null;
+        if (email) {
+          const existing = await sql`
+            SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
+            FROM contacts
+            WHERE LOWER(email) = LOWER(${email})
+              AND provisional = FALSE
+            LIMIT 1
+          `;
+          existingRow = existing[0] || null;
+        }
+
+        if (existingRow) {
+          // Link to the existing contact — no new provisional record needed.
+          await sql`
+            UPDATE quote_requests
+               SET contact_id = ${existingRow.id},
+                   reviewed_at = COALESCE(reviewed_at, NOW())
+             WHERE id = ${id}
+          `;
+          contactRow = existingRow;
+          isExisting = true;
+        } else {
+          const newContactId = makeId('ct');
+          await sql`
+            INSERT INTO contacts (id, email, name, phone, title, company_id, notes, provisional, source)
+            VALUES (
+              ${newContactId},
+              ${email},
+              ${trimOrNull(loaded.row.name)},
+              ${trimOrNull(loaded.row.phone ? `${loaded.row.country_code || ''} ${loaded.row.phone}`.trim() : null)},
+              ${null},
+              ${null},
+              ${trimOrNull(loaded.row.company ? `Company: ${loaded.row.company}` : null)},
+              TRUE,
+              'quote_request'
+            )
+          `;
+          await sql`
+            UPDATE quote_requests
+               SET contact_id = ${newContactId},
+                   reviewed_at = COALESCE(reviewed_at, NOW())
+             WHERE id = ${id}
+          `;
+          contactRow = await loadContact(newContactId);
+          isExisting = false;
+        }
       } else if (!loaded.row.reviewed_at) {
         await sql`UPDATE quote_requests SET reviewed_at = NOW() WHERE id = ${id}`;
       }
+
       const refreshed = await loadRequest(id);
       return res.status(200).json({
         request: serialiseQuoteRequest(refreshed.row, refreshed.files),
         contact: contactRow ? serialiseContact(contactRow) : null,
+        isExisting,
       });
     }
 

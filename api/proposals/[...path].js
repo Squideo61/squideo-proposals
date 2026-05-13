@@ -79,8 +79,10 @@ export default async function handler(req, res) {
     // "create proposal from deal" button). It's not part of the proposal's
     // own data — pull it out before we persist.
     const presetDealId = typeof body._dealId === 'string' && body._dealId ? body._dealId : null;
+    const presetContactId = typeof body._contactId === 'string' && body._contactId ? body._contactId : null;
     const data = { ...body };
     delete data._dealId;
+    delete data._contactId;
     const y = new Date().getFullYear();
     await sql`
       INSERT INTO proposals (id, data, updated_at, number_year, number_seq)
@@ -119,8 +121,8 @@ export default async function handler(req, res) {
 
       if (!hasDeal) {
         const inserted = await sql`
-          INSERT INTO deals (id, title, owner_email, stage, value, last_activity_at)
-          VALUES (${expectedAutoDealId}, ${title}, ${ownerEmail}, 'proposal_sent', ${value}, NOW())
+          INSERT INTO deals (id, title, primary_contact_id, owner_email, stage, value, last_activity_at)
+          VALUES (${expectedAutoDealId}, ${title}, ${presetContactId}, ${ownerEmail}, 'proposal_sent', ${value}, NOW())
           ON CONFLICT (id) DO NOTHING
           RETURNING id
         `;
@@ -137,6 +139,7 @@ export default async function handler(req, res) {
           UPDATE deals
              SET title = ${title},
                  value = ${value},
+                 primary_contact_id = COALESCE(primary_contact_id, ${presetContactId}),
                  updated_at = NOW()
            WHERE id = ${expectedAutoDealId}
         `;
