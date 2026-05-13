@@ -848,11 +848,15 @@ export function StoreProvider({ children }) {
               const nextDeals = resp.deal
                 ? { ...s.deals, [resp.deal.id]: resp.deal }
                 : s.deals;
+              const nextCompanies = resp.company
+                ? { ...s.companies, [resp.company.id]: resp.company }
+                : s.companies;
               return {
                 ...s,
                 quoteRequests: s.quoteRequests.map(r => r.id === id ? resp.request : r),
                 contacts: nextContacts,
                 deals: nextDeals,
+                companies: nextCompanies,
               };
             });
           }

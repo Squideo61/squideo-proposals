@@ -3,6 +3,7 @@ import sql from './_lib/db.js';
 import { cors, requireAuth } from './_lib/middleware.js';
 import { makeId, trimOrNull, lowerOrNull } from './_lib/crm/shared.js';
 import { serialiseContact } from './_lib/crm/contacts.js';
+import { serialiseCompany } from './_lib/crm/companies.js';
 import { serialiseDeal } from './_lib/crm/deals.js';
 
 // Parse a free-text budget band like "£5k–£10k", "5000-10000", "Under £2k"
@@ -236,11 +237,34 @@ export default async function handler(req, res) {
         `;
       }
 
-      // Flip provisional → permanent.
+      // Find or create the company so the deal + contact can be linked to it.
+      // Match case-insensitively on the trimmed name; never silently merge a
+      // blank company into something existing.
+      let companyId = null;
+      const companyName = trimOrNull(loaded.row.company);
+      if (companyName) {
+        const existing = await sql`
+          SELECT id FROM companies
+          WHERE LOWER(name) = LOWER(${companyName})
+          LIMIT 1
+        `;
+        if (existing[0]) {
+          companyId = existing[0].id;
+        } else {
+          companyId = makeId('co');
+          await sql`
+            INSERT INTO companies (id, name)
+            VALUES (${companyId}, ${companyName})
+          `;
+        }
+      }
+
+      // Flip provisional → permanent and attach to the company.
       await sql`
         UPDATE contacts
            SET provisional = FALSE,
                source = COALESCE(source, 'quote_request'),
+               company_id = COALESCE(company_id, ${companyId}),
                updated_at = NOW()
          WHERE id = ${contactId}
       `;
@@ -261,10 +285,11 @@ export default async function handler(req, res) {
       const dealNotes = notesParts.join('\n\n') || null;
 
       await sql`
-        INSERT INTO deals (id, title, primary_contact_id, owner_email, stage, value, notes)
+        INSERT INTO deals (id, title, company_id, primary_contact_id, owner_email, stage, value, notes)
         VALUES (
           ${dealId},
           ${dealTitle},
+          ${companyId},
           ${contactId},
           ${user.email},
           'lead',
@@ -291,16 +316,20 @@ export default async function handler(req, res) {
          WHERE id = ${id}
       `;
 
-      const [refreshed, contactRow, dealRow] = await Promise.all([
+      const [refreshed, contactRow, dealRow, companyRows] = await Promise.all([
         loadRequest(id),
         loadContact(contactId),
         loadDeal(dealId),
+        companyId
+          ? sql`SELECT id, name, domain, notes, created_at, updated_at FROM companies WHERE id = ${companyId}`
+          : Promise.resolve([]),
       ]);
 
       return res.status(200).json({
         request: serialiseQuoteRequest(refreshed.row, refreshed.files),
         contact: contactRow ? serialiseContact(contactRow) : null,
         deal: dealRow ? serialiseDeal(dealRow) : null,
+        company: companyRows[0] ? serialiseCompany(companyRows[0]) : null,
       });
     }
 

@@ -119,7 +119,7 @@ export async function companiesRoute(req, res, id, action, user) {
   return res.status(405).end();
 }
 
-function serialiseCompany(r) {
+export function serialiseCompany(r) {
   return {
     id: r.id,
     name: r.name,
