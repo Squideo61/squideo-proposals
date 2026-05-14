@@ -186,7 +186,16 @@ function AppShell() {
   };
 
   const deleteProposal = (id) => {
-    if (!confirm('Delete this proposal?')) return;
+    // Signed + paid proposals likely have a Xero invoice attached. Deleting
+    // the proposal here doesn't touch Xero — the invoice stays as PAID
+    // because reversing money in Xero is a manual call, not something the
+    // proposal tool should silently do. Warn the admin so they know.
+    const signed = state.signatures[id];
+    const payment = state.payments[id];
+    const message = signed && payment
+      ? 'Delete this signed and paid proposal?\n\nThe linked Xero invoice will stay in Xero as PAID — it will NOT be voided or refunded. If you need to reverse the payment, do that in Xero manually.'
+      : 'Delete this proposal?';
+    if (!confirm(message)) return;
     actions.deleteProposal(id);
   };
 
