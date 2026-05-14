@@ -260,6 +260,8 @@ export async function getInvoiceByNumber(invoiceNumber) {
       issueDate: parseXeroDate(inv.DateString || inv.Date),
       dueDate: parseXeroDate(inv.DueDateString || inv.DueDate),
       total: inv.Total != null ? Number(inv.Total) : null,
+      subTotal: inv.SubTotal != null ? Number(inv.SubTotal) : null,
+      totalTax: inv.TotalTax != null ? Number(inv.TotalTax) : null,
       amountDue: inv.AmountDue != null ? Number(inv.AmountDue) : null,
       currency: inv.CurrencyCode || null,
       // Xero's exchange rate from invoice currency to the org's base currency.
@@ -293,6 +295,8 @@ export async function getInvoicesByIds(invoiceIds) {
           invoiceNumber: inv.InvoiceNumber,
           status: inv.Status,
           total: inv.Total != null ? Number(inv.Total) : null,
+          subTotal: inv.SubTotal != null ? Number(inv.SubTotal) : null,
+          totalTax: inv.TotalTax != null ? Number(inv.TotalTax) : null,
           amountDue: inv.AmountDue != null ? Number(inv.AmountDue) : null,
           fullyPaidOn: parseXeroDate(inv.FullyPaidOnDate),
           currency: inv.CurrencyCode || null,

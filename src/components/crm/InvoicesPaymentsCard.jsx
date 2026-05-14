@@ -208,7 +208,16 @@ function InvoiceRow({ row, dealId, onChanged }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, flexWrap: 'wrap' }}>
-            {row.amount != null && <span>{formatAmountWithGbp(row.amount, row.currency || 'GBP', row.gbpAmount)}</span>}
+            {row.subtotalExVat != null ? (
+              <>
+                <span>{formatAmountWithGbp(row.subtotalExVat, row.currency || 'GBP', row.gbpSubtotalExVat)}</span>
+                <span style={{ fontSize: 10, color: BRAND.muted, fontWeight: 500, padding: '2px 6px', background: BRAND.paper, borderRadius: 4 }}>
+                  {row.taxAmount > 0 ? '+ VAT' : 'No VAT'}
+                </span>
+              </>
+            ) : row.amount != null ? (
+              <span>{formatAmountWithGbp(row.amount, row.currency || 'GBP', row.gbpAmount)}</span>
+            ) : null}
             {row.invoiceNumber && <span style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>{row.invoiceNumber}</span>}
             <span style={{ fontSize: 10, color: statusColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>{statusLabel}</span>
             {isPaid && paidMethodLabel && (

@@ -131,7 +131,7 @@ export async function invoicesRoute(req, res, id, action, user) {
       SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
              status, blob_url, filename, notes, uploaded_by, created_at,
              stripe_payment_link_url, paid_at, payment_method, xero_invoice_id,
-             currency, currency_rate
+             currency, currency_rate, subtotal_ex_vat, tax_amount
         FROM manual_invoices
         WHERE deal_id = ${dealId} OR proposal_id = ANY(${proposalIds.length ? proposalIds : ['__none__']})
         ORDER BY issued_at DESC NULLS LAST, created_at DESC
@@ -158,10 +158,16 @@ export async function invoicesRoute(req, res, id, action, user) {
       const currency = r.currency || 'GBP';
       const rate = r.currency_rate != null ? Number(r.currency_rate) : null;
       const amount = r.amount != null ? Number(r.amount) : null;
+      const subtotalExVat = r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : null;
+      const taxAmount = r.tax_amount != null ? Number(r.tax_amount) : null;
       // Xero's CurrencyRate is base-per-invoice-currency (e.g. 1 GBP = 1.1518
       // EUR), so to convert an invoice in EUR to GBP we divide by the rate.
       const gbpAmount = (currency !== 'GBP' && amount != null && rate)
         ? Number((amount / rate).toFixed(2))
+        : null;
+      // GBP equivalent of the ex-VAT subtotal, for non-GBP invoices.
+      const gbpSubtotalExVat = (currency !== 'GBP' && subtotalExVat != null && rate)
+        ? Number((subtotalExVat / rate).toFixed(2))
         : null;
       out.push({
         id: 'manual:' + r.id,
@@ -171,8 +177,11 @@ export async function invoicesRoute(req, res, id, action, user) {
         proposalTitle: r.proposal_id ? (proposalMap.get(r.proposal_id)?.proposalTitle || proposalMap.get(r.proposal_id)?.clientName || r.proposal_id) : null,
         invoiceNumber: r.invoice_number || null,
         amount,
+        subtotalExVat,
+        taxAmount,
         currency,
         gbpAmount,
+        gbpSubtotalExVat,
         status: r.status,
         issuedAt: r.issued_at,
         dueAt: r.due_at,
@@ -245,20 +254,26 @@ export async function invoicesRoute(req, res, id, action, user) {
     // Use the number Xero assigned (covers auto-assign when field was left blank)
     const storedInvoiceNumber = xeroInvoiceNumber || trimOrNull(invoiceNumber);
 
-    // Calculate inc-VAT total for our own record.
-    const totalAmount = lineItems.reduce((sum, li) => {
+    // Calculate ex-VAT, VAT, and inc-VAT totals for our own record.
+    let subTotal = 0;
+    let taxTotal = 0;
+    for (const li of lineItems) {
       const qty = Number(li.quantity) || 1;
       const price = Number(li.unitAmount || 0);
       const disc = Number(li.discountRate || 0);
       const vat = Number(li.vatRate || 0);
-      return sum + qty * price * (1 - disc / 100) * (1 + vat / 100);
-    }, 0);
+      const lineEx = qty * price * (1 - disc / 100);
+      subTotal += lineEx;
+      taxTotal += lineEx * (vat / 100);
+    }
+    const totalAmount = subTotal + taxTotal;
 
     const newId = makeId('inv');
     await sql`
       INSERT INTO manual_invoices (
         id, deal_id, proposal_id, invoice_number, amount,
-        issued_at, due_at, status, notes, uploaded_by, xero_invoice_id
+        issued_at, due_at, status, notes, uploaded_by, xero_invoice_id,
+        subtotal_ex_vat, tax_amount
       ) VALUES (
         ${newId},
         ${resolvedDealId},
@@ -270,7 +285,9 @@ export async function invoicesRoute(req, res, id, action, user) {
         'issued',
         ${lineItems.map(li => li.description).filter(Boolean).join(', ') || null},
         ${user.email || null},
-        ${xeroInvoiceId}
+        ${xeroInvoiceId},
+        ${Number(subTotal.toFixed(2))},
+        ${Number(taxTotal.toFixed(2))}
       )
     `;
 
@@ -405,12 +422,15 @@ export async function invoicesRoute(req, res, id, action, user) {
     const linkedXeroInvoiceId = xeroMatch?.invoiceId || null;
     const currency = xeroMatch?.currency || 'GBP';
     const currencyRate = xeroMatch?.currencyRate ?? null;
+    const subtotalExVat = xeroMatch?.subTotal ?? null;
+    const taxAmount = xeroMatch?.totalTax ?? null;
 
     await sql`
       INSERT INTO manual_invoices (
         id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
         status, blob_url, blob_pathname, filename, mime_type, size_bytes, notes,
-        uploaded_by, xero_invoice_id, currency, currency_rate
+        uploaded_by, xero_invoice_id, currency, currency_rate,
+        subtotal_ex_vat, tax_amount
       ) VALUES (
         ${newId},
         ${proposalId},
@@ -429,7 +449,9 @@ export async function invoicesRoute(req, res, id, action, user) {
         ${user.email || null},
         ${linkedXeroInvoiceId},
         ${currency},
-        ${currencyRate}
+        ${currencyRate},
+        ${subtotalExVat},
+        ${taxAmount}
       )
     `;
 
@@ -440,7 +462,7 @@ export async function invoicesRoute(req, res, id, action, user) {
       SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
              status, blob_url, filename, notes, uploaded_by, created_at,
              stripe_payment_link_url, paid_at, payment_method, xero_invoice_id,
-             currency, currency_rate
+             currency, currency_rate, subtotal_ex_vat, tax_amount
         FROM manual_invoices WHERE id = ${newId}
     `;
     const xeroInvoiceId = row.xero_invoice_id || null;
@@ -451,8 +473,13 @@ export async function invoicesRoute(req, res, id, action, user) {
     const rspCurrency = row.currency || 'GBP';
     const rspRate = row.currency_rate != null ? Number(row.currency_rate) : null;
     const rspAmount = row.amount != null ? Number(row.amount) : null;
+    const rspSubtotal = row.subtotal_ex_vat != null ? Number(row.subtotal_ex_vat) : null;
+    const rspTax = row.tax_amount != null ? Number(row.tax_amount) : null;
     const rspGbp = (rspCurrency !== 'GBP' && rspAmount != null && rspRate)
       ? Number((rspAmount / rspRate).toFixed(2))
+      : null;
+    const rspGbpSub = (rspCurrency !== 'GBP' && rspSubtotal != null && rspRate)
+      ? Number((rspSubtotal / rspRate).toFixed(2))
       : null;
     return res.status(201).json({
       id: 'manual:' + row.id,
@@ -461,8 +488,11 @@ export async function invoicesRoute(req, res, id, action, user) {
       proposalId: row.proposal_id,
       invoiceNumber: row.invoice_number || null,
       amount: rspAmount,
+      subtotalExVat: rspSubtotal,
+      taxAmount: rspTax,
       currency: rspCurrency,
       gbpAmount: rspGbp,
+      gbpSubtotalExVat: rspGbpSub,
       status: row.status,
       issuedAt: row.issued_at,
       dueAt: row.due_at,
@@ -728,6 +758,8 @@ async function syncFromXero(rows, user) {
       const amount = xero.total ?? row.amount;
       const currency = xero.currency || row.currency || 'GBP';
       const currencyRate = xero.currencyRate ?? row.currency_rate ?? null;
+      const subtotalExVat = xero.subTotal ?? row.subtotal_ex_vat ?? null;
+      const taxAmount = xero.totalTax ?? row.tax_amount ?? null;
       // Conditional update so only one concurrent request fires the notification.
       const result = await sql`
         UPDATE manual_invoices
@@ -737,11 +769,22 @@ async function syncFromXero(rows, user) {
                amount = COALESCE(amount, ${amount}),
                currency = ${currency},
                currency_rate = COALESCE(${currencyRate}, currency_rate),
+               subtotal_ex_vat = COALESCE(${subtotalExVat}, subtotal_ex_vat),
+               tax_amount = COALESCE(${taxAmount}, tax_amount),
                updated_at = NOW()
          WHERE id = ${row.id} AND status = 'issued'
          RETURNING id
       `;
-      updates.set(row.id, { status: 'paid', paid_at: paidAt, payment_method: row.payment_method || 'xero', amount: row.amount ?? amount, currency, currency_rate: currencyRate ?? row.currency_rate });
+      updates.set(row.id, {
+        status: 'paid',
+        paid_at: paidAt,
+        payment_method: row.payment_method || 'xero',
+        amount: row.amount ?? amount,
+        currency,
+        currency_rate: currencyRate ?? row.currency_rate,
+        subtotal_ex_vat: row.subtotal_ex_vat ?? subtotalExVat,
+        tax_amount: row.tax_amount ?? taxAmount,
+      });
       if (result.length) {
         // We won the race — fire notification + deal-stage advance.
         notifyInvoicePaid({ row, paidAt, amount, user }).catch(err => console.error('[invoices] sync notify failed', err));
