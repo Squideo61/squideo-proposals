@@ -152,7 +152,7 @@ function InvoiceRow({ row, dealId, onChanged }) {
   const canGenerateLink = isManual && isIssued && !hasStripeLink && row.amount > 0;
 
   async function handleDelete() {
-    if (!confirm('Delete this invoice?')) return;
+    if (!confirm('⚠ Warning: deleting this invoice will VOID it in Xero and CANNOT be undone.\n\nAre you sure you want to delete this invoice?')) return;
     try {
       await api.delete('/api/crm/invoices/' + encodeURIComponent(row.id.replace('manual:', '')));
       onChanged?.();
