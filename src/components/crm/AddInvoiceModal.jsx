@@ -20,6 +20,7 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
   const [dueAt, setDueAt] = useState('');
   const [status, setStatus] = useState('issued');
   const [notes, setNotes] = useState('');
+  const [vatRate, setVatRate] = useState('20');
   const [generateLink, setGenerateLink] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [createdLink, setCreatedLink] = useState(null);
@@ -50,6 +51,7 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
         dueAt: dueAt || undefined,
         status,
         notes: notes || undefined,
+        vatRate: vatRate || '20',
         generateStripeLink: (generateLink && showLinkOption) ? 'true' : undefined,
       };
       const metaHeader = base64UrlEncode(JSON.stringify(meta));
@@ -179,12 +181,18 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
           </Field>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
           <Field label="Issued at">
             <input type="date" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} className="input" />
           </Field>
           <Field label="Due at">
             <input type="date" value={dueAt} onChange={(e) => setDueAt(e.target.value)} className="input" />
+          </Field>
+          <Field label="VAT">
+            <select value={vatRate} onChange={(e) => setVatRate(e.target.value)} className="input">
+              <option value="20">Standard 20%</option>
+              <option value="0">No VAT</option>
+            </select>
           </Field>
           <Field label="Status">
             <select value={status} onChange={(e) => setStatus(e.target.value)} className="input">

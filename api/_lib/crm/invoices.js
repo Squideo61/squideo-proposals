@@ -14,6 +14,7 @@ import sql from '../db.js';
 import { advanceStage } from '../dealStage.js';
 import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
+import { getOrCreateContact, createInvoice, createPayment } from '../xero.js';
 
 export async function invoicesRoute(req, res, id, action, user) {
   // --- GET /api/crm/invoices?dealId=...
@@ -97,16 +98,20 @@ export async function invoicesRoute(req, res, id, action, user) {
     const manualRows = await sql`
       SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
              status, blob_url, filename, notes, uploaded_by, created_at,
-             stripe_payment_link_url, paid_at, payment_method
+             stripe_payment_link_url, paid_at, payment_method, xero_invoice_id
         FROM manual_invoices
         WHERE deal_id = ${dealId} OR proposal_id = ANY(${proposalIds.length ? proposalIds : ['__none__']})
         ORDER BY issued_at DESC NULLS LAST, created_at DESC
     `;
     for (const r of manualRows) {
+      const xeroInvoiceId = r.xero_invoice_id || null;
+      const xeroPdfUrl = xeroInvoiceId
+        ? '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(xeroInvoiceId)
+        : null;
       out.push({
         id: 'manual:' + r.id,
         source: 'manual',
-        xeroInvoiceId: null,
+        xeroInvoiceId,
         proposalId: r.proposal_id || null,
         proposalTitle: r.proposal_id ? (proposalMap.get(r.proposal_id)?.proposalTitle || proposalMap.get(r.proposal_id)?.clientName || r.proposal_id) : null,
         invoiceNumber: r.invoice_number || null,
@@ -117,7 +122,7 @@ export async function invoicesRoute(req, res, id, action, user) {
         notes: r.notes || null,
         filename: r.filename || null,
         uploadedBy: r.uploaded_by || null,
-        pdfUrl: r.blob_url || null,
+        pdfUrl: r.blob_url || xeroPdfUrl,
         stripePaymentLinkUrl: r.stripe_payment_link_url || null,
         paidAt: r.paid_at || null,
         paymentMethod: r.payment_method || null,
@@ -237,16 +242,34 @@ export async function invoicesRoute(req, res, id, action, user) {
       }
     }
 
+    // Push a corresponding invoice to Xero (non-blocking — failure does not
+    // prevent the manual invoice from being saved).
+    const vatRate = numberOrNull(meta.vatRate) ?? 20;
+    await pushInvoiceToXero({
+      invoiceId: newId,
+      dealId: resolvedDealId,
+      proposalId,
+      invoiceNumber: trimOrNull(meta.invoiceNumber),
+      amount,
+      notes: trimOrNull(meta.notes),
+      dueAt: trimOrNull(meta.dueAt),
+      vatRate,
+    });
+
     const [row] = await sql`
       SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
              status, blob_url, filename, notes, uploaded_by, created_at,
-             stripe_payment_link_url, paid_at, payment_method
+             stripe_payment_link_url, paid_at, payment_method, xero_invoice_id
         FROM manual_invoices WHERE id = ${newId}
     `;
+    const xeroInvoiceId = row.xero_invoice_id || null;
+    const xeroPdfUrl = xeroInvoiceId
+      ? '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(xeroInvoiceId)
+      : null;
     return res.status(201).json({
       id: 'manual:' + row.id,
       source: 'manual',
-      xeroInvoiceId: null,
+      xeroInvoiceId,
       proposalId: row.proposal_id,
       invoiceNumber: row.invoice_number || null,
       amount: row.amount != null ? Number(row.amount) : null,
@@ -256,7 +279,7 @@ export async function invoicesRoute(req, res, id, action, user) {
       notes: row.notes,
       filename: row.filename || null,
       uploadedBy: row.uploaded_by || null,
-      pdfUrl: row.blob_url || null,
+      pdfUrl: row.blob_url || xeroPdfUrl,
       stripePaymentLinkUrl: row.stripe_payment_link_url || null,
       paidAt: row.paid_at || null,
       paymentMethod: row.payment_method || null,
@@ -297,7 +320,7 @@ export async function invoicesRoute(req, res, id, action, user) {
        WHERE id = ${manualId}
     `;
 
-    // First-time mark-paid: advance deal stage + send notification.
+    // First-time mark-paid: advance deal stage + send notification + record in Xero.
     if (next.status === 'paid' && cur.status !== 'paid') {
       const dealId = cur.deal_id;
       if (dealId) {
@@ -336,6 +359,16 @@ export async function invoicesRoute(req, res, id, action, user) {
           console.error('[invoices] notify failed', err);
         }
       }
+
+      // Record payment in Xero so the invoice transitions to PAID there too.
+      if (cur.xero_invoice_id && next.amount) {
+        await recordXeroPayment({
+          xeroInvoiceId: cur.xero_invoice_id,
+          amount: next.amount,
+          paymentMethod: next.payment_method,
+          paidAt: next.paid_at,
+        });
+      }
     }
 
     return res.status(200).json({ ok: true });
@@ -359,6 +392,98 @@ export async function invoicesRoute(req, res, id, action, user) {
   }
 
   return res.status(405).end();
+}
+
+// Looks up a Xero-compatible contact name + email from a deal's linked
+// company/contact. Falls back to the deal title if nothing else is available.
+async function resolveXeroContactInfo(dealId, proposalId) {
+  let resolvedDealId = dealId;
+  if (!resolvedDealId && proposalId) {
+    const [pr] = await sql`SELECT deal_id FROM proposals WHERE id = ${proposalId}`;
+    resolvedDealId = pr?.deal_id || null;
+  }
+  if (!resolvedDealId) return null;
+
+  const [deal] = await sql`
+    SELECT title, company_id, primary_contact_id FROM deals WHERE id = ${resolvedDealId}
+  `;
+  if (!deal) return null;
+
+  let name = null;
+  let email = null;
+  if (deal.company_id) {
+    const [co] = await sql`SELECT name FROM companies WHERE id = ${deal.company_id}`;
+    if (co?.name) name = co.name;
+  }
+  if (deal.primary_contact_id) {
+    const [ct] = await sql`SELECT name, email FROM contacts WHERE id = ${deal.primary_contact_id}`;
+    if (ct?.email) email = ct.email;
+    if (!name && ct?.name) name = ct.name;
+  }
+  if (!name) name = deal.title;
+  return { name, email };
+}
+
+// Creates a Xero AUTHORISED invoice for a manual_invoice row and persists the
+// resulting xero_invoice_id. Non-blocking — catches and logs on failure.
+async function pushInvoiceToXero({ invoiceId, dealId, proposalId, invoiceNumber, amount, notes, dueAt, vatRate }) {
+  if (!amount || amount <= 0) return;
+  try {
+    const contactInfo = await resolveXeroContactInfo(dealId, proposalId);
+    if (!contactInfo) {
+      console.warn('[invoices] xero: no contact found — skipping push');
+      return;
+    }
+    const contactId = await getOrCreateContact({ name: contactInfo.name, email: contactInfo.email || undefined });
+    const vat = Number(vatRate) || 0;
+    const isVat = vat > 0;
+    // Treat stored amount as inc-VAT; back-calculate ex-VAT for Xero.
+    const unitAmount = isVat
+      ? Number((amount / (1 + vat / 100)).toFixed(2))
+      : Number(Number(amount).toFixed(2));
+    const xeroInvoiceId = await createInvoice({
+      contactId,
+      lineItems: [{
+        description: notes || (invoiceNumber ? `Invoice ${invoiceNumber}` : 'Squideo Services'),
+        quantity: 1,
+        unitAmount,
+        taxType: isVat ? 'OUTPUT2' : 'NONE',
+        accountCode: '200',
+      }],
+      reference: invoiceNumber || undefined,
+      dueDate: dueAt || undefined,
+    });
+    await sql`UPDATE manual_invoices SET xero_invoice_id = ${xeroInvoiceId} WHERE id = ${invoiceId}`;
+  } catch (err) {
+    console.error('[invoices] xero push failed', err.message);
+  }
+}
+
+// Records a payment against an existing Xero invoice, transitioning it to PAID.
+// Skips silently if the appropriate account code env var is not configured.
+async function recordXeroPayment({ xeroInvoiceId, amount, paymentMethod, paidAt }) {
+  const isStripe = paymentMethod === 'stripe-link';
+  const accountCode = isStripe
+    ? (process.env.XERO_STRIPE_CLEARING_CODE || null)
+    : (process.env.XERO_BANK_ACCOUNT_CODE || null);
+  if (!accountCode) {
+    console.warn('[invoices] xero payment: no account code env var for method', paymentMethod, '— skipping');
+    return;
+  }
+  try {
+    const date = paidAt
+      ? new Date(paidAt).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    await createPayment({
+      invoiceId: xeroInvoiceId,
+      accountCode,
+      amount: Number(Number(amount).toFixed(2)),
+      date,
+      reference: paymentMethod || undefined,
+    });
+  } catch (err) {
+    console.error('[invoices] xero payment recording failed', err.message);
+  }
 }
 
 // Creates a Stripe Payment Link for a manual invoice and persists the URL.

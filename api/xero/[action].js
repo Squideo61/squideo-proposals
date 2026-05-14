@@ -165,6 +165,8 @@ export default async function handler(req, res) {
       SELECT 1 AS ok FROM partner_invoices WHERE xero_invoice_id = ${invoiceId}
       UNION ALL
       SELECT 1 AS ok FROM proposal_billing WHERE xero_invoice_id = ${invoiceId}
+      UNION ALL
+      SELECT 1 AS ok FROM manual_invoices WHERE xero_invoice_id = ${invoiceId}
       LIMIT 1
     `;
     if (!allowed.length) return res.status(404).json({ error: 'Unknown invoice' });

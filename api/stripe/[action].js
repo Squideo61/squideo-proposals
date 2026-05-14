@@ -544,7 +544,7 @@ export default async function handler(req, res) {
         if (manualInvoiceId) {
           try {
             const [inv] = await sql`
-              SELECT id, deal_id, invoice_number, amount, status
+              SELECT id, deal_id, invoice_number, amount, status, xero_invoice_id
                 FROM manual_invoices WHERE id = ${manualInvoiceId}
             `;
             if (inv && inv.status !== 'paid') {
@@ -583,6 +583,21 @@ export default async function handler(req, res) {
                   }),
                   text: `Invoice${inv.invoice_number ? ' ' + inv.invoice_number : ''} paid via Stripe Payment Link — £${(session.amount_total / 100).toFixed(2)}. ${link}`,
                 });
+              }
+              // Mark paid in Xero too if this invoice was synced there.
+              if (inv.xero_invoice_id && process.env.XERO_STRIPE_CLEARING_CODE) {
+                try {
+                  const { createPayment: xeroCreatePayment } = await import('../_lib/xero.js');
+                  await xeroCreatePayment({
+                    invoiceId: inv.xero_invoice_id,
+                    accountCode: process.env.XERO_STRIPE_CLEARING_CODE,
+                    amount: Number((session.amount_total / 100).toFixed(2)),
+                    date: new Date().toISOString().slice(0, 10),
+                    reference: 'stripe-payment-link',
+                  });
+                } catch (xeroErr) {
+                  console.error('[stripe webhook] xero payment recording failed', xeroErr.message);
+                }
               }
             }
           } catch (err) {
