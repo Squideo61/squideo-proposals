@@ -4,6 +4,7 @@ import { registerWatch } from '../gmailTokens.js';
 import { syncHistory } from '../gmailSync.js';
 import { escapeHtml } from './shared.js';
 import { getFreshAccessToken } from './gmail.js';
+import { buildResumeEmail } from '../quoteResumeEmail.js';
 
 export async function cronHandler(req, res, action) {
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
@@ -25,6 +26,7 @@ export async function cronHandler(req, res, action) {
     case 'gmail-watch-renew': return cronGmailWatchRenew(res);
     case 'prune-views':       return cronPruneViews(res);
     case 'quote-partials':    return cronQuotePartials(res);
+    case 'quote-resume':      return cronQuoteResume(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }
@@ -76,6 +78,46 @@ function buildPartialEmail(p) {
     </td></tr>
   </table>
 </body></html>`;
+}
+
+export async function cronQuoteResume(res) {
+  // Pick up reminders whose scheduled_for has passed and that aren't sent yet.
+  // Skip any session where the user has unsubscribed or already completed.
+  const due = await sql`
+    SELECT r.id, r.form_session_id, r.email, r.name, r.resume_url, r.kind, r.unsubscribe_token
+    FROM quote_request_resume_emails r
+    LEFT JOIN quote_request_partials p ON p.form_session_id = r.form_session_id
+    WHERE r.sent_at IS NULL
+      AND r.unsubscribed_at IS NULL
+      AND r.scheduled_for <= NOW()
+      AND p.completed_at IS NULL
+    ORDER BY r.scheduled_for ASC
+    LIMIT 50
+  `;
+
+  let sent = 0;
+  for (const r of due) {
+    try {
+      const unsubscribeUrl = `${APP_URL.replace(/\/$/, '')}/api/quote-requests?action=unsubscribe&token=${r.unsubscribe_token}`;
+      const { subject, html } = buildResumeEmail({
+        kind: r.kind,
+        name: r.name,
+        resumeUrl: r.resume_url,
+        unsubscribeUrl,
+      });
+      await sendMail({ to: r.email, subject, html });
+      await sql`
+        UPDATE quote_request_resume_emails
+        SET sent_at = NOW()
+        WHERE id = ${r.id}
+      `;
+      sent++;
+    } catch (err) {
+      console.error('[cron quote-resume] send failed', { id: r.id, err: err.message });
+    }
+  }
+
+  return res.status(200).json({ ok: true, found: due.length, sent });
 }
 
 export async function cronQuotePartials(res) {

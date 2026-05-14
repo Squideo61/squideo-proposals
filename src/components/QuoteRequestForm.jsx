@@ -110,7 +110,7 @@ const DEFAULTS = {
   captchaText: "I'm not a robot",
   captchaLogoText: 'Verify',
   exitIntentTitle: "Wait! Don't leave yet",
-  exitIntentDescription: "You're almost there. Save your progress and we'll send you a link to finish later.",
+  exitIntentDescription: "You're almost there. We'll email you a link to your saved quote and a few friendly reminders if you don't get back to it.",
   exitIntentContinueButton: 'Continue my quote',
   exitIntentSaveButton: 'Save & email me a link',
   prevButtonText: 'Back',
@@ -1104,7 +1104,34 @@ export function QuoteRequestForm(props = {}) {
               </button>
               <button
                 type="button" className="btn btn-secondary"
-                onClick={() => { saveProgress(); setExitOpen(false); alert('✅ Your progress has been saved. Come back to this link any time.'); }}
+                onClick={async () => {
+                  const email = form.email.trim();
+                  if (!email || !isValidEmail(email)) {
+                    alert("Please go back to step 1 and enter a valid email address — we need it to send you the resume link.");
+                    setExitOpen(false);
+                    setStep(1);
+                    return;
+                  }
+                  saveProgress();
+                  try {
+                    const r = await fetch(`${cfg.apiBase}?action=save-and-email`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        formSessionId: sessionIdRef.current,
+                        email,
+                        name: form.name.trim() || null,
+                        origin: window.location.origin,
+                      }),
+                    });
+                    if (!r.ok) throw new Error('send failed');
+                    setExitOpen(false);
+                    alert(`✅ We've emailed a resume link to ${email}. Check your inbox (and spam folder just in case).`);
+                  } catch {
+                    setExitOpen(false);
+                    alert("Sorry — we couldn't send the email just now. Your progress is saved locally, so you can come back to this page any time.");
+                  }
+                }}
               >
                 {cfg.exitIntentSaveButton}
               </button>

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { put } from '@vercel/blob';
 import sql from './_lib/db.js';
 import { sendMail, APP_URL } from './_lib/email.js';
+import { buildResumeEmail } from './_lib/quoteResumeEmail.js';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const NOTIFY_TO = process.env.QUOTE_REQUEST_NOTIFY_TO || 'adam@squideo.co.uk';
@@ -110,6 +111,87 @@ export default async function handler(req, res) {
 
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const action = url.searchParams.get('action');
+
+    if (action === 'unsubscribe' && req.method === 'GET') {
+      const token = url.searchParams.get('token');
+      if (!token) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(400).send('<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:40px;max-width:560px;margin:0 auto;"><h2>Invalid link</h2><p>This unsubscribe link is missing a token.</p></body>');
+      }
+      const rows = await sql`
+        SELECT form_session_id FROM quote_request_resume_emails
+        WHERE unsubscribe_token = ${token}
+        LIMIT 1
+      `;
+      if (rows.length) {
+        await sql`
+          UPDATE quote_request_resume_emails
+          SET unsubscribed_at = NOW()
+          WHERE form_session_id = ${rows[0].form_session_id} AND unsubscribed_at IS NULL
+        `;
+      }
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(200).send('<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:40px;max-width:560px;margin:0 auto;line-height:1.5;"><h2>You\'re unsubscribed</h2><p>We won\'t send any more reminders about your unfinished quote request. You can still come back to finish it any time using the link from your previous email.</p><p style="color:#6B7785;font-size:13px;">— Squideo</p></body>');
+    }
+
+    if (action === 'save-and-email') {
+      const body = await readJsonBody(req);
+      const formSessionId = trimOrNull(body.formSessionId);
+      const email = trimOrNull(body.email);
+      const name = trimOrNull(body.name);
+      if (!formSessionId || !email) {
+        return res.status(400).json({ error: 'Form session and email required' });
+      }
+      // basic email shape check
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ error: 'Invalid email' });
+      }
+
+      const resumeOrigin = trimOrNull(body.origin) || APP_URL;
+      const resumeUrl = `${resumeOrigin.replace(/\/$/, '')}/quote?resume=${encodeURIComponent(formSessionId)}`;
+      const unsubscribeToken = crypto.randomBytes(24).toString('hex');
+      const unsubscribeUrl = `${APP_URL.replace(/\/$/, '')}/api/quote-requests?action=unsubscribe&token=${unsubscribeToken}`;
+
+      // Clear any existing pending reminders for this session (e.g. they clicked save twice)
+      await sql`
+        DELETE FROM quote_request_resume_emails
+        WHERE form_session_id = ${formSessionId} AND sent_at IS NULL
+      `;
+
+      const schedule = [
+        { kind: 'initial', offsetMs: 0 },
+        { kind: 'reminder_1', offsetMs: 24 * 60 * 60 * 1000 },
+        { kind: 'reminder_2', offsetMs: 4 * 24 * 60 * 60 * 1000 },
+        { kind: 'reminder_3', offsetMs: 11 * 24 * 60 * 60 * 1000 },
+      ];
+      const now = Date.now();
+      for (const s of schedule) {
+        await sql`
+          INSERT INTO quote_request_resume_emails (
+            id, form_session_id, email, name, resume_url, kind,
+            unsubscribe_token, scheduled_for
+          ) VALUES (
+            ${crypto.randomUUID()}, ${formSessionId}, ${email}, ${name},
+            ${resumeUrl}, ${s.kind}, ${unsubscribeToken}, ${new Date(now + s.offsetMs)}
+          )
+        `;
+      }
+
+      try {
+        const { subject, html } = buildResumeEmail({ kind: 'initial', name, resumeUrl, unsubscribeUrl });
+        await sendMail({ to: email, subject, html });
+        await sql`
+          UPDATE quote_request_resume_emails
+          SET sent_at = NOW()
+          WHERE form_session_id = ${formSessionId} AND kind = 'initial'
+        `;
+      } catch (err) {
+        console.error('[quote-requests save-and-email] initial send failed', err);
+        return res.status(500).json({ error: 'Could not send email — please try again' });
+      }
+
+      return res.status(200).json({ ok: true });
+    }
 
     if (action === 'autosave') {
       const body = await readJsonBody(req);
@@ -264,8 +346,12 @@ export default async function handler(req, res) {
           SET completed_at = NOW()
           WHERE form_session_id = ${qr.form_session_id}
         `;
+        await sql`
+          DELETE FROM quote_request_resume_emails
+          WHERE form_session_id = ${qr.form_session_id} AND sent_at IS NULL
+        `;
       } catch (e) {
-        console.warn('[quote-requests] partial mark-complete failed', e?.message);
+        console.warn('[quote-requests] partial/resume cleanup failed', e?.message);
       }
     }
 
