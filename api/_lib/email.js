@@ -165,18 +165,22 @@ export function firstViewHtml({ title, clientName, country, city, link }) {
   return shell(inner);
 }
 
-export function signedHtml({ proposal, signerName, signerEmail, signedAt, link }) {
+export function signedHtml({ proposal, signature, signerName, signerEmail, signedAt, link }) {
   const title = proposal.proposalTitle || proposal.clientName || 'Proposal';
-  const total = proposal.basePrice
-    ? formatGBP(proposal.basePrice * (1 + (proposal.vatRate || 0)))
-    : null;
+  const vatRate = proposal.vatRate || 0;
+  // Prefer the signed total (reflects discounts, partner selections, extras) over the proposal's base price.
+  const totalIncVat = Number.isFinite(signature?.total)
+    ? signature.total
+    : (proposal.basePrice ? proposal.basePrice * (1 + vatRate) : null);
+  const totalExVat = totalIncVat != null ? totalIncVat / (1 + vatRate) : null;
   const dateStr = signedAt ? new Date(signedAt).toLocaleString('en-GB') : '';
   const inner = `
     <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">🎉 Proposal signed</h2>
     <p style="margin:0 0 16px;"><strong>${escapeHtml(signerName || 'Someone')}</strong>${signerEmail ? ` (${escapeHtml(signerEmail)})` : ''} just signed <strong>${escapeHtml(title)}</strong>${proposal.clientName && proposal.clientName !== title ? ` for ${escapeHtml(proposal.clientName)}` : ''}.</p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 20px;">
       ${proposal.contactBusinessName ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Business</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(proposal.contactBusinessName)}</td></tr>` : ''}
-      ${total ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Deal value</td><td style="padding:4px 0;font-size:13px;font-weight:600;">${total}</td></tr>` : ''}
+      ${totalExVat != null ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Sale value</td><td style="padding:4px 0;font-size:13px;font-weight:600;">${formatGBP(totalExVat)}${vatRate ? ' + VAT' : ''}</td></tr>` : ''}
+      ${totalIncVat != null && vatRate ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Total inc VAT</td><td style="padding:4px 0;font-size:13px;">${formatGBP(totalIncVat)}</td></tr>` : ''}
       ${dateStr ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Signed at</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(dateStr)}</td></tr>` : ''}
       ${proposal.preparedBy ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Prepared by</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(proposal.preparedBy)}</td></tr>` : ''}
     </table>

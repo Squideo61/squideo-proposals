@@ -110,7 +110,7 @@ export default async function handler(req, res) {
         await sendMail({
           to: recipients,
           subject: `🎉 Signed: ${title}`,
-          html: signedHtml({ proposal, signerName: name, signerEmail: email, signedAt, link }),
+          html: signedHtml({ proposal, signature: rest, signerName: name, signerEmail: email, signedAt, link }),
           text: `${name || 'Someone'} (${email || ''}) signed "${title}" on ${signedAt}. ${link}`,
         });
       }
