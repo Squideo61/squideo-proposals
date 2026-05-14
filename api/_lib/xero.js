@@ -199,9 +199,11 @@ export async function getNextInvoiceNumber() {
     const json = await xeroFetch(
       `/api.xro/2.0/Invoices?Type=ACCREC&order=Date+DESC&page=1&pageSize=50&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID`
     );
+    // Accept only INV-NNNNN (up to 5 digits). INV-28883219 is 8 digits — a legacy
+    // manually-assigned number that persists across every sort strategy we've tried.
     const nums = (json?.Invoices || [])
       .map(i => i.InvoiceNumber || '')
-      .filter(n => /^INV-\d+$/.test(n))
+      .filter(n => /^INV-\d{1,5}$/.test(n))
       .map(n => parseInt(n.slice(4), 10));
     if (!nums.length) return null;
     const maxNum = Math.max(...nums);
