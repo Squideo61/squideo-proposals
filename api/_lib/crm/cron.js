@@ -24,8 +24,95 @@ export async function cronHandler(req, res, action) {
     case 'task-reminders':    return cronTaskReminders(res);
     case 'gmail-watch-renew': return cronGmailWatchRenew(res);
     case 'prune-views':       return cronPruneViews(res);
+    case 'quote-partials':    return cronQuotePartials(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
+}
+
+const PARTIAL_NOTIFY_TO = process.env.QUOTE_REQUEST_NOTIFY_TO || 'adam@squideo.co.uk';
+
+function buildPartialEmail(p) {
+  const rows = [
+    ['Name', p.name],
+    ['Email', p.email],
+    ['Phone', p.phone ? `${p.country_code || ''} ${p.phone}`.trim() : null],
+    ['Company', p.company],
+    ['Timeline', p.timeline],
+    ['Budget', p.budget],
+    ['Country', p.country_name],
+    ['Source', p.source_url],
+    ['Reached step', p.last_step ? `${p.last_step} of 4` : null],
+  ].filter(([, v]) => v != null && v !== '');
+
+  const rowHtml = rows
+    .map(
+      ([k, v]) =>
+        `<tr><td style="padding:6px 14px 6px 0;color:#6B7785;font-size:13px;vertical-align:top;white-space:nowrap;">${escapeHtml(k)}</td><td style="padding:6px 0;font-size:13px;">${escapeHtml(v)}</td></tr>`
+    )
+    .join('');
+
+  const details = p.project_details
+    ? `<h3 style="margin:18px 0 8px;font-size:14px;font-weight:700;">Project details</h3>
+       <div style="white-space:pre-wrap;font-size:13px;line-height:1.55;background:#FAFBFC;border:1px solid #E5E9EE;border-radius:8px;padding:12px 14px;">${escapeHtml(p.project_details)}</div>`
+    : '';
+
+  return `<!doctype html>
+<html><body style="margin:0;padding:0;background:#FAFBFC;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0F2A3D;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FAFBFC;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="max-width:640px;background:#fff;border:1px solid #E5E9EE;border-radius:12px;overflow:hidden;">
+        <tr><td style="padding:24px 28px;border-bottom:1px solid #E5E9EE;">
+          <div style="font-size:18px;font-weight:700;color:#F59E0B;">Partial quote request — visitor stopped before submitting</div>
+        </td></tr>
+        <tr><td style="padding:24px 28px;font-size:14px;line-height:1.55;color:#0F2A3D;">
+          <p style="margin:0 0 14px;font-size:13px;color:#6B7785;">A visitor completed the project details but didn't finish the form. Last activity 20+ minutes ago.</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+            ${rowHtml}
+          </table>
+          ${details}
+          <p style="margin:20px 0 0;font-size:12px;color:#6B7785;">Started ${escapeHtml(new Date(p.created_at).toLocaleString('en-GB'))} · Last activity ${escapeHtml(new Date(p.last_activity_at).toLocaleString('en-GB'))}.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+}
+
+export async function cronQuotePartials(res) {
+  const rows = await sql`
+    SELECT form_session_id, name, email, phone, country_code, country_name,
+           company, project_details, timeline, budget, source_url, last_step,
+           last_activity_at, created_at
+    FROM quote_request_partials
+    WHERE completed_at IS NULL
+      AND notified_at IS NULL
+      AND project_details IS NOT NULL
+      AND last_activity_at < NOW() - INTERVAL '20 minutes'
+    ORDER BY last_activity_at ASC
+    LIMIT 25
+  `;
+
+  let sent = 0;
+  for (const p of rows) {
+    try {
+      const subjectName = p.name || p.email || 'Anonymous visitor';
+      await sendMail({
+        to: PARTIAL_NOTIFY_TO,
+        subject: `Partial quote request from ${subjectName}`,
+        html: buildPartialEmail(p),
+      });
+      await sql`
+        UPDATE quote_request_partials
+        SET notified_at = NOW()
+        WHERE form_session_id = ${p.form_session_id}
+      `;
+      sent++;
+    } catch (err) {
+      console.error('[cron quote-partials] send failed', { sessionId: p.form_session_id, err: err.message });
+    }
+  }
+
+  return res.status(200).json({ ok: true, found: rows.length, sent });
 }
 
 // GDPR retention: proposal_views collects IP + UA per open, which is personal

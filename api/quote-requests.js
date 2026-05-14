@@ -111,6 +111,51 @@ export default async function handler(req, res) {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const action = url.searchParams.get('action');
 
+    if (action === 'autosave') {
+      const body = await readJsonBody(req);
+      const formSessionId = trimOrNull(body.formSessionId);
+      const projectDetails = trimOrNull(body.projectDetails);
+      if (!formSessionId || !projectDetails) {
+        return res.status(204).end();
+      }
+      const sourceUrl = trimOrNull(body.sourceUrl);
+      const userAgent = trimOrNull(req.headers['user-agent']);
+      const ip = trimOrNull(
+        (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+          req.socket?.remoteAddress
+      );
+      const lastStep = Number.isFinite(Number(body.lastStep)) ? Math.max(1, Math.min(4, Math.floor(Number(body.lastStep)))) : null;
+      await sql`
+        INSERT INTO quote_request_partials (
+          form_session_id, name, email, phone, country_code, country_name,
+          company, project_details, timeline, budget, source_url, user_agent,
+          ip_address, last_step, last_activity_at
+        ) VALUES (
+          ${formSessionId}, ${trimOrNull(body.name)}, ${trimOrNull(body.email)},
+          ${trimOrNull(body.phone)}, ${trimOrNull(body.countryCode)}, ${trimOrNull(body.countryName)},
+          ${trimOrNull(body.company)}, ${projectDetails}, ${trimOrNull(body.timeline)},
+          ${trimOrNull(body.budget)}, ${sourceUrl}, ${userAgent}, ${ip}, ${lastStep}, NOW()
+        )
+        ON CONFLICT (form_session_id) DO UPDATE SET
+          name = EXCLUDED.name,
+          email = EXCLUDED.email,
+          phone = EXCLUDED.phone,
+          country_code = EXCLUDED.country_code,
+          country_name = EXCLUDED.country_name,
+          company = EXCLUDED.company,
+          project_details = EXCLUDED.project_details,
+          timeline = EXCLUDED.timeline,
+          budget = EXCLUDED.budget,
+          source_url = COALESCE(quote_request_partials.source_url, EXCLUDED.source_url),
+          user_agent = COALESCE(quote_request_partials.user_agent, EXCLUDED.user_agent),
+          ip_address = COALESCE(quote_request_partials.ip_address, EXCLUDED.ip_address),
+          last_step = EXCLUDED.last_step,
+          last_activity_at = NOW()
+        WHERE quote_request_partials.completed_at IS NULL
+      `;
+      return res.status(204).end();
+    }
+
     if (action === 'upload') {
       if (!process.env.BLOB_READ_WRITE_TOKEN) {
         return res.status(503).json({ error: 'File storage not configured' });
@@ -211,6 +256,18 @@ export default async function handler(req, res) {
       subject: `New quote request from ${subjectName}`,
       html: buildNotificationEmail(qr, storedFiles),
     });
+
+    if (qr.form_session_id) {
+      try {
+        await sql`
+          UPDATE quote_request_partials
+          SET completed_at = NOW()
+          WHERE form_session_id = ${qr.form_session_id}
+        `;
+      } catch (e) {
+        console.warn('[quote-requests] partial mark-complete failed', e?.message);
+      }
+    }
 
     return res.status(201).json({ id, ok: true });
   } catch (err) {

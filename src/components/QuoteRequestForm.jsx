@@ -283,6 +283,63 @@ export function QuoteRequestForm(props = {}) {
     if (initialisedRef.current) saveProgress();
   }, [form, step, country, saveProgress]);
 
+  const autosaveTimerRef = useRef(null);
+  const autosaveLastRef = useRef('');
+  useEffect(() => {
+    if (!initialisedRef.current) return;
+    if (submittedRef.current) return;
+    const projectDetails = form.projectDetails.trim();
+    if (!projectDetails) return;
+    if (!sessionIdRef.current) return;
+
+    const payload = {
+      formSessionId: sessionIdRef.current,
+      name: form.name.trim() || null,
+      email: form.email.trim() || null,
+      phone: form.phone.trim() || null,
+      countryCode: country?.dialCode || null,
+      countryName: country?.name || null,
+      company: form.company.trim() || null,
+      projectDetails,
+      timeline: form.timeline || null,
+      budget: form.budget.trim() || null,
+      sourceUrl: window.location.href,
+      lastStep: typeof step === 'number' ? step : null,
+    };
+    const fingerprint = JSON.stringify(payload);
+    if (fingerprint === autosaveLastRef.current) return;
+
+    const send = () => {
+      autosaveLastRef.current = fingerprint;
+      try {
+        if (navigator.sendBeacon) {
+          const blob = new Blob([fingerprint], { type: 'application/json' });
+          navigator.sendBeacon(`${cfg.apiBase}?action=autosave`, blob);
+          return;
+        }
+      } catch { /* fall through */ }
+      fetch(`${cfg.apiBase}?action=autosave`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: fingerprint,
+        keepalive: true,
+      }).catch(() => { /* non-critical */ });
+    };
+
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(send, 2500);
+
+    const onUnload = () => { if (autosaveLastRef.current !== fingerprint) send(); };
+    window.addEventListener('pagehide', onUnload);
+    window.addEventListener('beforeunload', onUnload);
+
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      window.removeEventListener('pagehide', onUnload);
+      window.removeEventListener('beforeunload', onUnload);
+    };
+  }, [form, step, country, cfg.apiBase]);
+
   const loadSession = useCallback((sessionId) => {
     try {
       const raw = localStorage.getItem(STORAGE_PREFIX + sessionId);
