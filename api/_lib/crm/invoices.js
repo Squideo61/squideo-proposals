@@ -352,6 +352,20 @@ export async function invoicesRoute(req, res, id, action, user) {
           error: `Invoice ${invoiceNumberHint} was not found in Xero. Check the invoice number and try again.`,
         });
       }
+      // Block re-uploading the same Xero invoice. Voided rows are ignored —
+      // they represent invoices already cancelled in Xero, so they don't
+      // conflict with a fresh upload of a different Xero invoice number.
+      const existing = await sql`
+        SELECT id FROM manual_invoices
+         WHERE xero_invoice_id = ${xeroMatch.invoiceId}
+           AND status != 'void'
+         LIMIT 1
+      `;
+      if (existing.length) {
+        return res.status(409).json({
+          error: `Invoice ${xeroMatch.invoiceNumber} is already linked to this CRM. Delete the existing entry first if you want to re-upload.`,
+        });
+      }
     }
 
     const newId = makeId('inv');
