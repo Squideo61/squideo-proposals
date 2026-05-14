@@ -115,7 +115,7 @@ const DEFAULTS = {
   exitIntentSaveButton: 'Save & email me a link',
   prevButtonText: 'Back',
   nextButtonText: 'Continue',
-  submitButtonText: 'Get my free quote!',
+  submitButtonText: '🎉 Get My Free Quote!',
   enableExitIntent: true,
   exitIntentDelayMs: 3000,
   nameRequired: true,
