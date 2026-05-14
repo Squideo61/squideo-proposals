@@ -6,7 +6,6 @@ import { formatGBP, formatCurrency, formatAmountWithGbp } from '../../utils.js';
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
 import { AddInvoiceModal } from './AddInvoiceModal.jsx';
-import { AddPaymentModal } from './AddPaymentModal.jsx';
 import { MarkInvoicePaidModal } from './MarkInvoicePaidModal.jsx';
 import { CreateXeroInvoiceModal } from './CreateXeroInvoiceModal.jsx';
 
@@ -23,7 +22,6 @@ export function InvoicesPaymentsCard({ dealId, proposals, contactName }) {
   const [invoices, setInvoices] = useState(null);
   const [payments, setPayments] = useState(null);
   const [adding, setAdding] = useState(false);
-  const [addingPayment, setAddingPayment] = useState(false);
   const [creatingXero, setCreatingXero] = useState(false);
 
   const reloadInvoices = useCallback(() => {
@@ -76,7 +74,6 @@ export function InvoicesPaymentsCard({ dealId, proposals, contactName }) {
         <div style={{ display: 'flex', gap: 6 }}>
           <button onClick={() => setCreatingXero(true)} className="btn"><Plus size={12} /> Create invoice</button>
           <button onClick={() => setAdding(true)} className="btn-ghost"><Plus size={12} /> Upload invoice</button>
-          <button onClick={() => setAddingPayment(true)} className="btn-ghost"><Plus size={12} /> Add payment</button>
         </div>
       )}
     >
@@ -132,14 +129,6 @@ export function InvoicesPaymentsCard({ dealId, proposals, contactName }) {
           proposals={proposals}
           onClose={() => setAdding(false)}
           onCreated={() => { setAdding(false); reloadInvoices(); }}
-        />
-      )}
-      {addingPayment && (
-        <AddPaymentModal
-          dealId={dealId}
-          proposals={proposals}
-          onClose={() => setAddingPayment(false)}
-          onCreated={() => { setAddingPayment(false); reload(); }}
         />
       )}
     </Card>
