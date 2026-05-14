@@ -101,8 +101,8 @@ const DEFAULTS = {
     "6-8 weeks - I'm happy to slot into Squideo's normal production schedule",
     "I'm not ready yet, but I'm open to booking in early for a discount on my quote",
   ],
-  budgetLabel: 'Budget',
-  budgetPlaceholder: 'Approximate budget, or "not sure yet"',
+  budgetLabel: 'What budget is going to work for you?',
+  budgetPlaceholder: "This ensures we provide useful options and keeps things efficient on both sides. If you're unsure, a rough guess is still really helpful.",
   fileUploadLabel: 'Attachments (optional)',
   fileUploadButtonText: 'Click to upload or drag files here',
   optInText: 'Send me occasional tips and case studies from Squideo.',
@@ -123,8 +123,8 @@ const DEFAULTS = {
   phoneRequired: false,
   companyRequired: false,
   projectDetailsRequired: true,
-  timelineRequired: false,
-  budgetRequired: false,
+  timelineRequired: true,
+  budgetRequired: true,
   apiBase: '/api/quote-requests',
 };
 
@@ -422,6 +422,7 @@ export function QuoteRequestForm(props = {}) {
       }
     } else if (n === 3) {
       if (cfg.timelineRequired && !form.timeline) newErrors.timeline = 'Please select your preferred timeline';
+      if (cfg.budgetRequired && !form.budget.trim()) newErrors.budget = 'Please share a rough budget — even a guess helps';
     } else if (n === 4) {
       if (!form.captchaVerified) newErrors['captcha-verified'] = "⚠️ Please verify that you're not a robot by checking the box above";
     }
@@ -874,11 +875,12 @@ export function QuoteRequestForm(props = {}) {
               <label htmlFor="qr-budget">{cfg.budgetLabel}{!cfg.budgetRequired && <span className="optional-label"> (optional)</span>}</label>
               <textarea
                 id="qr-budget" name="budget" rows={3}
-                className="form-input"
+                className={`form-input ${errors.budget ? 'error' : ''}`}
                 placeholder={cfg.budgetPlaceholder}
                 value={form.budget}
-                onChange={(e) => setField('budget', e.target.value)}
+                onChange={(e) => { setField('budget', e.target.value); if (errors.budget) clearError('budget'); }}
               />
+              {errors.budget && <span className="error-message visible">{errors.budget}</span>}
             </div>
           </div>
 
