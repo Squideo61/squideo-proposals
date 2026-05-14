@@ -14,6 +14,21 @@ export function useIsMobile() {
 
 export const formatGBP = (n) => '£' + (Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
+const CURRENCY_SYMBOLS = { GBP: '£', EUR: '€', USD: '$', AUD: 'A$', CAD: 'C$', NZD: 'NZ$', JPY: '¥' };
+
+export const formatCurrency = (n, code = 'GBP') => {
+  const symbol = CURRENCY_SYMBOLS[code] || (code ? code + ' ' : '£');
+  return symbol + (Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+};
+
+// "€10,000.00 (£8,600.00)" when both supplied and they differ; otherwise just
+// the primary amount. Used for invoice amounts that may be in any currency.
+export const formatAmountWithGbp = (amount, currency = 'GBP', gbpAmount = null) => {
+  const primary = formatCurrency(amount, currency);
+  if (!gbpAmount || (currency || 'GBP') === 'GBP') return primary;
+  return primary + ' (' + formatCurrency(gbpAmount, 'GBP') + ')';
+};
+
 export const formatProposalNumber = (n) =>
   n && n.year && n.seq ? n.year + '-' + String(n.seq).padStart(3, '0') : '';
 

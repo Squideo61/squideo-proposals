@@ -262,6 +262,9 @@ export async function getInvoiceByNumber(invoiceNumber) {
       total: inv.Total != null ? Number(inv.Total) : null,
       amountDue: inv.AmountDue != null ? Number(inv.AmountDue) : null,
       currency: inv.CurrencyCode || null,
+      // Xero's exchange rate from invoice currency to the org's base currency.
+      // For a GBP-base org, a EUR invoice with rate 0.86 means 1 EUR = 0.86 GBP.
+      currencyRate: inv.CurrencyRate != null ? Number(inv.CurrencyRate) : null,
     };
   } catch (err) {
     console.warn('[xero] getInvoiceByNumber failed', err.message);
@@ -292,6 +295,8 @@ export async function getInvoicesByIds(invoiceIds) {
           total: inv.Total != null ? Number(inv.Total) : null,
           amountDue: inv.AmountDue != null ? Number(inv.AmountDue) : null,
           fullyPaidOn: parseXeroDate(inv.FullyPaidOnDate),
+          currency: inv.CurrencyCode || null,
+          currencyRate: inv.CurrencyRate != null ? Number(inv.CurrencyRate) : null,
         });
       }
     }

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Plus, FileText, Trash2, CheckCircle, Link, Copy, Check, ExternalLink } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP } from '../../utils.js';
+import { formatGBP, formatCurrency, formatAmountWithGbp } from '../../utils.js';
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
 import { AddInvoiceModal } from './AddInvoiceModal.jsx';
@@ -53,10 +53,18 @@ export function InvoicesPaymentsCard({ dealId, proposals, contactName }) {
   const allInvoices = invoices || [];
   const standAlonePayments = payments || [];
 
-  const totalPaid = [
+  // Totals are summed per-currency — we don't FX-convert non-GBP into a single
+  // bucket, so each currency renders as its own subtotal.
+  const paidRows = [
     ...allInvoices.filter(r => r.status === 'paid'),
     ...standAlonePayments,
-  ].reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  ];
+  const totalsByCurrency = paidRows.reduce((acc, r) => {
+    const ccy = r.currency || 'GBP';
+    acc[ccy] = (acc[ccy] || 0) + (Number(r.amount) || 0);
+    return acc;
+  }, {});
+  const totalEntries = Object.entries(totalsByCurrency).filter(([, v]) => v > 0);
 
   const count = allInvoices.length + standAlonePayments.length;
 
@@ -99,10 +107,14 @@ export function InvoicesPaymentsCard({ dealId, proposals, contactName }) {
         </>
       )}
 
-      {!loading && totalPaid > 0 && (
-        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', justifyContent: 'space-between', fontSize: 12, color: BRAND.muted }}>
-          <span>Total paid</span>
-          <span style={{ fontWeight: 600, color: BRAND.ink }}>{formatGBP(totalPaid)}</span>
+      {!loading && totalEntries.length > 0 && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: BRAND.muted }}>
+          {totalEntries.map(([ccy, total]) => (
+            <div key={ccy} style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Total paid{totalEntries.length > 1 ? ` (${ccy})` : ''}</span>
+              <span style={{ fontWeight: 600, color: BRAND.ink }}>{formatCurrency(total, ccy)}</span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -204,7 +216,7 @@ function InvoiceRow({ row, dealId, onChanged }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, flexWrap: 'wrap' }}>
-            {row.amount != null && <span>{formatGBP(row.amount)}</span>}
+            {row.amount != null && <span>{formatAmountWithGbp(row.amount, row.currency || 'GBP', row.gbpAmount)}</span>}
             {row.invoiceNumber && <span style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>{row.invoiceNumber}</span>}
             <span style={{ fontSize: 10, color: statusColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>{statusLabel}</span>
             {isPaid && paidMethodLabel && (
@@ -315,7 +327,7 @@ function StandalonePaymentRow({ row, onChanged }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 6, opacity: 0.85 }}>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600 }}>
-          <span>{formatGBP(row.amount)}</span>
+          <span>{formatCurrency(row.amount, row.currency || 'GBP')}</span>
           <span style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500, padding: '2px 6px', background: 'white', borderRadius: 4 }}>{method}</span>
         </div>
         <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>

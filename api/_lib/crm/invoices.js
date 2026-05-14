@@ -130,7 +130,8 @@ export async function invoicesRoute(req, res, id, action, user) {
     let manualRows = await sql`
       SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
              status, blob_url, filename, notes, uploaded_by, created_at,
-             stripe_payment_link_url, paid_at, payment_method, xero_invoice_id
+             stripe_payment_link_url, paid_at, payment_method, xero_invoice_id,
+             currency, currency_rate
         FROM manual_invoices
         WHERE deal_id = ${dealId} OR proposal_id = ANY(${proposalIds.length ? proposalIds : ['__none__']})
         ORDER BY issued_at DESC NULLS LAST, created_at DESC
@@ -154,6 +155,12 @@ export async function invoicesRoute(req, res, id, action, user) {
         : null;
       // Blob store is private — serve PDFs through the authenticated proxy route.
       const blobPdfUrl = r.blob_url ? `/api/crm/invoices/${r.id}/pdf` : null;
+      const currency = r.currency || 'GBP';
+      const rate = r.currency_rate != null ? Number(r.currency_rate) : null;
+      const amount = r.amount != null ? Number(r.amount) : null;
+      const gbpAmount = (currency !== 'GBP' && amount != null && rate)
+        ? Number((amount * rate).toFixed(2))
+        : null;
       out.push({
         id: 'manual:' + r.id,
         source: 'manual',
@@ -161,7 +168,9 @@ export async function invoicesRoute(req, res, id, action, user) {
         proposalId: r.proposal_id || null,
         proposalTitle: r.proposal_id ? (proposalMap.get(r.proposal_id)?.proposalTitle || proposalMap.get(r.proposal_id)?.clientName || r.proposal_id) : null,
         invoiceNumber: r.invoice_number || null,
-        amount: r.amount != null ? Number(r.amount) : null,
+        amount,
+        currency,
+        gbpAmount,
         status: r.status,
         issuedAt: r.issued_at,
         dueAt: r.due_at,
@@ -381,12 +390,14 @@ export async function invoicesRoute(req, res, id, action, user) {
     const dueAt = trimOrNull(meta.dueAt) || xeroMatch?.dueDate || null;
     const storedInvoiceNumber = xeroMatch?.invoiceNumber || invoiceNumberHint || null;
     const linkedXeroInvoiceId = xeroMatch?.invoiceId || null;
+    const currency = xeroMatch?.currency || 'GBP';
+    const currencyRate = xeroMatch?.currencyRate ?? null;
 
     await sql`
       INSERT INTO manual_invoices (
         id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
         status, blob_url, blob_pathname, filename, mime_type, size_bytes, notes,
-        uploaded_by, xero_invoice_id
+        uploaded_by, xero_invoice_id, currency, currency_rate
       ) VALUES (
         ${newId},
         ${proposalId},
@@ -403,7 +414,9 @@ export async function invoicesRoute(req, res, id, action, user) {
         ${sizeBytes},
         ${trimOrNull(meta.notes)},
         ${user.email || null},
-        ${linkedXeroInvoiceId}
+        ${linkedXeroInvoiceId},
+        ${currency},
+        ${currencyRate}
       )
     `;
 
@@ -443,7 +456,8 @@ export async function invoicesRoute(req, res, id, action, user) {
     const [row] = await sql`
       SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
              status, blob_url, filename, notes, uploaded_by, created_at,
-             stripe_payment_link_url, paid_at, payment_method, xero_invoice_id
+             stripe_payment_link_url, paid_at, payment_method, xero_invoice_id,
+             currency, currency_rate
         FROM manual_invoices WHERE id = ${newId}
     `;
     const xeroInvoiceId = row.xero_invoice_id || null;
@@ -451,13 +465,21 @@ export async function invoicesRoute(req, res, id, action, user) {
       ? '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(xeroInvoiceId)
       : null;
     const blobPdfUrl = row.blob_url ? `/api/crm/invoices/${row.id}/pdf` : null;
+    const rspCurrency = row.currency || 'GBP';
+    const rspRate = row.currency_rate != null ? Number(row.currency_rate) : null;
+    const rspAmount = row.amount != null ? Number(row.amount) : null;
+    const rspGbp = (rspCurrency !== 'GBP' && rspAmount != null && rspRate)
+      ? Number((rspAmount * rspRate).toFixed(2))
+      : null;
     return res.status(201).json({
       id: 'manual:' + row.id,
       source: 'manual',
       xeroInvoiceId,
       proposalId: row.proposal_id,
       invoiceNumber: row.invoice_number || null,
-      amount: row.amount != null ? Number(row.amount) : null,
+      amount: rspAmount,
+      currency: rspCurrency,
+      gbpAmount: rspGbp,
       status: row.status,
       issuedAt: row.issued_at,
       dueAt: row.due_at,
@@ -721,6 +743,8 @@ async function syncFromXero(rows, user) {
     if (xero.status === 'PAID' && row.status !== 'paid') {
       const paidAt = xero.fullyPaidOn || new Date().toISOString().slice(0, 10);
       const amount = xero.total ?? row.amount;
+      const currency = xero.currency || row.currency || 'GBP';
+      const currencyRate = xero.currencyRate ?? row.currency_rate ?? null;
       // Conditional update so only one concurrent request fires the notification.
       const result = await sql`
         UPDATE manual_invoices
@@ -728,11 +752,13 @@ async function syncFromXero(rows, user) {
                paid_at = ${paidAt},
                payment_method = COALESCE(payment_method, 'xero'),
                amount = COALESCE(amount, ${amount}),
+               currency = ${currency},
+               currency_rate = COALESCE(${currencyRate}, currency_rate),
                updated_at = NOW()
          WHERE id = ${row.id} AND status = 'issued'
          RETURNING id
       `;
-      updates.set(row.id, { status: 'paid', paid_at: paidAt, payment_method: row.payment_method || 'xero', amount: row.amount ?? amount });
+      updates.set(row.id, { status: 'paid', paid_at: paidAt, payment_method: row.payment_method || 'xero', amount: row.amount ?? amount, currency, currency_rate: currencyRate ?? row.currency_rate });
       if (result.length) {
         // We won the race — fire notification + deal-stage advance.
         notifyInvoicePaid({ row, paidAt, amount, user }).catch(err => console.error('[invoices] sync notify failed', err));
