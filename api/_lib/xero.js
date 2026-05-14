@@ -197,13 +197,13 @@ export async function getNextInvoiceNumber() {
     const json = await xeroFetch(
       `/api.xro/2.0/Invoices?Type=ACCREC&where=${where}&order=Date+DESC&page=1&pageSize=100&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID,VOIDED`
     );
-    const candidates = (json?.Invoices || [])
-      .map(i => i.InvoiceNumber || '')
-      .filter(n => /^INV-\d+$/.test(n));
-    if (!candidates.length) return null;
-    candidates.sort((a, b) => parseInt(b.slice(4), 10) - parseInt(a.slice(4), 10));
-    const top = candidates[0];
-    const digits = top.slice(4); // "6058"
+    // Trust Xero's alphabetical DESC sort — INV-6059 > INV-28883219 alphabetically
+    // (6 > 2), so the numerically-huge outlier falls after the real sequence.
+    // Numeric sort would pick the outlier; alphabetical won't.
+    const inv = (json?.Invoices || [])
+      .find(i => /^INV-\d+$/.test(i.InvoiceNumber || ''));
+    if (!inv) return null;
+    const digits = inv.InvoiceNumber.slice(4); // "6058"
     const nextNum = String(parseInt(digits, 10) + 1).padStart(digits.length, '0');
     return `INV-${nextNum}`; // "INV-6059"
   } catch (err) {
