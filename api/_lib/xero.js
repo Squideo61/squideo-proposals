@@ -193,17 +193,11 @@ export async function getNextInvoiceNumber() {
     // Sort by Date DESC and fetch 100 so we span any non-standard-format invoices
     // (e.g. INV-C-2026-..., ZRUSFYBT-...) that sort ahead of INV-NNNN alphabetically.
     // Filter client-side to the exact INV-<digits> pattern and pick the numeric max.
-    // INV-28883219 etc. are old invoices with manually-assigned high numbers.
-    // Filter to invoices dated within the last 2 years so outliers with old dates
-    // are excluded, then take the numeric max of the remaining INV-NNNN results.
-    const cutoff = new Date();
-    cutoff.setFullYear(cutoff.getFullYear() - 2);
-    const dateFilter = `DateTime(${cutoff.getFullYear()}, ${cutoff.getMonth() + 1}, 1)`;
-    const where = encodeURIComponent(
-      `InvoiceNumber.StartsWith("INV-") && Date >= ${dateFilter}`
-    );
+    // Sort by Date DESC (same order as the Xero UI list). Old outlier invoices
+    // (INV-28883219 etc.) have old dates and sink out of the top 50. No WHERE date
+    // filter needed — the sort does the work. Take the numeric max of what comes back.
     const json = await xeroFetch(
-      `/api.xro/2.0/Invoices?Type=ACCREC&where=${where}&order=UpdatedDateUTC+DESC&page=1&pageSize=50&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID`
+      `/api.xro/2.0/Invoices?Type=ACCREC&order=Date+DESC&page=1&pageSize=50&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID`
     );
     const nums = (json?.Invoices || [])
       .map(i => i.InvoiceNumber || '')
