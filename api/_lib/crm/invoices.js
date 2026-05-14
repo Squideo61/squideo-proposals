@@ -312,11 +312,23 @@ export async function invoicesRoute(req, res, id, action, user) {
     // When uploading a Xero invoice PDF, the filename is "Invoice INV-6049.pdf"
     // by default. Extract the invoice number from filename (or form input) and
     // look it up in Xero — it already exists there, so we link rather than push.
+    // Uploads MUST contain an INV-NNNN pattern and MUST resolve to a Xero
+    // invoice; otherwise it's not a Xero invoice PDF and we reject it.
     const invoiceNumberHint = trimOrNull(meta.invoiceNumber)
       || extractInvoiceNumber(filename);
     let xeroMatch = null;
-    if (fileBuffer && invoiceNumberHint) {
+    if (fileBuffer) {
+      if (!invoiceNumberHint) {
+        return res.status(400).json({
+          error: 'This doesn\'t look like a Xero invoice PDF — no invoice number (INV-NNNN) found in the filename. Rename the file or enter the invoice number manually.',
+        });
+      }
       xeroMatch = await getInvoiceByNumber(invoiceNumberHint).catch(() => null);
+      if (!xeroMatch) {
+        return res.status(404).json({
+          error: `Invoice ${invoiceNumberHint} was not found in Xero. Check the invoice number and try again.`,
+        });
+      }
     }
 
     const newId = makeId('inv');

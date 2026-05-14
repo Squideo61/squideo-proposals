@@ -187,9 +187,9 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
               Detected {detectedInvoiceNumber} — amount, dates &amp; status will be pulled from Xero.
             </p>
           )}
-          {file && !detectedInvoiceNumber && (
-            <p style={{ margin: '4px 0 0', fontSize: 11, color: BRAND.muted }}>
-              Couldn't auto-detect an invoice number in the filename. Enter it below to link to Xero.
+          {file && !detectedInvoiceNumber && !invoiceNumber && (
+            <p style={{ margin: '4px 0 0', fontSize: 11, color: '#DC2626' }}>
+              No invoice number (INV-NNNN) found in the filename. Only Xero invoice PDFs can be uploaded — rename the file or enter the invoice number below.
             </p>
           )}
         </Field>
