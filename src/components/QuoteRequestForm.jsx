@@ -198,12 +198,18 @@ function formatFileSize(bytes) {
 
 function fireConfetti() {
   try {
-    confetti({
-      particleCount: 80,
-      spread: 70,
-      origin: { y: 0.6 },
-      colors: ['#7ac943', '#6bb635', '#FFD700', '#FFA500', '#4ECDC4'],
-    });
+    const colors = ['#7ac943', '#6bb635', '#FFD700', '#FFA500', '#4ECDC4', '#FF6B6B'];
+    const defaults = {
+      zIndex: 2147483647,
+      disableForReducedMotion: false,
+      colors,
+      startVelocity: 45,
+      gravity: 0.9,
+      ticks: 200,
+    };
+    confetti({ ...defaults, particleCount: 60, spread: 60, angle: 60, origin: { x: 0, y: 0.7 } });
+    confetti({ ...defaults, particleCount: 60, spread: 60, angle: 120, origin: { x: 1, y: 0.7 } });
+    confetti({ ...defaults, particleCount: 100, spread: 90, origin: { x: 0.5, y: 0.6 } });
   } catch { /* canvas-confetti not critical */ }
 }
 
