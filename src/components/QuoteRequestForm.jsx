@@ -126,6 +126,7 @@ const DEFAULTS = {
   timelineRequired: true,
   budgetRequired: true,
   apiBase: '/api/quote-requests',
+  successRedirectUrl: 'https://www.squideo.com/qr-thank-you',
 };
 
 function formatPhoneNumber(value, format) {
@@ -640,6 +641,15 @@ export function QuoteRequestForm(props = {}) {
       setStep('success');
       if (typeof cfg.onSubmitted === 'function') {
         try { cfg.onSubmitted(payload); } catch { /* */ }
+      }
+      if (cfg.successRedirectUrl) {
+        // Small delay so the confetti is visible. Use window.top so we break
+        // out of the iframe when embedded on squideo.com; falls through to the
+        // current window if top isn't reachable.
+        setTimeout(() => {
+          try { (window.top || window).location.href = cfg.successRedirectUrl; }
+          catch { window.location.href = cfg.successRedirectUrl; }
+        }, 1200);
       }
     } catch (err) {
       console.error('[QuoteRequestForm] submit error', err);
