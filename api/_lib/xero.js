@@ -239,6 +239,46 @@ export async function getInvoicePdf(invoiceId) {
   return xeroFetchBytes(`/api.xro/2.0/Invoices/${encodeURIComponent(invoiceId)}`);
 }
 
+// Looks up an invoice in Xero by its InvoiceNumber (e.g. "INV-6049"). Returns
+// the full Xero invoice object or null if not found. Used to log uploaded PDFs
+// against an invoice that already exists in Xero, without pushing a duplicate.
+export async function getInvoiceByNumber(invoiceNumber) {
+  const trimmed = String(invoiceNumber || '').trim();
+  if (!trimmed) return null;
+  try {
+    const json = await xeroFetch(
+      `/api.xro/2.0/Invoices?InvoiceNumbers=${encodeURIComponent(trimmed)}`,
+    );
+    const inv = json?.Invoices?.[0];
+    if (!inv) return null;
+    return {
+      invoiceId: inv.InvoiceID,
+      invoiceNumber: inv.InvoiceNumber,
+      status: inv.Status,
+      contactId: inv.Contact?.ContactID || null,
+      contactName: inv.Contact?.Name || null,
+      issueDate: parseXeroDate(inv.DateString || inv.Date),
+      dueDate: parseXeroDate(inv.DueDateString || inv.DueDate),
+      total: inv.Total != null ? Number(inv.Total) : null,
+      amountDue: inv.AmountDue != null ? Number(inv.AmountDue) : null,
+      currency: inv.CurrencyCode || null,
+    };
+  } catch (err) {
+    console.warn('[xero] getInvoiceByNumber failed', err.message);
+    return null;
+  }
+}
+
+// Xero dates come either as ISO ("2026-05-14T00:00:00") or as
+// /Date(1736899200000+0000)/. Returns YYYY-MM-DD or null.
+function parseXeroDate(value) {
+  if (!value) return null;
+  const m = String(value).match(/\/Date\((\d+)/);
+  const d = m ? new Date(Number(m[1])) : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
 // Looks up the invoice number (e.g. INV-0042) for a given Xero invoice id.
 // Used to name the downloaded PDF; never throws — returns null on failure.
 export async function getInvoiceNumber(invoiceId) {

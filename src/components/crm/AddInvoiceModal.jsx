@@ -29,6 +29,18 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
   const amountNum = Number(amount);
   const showLinkOption = amountNum > 0 && status === 'issued';
 
+  // Xero's default PDF filename is "Invoice INV-NNNN.pdf" — auto-detect the
+  // invoice number on file pick so the user sees what we'll match in Xero.
+  const detectedInvoiceNumber = file ? extractInvoiceNumber(file.name) : null;
+
+  function handleFileChange(picked) {
+    setFile(picked);
+    if (picked && !invoiceNumber) {
+      const inv = extractInvoiceNumber(picked.name);
+      if (inv) setInvoiceNumber(inv);
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (!file && !amountNum) {
@@ -84,7 +96,7 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || 'Failed to create invoice');
 
-      showMsg?.('Invoice created', 'success');
+      showMsg?.(json.autoLinked ? 'Linked to Xero invoice' : 'Invoice created', 'success');
 
       if (json.stripePaymentLinkUrl) {
         setCreatedLink(json.stripePaymentLinkUrl);
@@ -161,13 +173,23 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
             <input
               type="file"
               accept="application/pdf"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
               style={{ display: 'none' }}
             />
           </label>
           {!file && (
             <p style={{ margin: '4px 0 0', fontSize: 11, color: BRAND.muted }}>
-              No PDF — a metadata-only invoice will be created. You can add a PDF later.
+              Uploading a Xero invoice PDF? We'll match it to Xero by invoice number and auto-fill the rest.
+            </p>
+          )}
+          {file && detectedInvoiceNumber && (
+            <p style={{ margin: '4px 0 0', fontSize: 11, color: '#16A34A' }}>
+              Detected {detectedInvoiceNumber} — amount, dates &amp; status will be pulled from Xero.
+            </p>
+          )}
+          {file && !detectedInvoiceNumber && (
+            <p style={{ margin: '4px 0 0', fontSize: 11, color: BRAND.muted }}>
+              Couldn't auto-detect an invoice number in the filename. Enter it below to link to Xero.
             </p>
           )}
         </Field>
@@ -235,6 +257,12 @@ function Field({ label, children }) {
       {children}
     </label>
   );
+}
+
+function extractInvoiceNumber(filename) {
+  if (!filename) return null;
+  const m = String(filename).match(/INV-\d{3,}/i);
+  return m ? m[0].toUpperCase() : null;
 }
 
 function base64UrlEncode(s) {

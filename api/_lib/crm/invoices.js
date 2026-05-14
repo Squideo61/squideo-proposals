@@ -9,14 +9,46 @@
 // Scoped by dealId (the only filter currently supported — contact/company
 // rollups stay payment-only per the product spec).
 
-import { put, del } from '@vercel/blob';
+import { put, del, get as blobGet } from '@vercel/blob';
 import sql from '../db.js';
 import { advanceStage } from '../dealStage.js';
 import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
-import { getOrCreateContact, createInvoice, createPayment, voidInvoice } from '../xero.js';
+import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber } from '../xero.js';
 
 export async function invoicesRoute(req, res, id, action, user) {
+  // --- GET /api/crm/invoices/:id/pdf — streams a private Blob PDF back through
+  // the API. Blob store is configured private; raw blob URLs aren't directly
+  // accessible without auth, so we proxy via @vercel/blob's get().
+  if (id && action === 'pdf' && req.method === 'GET') {
+    const manualId = stripManualPrefix(id);
+    const [row] = await sql`
+      SELECT blob_url, blob_pathname, filename, mime_type
+        FROM manual_invoices WHERE id = ${manualId}
+    `;
+    if (!row || (!row.blob_url && !row.blob_pathname)) {
+      return res.status(404).json({ error: 'No PDF for this invoice' });
+    }
+    try {
+      const result = await blobGet(row.blob_url || row.blob_pathname, { access: 'private' });
+      if (!result || !result.stream) return res.status(404).json({ error: 'PDF not found' });
+      res.setHeader('Content-Type', row.mime_type || result.blob?.contentType || 'application/pdf');
+      const fname = (row.filename || 'invoice.pdf').replace(/"/g, '');
+      res.setHeader('Content-Disposition', `inline; filename="${fname}"`);
+      if (result.blob?.size) res.setHeader('Content-Length', String(result.blob.size));
+      const reader = result.stream.getReader();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+      return res.end();
+    } catch (err) {
+      console.error('[invoices] blob get failed', err);
+      return res.status(500).json({ error: 'Failed to fetch PDF' });
+    }
+  }
+
   // --- GET /api/crm/invoices?dealId=...
   if (!id && req.method === 'GET') {
     const dealId = trimOrNull(req.query.dealId);
@@ -108,6 +140,8 @@ export async function invoicesRoute(req, res, id, action, user) {
       const xeroPdfUrl = xeroInvoiceId
         ? '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(xeroInvoiceId)
         : null;
+      // Blob store is private — serve PDFs through the authenticated proxy route.
+      const blobPdfUrl = r.blob_url ? `/api/crm/invoices/${r.id}/pdf` : null;
       out.push({
         id: 'manual:' + r.id,
         source: 'manual',
@@ -122,7 +156,7 @@ export async function invoicesRoute(req, res, id, action, user) {
         notes: r.notes || null,
         filename: r.filename || null,
         uploadedBy: r.uploaded_by || null,
-        pdfUrl: r.blob_url || xeroPdfUrl,
+        pdfUrl: blobPdfUrl || xeroPdfUrl,
         stripePaymentLinkUrl: r.stripe_payment_link_url || null,
         paidAt: r.paid_at || null,
         paymentMethod: r.payment_method || null,
@@ -275,6 +309,16 @@ export async function invoicesRoute(req, res, id, action, user) {
       resolvedDealId = pr?.deal_id || null;
     }
 
+    // When uploading a Xero invoice PDF, the filename is "Invoice INV-6049.pdf"
+    // by default. Extract the invoice number from filename (or form input) and
+    // look it up in Xero — it already exists there, so we link rather than push.
+    const invoiceNumberHint = trimOrNull(meta.invoiceNumber)
+      || extractInvoiceNumber(filename);
+    let xeroMatch = null;
+    if (fileBuffer && invoiceNumberHint) {
+      xeroMatch = await getInvoiceByNumber(invoiceNumberHint).catch(() => null);
+    }
+
     const newId = makeId('inv');
     let blobUrl = null;
     let blobPathname = null;
@@ -287,7 +331,7 @@ export async function invoicesRoute(req, res, id, action, user) {
       const blob = await put(
         `manual-invoices/${resolvedDealId || 'orphan'}/${newId}/${safeName}`,
         fileBuffer,
-        { access: 'public', contentType: mimeType },
+        { access: 'private', contentType: mimeType },
       );
       blobUrl = blob.url;
       blobPathname = blob.pathname;
@@ -296,22 +340,37 @@ export async function invoicesRoute(req, res, id, action, user) {
       sizeBytes = fileBuffer.length;
     }
 
-    const status = ['issued', 'paid', 'void'].includes(meta.status) ? meta.status : 'issued';
-    const amount = numberOrNull(meta.amount);
+    // Reconcile form metadata with what Xero says — Xero is authoritative for
+    // amount, dates, and paid status once we've matched. Form values still
+    // take precedence if the user explicitly set them.
+    const formStatus = ['issued', 'paid', 'void'].includes(meta.status) ? meta.status : null;
+    const xeroDerivedStatus = xeroMatch?.status === 'PAID' ? 'paid'
+      : xeroMatch?.status === 'VOIDED' ? 'void'
+      : xeroMatch ? 'issued'
+      : null;
+    const status = formStatus || xeroDerivedStatus || 'issued';
+
+    const formAmount = numberOrNull(meta.amount);
+    const amount = formAmount != null ? formAmount : (xeroMatch?.total ?? null);
+
+    const issuedAt = trimOrNull(meta.issuedAt) || xeroMatch?.issueDate || new Date().toISOString().slice(0, 10);
+    const dueAt = trimOrNull(meta.dueAt) || xeroMatch?.dueDate || null;
+    const storedInvoiceNumber = xeroMatch?.invoiceNumber || invoiceNumberHint || null;
+    const linkedXeroInvoiceId = xeroMatch?.invoiceId || null;
 
     await sql`
       INSERT INTO manual_invoices (
         id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
         status, blob_url, blob_pathname, filename, mime_type, size_bytes, notes,
-        uploaded_by
+        uploaded_by, xero_invoice_id
       ) VALUES (
         ${newId},
         ${proposalId},
         ${resolvedDealId},
-        ${trimOrNull(meta.invoiceNumber)},
+        ${storedInvoiceNumber},
         ${amount},
-        ${trimOrNull(meta.issuedAt) || new Date().toISOString().slice(0, 10)},
-        ${trimOrNull(meta.dueAt)},
+        ${issuedAt},
+        ${dueAt},
         ${status},
         ${blobUrl},
         ${blobPathname},
@@ -319,7 +378,8 @@ export async function invoicesRoute(req, res, id, action, user) {
         ${storedMime},
         ${sizeBytes},
         ${trimOrNull(meta.notes)},
-        ${user.email || null}
+        ${user.email || null},
+        ${linkedXeroInvoiceId}
       )
     `;
 
@@ -329,7 +389,7 @@ export async function invoicesRoute(req, res, id, action, user) {
       try {
         stripePaymentLinkUrl = await createStripePaymentLink({
           invoiceId: newId,
-          invoiceNumber: trimOrNull(meta.invoiceNumber),
+          invoiceNumber: storedInvoiceNumber,
           amount,
           dealId: resolvedDealId,
         });
@@ -338,19 +398,23 @@ export async function invoicesRoute(req, res, id, action, user) {
       }
     }
 
-    // Push a corresponding invoice to Xero (non-blocking — failure does not
-    // prevent the manual invoice from being saved).
-    const vatRate = numberOrNull(meta.vatRate) ?? 20;
-    await pushInvoiceToXero({
-      invoiceId: newId,
-      dealId: resolvedDealId,
-      proposalId,
-      invoiceNumber: trimOrNull(meta.invoiceNumber),
-      amount,
-      notes: trimOrNull(meta.notes),
-      dueAt: trimOrNull(meta.dueAt),
-      vatRate,
-    });
+    // PDF uploads represent invoices that already exist in Xero — link if we
+    // found a match, otherwise log metadata-only without pushing a duplicate.
+    // Only the no-file path (creating a brand-new invoice from the dashboard)
+    // pushes to Xero.
+    if (!fileBuffer) {
+      const vatRate = numberOrNull(meta.vatRate) ?? 20;
+      await pushInvoiceToXero({
+        invoiceId: newId,
+        dealId: resolvedDealId,
+        proposalId,
+        invoiceNumber: storedInvoiceNumber,
+        amount,
+        notes: trimOrNull(meta.notes),
+        dueAt,
+        vatRate,
+      });
+    }
 
     const [row] = await sql`
       SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
@@ -362,6 +426,7 @@ export async function invoicesRoute(req, res, id, action, user) {
     const xeroPdfUrl = xeroInvoiceId
       ? '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(xeroInvoiceId)
       : null;
+    const blobPdfUrl = row.blob_url ? `/api/crm/invoices/${row.id}/pdf` : null;
     return res.status(201).json({
       id: 'manual:' + row.id,
       source: 'manual',
@@ -375,10 +440,11 @@ export async function invoicesRoute(req, res, id, action, user) {
       notes: row.notes,
       filename: row.filename || null,
       uploadedBy: row.uploaded_by || null,
-      pdfUrl: row.blob_url || xeroPdfUrl,
+      pdfUrl: blobPdfUrl || xeroPdfUrl,
       stripePaymentLinkUrl: row.stripe_payment_link_url || null,
       paidAt: row.paid_at || null,
       paymentMethod: row.payment_method || null,
+      autoLinked: !!linkedXeroInvoiceId,
     });
   }
 
@@ -644,4 +710,12 @@ function parseInvoiceMeta(req) {
 
 function stripManualPrefix(id) {
   return id.startsWith('manual:') ? id.slice('manual:'.length) : id;
+}
+
+// Xero's default PDF filename is "Invoice INV-NNNN.pdf". Pull the invoice
+// number out so we can match the upload to its Xero record.
+function extractInvoiceNumber(filename) {
+  if (!filename) return null;
+  const m = String(filename).match(/INV-\d{3,}/i);
+  return m ? m[0].toUpperCase() : null;
 }
