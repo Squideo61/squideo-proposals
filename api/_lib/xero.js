@@ -193,13 +193,14 @@ export async function getNextInvoiceNumber() {
     // Sort by Date DESC and fetch 100 so we span any non-standard-format invoices
     // (e.g. INV-C-2026-..., ZRUSFYBT-...) that sort ahead of INV-NNNN alphabetically.
     // Filter client-side to the exact INV-<digits> pattern and pick the numeric max.
+    // Sort by UpdatedDateUTC DESC so the most recently created/modified invoice is first.
+    // Outlier invoices (INV-8045, INV-28883219 etc.) were created long ago and sink to
+    // the bottom; the current sequential invoice (INV-6058, just created) floats up.
+    // Alphabetical and numeric sorts both fail due to scattered out-of-range numbers.
     const where = encodeURIComponent('InvoiceNumber.StartsWith("INV-")');
     const json = await xeroFetch(
-      `/api.xro/2.0/Invoices?Type=ACCREC&where=${where}&order=InvoiceNumber+DESC&page=1&pageSize=50&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID,VOIDED`
+      `/api.xro/2.0/Invoices?Type=ACCREC&where=${where}&order=UpdatedDateUTC+DESC&page=1&pageSize=50&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID,VOIDED`
     );
-    // Alphabetical DESC is correct: INV-6058 > INV-28883219 because '6' > '2'.
-    // Numeric sort would pick the outlier; date sort is unreliable when many invoices
-    // share the same date. Just find() the first standard-format match in the sorted list.
     const inv = (json?.Invoices || [])
       .find(i => /^INV-\d+$/.test(i.InvoiceNumber || ''));
     if (!inv) return null;
