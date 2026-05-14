@@ -185,20 +185,23 @@ export async function createInvoice({ contactId, lineItems, reference, invoiceNu
 }
 
 // Returns the predicted next invoice number based on the most recent ACCREC
-// invoice in Xero. Parses "INV-6059" → "INV-6060". Returns null on failure.
+// invoice in Xero. Includes all statuses (DRAFT, AUTHORISED, PAID, VOIDED)
+// so the latest paid invoices are counted. Parses "INV-6058" → "INV-6059".
 export async function getNextInvoiceNumber() {
   try {
+    // Must include all statuses — the default only returns DRAFT+AUTHORISED,
+    // which would miss PAID invoices and produce a stale/duplicate number.
     const json = await xeroFetch(
-      '/api.xro/2.0/Invoices?Type=ACCREC&order=InvoiceNumber+DESC&page=1&pageSize=1'
+      '/api.xro/2.0/Invoices?Type=ACCREC&order=InvoiceNumber+DESC&page=1&pageSize=1&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID,VOIDED'
     );
     const inv = json?.Invoices?.[0];
     if (!inv?.InvoiceNumber) return null;
     const match = inv.InvoiceNumber.match(/^(.+?)(\d+)$/);
     if (!match) return null;
-    const prefix = match[1];
-    const digits = match[2];
+    const prefix = match[1];   // "INV-"
+    const digits = match[2];   // "6058"
     const nextNum = String(parseInt(digits, 10) + 1).padStart(digits.length, '0');
-    return `${prefix}${nextNum}`;
+    return `${prefix}${nextNum}`; // "INV-6059"
   } catch (err) {
     console.warn('[xero] getNextInvoiceNumber failed', err.message);
     return null;
