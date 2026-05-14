@@ -16,7 +16,7 @@ export function CreateXeroInvoiceModal({ dealId, proposalId, contactName: contac
   const [contactName, setContactName] = useState(contactNameProp || '');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [issuedAt, setIssuedAt] = useState(new Date().toISOString().slice(0, 10));
-  const [dueAt, setDueAt] = useState('');
+  const [dueAt, setDueAt] = useState(new Date().toISOString().slice(0, 10));
   const [lineItems, setLineItems] = useState([makeLineItem()]);
   const [saving, setSaving] = useState(false);
 
