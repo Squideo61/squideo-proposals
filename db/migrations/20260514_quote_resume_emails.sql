@@ -16,5 +16,5 @@ CREATE INDEX IF NOT EXISTS qr_resume_emails_due_idx
   WHERE sent_at IS NULL;
 CREATE INDEX IF NOT EXISTS qr_resume_emails_session_idx
   ON quote_request_resume_emails (form_session_id);
-CREATE UNIQUE INDEX IF NOT EXISTS qr_resume_emails_token_idx
+CREATE INDEX IF NOT EXISTS qr_resume_emails_token_idx
   ON quote_request_resume_emails (unsubscribe_token);
