@@ -98,15 +98,16 @@ export async function installBoxesNav(sdk) {
   await rebuildDealsSection(sdk);
 
   // Re-sync when the user comes back to Gmail (typical flow: delete/rename
-  // a deal in the web app, switch back to Gmail). Also poll every 2 minutes
-  // as a fallback for cases where the focus event doesn't fire.
+  // a deal in the web app, switch back to Gmail). Also poll every 30s as a
+  // fallback for cases where focus/visibility events don't fire — the
+  // previous 2-minute interval left deleted deals visible for too long.
   const onFocus = () => rebuildDealsSection(sdk);
   window.addEventListener('focus', onFocus);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') rebuildDealsSection(sdk);
   });
   if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(() => rebuildDealsSection(sdk), 120_000);
+  refreshTimer = setInterval(() => rebuildDealsSection(sdk), 30_000);
 }
 
 function BoxRouteView({ dealId }) {

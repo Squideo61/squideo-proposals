@@ -168,14 +168,23 @@ export async function threadsRoute(req, res, id, action, user) {
     }
 
     // Contact-based fallback for any thread that wasn't explicitly linked.
+    // We must exclude the current user's own email from the match set —
+    // otherwise any deal that has the user attached as a contact (e.g. a
+    // test deal where the team is on the contact list) would chip every
+    // thread the user has replied to. gmailSync's auto-linker applies the
+    // same filter; this keeps the two resolvers consistent.
+    const userEmail = (user.email || '').toLowerCase();
     const unlinked = items.filter(i =>
       i && i.threadId && !linkedThreads.has(i.threadId) &&
       Array.isArray(i.senderEmails) && i.senderEmails.length
     );
     if (unlinked.length) {
       const allEmails = Array.from(new Set(
-        unlinked.flatMap(i => i.senderEmails.map(e => String(e).toLowerCase()))
+        unlinked.flatMap(i => i.senderEmails
+          .map(e => String(e).toLowerCase())
+          .filter(e => e && e !== userEmail))
       ));
+      if (!allEmails.length) return res.status(200).json(byThread);
       const matches = await sql`
         SELECT DISTINCT ON (LOWER(c.email), d.id)
                LOWER(c.email) AS email,
@@ -199,7 +208,9 @@ export async function threadsRoute(req, res, id, action, user) {
       for (const item of unlinked) {
         const seen = new Map();
         for (const email of item.senderEmails) {
-          for (const d of (dealsByEmail[String(email).toLowerCase()] || [])) {
+          const lower = String(email).toLowerCase();
+          if (!lower || lower === userEmail) continue;
+          for (const d of (dealsByEmail[lower] || [])) {
             if (!seen.has(d.dealId)) seen.set(d.dealId, d);
           }
         }

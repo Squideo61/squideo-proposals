@@ -169,7 +169,18 @@ export default async function handler(req, res) {
         return res.status(403).json({ error: 'You can only delete proposals you created' });
       }
     }
+    // Cascade-clean the auto-created `deal_<proposalId>`. We only delete it
+    // when it still has the deterministic id (i.e. nobody manually re-linked
+    // the proposal to a hand-made deal) and the deal has no other proposals
+    // hanging off it. Without this, deleted proposals leave behind orphan
+    // "Untitled deal" rows that show up in the CRM list and the Gmail
+    // extension's deal nav.
+    const autoDealId = 'deal_' + id;
     await sql`DELETE FROM proposals WHERE id = ${id}`;
+    const stillLinked = await sql`SELECT 1 FROM proposals WHERE deal_id = ${autoDealId} LIMIT 1`;
+    if (!stillLinked.length) {
+      await sql`DELETE FROM deals WHERE id = ${autoDealId}`;
+    }
     return res.status(200).json({ ok: true });
   }
 
