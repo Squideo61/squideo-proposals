@@ -95,7 +95,7 @@ const DEFAULTS = {
   caveatNote: '*The more content we are quoting for, the better the rate we can offer.',
   timelineLabel: 'When do you need this?',
   timelinePlaceholder: 'Select a timeline',
-  timelineCaveat: 'A rough idea is fine — we can adjust later.',
+  timelineCaveat: '*Please note - Turnaround times for video projects requiring more than 5 minutes of content will need to be assessed on a case-by-case basis. We will take your answer below into consideration.',
   timelineOptions: [
     "~4 weeks - It's a priority",
     "6-8 weeks - I'm happy to slot into Squideo's normal production schedule",
