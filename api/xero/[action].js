@@ -289,6 +289,7 @@ export default async function handler(req, res) {
       const to = ownerEmail ? [ownerEmail, ...recipients.filter(e => e !== ownerEmail)] : recipients;
       const title = proposal.proposalTitle || proposal.clientName || proposalId;
       const link = `${APP_URL}/?proposal=${proposalId}`;
+      const invoiceLink = `${APP_URL}/api/xero/invoice-pdf?invoiceId=${encodeURIComponent(invoiceId)}`;
       if (to.length) {
         await sendMail({
           to,
@@ -296,8 +297,9 @@ export default async function handler(req, res) {
           html: `<p>${signed.name || 'A client'} (${signed.email || ''}) chose the email-me-an-invoice route for <strong>${title}</strong>.</p>
                  <p>Billing company: <strong>${billing.companyName}</strong> (${billing.accountsEmail || ''})</p>
                  <p>An invoice ${isDeposit ? '(50% deposit)' : '(full payment)'} has been issued from Xero and emailed to the client.</p>
+                 <p style="margin:16px 0;"><a href="${invoiceLink}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">View invoice</a></p>
                  <p><a href="${link}">Open the proposal</a></p>`,
-          text: `${signed.name || 'A client'} chose invoice route for "${title}". Xero invoice issued. ${link}`,
+          text: `${signed.name || 'A client'} chose invoice route for "${title}". Xero invoice issued. View invoice: ${invoiceLink} — Proposal: ${link}`,
         });
       }
     } catch (err) {
