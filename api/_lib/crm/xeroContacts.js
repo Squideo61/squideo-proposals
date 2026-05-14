@@ -13,53 +13,14 @@ export async function xeroContactsRoute(req, res, id, action, user) {
     if (user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
     try {
       const contacts = await listAllContacts();
+      // Parallelise the upserts — each sql\`...\` is one HTTP call to Neon
+      // (~75ms), so sequential is painfully slow for hundreds of contacts.
+      // 25 in flight keeps Neon happy and well inside Vercel's 60s timeout.
+      const CONCURRENCY = 25;
       let upserts = 0;
-      for (const c of contacts) {
-        const addr = (c.Addresses || []).find(a => a.AddressType === 'STREET')
-          || (c.Addresses || [])[0]
-          || {};
-        const phone = (c.Phones || []).map(p => [p.PhoneCountryCode, p.PhoneAreaCode, p.PhoneNumber].filter(Boolean).join(' ').trim()).filter(Boolean)[0] || null;
-        await sql`
-          INSERT INTO xero_contacts (
-            id, name, email, vat_number, default_currency, status,
-            address_line1, address_line2, city, postcode, country, phone,
-            is_supplier, is_customer, xero_updated_at, last_synced_at
-          ) VALUES (
-            ${c.ContactID},
-            ${c.Name || ''},
-            ${c.EmailAddress || null},
-            ${c.TaxNumber || null},
-            ${c.DefaultCurrency || null},
-            ${c.ContactStatus || 'ACTIVE'},
-            ${addr.AddressLine1 || null},
-            ${addr.AddressLine2 || null},
-            ${addr.City || null},
-            ${addr.PostalCode || null},
-            ${addr.Country || null},
-            ${phone},
-            ${!!c.IsSupplier},
-            ${!!c.IsCustomer},
-            ${parseXeroUpdated(c.UpdatedDateUTC)},
-            NOW()
-          )
-          ON CONFLICT (id) DO UPDATE SET
-            name             = EXCLUDED.name,
-            email            = EXCLUDED.email,
-            vat_number       = EXCLUDED.vat_number,
-            default_currency = EXCLUDED.default_currency,
-            status           = EXCLUDED.status,
-            address_line1    = EXCLUDED.address_line1,
-            address_line2    = EXCLUDED.address_line2,
-            city             = EXCLUDED.city,
-            postcode         = EXCLUDED.postcode,
-            country          = EXCLUDED.country,
-            phone            = EXCLUDED.phone,
-            is_supplier      = EXCLUDED.is_supplier,
-            is_customer      = EXCLUDED.is_customer,
-            xero_updated_at  = EXCLUDED.xero_updated_at,
-            last_synced_at   = NOW()
-        `;
-        upserts += 1;
+      for (let i = 0; i < contacts.length; i += CONCURRENCY) {
+        const chunk = contacts.slice(i, i + CONCURRENCY);
+        await Promise.all(chunk.map(c => upsertContact(c).then(() => { upserts += 1; })));
       }
       return res.status(200).json({ total: contacts.length, upserts });
     } catch (err) {
@@ -166,6 +127,56 @@ function serialise(r) {
     xeroUpdatedAt: r.xero_updated_at || null,
     lastSyncedAt: r.last_synced_at || null,
   };
+}
+
+// Upserts a single Xero contact into the mirror.
+async function upsertContact(c) {
+  const addr = (c.Addresses || []).find(a => a.AddressType === 'STREET')
+    || (c.Addresses || [])[0]
+    || {};
+  const phone = (c.Phones || [])
+    .map(p => [p.PhoneCountryCode, p.PhoneAreaCode, p.PhoneNumber].filter(Boolean).join(' ').trim())
+    .filter(Boolean)[0] || null;
+  await sql`
+    INSERT INTO xero_contacts (
+      id, name, email, vat_number, default_currency, status,
+      address_line1, address_line2, city, postcode, country, phone,
+      is_supplier, is_customer, xero_updated_at, last_synced_at
+    ) VALUES (
+      ${c.ContactID},
+      ${c.Name || ''},
+      ${c.EmailAddress || null},
+      ${c.TaxNumber || null},
+      ${c.DefaultCurrency || null},
+      ${c.ContactStatus || 'ACTIVE'},
+      ${addr.AddressLine1 || null},
+      ${addr.AddressLine2 || null},
+      ${addr.City || null},
+      ${addr.PostalCode || null},
+      ${addr.Country || null},
+      ${phone},
+      ${!!c.IsSupplier},
+      ${!!c.IsCustomer},
+      ${parseXeroUpdated(c.UpdatedDateUTC)},
+      NOW()
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      name             = EXCLUDED.name,
+      email            = EXCLUDED.email,
+      vat_number       = EXCLUDED.vat_number,
+      default_currency = EXCLUDED.default_currency,
+      status           = EXCLUDED.status,
+      address_line1    = EXCLUDED.address_line1,
+      address_line2    = EXCLUDED.address_line2,
+      city             = EXCLUDED.city,
+      postcode         = EXCLUDED.postcode,
+      country          = EXCLUDED.country,
+      phone            = EXCLUDED.phone,
+      is_supplier      = EXCLUDED.is_supplier,
+      is_customer      = EXCLUDED.is_customer,
+      xero_updated_at  = EXCLUDED.xero_updated_at,
+      last_synced_at   = NOW()
+  `;
 }
 
 // Xero serialises UpdatedDateUTC as /Date(1736899200000+0000)/.
