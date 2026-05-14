@@ -181,7 +181,8 @@ export async function createInvoice({ contactId, lineItems, reference, invoiceNu
     method: 'POST',
     body: JSON.stringify(payload),
   });
-  return res.Invoices[0].InvoiceID;
+  const inv = res.Invoices[0];
+  return { invoiceId: inv.InvoiceID, invoiceNumber: inv.InvoiceNumber || null };
 }
 
 // Returns the predicted next invoice number based on the most recent ACCREC

@@ -178,13 +178,15 @@ export async function invoicesRoute(req, res, id, action, user) {
       };
     });
 
-    const xeroInvoiceId = await createInvoice({
+    const { invoiceId: xeroInvoiceId, invoiceNumber: xeroInvoiceNumber } = await createInvoice({
       contactId: xeroContactId,
       lineItems: xeroLineItems,
       invoiceNumber: invoiceNumber?.trim() || undefined,
       issueDate: issuedAt || undefined,
       dueDate: dueAt || undefined,
     });
+    // Use the number Xero assigned (covers auto-assign when field was left blank)
+    const storedInvoiceNumber = xeroInvoiceNumber || trimOrNull(invoiceNumber);
 
     // Calculate inc-VAT total for our own record.
     const totalAmount = lineItems.reduce((sum, li) => {
@@ -204,7 +206,7 @@ export async function invoicesRoute(req, res, id, action, user) {
         ${newId},
         ${resolvedDealId},
         ${trimOrNull(proposalId)},
-        ${trimOrNull(invoiceNumber)},
+        ${storedInvoiceNumber},
         ${Number(totalAmount.toFixed(2))},
         ${trimOrNull(issuedAt) || new Date().toISOString().slice(0, 10)},
         ${trimOrNull(dueAt)},
@@ -535,7 +537,7 @@ async function pushInvoiceToXero({ invoiceId, dealId, proposalId, invoiceNumber,
     const unitAmount = isVat
       ? Number((amount / (1 + vat / 100)).toFixed(2))
       : Number(Number(amount).toFixed(2));
-    const xeroInvoiceId = await createInvoice({
+    const { invoiceId: xeroInvoiceId } = await createInvoice({
       contactId,
       lineItems: [{
         description: notes || (invoiceNumber ? `Invoice ${invoiceNumber}` : 'Squideo Services'),

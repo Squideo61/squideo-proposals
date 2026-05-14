@@ -260,13 +260,13 @@ export default async function handler(req, res) {
       const paymentLabel = isDeposit ? '50% deposit' : (isPartner ? 'Project + Partner first month' : 'Full payment');
       const referenceBase = proposalNumber || (proposal.proposalTitle || proposal.clientName || proposalId);
       const reference = `${referenceBase} — ${paymentLabel}`.slice(0, 80);
-      invoiceId = await createInvoice({
+      ({ invoiceId } = await createInvoice({
         contactId,
         lineItems,
         reference,
         dueDate,
         status: 'AUTHORISED',
-      });
+      }));
 
       await sql`UPDATE proposal_billing SET xero_invoice_id = ${invoiceId} WHERE proposal_id = ${proposalId}`;
 

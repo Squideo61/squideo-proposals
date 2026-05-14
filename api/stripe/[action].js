@@ -151,13 +151,13 @@ async function pushInitialXeroInvoice({ proposalId, isDeposit, isPartner, paidAm
     // payment below if the previous attempt failed between create and pay.
     let invoiceId = paymentRow?.xero_invoice_id;
     if (!invoiceId) {
-      invoiceId = await createInvoice({
+      ({ invoiceId } = await createInvoice({
         contactId,
         lineItems,
         reference,
         dueDate,
         status: 'AUTHORISED',
-      });
+      }));
       await sql`UPDATE payments SET xero_invoice_id = ${invoiceId} WHERE proposal_id = ${proposalId}`;
     }
 
@@ -309,13 +309,13 @@ async function pushRecurringXeroInvoice({ stripe, invoice }) {
     const referenceBase = proposalNumber || (proposal.proposalTitle || proposal.clientName || proposalId);
     let xeroInvoiceId = existing?.xero_invoice_id;
     if (!xeroInvoiceId) {
-      xeroInvoiceId = await createInvoice({
+      ({ invoiceId: xeroInvoiceId } = await createInvoice({
         contactId,
         lineItems,
         reference: `${referenceBase} — Partner month ${monthNumber}`.slice(0, 80),
         dueDate,
         status: 'AUTHORISED',
-      });
+      }));
       await sql`UPDATE partner_invoices SET xero_invoice_id = ${xeroInvoiceId} WHERE stripe_invoice_id = ${invoice.id}`;
     }
 
