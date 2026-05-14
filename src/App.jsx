@@ -29,6 +29,7 @@ const CompanyDetailView = lazyNamed(() => import('./components/crm/CompanyDetail
 const TasksView = lazyNamed(() => import('./components/crm/TasksView.jsx'), 'TasksView');
 const TriageView = lazyNamed(() => import('./components/crm/TriageView.jsx'), 'TriageView');
 const QuoteRequestsView = lazyNamed(() => import('./components/crm/QuoteRequestsView.jsx'), 'QuoteRequestsView');
+const XeroDuplicatesView = lazyNamed(() => import('./components/crm/XeroDuplicatesView.jsx'), 'XeroDuplicatesView');
 
 function ViewFallback() {
   return (
@@ -245,6 +246,7 @@ function AppShell() {
           onManageTasks={() => navigate('tasks')}
           onManageTriage={() => navigate('triage')}
           onManageQuoteRequests={() => navigate('quote-requests')}
+          onManageXeroDuplicates={() => navigate('xero-duplicates')}
         />
       )}
       {view === 'pipeline' && (
@@ -305,6 +307,9 @@ function AppShell() {
       )}
       {view === 'leaderboard' && (
         <LeaderboardView onBack={() => navigate('list')} />
+      )}
+      {view === 'xero-duplicates' && (
+        <XeroDuplicatesView onBack={() => navigate('list')} />
       )}
       {view === 'partner-credits' && (
         <PartnerCreditsView

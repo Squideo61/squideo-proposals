@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BarChart3, Check, CheckSquare, Clock, Contact, Copy, Coins, Download, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Search, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
+import { AlertTriangle, BarChart3, Check, CheckSquare, Clock, Contact, Copy, Coins, Download, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Search, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, useIsMobile } from '../utils.js';
@@ -9,7 +9,7 @@ import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
 const TEAM_FILTER_STORAGE_KEY = 'squideo.dashboard.teamMemberFilter';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage, onManageQuoteRequests }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageUsers, onManageNotifications, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage, onManageQuoteRequests, onManageXeroDuplicates }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   const [memberFilter, setMemberFilter] = useState(() => {
@@ -114,6 +114,9 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
           <button onClick={onManageLeaderboard} className="btn-ghost"><Trophy size={14} /> Leaderboard</button>
           <button onClick={onManagePartnerCredits} className="btn-ghost"><Coins size={14} /> Partner Credits</button>
           <button onClick={onManageTemplates} className="btn-ghost"><LayoutTemplate size={14} /> Templates</button>
+          {onManageXeroDuplicates && user.role === 'admin' && (
+            <button onClick={onManageXeroDuplicates} className="btn-ghost"><AlertTriangle size={14} /> Xero Duplicates</button>
+          )}
           <button onClick={onManageNotifications} className="btn-ghost"><Mail size={14} /> Notifications</button>
           <button onClick={onManageUsers} className="btn-ghost"><Users size={14} /> Users</button>
           <button
