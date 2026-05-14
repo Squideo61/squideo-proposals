@@ -5,6 +5,7 @@ import { syncHistory } from '../gmailSync.js';
 import { escapeHtml } from './shared.js';
 import { getFreshAccessToken } from './gmail.js';
 import { buildResumeEmail } from '../quoteResumeEmail.js';
+import { signTaskActionToken } from '../auth.js';
 
 export async function cronHandler(req, res, action) {
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
@@ -197,16 +198,25 @@ export async function cronTaskReminders(res) {
     const dueLabel = new Date(t.due_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
     const dealLink = t.deal_id ? `${APP_URL}/?deal=${encodeURIComponent(t.deal_id)}` : APP_URL;
     const subject = `Reminder: ${t.title}`;
-    const html = `
+    // Per-recipient signed token so each click is attributable in the audit log.
+    const baseRoot = APP_URL.replace(/\/$/, '');
+    const buildHtml = (doneUrl) => `
       <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Task due ${dueLabel}</h2>
       <p style="margin:0 0 12px;"><strong>${escapeHtml(t.title)}</strong>${t.deal_title ? ` — on deal <em>${escapeHtml(t.deal_title)}</em>` : ''}</p>
       ${t.notes ? `<p style="margin:0 0 16px;color:#6B7785;">${escapeHtml(t.notes)}</p>` : ''}
-      <p style="margin:16px 0 0;"><a href="${dealLink}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open in Squideo</a></p>
+      <p style="margin:16px 0 0;">
+        <a href="${doneUrl}" style="display:inline-block;background:#16A34A;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin-right:8px;">Mark as done</a>
+        <a href="${dealLink}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open in Squideo</a>
+      </p>
     `;
-    const text = `Reminder: ${t.title} — due ${dueLabel}${t.deal_title ? ' (deal: ' + t.deal_title + ')' : ''}. ${dealLink}`;
     // Fan out in parallel — Resend rate limits are well above our team size.
     const results = await Promise.allSettled(
-      recipients.map(to => sendMail({ to, subject, html, text }))
+      recipients.map(async (to) => {
+        const token = await signTaskActionToken({ taskId: t.id, email: to, action: 'done' });
+        const doneUrl = `${baseRoot}/api/crm/tasks/${encodeURIComponent(t.id)}/done-link?token=${encodeURIComponent(token)}`;
+        const text = `Reminder: ${t.title} — due ${dueLabel}${t.deal_title ? ' (deal: ' + t.deal_title + ')' : ''}.\nMark done: ${doneUrl}\nOpen: ${dealLink}`;
+        return sendMail({ to, subject, html: buildHtml(doneUrl), text });
+      })
     );
     const anySent = results.some(r => r.status === 'fulfilled');
     results.forEach((r, i) => {

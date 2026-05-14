@@ -1,5 +1,7 @@
 import sql from '../db.js';
 import { makeId, trimOrNull } from './shared.js';
+import { verifyTaskActionToken } from '../auth.js';
+import { APP_URL } from '../email.js';
 
 // Accept either the new array field (`assigneeEmails`) or the legacy single
 // (`assigneeEmail`) for one release so old clients don't break mid-deploy.
@@ -197,6 +199,83 @@ export async function tasksRoute(req, res, id, action, user) {
   }
 
   return res.status(405).end();
+}
+
+// One-click "Mark as done" from a reminder email. Auth comes from the signed
+// token in the URL (audience: task-action), so no session is required.
+export async function taskDoneLinkRoute(req, res) {
+  if (req.method !== 'GET') return res.status(405).end();
+  const url = new URL(req.url, 'http://x');
+  const token = url.searchParams.get('token');
+  const taskId = url.searchParams.get('_id');
+  if (!token || !taskId) return res.status(400).send(renderTaskActionPage({ title: 'Bad request', body: 'Missing token.' }));
+
+  let payload;
+  try {
+    payload = await verifyTaskActionToken(token);
+  } catch (err) {
+    return res.status(401).send(renderTaskActionPage({
+      title: 'Link expired',
+      body: 'This one-click link is no longer valid. Open Squideo to mark the task done.',
+    }));
+  }
+  if (payload.taskId !== taskId || payload.act !== 'done') {
+    return res.status(400).send(renderTaskActionPage({ title: 'Bad request', body: 'Token does not match this task.' }));
+  }
+
+  // Idempotent: only flip if currently undone. Concurrent clicks won't reopen.
+  const rows = await sql`
+    UPDATE tasks
+       SET done_at = NOW()
+     WHERE id = ${taskId} AND done_at IS NULL
+     RETURNING deal_id, title
+  `;
+  if (rows.length) {
+    const { deal_id, title } = rows[0];
+    if (deal_id) {
+      await sql`
+        INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+        VALUES (${deal_id}, 'task_done', ${JSON.stringify({ taskId, title, via: 'email' })}, ${payload.email || null})
+      `;
+      await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${deal_id}`;
+    }
+    return res.status(200).send(renderTaskActionPage({
+      title: 'Task marked done',
+      body: `<strong>${escapeForHtml(title || 'Your task')}</strong> is now complete.`,
+    }));
+  }
+
+  // Either the task doesn't exist or it was already done. Surface both as
+  // benign so re-clicking the link doesn't feel like an error.
+  const existing = await sql`SELECT title, done_at FROM tasks WHERE id = ${taskId}`;
+  if (!existing.length) {
+    return res.status(404).send(renderTaskActionPage({ title: 'Task not found', body: 'It may have been deleted.' }));
+  }
+  return res.status(200).send(renderTaskActionPage({
+    title: 'Already done',
+    body: `<strong>${escapeForHtml(existing[0].title || 'This task')}</strong> was already marked complete.`,
+  }));
+}
+
+function escapeForHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderTaskActionPage({ title, body }) {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>${escapeForHtml(title)} · Squideo</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0;padding:48px 16px;background:#FAFBFC;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0F2A3D;}
+.card{max-width:480px;margin:0 auto;background:#fff;border:1px solid #E5E9EE;border-radius:12px;padding:32px;text-align:center;}
+h1{margin:0 0 12px;font-size:22px;}p{margin:0 0 20px;color:#3B4A57;line-height:1.5;}
+a.btn{display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;}</style>
+</head><body><div class="card">
+<h1>${escapeForHtml(title)}</h1>
+<p>${body}</p>
+<p><a class="btn" href="${escapeForHtml(APP_URL)}">Open Squideo</a></p>
+</div></body></html>`;
 }
 
 export function serialiseTask(r) {

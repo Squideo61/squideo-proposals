@@ -5,7 +5,7 @@ import { cors, requireAuth } from '../_lib/middleware.js';
 import { companiesRoute } from '../_lib/crm/companies.js';
 import { contactsRoute } from '../_lib/crm/contacts.js';
 import { dealsRoute } from '../_lib/crm/deals.js';
-import { tasksRoute } from '../_lib/crm/tasks.js';
+import { tasksRoute, taskDoneLinkRoute } from '../_lib/crm/tasks.js';
 import { triageRoute } from '../_lib/crm/triage.js';
 import { emailsRoute } from '../_lib/crm/emails.js';
 import { threadsRoute } from '../_lib/crm/threads.js';
@@ -58,6 +58,12 @@ export default async function handler(req, res) {
   // handler verifies it itself, so no app-level auth.
   if (resource === 'gmail' && id === 'push') {
     return gmailPush(req, res);
+  }
+
+  // One-click "Mark task done" from a reminder email. Auth via signed token
+  // in the URL, not a session — recipients click straight from their inbox.
+  if (resource === 'tasks' && action === 'done-link') {
+    return taskDoneLinkRoute(req, res);
   }
 
   // Backfill self-chain. The first invocation runs under the user's session
