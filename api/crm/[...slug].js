@@ -14,6 +14,7 @@ import { commentsRoute } from '../_lib/crm/comments.js';
 import { paymentsRoute } from '../_lib/crm/payments.js';
 import { invoicesRoute } from '../_lib/crm/invoices.js';
 import { retainersRoute } from '../_lib/crm/retainers.js';
+import { xeroContactsRoute } from '../_lib/crm/xeroContacts.js';
 import { gmailRoute, gmailCallback } from '../_lib/crm/gmail.js';
 import { gmailPush } from '../_lib/crm/gmailPush.js';
 import { gmailBackfill } from '../_lib/crm/gmailBackfill.js';
@@ -89,6 +90,7 @@ export default async function handler(req, res) {
       case 'payments':  return await paymentsRoute(req, res, id, action, user);
       case 'invoices':   return await invoicesRoute(req, res, id, action, user);
       case 'retainers':  return await retainersRoute(req, res, id, action, user);
+      case 'xero-contacts': return await xeroContactsRoute(req, res, id, action, user);
       default:           return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {

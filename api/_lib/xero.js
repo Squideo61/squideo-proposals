@@ -126,7 +126,21 @@ function escapeWhere(s) {
   return String(s || '').replace(/"/g, '\\"');
 }
 
-export async function getOrCreateContact({ name, email, address, vatNumber }) {
+// Resolves a Xero ContactID. Caller can pass `xeroContactId` to bypass the
+// name-search entirely — that's the duplicate-prevention path used once the
+// local company has been linked to a Xero contact. If `xeroContactId` is
+// supplied and refers to an archived contact, it's auto-unarchived so the
+// invoice push doesn't 400.
+export async function getOrCreateContact({ xeroContactId, name, email, address, vatNumber }) {
+  if (xeroContactId) {
+    try {
+      const ok = await ensureActiveContact(xeroContactId);
+      if (ok) return xeroContactId;
+    } catch (err) {
+      console.warn('[xero] ensureActiveContact failed, falling back to name search', err.message);
+    }
+  }
+
   const trimmedName = (name || '').trim();
   if (!trimmedName) throw new Error('[xero] contact name is required');
 
@@ -156,6 +170,45 @@ export async function getOrCreateContact({ name, email, address, vatNumber }) {
     body: JSON.stringify(payload),
   });
   return created.Contacts[0].ContactID;
+}
+
+// Confirms a Xero contact exists and is not archived. If archived, flips it
+// back to ACTIVE so the invoice push doesn't 400. Returns true on success.
+async function ensureActiveContact(contactId) {
+  const res = await xeroFetch(`/api.xro/2.0/Contacts/${encodeURIComponent(contactId)}`);
+  const c = res?.Contacts?.[0];
+  if (!c) return false;
+  if (c.ContactStatus === 'ARCHIVED') {
+    await xeroFetch(`/api.xro/2.0/Contacts/${encodeURIComponent(contactId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ ContactStatus: 'ACTIVE' }),
+    });
+  }
+  return true;
+}
+
+// Paginates through every Xero contact and returns them. Includes archived
+// contacts so the mirror reflects everything. Optionally pass an ISO date
+// string to `modifiedSince` for incremental pulls (uses Xero's
+// If-Modified-Since header). Each page returns up to 100 contacts.
+export async function listAllContacts({ modifiedSince = null } = {}) {
+  const all = [];
+  let page = 1;
+  while (true) {
+    const headers = modifiedSince ? { 'If-Modified-Since': new Date(modifiedSince).toUTCString() } : {};
+    const json = await xeroFetch(
+      `/api.xro/2.0/Contacts?page=${page}&includeArchived=true`,
+      { headers },
+    );
+    const batch = json?.Contacts || [];
+    all.push(...batch);
+    if (batch.length < 100) break;
+    page += 1;
+    // Safety net — Xero would never return more than a few hundred pages for
+    // a normal org, but cap to avoid runaway loops.
+    if (page > 200) break;
+  }
+  return all;
 }
 
 export async function createInvoice({ contactId, lineItems, reference, invoiceNumber, issueDate, dueDate, status = 'AUTHORISED' }) {
