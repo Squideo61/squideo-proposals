@@ -88,10 +88,11 @@ const DEFAULTS = {
   companyPlaceholder: 'Your company name',
   projectDetailsLabel: 'Project details',
   projectDetailsPlaceholder: 'Tell us about your project — goals, audience, style references…',
-  caveatIntro: 'For the most accurate quote, please share:',
-  caveatPoint1: '• What the video is for (audience, use, goals)',
-  caveatPoint2: '• Any references, style ideas, or examples you like',
-  caveatNote: "Even a rough description helps — we'll follow up with any questions.",
+  caveatIntro: "To quote accurately, we'll need to know:",
+  caveatPoint1: "• How many videos you're looking for",
+  caveatPoint2: '• How long each of the videos need to be (roughly)',
+  caveatPoint3: '• Any references, style ideas, or examples you like',
+  caveatNote: '*The more content we are quoting for, the better the rate we can offer.',
   timelineLabel: 'When do you need this?',
   timelinePlaceholder: 'Select a timeline',
   timelineCaveat: 'A rough idea is fine — we can adjust later.',
@@ -831,6 +832,7 @@ export function QuoteRequestForm(props = {}) {
                 <p className="caveat-intro">{cfg.caveatIntro}</p>
                 <p className="caveat-item">{cfg.caveatPoint1}</p>
                 <p className="caveat-item">{cfg.caveatPoint2}</p>
+                <p className="caveat-item">{cfg.caveatPoint3}</p>
                 <p className="caveat-note">{cfg.caveatNote}</p>
               </div>
               <textarea
