@@ -87,7 +87,7 @@ const DEFAULTS = {
   companyLabel: 'Company',
   companyPlaceholder: 'Your company name',
   projectDetailsLabel: 'Project details',
-  projectDetailsPlaceholder: 'Tell us about your project — goals, audience, style references…',
+  projectDetailsPlaceholder: 'Just one video, or more? A short description is just fine at this stage. If you have a brief or script already you can upload one in the next step.',
   caveatIntro: "To quote accurately, we'll need to know:",
   caveatPoint1: "• How many videos you're looking for",
   caveatPoint2: '• How long each of the videos need to be (roughly)',
