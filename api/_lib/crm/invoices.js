@@ -14,7 +14,7 @@ import sql from '../db.js';
 import { advanceStage } from '../dealStage.js';
 import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
-import { getOrCreateContact, createInvoice, createPayment } from '../xero.js';
+import { getOrCreateContact, createInvoice, createPayment, voidInvoice } from '../xero.js';
 
 export async function invoicesRoute(req, res, id, action, user) {
   // --- GET /api/crm/invoices?dealId=...
@@ -470,10 +470,10 @@ export async function invoicesRoute(req, res, id, action, user) {
     return res.status(200).json({ ok: true });
   }
 
-  // --- DELETE /api/crm/invoices/:id — remove DB row + Blob
+  // --- DELETE /api/crm/invoices/:id — remove DB row + Blob + void in Xero
   if (id && req.method === 'DELETE') {
     const manualId = stripManualPrefix(id);
-    const cur = (await sql`SELECT blob_url, uploaded_by FROM manual_invoices WHERE id = ${manualId}`)[0];
+    const cur = (await sql`SELECT blob_url, uploaded_by, xero_invoice_id FROM manual_invoices WHERE id = ${manualId}`)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
     if (user.role !== 'admin' && cur.uploaded_by !== user.email) {
       return res.status(403).json({ error: 'Forbidden' });
@@ -481,6 +481,11 @@ export async function invoicesRoute(req, res, id, action, user) {
     if (cur.blob_url) {
       try { await del(cur.blob_url); } catch (err) {
         console.error('[invoices] blob delete failed', err.message);
+      }
+    }
+    if (cur.xero_invoice_id) {
+      try { await voidInvoice(cur.xero_invoice_id); } catch (err) {
+        console.error('[invoices] xero void failed', err.message);
       }
     }
     await sql`DELETE FROM manual_invoices WHERE id = ${manualId}`;

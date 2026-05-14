@@ -216,6 +216,13 @@ export async function getNextInvoiceNumber() {
   }
 }
 
+export async function voidInvoice(invoiceId) {
+  await xeroFetch(`/api.xro/2.0/Invoices/${encodeURIComponent(invoiceId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ Status: 'VOIDED' }),
+  });
+}
+
 export async function emailInvoice(invoiceId) {
   await xeroFetch(`/api.xro/2.0/Invoices/${invoiceId}/Email`, {
     method: 'POST',
