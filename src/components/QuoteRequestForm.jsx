@@ -70,7 +70,7 @@ const DEFAULTS = {
   step1Title: "Let's get to know you",
   step1Description: 'Quick details so we know how to reach you.',
   step2Title: 'Tell us about your project',
-  step2Description: 'The more detail you share, the more accurate your quote.',
+  step2Description: "Help us understand what you're looking for",
   step3Title: "Timeline and budget",
   step3Description: 'Help us understand your needs.',
   step4Title: 'Almost done!',
