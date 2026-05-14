@@ -133,6 +133,100 @@ export async function invoicesRoute(req, res, id, action, user) {
     return res.status(200).json(out);
   }
 
+  // --- POST /api/crm/invoices (JSON) — create a Xero invoice with full line
+  // items and store the resulting xero_invoice_id in manual_invoices.
+  // This path is triggered when Content-Type is application/json, which the
+  // CRM body parser will have already parsed into req.body.
+  if (!id && req.method === 'POST' && (req.headers['content-type'] || '').startsWith('application/json')) {
+    const body = req.body || {};
+    const { dealId, proposalId, contactName, lineItems, invoiceNumber, issuedAt, dueAt } = body;
+
+    if (!Array.isArray(lineItems) || !lineItems.length) {
+      return res.status(400).json({ error: 'At least one line item required' });
+    }
+    if (!dealId && !proposalId) {
+      return res.status(400).json({ error: 'dealId or proposalId required' });
+    }
+
+    let resolvedDealId = dealId || null;
+    if (!resolvedDealId && proposalId) {
+      const [pr] = await sql`SELECT deal_id FROM proposals WHERE id = ${proposalId}`;
+      resolvedDealId = pr?.deal_id || null;
+    }
+
+    // Resolve Xero contact — prefer the explicit name sent from the UI.
+    let xeroContactInfo = contactName?.trim()
+      ? { name: contactName.trim(), email: null }
+      : await resolveXeroContactInfo(resolvedDealId, proposalId);
+    if (!xeroContactInfo?.name) {
+      return res.status(400).json({ error: 'Could not determine client name for Xero invoice' });
+    }
+    const xeroContactId = await getOrCreateContact({
+      name: xeroContactInfo.name,
+      email: xeroContactInfo.email || undefined,
+    });
+
+    const xeroLineItems = lineItems.map(li => {
+      const vat = Number(li.vatRate) || 0;
+      return {
+        description: String(li.description || '').trim(),
+        quantity: Number(li.quantity) || 1,
+        unitAmount: Number(Number(li.unitAmount || 0).toFixed(2)),
+        taxType: vat > 0 ? 'OUTPUT2' : 'NONE',
+        accountCode: '200',
+        discountRate: li.discountRate ? Number(li.discountRate) : undefined,
+      };
+    });
+
+    const xeroInvoiceId = await createInvoice({
+      contactId: xeroContactId,
+      lineItems: xeroLineItems,
+      invoiceNumber: invoiceNumber?.trim() || undefined,
+      issueDate: issuedAt || undefined,
+      dueDate: dueAt || undefined,
+    });
+
+    // Calculate inc-VAT total for our own record.
+    const totalAmount = lineItems.reduce((sum, li) => {
+      const qty = Number(li.quantity) || 1;
+      const price = Number(li.unitAmount || 0);
+      const disc = Number(li.discountRate || 0);
+      const vat = Number(li.vatRate || 0);
+      return sum + qty * price * (1 - disc / 100) * (1 + vat / 100);
+    }, 0);
+
+    const newId = makeId('inv');
+    await sql`
+      INSERT INTO manual_invoices (
+        id, deal_id, proposal_id, invoice_number, amount,
+        issued_at, due_at, status, notes, uploaded_by, xero_invoice_id
+      ) VALUES (
+        ${newId},
+        ${resolvedDealId},
+        ${trimOrNull(proposalId)},
+        ${trimOrNull(invoiceNumber)},
+        ${Number(totalAmount.toFixed(2))},
+        ${trimOrNull(issuedAt) || new Date().toISOString().slice(0, 10)},
+        ${trimOrNull(dueAt)},
+        'issued',
+        ${lineItems.map(li => li.description).filter(Boolean).join(', ') || null},
+        ${user.email || null},
+        ${xeroInvoiceId}
+      )
+    `;
+
+    const pdfUrl = '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(xeroInvoiceId);
+    return res.status(201).json({
+      id: 'manual:' + newId,
+      source: 'manual',
+      xeroInvoiceId,
+      invoiceNumber: trimOrNull(invoiceNumber),
+      amount: Number(totalAmount.toFixed(2)),
+      status: 'issued',
+      pdfUrl,
+    });
+  }
+
   // --- POST /api/crm/invoices — create a manual invoice.
   // PDF is optional. If a file body is present, it is stored in Vercel Blob.
   // If no file is provided, a metadata-only invoice is created (blob_url = null).

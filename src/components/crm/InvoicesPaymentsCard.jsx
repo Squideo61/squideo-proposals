@@ -8,6 +8,7 @@ import { Card, Empty } from './Card.jsx';
 import { AddInvoiceModal } from './AddInvoiceModal.jsx';
 import { AddPaymentModal } from './AddPaymentModal.jsx';
 import { MarkInvoicePaidModal } from './MarkInvoicePaidModal.jsx';
+import { CreateXeroInvoiceModal } from './CreateXeroInvoiceModal.jsx';
 
 const STATUS_LABEL = { authorised: 'Issued', issued: 'Issued', paid: 'Paid', void: 'Void' };
 const STATUS_COLOR = {
@@ -17,12 +18,13 @@ const STATUS_COLOR = {
   void: '#DC2626',
 };
 
-export function InvoicesPaymentsCard({ dealId, proposals }) {
+export function InvoicesPaymentsCard({ dealId, proposals, contactName }) {
   const { showMsg } = useStore();
   const [invoices, setInvoices] = useState(null);
   const [payments, setPayments] = useState(null);
   const [adding, setAdding] = useState(false);
   const [addingPayment, setAddingPayment] = useState(false);
+  const [creatingXero, setCreatingXero] = useState(false);
 
   const reloadInvoices = useCallback(() => {
     api.get('/api/crm/invoices?dealId=' + encodeURIComponent(dealId))
@@ -64,7 +66,8 @@ export function InvoicesPaymentsCard({ dealId, proposals }) {
       count={count || undefined}
       action={(
         <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={() => setAdding(true)} className="btn-ghost"><Plus size={12} /> Add invoice</button>
+          <button onClick={() => setCreatingXero(true)} className="btn"><Plus size={12} /> Create invoice</button>
+          <button onClick={() => setAdding(true)} className="btn-ghost"><Plus size={12} /> Upload invoice</button>
           <button onClick={() => setAddingPayment(true)} className="btn-ghost"><Plus size={12} /> Add payment</button>
         </div>
       )}
@@ -103,6 +106,14 @@ export function InvoicesPaymentsCard({ dealId, proposals }) {
         </div>
       )}
 
+      {creatingXero && (
+        <CreateXeroInvoiceModal
+          dealId={dealId}
+          contactName={contactName}
+          onClose={() => setCreatingXero(false)}
+          onCreated={() => { setCreatingXero(false); reloadInvoices(); }}
+        />
+      )}
       {adding && (
         <AddInvoiceModal
           dealId={dealId}

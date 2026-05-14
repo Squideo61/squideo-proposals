@@ -201,7 +201,11 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         </Card>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <InvoicesPaymentsCard dealId={dealId} proposals={proposals} />
+          <InvoicesPaymentsCard
+            dealId={dealId}
+            proposals={proposals}
+            contactName={company?.name || contact?.name || deal.title}
+          />
         </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>

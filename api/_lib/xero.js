@@ -158,13 +158,15 @@ export async function getOrCreateContact({ name, email, address, vatNumber }) {
   return created.Contacts[0].ContactID;
 }
 
-export async function createInvoice({ contactId, lineItems, reference, dueDate, status = 'AUTHORISED' }) {
+export async function createInvoice({ contactId, lineItems, reference, invoiceNumber, issueDate, dueDate, status = 'AUTHORISED' }) {
   const payload = {
     Type: 'ACCREC',
     Contact: { ContactID: contactId },
     LineAmountTypes: 'Exclusive',
     Status: status,
+    InvoiceNumber: invoiceNumber || undefined,
     Reference: reference || undefined,
+    Date: issueDate || undefined,
     DueDate: dueDate || undefined,
     LineItems: lineItems.map(li => ({
       Description: li.description,
@@ -172,6 +174,7 @@ export async function createInvoice({ contactId, lineItems, reference, dueDate, 
       UnitAmount: li.unitAmount,
       TaxType: li.taxType,
       AccountCode: li.accountCode,
+      DiscountRate: li.discountRate || undefined,
     })),
   };
   const res = await xeroFetch('/api.xro/2.0/Invoices', {
@@ -179,6 +182,27 @@ export async function createInvoice({ contactId, lineItems, reference, dueDate, 
     body: JSON.stringify(payload),
   });
   return res.Invoices[0].InvoiceID;
+}
+
+// Returns the predicted next invoice number based on the most recent ACCREC
+// invoice in Xero. Parses "INV-6059" → "INV-6060". Returns null on failure.
+export async function getNextInvoiceNumber() {
+  try {
+    const json = await xeroFetch(
+      '/api.xro/2.0/Invoices?Type=ACCREC&order=InvoiceNumber+DESC&page=1&pageSize=1'
+    );
+    const inv = json?.Invoices?.[0];
+    if (!inv?.InvoiceNumber) return null;
+    const match = inv.InvoiceNumber.match(/^(.+?)(\d+)$/);
+    if (!match) return null;
+    const prefix = match[1];
+    const digits = match[2];
+    const nextNum = String(parseInt(digits, 10) + 1).padStart(digits.length, '0');
+    return `${prefix}${nextNum}`;
+  } catch (err) {
+    console.warn('[xero] getNextInvoiceNumber failed', err.message);
+    return null;
+  }
 }
 
 export async function emailInvoice(invoiceId) {

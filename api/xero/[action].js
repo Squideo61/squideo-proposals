@@ -7,7 +7,7 @@
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, APP_URL } from '../_lib/email.js';
-import { getOrCreateContact, createInvoice, emailInvoice, getInvoicePdf, getInvoiceNumber } from '../_lib/xero.js';
+import { getOrCreateContact, createInvoice, emailInvoice, getInvoicePdf, getInvoiceNumber, getNextInvoiceNumber } from '../_lib/xero.js';
 import {
   lineItemsForProject,
   lineItemsForDiscountedProject,
@@ -145,6 +145,16 @@ export default async function handler(req, res) {
       console.error('[xero callback] failed', err);
       return res.status(500).send('Callback failed: ' + err.message);
     }
+  }
+
+  // --- /api/xero/next-invoice-number ---
+  // Returns the predicted next invoice number so the CRM can pre-fill it.
+  if (action === 'next-invoice-number') {
+    if (req.method !== 'GET') return res.status(405).end();
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const nextNumber = await getNextInvoiceNumber();
+    return res.status(200).json({ nextNumber });
   }
 
   // --- /api/xero/invoice-pdf?invoiceId=... ---
