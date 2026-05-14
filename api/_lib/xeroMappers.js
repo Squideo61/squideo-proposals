@@ -19,10 +19,19 @@ export function formatProposalNumber(year, seq) {
 
 export function lineItemsForProject(proposal, signed, proposalNumber) {
   const taxType = taxTypeForRate(proposal.vatRate);
-  const title = proposal.proposalTitle || proposal.clientName || 'Video production';
+  // Prefer the actual deliverable text the client agreed to: in option mode
+  // that's the picked option's description; in single mode it's the
+  // proposal's requirement field. Fall back to title for legacy proposals
+  // with neither field populated.
+  const requirementText =
+    signed?.selectedVideoOption?.description?.trim()
+    || proposal.requirement?.trim()
+    || proposal.proposalTitle
+    || proposal.clientName
+    || 'Video production';
   const prefix = proposalNumber ? `${proposalNumber} — ` : '';
   const lines = [{
-    description: prefix + title,
+    description: prefix + requirementText,
     quantity: 1,
     unitAmount: Number(signed?.selectedVideoOption?.price ?? proposal.basePrice) || 0,
     taxType,
