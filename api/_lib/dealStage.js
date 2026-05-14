@@ -57,6 +57,21 @@ export async function dealIdForProposal(proposalId) {
   return rows[0]?.deal_id || null;
 }
 
+// Returns the linked Xero contact ID for a proposal via deal → company.
+// Used by the invoice push paths so the existing Xero contact is reused
+// instead of the billing-form name creating a duplicate.
+export async function xeroContactIdForProposal(proposalId) {
+  if (!proposalId) return null;
+  const rows = await sql`
+    SELECT c.xero_contact_id
+      FROM proposals p
+      LEFT JOIN deals d     ON d.id = p.deal_id
+      LEFT JOIN companies c ON c.id = d.company_id
+     WHERE p.id = ${proposalId}
+  `;
+  return rows[0]?.xero_contact_id || null;
+}
+
 // Append a non-stage event to the timeline. Use for proposal_sent, task_created,
 // note, etc. — anything that should appear on the deal timeline without
 // changing the stage.

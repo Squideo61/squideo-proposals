@@ -2,6 +2,7 @@ import sql from '../_lib/db.js';
 import { cors } from '../_lib/middleware.js';
 import { sendMail, APP_URL } from '../_lib/email.js';
 import { getOrCreateContact, createQuote } from '../_lib/xero.js';
+import { xeroContactIdForProposal } from '../_lib/dealStage.js';
 import {
   lineItemsForProject,
   lineItemsForDiscountedProject,
@@ -68,7 +69,11 @@ export default async function handler(req, res) {
 
   let quoteId;
   try {
-    const contactId = await getOrCreateContact(billingToContact(billing, signed.email));
+    const linkedXeroContactId = await xeroContactIdForProposal(proposalId);
+    const contactId = await getOrCreateContact({
+      ...billingToContact(billing, signed.email),
+      xeroContactId: linkedXeroContactId || undefined,
+    });
 
     const isPartner = !!signed.partnerSelected && !!signed.amountBreakdown;
     const lineItems = isPartner

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Building2, Globe, User, Edit2 } from 'lucide-react';
+import { ArrowLeft, Building2, Globe, User, Edit2, Link2, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatGBP, formatRelativeTime } from '../../utils.js';
@@ -7,11 +7,16 @@ import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
 import { PaymentsCard } from './PaymentsCard.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
+import { XeroContactPicker } from './XeroContactPicker.jsx';
 
 export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact, onEdit }) {
   const { showMsg } = useStore();
   const isMobile = useIsMobile();
   const [detail, setDetail] = useState(null);
+  const [linking, setLinking] = useState(false);
+  const [xeroContact, setXeroContact] = useState(null);
+
+  const reload = () => api.get('/api/crm/companies/' + encodeURIComponent(companyId) + '/detail').then(setDetail);
 
   useEffect(() => {
     if (!companyId) return;
@@ -19,6 +24,30 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
       .then(setDetail)
       .catch((err) => showMsg?.(err.message || 'Failed to load company', 'error'));
   }, [companyId, showMsg]);
+
+  async function handleSaveLink() {
+    if (!xeroContact) return;
+    try {
+      await api.patch('/api/crm/companies/' + encodeURIComponent(companyId), { xeroContactId: xeroContact.id });
+      showMsg?.(`Linked to Xero: ${xeroContact.name}`, 'success');
+      setLinking(false);
+      setXeroContact(null);
+      reload();
+    } catch (err) {
+      showMsg?.(err.message || 'Failed to link', 'error');
+    }
+  }
+
+  async function handleUnlink() {
+    if (!confirm('Unlink this company from its Xero contact?')) return;
+    try {
+      await api.patch('/api/crm/companies/' + encodeURIComponent(companyId), { xeroContactId: null });
+      showMsg?.('Unlinked', 'success');
+      reload();
+    } catch (err) {
+      showMsg?.(err.message || 'Failed to unlink', 'error');
+    }
+  }
 
   if (!detail) {
     return (
@@ -44,6 +73,34 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
           <Field icon={Globe} label="Domain">{detail.domain || <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field label="Contacts">{detail.contacts.length}</Field>
         </div>
+
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid ' + BRAND.border }}>
+          <div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+            Xero contact link
+          </div>
+          {detail.xeroContactId ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6 }}>
+              <Link2 size={14} color="#16A34A" />
+              <code style={{ fontSize: 12, color: BRAND.ink, flex: 1 }}>{detail.xeroContactId}</code>
+              <button onClick={handleUnlink} className="btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }}>
+                <X size={11} /> Unlink
+              </button>
+            </div>
+          ) : linking ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <XeroContactPicker value={xeroContact} onChange={setXeroContact} placeholder={`Search Xero for "${detail.name}"…`} autoFocus />
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button onClick={() => { setLinking(false); setXeroContact(null); }} className="btn-ghost">Cancel</button>
+                <button onClick={handleSaveLink} className="btn" disabled={!xeroContact}>Link</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setLinking(true)} className="btn-ghost" style={{ fontSize: 12 }}>
+              <Link2 size={12} /> Link to a Xero contact
+            </button>
+          )}
+        </div>
+
         {detail.notes && (
           <div style={{ marginTop: 16, padding: 12, background: '#F8FAFC', borderRadius: 8, fontSize: 13, whiteSpace: 'pre-wrap' }}>
             {detail.notes}

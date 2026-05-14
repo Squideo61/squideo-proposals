@@ -2,10 +2,62 @@ import sql from '../db.js';
 import { makeId, trimOrNull, lowerOrNull } from './shared.js';
 
 export async function companiesRoute(req, res, id, action, user) {
+  // POST /companies/from-xero-contact — find or create a local company linked
+  // to a given Xero contact ID. Used by the contact picker so deals/proposals
+  // always resolve to a local company with a stable xero_contact_id link.
+  if (id === 'from-xero-contact' && req.method === 'POST') {
+    const body = req.body || {};
+    const xeroContactId = trimOrNull(body.xeroContactId);
+    if (!xeroContactId) return res.status(400).json({ error: 'xeroContactId required' });
+
+    // Already linked? Return existing.
+    const existing = await sql`
+      SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
+        FROM companies WHERE xero_contact_id = ${xeroContactId} LIMIT 1
+    `;
+    if (existing.length) return res.status(200).json(serialiseCompany(existing[0]));
+
+    // Look up the Xero contact in the mirror so we can copy its name.
+    const [xc] = await sql`
+      SELECT id, name, email, country FROM xero_contacts WHERE id = ${xeroContactId}
+    `;
+    if (!xc) return res.status(404).json({ error: 'Xero contact not found in mirror — run sync' });
+
+    // Try matching an unlinked local company by name (case-insensitive) first.
+    const byName = await sql`
+      SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
+        FROM companies
+       WHERE xero_contact_id IS NULL
+         AND LOWER(name) = LOWER(${xc.name})
+       LIMIT 1
+    `;
+    if (byName.length) {
+      await sql`UPDATE companies SET xero_contact_id = ${xeroContactId}, updated_at = NOW() WHERE id = ${byName[0].id}`;
+      const refreshed = await sql`
+        SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
+          FROM companies WHERE id = ${byName[0].id}
+      `;
+      return res.status(200).json(serialiseCompany(refreshed[0]));
+    }
+
+    // Otherwise, create a fresh local company linked to the Xero contact.
+    const newId = makeId('co');
+    const domain = xc.email && xc.email.includes('@') ? xc.email.split('@')[1].toLowerCase() : null;
+    await sql`
+      INSERT INTO companies (id, name, domain, xero_contact_id)
+      VALUES (${newId}, ${xc.name}, ${domain}, ${xeroContactId})
+    `;
+    const rows = await sql`
+      SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
+        FROM companies WHERE id = ${newId}
+    `;
+    return res.status(201).json(serialiseCompany(rows[0]));
+  }
+
   if (!id) {
     if (req.method === 'GET') {
       const rows = await sql`
-        SELECT id, name, domain, notes, created_at, updated_at
+        SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
         FROM companies
         ORDER BY name ASC
       `;
@@ -17,11 +69,11 @@ export async function companiesRoute(req, res, id, action, user) {
       if (!name) return res.status(400).json({ error: 'name is required' });
       const newId = body.id || makeId('co');
       await sql`
-        INSERT INTO companies (id, name, domain, notes)
-        VALUES (${newId}, ${name}, ${lowerOrNull(body.domain)}, ${trimOrNull(body.notes)})
+        INSERT INTO companies (id, name, domain, notes, xero_contact_id)
+        VALUES (${newId}, ${name}, ${lowerOrNull(body.domain)}, ${trimOrNull(body.notes)}, ${trimOrNull(body.xeroContactId)})
       `;
       const rows = await sql`
-        SELECT id, name, domain, notes, created_at, updated_at
+        SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
         FROM companies WHERE id = ${newId}
       `;
       return res.status(201).json(serialiseCompany(rows[0]));
@@ -32,7 +84,7 @@ export async function companiesRoute(req, res, id, action, user) {
   // /companies/:id/detail — company + member contacts + deals at the company
   if (action === 'detail' && req.method === 'GET') {
     const [companyRow] = await sql`
-      SELECT id, name, domain, notes, created_at, updated_at
+      SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
       FROM companies WHERE id = ${id}
     `;
     if (!companyRow) return res.status(404).json({ error: 'Not found' });
@@ -88,7 +140,7 @@ export async function companiesRoute(req, res, id, action, user) {
   if (req.method === 'PATCH') {
     const body = req.body || {};
     const cur = (await sql`
-      SELECT id, name, domain, notes, created_at, updated_at
+      SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
       FROM companies WHERE id = ${id}
     `)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
@@ -96,17 +148,20 @@ export async function companiesRoute(req, res, id, action, user) {
       name:   'name'   in body ? (trimOrNull(body.name) || cur.name) : cur.name,
       domain: 'domain' in body ? lowerOrNull(body.domain) : cur.domain,
       notes:  'notes'  in body ? trimOrNull(body.notes) : cur.notes,
+      // Allow explicit clear with xeroContactId: null
+      xero_contact_id: 'xeroContactId' in body ? trimOrNull(body.xeroContactId) : cur.xero_contact_id,
     };
     await sql`
       UPDATE companies
          SET name = ${next.name},
              domain = ${next.domain},
              notes = ${next.notes},
+             xero_contact_id = ${next.xero_contact_id},
              updated_at = NOW()
        WHERE id = ${id}
     `;
     const rows = await sql`
-      SELECT id, name, domain, notes, created_at, updated_at
+      SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
       FROM companies WHERE id = ${id}
     `;
     return res.status(200).json(serialiseCompany(rows[0]));
@@ -125,6 +180,7 @@ export function serialiseCompany(r) {
     name: r.name,
     domain: r.domain || null,
     notes: r.notes || null,
+    xeroContactId: r.xero_contact_id || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

@@ -220,14 +220,20 @@ export async function invoicesRoute(req, res, id, action, user) {
       resolvedDealId = pr?.deal_id || null;
     }
 
-    // Resolve Xero contact — prefer the explicit name sent from the UI.
-    let xeroContactInfo = contactName?.trim()
-      ? { name: contactName.trim(), email: null }
-      : await resolveXeroContactInfo(resolvedDealId, proposalId);
-    if (!xeroContactInfo?.name) {
-      return res.status(400).json({ error: 'Could not determine client name for Xero invoice' });
+    // Always pull the linked xero_contact_id from the deal — even when the UI
+    // provided a free-text name. The link is what stops us creating duplicates
+    // in Xero. The free-text name is only used as a fallback for create-search.
+    const linked = await resolveXeroContactInfo(resolvedDealId, proposalId);
+    const xeroContactInfo = {
+      name: contactName?.trim() || linked?.name,
+      email: linked?.email || null,
+      xeroContactId: linked?.xeroContactId || null,
+    };
+    if (!xeroContactInfo.name && !xeroContactInfo.xeroContactId) {
+      return res.status(400).json({ error: 'Could not determine client for Xero invoice' });
     }
     const xeroContactId = await getOrCreateContact({
+      xeroContactId: xeroContactInfo.xeroContactId,
       name: xeroContactInfo.name,
       email: xeroContactInfo.email || undefined,
     });
@@ -621,7 +627,9 @@ export async function invoicesRoute(req, res, id, action, user) {
 }
 
 // Looks up a Xero-compatible contact name + email from a deal's linked
-// company/contact. Falls back to the deal title if nothing else is available.
+// company/contact. Also returns `xeroContactId` when the linked local company
+// is linked to a Xero contact — callers should pass that to getOrCreateContact
+// to skip the fragile name-search lookup.
 async function resolveXeroContactInfo(dealId, proposalId) {
   let resolvedDealId = dealId;
   if (!resolvedDealId && proposalId) {
@@ -637,9 +645,11 @@ async function resolveXeroContactInfo(dealId, proposalId) {
 
   let name = null;
   let email = null;
+  let xeroContactId = null;
   if (deal.company_id) {
-    const [co] = await sql`SELECT name FROM companies WHERE id = ${deal.company_id}`;
+    const [co] = await sql`SELECT name, xero_contact_id FROM companies WHERE id = ${deal.company_id}`;
     if (co?.name) name = co.name;
+    if (co?.xero_contact_id) xeroContactId = co.xero_contact_id;
   }
   if (deal.primary_contact_id) {
     const [ct] = await sql`SELECT name, email FROM contacts WHERE id = ${deal.primary_contact_id}`;
@@ -647,7 +657,7 @@ async function resolveXeroContactInfo(dealId, proposalId) {
     if (!name && ct?.name) name = ct.name;
   }
   if (!name) name = deal.title;
-  return { name, email };
+  return { name, email, xeroContactId };
 }
 
 // Creates a Xero AUTHORISED invoice for a manual_invoice row and persists the
@@ -660,7 +670,11 @@ async function pushInvoiceToXero({ invoiceId, dealId, proposalId, invoiceNumber,
       console.warn('[invoices] xero: no contact found — skipping push');
       return;
     }
-    const contactId = await getOrCreateContact({ name: contactInfo.name, email: contactInfo.email || undefined });
+    const contactId = await getOrCreateContact({
+      xeroContactId: contactInfo.xeroContactId || undefined,
+      name: contactInfo.name,
+      email: contactInfo.email || undefined,
+    });
     const vat = Number(vatRate) || 0;
     const isVat = vat > 0;
     // Treat stored amount as inc-VAT; back-calculate ex-VAT for Xero.

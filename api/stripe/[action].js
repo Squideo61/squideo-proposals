@@ -3,7 +3,7 @@ import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, paidHtml, clientPaidThanksHtml, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../_lib/email.js';
 import { getOrCreateContact, createInvoice, emailInvoice, createPayment } from '../_lib/xero.js';
-import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
+import { advanceStage, dealIdForProposal, xeroContactIdForProposal } from '../_lib/dealStage.js';
 import {
   lineItemsForProject,
   lineItemsForDiscountedProject,
@@ -128,7 +128,8 @@ async function pushInitialXeroInvoice({ proposalId, isDeposit, isPartner, paidAm
       console.warn('[xero] billing missing company name, skipping', { proposalId });
       return;
     }
-    const contactId = await getOrCreateContact(contact);
+    const linkedXeroContactId = await xeroContactIdForProposal(proposalId);
+    const contactId = await getOrCreateContact({ ...contact, xeroContactId: linkedXeroContactId || undefined });
 
     let lineItems;
     if (isPartner) {
@@ -292,7 +293,8 @@ async function pushRecurringXeroInvoice({ stripe, invoice }) {
     }
     const signed = { name: sigRow.name, email: sigRow.email, ...(sigRow.data || {}) };
     const contact = billingToContact(billing, signed.email);
-    const contactId = await getOrCreateContact(contact);
+    const linkedXeroContactId = await xeroContactIdForProposal(proposalId);
+    const contactId = await getOrCreateContact({ ...contact, xeroContactId: linkedXeroContactId || undefined });
 
     // Months are 2-indexed (month 1 was the first-month line on the initial invoice).
     const monthNumber = (countRows[0]?.n || 0) + 2;

@@ -5,6 +5,8 @@ import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
 import { Modal } from '../ui.jsx';
 import { PIPELINE_STAGES } from '../../lib/stages.js';
+import { XeroContactPicker } from './XeroContactPicker.jsx';
+import { api } from '../../api.js';
 
 export { PIPELINE_STAGES };
 
@@ -210,33 +212,46 @@ function daysSince(iso) {
 }
 
 function NewDealModal({ onClose, onCreated }) {
-  const { state, actions } = useStore();
+  const { state, actions, showMsg } = useStore();
   const [title, setTitle] = useState('');
   const [stage, setStage] = useState('lead');
   const [value, setValue] = useState('');
-  const [companyId, setCompanyId] = useState('');
+  const [xeroContact, setXeroContact] = useState(null);
   const [primaryContactId, setPrimaryContactId] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const companies = Object.values(state.companies || {});
   const contacts = Object.values(state.contacts || {});
+
+  // When a Xero contact is picked, auto-suggest the title if blank.
+  function handleXeroPick(c) {
+    setXeroContact(c);
+    if (c && !title.trim()) setTitle(c.name);
+  }
 
   const submit = async (e) => {
     e.preventDefault();
     if (!title.trim() || submitting) return;
     setSubmitting(true);
     try {
+      // Resolve picked Xero contact → local company (find or create + link).
+      let companyId = null;
+      if (xeroContact) {
+        const company = await api.post('/api/crm/companies/from-xero-contact', {
+          xeroContactId: xeroContact.id,
+        });
+        companyId = company.id;
+      }
       const deal = await actions.createDeal({
         title: title.trim(),
         stage,
         value: value === '' ? null : Number(value),
-        companyId: companyId || null,
+        companyId,
         primaryContactId: primaryContactId || null,
       });
       onCreated?.(deal);
     } catch (err) {
       console.error('createDeal failed', err);
-      window.alert('Failed to create deal: ' + (err?.message || 'unknown error'));
+      showMsg?.('Failed to create deal: ' + (err?.message || 'unknown error'), 'error');
     } finally {
       setSubmitting(false);
     }
@@ -247,8 +262,14 @@ function NewDealModal({ onClose, onCreated }) {
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>New deal</h2>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <label style={{ fontSize: 13, fontWeight: 500 }}>
+          Company (Xero contact, optional)
+          <div style={{ marginTop: 4 }}>
+            <XeroContactPicker value={xeroContact} onChange={handleXeroPick} placeholder="Search Xero contacts…" />
+          </div>
+        </label>
+        <label style={{ fontSize: 13, fontWeight: 500 }}>
           Title
-          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Acme Corp — Q2 explainer" autoFocus style={{ marginTop: 4 }} required />
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Acme Corp — Q2 explainer" style={{ marginTop: 4 }} required />
         </label>
         <label style={{ fontSize: 13, fontWeight: 500 }}>
           Stage
@@ -259,13 +280,6 @@ function NewDealModal({ onClose, onCreated }) {
         <label style={{ fontSize: 13, fontWeight: 500 }}>
           Value (£, ex VAT, optional)
           <input className="input" type="number" min="0" step="0.01" value={value} onChange={(e) => setValue(e.target.value)} style={{ marginTop: 4 }} />
-        </label>
-        <label style={{ fontSize: 13, fontWeight: 500 }}>
-          Company (optional)
-          <select className="input" value={companyId} onChange={(e) => setCompanyId(e.target.value)} style={{ marginTop: 4 }}>
-            <option value="">—</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
         </label>
         <label style={{ fontSize: 13, fontWeight: 500 }}>
           Primary contact (optional)
