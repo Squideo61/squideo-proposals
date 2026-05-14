@@ -53,7 +53,7 @@ export async function xeroContactsRoute(req, res, id, action, user) {
   }
 
   // GET /api/crm/xero-contacts/search?q=... — typeahead.
-  if (!id && req.method === 'GET' && req.query.q != null) {
+  if (id === 'search' && req.method === 'GET') {
     const q = String(req.query.q || '').trim();
     const includeArchived = req.query.includeArchived === '1';
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
