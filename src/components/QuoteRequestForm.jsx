@@ -677,17 +677,6 @@ export function QuoteRequestForm(props = {}) {
       )}
 
       <div className="progress-form-container">
-        {!isSuccess && (
-          <div className="time-estimate-badge">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="time-icon">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span key={timeBadgeTick} className="time-text">
-              {remainingMinutes === 1 ? '1 minute left' : `${remainingMinutes} minutes left`}
-            </span>
-          </div>
-        )}
-
         <div className="progress-header">
           <div className="progress-steps">
             {STEP_LABELS.map((label, idx) => {
@@ -716,6 +705,17 @@ export function QuoteRequestForm(props = {}) {
         </div>
 
         <form className="multi-step-form" onSubmit={onSubmit} noValidate>
+          {!isSuccess && (
+            <div className="time-estimate-badge">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="time-icon">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span key={timeBadgeTick} className="time-text">
+                {remainingMinutes === 1 ? '1 minute left' : `${remainingMinutes} minutes left`}
+              </span>
+            </div>
+          )}
+
           {/* Step 1 */}
           <div className={`form-step ${step === 1 ? 'active' : ''}`}>
             <h2 className="step-title">{greetedStep1Title}</h2>
