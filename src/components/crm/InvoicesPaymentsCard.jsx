@@ -194,7 +194,10 @@ function InvoiceRow({ row, dealId, onChanged }) {
 
   // Payment method badge for paid manual invoices
   const paidMethodLabel = row.paymentMethod
-    ? (row.paymentMethod === 'bacs' ? 'BACS' : row.paymentMethod === 'stripe-link' ? 'Stripe' : row.paymentMethod.toUpperCase())
+    ? (row.paymentMethod === 'bacs' ? 'BACS'
+      : row.paymentMethod === 'stripe-link' ? 'Stripe'
+      : row.paymentMethod === 'stripe-standalone' ? 'Stripe'
+      : row.paymentMethod.toUpperCase())
     : null;
   const paidDate = row.paidAt
     ? new Date(row.paidAt).toLocaleDateString('en-GB')

@@ -7,9 +7,9 @@ import { Modal } from '../ui.jsx';
 import { formatGBP } from '../../utils.js';
 
 const METHODS = [
-  { value: 'bacs',   label: 'BACS / Bank Transfer' },
-  { value: 'cheque', label: 'Cheque' },
-  { value: 'cash',   label: 'Cash' },
+  { value: 'bacs',              label: 'BACS / Bank Transfer' },
+  { value: 'stripe-standalone', label: 'Standalone Stripe Payment' },
+  { value: 'cash',              label: 'Cash' },
 ];
 
 export function MarkInvoicePaidModal({ invoiceId, invoiceNumber, amount, onClose, onMarked }) {
