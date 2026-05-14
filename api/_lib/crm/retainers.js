@@ -10,7 +10,7 @@ export async function retainersRoute(req, res, id, action, user) {
     const retainers = await sql`
       SELECT r.id, r.deal_id, r.contact_id, r.title,
              r.allocation_type, r.allocation_amount, r.currency,
-             r.notes, r.created_by, r.created_at, r.updated_at,
+             r.notes, r.status, r.created_by, r.created_at, r.updated_at,
              c.name AS contact_name, c.email AS contact_email
         FROM project_retainers r
         LEFT JOIN contacts c ON c.id = r.contact_id
@@ -46,6 +46,7 @@ export async function retainersRoute(req, res, id, action, user) {
       allocationAmount: Number(r.allocation_amount),
       currency: r.currency,
       notes: r.notes || null,
+      status: r.status || 'active',
       createdBy: r.created_by,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -101,6 +102,7 @@ export async function retainersRoute(req, res, id, action, user) {
       allocation_amount: 'allocationAmount' in body ? numberOrNull(body.allocationAmount)                    : cur.allocation_amount,
       currency:          'currency'         in body ? (trimOrNull(body.currency) || 'GBP')                  : cur.currency,
       notes:             'notes'            in body ? trimOrNull(body.notes)                                 : cur.notes,
+      status:            'status'           in body ? trimOrNull(body.status)                                : cur.status,
     };
 
     if (!next.title)           return res.status(400).json({ error: 'title required' });
@@ -108,6 +110,8 @@ export async function retainersRoute(req, res, id, action, user) {
       return res.status(400).json({ error: 'allocationType must be money or credits' });
     if (!next.allocation_amount || next.allocation_amount <= 0)
       return res.status(400).json({ error: 'allocationAmount must be positive' });
+    if (!['active', 'completed', 'archived'].includes(next.status))
+      return res.status(400).json({ error: 'status must be active, completed or archived' });
 
     await sql`
       UPDATE project_retainers
@@ -117,14 +121,18 @@ export async function retainersRoute(req, res, id, action, user) {
              allocation_amount = ${next.allocation_amount},
              currency          = ${next.currency},
              notes             = ${next.notes},
+             status            = ${next.status},
              updated_at        = NOW()
        WHERE id = ${id}
     `;
     return res.status(200).json({ ok: true });
   }
 
-  // --- DELETE /api/crm/retainers/:id — delete retainer (entries cascade)
+  // --- DELETE /api/crm/retainers/:id — delete retainer (entries cascade).
+  // Admin-only: the deal owner can archive, but a hard delete that wipes the
+  // work log is intentionally gated to admins.
   if (id && !action && req.method === 'DELETE') {
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
     const cur = (await sql`SELECT id FROM project_retainers WHERE id = ${id}`)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
     await sql`DELETE FROM project_retainers WHERE id = ${id}`;

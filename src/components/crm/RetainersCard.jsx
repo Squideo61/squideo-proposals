@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Edit2, Plus, Printer, Trash2 } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Archive, ArchiveRestore, CheckCircle2, ChevronDown, ChevronRight, Edit2, MoreVertical, Plus, Printer, Trash2, Undo2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
+import { Modal } from '../ui.jsx';
 import { AddRetainerModal } from './AddRetainerModal.jsx';
 import { AddRetainerEntryModal } from './AddRetainerEntryModal.jsx';
 import { openRetainerPrintWindow } from '../../utils/printRetainer.js';
@@ -29,11 +30,13 @@ function fmtDate(d) {
 }
 
 export function RetainersCard({ dealId, contacts }) {
-  const { showMsg } = useStore();
+  const { showMsg, state } = useStore();
+  const isAdmin = state?.session?.role === 'admin';
   const [rows, setRows] = useState(null);
   const [addingRetainer, setAddingRetainer] = useState(false);
   const [editingRetainer, setEditingRetainer] = useState(null);
   const [loggingEntry, setLoggingEntry] = useState(null);
+  const [deletingRetainer, setDeletingRetainer] = useState(null);
 
   const reload = useCallback(() => {
     api.get('/api/crm/retainers?dealId=' + encodeURIComponent(dealId))
@@ -45,6 +48,17 @@ export function RetainersCard({ dealId, contacts }) {
   }, [dealId, showMsg]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  const setStatus = useCallback(async (retainer, status) => {
+    try {
+      await api.patch('/api/crm/retainers/' + retainer.id, { status });
+      const labels = { active: 'Project reopened', completed: 'Project marked complete', archived: 'Project archived' };
+      showMsg?.(labels[status] || 'Project updated', 'success');
+      reload();
+    } catch (err) {
+      showMsg?.(err.message || 'Failed to update project', 'error');
+    }
+  }, [reload, showMsg]);
 
   const totalProjects = rows?.length ?? null;
 
@@ -66,9 +80,12 @@ export function RetainersCard({ dealId, contacts }) {
             <RetainerSection
               key={r.id}
               retainer={r}
+              isAdmin={isAdmin}
               onEdit={() => setEditingRetainer(r)}
               onLogWork={() => setLoggingEntry(r)}
               onPrint={() => openRetainerPrintWindow(r)}
+              onSetStatus={(status) => setStatus(r, status)}
+              onDelete={() => setDeletingRetainer(r)}
               onEntryDeleted={reload}
             />
           ))}
@@ -90,7 +107,6 @@ export function RetainersCard({ dealId, contacts }) {
           contacts={contacts}
           onClose={() => setEditingRetainer(null)}
           onSaved={() => { setEditingRetainer(null); reload(); }}
-          onDeleted={() => { setEditingRetainer(null); reload(); }}
         />
       )}
       {loggingEntry && (
@@ -100,13 +116,43 @@ export function RetainersCard({ dealId, contacts }) {
           onSaved={() => { setLoggingEntry(null); reload(); }}
         />
       )}
+      {deletingRetainer && (
+        <DeleteProjectModal
+          retainer={deletingRetainer}
+          onClose={() => setDeletingRetainer(null)}
+          onDeleted={() => { setDeletingRetainer(null); reload(); }}
+        />
+      )}
     </Card>
   );
 }
 
-function RetainerSection({ retainer, onEdit, onLogWork, onPrint, onEntryDeleted }) {
+function StatusBadge({ status }) {
+  if (status === 'completed') {
+    return (
+      <span style={{
+        fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5,
+        padding: '2px 6px', borderRadius: 4, background: '#DCFCE7', color: '#15803D',
+      }}>Completed</span>
+    );
+  }
+  if (status === 'archived') {
+    return (
+      <span style={{
+        fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5,
+        padding: '2px 6px', borderRadius: 4, background: '#E5E7EB', color: '#475569',
+      }}>Archived</span>
+    );
+  }
+  return null;
+}
+
+function RetainerSection({ retainer, isAdmin, onEdit, onLogWork, onPrint, onSetStatus, onDelete, onEntryDeleted }) {
   const { showMsg } = useStore();
-  const [open, setOpen] = useState(true);
+  const status = retainer.status || 'active';
+  const dimmed = status !== 'active';
+  const [open, setOpen] = useState(!dimmed);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const total = Number(retainer.allocationAmount) || 0;
   const used  = (retainer.entries || []).reduce((s, e) => s + Number(e.value || 0), 0);
@@ -125,8 +171,30 @@ function RetainerSection({ retainer, onEdit, onLogWork, onPrint, onEntryDeleted 
     }
   }
 
+  const menuItems = [
+    { label: 'Edit',        icon: Edit2,   onClick: onEdit },
+    { label: 'Print / PDF', icon: Printer, onClick: onPrint },
+  ];
+  if (status === 'active') {
+    menuItems.push({ label: 'Mark complete', icon: CheckCircle2,   onClick: () => onSetStatus('completed') });
+    menuItems.push({ label: 'Archive',       icon: Archive,        onClick: () => onSetStatus('archived')  });
+  } else if (status === 'completed') {
+    menuItems.push({ label: 'Reopen',  icon: Undo2,    onClick: () => onSetStatus('active')   });
+    menuItems.push({ label: 'Archive', icon: Archive,  onClick: () => onSetStatus('archived') });
+  } else if (status === 'archived') {
+    menuItems.push({ label: 'Unarchive', icon: ArchiveRestore, onClick: () => onSetStatus('active') });
+  }
+  if (isAdmin) {
+    menuItems.push({ label: 'Delete', icon: Trash2, onClick: onDelete, danger: true });
+  }
+
   return (
-    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
+    <div style={{
+      border: '1px solid ' + BRAND.border,
+      borderRadius: 8,
+      overflow: 'hidden',
+      opacity: dimmed ? 0.65 : 1,
+    }}>
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
@@ -141,7 +209,10 @@ function RetainerSection({ retainer, onEdit, onLogWork, onPrint, onEntryDeleted 
           {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink }}>{retainer.title}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink }}>{retainer.title}</span>
+            <StatusBadge status={status} />
+          </div>
           {retainer.contactName && (
             <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>{retainer.contactName}</div>
           )}
@@ -150,15 +221,10 @@ function RetainerSection({ retainer, onEdit, onLogWork, onPrint, onEntryDeleted 
           <div style={{ fontSize: 13, fontWeight: 700, color: remainingColor }}>{fmtValue(retainer, remaining)}</div>
           <div style={{ fontSize: 10, color: BRAND.muted }}>remaining</div>
         </div>
-        <button onClick={onPrint} className="btn-icon" title="Print / PDF summary" style={{ padding: 6 }}>
-          <Printer size={14} color={BRAND.muted} />
-        </button>
         <button onClick={onLogWork} className="btn-ghost" style={{ fontSize: 12, padding: '4px 10px', whiteSpace: 'nowrap' }}>
           <Plus size={12} /> Log work
         </button>
-        <button onClick={onEdit} className="btn-icon" title="Edit project" style={{ padding: 6 }}>
-          <Edit2 size={14} color={BRAND.muted} />
-        </button>
+        <ProjectMenu items={menuItems} open={menuOpen} onOpenChange={setMenuOpen} />
       </div>
 
       {open && (
@@ -225,5 +291,137 @@ function RetainerSection({ retainer, onEdit, onLogWork, onPrint, onEntryDeleted 
         </div>
       )}
     </div>
+  );
+}
+
+function ProjectMenu({ items, open, onOpenChange }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) onOpenChange(false);
+    };
+    const closeOnEsc = (e) => { if (e.key === 'Escape') onOpenChange(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', closeOnEsc);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', closeOnEsc);
+    };
+  }, [open, onOpenChange]);
+
+  return (
+    <div ref={ref} style={{ position: 'relative', zIndex: open ? 50 : 'auto' }}>
+      <button
+        onClick={() => onOpenChange(!open)}
+        className="btn-icon"
+        title="More actions"
+        aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        style={{ padding: 6 }}
+      >
+        <MoreVertical size={14} color={BRAND.muted} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            right: 0,
+            background: 'white',
+            border: '1px solid ' + BRAND.border,
+            borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)',
+            minWidth: 180,
+            padding: 4,
+            zIndex: 50,
+          }}
+        >
+          {items.map((item, i) => (
+            <button
+              key={i}
+              role="menuitem"
+              onClick={() => { onOpenChange(false); item.onClick(); }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                padding: '8px 10px',
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: 500,
+                color: item.danger ? '#D32F2F' : BRAND.ink,
+                textAlign: 'left',
+                fontFamily: 'inherit',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = item.danger ? '#FFEBEE' : '#F1F5F9'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <item.icon size={14} />
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeleteProjectModal({ retainer, onClose, onDeleted }) {
+  const { showMsg } = useStore();
+  const [confirmText, setConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const matches = confirmText.trim() === retainer.title.trim();
+
+  async function handleDelete() {
+    if (!matches) return;
+    setDeleting(true);
+    try {
+      await api.delete('/api/crm/retainers/' + retainer.id);
+      showMsg?.('Project deleted', 'success');
+      onDeleted?.();
+    } catch (err) {
+      showMsg?.(err.message || 'Failed to delete', 'error');
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <Modal onClose={onClose}>
+      <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#D32F2F' }}>Delete project</h2>
+      <p style={{ fontSize: 13, color: BRAND.ink, marginTop: 12, marginBottom: 4 }}>
+        This will permanently delete <strong>{retainer.title}</strong> and all its work log entries. This cannot be undone.
+      </p>
+      <p style={{ fontSize: 12, color: BRAND.muted, marginTop: 12, marginBottom: 4 }}>
+        Type the project name to confirm:
+      </p>
+      <input
+        type="text"
+        value={confirmText}
+        onChange={(e) => setConfirmText(e.target.value)}
+        className="input"
+        placeholder={retainer.title}
+        autoFocus
+        style={{ marginTop: 4 }}
+      />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+        <button type="button" onClick={onClose} className="btn-ghost" disabled={deleting}>Cancel</button>
+        <button
+          type="button"
+          onClick={handleDelete}
+          className="btn-ghost is-danger"
+          disabled={!matches || deleting}
+        >
+          {deleting ? 'Deleting…' : 'Delete project'}
+        </button>
+      </div>
+    </Modal>
   );
 }

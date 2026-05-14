@@ -5,7 +5,7 @@ import { useStore } from '../../store.jsx';
 import { api } from '../../api.js';
 import { Modal } from '../ui.jsx';
 
-export function AddRetainerModal({ dealId, retainer, contacts, onClose, onSaved, onDeleted }) {
+export function AddRetainerModal({ dealId, retainer, contacts, onClose, onSaved }) {
   const { showMsg } = useStore();
   const editing = !!retainer;
 
@@ -17,7 +17,6 @@ export function AddRetainerModal({ dealId, retainer, contacts, onClose, onSaved,
   );
   const [notes, setNotes] = useState(retainer?.notes || '');
   const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
   const sortedContacts = [...(contacts || [])].sort((a, b) =>
     (a.name || a.email || '').localeCompare(b.name || b.email || '')
@@ -57,20 +56,6 @@ export function AddRetainerModal({ dealId, retainer, contacts, onClose, onSaved,
       showMsg?.(err.message || 'Failed to save', 'error');
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleDelete() {
-    if (!window.confirm('Delete this project and all its work entries? This cannot be undone.')) return;
-    setDeleting(true);
-    try {
-      await api.delete('/api/crm/retainers/' + retainer.id);
-      showMsg?.('Project deleted', 'success');
-      onDeleted?.();
-    } catch (err) {
-      showMsg?.(err.message || 'Failed to delete', 'error');
-    } finally {
-      setDeleting(false);
     }
   }
 
@@ -155,16 +140,9 @@ export function AddRetainerModal({ dealId, retainer, contacts, onClose, onSaved,
           />
         </Field>
 
-        <div style={{ display: 'flex', justifyContent: editing ? 'space-between' : 'flex-end', gap: 8, marginTop: 8 }}>
-          {editing && (
-            <button type="button" onClick={handleDelete} className="btn-ghost is-danger" disabled={deleting}>
-              {deleting ? 'Deleting…' : 'Delete project'}
-            </button>
-          )}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
-            <button type="submit" className="btn" disabled={saving}>{saving ? 'Saving…' : editing ? 'Save changes' : 'Create project'}</button>
-          </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+          <button type="submit" className="btn" disabled={saving}>{saving ? 'Saving…' : editing ? 'Save changes' : 'Create project'}</button>
         </div>
       </form>
     </Modal>
