@@ -14,7 +14,7 @@ import sql from '../db.js';
 import { advanceStage } from '../dealStage.js';
 import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
-import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber } from '../xero.js';
+import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber, getInvoicesByIds } from '../xero.js';
 
 export async function invoicesRoute(req, res, id, action, user) {
   // --- GET /api/crm/invoices/:id/pdf — streams a private Blob PDF back through
@@ -127,7 +127,7 @@ export async function invoicesRoute(req, res, id, action, user) {
       }
     }
 
-    const manualRows = await sql`
+    let manualRows = await sql`
       SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
              status, blob_url, filename, notes, uploaded_by, created_at,
              stripe_payment_link_url, paid_at, payment_method, xero_invoice_id
@@ -135,6 +135,18 @@ export async function invoicesRoute(req, res, id, action, user) {
         WHERE deal_id = ${dealId} OR proposal_id = ANY(${proposalIds.length ? proposalIds : ['__none__']})
         ORDER BY issued_at DESC NULLS LAST, created_at DESC
     `;
+
+    // Sync status from Xero for any still-issued invoice we've linked. Xero's
+    // Stripe integration pays invoices with no webhook to us, so this is how
+    // we discover payments made via the embedded Xero "Pay now" button.
+    const toSync = manualRows.filter(r => r.status === 'issued' && r.xero_invoice_id);
+    if (toSync.length) {
+      const updates = await syncFromXero(toSync, user);
+      if (updates.size) {
+        manualRows = manualRows.map(r => updates.has(r.id) ? { ...r, ...updates.get(r.id) } : r);
+      }
+    }
+
     for (const r of manualRows) {
       const xeroInvoiceId = r.xero_invoice_id || null;
       const xeroPdfUrl = xeroInvoiceId
@@ -693,6 +705,83 @@ async function createStripePaymentLink({ invoiceId, invoiceNumber, amount, dealI
      WHERE id = ${invoiceId}
   `;
   return link.url;
+}
+
+// Polls Xero for the current status of issued+linked manual_invoices and
+// applies any transitions to PAID/VOIDED. Returns a Map keyed by manual_invoice
+// id with the patched columns so the caller can splice them into its response.
+async function syncFromXero(rows, user) {
+  const updates = new Map();
+  const lookup = await getInvoicesByIds(rows.map(r => r.xero_invoice_id));
+  if (!lookup.size) return updates;
+
+  for (const row of rows) {
+    const xero = lookup.get(row.xero_invoice_id);
+    if (!xero) continue;
+    if (xero.status === 'PAID' && row.status !== 'paid') {
+      const paidAt = xero.fullyPaidOn || new Date().toISOString().slice(0, 10);
+      const amount = xero.total ?? row.amount;
+      // Conditional update so only one concurrent request fires the notification.
+      const result = await sql`
+        UPDATE manual_invoices
+           SET status = 'paid',
+               paid_at = ${paidAt},
+               payment_method = COALESCE(payment_method, 'xero'),
+               amount = COALESCE(amount, ${amount}),
+               updated_at = NOW()
+         WHERE id = ${row.id} AND status = 'issued'
+         RETURNING id
+      `;
+      updates.set(row.id, { status: 'paid', paid_at: paidAt, payment_method: row.payment_method || 'xero', amount: row.amount ?? amount });
+      if (result.length) {
+        // We won the race — fire notification + deal-stage advance.
+        notifyInvoicePaid({ row, paidAt, amount, user }).catch(err => console.error('[invoices] sync notify failed', err));
+      }
+    } else if (xero.status === 'VOIDED' && row.status !== 'void') {
+      await sql`UPDATE manual_invoices SET status = 'void', updated_at = NOW() WHERE id = ${row.id} AND status != 'void'`;
+      updates.set(row.id, { status: 'void' });
+    }
+  }
+  return updates;
+}
+
+// Sends the "invoice paid" notification email and advances the deal stage.
+// Used by both the PATCH mark-paid path and the GET-time Xero sync.
+async function notifyInvoicePaid({ row, paidAt, amount, paymentMethod = 'xero', user = {} }) {
+  const dealId = row.deal_id;
+  if (!dealId) return;
+  try {
+    await advanceStage(dealId, 'paid', {
+      actorEmail: user?.email || null,
+      payload: { invoiceId: row.id, amount, paymentMethod, source: 'xero-sync' },
+    });
+  } catch (err) {
+    console.error('[invoices] advanceStage failed', err);
+  }
+  try {
+    const [dealRow] = await sql`SELECT title, owner_email FROM deals WHERE id = ${dealId}`;
+    const ownerEmail = dealRow?.owner_email || null;
+    const title = dealRow?.title || row.invoice_number || row.id;
+    const link = `${APP_URL}/crm?deal=${dealId}`;
+    const others = await adminEmailsExcluding(ownerEmail);
+    const all = [...(ownerEmail ? [ownerEmail] : []), ...others];
+    if (!all.length) return;
+    await sendMail({
+      to: all,
+      subject: `💰 Invoice paid: ${title}`,
+      html: invoicePaidHtml({
+        title,
+        amount: amount != null ? Number(amount) : null,
+        paymentMethod,
+        paidAt,
+        invoiceNumber: row.invoice_number,
+        link,
+      }),
+      text: `Invoice ${row.invoice_number || row.id} paid via ${paymentMethod} — ${link}`,
+    });
+  } catch (err) {
+    console.error('[invoices] notify failed', err);
+  }
 }
 
 function parseInvoiceMeta(req) {

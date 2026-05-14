@@ -269,6 +269,39 @@ export async function getInvoiceByNumber(invoiceNumber) {
   }
 }
 
+// Batch lookup of Xero invoices by their InvoiceID. Used to refresh status of
+// linked manual_invoices on dashboard load — Xero's Stripe integration pays
+// invoices directly with no webhook, so polling on read is how we catch it.
+// Returns a Map keyed by InvoiceID; missing/errored ids are simply absent.
+export async function getInvoicesByIds(invoiceIds) {
+  const ids = (invoiceIds || []).filter(Boolean);
+  if (!ids.length) return new Map();
+  try {
+    // Xero supports up to 40 IDs per call; chunk to be safe.
+    const out = new Map();
+    for (let i = 0; i < ids.length; i += 40) {
+      const chunk = ids.slice(i, i + 40);
+      const json = await xeroFetch(
+        `/api.xro/2.0/Invoices?IDs=${encodeURIComponent(chunk.join(','))}`,
+      );
+      for (const inv of json?.Invoices || []) {
+        out.set(inv.InvoiceID, {
+          invoiceId: inv.InvoiceID,
+          invoiceNumber: inv.InvoiceNumber,
+          status: inv.Status,
+          total: inv.Total != null ? Number(inv.Total) : null,
+          amountDue: inv.AmountDue != null ? Number(inv.AmountDue) : null,
+          fullyPaidOn: parseXeroDate(inv.FullyPaidOnDate),
+        });
+      }
+    }
+    return out;
+  } catch (err) {
+    console.warn('[xero] getInvoicesByIds failed', err.message);
+    return new Map();
+  }
+}
+
 // Xero dates come either as ISO ("2026-05-14T00:00:00") or as
 // /Date(1736899200000+0000)/. Returns YYYY-MM-DD or null.
 function parseXeroDate(value) {
