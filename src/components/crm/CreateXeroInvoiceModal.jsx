@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -19,14 +19,6 @@ export function CreateXeroInvoiceModal({ dealId, proposalId, contactName: contac
   const [dueAt, setDueAt] = useState('');
   const [lineItems, setLineItems] = useState([makeLineItem()]);
   const [saving, setSaving] = useState(false);
-  const [loadingNumber, setLoadingNumber] = useState(true);
-
-  useEffect(() => {
-    api.get('/api/xero/next-invoice-number')
-      .then(r => { if (r?.nextNumber) setInvoiceNumber(r.nextNumber); })
-      .catch(() => {})
-      .finally(() => setLoadingNumber(false));
-  }, []);
 
   function updateLine(key, field, value) {
     setLineItems(prev => prev.map(li => li._key === key ? { ...li, [field]: value } : li));
@@ -105,13 +97,13 @@ export function CreateXeroInvoiceModal({ dealId, proposalId, contactName: contac
               required
             />
           </Field>
-          <Field label={loadingNumber ? 'Invoice number (fetching…)' : 'Invoice number'}>
+          <Field label="Invoice number">
             <input
               type="text"
               value={invoiceNumber}
               onChange={e => setInvoiceNumber(e.target.value)}
               className="input"
-              placeholder="INV-0001"
+              placeholder="Auto-assigned by Xero (e.g. INV-6059)"
             />
           </Field>
         </div>
