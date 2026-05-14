@@ -140,10 +140,12 @@ export default async function handler(req, res) {
       const email = trimOrNull(body.email);
       const name = trimOrNull(body.name);
       if (!formSessionId || !email) {
+        console.warn('[save-and-email] missing fields', { hasSession: !!formSessionId, hasEmail: !!email, bodyKeys: Object.keys(body || {}) });
         return res.status(400).json({ error: 'Form session and email required' });
       }
       // basic email shape check
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        console.warn('[save-and-email] invalid email shape', { email });
         return res.status(400).json({ error: 'Invalid email' });
       }
 

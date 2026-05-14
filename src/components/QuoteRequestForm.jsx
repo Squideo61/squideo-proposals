@@ -1112,6 +1112,9 @@ export function QuoteRequestForm(props = {}) {
                     setStep(1);
                     return;
                   }
+                  if (!sessionIdRef.current) {
+                    sessionIdRef.current = 'form_' + Date.now() + '_' + Math.random().toString(36).slice(2, 11);
+                  }
                   saveProgress();
                   try {
                     const r = await fetch(`${cfg.apiBase}?action=save-and-email`, {
