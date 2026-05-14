@@ -107,6 +107,15 @@
   padding: 40px 20px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   position: relative;
+  transition: padding-top 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.quote-request-widget.has-welcome-banner .progress-form-container {
+  padding-top: 140px;
+}
+@media (max-width: 640px) {
+  .quote-request-widget.has-welcome-banner .progress-form-container {
+    padding-top: 200px;
+  }
 }
 .quote-request-widget .time-estimate-badge {
   display: inline-flex;

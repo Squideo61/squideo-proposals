@@ -651,7 +651,7 @@ export function QuoteRequestForm(props = {}) {
   const numericStep = typeof step === 'number' ? step : TOTAL_STEPS;
 
   return (
-    <div className="quote-request-widget">
+    <div className={`quote-request-widget ${welcomeBanner && welcomeBanner.visible ? 'has-welcome-banner' : ''}`}>
       {welcomeBanner && (
         <div className={`welcome-back-banner ${welcomeBanner.visible ? 'visible' : ''}`}>
           <div className="welcome-back-content">
