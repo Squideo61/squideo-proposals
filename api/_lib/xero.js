@@ -193,11 +193,15 @@ export async function getNextInvoiceNumber() {
     // Sort by Date DESC and fetch 100 so we span any non-standard-format invoices
     // (e.g. INV-C-2026-..., ZRUSFYBT-...) that sort ahead of INV-NNNN alphabetically.
     // Filter client-side to the exact INV-<digits> pattern and pick the numeric max.
-    // Exclude VOIDED — voided test/draft invoices cause outlier high numbers.
-    // Sort by UpdatedDateUTC DESC so recently active invoices dominate the first page;
-    // old outliers that happen to be non-voided sink below the top 50.
-    // Then find the numeric maximum across all INV-NNNN matches in those 50 results.
-    const where = encodeURIComponent('InvoiceNumber.StartsWith("INV-")');
+    // INV-28883219 etc. are old invoices with manually-assigned high numbers.
+    // Filter to invoices dated within the last 2 years so outliers with old dates
+    // are excluded, then take the numeric max of the remaining INV-NNNN results.
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - 2);
+    const dateFilter = `DateTime(${cutoff.getFullYear()}, ${cutoff.getMonth() + 1}, 1)`;
+    const where = encodeURIComponent(
+      `InvoiceNumber.StartsWith("INV-") && Date >= ${dateFilter}`
+    );
     const json = await xeroFetch(
       `/api.xro/2.0/Invoices?Type=ACCREC&where=${where}&order=UpdatedDateUTC+DESC&page=1&pageSize=50&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID`
     );
@@ -207,10 +211,8 @@ export async function getNextInvoiceNumber() {
       .map(n => parseInt(n.slice(4), 10));
     if (!nums.length) return null;
     const maxNum = Math.max(...nums);
-    const digits = String(maxNum);
-    const padLen = Math.max(digits.length, 4); // keep at least 4-digit padding
-    const nextNum = String(maxNum + 1).padStart(padLen, '0');
-    return `INV-${nextNum}`; // "INV-6059"
+    const padLen = Math.max(String(maxNum).length, 4);
+    return `INV-${String(maxNum + 1).padStart(padLen, '0')}`;
   } catch (err) {
     console.warn('[xero] getNextInvoiceNumber failed', err.message);
     return null;
