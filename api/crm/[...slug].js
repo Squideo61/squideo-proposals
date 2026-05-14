@@ -13,6 +13,7 @@ import { templatesRoute } from '../_lib/crm/templates.js';
 import { commentsRoute } from '../_lib/crm/comments.js';
 import { paymentsRoute } from '../_lib/crm/payments.js';
 import { invoicesRoute } from '../_lib/crm/invoices.js';
+import { retainersRoute } from '../_lib/crm/retainers.js';
 import { gmailRoute, gmailCallback } from '../_lib/crm/gmail.js';
 import { gmailPush } from '../_lib/crm/gmailPush.js';
 import { gmailBackfill } from '../_lib/crm/gmailBackfill.js';
@@ -86,8 +87,9 @@ export default async function handler(req, res) {
       case 'templates': return await templatesRoute(req, res, id, action, user);
       case 'comments':  return await commentsRoute(req, res, id, action, user);
       case 'payments':  return await paymentsRoute(req, res, id, action, user);
-      case 'invoices':  return await invoicesRoute(req, res, id, action, user);
-      default:          return res.status(404).json({ error: 'Unknown resource: ' + resource });
+      case 'invoices':   return await invoicesRoute(req, res, id, action, user);
+      case 'retainers':  return await retainersRoute(req, res, id, action, user);
+      default:           return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {
     console.error('[crm] unhandled', { resource, id, action, method: req.method, err });
