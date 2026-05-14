@@ -182,7 +182,9 @@ async function list(req, res) {
            p.number_year, p.number_seq, p.deal_id,
            COALESCE(v.opens, 0)    AS view_opens,
            COALESCE(v.duration, 0) AS view_duration,
-           v.last_active_at        AS view_last_active
+           v.last_active_at        AS view_last_active,
+           pb.xero_invoice_id      AS billing_invoice_id,
+           pb.xero_quote_id        AS billing_quote_id
     FROM proposals p
     LEFT JOIN (
       SELECT proposal_id,
@@ -192,6 +194,7 @@ async function list(req, res) {
       FROM proposal_views
       GROUP BY proposal_id
     ) v ON v.proposal_id = p.id
+    LEFT JOIN proposal_billing pb ON pb.proposal_id = p.id
     ORDER BY p.created_at DESC
   `;
   const proposals = {};
@@ -208,6 +211,8 @@ async function list(req, res) {
         duration: Number(row.view_duration) || 0,
         lastActiveAt: row.view_last_active || null,
       },
+      _hasXeroInvoice: !!row.billing_invoice_id,
+      _hasXeroQuote: !!row.billing_quote_id,
     };
   }
   return res.status(200).json(proposals);

@@ -276,7 +276,14 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
   };
 
   const handleUnmarkAccepted = () => {
-    if (!window.confirm('Remove the signature for this proposal? It will be marked as not yet accepted.')) return;
+    // If a Xero invoice was issued for this proposal (email-invoice route),
+    // the server-side DELETE /api/signatures voids it and clears the
+    // billing ref. Surface that in the confirm so the team knows the
+    // invoice in Xero is about to change state, not just our dashboard.
+    const message = proposal._hasXeroInvoice
+      ? 'Remove the signature for this proposal? It will be marked as not yet accepted, and the linked Xero invoice will be voided.'
+      : 'Remove the signature for this proposal? It will be marked as not yet accepted.';
+    if (!window.confirm(message)) return;
     actions.removeSignature(proposal.id);
     showMsg('Signature removed');
   };
