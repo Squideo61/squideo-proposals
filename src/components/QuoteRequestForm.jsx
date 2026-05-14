@@ -103,7 +103,7 @@ const DEFAULTS = {
   ],
   budgetLabel: 'What budget is going to work for you?',
   budgetPlaceholder: "This ensures we provide useful options and keeps things efficient on both sides. If you're unsure, a rough guess is still really helpful.",
-  fileUploadLabel: 'Attachments (optional)',
+  fileUploadLabel: 'Upload a brief, or script if you have one',
   fileUploadButtonText: 'Click to upload or drag files here',
   optInText: 'Send me occasional tips and case studies from Squideo.',
   showOptIn: true,
