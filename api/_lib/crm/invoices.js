@@ -350,13 +350,6 @@ export async function invoicesRoute(req, res, id, action, user) {
           error: `Invoice ${invoiceNumberHint} was not found in Xero. Check the invoice number and try again.`,
         });
       }
-      // Refuse to sync an invoice that's already been voided in Xero —
-      // there's nothing meaningful to track.
-      if (xeroMatch.status === 'VOIDED') {
-        return res.status(400).json({
-          error: `Invoice ${xeroMatch.invoiceNumber} has been voided in Xero and can't be synced.`,
-        });
-      }
       // One Xero invoice = one row. Reject any duplicate, including voided
       // ones, so repeated upload attempts can't stack up phantom entries.
       const existing = await sql`
