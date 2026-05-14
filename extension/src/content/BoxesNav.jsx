@@ -8,7 +8,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { api } from '../lib/api.js';
+import { api, isExtensionContextInvalidated } from '../lib/api.js';
 import { STAGE_COLOURS } from '../lib/stages.js';
 
 const BRAND = {
@@ -29,8 +29,31 @@ let sharedSdk = null;
 let currentSection = null;
 let refreshTimer = null;
 let refreshing = false;
+// Set once when we detect that the extension was reloaded/updated underneath
+// this content script. From that point on, all chrome.runtime calls will
+// throw "Extension context invalidated" forever, so we stop polling and stop
+// logging — a fresh page load re-injects a working content script.
+let extensionContextDead = false;
+let onFocusHandler = null;
+let onVisibilityHandler = null;
+
+function teardownDealsNavPolling() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+  if (onFocusHandler) {
+    window.removeEventListener('focus', onFocusHandler);
+    onFocusHandler = null;
+  }
+  if (onVisibilityHandler) {
+    document.removeEventListener('visibilitychange', onVisibilityHandler);
+    onVisibilityHandler = null;
+  }
+}
 
 async function rebuildDealsSection(sdk) {
+  if (extensionContextDead) return;
   if (refreshing) return;
   refreshing = true;
   try {
@@ -38,6 +61,13 @@ async function rebuildDealsSection(sdk) {
     try {
       deals = await api.get('/api/crm/deals');
     } catch (err) {
+      if (isExtensionContextInvalidated(err)) {
+        // Old content script orphaned by an extension reload. Shut down the
+        // polling loop so we don't spam the same error every 30s.
+        extensionContextDead = true;
+        teardownDealsNavPolling();
+        return;
+      }
       console.warn('[Squideo] could not load deals for nav', err);
       return;
     }
@@ -101,11 +131,12 @@ export async function installBoxesNav(sdk) {
   // a deal in the web app, switch back to Gmail). Also poll every 30s as a
   // fallback for cases where focus/visibility events don't fire — the
   // previous 2-minute interval left deleted deals visible for too long.
-  const onFocus = () => rebuildDealsSection(sdk);
-  window.addEventListener('focus', onFocus);
-  document.addEventListener('visibilitychange', () => {
+  onFocusHandler = () => rebuildDealsSection(sdk);
+  window.addEventListener('focus', onFocusHandler);
+  onVisibilityHandler = () => {
     if (document.visibilityState === 'visible') rebuildDealsSection(sdk);
-  });
+  };
+  document.addEventListener('visibilitychange', onVisibilityHandler);
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(() => rebuildDealsSection(sdk), 30_000);
 }
