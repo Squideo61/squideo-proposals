@@ -3,15 +3,16 @@
 //  1) Xero invoices we know about (xero_invoice_id stored on payments,
 //     partner_invoices, proposal_billing) — read-only, PDFs fetched via
 //     the /api/xero/invoice-pdf passthrough.
-//  2) manual_invoices uploaded by the team — full CRUD, PDFs stored in
-//     Vercel Blob.
+//  2) manual_invoices created by the team — full CRUD, optional PDF in
+//     Vercel Blob, optional Stripe Payment Link.
 //
 // Scoped by dealId (the only filter currently supported — contact/company
 // rollups stay payment-only per the product spec).
 
-import crypto from 'node:crypto';
 import { put, del } from '@vercel/blob';
 import sql from '../db.js';
+import { advanceStage } from '../dealStage.js';
+import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 
 export async function invoicesRoute(req, res, id, action, user) {
@@ -95,7 +96,8 @@ export async function invoicesRoute(req, res, id, action, user) {
 
     const manualRows = await sql`
       SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
-             status, blob_url, filename, notes, uploaded_by, created_at
+             status, blob_url, filename, notes, uploaded_by, created_at,
+             stripe_payment_link_url, paid_at, payment_method
         FROM manual_invoices
         WHERE deal_id = ${dealId} OR proposal_id = ANY(${proposalIds.length ? proposalIds : ['__none__']})
         ORDER BY issued_at DESC NULLS LAST, created_at DESC
@@ -115,7 +117,10 @@ export async function invoicesRoute(req, res, id, action, user) {
         notes: r.notes || null,
         filename: r.filename || null,
         uploadedBy: r.uploaded_by || null,
-        pdfUrl: r.blob_url,
+        pdfUrl: r.blob_url || null,
+        stripePaymentLinkUrl: r.stripe_payment_link_url || null,
+        paidAt: r.paid_at || null,
+        paymentMethod: r.payment_method || null,
       });
     }
 
@@ -123,18 +128,14 @@ export async function invoicesRoute(req, res, id, action, user) {
     return res.status(200).json(out);
   }
 
-  // --- POST /api/crm/invoices — upload a manual invoice.
-  // Multipart isn't used; we follow the deal_files pattern: raw bytes in the
-  // body, metadata via headers. JSON fallback via ?meta= for callers that
-  // can't set headers cleanly.
+  // --- POST /api/crm/invoices — create a manual invoice.
+  // PDF is optional. If a file body is present, it is stored in Vercel Blob.
+  // If no file is provided, a metadata-only invoice is created (blob_url = null).
+  // Metadata comes via X-Invoice-Meta header (base64url JSON).
   if (!id && req.method === 'POST') {
-    if (!process.env.BLOB_READ_WRITE_TOKEN) {
-      return res.status(503).json({ error: 'File storage not configured' });
-    }
-
-    // Metadata comes via headers or query string (Content-Type is the file's
-    // mime type so we can't put JSON in the body alongside the bytes).
-    const filename = decodeURIComponent(req.headers['x-filename'] || 'invoice.pdf');
+    const filename = req.headers['x-filename']
+      ? decodeURIComponent(req.headers['x-filename'])
+      : null;
     const mimeType = req.headers['content-type'] || 'application/pdf';
     const meta = parseInvoiceMeta(req);
     const dealId = trimOrNull(meta.dealId);
@@ -143,21 +144,30 @@ export async function invoicesRoute(req, res, id, action, user) {
       return res.status(400).json({ error: 'dealId or proposalId required' });
     }
 
+    // Read the body — may be empty for metadata-only invoices.
     let fileBuffer = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : null;
     if (!fileBuffer) {
       const chunks = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
-      fileBuffer = Buffer.concat(chunks);
-    }
-    if (!fileBuffer || fileBuffer.length === 0) {
-      return res.status(400).json({ error: 'No file data received' });
-    }
-    if (fileBuffer.length > 20 * 1024 * 1024) {
-      return res.status(413).json({ error: 'File too large (max 20 MB)' });
+      const raw = Buffer.concat(chunks);
+      fileBuffer = raw.length > 0 ? raw : null;
     }
 
-    // If only proposalId was supplied, look up its deal so the row still
-    // joins back to the deal view by dealId.
+    // Must have either a file or an amount.
+    if (!fileBuffer && !numberOrNull(meta.amount)) {
+      return res.status(400).json({ error: 'Provide a PDF, an amount, or both' });
+    }
+
+    if (fileBuffer) {
+      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        return res.status(503).json({ error: 'File storage not configured' });
+      }
+      if (fileBuffer.length > 20 * 1024 * 1024) {
+        return res.status(413).json({ error: 'File too large (max 20 MB)' });
+      }
+    }
+
+    // If only proposalId was supplied, look up its deal.
     let resolvedDealId = dealId;
     if (!resolvedDealId && proposalId) {
       const [pr] = await sql`SELECT deal_id FROM proposals WHERE id = ${proposalId}`;
@@ -165,12 +175,28 @@ export async function invoicesRoute(req, res, id, action, user) {
     }
 
     const newId = makeId('inv');
-    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const blob = await put(`manual-invoices/${resolvedDealId || 'orphan'}/${newId}/${safeName}`, fileBuffer, {
-      access: 'public', contentType: mimeType,
-    });
+    let blobUrl = null;
+    let blobPathname = null;
+    let storedFilename = null;
+    let storedMime = null;
+    let sizeBytes = null;
+
+    if (fileBuffer) {
+      const safeName = (filename || 'invoice.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await put(
+        `manual-invoices/${resolvedDealId || 'orphan'}/${newId}/${safeName}`,
+        fileBuffer,
+        { access: 'public', contentType: mimeType },
+      );
+      blobUrl = blob.url;
+      blobPathname = blob.pathname;
+      storedFilename = filename || 'invoice.pdf';
+      storedMime = mimeType;
+      sizeBytes = fileBuffer.length;
+    }
 
     const status = ['issued', 'paid', 'void'].includes(meta.status) ? meta.status : 'issued';
+    const amount = numberOrNull(meta.amount);
 
     await sql`
       INSERT INTO manual_invoices (
@@ -182,23 +208,39 @@ export async function invoicesRoute(req, res, id, action, user) {
         ${proposalId},
         ${resolvedDealId},
         ${trimOrNull(meta.invoiceNumber)},
-        ${numberOrNull(meta.amount)},
+        ${amount},
         ${trimOrNull(meta.issuedAt) || new Date().toISOString().slice(0, 10)},
         ${trimOrNull(meta.dueAt)},
         ${status},
-        ${blob.url},
-        ${blob.pathname},
-        ${filename},
-        ${mimeType},
-        ${fileBuffer.length},
+        ${blobUrl},
+        ${blobPathname},
+        ${storedFilename},
+        ${storedMime},
+        ${sizeBytes},
         ${trimOrNull(meta.notes)},
         ${user.email || null}
       )
     `;
 
+    // Optionally generate a Stripe Payment Link for the new invoice.
+    let stripePaymentLinkUrl = null;
+    if (meta.generateStripeLink === 'true' && amount > 0) {
+      try {
+        stripePaymentLinkUrl = await createStripePaymentLink({
+          invoiceId: newId,
+          invoiceNumber: trimOrNull(meta.invoiceNumber),
+          amount,
+          dealId: resolvedDealId,
+        });
+      } catch (err) {
+        console.error('[invoices] Stripe payment link creation failed', err.message);
+      }
+    }
+
     const [row] = await sql`
       SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
-             status, blob_url, filename, notes, uploaded_by, created_at
+             status, blob_url, filename, notes, uploaded_by, created_at,
+             stripe_payment_link_url, paid_at, payment_method
         FROM manual_invoices WHERE id = ${newId}
     `;
     return res.status(201).json({
@@ -214,7 +256,10 @@ export async function invoicesRoute(req, res, id, action, user) {
       notes: row.notes,
       filename: row.filename || null,
       uploadedBy: row.uploaded_by || null,
-      pdfUrl: row.blob_url,
+      pdfUrl: row.blob_url || null,
+      stripePaymentLinkUrl: row.stripe_payment_link_url || null,
+      paidAt: row.paid_at || null,
+      paymentMethod: row.payment_method || null,
     });
   }
 
@@ -234,18 +279,65 @@ export async function invoicesRoute(req, res, id, action, user) {
       due_at:         'dueAt'         in body ? trimOrNull(body.dueAt)         : cur.due_at,
       status:         'status'        in body && ['issued', 'paid', 'void'].includes(body.status) ? body.status : cur.status,
       notes:          'notes'         in body ? trimOrNull(body.notes)         : cur.notes,
+      paid_at:        'paidAt'        in body ? trimOrNull(body.paidAt)        : cur.paid_at,
+      payment_method: 'paymentMethod' in body ? trimOrNull(body.paymentMethod) : cur.payment_method,
     };
     await sql`
       UPDATE manual_invoices
-         SET invoice_number = ${next.invoice_number},
-             amount = ${next.amount},
-             issued_at = ${next.issued_at},
-             due_at = ${next.due_at},
-             status = ${next.status},
-             notes = ${next.notes},
-             updated_at = NOW()
+         SET invoice_number  = ${next.invoice_number},
+             amount          = ${next.amount},
+             issued_at       = ${next.issued_at},
+             due_at          = ${next.due_at},
+             status          = ${next.status},
+             notes           = ${next.notes},
+             paid_at         = ${next.paid_at},
+             payment_method  = ${next.payment_method},
+             recorded_by     = COALESCE(recorded_by, ${user.email || null}),
+             updated_at      = NOW()
        WHERE id = ${manualId}
     `;
+
+    // First-time mark-paid: advance deal stage + send notification.
+    if (next.status === 'paid' && cur.status !== 'paid') {
+      const dealId = cur.deal_id;
+      if (dealId) {
+        try {
+          await advanceStage(dealId, 'paid', {
+            actorEmail: user.email || null,
+            payload: { invoiceId: manualId, amount: next.amount, paymentMethod: next.payment_method, source: 'manual-invoice-paid' },
+          });
+        } catch (err) {
+          console.error('[invoices] advanceStage failed', err);
+        }
+
+        try {
+          const [dealRow] = await sql`SELECT title, owner_email FROM deals WHERE id = ${dealId}`;
+          const ownerEmail = dealRow?.owner_email || null;
+          const title = dealRow?.title || cur.invoice_number || manualId;
+          const link = `${APP_URL}/crm?deal=${dealId}`;
+          const others = await adminEmailsExcluding(ownerEmail);
+          const all = [...(ownerEmail ? [ownerEmail] : []), ...others];
+          if (all.length) {
+            await sendMail({
+              to: all,
+              subject: `💰 Invoice paid: ${title}`,
+              html: invoicePaidHtml({
+                title,
+                amount: next.amount != null ? Number(next.amount) : null,
+                paymentMethod: next.payment_method,
+                paidAt: next.paid_at,
+                invoiceNumber: cur.invoice_number,
+                link,
+              }),
+              text: `Invoice ${cur.invoice_number || manualId} marked paid via ${next.payment_method || 'manual'} — ${link}`,
+            });
+          }
+        } catch (err) {
+          console.error('[invoices] notify failed', err);
+        }
+      }
+    }
+
     return res.status(200).json({ ok: true });
   }
 
@@ -257,14 +349,46 @@ export async function invoicesRoute(req, res, id, action, user) {
     if (user.role !== 'admin' && cur.uploaded_by !== user.email) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    try { await del(cur.blob_url); } catch (err) {
-      console.error('[invoices] blob delete failed', err.message);
+    if (cur.blob_url) {
+      try { await del(cur.blob_url); } catch (err) {
+        console.error('[invoices] blob delete failed', err.message);
+      }
     }
     await sql`DELETE FROM manual_invoices WHERE id = ${manualId}`;
     return res.status(200).json({ ok: true });
   }
 
   return res.status(405).end();
+}
+
+// Creates a Stripe Payment Link for a manual invoice and persists the URL.
+// Returns the payment link URL on success; throws on failure.
+async function createStripePaymentLink({ invoiceId, invoiceNumber, amount, dealId }) {
+  const Stripe = (await import('stripe')).default;
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+  const label = invoiceNumber ? `Invoice ${invoiceNumber}` : 'Squideo Invoice';
+  const link = await stripe.paymentLinks.create({
+    line_items: [{
+      price_data: {
+        currency: 'gbp',
+        product_data: { name: label },
+        unit_amount: Math.round(amount * 100),
+      },
+      quantity: 1,
+    }],
+    metadata: {
+      manual_invoice_id: invoiceId,
+      deal_id: dealId || '',
+    },
+  });
+  await sql`
+    UPDATE manual_invoices
+       SET stripe_payment_link_id  = ${link.id},
+           stripe_payment_link_url = ${link.url},
+           updated_at = NOW()
+     WHERE id = ${invoiceId}
+  `;
+  return link.url;
 }
 
 function parseInvoiceMeta(req) {

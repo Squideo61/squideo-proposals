@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import sql from '../_lib/db.js';
-import { cors } from '../_lib/middleware.js';
-import { sendMail, paidHtml, clientPaidThanksHtml, APP_URL, adminEmailsExcluding } from '../_lib/email.js';
+import { cors, requireAuth } from '../_lib/middleware.js';
+import { sendMail, paidHtml, clientPaidThanksHtml, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../_lib/email.js';
 import { getOrCreateContact, createInvoice, emailInvoice, createPayment } from '../_lib/xero.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 import {
@@ -537,6 +537,58 @@ export default async function handler(req, res) {
             console.error('[stripe webhook] payment-received email failed', err);
           }
         }
+
+        // --- Payment Link for a manual (CRM) invoice ---
+        // These sessions have manual_invoice_id in metadata instead of proposalId.
+        const manualInvoiceId = session.metadata?.manual_invoice_id;
+        if (manualInvoiceId) {
+          try {
+            const [inv] = await sql`
+              SELECT id, deal_id, invoice_number, amount, status
+                FROM manual_invoices WHERE id = ${manualInvoiceId}
+            `;
+            if (inv && inv.status !== 'paid') {
+              await sql`
+                UPDATE manual_invoices
+                   SET status         = 'paid',
+                       paid_at        = NOW(),
+                       payment_method = 'stripe-link',
+                       updated_at     = NOW()
+                 WHERE id = ${manualInvoiceId}
+              `;
+              if (inv.deal_id) {
+                await advanceStage(inv.deal_id, 'paid', {
+                  payload: { invoiceId: manualInvoiceId, source: 'stripe-payment-link' },
+                }).catch(err => console.error('[stripe webhook] invoice advanceStage failed', err));
+              }
+              const dealRow = inv.deal_id
+                ? (await sql`SELECT title, owner_email FROM deals WHERE id = ${inv.deal_id}`)[0]
+                : null;
+              const title = dealRow?.title || inv.invoice_number || manualInvoiceId;
+              const link = inv.deal_id ? `${APP_URL}/crm?deal=${inv.deal_id}` : APP_URL;
+              const ownerEmail = dealRow?.owner_email || null;
+              const others = await adminEmailsExcluding(ownerEmail);
+              const all = [...(ownerEmail ? [ownerEmail] : []), ...others];
+              if (all.length) {
+                await sendMail({
+                  to: all,
+                  subject: `💰 Invoice paid via Stripe: ${title}`,
+                  html: invoicePaidHtml({
+                    title,
+                    amount: session.amount_total / 100,
+                    paymentMethod: 'Stripe Payment Link',
+                    paidAt: new Date().toISOString(),
+                    invoiceNumber: inv.invoice_number,
+                    link,
+                  }),
+                  text: `Invoice${inv.invoice_number ? ' ' + inv.invoice_number : ''} paid via Stripe Payment Link — £${(session.amount_total / 100).toFixed(2)}. ${link}`,
+                });
+              }
+            }
+          } catch (err) {
+            console.error('[stripe webhook] manual invoice payment-link handling failed', err);
+          }
+        }
       }
     }
 
@@ -566,6 +618,62 @@ export default async function handler(req, res) {
   let body = {};
   if (rawBody.length > 0) {
     try { body = JSON.parse(rawBody.toString()); } catch {}
+  }
+
+  // --- INVOICE PAYMENT LINK ---
+  // Creates a Stripe Payment Link for a manual_invoices row so the client can pay online.
+  // Idempotent: returns the existing URL if a link has already been created.
+  if (action === 'invoice-link') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const { manualInvoiceId, dealId } = body;
+    if (!manualInvoiceId) return res.status(400).json({ error: 'manualInvoiceId required' });
+
+    const [inv] = await sql`
+      SELECT id, amount, invoice_number, stripe_payment_link_id, stripe_payment_link_url
+        FROM manual_invoices WHERE id = ${manualInvoiceId}
+    `;
+    if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+
+    if (inv.stripe_payment_link_id) {
+      return res.status(200).json({ url: inv.stripe_payment_link_url });
+    }
+
+    const amount = Number(inv.amount);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Invoice must have a positive amount to generate a payment link' });
+    }
+
+    try {
+      const label = inv.invoice_number ? `Invoice ${inv.invoice_number}` : 'Squideo Invoice';
+      const paymentLink = await stripe.paymentLinks.create({
+        line_items: [{
+          price_data: {
+            currency: 'gbp',
+            product_data: { name: label },
+            unit_amount: Math.round(amount * 100),
+          },
+          quantity: 1,
+        }],
+        metadata: {
+          manual_invoice_id: manualInvoiceId,
+          deal_id: dealId || '',
+        },
+      });
+      await sql`
+        UPDATE manual_invoices
+           SET stripe_payment_link_id  = ${paymentLink.id},
+               stripe_payment_link_url = ${paymentLink.url},
+               updated_at = NOW()
+         WHERE id = ${manualInvoiceId}
+      `;
+      return res.status(200).json({ url: paymentLink.url });
+    } catch (err) {
+      console.error('[stripe invoice-link] failed', err);
+      return res.status(502).json({ error: err.message || 'Stripe Payment Link creation failed' });
+    }
   }
 
   // --- CHECKOUT ---

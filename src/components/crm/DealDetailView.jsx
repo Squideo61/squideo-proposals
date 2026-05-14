@@ -9,8 +9,7 @@ import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 import { Card, Empty } from './Card.jsx';
-import { PaymentsCard } from './PaymentsCard.jsx';
-import { InvoicesCard } from './InvoicesCard.jsx';
+import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
@@ -201,8 +200,9 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           )}
         </Card>
 
-        <PaymentsCard dealId={dealId} proposals={proposals} showAddButton />
-        <InvoicesCard dealId={dealId} proposals={proposals} />
+        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+          <InvoicesPaymentsCard dealId={dealId} proposals={proposals} />
+        </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <RetainersCard dealId={dealId} contacts={Object.values(state.contacts || {})} />

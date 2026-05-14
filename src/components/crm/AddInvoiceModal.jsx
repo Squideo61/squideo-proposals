@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Upload } from 'lucide-react';
+import { X, Upload, Link, Copy, Check } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { Modal } from '../ui.jsx';
@@ -20,12 +20,24 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
   const [dueAt, setDueAt] = useState('');
   const [status, setStatus] = useState('issued');
   const [notes, setNotes] = useState('');
+  const [generateLink, setGenerateLink] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [createdLink, setCreatedLink] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  const amountNum = Number(amount);
+  const showLinkOption = amountNum > 0 && status === 'issued';
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!file) { showMsg?.('Pick a PDF to upload', 'error'); return; }
-    if (file.size > 20 * 1024 * 1024) { showMsg?.('File too large (max 20 MB)', 'error'); return; }
+    if (!file && !amountNum) {
+      showMsg?.('Provide a PDF, an amount, or both', 'error');
+      return;
+    }
+    if (file && file.size > 20 * 1024 * 1024) {
+      showMsg?.('File too large (max 20 MB)', 'error');
+      return;
+    }
 
     setUploading(true);
     try {
@@ -33,38 +45,101 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
         dealId,
         proposalId: proposalId || undefined,
         invoiceNumber: invoiceNumber || undefined,
-        amount: amount ? Number(amount) : undefined,
+        amount: amountNum || undefined,
         issuedAt: issuedAt || undefined,
         dueAt: dueAt || undefined,
         status,
         notes: notes || undefined,
+        generateStripeLink: (generateLink && showLinkOption) ? 'true' : undefined,
       };
       const metaHeader = base64UrlEncode(JSON.stringify(meta));
-      const res = await fetch('/api/crm/invoices', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': file.type || 'application/pdf',
-          'X-Filename': encodeURIComponent(file.name || 'invoice.pdf'),
-          'X-Invoice-Meta': metaHeader,
-        },
-        body: file,
-      });
+
+      let res;
+      if (file) {
+        res = await fetch('/api/crm/invoices', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': file.type || 'application/pdf',
+            'X-Filename': encodeURIComponent(file.name || 'invoice.pdf'),
+            'X-Invoice-Meta': metaHeader,
+          },
+          body: file,
+        });
+      } else {
+        // Metadata-only — send empty body with meta in header
+        res = await fetch('/api/crm/invoices', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'X-Invoice-Meta': metaHeader,
+          },
+          body: new Uint8Array(0),
+        });
+      }
+
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || 'Upload failed');
-      showMsg?.('Invoice uploaded', 'success');
-      onCreated?.(json);
+      if (!res.ok) throw new Error(json.error || 'Failed to create invoice');
+
+      showMsg?.('Invoice created', 'success');
+
+      if (json.stripePaymentLinkUrl) {
+        setCreatedLink(json.stripePaymentLinkUrl);
+      } else {
+        onCreated?.(json);
+      }
     } catch (err) {
-      showMsg?.(err.message || 'Upload failed', 'error');
+      showMsg?.(err.message || 'Failed to create invoice', 'error');
     } finally {
       setUploading(false);
     }
   }
 
+  async function handleCopyLink() {
+    try {
+      await navigator.clipboard.writeText(createdLink);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      showMsg?.('Copy failed — please copy the link manually', 'error');
+    }
+  }
+
+  function handleDone() {
+    onCreated?.();
+  }
+
+  if (createdLink) {
+    return (
+      <Modal onClose={onClose}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Invoice created</h2>
+          <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
+        </div>
+        <div style={{ padding: '16px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, marginBottom: 16 }}>
+          <p style={{ margin: '0 0 10px', fontSize: 13, fontWeight: 600 }}>Stripe payment link generated</p>
+          <p style={{ margin: '0 0 12px', fontSize: 12, color: BRAND.muted }}>Share this link with your client so they can pay by card online.</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, padding: '8px 10px' }}>
+            <Link size={12} color={BRAND.muted} style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: 12, flex: 1, wordBreak: 'break-all', color: BRAND.ink }}>{createdLink}</span>
+            <button onClick={handleCopyLink} className="btn-ghost" style={{ padding: '4px 8px', flexShrink: 0 }}>
+              {copied ? <Check size={12} color="#16A34A" /> : <Copy size={12} />}
+              {copied ? ' Copied' : ' Copy'}
+            </button>
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button onClick={handleDone} className="btn">Done</button>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal onClose={onClose}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Upload invoice</h2>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Add invoice</h2>
         <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
       </div>
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -76,7 +151,8 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
             ))}
           </select>
         </Field>
-        <Field label="PDF file">
+
+        <Field label="PDF file (optional)">
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', border: '1px dashed ' + BRAND.border, borderRadius: 8, cursor: 'pointer', background: BRAND.paper }}>
             <Upload size={14} color={BRAND.muted} />
             <span style={{ fontSize: 13, color: BRAND.muted }}>{file ? file.name : 'Choose a PDF…'}</span>
@@ -85,10 +161,15 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
               accept="application/pdf"
               onChange={(e) => setFile(e.target.files?.[0] || null)}
               style={{ display: 'none' }}
-              required
             />
           </label>
+          {!file && (
+            <p style={{ margin: '4px 0 0', fontSize: 11, color: BRAND.muted }}>
+              No PDF — a metadata-only invoice will be created. You can add a PDF later.
+            </p>
+          )}
         </Field>
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Invoice number">
             <input type="text" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="input" placeholder="INV-0042" />
@@ -97,6 +178,7 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
             <input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} className="input" />
           </Field>
         </div>
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
           <Field label="Issued at">
             <input type="date" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} className="input" />
@@ -110,13 +192,28 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
             </select>
           </Field>
         </div>
+
         <Field label="Notes (optional)">
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="input" rows={2} />
         </Field>
 
+        {showLinkOption && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', padding: '10px 12px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 8 }}>
+            <input
+              type="checkbox"
+              checked={generateLink}
+              onChange={(e) => setGenerateLink(e.target.checked)}
+              style={{ width: 14, height: 14 }}
+            />
+            <span>Generate a Stripe payment link so the client can pay by card</span>
+          </label>
+        )}
+
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
-          <button type="submit" className="btn" disabled={uploading}>{uploading ? 'Uploading…' : 'Upload'}</button>
+          <button type="submit" className="btn" disabled={uploading}>
+            {uploading ? 'Saving…' : file ? 'Upload & create' : 'Create invoice'}
+          </button>
         </div>
       </form>
     </Modal>
@@ -133,7 +230,6 @@ function Field({ label, children }) {
 }
 
 function base64UrlEncode(s) {
-  // btoa returns standard base64; rewrite to base64url (no padding, +→-, /→_)
   return btoa(unescape(encodeURIComponent(s)))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')

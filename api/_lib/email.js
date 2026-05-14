@@ -202,3 +202,19 @@ export function paidHtml({ proposal, signerName, signerEmail, amount, paymentTyp
   `;
   return shell(inner);
 }
+
+export function invoicePaidHtml({ title, amount, paymentMethod, paidAt, invoiceNumber, link }) {
+  const dateStr = paidAt ? new Date(paidAt).toLocaleString('en-GB') : '';
+  const methodLabel = (paymentMethod || 'manual').toUpperCase();
+  const inner = `
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">💰 Invoice marked paid</h2>
+    <p style="margin:0 0 16px;">Invoice${invoiceNumber ? ` <strong>${escapeHtml(invoiceNumber)}</strong>` : ''} for <strong>${escapeHtml(title || 'a deal')}</strong> has been marked paid.</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 20px;">
+      ${amount != null ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Amount</td><td style="padding:4px 0;font-size:13px;font-weight:600;">${formatGBP(amount)}</td></tr>` : ''}
+      <tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Method</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(methodLabel)}</td></tr>
+      ${dateStr ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Paid at</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(dateStr)}</td></tr>` : ''}
+    </table>
+    ${link ? `<p style="margin:0;"><a href="${escapeHtml(link)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open deal</a></p>` : ''}
+  `;
+  return shell(inner);
+}
