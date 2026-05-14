@@ -189,21 +189,23 @@ export async function createInvoice({ contactId, lineItems, reference, invoiceNu
 // so the latest paid invoices are counted. Parses "INV-6058" → "INV-6059".
 export async function getNextInvoiceNumber() {
   try {
-    // Must include all statuses — the default only returns DRAFT+AUTHORISED,
-    // which would miss PAID invoices and produce a stale/duplicate number.
-    // WHERE filter skips non-INV invoices (e.g. ZRUSFYBT-* sort higher alphabetically).
+    // Must include all statuses — default only returns DRAFT+AUTHORISED, missing PAID.
+    // Sort by Date DESC and fetch 100 so we span any non-standard-format invoices
+    // (e.g. INV-C-2026-..., ZRUSFYBT-...) that sort ahead of INV-NNNN alphabetically.
+    // Filter client-side to the exact INV-<digits> pattern and pick the numeric max.
     const where = encodeURIComponent('InvoiceNumber.StartsWith("INV-")');
     const json = await xeroFetch(
-      `/api.xro/2.0/Invoices?Type=ACCREC&where=${where}&order=InvoiceNumber+DESC&page=1&pageSize=1&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID,VOIDED`
+      `/api.xro/2.0/Invoices?Type=ACCREC&where=${where}&order=Date+DESC&page=1&pageSize=100&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID,VOIDED`
     );
-    const inv = json?.Invoices?.[0];
-    if (!inv?.InvoiceNumber) return null;
-    const match = inv.InvoiceNumber.match(/^(.+?)(\d+)$/);
-    if (!match) return null;
-    const prefix = match[1];   // "INV-"
-    const digits = match[2];   // "6058"
+    const candidates = (json?.Invoices || [])
+      .map(i => i.InvoiceNumber || '')
+      .filter(n => /^INV-\d+$/.test(n));
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => parseInt(b.slice(4), 10) - parseInt(a.slice(4), 10));
+    const top = candidates[0];
+    const digits = top.slice(4); // "6058"
     const nextNum = String(parseInt(digits, 10) + 1).padStart(digits.length, '0');
-    return `${prefix}${nextNum}`; // "INV-6059"
+    return `INV-${nextNum}`; // "INV-6059"
   } catch (err) {
     console.warn('[xero] getNextInvoiceNumber failed', err.message);
     return null;
