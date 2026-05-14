@@ -193,19 +193,23 @@ export async function getNextInvoiceNumber() {
     // Sort by Date DESC and fetch 100 so we span any non-standard-format invoices
     // (e.g. INV-C-2026-..., ZRUSFYBT-...) that sort ahead of INV-NNNN alphabetically.
     // Filter client-side to the exact INV-<digits> pattern and pick the numeric max.
-    // Sort by UpdatedDateUTC DESC so the most recently created/modified invoice is first.
-    // Outlier invoices (INV-8045, INV-28883219 etc.) were created long ago and sink to
-    // the bottom; the current sequential invoice (INV-6058, just created) floats up.
-    // Alphabetical and numeric sorts both fail due to scattered out-of-range numbers.
+    // Exclude VOIDED — voided test/draft invoices cause outlier high numbers.
+    // Sort by UpdatedDateUTC DESC so recently active invoices dominate the first page;
+    // old outliers that happen to be non-voided sink below the top 50.
+    // Then find the numeric maximum across all INV-NNNN matches in those 50 results.
     const where = encodeURIComponent('InvoiceNumber.StartsWith("INV-")');
     const json = await xeroFetch(
-      `/api.xro/2.0/Invoices?Type=ACCREC&where=${where}&order=UpdatedDateUTC+DESC&page=1&pageSize=50&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID,VOIDED`
+      `/api.xro/2.0/Invoices?Type=ACCREC&where=${where}&order=UpdatedDateUTC+DESC&page=1&pageSize=50&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID`
     );
-    const inv = (json?.Invoices || [])
-      .find(i => /^INV-\d+$/.test(i.InvoiceNumber || ''));
-    if (!inv) return null;
-    const digits = inv.InvoiceNumber.slice(4); // "6058"
-    const nextNum = String(parseInt(digits, 10) + 1).padStart(digits.length, '0');
+    const nums = (json?.Invoices || [])
+      .map(i => i.InvoiceNumber || '')
+      .filter(n => /^INV-\d+$/.test(n))
+      .map(n => parseInt(n.slice(4), 10));
+    if (!nums.length) return null;
+    const maxNum = Math.max(...nums);
+    const digits = String(maxNum);
+    const padLen = Math.max(digits.length, 4); // keep at least 4-digit padding
+    const nextNum = String(maxNum + 1).padStart(padLen, '0');
     return `INV-${nextNum}`; // "INV-6059"
   } catch (err) {
     console.warn('[xero] getNextInvoiceNumber failed', err.message);
