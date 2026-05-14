@@ -242,7 +242,7 @@ export function AddInvoiceModal({ dealId, proposals = [], defaultProposalId, onC
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
           <button type="submit" className="btn" disabled={uploading}>
-            {uploading ? 'Saving…' : file ? 'Upload & create' : 'Create invoice'}
+            {uploading ? 'Saving…' : file ? 'Upload & sync' : 'Create invoice'}
           </button>
         </div>
       </form>
