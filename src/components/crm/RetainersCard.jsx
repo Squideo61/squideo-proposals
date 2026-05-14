@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Archive, ArchiveRestore, CheckCircle2, ChevronDown, ChevronRight, Edit2, MoreVertical, Plus, Printer, Trash2, Undo2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -295,12 +296,31 @@ function RetainerSection({ retainer, isAdmin, onEdit, onLogWork, onPrint, onSetS
 }
 
 function ProjectMenu({ items, open, onOpenChange }) {
-  const ref = useRef(null);
+  const buttonRef = useRef(null);
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState(null);
+
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current) return;
+    const place = () => {
+      const r = buttonRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, right: window.innerWidth - r.right });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const close = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) onOpenChange(false);
+      if (buttonRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      onOpenChange(false);
     };
     const closeOnEsc = (e) => { if (e.key === 'Escape') onOpenChange(false); };
     document.addEventListener('mousedown', close);
@@ -312,8 +332,9 @@ function ProjectMenu({ items, open, onOpenChange }) {
   }, [open, onOpenChange]);
 
   return (
-    <div ref={ref} style={{ position: 'relative', zIndex: open ? 50 : 'auto' }}>
+    <>
       <button
+        ref={buttonRef}
         onClick={() => onOpenChange(!open)}
         className="btn-icon"
         title="More actions"
@@ -324,20 +345,21 @@ function ProjectMenu({ items, open, onOpenChange }) {
       >
         <MoreVertical size={14} color={BRAND.muted} />
       </button>
-      {open && (
+      {open && pos && createPortal(
         <div
+          ref={menuRef}
           role="menu"
           style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            right: 0,
+            position: 'fixed',
+            top: pos.top,
+            right: pos.right,
             background: 'white',
             border: '1px solid ' + BRAND.border,
             borderRadius: 8,
             boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)',
             minWidth: 180,
             padding: 4,
-            zIndex: 50,
+            zIndex: 2500,
           }}
         >
           {items.map((item, i) => (
@@ -368,9 +390,10 @@ function ProjectMenu({ items, open, onOpenChange }) {
               <span>{item.label}</span>
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   );
 }
 
