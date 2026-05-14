@@ -260,6 +260,40 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     return opts[0];
   });
 
+  // Once signed, replay the choices the client locked in so the (now disabled)
+  // controls reflect the signed selection instead of resetting to defaults.
+  // Without this, extras the client ticked show as unchecked on the signed
+  // view even though they're on the invoice.
+  useEffect(() => {
+    if (!signed) return;
+    if (Array.isArray(signed.selectedExtras)) {
+      const map = {};
+      const meta = {};
+      for (const e of signed.selectedExtras) {
+        if (!e?.id) continue;
+        map[e.id] = true;
+        if (e.variantsEnabled) {
+          meta[e.id] = {
+            quantity: Math.max(1, Number(e.quantity) || 1),
+            languages: e.languages || '',
+          };
+        }
+      }
+      setSelectedExtras(map);
+      setExtrasMeta(meta);
+    }
+    if (typeof signed.partnerSelected === 'boolean') setPartnerSelected(signed.partnerSelected);
+    if (Number.isFinite(Number(signed.partnerCredits))) setPartnerCredits(Number(signed.partnerCredits));
+    if (signed.paymentOption) setPaymentOption(signed.paymentOption);
+    if (signed.selectedVideoOption && Array.isArray(data?.videoOptions)) {
+      const idx = data.videoOptions.findIndex(v =>
+        (v.id && signed.selectedVideoOption.id && v.id === signed.selectedVideoOption.id)
+        || (v.label && v.label === signed.selectedVideoOption.label)
+      );
+      if (idx >= 0) setSelectedVideoOptionIdx(idx);
+    }
+  }, [signed, data]);
+
   // Partner Programme unlocks its discount only on full payment (or PO).
   // When the client opts in, bump them off 50/50 onto the next available option.
   useEffect(() => {

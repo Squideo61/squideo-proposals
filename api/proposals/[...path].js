@@ -159,8 +159,16 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'DELETE') {
-    // Destructive — admin-only. Members can edit (team write) but not destroy.
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    // Admins can delete anything. Members can delete proposals they own
+    // (preparedByEmail matches their login) so they can clean up their own
+    // mistakes without pulling an admin in.
+    if (user.role !== 'admin') {
+      const rows = await sql`SELECT data->>'preparedByEmail' AS owner FROM proposals WHERE id = ${id}`;
+      const owner = rows[0]?.owner || null;
+      if (!owner || !user.email || owner.toLowerCase() !== user.email.toLowerCase()) {
+        return res.status(403).json({ error: 'You can only delete proposals you created' });
+      }
+    }
     await sql`DELETE FROM proposals WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }

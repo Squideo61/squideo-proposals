@@ -2,6 +2,7 @@ import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, signedHtml, clientSignedThanksHtml, APP_URL } from '../_lib/email.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
+import { voidInvoice } from '../_lib/xero.js';
 
 // Allowlist of fields from `signatures.data` that the public client view
 // actually consumes (SignedBlock, ClientView post-sign branch, ThankYouView,
@@ -33,8 +34,30 @@ export default async function handler(req, res) {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+
+    // If we previously issued a Xero invoice for this proposal (email-invoice
+    // route), void it so it no longer counts and clear the stored reference.
+    // The next sign on the same link will then create a fresh invoice from
+    // the new client selection. Best-effort: a Xero failure (e.g. already
+    // PAID) must not block the unmark — log and continue.
+    const billing = await sql`
+      SELECT xero_invoice_id, xero_quote_id FROM proposal_billing WHERE proposal_id = ${id}
+    `;
+    const oldInvoiceId = billing[0]?.xero_invoice_id || null;
+    if (oldInvoiceId) {
+      try { await voidInvoice(oldInvoiceId); }
+      catch (err) { console.error('[signatures] voidInvoice failed', err.message || err); }
+    }
+    if (billing.length) {
+      await sql`
+        UPDATE proposal_billing
+           SET xero_invoice_id = NULL, xero_quote_id = NULL, updated_at = NOW()
+         WHERE proposal_id = ${id}
+      `;
+    }
+
     await sql`DELETE FROM signatures WHERE proposal_id = ${id}`;
-    return res.status(200).json({ ok: true });
+    return res.status(200).json({ ok: true, voidedInvoiceId: oldInvoiceId });
   }
 
   if (req.method === 'GET') {
