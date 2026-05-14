@@ -84,8 +84,8 @@ const DEFAULTS = {
   emailPlaceholder: 'you@company.com',
   phoneLabel: 'Phone number',
   phonePlaceholder: 'Phone number',
-  companyLabel: 'Company',
-  companyPlaceholder: 'Your company name',
+  companyLabel: 'Company or Organisation',
+  companyPlaceholder: 'Your company or organisation name',
   projectDetailsLabel: 'Project details',
   projectDetailsPlaceholder: 'Just one video, or more? A short description is just fine at this stage. If you have a brief or script already you can upload one in the next step.',
   caveatIntro: "To quote accurately, we'll need to know:",
@@ -120,8 +120,8 @@ const DEFAULTS = {
   exitIntentDelayMs: 3000,
   nameRequired: true,
   emailRequired: true,
-  phoneRequired: false,
-  companyRequired: false,
+  phoneRequired: true,
+  companyRequired: true,
   projectDetailsRequired: true,
   timelineRequired: true,
   budgetRequired: true,
@@ -416,6 +416,7 @@ export function QuoteRequestForm(props = {}) {
       if (cfg.emailRequired && !form.email.trim()) newErrors.email = 'We need your email to send you the quote';
       if (form.email.trim() && !isValidEmail(form.email.trim())) newErrors.email = 'Please enter a valid email address (e.g., name@example.com)';
       if (cfg.phoneRequired && !form.phone.trim()) newErrors.phone = 'A phone number helps us reach you faster';
+      if (cfg.companyRequired && !form.company.trim()) newErrors.company = 'Please enter your company or organisation';
     } else if (n === 2) {
       if (cfg.projectDetailsRequired && !form.projectDetails.trim()) {
         newErrors['project-details'] = 'Please tell us a bit about your project (even a short description helps!)';
@@ -818,11 +819,12 @@ export function QuoteRequestForm(props = {}) {
               <label htmlFor="qr-company">{cfg.companyLabel}{!cfg.companyRequired && <span className="optional-label"> (optional)</span>}</label>
               <input
                 type="text" id="qr-company" name="company"
-                className="form-input"
+                className={`form-input ${errors.company ? 'error' : ''}`}
                 placeholder={cfg.companyPlaceholder}
                 value={form.company}
-                onChange={(e) => setField('company', e.target.value)}
+                onChange={(e) => { setField('company', e.target.value); if (errors.company) clearError('company'); }}
               />
+              {errors.company && <span className="error-message visible">{errors.company}</span>}
             </div>
           </div>
 
