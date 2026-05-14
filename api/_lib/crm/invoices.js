@@ -158,8 +158,10 @@ export async function invoicesRoute(req, res, id, action, user) {
       const currency = r.currency || 'GBP';
       const rate = r.currency_rate != null ? Number(r.currency_rate) : null;
       const amount = r.amount != null ? Number(r.amount) : null;
+      // Xero's CurrencyRate is base-per-invoice-currency (e.g. 1 GBP = 1.1518
+      // EUR), so to convert an invoice in EUR to GBP we divide by the rate.
       const gbpAmount = (currency !== 'GBP' && amount != null && rate)
-        ? Number((amount * rate).toFixed(2))
+        ? Number((amount / rate).toFixed(2))
         : null;
       out.push({
         id: 'manual:' + r.id,
@@ -469,7 +471,7 @@ export async function invoicesRoute(req, res, id, action, user) {
     const rspRate = row.currency_rate != null ? Number(row.currency_rate) : null;
     const rspAmount = row.amount != null ? Number(row.amount) : null;
     const rspGbp = (rspCurrency !== 'GBP' && rspAmount != null && rspRate)
-      ? Number((rspAmount * rspRate).toFixed(2))
+      ? Number((rspAmount / rspRate).toFixed(2))
       : null;
     return res.status(201).json({
       id: 'manual:' + row.id,
