@@ -311,18 +311,16 @@ export async function invoicesRoute(req, res, id, action, user) {
       fileBuffer = raw.length > 0 ? raw : null;
     }
 
-    // Must have either a file or an amount.
-    if (!fileBuffer && !numberOrNull(meta.amount)) {
-      return res.status(400).json({ error: 'Provide a PDF, an amount, or both' });
+    // Upload endpoint is strictly for syncing existing Xero invoices —
+    // a PDF is required (the metadata-only path was removed).
+    if (!fileBuffer) {
+      return res.status(400).json({ error: 'A Xero invoice PDF is required' });
     }
-
-    if (fileBuffer) {
-      if (!process.env.BLOB_READ_WRITE_TOKEN) {
-        return res.status(503).json({ error: 'File storage not configured' });
-      }
-      if (fileBuffer.length > 20 * 1024 * 1024) {
-        return res.status(413).json({ error: 'File too large (max 20 MB)' });
-      }
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      return res.status(503).json({ error: 'File storage not configured' });
+    }
+    if (fileBuffer.length > 20 * 1024 * 1024) {
+      return res.status(413).json({ error: 'File too large (max 20 MB)' });
     }
 
     // If only proposalId was supplied, look up its deal.
@@ -436,38 +434,8 @@ export async function invoicesRoute(req, res, id, action, user) {
       )
     `;
 
-    // Optionally generate a Stripe Payment Link for the new invoice.
-    let stripePaymentLinkUrl = null;
-    if (meta.generateStripeLink === 'true' && amount > 0) {
-      try {
-        stripePaymentLinkUrl = await createStripePaymentLink({
-          invoiceId: newId,
-          invoiceNumber: storedInvoiceNumber,
-          amount,
-          dealId: resolvedDealId,
-        });
-      } catch (err) {
-        console.error('[invoices] Stripe payment link creation failed', err.message);
-      }
-    }
-
-    // PDF uploads represent invoices that already exist in Xero — link if we
-    // found a match, otherwise log metadata-only without pushing a duplicate.
-    // Only the no-file path (creating a brand-new invoice from the dashboard)
-    // pushes to Xero.
-    if (!fileBuffer) {
-      const vatRate = numberOrNull(meta.vatRate) ?? 20;
-      await pushInvoiceToXero({
-        invoiceId: newId,
-        dealId: resolvedDealId,
-        proposalId,
-        invoiceNumber: storedInvoiceNumber,
-        amount,
-        notes: trimOrNull(meta.notes),
-        dueAt,
-        vatRate,
-      });
-    }
+    // The upload path always represents an existing Xero invoice (we matched
+    // it above), so we never push to Xero from here.
 
     const [row] = await sql`
       SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
