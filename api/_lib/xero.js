@@ -191,8 +191,10 @@ export async function getNextInvoiceNumber() {
   try {
     // Must include all statuses — the default only returns DRAFT+AUTHORISED,
     // which would miss PAID invoices and produce a stale/duplicate number.
+    // WHERE filter skips non-INV invoices (e.g. ZRUSFYBT-* sort higher alphabetically).
+    const where = encodeURIComponent('InvoiceNumber.StartsWith("INV-")');
     const json = await xeroFetch(
-      '/api.xro/2.0/Invoices?Type=ACCREC&order=InvoiceNumber+DESC&page=1&pageSize=1&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID,VOIDED'
+      `/api.xro/2.0/Invoices?Type=ACCREC&where=${where}&order=InvoiceNumber+DESC&page=1&pageSize=1&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID,VOIDED`
     );
     const inv = json?.Invoices?.[0];
     if (!inv?.InvoiceNumber) return null;
