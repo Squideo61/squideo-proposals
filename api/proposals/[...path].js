@@ -184,7 +184,17 @@ async function list(req, res) {
            COALESCE(v.duration, 0) AS view_duration,
            v.last_active_at        AS view_last_active,
            pb.xero_invoice_id      AS billing_invoice_id,
-           pb.xero_quote_id        AS billing_quote_id
+           pb.xero_quote_id        AS billing_quote_id,
+           s.name                  AS sig_name,
+           s.email                 AS sig_email,
+           s.signed_at             AS sig_signed_at,
+           s.data                  AS sig_data,
+           pay.amount              AS pay_amount,
+           pay.payment_type        AS pay_type,
+           pay.paid_at             AS pay_paid_at,
+           pay.stripe_session_id   AS pay_session_id,
+           pay.customer_email      AS pay_customer_email,
+           pay.receipt_url         AS pay_receipt_url
     FROM proposals p
     LEFT JOIN (
       SELECT proposal_id,
@@ -195,6 +205,8 @@ async function list(req, res) {
       GROUP BY proposal_id
     ) v ON v.proposal_id = p.id
     LEFT JOIN proposal_billing pb ON pb.proposal_id = p.id
+    LEFT JOIN signatures s ON s.proposal_id = p.id
+    LEFT JOIN payments pay ON pay.proposal_id = p.id
     ORDER BY p.created_at DESC
   `;
   const proposals = {};
@@ -213,6 +225,19 @@ async function list(req, res) {
       },
       _hasXeroInvoice: !!row.billing_invoice_id,
       _hasXeroQuote: !!row.billing_quote_id,
+      _signature: row.sig_signed_at
+        ? { name: row.sig_name, email: row.sig_email, signedAt: row.sig_signed_at, ...(row.sig_data || {}) }
+        : null,
+      _payment: row.pay_paid_at
+        ? {
+            amount: row.pay_amount,
+            paymentType: row.pay_type,
+            paidAt: row.pay_paid_at,
+            stripeSessionId: row.pay_session_id,
+            customerEmail: row.pay_customer_email,
+            receiptUrl: row.pay_receipt_url,
+          }
+        : null,
     };
   }
   return res.status(200).json(proposals);

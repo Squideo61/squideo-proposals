@@ -227,11 +227,19 @@ export function StoreProvider({ children }) {
       for (const c of (Array.isArray(contacts) ? contacts : [])) contactsMap[c.id] = c;
       const companiesMap = {};
       for (const c of (Array.isArray(companies) ? companies : [])) companiesMap[c.id] = c;
+      const signaturesMap = {};
+      const paymentsMap = {};
+      for (const [pid, p] of Object.entries(proposals || {})) {
+        if (p?._signature) signaturesMap[pid] = p._signature;
+        if (p?._payment)   paymentsMap[pid]   = p._payment;
+      }
       setState(s => ({
         ...s,
         proposals: proposals || {},
         templates: templates || {},
         users: users || {},
+        signatures: signaturesMap,
+        payments: paymentsMap,
         deals: dealsMap,
         contacts: contactsMap,
         companies: companiesMap,
@@ -244,14 +252,6 @@ export function StoreProvider({ children }) {
         notificationRecipients: settings?.notificationRecipients || [],
         loading: false,
       }));
-      Object.keys(proposals || {}).forEach(id => {
-        api.get('/api/signatures/' + id).then(sig => {
-          if (sig) setState(s => ({ ...s, signatures: { ...s.signatures, [id]: sig } }));
-        }).catch(() => {});
-        api.get('/api/payments/' + id).then(pay => {
-          if (pay) setState(s => ({ ...s, payments: { ...s.payments, [id]: pay } }));
-        }).catch(() => {});
-      });
     });
   }, []);
   fetchAllRef.current = fetchAll;
@@ -303,6 +303,80 @@ export function StoreProvider({ children }) {
       window.removeEventListener('focus', refresh);
     };
   }, [state.session]);
+
+  // Live dashboard: poll the proposals list every 20s so new signatures,
+  // payments, and view counts surface without a manual refresh. We replace
+  // signatures / payments / view counts unconditionally (they only change
+  // from outside the app), but we skip overwriting a proposal's editable
+  // data if there's a pending debounced save for it — otherwise typing in
+  // the builder would race with the poll and the user would see characters
+  // disappear. New signs and payments trigger a toast so they're noticed
+  // even when the user is on a different view.
+  useEffect(() => {
+    if (!state.session) return undefined;
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      api.get('/api/proposals').then((proposals) => {
+        if (cancelled || !proposals || typeof proposals !== 'object') return;
+        let newlySigned = [];
+        let newlyPaid = [];
+        setState(s => {
+          // Recompute each time (strict mode invokes the updater twice; we
+          // overwrite rather than append so the result is idempotent).
+          newlySigned = [];
+          newlyPaid = [];
+          const nextProposals = { ...s.proposals };
+          const nextSignatures = {};
+          const nextPayments = {};
+          for (const [pid, p] of Object.entries(proposals)) {
+            if (p?._signature) nextSignatures[pid] = p._signature;
+            if (p?._payment)   nextPayments[pid]   = p._payment;
+            if (p?._signature && !s.signatures[pid]) newlySigned.push({ id: pid, sig: p._signature, name: p.clientName || p.contactBusinessName || 'a proposal' });
+            if (p?._payment   && !s.payments[pid])   newlyPaid.push({ id: pid, pay: p._payment, name: p.clientName || p.contactBusinessName || 'a proposal' });
+            const editing = !!saveTimers.current[pid];
+            if (editing && s.proposals[pid]) {
+              // Keep the user's in-flight local edits, but still let view counts
+              // and dealId tick over so the dashboard reflects external changes.
+              nextProposals[pid] = {
+                ...s.proposals[pid],
+                _views: p._views ?? s.proposals[pid]._views,
+                _dealId: p._dealId ?? s.proposals[pid]._dealId,
+                _number: p._number ?? s.proposals[pid]._number,
+                _hasXeroInvoice: p._hasXeroInvoice,
+                _hasXeroQuote: p._hasXeroQuote,
+              };
+            } else {
+              nextProposals[pid] = p;
+            }
+          }
+          // Proposals deleted on the server should also vanish locally.
+          for (const pid of Object.keys(s.proposals)) {
+            if (!proposals[pid] && !saveTimers.current[pid]) delete nextProposals[pid];
+          }
+          return { ...s, proposals: nextProposals, signatures: nextSignatures, payments: nextPayments };
+        });
+        if (newlySigned.length || newlyPaid.length) {
+          const parts = [];
+          for (const n of newlySigned) parts.push(`${n.sig.name || 'Someone'} signed ${n.name}`);
+          for (const n of newlyPaid)   parts.push(`Payment received for ${n.name}`);
+          showMsg(parts.join(' · '));
+        }
+      }).catch(() => {});
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') tick(); };
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') tick();
+    }, 20_000);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', tick);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', tick);
+    };
+  }, [state.session, showMsg]);
 
   // mutate: the one place CRM-style optimistic actions live.
   // - `patches` is a tagged descriptor (or array). applyOne handles the dual-cache
