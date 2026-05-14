@@ -194,7 +194,8 @@ async function list(req, res) {
            pay.paid_at             AS pay_paid_at,
            pay.stripe_session_id   AS pay_session_id,
            pay.customer_email      AS pay_customer_email,
-           pay.receipt_url         AS pay_receipt_url
+           pay.receipt_url         AS pay_receipt_url,
+           pay.xero_invoice_id     AS pay_xero_invoice_id
     FROM proposals p
     LEFT JOIN (
       SELECT proposal_id,
@@ -223,7 +224,8 @@ async function list(req, res) {
         duration: Number(row.view_duration) || 0,
         lastActiveAt: row.view_last_active || null,
       },
-      _hasXeroInvoice: !!row.billing_invoice_id,
+      _xeroInvoiceId: row.billing_invoice_id || row.pay_xero_invoice_id || null,
+      _hasXeroInvoice: !!(row.billing_invoice_id || row.pay_xero_invoice_id),
       _hasXeroQuote: !!row.billing_quote_id,
       _signature: row.sig_signed_at
         ? { name: row.sig_name, email: row.sig_email, signedAt: row.sig_signed_at, ...(row.sig_data || {}) }

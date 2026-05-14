@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, BarChart3, Check, CheckSquare, Clock, Contact, Copy, Coins, Download, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Search, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
+import { AlertTriangle, BarChart3, Check, CheckSquare, Clock, Contact, Copy, Coins, Download, ExternalLink, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Receipt, Search, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, useIsMobile } from '../utils.js';
@@ -402,6 +402,9 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
               onClick: () => openPrintWindow(proposal, signed ? printOptionsForSigned(signed, payment) : {}),
             },
             ...(onDuplicate ? [{ label: 'Duplicate proposal', icon: Copy, onClick: () => onDuplicate(proposal.id) }] : []),
+            ...(signed && proposal._xeroInvoiceId
+              ? [{ label: 'View invoice', icon: Receipt, onClick: () => window.open('/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(proposal._xeroInvoiceId), '_blank', 'noopener') }]
+              : []),
             ...(signed && !payment ? [{ label: 'Mark as paid', icon: Check, onClick: handleMarkPaid }] : []),
             ...(signed && !payment ? [{ label: 'Unmark as accepted', icon: Undo2, onClick: handleUnmarkAccepted }] : []),
             { label: 'Delete', icon: Trash2, onClick: () => onDelete(proposal.id), danger: true },

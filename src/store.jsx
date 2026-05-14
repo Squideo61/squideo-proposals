@@ -344,6 +344,7 @@ export function StoreProvider({ children }) {
                 _dealId: p._dealId ?? s.proposals[pid]._dealId,
                 _number: p._number ?? s.proposals[pid]._number,
                 _hasXeroInvoice: p._hasXeroInvoice,
+                _xeroInvoiceId: p._xeroInvoiceId,
                 _hasXeroQuote: p._hasXeroQuote,
               };
             } else {
