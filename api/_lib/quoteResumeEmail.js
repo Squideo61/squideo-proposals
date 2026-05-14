@@ -4,18 +4,19 @@ const escapeHtml = (s = '') =>
   }[c]));
 
 export function buildResumeEmail({ kind, name, resumeUrl, unsubscribeUrl }) {
+  const firstName = (name || '').trim().split(/\s+/)[0] || '';
   const intro = {
-    initial: name
-      ? `Hi ${escapeHtml(name)}, thanks for starting your quote request! Click the link below any time to pick up where you left off.`
+    initial: firstName
+      ? `Hi ${escapeHtml(firstName)}, thanks for starting your quote request! Click the link below any time to pick up where you left off.`
       : `Thanks for starting your quote request! Click the link below any time to pick up where you left off.`,
-    reminder_1: name
-      ? `Hi ${escapeHtml(name)}, just a quick reminder — your quote request is still saved. Click below to finish it off.`
+    reminder_1: firstName
+      ? `Hi ${escapeHtml(firstName)}, just a quick reminder — your quote request is still saved. Click below to finish it off.`
       : `Just a quick reminder — your quote request is still saved. Click below to finish it off.`,
-    reminder_2: name
-      ? `Hi ${escapeHtml(name)}, your saved quote request is waiting. We'd love to help — finish it off whenever you have a moment.`
+    reminder_2: firstName
+      ? `Hi ${escapeHtml(firstName)}, your saved quote request is waiting. We'd love to help — finish it off whenever you have a moment.`
       : `Your saved quote request is waiting. We'd love to help — finish it off whenever you have a moment.`,
-    reminder_3: name
-      ? `Hi ${escapeHtml(name)}, this is our last reminder. Your saved quote request is still here if you'd like to come back to it.`
+    reminder_3: firstName
+      ? `Hi ${escapeHtml(firstName)}, this is our last reminder. Your saved quote request is still here if you'd like to come back to it.`
       : `This is our last reminder. Your saved quote request is still here if you'd like to come back to it.`,
   }[kind] || '';
 
