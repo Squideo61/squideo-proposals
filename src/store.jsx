@@ -406,14 +406,29 @@ export function StoreProvider({ children }) {
       }, 800);
     },
     deleteProposal(id) {
+      // Cancel any pending debounced save — otherwise an in-flight PUT (e.g.
+      // user typed in the builder, hit Back, then deleted within 800ms) fires
+      // AFTER the DELETE and re-creates the proposal on the server.
+      if (saveTimers.current[id]) {
+        clearTimeout(saveTimers.current[id]);
+        delete saveTimers.current[id];
+      }
+      let snapshot = null;
       setState(s => {
+        snapshot = s;
         const proposals = { ...s.proposals }; delete proposals[id];
         const signatures = { ...s.signatures }; delete signatures[id];
         const payments = { ...s.payments }; delete payments[id];
         const viewSessions = { ...s.viewSessions }; delete viewSessions[id];
         return { ...s, proposals, signatures, payments, viewSessions };
       });
-      api.delete('/api/proposals/' + id).catch(() => {});
+      api.delete('/api/proposals/' + id).catch((err) => {
+        // Server refused (most likely 403 — non-admin trying to delete
+        // someone else's proposal). Roll back the optimistic remove and
+        // surface the error so the user knows why the proposal came back.
+        if (snapshot) setState(snapshot);
+        showMsg(err?.message || 'Could not delete proposal');
+      });
     },
     saveTemplate(id, tpl) {
       setState(s => ({ ...s, templates: { ...s.templates, [id]: tpl } }));
