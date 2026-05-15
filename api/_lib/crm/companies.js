@@ -101,6 +101,7 @@ export async function companiesRoute(req, res, id, action, user) {
       SELECT c.id, c.name, c.domain, c.notes, c.xero_contact_id,
              c.customer_verified_at, c.customer_verified_by,
              c.created_at, c.updated_at,
+             xc.name AS xero_contact_name,
              EXISTS(
                SELECT 1
                  FROM signatures s
@@ -109,6 +110,7 @@ export async function companiesRoute(req, res, id, action, user) {
                 WHERE d.company_id = c.id
              ) AS has_signed_proposal
         FROM companies c
+        LEFT JOIN xero_contacts xc ON xc.id = c.xero_contact_id
        WHERE c.id = ${id}
     `;
     if (!companyRow) return res.status(404).json({ error: 'Not found' });
@@ -233,6 +235,10 @@ export function serialiseCompany(r) {
     domain: r.domain || null,
     notes: r.notes || null,
     xeroContactId: r.xero_contact_id || null,
+    // Name comes from the LEFT JOIN on xero_contacts in the detail query.
+    // Null when the company isn't linked, or when the Xero mirror hasn't
+    // been synced yet (sync runs on-demand via POST /api/crm/xero-contacts/sync).
+    xeroContactName: r.xero_contact_name || null,
     customerVerifiedAt: verifiedAt,
     customerVerifiedBy: r.customer_verified_by || null,
     // hasSignedProposal is only present on rows that came from a list/detail

@@ -162,7 +162,11 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
           {detail.xeroContactId ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6 }}>
               <Link2 size={14} color="#16A34A" />
-              <code style={{ fontSize: 12, color: BRAND.ink, flex: 1 }}>{detail.xeroContactId}</code>
+              <span style={{ fontSize: 13, color: BRAND.ink, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={detail.xeroContactId}>
+                {detail.xeroContactName
+                  ? <strong>{detail.xeroContactName}</strong>
+                  : <code style={{ fontSize: 12, color: BRAND.muted }}>{detail.xeroContactId}</code>}
+              </span>
               <button onClick={handleUnlink} className="btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }}>
                 <X size={11} /> Unlink
               </button>
