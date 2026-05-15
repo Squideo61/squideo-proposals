@@ -58,10 +58,22 @@ export async function companiesRoute(req, res, id, action, user) {
 
   if (!id) {
     if (req.method === 'GET') {
+      // EXISTS subquery joins signatures → proposals → deals → companies in
+      // one shot, so the Customers view can flag every company that has had a
+      // signed proposal land against it without a per-row round-trip.
       const rows = await sql`
-        SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
-        FROM companies
-        ORDER BY name ASC
+        SELECT c.id, c.name, c.domain, c.notes, c.xero_contact_id,
+               c.customer_verified_at, c.customer_verified_by,
+               c.created_at, c.updated_at,
+               EXISTS(
+                 SELECT 1
+                   FROM signatures s
+                   JOIN proposals p ON p.id = s.proposal_id
+                   JOIN deals d ON d.id = p.deal_id
+                  WHERE d.company_id = c.id
+               ) AS has_signed_proposal
+          FROM companies c
+         ORDER BY c.name ASC
       `;
       return res.status(200).json(rows.map(serialiseCompany));
     }
@@ -86,8 +98,18 @@ export async function companiesRoute(req, res, id, action, user) {
   // /companies/:id/detail — company + member contacts + deals at the company
   if (action === 'detail' && req.method === 'GET') {
     const [companyRow] = await sql`
-      SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
-      FROM companies WHERE id = ${id}
+      SELECT c.id, c.name, c.domain, c.notes, c.xero_contact_id,
+             c.customer_verified_at, c.customer_verified_by,
+             c.created_at, c.updated_at,
+             EXISTS(
+               SELECT 1
+                 FROM signatures s
+                 JOIN proposals p ON p.id = s.proposal_id
+                 JOIN deals d ON d.id = p.deal_id
+                WHERE d.company_id = c.id
+             ) AS has_signed_proposal
+        FROM companies c
+       WHERE c.id = ${id}
     `;
     if (!companyRow) return res.status(404).json({ error: 'Not found' });
 
@@ -142,7 +164,8 @@ export async function companiesRoute(req, res, id, action, user) {
   if (req.method === 'PATCH') {
     const body = req.body || {};
     const cur = (await sql`
-      SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
+      SELECT id, name, domain, notes, xero_contact_id,
+             customer_verified_at, customer_verified_by, created_at, updated_at
       FROM companies WHERE id = ${id}
     `)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
@@ -150,21 +173,44 @@ export async function companiesRoute(req, res, id, action, user) {
       name:   'name'   in body ? (trimOrNull(body.name) || cur.name) : cur.name,
       domain: 'domain' in body ? lowerOrNull(body.domain) : cur.domain,
       notes:  'notes'  in body ? trimOrNull(body.notes) : cur.notes,
-      // Allow explicit clear with xeroContactId: null
       xero_contact_id: 'xeroContactId' in body ? trimOrNull(body.xeroContactId) : cur.xero_contact_id,
     };
+    // Customer-verified is a toggle. Truthy → stamp now + caller; falsy → clear both.
+    let verifiedAt = cur.customer_verified_at;
+    let verifiedBy = cur.customer_verified_by;
+    if ('customerVerified' in body) {
+      if (body.customerVerified) {
+        verifiedAt = new Date();
+        verifiedBy = user.email || null;
+      } else {
+        verifiedAt = null;
+        verifiedBy = null;
+      }
+    }
     await sql`
       UPDATE companies
          SET name = ${next.name},
              domain = ${next.domain},
              notes = ${next.notes},
              xero_contact_id = ${next.xero_contact_id},
+             customer_verified_at = ${verifiedAt},
+             customer_verified_by = ${verifiedBy},
              updated_at = NOW()
        WHERE id = ${id}
     `;
     const rows = await sql`
-      SELECT id, name, domain, notes, xero_contact_id, created_at, updated_at
-      FROM companies WHERE id = ${id}
+      SELECT c.id, c.name, c.domain, c.notes, c.xero_contact_id,
+             c.customer_verified_at, c.customer_verified_by,
+             c.created_at, c.updated_at,
+             EXISTS(
+               SELECT 1
+                 FROM signatures s
+                 JOIN proposals p ON p.id = s.proposal_id
+                 JOIN deals d ON d.id = p.deal_id
+                WHERE d.company_id = c.id
+             ) AS has_signed_proposal
+        FROM companies c
+       WHERE c.id = ${id}
     `;
     return res.status(200).json(serialiseCompany(rows[0]));
   }
@@ -179,12 +225,22 @@ export async function companiesRoute(req, res, id, action, user) {
 }
 
 export function serialiseCompany(r) {
+  const verifiedAt = r.customer_verified_at || null;
+  const hasSigned = !!r.has_signed_proposal;
   return {
     id: r.id,
     name: r.name,
     domain: r.domain || null,
     notes: r.notes || null,
     xeroContactId: r.xero_contact_id || null,
+    customerVerifiedAt: verifiedAt,
+    customerVerifiedBy: r.customer_verified_by || null,
+    // hasSignedProposal is only present on rows that came from a list/detail
+    // SELECT — older serialise call-sites (e.g. quote-request qualify) just
+    // get `undefined` here, which the SPA treats as `false`. That's fine
+    // because the SPA refreshes companies on the next interaction anyway.
+    hasSignedProposal: r.has_signed_proposal !== undefined ? hasSigned : null,
+    isCustomer: !!verifiedAt || hasSigned,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

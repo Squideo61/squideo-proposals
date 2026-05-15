@@ -795,6 +795,26 @@ export function StoreProvider({ children }) {
         () => api.delete('/api/crm/companies/' + encodeURIComponent(companyId)),
       );
     },
+    // Toggle a company's manual "customer" flag. Optimistically patches the
+    // local row (so the badge flips immediately) then merges the server's
+    // canonical response — which also recomputes hasSignedProposal / isCustomer.
+    setCompanyCustomerVerified(companyId, verified) {
+      return mutate(
+        {
+          kind: 'company',
+          id: companyId,
+          patch: {
+            customerVerifiedAt: verified ? new Date().toISOString() : null,
+            isCustomer: verified || undefined, // server recomputes; optimistic only
+          },
+          errorMsg: 'Failed to update customer status',
+        },
+        () => api.patch(
+          '/api/crm/companies/' + encodeURIComponent(companyId),
+          { customerVerified: !!verified },
+        ),
+      );
+    },
     refreshTasks(scope = 'open') {
       return api.get('/api/crm/tasks?scope=' + encodeURIComponent(scope)).then((rows) => {
         const list = Array.isArray(rows) ? rows : [];
