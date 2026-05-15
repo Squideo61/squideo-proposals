@@ -15,6 +15,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
   const [detail, setDetail] = useState(null);
   const [linking, setLinking] = useState(false);
   const [xeroContact, setXeroContact] = useState(null);
+  const [payments, setPayments] = useState(null);
 
   const reload = () => api.get('/api/crm/companies/' + encodeURIComponent(companyId) + '/detail').then(setDetail);
 
@@ -23,7 +24,26 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
     api.get('/api/crm/companies/' + encodeURIComponent(companyId) + '/detail')
       .then(setDetail)
       .catch((err) => showMsg?.(err.message || 'Failed to load company', 'error'));
+    api.get('/api/crm/payments?companyId=' + encodeURIComponent(companyId))
+      .then((rows) => setPayments(Array.isArray(rows) ? rows : []))
+      .catch(() => setPayments([]));
   }, [companyId, showMsg]);
+
+  // Lifetime value rollup. We deliberately sum the rollup we already render
+  // in PaymentsCard so there's a single source of truth (Stripe initial +
+  // Partner monthly + manual).
+  const lifetimeTotals = (() => {
+    if (!payments) return null;
+    const year = new Date().getFullYear();
+    let lifetime = 0;
+    let thisYear = 0;
+    for (const p of payments) {
+      const amt = Number(p.amount) || 0;
+      lifetime += amt;
+      if (p.paidAt && new Date(p.paidAt).getFullYear() === year) thisYear += amt;
+    }
+    return { lifetime, thisYear, year, count: payments.length };
+  })();
 
   async function handleSaveLink() {
     if (!xeroContact) return;
@@ -95,6 +115,31 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 16 }}>
           <Field icon={Globe} label="Domain">{detail.domain || <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field label="Contacts">{detail.contacts.length}</Field>
+        </div>
+
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid ' + BRAND.border }}>
+          <div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 }}>
+            Lifetime value
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3, 1fr)', gap: 12 }}>
+            <Stat
+              label="Lifetime spend"
+              value={lifetimeTotals ? formatGBP(lifetimeTotals.lifetime) : '…'}
+              hint={lifetimeTotals ? `${lifetimeTotals.count} payment${lifetimeTotals.count === 1 ? '' : 's'}` : null}
+            />
+            <Stat
+              label={lifetimeTotals ? `This year (${lifetimeTotals.year})` : 'This year'}
+              value={lifetimeTotals ? formatGBP(lifetimeTotals.thisYear) : '…'}
+            />
+            <Stat
+              label="First payment"
+              value={lifetimeTotals
+                ? (lifetimeTotals.count
+                    ? new Date(Math.min(...payments.filter(p => p.paidAt).map(p => new Date(p.paidAt).getTime()))).toLocaleDateString('en-GB')
+                    : '—')
+                : '…'}
+            />
+          </div>
         </div>
 
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid ' + BRAND.border }}>
@@ -203,6 +248,18 @@ function Field({ icon: Icon, label, children }) {
         {label}
       </div>
       <div style={{ fontSize: 14 }}>{children}</div>
+    </div>
+  );
+}
+
+function Stat({ label, value, hint }) {
+  return (
+    <div style={{ background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '10px 12px' }}>
+      <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 600, marginBottom: 4 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 18, fontWeight: 700 }}>{value}</div>
+      {hint && <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>{hint}</div>}
     </div>
   );
 }
