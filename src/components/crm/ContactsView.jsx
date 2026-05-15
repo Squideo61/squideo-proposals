@@ -26,11 +26,20 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany }) {
     () => companies.filter(c => c.isCustomer).length,
     [companies],
   );
+  // Count contacts whose linked company is a customer. Contacts with no
+  // company never count regardless of the filter — they have no organisation
+  // to derive customer status from.
+  const customerContactCount = useMemo(
+    () => contacts.filter(c => c.companyId && state.companies?.[c.companyId]?.isCustomer).length,
+    [contacts, state.companies],
+  );
 
-  const items = view === 'contacts'
-    ? contacts
-    : (customersOnly ? companies.filter(c => c.isCustomer) : companies);
   const isOrgsView = view === 'organisations';
+  const items = isOrgsView
+    ? (customersOnly ? companies.filter(c => c.isCustomer) : companies)
+    : (customersOnly
+        ? contacts.filter(c => c.companyId && state.companies?.[c.companyId]?.isCustomer)
+        : contacts);
 
   const q = search.trim().toLowerCase();
   const filtered = q ? items.filter(c => {
@@ -80,23 +89,25 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany }) {
             </button>
           )}
         </div>
-        {isOrgsView && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer', userSelect: 'none' }} title={`${customerCount} flagged as a customer`}>
-            <input
-              type="checkbox"
-              checked={customersOnly}
-              onChange={(e) => setCustomersOnly(e.target.checked)}
-            />
-            Customers only ({customerCount})
-          </label>
-        )}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer', userSelect: 'none' }} title={isOrgsView
+          ? `${customerCount} flagged as a customer`
+          : `${customerContactCount} contacts at customer organisations`}>
+          <input
+            type="checkbox"
+            checked={customersOnly}
+            onChange={(e) => setCustomersOnly(e.target.checked)}
+          />
+          Customers only ({isOrgsView ? customerCount : customerContactCount})
+        </label>
       </div>
 
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
         {filtered.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: BRAND.muted }}>
             {items.length === 0
-              ? (view === 'contacts' ? 'No contacts yet' : (customersOnly ? 'No customers yet — verify an organisation to flag it' : 'No organisations yet'))
+              ? (isOrgsView
+                  ? (customersOnly ? 'No customers yet — verify an organisation to flag it' : 'No organisations yet')
+                  : (customersOnly ? 'No contacts at customer organisations yet' : 'No contacts yet'))
               : 'No matches'}
           </div>
         ) : view === 'contacts' ? (
