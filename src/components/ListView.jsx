@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, BarChart3, Check, CheckSquare, Clock, Contact, Copy, Coins, Download, ExternalLink, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Receipt, Search, Settings, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
+import { AlertTriangle, BarChart3, Check, CheckSquare, ChevronDown, Clock, Contact, Copy, Coins, Download, ExternalLink, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Receipt, Search, Settings, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, proposalSignedTotalExVat, useIsMobile } from '../utils.js';
@@ -139,49 +139,37 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
       </header>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-        <h2 className="section-label" style={{ margin: 0 }}>
-          {!memberFilter
-            ? 'All proposals'
-            : memberFilter === state.session?.email
-            ? 'My proposals'
-            : `${memberFilterName.split(' ')[0]}'s proposals`}
-          {filtersActive && <span style={{ color: BRAND.blue, textTransform: 'none', letterSpacing: 0 }}> · {filtered.length} of {proposals.length}</span>}
-        </h2>
+        <MemberFilterHeading
+          memberFilter={memberFilter}
+          setMemberFilter={setMemberFilter}
+          memberOptions={memberOptions}
+          memberFilterName={memberFilterName}
+          sessionEmail={state.session?.email}
+          filtersActive={filtersActive}
+          filteredCount={filtered.length}
+          totalCount={proposals.length}
+        />
         {proposals.length > 0 && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
-            <select
-              value={memberFilter}
-              onChange={(e) => setMemberFilter(e.target.value)}
+          <div style={{ position: 'relative', width: isMobile ? '100%' : 260 }}>
+            <Search size={14} color={BRAND.muted} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by number, client, business..."
               className="input"
-              aria-label="Filter by team member"
-              style={{ width: isMobile ? '100%' : 200 }}
-            >
-              <option value="">All team members</option>
-              {memberOptions.map((m) => (
-                <option key={m.email} value={m.email}>{m.name}</option>
-              ))}
-            </select>
-            <div style={{ position: 'relative', width: isMobile ? '100%' : 260 }}>
-              <Search size={14} color={BRAND.muted} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by number, client, business..."
-                className="input"
-                style={{ paddingLeft: 34, paddingRight: search ? 34 : 12 }}
-              />
-              {search && (
-                <button
-                  onClick={() => setSearch('')}
-                  aria-label="Clear search"
-                  style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: BRAND.muted }}
-                  title="Clear search"
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </div>
+              style={{ paddingLeft: 34, paddingRight: search ? 34 : 12 }}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                aria-label="Clear search"
+                style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: BRAND.muted }}
+                title="Clear search"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -226,6 +214,133 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
         <ViewAnalyticsModal proposal={analyticsProposal} onClose={() => setAnalyticsId(null)} />
       )}
     </div>
+  );
+}
+
+// The "Callum's proposals" heading is itself the team-member filter trigger —
+// click the name to open a popover listing every team member plus an
+// "All team members" reset. Keeps the filter intent visible at the place
+// the user reads the scope of the list.
+function MemberFilterHeading({ memberFilter, setMemberFilter, memberOptions, memberFilterName, sessionEmail, filtersActive, filteredCount, totalCount }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
+  const heading = !memberFilter
+    ? 'All proposals'
+    : memberFilter === sessionEmail
+    ? 'My proposals'
+    : `${memberFilterName.split(' ')[0]}'s proposals`;
+
+  const choose = (email) => {
+    setMemberFilter(email);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={ref} style={{ position: 'relative', margin: 0 }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="section-label"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          background: 'transparent',
+          border: 'none',
+          padding: '4px 8px',
+          margin: '-4px -8px',
+          borderRadius: 6,
+          cursor: 'pointer',
+          color: 'inherit',
+          font: 'inherit',
+          textTransform: 'uppercase',
+          letterSpacing: 0.5,
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+      >
+        <span>{heading}</span>
+        <ChevronDown size={14} style={{ opacity: 0.6 }} />
+        {filtersActive && (
+          <span style={{ color: BRAND.blue, textTransform: 'none', letterSpacing: 0, marginLeft: 4 }}>
+            · {filteredCount} of {totalCount}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            left: 0,
+            background: 'white',
+            border: '1px solid ' + BRAND.border,
+            borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)',
+            minWidth: 220,
+            padding: 4,
+            zIndex: 50,
+          }}
+        >
+          <MemberOption label="All team members" selected={!memberFilter} onClick={() => choose('')} />
+          {memberOptions.map((m) => (
+            <MemberOption
+              key={m.email}
+              label={m.email === sessionEmail ? `${m.name} (me)` : m.name}
+              selected={memberFilter === m.email}
+              onClick={() => choose(m.email)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MemberOption({ label, selected, onClick }) {
+  return (
+    <button
+      role="option"
+      aria-selected={selected}
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+        width: '100%',
+        padding: '8px 10px',
+        background: selected ? '#F1F5F9' : 'transparent',
+        border: 'none',
+        borderRadius: 6,
+        cursor: 'pointer',
+        font: 'inherit',
+        fontSize: 13,
+        color: BRAND.ink,
+        textAlign: 'left',
+      }}
+      onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = '#F8FAFC'; }}
+      onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = 'transparent'; }}
+    >
+      <span>{label}</span>
+      {selected && <Check size={14} color={BRAND.blue} />}
+    </button>
   );
 }
 
