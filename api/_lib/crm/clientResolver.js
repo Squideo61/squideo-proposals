@@ -130,7 +130,7 @@ export async function resolveClientRoute(req, res, _id, _action, user) {
   let updatedDeal = null;
   if (proposalId) {
     const autoDealId = 'deal_' + proposalId;
-    const dealRows = await sql`SELECT id, deal_id, primary_contact_id, company_id FROM deals WHERE id = ${autoDealId} LIMIT 1`;
+    const dealRows = await sql`SELECT id, primary_contact_id, company_id FROM deals WHERE id = ${autoDealId} LIMIT 1`;
     if (dealRows[0]) {
       await sql`
         UPDATE deals

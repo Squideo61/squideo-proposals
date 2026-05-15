@@ -191,7 +191,7 @@ describe('resolveClientRoute — proposal/deal sync', () => {
       [{ id: 'ct_existing', email: null, name: 'Joe', company_id: 'co_existing', provisional: false }],
       [{ id: 'co_existing', name: 'Acme', domain: null }],
       [{ id: 'co_existing', name: 'Acme', domain: null }],          // contact.company_id lookup
-      [{ id: 'deal_PROP1', deal_id: 'deal_PROP1', primary_contact_id: null, company_id: null }], // SELECT deals
+      [{ id: 'deal_PROP1', primary_contact_id: null, company_id: null }], // SELECT deals
       undefined,                                                    // UPDATE deals
       undefined,                                                    // UPDATE proposals data
     ];
