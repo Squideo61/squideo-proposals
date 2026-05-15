@@ -1223,6 +1223,28 @@ export function StoreProvider({ children }) {
     saveUserNotifications(email, overrides) {
       return api.put('/api/users?_kind=notifications&email=' + encodeURIComponent(email), { overrides });
     },
+
+    // ---------- Proposal client resolver ----------
+    // Used by ClientLinkPanel in the builder. POSTs the typed clientName /
+    // businessName to /api/crm/resolve-client, then merges any newly-created
+    // contact / company into local state so the rest of the UI sees them
+    // immediately. Returns the same envelope the server returns.
+    resolveProposalClient({ clientName, businessName, proposalId }) {
+      return api.post('/api/crm/resolve-client', { clientName, businessName, proposalId }).then((resp) => {
+        setState(s => {
+          let contacts = s.contacts;
+          let companies = s.companies;
+          if (resp?.contact) {
+            contacts = { ...s.contacts, [resp.contact.id]: resp.contact };
+          }
+          if (resp?.company) {
+            companies = { ...s.companies, [resp.company.id]: resp.company };
+          }
+          return { ...s, contacts, companies };
+        });
+        return resp;
+      });
+    },
   }), []);
 
   const value = useMemo(

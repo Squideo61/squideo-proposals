@@ -19,6 +19,7 @@ import { gmailRoute, gmailCallback } from '../_lib/crm/gmail.js';
 import { gmailPush } from '../_lib/crm/gmailPush.js';
 import { gmailBackfill } from '../_lib/crm/gmailBackfill.js';
 import { cronHandler } from '../_lib/crm/cron.js';
+import { resolveClientRoute } from '../_lib/crm/clientResolver.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -97,6 +98,7 @@ export default async function handler(req, res) {
       case 'invoices':   return await invoicesRoute(req, res, id, action, user);
       case 'retainers':  return await retainersRoute(req, res, id, action, user);
       case 'xero-contacts': return await xeroContactsRoute(req, res, id, action, user);
+      case 'resolve-client': return await resolveClientRoute(req, res, id, action, user);
       default:           return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {
