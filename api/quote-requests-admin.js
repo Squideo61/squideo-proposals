@@ -8,6 +8,26 @@ import { serialiseDeal } from './_lib/crm/deals.js';
 import { getRole } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
 
+// Domains we never treat as company identifiers. Matching a CRM company by
+// "gmail.com" would lump every Gmail-using requester into one org.
+const FREE_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk',
+  'hotmail.com', 'hotmail.co.uk', 'outlook.com', 'live.com', 'msn.com',
+  'icloud.com', 'me.com', 'mac.com',
+  'aol.com', 'protonmail.com', 'proton.me', 'tutanota.com',
+  'yandex.com', 'yandex.ru', 'mail.com', 'gmx.com', 'gmx.co.uk',
+  'fastmail.com', 'zoho.com', 'mail.ru', 'qq.com', '163.com',
+]);
+
+function workEmailDomain(email) {
+  const e = (email || '').toLowerCase().trim();
+  if (!e.includes('@')) return null;
+  const d = e.split('@')[1];
+  if (!d) return null;
+  if (FREE_EMAIL_DOMAINS.has(d)) return null;
+  return d;
+}
+
 // Parse a free-text budget band like "£5k–£10k", "5000-10000", "Under £2k"
 // into a numeric lower bound. Returns null when nothing parseable is found.
 function parseBudgetLower(budget) {
@@ -275,26 +295,45 @@ export default async function handler(req, res) {
         `;
       }
 
-      // Find or create the company so the deal + contact can be linked to it.
-      // Match case-insensitively on the trimmed name; never silently merge a
-      // blank company into something existing.
+      // Resolve the company to link the deal + contact to. We try, in order:
+      //   1. Case-insensitive match on the form's company name.
+      //   2. Match by the requester's work-email domain (skipping free-email
+      //      domains like gmail.com so we don't lump strangers together).
+      //   3. Create a new company if we have either a name or a usable domain.
+      // The third step also populates the new company's `domain` column so
+      // the next requester from the same work domain auto-matches.
       let companyId = null;
       const companyName = trimOrNull(loaded.row.company);
+      const emailDomain = workEmailDomain(loaded.row.email);
+
       if (companyName) {
-        const existing = await sql`
+        const byName = await sql`
           SELECT id FROM companies
           WHERE LOWER(name) = LOWER(${companyName})
           LIMIT 1
         `;
-        if (existing[0]) {
-          companyId = existing[0].id;
-        } else {
-          companyId = makeId('co');
-          await sql`
-            INSERT INTO companies (id, name)
-            VALUES (${companyId}, ${companyName})
-          `;
-        }
+        if (byName[0]) companyId = byName[0].id;
+      }
+
+      if (!companyId && emailDomain) {
+        const byDomain = await sql`
+          SELECT id FROM companies
+          WHERE LOWER(domain) = ${emailDomain}
+          LIMIT 1
+        `;
+        if (byDomain[0]) companyId = byDomain[0].id;
+      }
+
+      if (!companyId && (companyName || emailDomain)) {
+        companyId = makeId('co');
+        await sql`
+          INSERT INTO companies (id, name, domain)
+          VALUES (
+            ${companyId},
+            ${companyName || emailDomain},
+            ${emailDomain}
+          )
+        `;
       }
 
       // Flip provisional → permanent and attach to the company.
