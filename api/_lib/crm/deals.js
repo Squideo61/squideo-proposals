@@ -311,7 +311,14 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const deal = serialiseDeal(rows[0]);
     const [proposals, events, tasks, emails, files, comments] = await Promise.all([
-      sql`SELECT id, data, number_year, number_seq, created_at FROM proposals WHERE deal_id = ${id} ORDER BY created_at DESC`,
+      sql`
+        SELECT p.id, p.data, p.number_year, p.number_seq, p.created_at,
+               s.data AS signature_data
+          FROM proposals p
+          LEFT JOIN signatures s ON s.proposal_id = p.id
+         WHERE p.deal_id = ${id}
+         ORDER BY p.created_at DESC
+      `,
       sql`SELECT id, deal_id, event_type, payload, actor_email, occurred_at FROM deal_events WHERE deal_id = ${id} ORDER BY occurred_at DESC LIMIT 100`,
       sql`
         SELECT t.*,
@@ -373,6 +380,13 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         clientName: p.data?.clientName || null,
         contactBusinessName: p.data?.contactBusinessName || null,
         basePrice: p.data?.basePrice || null,
+        // Project value ex VAT, reflecting any selected extras / discounts
+        // from the signature when the proposal is signed. Falls back to the
+        // proposal's basePrice when there's no signature yet. Excludes the
+        // ongoing Partner Programme subscription so it represents the
+        // one-off project sale only.
+        totalExVat: computeProposalTotalExVat(p.data, p.signature_data),
+        signed: !!p.signature_data,
         number: p.number_year && p.number_seq ? { year: p.number_year, seq: p.number_seq } : null,
         createdAt: p.created_at,
       })),
@@ -453,6 +467,24 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
   }
 
   return res.status(405).end();
+}
+
+// Compute the ex-VAT value of a proposal that best reflects the actual
+// deal value at this point in time:
+//   - Signed proposals: use signature.amountBreakdown.projectExVat when
+//     the partner programme split is present (so we exclude the recurring
+//     subscription), or signature.total/(1+vatRate) for the simple case.
+//   - Unsigned proposals: fall back to basePrice (no extras selected yet).
+function computeProposalTotalExVat(proposalData, signatureData) {
+  if (signatureData?.amountBreakdown?.projectExVat != null) {
+    const v = Number(signatureData.amountBreakdown.projectExVat);
+    if (Number.isFinite(v)) return v;
+  }
+  if (signatureData?.total != null && Number.isFinite(Number(signatureData.total))) {
+    const vatRate = Number(proposalData?.vatRate) || 0;
+    return Number(signatureData.total) / (1 + vatRate);
+  }
+  return proposalData?.basePrice ?? null;
 }
 
 export function serialiseDeal(r) {

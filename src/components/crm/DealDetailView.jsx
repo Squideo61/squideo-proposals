@@ -161,7 +161,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   {p.number ? <span style={{ color: BRAND.muted, fontSize: 11, marginRight: 6 }}>{formatProposalNumber(p.number)}</span> : null}
                   {p.clientName || p.contactBusinessName || 'Untitled'}
                 </div>
-                {p.basePrice != null && <div style={{ fontSize: 11, color: BRAND.muted }}>{formatGBP(p.basePrice)} ex VAT</div>}
+                {(p.totalExVat ?? p.basePrice) != null && (
+                  <div style={{ fontSize: 11, color: BRAND.muted }}>
+                    {formatGBP(p.totalExVat ?? p.basePrice)} ex VAT
+                    {p.signed && p.totalExVat != null && p.basePrice != null && p.totalExVat !== p.basePrice && (
+                      <span style={{ marginLeft: 4 }} title="Includes selected extras">(inc. extras)</span>
+                    )}
+                  </div>
+                )}
               </div>
               <ExternalLink size={14} color={BRAND.muted} />
             </button>
