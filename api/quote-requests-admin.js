@@ -5,6 +5,8 @@ import { makeId, trimOrNull, lowerOrNull } from './_lib/crm/shared.js';
 import { serialiseContact } from './_lib/crm/contacts.js';
 import { serialiseCompany } from './_lib/crm/companies.js';
 import { serialiseDeal } from './_lib/crm/deals.js';
+import { getRole } from './_lib/userRoles.js';
+import { hasPermission } from './_lib/permissions.js';
 
 // Parse a free-text budget band like "£5k–£10k", "5000-10000", "Under £2k"
 // into a numeric lower bound. Returns null when nothing parseable is found.
@@ -103,6 +105,9 @@ export default async function handler(req, res) {
 
   const user = await requireAuth(req, res);
   if (!user) return;
+  if (!hasPermission(await getRole(user.role), 'quote_requests.manage')) {
+    return res.status(403).json({ error: 'You do not have permission to view quote requests' });
+  }
 
   try {
     // ── List ────────────────────────────────────────────────────────────────

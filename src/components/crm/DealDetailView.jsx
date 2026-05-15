@@ -1026,7 +1026,7 @@ function ReactionBar({ reactions = {}, userEmail, onReact }) {
 function CommentRow({ comment, session, isReply, replyingTo, editingCommentId, onReply, onCancelReply, onEdit, onCancelEdit, onSubmitEdit, onDelete, onSubmitReply, onReact, users }) {
   const [hover, setHover] = useState(false);
   const isMine = session?.email === comment.createdBy;
-  const isAdmin = session?.role === 'admin';
+  const isAdmin = Array.isArray(session?.permissions) && (session.permissions.includes('*') || session.permissions.includes('comments.manage_all'));
   const isEditing = editingCommentId === comment.id;
   const isReplying = replyingTo === comment.id;
 

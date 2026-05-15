@@ -4,13 +4,17 @@
 
 import sql from '../db.js';
 import { listAllContacts } from '../xero.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
 
 export async function xeroContactsRoute(req, res, id, action, user) {
   // POST /api/crm/xero-contacts/sync — pull every contact from Xero and
-  // upsert into the mirror. Admin only because it can run for several
-  // seconds and burns Xero API quota.
+  // upsert into the mirror. Gated to invoices.manage because it can run for
+  // several seconds and burns Xero API quota.
   if (id === 'sync' && req.method === 'POST') {
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+    if (!hasPermission(await getRole(user.role), 'invoices.manage')) {
+      return res.status(403).json({ error: 'You do not have permission to sync Xero contacts' });
+    }
     try {
       const contacts = await listAllContacts();
       // Parallelise the upserts — each sql\`...\` is one HTTP call to Neon

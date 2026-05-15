@@ -1,5 +1,7 @@
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
+import { getRole } from '../_lib/userRoles.js';
+import { hasPermission } from '../_lib/permissions.js';
 import { verifyToken } from '../_lib/auth.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 
@@ -34,9 +36,11 @@ export default async function handler(req, res) {
   if (req.method === 'POST') {
     const user = await requireAuth(req, res);
     if (!user) return;
-    // Manual payment record — admin only. Real payments come in via the
-    // Stripe webhook; this is for back-office corrections.
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    // Manual payment record — back-office only. Real payments come in via
+    // the Stripe webhook; this is for corrections.
+    if (!hasPermission(await getRole(user.role), 'payments.manage')) {
+      return res.status(403).json({ error: 'You do not have permission to record payments' });
+    }
     const { amount, paymentType, paidAt, stripeSessionId, customerEmail, receiptUrl } = req.body;
     await sql`
       INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email, receipt_url)

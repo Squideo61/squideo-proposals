@@ -6,6 +6,8 @@
 //   DELETE /api/proposals/:id             — delete (auth)
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
+import { getRole } from '../_lib/userRoles.js';
+import { hasPermission } from '../_lib/permissions.js';
 
 // Allowlist of fields the public client view (ClientView + ThankYouView +
 // SignedBlock + printProposal) actually consumes. The full `data` JSONB on
@@ -159,10 +161,10 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'DELETE') {
-    // Admins can delete anything. Members can delete proposals they own
-    // (preparedByEmail matches their login) so they can clean up their own
-    // mistakes without pulling an admin in.
-    if (user.role !== 'admin') {
+    // Users with proposals.manage_all can delete anything. Others can
+    // delete proposals they own (preparedByEmail matches their login).
+    const role = await getRole(user.role);
+    if (!hasPermission(role, 'proposals.manage_all')) {
       const rows = await sql`SELECT data->>'preparedByEmail' AS owner FROM proposals WHERE id = ${id}`;
       const owner = rows[0]?.owner || null;
       if (!owner || !user.email || owner.toLowerCase() !== user.email.toLowerCase()) {

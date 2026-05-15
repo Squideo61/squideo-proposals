@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { put } from '@vercel/blob';
 import sql from './_lib/db.js';
 import { sendMail, APP_URL } from './_lib/email.js';
+import { sendNotification } from './_lib/notifications.js';
 import { buildResumeEmail } from './_lib/quoteResumeEmail.js';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -335,10 +336,10 @@ export default async function handler(req, res) {
     }
 
     const subjectName = qr.name || qr.email || 'Anonymous';
-    await sendMail({
-      to: NOTIFY_TO,
+    await sendNotification('quote_request.new', {
       subject: `New quote request from ${subjectName}`,
       html: buildNotificationEmail(qr, storedFiles),
+      extraRecipients: NOTIFY_TO ? [NOTIFY_TO] : [],
     });
 
     try {

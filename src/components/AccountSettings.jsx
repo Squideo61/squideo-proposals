@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Mail, X } from 'lucide-react';
+import { Bell, Mail, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { resizeImage } from '../utils.js';
 import { api } from '../api.js';
 import { Field, Modal } from './ui.jsx';
+import { UserNotificationEditor } from './admin/UserNotificationEditor.jsx';
 
 function AvatarCircle({ avatar, name, size = 80 }) {
   if (avatar) {
@@ -42,6 +43,7 @@ export function AccountSettings({ onClose, onLogout }) {
   const [pwBusy, setPwBusy] = useState(false);
   const [pwError, setPwError] = useState('');
   const [pwSuccess, setPwSuccess] = useState(false);
+  const [notifEditor, setNotifEditor] = useState(false);
 
   const handleAvatarFile = async (e) => {
     const file = e.target.files[0];
@@ -184,7 +186,29 @@ export function AccountSettings({ onClose, onLogout }) {
 
       <div style={{ borderTop: '1px solid ' + BRAND.border, margin: '24px 0' }} />
 
+      <div>
+        <h3 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Bell size={14} /> Email notifications
+        </h3>
+        <p style={{ margin: '0 0 12px', fontSize: 13, color: BRAND.muted }}>
+          Choose which notifications you want to receive by email. Defaults
+          come from your role; overrides apply to you alone.
+        </p>
+        <button onClick={() => setNotifEditor(true)} className="btn" style={{ width: '100%', justifyContent: 'center' }}>
+          Edit my notification preferences
+        </button>
+      </div>
+
+      <div style={{ borderTop: '1px solid ' + BRAND.border, margin: '24px 0' }} />
+
       <TwoFactorSection onResetDone={onClose} />
+
+      {notifEditor && sessionUser?.email && (
+        <UserNotificationEditor
+          email={sessionUser.email}
+          onClose={() => setNotifEditor(false)}
+        />
+      )}
 
       <div style={{ borderTop: '1px solid ' + BRAND.border, marginTop: 24, paddingTop: 20 }}>
         <button className="btn-ghost" onClick={onLogout} style={{ color: '#DC2626', width: '100%', justifyContent: 'center' }}>

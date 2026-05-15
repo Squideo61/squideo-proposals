@@ -32,7 +32,8 @@ function fmtDate(d) {
 
 export function RetainersCard({ dealId, contacts }) {
   const { showMsg, state } = useStore();
-  const isAdmin = state?.session?.role === 'admin';
+  const perms = state?.session?.permissions || [];
+  const isAdmin = perms.includes('*') || perms.includes('invoices.manage');
   const [rows, setRows] = useState(null);
   const [addingRetainer, setAddingRetainer] = useState(false);
   const [editingRetainer, setEditingRetainer] = useState(null);

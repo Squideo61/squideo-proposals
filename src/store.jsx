@@ -1,12 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_PROPOSAL } from './defaults.js';
 import { api } from './api.js';
+import { permissionsInclude } from './lib/permissions.js';
 
 const StoreContext = createContext(null);
 
 function emptyStore() {
   return {
     users: {},
+    roles: {},
     proposals: {},
     templates: {},
     signatures: {},
@@ -213,6 +215,7 @@ export function StoreProvider({ children }) {
       api.get('/api/templates').catch(() => ({})),
       api.get('/api/settings').catch(() => ({})),
       api.get('/api/users').catch(() => ({})),
+      api.get('/api/roles').catch(() => []),
       api.get('/api/crm/deals').catch(() => []),
       api.get('/api/crm/contacts').catch(() => []),
       api.get('/api/crm/companies').catch(() => []),
@@ -220,13 +223,15 @@ export function StoreProvider({ children }) {
       api.get('/api/crm/gmail').catch(() => null),
       api.get('/api/crm/triage').catch(() => []),
       api.get('/api/quote-requests-admin?status=new').catch(() => []),
-    ]).then(([proposals, templates, settings, users, deals, contacts, companies, tasks, gmailAccount, triage, quoteRequests]) => {
+    ]).then(([proposals, templates, settings, users, roles, deals, contacts, companies, tasks, gmailAccount, triage, quoteRequests]) => {
       const dealsMap = {};
       for (const d of (Array.isArray(deals) ? deals : [])) dealsMap[d.id] = d;
       const contactsMap = {};
       for (const c of (Array.isArray(contacts) ? contacts : [])) contactsMap[c.id] = c;
       const companiesMap = {};
       for (const c of (Array.isArray(companies) ? companies : [])) companiesMap[c.id] = c;
+      const rolesMap = {};
+      for (const r of (Array.isArray(roles) ? roles : [])) rolesMap[r.id] = r;
       const signaturesMap = {};
       const paymentsMap = {};
       for (const [pid, p] of Object.entries(proposals || {})) {
@@ -238,6 +243,7 @@ export function StoreProvider({ children }) {
         proposals: proposals || {},
         templates: templates || {},
         users: users || {},
+        roles: rolesMap,
         signatures: signaturesMap,
         payments: paymentsMap,
         deals: dealsMap,
@@ -262,7 +268,14 @@ export function StoreProvider({ children }) {
     // session and kick off the normal fetchAll.
     api.get('/api/auth/me').then((r) => {
       if (r && r.user) {
-        setState(s => ({ ...s, session: { email: r.user.email, name: r.user.name, avatar: r.user.avatar ?? null, role: r.user.role || 'member' } }));
+        setState(s => ({ ...s, session: {
+          email: r.user.email,
+          name: r.user.name,
+          avatar: r.user.avatar ?? null,
+          role: r.user.role || 'member',
+          roleName: r.user.roleName || r.user.role || 'Member',
+          permissions: Array.isArray(r.user.permissions) ? r.user.permissions : [],
+        } }));
         fetchAll();
       } else {
         setState(s => ({ ...s, loading: false }));
@@ -416,7 +429,28 @@ export function StoreProvider({ children }) {
   const actions = useMemo(() => ({
     login(user) {
       // The session cookie was set on the API response that produced this user.
-      setState(s => ({ ...s, session: { email: user.email, name: user.name, avatar: user.avatar ?? null, role: user.role || 'member' }, loading: true }));
+      setState(s => ({ ...s, session: {
+        email: user.email,
+        name: user.name,
+        avatar: user.avatar ?? null,
+        role: user.role || 'member',
+        roleName: user.roleName || user.role || 'Member',
+        permissions: Array.isArray(user.permissions) ? user.permissions : [],
+      }, loading: true }));
+      // After login, re-fetch /me to pick up the merged permissions/roleName
+      // payload (login itself returns the leaner publicUser shape).
+      api.get('/api/auth/me').then((r) => {
+        if (r && r.user) {
+          setState(s => ({ ...s, session: {
+            email: r.user.email,
+            name: r.user.name,
+            avatar: r.user.avatar ?? null,
+            role: r.user.role || 'member',
+            roleName: r.user.roleName || r.user.role || 'Member',
+            permissions: Array.isArray(r.user.permissions) ? r.user.permissions : [],
+          } }));
+        }
+      }).catch(() => {});
       fetchAllRef.current?.();
     },
     logout() {
@@ -427,7 +461,26 @@ export function StoreProvider({ children }) {
       setState({ ...emptyStore(), loading: false });
     },
     signup(user) {
-      setState(s => ({ ...s, session: { email: user.email, name: user.name, avatar: null, role: user.role || 'member' }, users: { ...s.users, [user.email]: user }, loading: true }));
+      setState(s => ({ ...s, session: {
+        email: user.email,
+        name: user.name,
+        avatar: null,
+        role: user.role || 'member',
+        roleName: user.roleName || user.role || 'Member',
+        permissions: Array.isArray(user.permissions) ? user.permissions : [],
+      }, users: { ...s.users, [user.email]: user }, loading: true }));
+      api.get('/api/auth/me').then((r) => {
+        if (r && r.user) {
+          setState(s => ({ ...s, session: {
+            email: r.user.email,
+            name: r.user.name,
+            avatar: r.user.avatar ?? null,
+            role: r.user.role || 'member',
+            roleName: r.user.roleName || r.user.role || 'Member',
+            permissions: Array.isArray(r.user.permissions) ? r.user.permissions : [],
+          } }));
+        }
+      }).catch(() => {});
       fetchAllRef.current?.();
     },
     updateAvatar(avatar) {
@@ -1096,6 +1149,79 @@ export function StoreProvider({ children }) {
           });
           return newFile;
         });
+    },
+
+    // ---------- Roles ----------
+    refreshRoles() {
+      return api.get('/api/roles').then((rows) => {
+        const map = {};
+        for (const r of (Array.isArray(rows) ? rows : [])) map[r.id] = r;
+        setState(s => ({ ...s, roles: map }));
+        return map;
+      }).catch(() => ({}));
+    },
+    createRole(input) {
+      return api.post('/api/roles', input).then((row) => {
+        if (row?.id) setState(s => ({ ...s, roles: { ...s.roles, [row.id]: row } }));
+        return row;
+      });
+    },
+    saveRole(id, patch) {
+      return api.patch('/api/roles?id=' + encodeURIComponent(id), patch).then((row) => {
+        if (row?.id) setState(s => ({ ...s, roles: { ...s.roles, [row.id]: row } }));
+        // If the caller is the user whose role we just edited, refresh their
+        // session so the new permissions take effect immediately without
+        // requiring a re-login.
+        api.get('/api/auth/me').then((r) => {
+          if (r?.user) setState(s => ({ ...s, session: { ...s.session,
+            roleName: r.user.roleName || r.user.role,
+            permissions: Array.isArray(r.user.permissions) ? r.user.permissions : [],
+          } }));
+        }).catch(() => {});
+        return row;
+      });
+    },
+    deleteRole(id) {
+      return api.delete('/api/roles?id=' + encodeURIComponent(id)).then(() => {
+        setState(s => {
+          const roles = { ...s.roles };
+          delete roles[id];
+          return { ...s, roles };
+        });
+      });
+    },
+
+    // ---------- Per-user role change (admin action) ----------
+    updateUserRole(email, role) {
+      return api.patch('/api/users', { email, role }).then((resp) => {
+        setState(s => {
+          const cur = s.users[email];
+          const next = cur
+            ? { ...s, users: { ...s.users, [email]: { ...cur, role } } }
+            : s;
+          // If the edited user is the current session user, also refresh
+          // permissions in-place so the UI gates update immediately.
+          if ((s.session?.email || '').toLowerCase() === (email || '').toLowerCase()) {
+            api.get('/api/auth/me').then((r) => {
+              if (r?.user) setState(s2 => ({ ...s2, session: { ...s2.session,
+                role: r.user.role,
+                roleName: r.user.roleName || r.user.role,
+                permissions: Array.isArray(r.user.permissions) ? r.user.permissions : [],
+              } }));
+            }).catch(() => {});
+          }
+          return next;
+        });
+        return resp;
+      });
+    },
+
+    // ---------- Per-user notification overrides ----------
+    getUserNotifications(email) {
+      return api.get('/api/users?_kind=notifications&email=' + encodeURIComponent(email));
+    },
+    saveUserNotifications(email, overrides) {
+      return api.put('/api/users?_kind=notifications&email=' + encodeURIComponent(email), { overrides });
     },
   }), []);
 

@@ -6,10 +6,14 @@ vi.mock('../api/_lib/auth.js', () => ({
 vi.mock('../api/_lib/extension.js', () => ({
   lookupExtensionToken: vi.fn(),
 }));
+vi.mock('../api/_lib/userRoles.js', () => ({
+  getRole: vi.fn(),
+}));
 
-import { requireAuth, requireAdmin } from '../api/_lib/middleware.js';
+import { requireAuth, requireAdmin, requirePermission } from '../api/_lib/middleware.js';
 import { verifyToken } from '../api/_lib/auth.js';
 import { lookupExtensionToken } from '../api/_lib/extension.js';
+import { getRole } from '../api/_lib/userRoles.js';
 
 function fakeReq(headers = {}) {
   return { headers };
@@ -28,6 +32,7 @@ function fakeRes() {
 beforeEach(() => {
   vi.mocked(verifyToken).mockReset();
   vi.mocked(lookupExtensionToken).mockReset();
+  vi.mocked(getRole).mockReset();
 });
 
 describe('requireAuth', () => {
@@ -96,21 +101,22 @@ describe('requireAuth', () => {
 });
 
 describe('requireAdmin', () => {
-  it('returns the payload when role is admin', async () => {
+  it('returns the payload (with permissions) when role grants users.manage', async () => {
     vi.mocked(verifyToken).mockResolvedValueOnce({ email: 'a@x.com', role: 'admin' });
+    vi.mocked(getRole).mockResolvedValueOnce({ id: 'admin', permissions: ['*'] });
     const res = fakeRes();
     const r = await requireAdmin(fakeReq({ authorization: 'Bearer j' }), res);
-    expect(r).toMatchObject({ role: 'admin' });
+    expect(r).toMatchObject({ role: 'admin', permissions: ['*'] });
     expect(res.statusCode).toBeNull();
   });
 
-  it('403s when the authenticated user is a member, not an admin', async () => {
+  it('403s when the role does not grant users.manage', async () => {
     vi.mocked(verifyToken).mockResolvedValueOnce({ email: 'a@x.com', role: 'member' });
+    vi.mocked(getRole).mockResolvedValueOnce({ id: 'member', permissions: [] });
     const res = fakeRes();
     const r = await requireAdmin(fakeReq({ authorization: 'Bearer j' }), res);
     expect(r).toBeNull();
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'Admin access required' });
   });
 
   it('propagates the 401 when requireAuth fails (no extra 403)', async () => {
@@ -118,5 +124,51 @@ describe('requireAdmin', () => {
     const r = await requireAdmin(fakeReq({}), res);
     expect(r).toBeNull();
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('requirePermission', () => {
+  it('grants when the role contains the slug', async () => {
+    vi.mocked(verifyToken).mockResolvedValueOnce({ email: 'a@x.com', role: 'sm' });
+    vi.mocked(getRole).mockResolvedValueOnce({ id: 'sm', permissions: ['deals.manage_all'] });
+    const res = fakeRes();
+    const r = await requirePermission(fakeReq({ authorization: 'Bearer j' }), res, 'deals.manage_all');
+    expect(r).toMatchObject({ permissions: ['deals.manage_all'] });
+  });
+
+  it('grants when the role has the wildcard', async () => {
+    vi.mocked(verifyToken).mockResolvedValueOnce({ email: 'a@x.com', role: 'admin' });
+    vi.mocked(getRole).mockResolvedValueOnce({ id: 'admin', permissions: ['*'] });
+    const res = fakeRes();
+    const r = await requirePermission(fakeReq({ authorization: 'Bearer j' }), res, 'anything.you.like');
+    expect(r).toMatchObject({ permissions: ['*'] });
+  });
+
+  it('grants when any-of an array of slugs matches', async () => {
+    vi.mocked(verifyToken).mockResolvedValueOnce({ email: 'a@x.com', role: 'sm' });
+    vi.mocked(getRole).mockResolvedValueOnce({ id: 'sm', permissions: ['deals.manage_all'] });
+    const res = fakeRes();
+    const r = await requirePermission(fakeReq({ authorization: 'Bearer j' }), res,
+      ['users.manage', 'deals.manage_all']);
+    expect(r).toMatchObject({ permissions: ['deals.manage_all'] });
+  });
+
+  it('403s when no slug in the array matches', async () => {
+    vi.mocked(verifyToken).mockResolvedValueOnce({ email: 'a@x.com', role: 'm' });
+    vi.mocked(getRole).mockResolvedValueOnce({ id: 'm', permissions: [] });
+    const res = fakeRes();
+    const r = await requirePermission(fakeReq({ authorization: 'Bearer j' }), res,
+      ['users.manage', 'roles.manage']);
+    expect(r).toBeNull();
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('403s when getRole returns null (orphaned role id)', async () => {
+    vi.mocked(verifyToken).mockResolvedValueOnce({ email: 'a@x.com', role: 'deleted' });
+    vi.mocked(getRole).mockResolvedValueOnce(null);
+    const res = fakeRes();
+    const r = await requirePermission(fakeReq({ authorization: 'Bearer j' }), res, 'users.manage');
+    expect(r).toBeNull();
+    expect(res.statusCode).toBe(403);
   });
 });

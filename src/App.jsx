@@ -9,7 +9,6 @@ import { AuthScreen } from './components/AuthScreen.jsx';
 import { ClientView } from './components/ClientView.jsx';
 import { PublicClientShell } from './components/PublicClientShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
-import { NotificationSettings } from './components/NotificationSettings.jsx';
 
 const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: m[name] })));
 
@@ -19,7 +18,7 @@ const TemplatesView = lazyNamed(() => import('./components/TemplatesView.jsx'), 
 const LeaderboardView = lazyNamed(() => import('./components/LeaderboardView.jsx'), 'LeaderboardView');
 const PartnerCreditsView = lazyNamed(() => import('./components/PartnerCreditsView.jsx'), 'PartnerCreditsView');
 const PartnerCreditDetailView = lazyNamed(() => import('./components/PartnerCreditDetailView.jsx'), 'PartnerCreditDetailView');
-const UserManager = lazyNamed(() => import('./components/UserManager.jsx'), 'UserManager');
+const AdminView = lazyNamed(() => import('./components/admin/AdminView.jsx'), 'AdminView');
 const AccountSettings = lazyNamed(() => import('./components/AccountSettings.jsx'), 'AccountSettings');
 const PipelineView = lazyNamed(() => import('./components/crm/PipelineView.jsx'), 'PipelineView');
 const DealDetailView = lazyNamed(() => import('./components/crm/DealDetailView.jsx'), 'DealDetailView');
@@ -244,8 +243,7 @@ function AppShell() {
           onPreview={(id) => navigate('client', id)}
           onDelete={deleteProposal}
           onDuplicate={duplicateProposal}
-          onManageUsers={() => setModal({ type: 'users' })}
-          onManageNotifications={() => setModal({ type: 'notifications' })}
+          onManageAdmin={() => navigate('admin', 'users')}
           onManageAccount={() => setModal({ type: 'account' })}
           onManageTemplates={() => navigate('templates')}
           onManageLeaderboard={() => navigate('leaderboard')}
@@ -256,6 +254,13 @@ function AppShell() {
           onManageTriage={() => navigate('triage')}
           onManageQuoteRequests={() => navigate('quote-requests')}
           onManageXeroDuplicates={() => navigate('xero-duplicates')}
+        />
+      )}
+      {view === 'admin' && (
+        <AdminView
+          tab={activeId || 'users'}
+          onBack={() => navigate('list')}
+          onChangeTab={(tab) => navigate('admin', tab)}
         />
       )}
       {view === 'pipeline' && (
@@ -366,13 +371,9 @@ function AppShell() {
       {modal && modal.type === 'templates' && (
         <TemplatePicker templates={templates} onPick={(t) => createFrom(t || DEFAULT_PROPOSAL, { dealId: modal.dealId })} onClose={() => setModal(null)} />
       )}
-      {modal && modal.type === 'notifications' && (
-        <NotificationSettings onClose={() => setModal(null)} />
-      )}
-      {modal && (modal.type === 'users' || modal.type === 'account') && (
+      {modal && modal.type === 'account' && (
         <Suspense fallback={null}>
-          {modal.type === 'users' && <UserManager onClose={() => setModal(null)} />}
-          {modal.type === 'account' && <AccountSettings onClose={() => setModal(null)} onLogout={logout} />}
+          <AccountSettings onClose={() => setModal(null)} onLogout={logout} />
         </Suspense>
       )}
       <Toast msg={toast} />

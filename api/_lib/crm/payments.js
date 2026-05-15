@@ -12,7 +12,10 @@
 import sql from '../db.js';
 import { advanceStage, dealIdForProposal } from '../dealStage.js';
 import { sendMail, paidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
+import { sendNotification } from '../notifications.js';
 import { makeId, trimOrNull, lowerOrNull, numberOrNull } from './shared.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
 
 export async function paymentsRoute(req, res, id, action, user) {
   // --- GET /api/crm/payments?dealId|contactId|companyId
@@ -179,29 +182,22 @@ export async function paymentsRoute(req, res, id, action, user) {
     try {
       const [proposalRow] = await sql`SELECT data FROM proposals WHERE id = ${proposalId}`;
       const proposal = proposalRow?.data || {};
-      const ownerEmail = proposal.preparedByEmail || null;
       const title = proposal.proposalTitle || proposal.clientName || proposalId;
       const link = `${APP_URL}/?proposal=${proposalId}`;
-      const recipients = await adminEmailsExcluding(ownerEmail);
-      // Include the owner too — same as the Stripe path which emails them first.
-      const all = ownerEmail ? [ownerEmail, ...recipients] : recipients;
-      if (all.length) {
-        await sendMail({
-          to: all,
-          subject: `💰 Payment received: ${title}`,
-          html: paidHtml({
-            proposal,
-            signerName: user.name || user.email || 'Team',
-            signerEmail: null,
-            amount,
-            paymentType: paymentType || 'manual',
-            paidAt: paidAt || new Date().toISOString(),
-            receiptUrl: null,
-            link,
-          }),
-          text: `${paymentMethod.toUpperCase()} payment of £${Number(amount).toFixed(2)} recorded for "${title}". ${link}`,
-        });
-      }
+      await sendNotification('payment.received', {
+        subject: `💰 Payment received: ${title}`,
+        html: paidHtml({
+          proposal,
+          signerName: user.name || user.email || 'Team',
+          signerEmail: null,
+          amount,
+          paymentType: paymentType || 'manual',
+          paidAt: paidAt || new Date().toISOString(),
+          receiptUrl: null,
+          link,
+        }),
+        text: `${paymentMethod.toUpperCase()} payment of £${Number(amount).toFixed(2)} recorded for "${title}". ${link}`,
+      });
     } catch (err) {
       console.error('[payments] notify failed', err);
     }
@@ -227,7 +223,7 @@ export async function paymentsRoute(req, res, id, action, user) {
     const body = req.body || {};
     const cur = (await sql`SELECT * FROM manual_payments WHERE id = ${manualId}`)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
-    if (user.role !== 'admin' && cur.recorded_by !== user.email) {
+    if (cur.recorded_by !== user.email && !hasPermission(await getRole(user.role), 'payments.manage')) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     const next = {
@@ -257,7 +253,7 @@ export async function paymentsRoute(req, res, id, action, user) {
     const manualId = stripManualPrefix(id);
     const cur = (await sql`SELECT recorded_by FROM manual_payments WHERE id = ${manualId}`)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
-    if (user.role !== 'admin' && cur.recorded_by !== user.email) {
+    if (cur.recorded_by !== user.email && !hasPermission(await getRole(user.role), 'payments.manage')) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     await sql`DELETE FROM manual_payments WHERE id = ${manualId}`;

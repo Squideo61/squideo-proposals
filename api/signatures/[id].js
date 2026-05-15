@@ -1,6 +1,9 @@
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
+import { getRole } from '../_lib/userRoles.js';
+import { hasPermission } from '../_lib/permissions.js';
 import { sendMail, signedHtml, clientSignedThanksHtml, APP_URL } from '../_lib/email.js';
+import { sendNotification } from '../_lib/notifications.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 import { voidInvoice } from '../_lib/xero.js';
 
@@ -33,7 +36,9 @@ export default async function handler(req, res) {
   if (req.method === 'DELETE') {
     const user = await requireAuth(req, res);
     if (!user) return;
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    if (!hasPermission(await getRole(user.role), 'signatures.manage_all')) {
+      return res.status(403).json({ error: 'You do not have permission to clear signatures' });
+    }
 
     // If we previously issued a Xero invoice for this proposal (email-invoice
     // route), void it so it no longer counts and clear the stored reference.
@@ -98,22 +103,15 @@ export default async function handler(req, res) {
     }
 
     try {
-      const [users, proposals] = await Promise.all([
-        sql`SELECT email FROM users`,
-        sql`SELECT data FROM proposals WHERE id = ${id}`,
-      ]);
+      const proposals = await sql`SELECT data FROM proposals WHERE id = ${id}`;
       const proposal = proposals[0]?.data || {};
-      const recipients = users.map(u => u.email).filter(Boolean);
       const title = proposal.proposalTitle || proposal.clientName || id;
       const link = `${APP_URL}/?proposal=${id}`;
-      if (recipients.length) {
-        await sendMail({
-          to: recipients,
-          subject: `🎉 Signed: ${title}`,
-          html: signedHtml({ proposal, signature: rest, signerName: name, signerEmail: email, signedAt, link }),
-          text: `${name || 'Someone'} (${email || ''}) signed "${title}" on ${signedAt}. ${link}`,
-        });
-      }
+      await sendNotification('proposal.signed', {
+        subject: `🎉 Signed: ${title}`,
+        html: signedHtml({ proposal, signature: rest, signerName: name, signerEmail: email, signedAt, link }),
+        text: `${name || 'Someone'} (${email || ''}) signed "${title}" on ${signedAt}. ${link}`,
+      });
 
       if (email) {
         const signedProposalLink = `${APP_URL}/?proposal=${id}&thanks=1&download=signed`;

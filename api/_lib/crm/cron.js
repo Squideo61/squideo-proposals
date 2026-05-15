@@ -1,5 +1,6 @@
 import sql from '../db.js';
 import { sendMail, APP_URL } from '../email.js';
+import { sendNotification, resolveRecipients } from '../notifications.js';
 import { registerWatch } from '../gmailTokens.js';
 import { syncHistory } from '../gmailSync.js';
 import { escapeHtml } from './shared.js';
@@ -149,10 +150,13 @@ export async function cronQuotePartials(res) {
   for (const p of rows) {
     try {
       const subjectName = p.name || p.email || 'Anonymous visitor';
-      await sendMail({
-        to: PARTIAL_NOTIFY_TO,
+      // Subscribed users get it via the prefs system. The PARTIAL_NOTIFY_TO
+      // env var is kept as a safety net so a fresh deploy with nobody opted
+      // in still gets the alert — added as extraRecipients (deduped).
+      await sendNotification('quote_request.partial', {
         subject: `Partial quote request from ${subjectName}`,
         html: buildPartialEmail(p),
+        extraRecipients: PARTIAL_NOTIFY_TO ? [PARTIAL_NOTIFY_TO] : [],
       });
       await sql`
         UPDATE quote_request_partials
@@ -219,9 +223,13 @@ export async function cronTaskReminders(res) {
         <a href="${dealLink}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open in Squideo</a>
       </p>
     `;
+    // Filter by per-user pref via resolveRecipients (audience: assignee).
+    const subscribed = await resolveRecipients('task.reminder', { assigneeEmails: recipients });
+    if (!subscribed.length) continue;
+
     // Fan out in parallel — Resend rate limits are well above our team size.
     const results = await Promise.allSettled(
-      recipients.map(async (to) => {
+      subscribed.map(async (to) => {
         const token = await signTaskActionToken({ taskId: t.id, email: to, action: 'done' });
         const doneUrl = `${baseRoot}/api/crm/tasks/${encodeURIComponent(t.id)}/done-link?token=${encodeURIComponent(token)}`;
         const text = `Reminder: ${t.title} — due ${dueLabel}${t.deal_title ? ' (deal: ' + t.deal_title + ')' : ''}.\nMark done: ${doneUrl}\nOpen: ${dealLink}`;
@@ -231,7 +239,7 @@ export async function cronTaskReminders(res) {
     const anySent = results.some(r => r.status === 'fulfilled');
     results.forEach((r, i) => {
       if (r.status === 'rejected') {
-        console.error('[cron task-reminders] send failed', { taskId: t.id, to: recipients[i], err: r.reason });
+        console.error('[cron task-reminders] send failed', { taskId: t.id, to: subscribed[i], err: r.reason });
       }
     });
     if (anySent) {

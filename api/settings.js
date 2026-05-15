@@ -1,5 +1,7 @@
 import sql from './_lib/db.js';
 import { cors, requireAuth } from './_lib/middleware.js';
+import { getRole } from './_lib/userRoles.js';
+import { hasPermission } from './_lib/permissions.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -19,10 +21,12 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'PUT') {
-    // Global settings — admin only. A compromised member account shouldn't
+    // Global settings — restricted. A compromised member account shouldn't
     // be able to redirect signed/paid notifications or pollute every new
     // proposal's defaults.
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    if (!hasPermission(await getRole(user.role), 'settings.manage')) {
+      return res.status(403).json({ error: 'You do not have permission to edit workspace settings' });
+    }
     const { extrasBank, inclusionsBank, notificationRecipients } = req.body || {};
     await sql`
       UPDATE settings SET

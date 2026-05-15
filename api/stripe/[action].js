@@ -2,6 +2,7 @@ import Stripe from 'stripe';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, paidHtml, clientPaidThanksHtml, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../_lib/email.js';
+import { sendNotification } from '../_lib/notifications.js';
 import { getOrCreateContact, createInvoice, emailInvoice, createPayment } from '../_lib/xero.js';
 import { advanceStage, dealIdForProposal, xeroContactIdForProposal } from '../_lib/dealStage.js';
 import {
@@ -353,15 +354,10 @@ async function pushRecurringXeroInvoice({ stripe, invoice }) {
     // payment lands and an invoice is mirrored into Xero. Best-effort only;
     // failure here mustn't block the webhook from 200ing.
     try {
-      const users = await sql`SELECT email FROM users`;
-      const recipients = users.map(u => u.email).filter(Boolean);
-      const ownerEmail = proposal.preparedByEmail || null;
-      const to = ownerEmail ? [ownerEmail, ...recipients.filter(e => e !== ownerEmail)] : recipients;
       const title = proposal.proposalTitle || proposal.clientName || proposalId;
       const link = `${APP_URL}/?proposal=${proposalId}`;
-      if (to.length && amount != null) {
-        await sendMail({
-          to,
+      if (amount != null) {
+        await sendNotification('payment.partner_credit', {
           subject: `🔁 Partner month ${monthNumber} paid: ${title}`,
           html: `<p>Stripe just collected month ${monthNumber} of the Partner Programme for <strong>${title}</strong>.</p>
                  <p>Amount: <strong>£${amount.toFixed(2)}</strong></p>
@@ -486,9 +482,8 @@ export default async function handler(req, res) {
             const title = proposal.proposalTitle || proposal.clientName || proposalId;
             const link = `${APP_URL}/?proposal=${proposalId}`;
 
-            if (isFirstWrite && ownerEmail) {
-              await sendMail({
-                to: ownerEmail,
+            if (isFirstWrite) {
+              await sendNotification('payment.received', {
                 subject: `💰 Payment received: ${title}`,
                 html: paidHtml({
                   proposal,
@@ -502,27 +497,6 @@ export default async function handler(req, res) {
                 }),
                 text: `${sig.name || 'A client'} paid £${amount.toFixed(2)} (${isDeposit ? '50% deposit' : 'full payment'}) for "${title}".${receiptUrl ? ' Receipt: ' + receiptUrl : ''} ${link}`,
               });
-            }
-
-            if (isFirstWrite) {
-              const adminRecipients = await adminEmailsExcluding(ownerEmail);
-              if (adminRecipients.length) {
-                await sendMail({
-                  to: adminRecipients,
-                  subject: `💰 Payment received: ${title}`,
-                  html: paidHtml({
-                    proposal,
-                    signerName: sig.name || session.customer_details?.name,
-                    signerEmail: sig.email || session.customer_details?.email,
-                    amount,
-                    paymentType: isDeposit ? 'deposit' : 'full',
-                    paidAt: new Date().toISOString(),
-                    receiptUrl,
-                    link,
-                  }),
-                  text: `${sig.name || 'A client'} paid £${amount.toFixed(2)} (${isDeposit ? '50% deposit' : 'full payment'}) for "${title}".${receiptUrl ? ' Receipt: ' + receiptUrl : ''} ${link}`,
-                });
-              }
             }
 
             const clientEmail = sig.email || session.customer_details?.email;
@@ -568,24 +542,18 @@ export default async function handler(req, res) {
                 : null;
               const title = dealRow?.title || inv.invoice_number || manualInvoiceId;
               const link = inv.deal_id ? `${APP_URL}/crm?deal=${inv.deal_id}` : APP_URL;
-              const ownerEmail = dealRow?.owner_email || null;
-              const others = await adminEmailsExcluding(ownerEmail);
-              const all = [...(ownerEmail ? [ownerEmail] : []), ...others];
-              if (all.length) {
-                await sendMail({
-                  to: all,
-                  subject: `💰 Invoice paid via Stripe: ${title}`,
-                  html: invoicePaidHtml({
-                    title,
-                    amount: session.amount_total / 100,
-                    paymentMethod: 'Stripe Payment Link',
-                    paidAt: new Date().toISOString(),
-                    invoiceNumber: inv.invoice_number,
-                    link,
-                  }),
-                  text: `Invoice${inv.invoice_number ? ' ' + inv.invoice_number : ''} paid via Stripe Payment Link — £${(session.amount_total / 100).toFixed(2)}. ${link}`,
-                });
-              }
+              await sendNotification('invoice.paid_manual', {
+                subject: `💰 Invoice paid via Stripe: ${title}`,
+                html: invoicePaidHtml({
+                  title,
+                  amount: session.amount_total / 100,
+                  paymentMethod: 'Stripe Payment Link',
+                  paidAt: new Date().toISOString(),
+                  invoiceNumber: inv.invoice_number,
+                  link,
+                }),
+                text: `Invoice${inv.invoice_number ? ' ' + inv.invoice_number : ''} paid via Stripe Payment Link — £${(session.amount_total / 100).toFixed(2)}. ${link}`,
+              });
               // Mark paid in Xero too if this invoice was synced there.
               if (inv.xero_invoice_id && process.env.XERO_STRIPE_CLEARING_CODE) {
                 try {
@@ -875,42 +843,20 @@ export default async function handler(req, res) {
         const title = proposal.proposalTitle || proposal.clientName || proposalId;
         const link = `${APP_URL}/?proposal=${proposalId}`;
 
-        if (ownerEmail) {
-          await sendMail({
-            to: ownerEmail,
-            subject: `💰 Payment received: ${title}`,
-            html: paidHtml({
-              proposal,
-              signerName: sig.name || session.customer_details?.name,
-              signerEmail: sig.email || session.customer_details?.email,
-              amount: payment.amount,
-              paymentType: payment.paymentType,
-              paidAt: payment.paidAt,
-              receiptUrl,
-              link,
-            }),
-            text: `${sig.name || 'A client'} paid £${payment.amount.toFixed(2)} (${isDeposit ? '50% deposit' : 'full payment'}) for "${title}".${receiptUrl ? ' Receipt: ' + receiptUrl : ''} ${link}`,
-          });
-        }
-
-        const adminRecipients = await adminEmailsExcluding(ownerEmail);
-        if (adminRecipients.length) {
-          await sendMail({
-            to: adminRecipients,
-            subject: `💰 Payment received: ${title}`,
-            html: paidHtml({
-              proposal,
-              signerName: sig.name || session.customer_details?.name,
-              signerEmail: sig.email || session.customer_details?.email,
-              amount: payment.amount,
-              paymentType: payment.paymentType,
-              paidAt: payment.paidAt,
-              receiptUrl,
-              link,
-            }),
-            text: `${sig.name || 'A client'} paid £${payment.amount.toFixed(2)} (${isDeposit ? '50% deposit' : 'full payment'}) for "${title}".${receiptUrl ? ' Receipt: ' + receiptUrl : ''} ${link}`,
-          });
-        }
+        await sendNotification('payment.received', {
+          subject: `💰 Payment received: ${title}`,
+          html: paidHtml({
+            proposal,
+            signerName: sig.name || session.customer_details?.name,
+            signerEmail: sig.email || session.customer_details?.email,
+            amount: payment.amount,
+            paymentType: payment.paymentType,
+            paidAt: payment.paidAt,
+            receiptUrl,
+            link,
+          }),
+          text: `${sig.name || 'A client'} paid £${payment.amount.toFixed(2)} (${isDeposit ? '50% deposit' : 'full payment'}) for "${title}".${receiptUrl ? ' Receipt: ' + receiptUrl : ''} ${link}`,
+        });
 
         const clientEmail = sig.email || session.customer_details?.email;
         if (clientEmail) {

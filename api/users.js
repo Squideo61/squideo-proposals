@@ -5,8 +5,12 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import sql from './_lib/db.js';
-import { cors, requireAuth, requireAdmin } from './_lib/middleware.js';
+import { cors, requireAuth, requireAdmin, requirePermission } from './_lib/middleware.js';
 import { sendMail, inviteHtml, APP_URL } from './_lib/email.js';
+import { getRole } from './_lib/userRoles.js';
+import { hasPermission } from './_lib/permissions.js';
+import { getEffectivePrefs } from './_lib/notifications.js';
+import { NOTIFICATIONS, isValidNotificationKey } from './_lib/notificationsCatalog.js';
 
 const INVITE_EXPIRY_DAYS = 7;
 
@@ -23,6 +27,9 @@ export default async function handler(req, res) {
 
   if (req.query._kind === 'invites') {
     return invitesHandler(req, res);
+  }
+  if (req.query._kind === 'notifications') {
+    return notificationsHandler(req, res);
   }
   return usersHandler(req, res);
 }
@@ -42,7 +49,28 @@ async function usersHandler(req, res) {
   if (req.method === 'PATCH') {
     const payload = await requireAuth(req, res);
     if (!payload) return;
-    const { avatar, current_password, new_password } = req.body;
+    const { avatar, current_password, new_password, role: newRole, email: targetEmail } = req.body || {};
+
+    // Role change: targets a (possibly different) user. Requires users.manage
+    // on the caller's role and that the target email is not the caller's own
+    // (admins can't demote themselves into a role with no permissions and get
+    // locked out).
+    if (newRole !== undefined) {
+      const role = await getRole(payload.role);
+      if (!hasPermission(role, 'users.manage')) {
+        return res.status(403).json({ error: 'You do not have permission to change roles' });
+      }
+      const targetEmailLower = (targetEmail || payload.email).toLowerCase();
+      if (targetEmailLower === payload.email.toLowerCase()) {
+        return res.status(400).json({ error: "You can't change your own role." });
+      }
+      const newRoleRow = await getRole(newRole);
+      if (!newRoleRow) return res.status(400).json({ error: 'Unknown role' });
+      const targetRows = await sql`SELECT email FROM users WHERE email = ${targetEmailLower}`;
+      if (!targetRows[0]) return res.status(404).json({ error: 'User not found' });
+      await sql`UPDATE users SET role = ${newRole} WHERE email = ${targetEmailLower}`;
+      return res.status(200).json({ ok: true, email: targetEmailLower, role: newRole });
+    }
 
     if (new_password !== undefined) {
       if (!current_password) return res.status(400).json({ error: 'Current password is required' });
@@ -80,6 +108,68 @@ async function usersHandler(req, res) {
   }
 
   res.status(405).end();
+}
+
+// /api/users?_kind=notifications&email=... — get / set a user's notification
+// overrides. Caller may always read/write their own; others require users.manage.
+async function notificationsHandler(req, res) {
+  const payload = await requireAuth(req, res);
+  if (!payload) return;
+
+  const targetEmail = ((req.query.email ? String(req.query.email) : payload.email) || '').toLowerCase();
+  const isSelf = targetEmail === payload.email.toLowerCase();
+
+  if (!isSelf) {
+    const role = await getRole(payload.role);
+    if (!hasPermission(role, 'users.manage')) {
+      return res.status(403).json({ error: 'You can only edit your own notification settings' });
+    }
+  }
+
+  const targetRows = await sql`SELECT email, role FROM users WHERE email = ${targetEmail}`;
+  if (!targetRows[0]) return res.status(404).json({ error: 'User not found' });
+
+  if (req.method === 'GET') {
+    const effective = await getEffectivePrefs(targetEmail);
+    const overrideRows = await sql`SELECT notification_key, enabled FROM user_notification_overrides WHERE user_email = ${targetEmail}`;
+    const overrides = {};
+    for (const row of overrideRows) overrides[row.notification_key] = row.enabled;
+    return res.status(200).json({
+      email: targetEmail,
+      role: targetRows[0].role,
+      effective,
+      overrides,
+    });
+  }
+
+  if (req.method === 'PUT') {
+    const { overrides } = req.body || {};
+    if (!overrides || typeof overrides !== 'object') {
+      return res.status(400).json({ error: 'Expected `overrides` object' });
+    }
+    // The contract is: caller sends the full set of overrides they want to
+    // exist. Anything missing is removed; anything `null` is removed; the
+    // rest is upserted. This makes the PUT idempotent.
+    const keep = {}; // key -> bool
+    for (const key of Object.keys(overrides)) {
+      if (!isValidNotificationKey(key)) continue;
+      const v = overrides[key];
+      if (v === null || v === undefined) continue;
+      keep[key] = !!v;
+    }
+    await sql`DELETE FROM user_notification_overrides WHERE user_email = ${targetEmail}`;
+    for (const [key, val] of Object.entries(keep)) {
+      // eslint-disable-next-line no-await-in-loop
+      await sql`
+        INSERT INTO user_notification_overrides (user_email, notification_key, enabled, updated_at)
+        VALUES (${targetEmail}, ${key}, ${val}, NOW())
+      `;
+    }
+    const effective = await getEffectivePrefs(targetEmail);
+    return res.status(200).json({ ok: true, effective, overrides: keep });
+  }
+
+  return res.status(405).end();
 }
 
 async function invitesHandler(req, res) {

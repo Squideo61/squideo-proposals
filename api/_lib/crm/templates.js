@@ -1,5 +1,7 @@
 import sql from '../db.js';
 import { makeId, trimOrNull } from './shared.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
 
 export async function templatesRoute(req, res, id, action, user) {
   if (!id) {
@@ -73,7 +75,9 @@ export async function templatesRoute(req, res, id, action, user) {
   }
 
   if (req.method === 'DELETE') {
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    if (!hasPermission(await getRole(user.role), 'templates.manage')) {
+      return res.status(403).json({ error: 'You do not have permission to delete templates' });
+    }
     await sql`DELETE FROM crm_email_templates WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }

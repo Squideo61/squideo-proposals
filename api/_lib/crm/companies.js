@@ -1,5 +1,7 @@
 import sql from '../db.js';
 import { makeId, trimOrNull, lowerOrNull } from './shared.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
 
 export async function companiesRoute(req, res, id, action, user) {
   // POST /companies/from-xero-contact — find or create a local company linked
@@ -167,7 +169,9 @@ export async function companiesRoute(req, res, id, action, user) {
     return res.status(200).json(serialiseCompany(rows[0]));
   }
   if (req.method === 'DELETE') {
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    if (!hasPermission(await getRole(user.role), 'companies.manage_all')) {
+      return res.status(403).json({ error: 'You do not have permission to delete companies' });
+    }
     await sql`DELETE FROM companies WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }

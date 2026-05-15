@@ -12,6 +12,8 @@
 
 import { verifyToken } from './auth.js';
 import { lookupExtensionToken } from './extension.js';
+import { getRole } from './userRoles.js';
+import { hasPermission } from './permissions.js';
 
 export function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -81,12 +83,30 @@ export async function requireAuth(req, res) {
   return null;
 }
 
-export async function requireAdmin(req, res) {
+// Requires the caller to have a specific permission slug on their role. The
+// resolved payload also gets a `permissions` array attached so callers don't
+// have to re-fetch.
+//
+// `slug` accepts a single string ('users.manage') or an array (any one of
+// them grants access — useful for endpoints that several roles legitimately
+// touch, like the admin section nav).
+export async function requirePermission(req, res, slug) {
   const payload = await requireAuth(req, res);
   if (!payload) return null;
-  if (payload.role !== 'admin') {
-    res.status(403).json({ error: 'Admin access required' });
+  const role = await getRole(payload.role);
+  const slugs = Array.isArray(slug) ? slug : [slug];
+  const ok = slugs.some(s => hasPermission(role, s));
+  if (!ok) {
+    res.status(403).json({ error: 'You do not have permission to perform this action' });
     return null;
   }
-  return payload;
+  return { ...payload, permissions: role?.permissions || [] };
+}
+
+// requireAdmin is preserved as a thin alias for `requirePermission('users.manage')`
+// so existing call-sites keep working through the rollout. The seeded Admin
+// role has '*' and the seeded Member role has nothing, so behaviour is
+// identical for the two existing roles.
+export async function requireAdmin(req, res) {
+  return requirePermission(req, res, 'users.manage');
 }

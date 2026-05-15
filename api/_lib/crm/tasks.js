@@ -2,6 +2,8 @@ import sql from '../db.js';
 import { makeId, trimOrNull } from './shared.js';
 import { verifyTaskActionToken } from '../auth.js';
 import { APP_URL } from '../email.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
 
 // Accept either the new array field (`assigneeEmails`) or the legacy single
 // (`assigneeEmail`) for one release so old clients don't break mid-deploy.
@@ -190,9 +192,9 @@ export async function tasksRoute(req, res, id, action, user) {
       FROM tasks t WHERE t.id = ${id}
     `;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
-    const allowed = user.role === 'admin'
-      || rows[0].created_by === user.email
-      || (Array.isArray(rows[0].assignees) && rows[0].assignees.includes(user.email));
+    const allowed = rows[0].created_by === user.email
+      || (Array.isArray(rows[0].assignees) && rows[0].assignees.includes(user.email))
+      || hasPermission(await getRole(user.role), 'tasks.manage_all');
     if (!allowed) return res.status(403).json({ error: 'Forbidden' });
     await sql`DELETE FROM tasks WHERE id = ${id}`;
     return res.status(200).json({ ok: true });

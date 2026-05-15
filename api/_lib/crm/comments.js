@@ -1,5 +1,7 @@
 import sql from '../db.js';
 import { trimOrNull } from './shared.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
 
 const ALLOWED_REACTIONS = ['👍', '👎', '❤️', '😂', '🎉', '👀'];
 
@@ -13,7 +15,7 @@ export async function commentsRoute(req, res, id, action, user) {
     const mentions = Array.isArray(body.mentions) ? body.mentions.filter(m => typeof m === 'string') : [];
     const rows = await sql`SELECT created_by FROM deal_comments WHERE id = ${id}`;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
-    if (rows[0].created_by !== user.email && user.role !== 'admin')
+    if (rows[0].created_by !== user.email && !hasPermission(await getRole(user.role), 'comments.manage_all'))
       return res.status(403).json({ error: 'Forbidden' });
     await sql`
       UPDATE deal_comments SET body = ${text}, mentions = ${mentions}, updated_at = NOW()
@@ -33,7 +35,7 @@ export async function commentsRoute(req, res, id, action, user) {
   if (req.method === 'DELETE') {
     const rows = await sql`SELECT created_by FROM deal_comments WHERE id = ${id}`;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
-    if (rows[0].created_by !== user.email && user.role !== 'admin')
+    if (rows[0].created_by !== user.email && !hasPermission(await getRole(user.role), 'comments.manage_all'))
       return res.status(403).json({ error: 'Forbidden' });
     await sql`DELETE FROM deal_comments WHERE id = ${id}`;
     return res.status(200).json({ ok: true });

@@ -1,5 +1,7 @@
 import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
 
 export async function retainersRoute(req, res, id, action, user) {
   // --- GET /api/crm/retainers?dealId=
@@ -129,10 +131,12 @@ export async function retainersRoute(req, res, id, action, user) {
   }
 
   // --- DELETE /api/crm/retainers/:id — delete retainer (entries cascade).
-  // Admin-only: the deal owner can archive, but a hard delete that wipes the
-  // work log is intentionally gated to admins.
+  // Gated to invoices.manage: the deal owner can archive, but a hard delete
+  // that wipes the work log is restricted.
   if (id && !action && req.method === 'DELETE') {
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    if (!hasPermission(await getRole(user.role), 'invoices.manage')) {
+      return res.status(403).json({ error: 'You do not have permission to delete retainers' });
+    }
     const cur = (await sql`SELECT id FROM project_retainers WHERE id = ${id}`)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
     await sql`DELETE FROM project_retainers WHERE id = ${id}`;

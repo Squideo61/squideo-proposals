@@ -3,6 +3,7 @@
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, firstViewHtml, APP_URL } from '../_lib/email.js';
+import { sendNotification } from '../_lib/notifications.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 
 export default async function handler(req, res) {
@@ -68,8 +69,8 @@ export default async function handler(req, res) {
           if (ownerEmail) {
             const title = data.proposalTitle || data.clientName || 'Your proposal';
             const link = `${APP_URL}/?proposal=${id}`;
-            await sendMail({
-              to: ownerEmail,
+            await sendNotification('proposal.first_view', {
+              ownerEmail,
               subject: `${data.clientName || 'A client'} just opened "${title}"`,
               html: firstViewHtml({ title, clientName: data.clientName, country, city, link }),
               text: `${data.clientName || 'A client'} opened ${title}. ${link}`,

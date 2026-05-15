@@ -15,6 +15,7 @@ import {
   clearSessionCookieHeader,
 } from '../_lib/middleware.js';
 import { sendMail, twoFactorCodeHtml } from '../_lib/email.js';
+import { getRole } from '../_lib/userRoles.js';
 import {
   generateTotpSecret,
   verifyTotp,
@@ -83,6 +84,14 @@ async function loadUser(email) {
 
 function publicUser(u) {
   return { email: u.email, name: u.name, avatar: u.avatar, role: u.role || 'member' };
+}
+
+// Same as publicUser but also resolves the user's permissions array from
+// their role. Used by the /me endpoint so the SPA knows which UI to show.
+async function publicUserWithPermissions(u) {
+  const base = publicUser(u);
+  const role = await getRole(base.role);
+  return { ...base, permissions: role?.permissions || [], roleName: role?.name || base.role };
 }
 
 async function consumeTrustedDevice(rawCookie, email) {
@@ -181,7 +190,7 @@ export default async function handler(req, res) {
     if (!payload) return;
     const u = await loadUser(payload.email);
     if (!u) return res.status(404).json({ error: 'User not found' });
-    return res.status(200).json({ user: publicUser(u) });
+    return res.status(200).json({ user: await publicUserWithPermissions(u) });
   }
 
   // `logout` clears the session cookie. Doesn't need auth — anyone hitting it

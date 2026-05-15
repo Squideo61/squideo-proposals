@@ -6,6 +6,8 @@ import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { getFreshAccessToken } from './gmail.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
 
 export async function dealsRoute(req, res, id, action, user, subaction = null) {
   if (!id) {
@@ -241,7 +243,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       SELECT blob_url, uploaded_by FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}
     `;
     if (!rows.length) return res.status(404).json({ error: 'File not found' });
-    if (user.role !== 'admin' && rows[0].uploaded_by !== user.email) {
+    if (rows[0].uploaded_by !== user.email && !hasPermission(await getRole(user.role), 'deals.manage_all')) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     try { await del(rows[0].blob_url); } catch (err) {
@@ -443,7 +445,9 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
   }
 
   if (req.method === 'DELETE') {
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    if (!hasPermission(await getRole(user.role), 'deals.manage_all')) {
+      return res.status(403).json({ error: 'You do not have permission to delete deals' });
+    }
     await sql`DELETE FROM deals WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }

@@ -13,8 +13,11 @@ import { put, del, get as blobGet } from '@vercel/blob';
 import sql from '../db.js';
 import { advanceStage } from '../dealStage.js';
 import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
+import { sendNotification } from '../notifications.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber, getInvoicesByIds } from '../xero.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
 
 export async function invoicesRoute(req, res, id, action, user) {
   // --- GET /api/crm/invoices/:id/pdf — streams a private Blob PDF back through
@@ -519,7 +522,7 @@ export async function invoicesRoute(req, res, id, action, user) {
     const body = req.body || {};
     const cur = (await sql`SELECT * FROM manual_invoices WHERE id = ${manualId}`)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
-    if (user.role !== 'admin' && cur.uploaded_by !== user.email) {
+    if (cur.uploaded_by !== user.email && !hasPermission(await getRole(user.role), 'invoices.manage')) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     const next = {
@@ -561,27 +564,21 @@ export async function invoicesRoute(req, res, id, action, user) {
         }
 
         try {
-          const [dealRow] = await sql`SELECT title, owner_email FROM deals WHERE id = ${dealId}`;
-          const ownerEmail = dealRow?.owner_email || null;
+          const [dealRow] = await sql`SELECT title FROM deals WHERE id = ${dealId}`;
           const title = dealRow?.title || cur.invoice_number || manualId;
           const link = `${APP_URL}/crm?deal=${dealId}`;
-          const others = await adminEmailsExcluding(ownerEmail);
-          const all = [...(ownerEmail ? [ownerEmail] : []), ...others];
-          if (all.length) {
-            await sendMail({
-              to: all,
-              subject: `💰 Invoice paid: ${title}`,
-              html: invoicePaidHtml({
-                title,
-                amount: next.amount != null ? Number(next.amount) : null,
-                paymentMethod: next.payment_method,
-                paidAt: next.paid_at,
-                invoiceNumber: cur.invoice_number,
-                link,
-              }),
-              text: `Invoice ${cur.invoice_number || manualId} marked paid via ${next.payment_method || 'manual'} — ${link}`,
-            });
-          }
+          await sendNotification('invoice.paid_manual', {
+            subject: `💰 Invoice paid: ${title}`,
+            html: invoicePaidHtml({
+              title,
+              amount: next.amount != null ? Number(next.amount) : null,
+              paymentMethod: next.payment_method,
+              paidAt: next.paid_at,
+              invoiceNumber: cur.invoice_number,
+              link,
+            }),
+            text: `Invoice ${cur.invoice_number || manualId} marked paid via ${next.payment_method || 'manual'} — ${link}`,
+          });
         } catch (err) {
           console.error('[invoices] notify failed', err);
         }
@@ -606,7 +603,7 @@ export async function invoicesRoute(req, res, id, action, user) {
     const manualId = stripManualPrefix(id);
     const cur = (await sql`SELECT blob_url, uploaded_by, xero_invoice_id FROM manual_invoices WHERE id = ${manualId}`)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
-    if (user.role !== 'admin' && cur.uploaded_by !== user.email) {
+    if (cur.uploaded_by !== user.email && !hasPermission(await getRole(user.role), 'invoices.manage')) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     if (cur.blob_url) {
@@ -825,15 +822,10 @@ async function notifyInvoicePaid({ row, paidAt, amount, paymentMethod = 'xero', 
     console.error('[invoices] advanceStage failed', err);
   }
   try {
-    const [dealRow] = await sql`SELECT title, owner_email FROM deals WHERE id = ${dealId}`;
-    const ownerEmail = dealRow?.owner_email || null;
+    const [dealRow] = await sql`SELECT title FROM deals WHERE id = ${dealId}`;
     const title = dealRow?.title || row.invoice_number || row.id;
     const link = `${APP_URL}/crm?deal=${dealId}`;
-    const others = await adminEmailsExcluding(ownerEmail);
-    const all = [...(ownerEmail ? [ownerEmail] : []), ...others];
-    if (!all.length) return;
-    await sendMail({
-      to: all,
+    await sendNotification('invoice.paid_xero', {
       subject: `💰 Invoice paid: ${title}`,
       html: invoicePaidHtml({
         title,

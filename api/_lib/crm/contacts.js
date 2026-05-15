@@ -1,5 +1,7 @@
 import sql from '../db.js';
 import { makeId, trimOrNull, lowerOrNull } from './shared.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
 
 export async function contactsRoute(req, res, id, action, user) {
   if (!id) {
@@ -122,7 +124,9 @@ export async function contactsRoute(req, res, id, action, user) {
     return res.status(200).json(serialiseContact(rows[0]));
   }
   if (req.method === 'DELETE') {
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    if (!hasPermission(await getRole(user.role), 'contacts.manage_all')) {
+      return res.status(403).json({ error: 'You do not have permission to delete contacts' });
+    }
     await sql`DELETE FROM contacts WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }
