@@ -49,6 +49,35 @@ export async function advanceStage(dealId, toStage, { actorEmail = null, payload
   return { changed: true, from: current, to: toStage };
 }
 
+// Regress a deal from `fromStage` back to `toStage`. Strictly gated on the
+// current stage matching `fromStage` so an unrelated later transition (e.g.
+// a deal that's already moved to 'paid') is never dragged backwards. Logs a
+// `stage_change` event with `reason` in the payload so the timeline shows
+// why the regression happened.
+export async function regressStage(dealId, fromStage, toStage, { actorEmail = null, reason = null, payload = {} } = {}) {
+  if (!dealId) return { changed: false, reason: 'no-deal' };
+  if (!isValidStage(fromStage) || !isValidStage(toStage)) return { changed: false, reason: 'invalid-stage' };
+
+  const rows = await sql`SELECT stage FROM deals WHERE id = ${dealId}`;
+  if (!rows.length) return { changed: false, reason: 'deal-not-found' };
+  const current = rows[0].stage;
+  if (current !== fromStage) return { changed: false, reason: 'stage-mismatch', current };
+
+  await sql`
+    UPDATE deals
+       SET stage = ${toStage},
+           stage_changed_at = NOW(),
+           last_activity_at = NOW(),
+           updated_at = NOW()
+     WHERE id = ${dealId}
+  `;
+  await sql`
+    INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+    VALUES (${dealId}, 'stage_change', ${JSON.stringify({ from: current, to: toStage, reason, ...payload })}, ${actorEmail})
+  `;
+  return { changed: true, from: current, to: toStage };
+}
+
 // Find the deal_id linked to a proposal — used by signatures/views/payments
 // hook sites to advance the deal even though they're keyed by proposal_id.
 export async function dealIdForProposal(proposalId) {

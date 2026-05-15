@@ -4,7 +4,7 @@ import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
 import { sendMail, signedHtml, clientSignedThanksHtml, APP_URL } from '../_lib/email.js';
 import { sendNotification } from '../_lib/notifications.js';
-import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
+import { advanceStage, regressStage, dealIdForProposal } from '../_lib/dealStage.js';
 import { voidInvoice } from '../_lib/xero.js';
 
 // Allowlist of fields from `signatures.data` that the public client view
@@ -62,6 +62,25 @@ export default async function handler(req, res) {
     }
 
     await sql`DELETE FROM signatures WHERE proposal_id = ${id}`;
+
+    // CRM: regress the linked deal from 'signed' back to 'proposal_sent' so
+    // the pipeline reflects that we're awaiting a fresh view/sign cycle. The
+    // next view event will naturally re-advance it to 'viewed' via the views
+    // route. Strictly gated on current stage = 'signed' so a deal that's
+    // already moved to 'paid' isn't dragged backwards. Best-effort.
+    try {
+      const dealId = await dealIdForProposal(id);
+      if (dealId) {
+        await regressStage(dealId, 'signed', 'proposal_sent', {
+          actorEmail: user.email || null,
+          reason: 'signature-unmarked',
+          payload: { proposalId: id },
+        });
+      }
+    } catch (err) {
+      console.error('[signatures] regressStage failed', err);
+    }
+
     return res.status(200).json({ ok: true, voidedInvoiceId: oldInvoiceId });
   }
 

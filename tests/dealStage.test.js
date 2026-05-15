@@ -6,6 +6,7 @@ vi.mock('../api/_lib/db.js', async () => ({
 
 import {
   advanceStage,
+  regressStage,
   dealIdForProposal,
   logDealEvent,
   isValidStage,
@@ -135,6 +136,59 @@ describe('advanceStage', () => {
     const result = await advanceStage('d1', 'lost');
     expect(result).toEqual({ changed: false, reason: 'same-stage' });
     expect(getSqlCalls()).toHaveLength(1);
+  });
+});
+
+describe('regressStage', () => {
+  it('no-deal: falsy dealId short-circuits before any SQL', async () => {
+    const result = await regressStage(null, 'signed', 'proposal_sent');
+    expect(result).toEqual({ changed: false, reason: 'no-deal' });
+    expect(getSqlCalls()).toHaveLength(0);
+  });
+
+  it('invalid-stage: unknown from/to rejected without SQL', async () => {
+    expect(await regressStage('d1', 'banana', 'proposal_sent')).toEqual({ changed: false, reason: 'invalid-stage' });
+    expect(await regressStage('d1', 'signed', 'banana')).toEqual({ changed: false, reason: 'invalid-stage' });
+    expect(getSqlCalls()).toHaveLength(0);
+  });
+
+  it('deal-not-found: empty SELECT returns deal-not-found', async () => {
+    setSqlSequence([[]]);
+    const result = await regressStage('d1', 'signed', 'proposal_sent');
+    expect(result).toEqual({ changed: false, reason: 'deal-not-found' });
+  });
+
+  it('stage-mismatch: deal at "paid" is not dragged back from "signed"', async () => {
+    setSqlSequence([[{ stage: 'paid' }]]);
+    const result = await regressStage('d1', 'signed', 'proposal_sent');
+    expect(result).toEqual({ changed: false, reason: 'stage-mismatch', current: 'paid' });
+    expect(getSqlCalls()).toHaveLength(1);
+  });
+
+  it('signed → proposal_sent: writes UPDATE + stage_change event with reason', async () => {
+    setSqlSequence([
+      [{ stage: 'signed' }],
+      [],
+      [],
+    ]);
+    const result = await regressStage('d1', 'signed', 'proposal_sent', {
+      actorEmail: 'a@x.com',
+      reason: 'signature-unmarked',
+      payload: { proposalId: 'p1' },
+    });
+    expect(result).toEqual({ changed: true, from: 'signed', to: 'proposal_sent' });
+    const calls = getSqlCalls();
+    expect(calls).toHaveLength(3);
+    expect(calls[1].text).toContain('UPDATE deals');
+    expect(calls[2].text).toContain('INSERT INTO deal_events');
+    expect(calls[2].values[2]).toBe('a@x.com');
+    const eventPayload = JSON.parse(calls[2].values[1]);
+    expect(eventPayload).toEqual({
+      from: 'signed',
+      to: 'proposal_sent',
+      reason: 'signature-unmarked',
+      proposalId: 'p1',
+    });
   });
 });
 
