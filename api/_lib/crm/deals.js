@@ -475,7 +475,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 //     the partner programme split is present (so we exclude the recurring
 //     subscription), or signature.total/(1+vatRate) for the simple case.
 //   - Unsigned proposals: fall back to basePrice (no extras selected yet).
-function computeProposalTotalExVat(proposalData, signatureData) {
+export function computeProposalTotalExVat(proposalData, signatureData) {
   if (signatureData?.amountBreakdown?.projectExVat != null) {
     const v = Number(signatureData.amountBreakdown.projectExVat);
     if (Number.isFinite(v)) return v;

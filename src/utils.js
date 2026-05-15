@@ -14,6 +14,27 @@ export function useIsMobile() {
 
 export const formatGBP = (n) => '£' + (Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
+// Ex-VAT value of a proposal that best reflects the actual deal value.
+// Mirrors computeProposalTotalExVat in api/_lib/crm/deals.js so the dashboard
+// and CRM agree. Signed: prefer signature.amountBreakdown.projectExVat
+// (excludes the recurring partner-programme subscription), falling back to
+// signature.total/(1+vatRate) for the simple non-partner case. Unsigned:
+// fall back to basePrice.
+export function proposalSignedTotalExVat(proposal, signed) {
+  if (signed?.amountBreakdown?.projectExVat != null) {
+    const v = Number(signed.amountBreakdown.projectExVat);
+    if (Number.isFinite(v)) return v;
+  }
+  if (signed?.total != null) {
+    const t = Number(signed.total);
+    if (Number.isFinite(t)) {
+      const vatRate = Number(proposal?.vatRate) || 0;
+      return t / (1 + vatRate);
+    }
+  }
+  return proposal?.basePrice ?? null;
+}
+
 const CURRENCY_SYMBOLS = { GBP: '£', EUR: '€', USD: '$', AUD: 'A$', CAD: 'C$', NZD: 'NZ$', JPY: '¥' };
 
 export const formatCurrency = (n, code = 'GBP') => {

@@ -5,6 +5,7 @@ import { hasPermission } from '../_lib/permissions.js';
 import { sendMail, signedHtml, clientSignedThanksHtml, APP_URL } from '../_lib/email.js';
 import { sendNotification } from '../_lib/notifications.js';
 import { advanceStage, regressStage, dealIdForProposal } from '../_lib/dealStage.js';
+import { computeProposalTotalExVat } from '../_lib/crm/deals.js';
 import { voidInvoice } from '../_lib/xero.js';
 
 // Allowlist of fields from `signatures.data` that the public client view
@@ -67,7 +68,10 @@ export default async function handler(req, res) {
     // the pipeline reflects that we're awaiting a fresh view/sign cycle. The
     // next view event will naturally re-advance it to 'viewed' via the views
     // route. Strictly gated on current stage = 'signed' so a deal that's
-    // already moved to 'paid' isn't dragged backwards. Best-effort.
+    // already moved to 'paid' isn't dragged backwards. Also revert deals.value
+    // back to the proposal's basePrice — at sign time we replaced it with the
+    // signed total ex-VAT, so on unmark we restore the pre-sign baseline.
+    // Best-effort.
     try {
       const dealId = await dealIdForProposal(id);
       if (dealId) {
@@ -76,9 +80,18 @@ export default async function handler(req, res) {
           reason: 'signature-unmarked',
           payload: { proposalId: id },
         });
+        const proposalRows = await sql`SELECT data FROM proposals WHERE id = ${id}`;
+        const basePrice = proposalRows[0]?.data?.basePrice;
+        if (basePrice != null && Number.isFinite(Number(basePrice))) {
+          await sql`
+            UPDATE deals
+               SET value = ${Number(basePrice)}, updated_at = NOW()
+             WHERE id = ${dealId}
+          `;
+        }
       }
     } catch (err) {
-      console.error('[signatures] regressStage failed', err);
+      console.error('[signatures] regressStage / value revert failed', err);
     }
 
     return res.status(200).json({ ok: true, voidedInvoiceId: oldInvoiceId });
@@ -111,14 +124,28 @@ export default async function handler(req, res) {
       VALUES (${id}, ${name}, ${email}, ${signedAt}, ${JSON.stringify(rest)})
     `;
 
-    // CRM: advance the linked deal to 'signed'. Best-effort.
+    // CRM: advance the linked deal to 'signed' AND sync deals.value to the
+    // signed ex-VAT total (which reflects selected extras / partner discount,
+    // unlike the proposal's basePrice that we sync on every save). Excludes
+    // the recurring partner-programme subscription — that's separate revenue.
+    // Best-effort: don't break the sign flow on a deal-side failure.
     try {
       const dealId = await dealIdForProposal(id);
       if (dealId) {
         await advanceStage(dealId, 'signed', { payload: { proposalId: id, signerName: name, signerEmail: email } });
+        const proposalRows = await sql`SELECT data FROM proposals WHERE id = ${id}`;
+        const proposalData = proposalRows[0]?.data || {};
+        const signedValue = computeProposalTotalExVat(proposalData, rest);
+        if (signedValue != null && Number.isFinite(Number(signedValue))) {
+          await sql`
+            UPDATE deals
+               SET value = ${Number(signedValue)}, updated_at = NOW()
+             WHERE id = ${dealId}
+          `;
+        }
       }
     } catch (err) {
-      console.error('[signatures] advanceStage failed', err);
+      console.error('[signatures] advanceStage / value sync failed', err);
     }
 
     try {

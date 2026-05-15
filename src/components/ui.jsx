@@ -172,7 +172,8 @@ export function Badge({ color, children }) {
     yellow: { bg: '#FFF8E1', fg: '#B26A00' },
     blue:   { bg: '#E3F2FD', fg: '#0D47A1' },
     orange: { bg: '#FFF3E0', fg: '#E65100' },
-    grey:   { bg: '#ECEFF1', fg: '#455A64' }
+    grey:   { bg: '#ECEFF1', fg: '#455A64' },
+    gold:   { bg: '#FEF3C7', fg: '#92400E' }
   };
   const c = colors[color] || colors.green;
   return (

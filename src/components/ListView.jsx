@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, BarChart3, Check, CheckSquare, Clock, Contact, Copy, Coins, Download, ExternalLink, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Receipt, Search, Settings, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
-import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, useIsMobile } from '../utils.js';
+import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, proposalSignedTotalExVat, useIsMobile } from '../utils.js';
 import { openPrintWindow, printOptionsForSigned } from '../utils/printProposal.js';
 import { permissionsInclude } from '../lib/permissions.js';
 import { Badge, Logo } from './ui.jsx';
@@ -298,7 +298,10 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
     : '#CBD5E1';
 
   const hasVat = Number(proposal.vatRate) > 0;
-  const figure = formatGBP(proposal.basePrice);
+  // Once signed, the figure reflects what the client actually agreed to (ex-VAT,
+  // excluding the recurring partner-programme subscription) — not the proposal's
+  // basePrice, which may not include selected extras or the partner discount.
+  const figure = formatGBP(signed ? proposalSignedTotalExVat(proposal, signed) : proposal.basePrice);
 
   const handleCardClick = () => onPreview(proposal.id);
   const handleCardKey = (e) => {
@@ -346,6 +349,7 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
           {!signed && opened && <Badge color="yellow">OPENED</Badge>}
           {payment && <Badge color="blue">PAID {formatGBP(payment.amount)}</Badge>}
           {signed && !payment && <Badge color="orange">AWAITING PAYMENT</Badge>}
+          {signed?.partnerSelected && <Badge color="gold">PARTNER</Badge>}
         </div>
         <div style={{ fontSize: isMobile ? 11 : 13, color: BRAND.muted, display: 'flex', gap: isMobile ? 10 : 16, flexWrap: 'wrap', alignItems: 'center' }}>
           <span>{proposal.contactBusinessName || '—'}</span>
