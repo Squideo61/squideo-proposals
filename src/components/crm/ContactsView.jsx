@@ -10,7 +10,9 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany }) {
   const isMobile = useIsMobile();
   const [view, setView] = useState('contacts'); // 'contacts' | 'organisations'
   const [search, setSearch] = useState('');
-  const [customersOnly, setCustomersOnly] = useState(true);
+  // Default OFF so newly-added organisations (which haven't signed yet)
+  // show up the moment they're created. Flip on to focus on customers.
+  const [customersOnly, setCustomersOnly] = useState(false);
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
 
