@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Award, Building2, CheckCircle2, Circle, Edit2, Plus, Search, Trash2, User, X } from 'lucide-react';
+import { ArrowLeft, Building2, CheckCircle2, Circle, Edit2, Plus, Search, Trash2, User, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -8,7 +8,7 @@ import { Modal } from '../ui.jsx';
 export function ContactsView({ onBack, onOpenContact, onOpenCompany }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
-  const [view, setView] = useState('contacts'); // 'contacts' | 'customers'
+  const [view, setView] = useState('contacts'); // 'contacts' | 'organisations'
   const [search, setSearch] = useState('');
   const [customersOnly, setCustomersOnly] = useState(true);
   const [editing, setEditing] = useState(null);
@@ -28,6 +28,7 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany }) {
   const items = view === 'contacts'
     ? contacts
     : (customersOnly ? companies.filter(c => c.isCustomer) : companies);
+  const isOrgsView = view === 'organisations';
 
   const q = search.trim().toLowerCase();
   const filtered = q ? items.filter(c => {
@@ -43,19 +44,19 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
           <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-            {view === 'contacts'
-              ? <User size={22} color={BRAND.blue} />
-              : <Award size={22} color={BRAND.blue} />}
-            {view === 'contacts' ? 'Contacts' : 'Customers'}
+            {isOrgsView
+              ? <Building2 size={22} color={BRAND.blue} />
+              : <User size={22} color={BRAND.blue} />}
+            {isOrgsView ? 'Organisations' : 'Contacts'}
           </h1>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ display: 'flex', borderRadius: 8, border: '1px solid ' + BRAND.border, overflow: 'hidden' }}>
             <Tab active={view === 'contacts'} onClick={() => setView('contacts')}>Contacts ({contacts.length})</Tab>
-            <Tab active={view === 'customers'} onClick={() => setView('customers')}>Customers ({customerCount})</Tab>
+            <Tab active={isOrgsView} onClick={() => setView('organisations')}>Organisations ({companies.length})</Tab>
           </div>
           <button onClick={() => setCreating(true)} className="btn">
-            <Plus size={16} /> New {view === 'contacts' ? 'contact' : 'organisation'}
+            <Plus size={16} /> New {isOrgsView ? 'organisation' : 'contact'}
           </button>
         </div>
       </header>
@@ -77,14 +78,14 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany }) {
             </button>
           )}
         </div>
-        {view === 'customers' && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer', userSelect: 'none' }}>
+        {isOrgsView && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer', userSelect: 'none' }} title={`${customerCount} flagged as a customer`}>
             <input
               type="checkbox"
               checked={customersOnly}
               onChange={(e) => setCustomersOnly(e.target.checked)}
             />
-            Customers only
+            Customers only ({customerCount})
           </label>
         )}
       </div>
@@ -124,9 +125,9 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany }) {
       </div>
 
       {creating && view === 'contacts' && <ContactModal onClose={() => setCreating(false)} />}
-      {creating && view === 'customers' && <CompanyModal onClose={() => setCreating(false)} />}
+      {creating && isOrgsView && <CompanyModal onClose={() => setCreating(false)} />}
       {editing && view === 'contacts' && <ContactModal contact={editing} onClose={() => setEditing(null)} />}
-      {editing && view === 'customers' && <CompanyModal company={editing} onClose={() => setEditing(null)} />}
+      {editing && isOrgsView && <CompanyModal company={editing} onClose={() => setEditing(null)} />}
     </div>
   );
 }
