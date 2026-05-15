@@ -92,6 +92,10 @@ export async function cronQuoteResume(res) {
       AND r.unsubscribed_at IS NULL
       AND r.scheduled_for <= NOW()
       AND p.completed_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM quote_requests qr
+        WHERE LOWER(qr.email) = LOWER(r.email)
+      )
     ORDER BY r.scheduled_for ASC
     LIMIT 50
   `;
@@ -123,15 +127,21 @@ export async function cronQuoteResume(res) {
 
 export async function cronQuotePartials(res) {
   const rows = await sql`
-    SELECT form_session_id, name, email, phone, country_code, country_name,
-           company, project_details, timeline, budget, source_url, last_step,
-           last_activity_at, created_at
-    FROM quote_request_partials
-    WHERE completed_at IS NULL
-      AND notified_at IS NULL
-      AND project_details IS NOT NULL
-      AND last_activity_at < NOW() - INTERVAL '20 minutes'
-    ORDER BY last_activity_at ASC
+    SELECT p.form_session_id, p.name, p.email, p.phone, p.country_code, p.country_name,
+           p.company, p.project_details, p.timeline, p.budget, p.source_url, p.last_step,
+           p.last_activity_at, p.created_at
+    FROM quote_request_partials p
+    WHERE p.completed_at IS NULL
+      AND p.notified_at IS NULL
+      AND p.project_details IS NOT NULL
+      AND p.last_activity_at < NOW() - INTERVAL '20 minutes'
+      AND (
+        p.email IS NULL
+        OR NOT EXISTS (
+          SELECT 1 FROM quote_requests qr WHERE LOWER(qr.email) = LOWER(p.email)
+        )
+      )
+    ORDER BY p.last_activity_at ASC
     LIMIT 25
   `;
 

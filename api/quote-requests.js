@@ -341,8 +341,8 @@ export default async function handler(req, res) {
       html: buildNotificationEmail(qr, storedFiles),
     });
 
-    if (qr.form_session_id) {
-      try {
+    try {
+      if (qr.form_session_id) {
         await sql`
           UPDATE quote_request_partials
           SET completed_at = NOW()
@@ -352,9 +352,23 @@ export default async function handler(req, res) {
           DELETE FROM quote_request_resume_emails
           WHERE form_session_id = ${qr.form_session_id} AND sent_at IS NULL
         `;
-      } catch (e) {
-        console.warn('[quote-requests] partial/resume cleanup failed', e?.message);
       }
+      // Also stop reminders / partial-alerts for any other abandoned sessions
+      // from the same person (matched by email — covers the case where they
+      // restarted in a new tab/browser and finished there).
+      if (qr.email) {
+        await sql`
+          UPDATE quote_request_partials
+          SET completed_at = NOW()
+          WHERE LOWER(email) = LOWER(${qr.email}) AND completed_at IS NULL
+        `;
+        await sql`
+          DELETE FROM quote_request_resume_emails
+          WHERE LOWER(email) = LOWER(${qr.email}) AND sent_at IS NULL
+        `;
+      }
+    } catch (e) {
+      console.warn('[quote-requests] partial/resume cleanup failed', e?.message);
     }
 
     return res.status(201).json({ id, ok: true });
