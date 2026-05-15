@@ -4,7 +4,7 @@ import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile, formatProposalNumber } from '../../utils.js';
-import { Modal } from '../ui.jsx';
+import { Badge, Modal } from '../ui.jsx';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
@@ -156,13 +156,16 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               onClick={() => onOpenProposal?.(p.id)}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%', padding: '8px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', marginBottom: 6 }}
             >
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>
-                  {p.number ? <span style={{ color: BRAND.muted, fontSize: 11, marginRight: 6 }}>{formatProposalNumber(p.number)}</span> : null}
-                  {p.clientName || p.contactBusinessName || 'Untitled'}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  {p.number ? <span style={{ color: BRAND.muted, fontSize: 11 }}>{formatProposalNumber(p.number)}</span> : null}
+                  <span>{p.clientName || p.contactBusinessName || 'Untitled'}</span>
+                  {p.signed
+                    ? <Badge color="green">Signed</Badge>
+                    : <Badge color="grey">Unsigned</Badge>}
                 </div>
                 {(p.totalExVat ?? p.basePrice) != null && (
-                  <div style={{ fontSize: 11, color: BRAND.muted }}>
+                  <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
                     {formatGBP(p.totalExVat ?? p.basePrice)} ex VAT
                     {p.signed && p.totalExVat != null && p.basePrice != null && p.totalExVat !== p.basePrice && (
                       <span style={{ marginLeft: 4 }} title="Includes selected extras">(inc. extras)</span>
