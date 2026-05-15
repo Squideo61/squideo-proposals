@@ -21,7 +21,7 @@ const dist = resolve(root, 'dist');
 
 const COMMON_DEFINE = {
   'process.env.NODE_ENV': JSON.stringify('production'),
-  'process.env.SQUIDEO_API_BASE': JSON.stringify('https://squideo-proposals-tu96.vercel.app'),
+  'process.env.SQUIDEO_API_BASE': JSON.stringify('https://app.squideo.com'),
 };
 
 async function buildEntry({ name, input }) {

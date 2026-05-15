@@ -46,7 +46,7 @@ const SCOPES = [
 
 function redirectUri() {
   return process.env.XERO_REDIRECT_URI
-    || (process.env.APP_URL || 'https://squideo-proposals-tu96.vercel.app') + '/api/xero/callback';
+    || (process.env.APP_URL || 'https://app.squideo.com') + '/api/xero/callback';
 }
 
 export default async function handler(req, res) {

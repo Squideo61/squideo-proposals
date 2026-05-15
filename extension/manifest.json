@@ -10,7 +10,7 @@
   ],
   "host_permissions": [
     "https://mail.google.com/*",
-    "https://squideo-proposals-tu96.vercel.app/*"
+    "https://app.squideo.com/*"
   ],
   "web_accessible_resources": [
     {

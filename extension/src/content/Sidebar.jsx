@@ -245,7 +245,7 @@ function DealDetail({ detail, gmailThreadId, onChanged }) {
           </Row>
         )}
         <a
-          href={`https://squideo-proposals-tu96.vercel.app/?deal=${encodeURIComponent(detail.id)}`}
+          href={`https://app.squideo.com/?deal=${encodeURIComponent(detail.id)}`}
           target="_blank"
           rel="noopener noreferrer"
           style={{

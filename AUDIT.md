@@ -403,7 +403,7 @@ Google's JWKS. Good.
 ### 4.6. Stripe Checkout success/cancel URLs hardcoded — *Low*
 
 [api/stripe/[action].js:510-512](api/stripe/[action].js#L510-L512):
-`https://squideo-proposals-tu96.vercel.app/?proposal=…` is the literal URL.
+`https://app.squideo.com/?proposal=…` is the literal URL (was previously the raw Vercel URL — domain migrated 2026-05-15).
 The same string appears at least three more times in `api/crm/[...slug].js`
 (the extension's host_permission too). Domain change requires a code edit
 in 5+ places.
@@ -484,11 +484,11 @@ spreads in all five mutation actions.
 ### 5.5. Extension `host_permissions` includes the production Vercel domain — *Low*
 
 [extension/manifest.json:11-14](extension/manifest.json#L11-L14): the extension's
-host permission for the API is the hardcoded `squideo-proposals-tu96.vercel.app`
-domain. A future custom-domain switch requires a manifest change → resubmit
-to Web Store.
+host permission for the API is hardcoded to `app.squideo.com` (migrated from
+the raw Vercel URL 2026-05-15). A future domain switch requires a manifest
+change → resubmit to Web Store.
 
-**Remediation**: when you migrate to `app.squideo.co.uk` (or similar), update
+**Remediation**: keep this in mind for any future domain migration — update
 the manifest **before** Stripe/Resend/Gmail callbacks switch over; otherwise
 the extension breaks for everyone overnight.
 

@@ -189,7 +189,7 @@ function BoxRouteView({ dealId }) {
           </div>
         </div>
         <a
-          href={'https://squideo-proposals-tu96.vercel.app/?deal=' + encodeURIComponent(deal.id)}
+          href={'https://app.squideo.com/?deal=' + encodeURIComponent(deal.id)}
           target="_blank" rel="noopener noreferrer"
           style={{
             background: '#2BB8E6', color: 'white', textDecoration: 'none',

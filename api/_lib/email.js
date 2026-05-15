@@ -2,7 +2,7 @@ import { Resend } from 'resend';
 import sql from './db.js';
 
 const FROM = process.env.MAIL_FROM || 'Squideo CRM <noreply@squideo.co.uk>';
-export const APP_URL = process.env.APP_URL || 'https://squideo-proposals-tu96.vercel.app';
+export const APP_URL = process.env.APP_URL || 'https://app.squideo.com';
 
 // Admin recipients for payment-received notifications, minus the proposal
 // owner (who gets their own copy of the same email).

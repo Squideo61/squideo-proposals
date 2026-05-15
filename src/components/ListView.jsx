@@ -255,7 +255,7 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
   const number = proposal._number ? formatProposalNumber(proposal._number) : '';
 
   const copyLink = () => {
-    const url = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + proposal.id;
+    const url = 'https://app.squideo.com/?proposal=' + proposal.id;
     navigator.clipboard.writeText(url)
       .then(() => showMsg('Link copied to clipboard'))
       .catch(() => showMsg('Copy failed — link: ' + url));

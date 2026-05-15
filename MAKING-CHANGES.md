@@ -81,6 +81,6 @@ You can watch the progress at **https://vercel.com/dashboard** → your project 
 | Start local app | `vercel dev` |
 | Stop local app | Press `Ctrl+C` in the terminal |
 | Save changes to GitHub | `git add .` → `git commit -m "message"` → `git push` |
-| View live app | Your Vercel URL (e.g. `https://squideo-proposals.vercel.app`) |
+| View live app | `https://app.squideo.com` |
 | View database | https://console.neon.tech |
 | View deployments | https://vercel.com/dashboard |

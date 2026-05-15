@@ -14,7 +14,7 @@
 
 import '@inboxsdk/core/background.js';
 
-const API_BASE = 'https://squideo-proposals-tu96.vercel.app';
+const API_BASE = 'https://app.squideo.com';
 const TOKEN_KEY = 'squideoExtensionToken';
 const TOKEN_EXPIRES_KEY = 'squideoExtensionTokenExpiresAt';
 

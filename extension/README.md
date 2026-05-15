@@ -1,7 +1,7 @@
 # Squideo CRM — Chrome Extension
 
 Sidebar, deal chips, and compose helpers for Gmail. Talks to the existing
-[squideo-proposals API](https://squideo-proposals-tu96.vercel.app) over an
+[squideo-proposals API](https://app.squideo.com) over an
 opaque extension token issued via `/extension-auth`.
 
 ## Dev setup

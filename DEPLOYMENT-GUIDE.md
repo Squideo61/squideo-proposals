@@ -88,7 +88,7 @@ not using yet — most paths fall back gracefully (e.g. emails skip if
 |-----|-----------|---------|
 | `DATABASE_URL` | ✓ | Neon connection string |
 | `JWT_SECRET` | ✓ | Session JWTs + 2FA backup-code pepper. ≥32 random chars. |
-| `APP_URL` | ✓ | e.g. `https://app.squideo.co.uk` — used for redirect URLs + email links |
+| `APP_URL` | ✓ | e.g. `https://app.squideo.com` — used for redirect URLs + email links |
 | `MAIL_FROM` |   | Default `Squideo Proposals <noreply@squideo.co.uk>` |
 | `RESEND_API_KEY` |   | Transactional email |
 | `STRIPE_SECRET_KEY` |   | Stripe checkout + verify |

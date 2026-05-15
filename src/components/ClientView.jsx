@@ -518,7 +518,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               onClick={() => {
-                const url = 'https://squideo-proposals-tu96.vercel.app/?proposal=' + id;
+                const url = 'https://app.squideo.com/?proposal=' + id;
                 navigator.clipboard.writeText(url)
                   .then(() => showMsg('Link copied to clipboard'))
                   .catch(() => showMsg('Copy failed — link: ' + url));
