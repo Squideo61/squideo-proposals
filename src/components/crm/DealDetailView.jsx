@@ -2253,6 +2253,9 @@ function RecipientInput({ value, onChange, placeholder, autoFocus, required }) {
   const currentToken = (value || '').slice(tokenBounds.start, tokenBounds.end).trim();
 
   // Filter contacts. Empty token (just inserted, or empty field) → no popup.
+  // Matches against name, email, AND the contact's company name (looked up
+  // via state.companies), so typing "acme" surfaces every contact attached
+  // to that company even if the contact's own name doesn't contain it.
   const suggestions = useMemo(() => {
     if (!focused) return [];
     const q = currentToken.toLowerCase();
@@ -2263,20 +2266,28 @@ function RecipientInput({ value, onChange, placeholder, autoFocus, required }) {
       const emailLower = c.email.toLowerCase();
       if (includedEmails.has(emailLower)) continue;
       const nameLower = (c.name || '').toLowerCase();
+      const companyName = c.companyId ? (state.companies?.[c.companyId]?.name || '') : '';
+      const companyLower = companyName.toLowerCase();
       const nameHit = nameLower.includes(q);
       const emailHit = emailLower.includes(q);
-      if (!nameHit && !emailHit) continue;
-      // Score: prefix > substring; name > email at the same tier.
+      const companyHit = companyLower.includes(q);
+      if (!nameHit && !emailHit && !companyHit) continue;
+      // Score so prefix-matches outrank substring-matches, and within each
+      // tier name > company > email. Substring tier interleaves company
+      // above email-substring because a company match feels more relevant
+      // than an email's local-part containing the token.
       let score = 0;
-      if (nameLower.startsWith(q)) score = 4;
-      else if (emailLower.startsWith(q)) score = 3;
-      else if (nameHit) score = 2;
+      if (nameLower.startsWith(q)) score = 6;
+      else if (companyLower.startsWith(q)) score = 5;
+      else if (emailLower.startsWith(q)) score = 4;
+      else if (nameHit) score = 3;
+      else if (companyHit) score = 2;
       else score = 1;
       out.push({ contact: c, score });
     }
     out.sort((a, b) => b.score - a.score || (a.contact.name || a.contact.email).localeCompare(b.contact.name || b.contact.email));
     return out.slice(0, 6).map((r) => r.contact);
-  }, [state.contacts, focused, currentToken, includedEmails]);
+  }, [state.contacts, state.companies, focused, currentToken, includedEmails]);
 
   // Clamp active row when suggestions list changes.
   useEffect(() => {
