@@ -179,7 +179,19 @@ export async function gmailRoute(req, res, id, action, user) {
     // comes back attached so the UI can explain the empty state when it
     // genuinely is empty.
     if (req.method === 'POST' || !cachedHtml) {
-      const diag = await refreshSignatureCache(user.email);
+      // Belt-and-braces: refreshSignatureCache itself returns a diagnostic on
+      // expected failures (token / API errors), but anything unexpected (DB
+      // hiccup, JSON parse) used to fall through to the dispatcher's 500
+      // handler — which strips the diagnostic and leaves the UI on the
+      // "!diagnostics" branch the user is stuck on. Catch here so the modal
+      // always gets a structured reason instead of an opaque 500.
+      let diag;
+      try {
+        diag = await refreshSignatureCache(user.email);
+      } catch (err) {
+        console.error('[gmail signature] refresh threw', user.email, err);
+        diag = { html: null, summary: [], pickedEmail: null, error: { stage: 'unexpected', message: err.message || 'Unknown error', code: err.code || null } };
+      }
       const fresh = await sql`
         SELECT signature_html, signature_fetched_at
         FROM gmail_accounts

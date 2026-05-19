@@ -1758,18 +1758,28 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
 function SignatureEmptyHint({ diagnostics }) {
   const baseStyle = { fontSize: 12, color: BRAND.muted, fontStyle: 'italic', lineHeight: 1.5 };
   if (!diagnostics) {
+    // No diagnostics → the GET to /api/crm/gmail/signature errored before
+    // we got a structured response (network blip, 5xx, JSON parse). Tell the
+    // user to retry rather than blaming Gmail config — the latter would be
+    // misleading if the problem is on our side.
     return (
       <div style={baseStyle}>
-        No Gmail signature found yet. Click <strong>Refresh from Gmail</strong> after
-        setting your signature in Gmail (Settings → General → Signature).
+        Couldn't reach the signature sync just now. Click <strong>Refresh from Gmail</strong> to try again.
       </div>
     );
   }
   if (diagnostics.error) {
+    const e = diagnostics.error;
+    const label = e.stage === 'token'
+      ? 'authentication'
+      : e.stage === 'unexpected'
+        ? 'unexpected server error'
+        : `Gmail API ${e.status || 'error'}`;
+    const detail = e.message ? ` — ${e.message}` : '';
     return (
       <div style={baseStyle}>
-        Couldn't read your Gmail signature ({diagnostics.error.stage === 'token' ? 'authentication' : `Gmail API ${diagnostics.error.status || 'error'}`}).
-        Try reconnecting Gmail from Account → Gmail integration.
+        Couldn't read your Gmail signature ({label}{detail}).
+        {' '}Try <strong>Refresh from Gmail</strong> again, or reconnect Gmail from Account → Gmail integration if this keeps happening.
       </div>
     );
   }
