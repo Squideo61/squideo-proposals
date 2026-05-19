@@ -151,17 +151,46 @@ export async function stopWatch(accessToken) {
 // Fetch the user's primary Gmail signature via users.settings.sendAs.
 // Requires the gmail.modify scope (already granted alongside .readonly).
 // Returns the raw HTML string, or null if no signature is set / call fails.
+//
+// Picking the right sendAs is fiddly: a Workspace user often has multiple
+// (aliases, send-on-behalf, custom from-addresses) and the signature lives
+// on whichever one they edited. We prefer primary → default → first non-
+// empty signature, falling back to the first entry only if every signature
+// is empty. Verbose logging on the way through so we can diagnose "no
+// signature found" reports without a redeploy.
 export async function fetchGmailSignature(accessToken) {
   const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs', {
     headers: { Authorization: 'Bearer ' + accessToken },
   });
   if (!res.ok) {
-    console.warn('[gmail signature] sendAs fetch failed', res.status);
+    const errText = await res.text().catch(() => '');
+    console.warn('[gmail signature] sendAs fetch failed', res.status, errText.slice(0, 200));
     return null;
   }
   const json = await res.json();
   const list = Array.isArray(json.sendAs) ? json.sendAs : [];
-  // Prefer the primary identity, then the default-reply identity, then first.
-  const primary = list.find(s => s.isPrimary) || list.find(s => s.isDefault) || list[0];
-  return primary?.signature || null;
+  if (!list.length) {
+    console.warn('[gmail signature] sendAs list empty');
+    return null;
+  }
+  const summary = list.map(s => ({
+    email: s.sendAsEmail,
+    isPrimary: !!s.isPrimary,
+    isDefault: !!s.isDefault,
+    hasSig: !!(s.signature && s.signature.trim()),
+    sigLen: s.signature ? s.signature.length : 0,
+  }));
+  console.log('[gmail signature] sendAs summary', JSON.stringify(summary));
+
+  const hasSig = (s) => s && s.signature && s.signature.trim();
+  const picked =
+    list.find(s => s.isPrimary && hasSig(s))
+    || list.find(s => s.isDefault && hasSig(s))
+    || list.find(hasSig);
+  if (picked) {
+    console.log('[gmail signature] picked', picked.sendAsEmail, 'len', picked.signature.length);
+    return picked.signature;
+  }
+  console.warn('[gmail signature] no sendAs entry has a non-empty signature');
+  return null;
 }

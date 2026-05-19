@@ -1496,6 +1496,7 @@ function FormRow({ label, children }) {
 
 function EmailComposerModal({ deal, contact, onClose, onSent }) {
   const { state, actions, showMsg } = useStore();
+  const isMobile = useIsMobile();
   const gmailConnected = state.gmailAccount && state.gmailAccount.connected;
   const defaultSubject = deal?.title ? `Re: ${deal.title}` : '';
   const [to, setTo] = useState(contact?.email || '');
@@ -1505,6 +1506,15 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [signature, setSignature] = useState(null); // null = loading, '' = none
+  const [minimised, setMinimised] = useState(false);
+
+  // Esc closes the composer — preserves the Modal-era keyboard affordance
+  // even though we no longer render through Modal.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose && onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   useEffect(() => {
     if (!gmailConnected) { setSignature(''); return; }
@@ -1553,72 +1563,139 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
     }
   };
 
+  // Gmail-style compose dock. Anchored to the bottom-right of the viewport
+  // so the user can keep the deal page interactive while drafting. On mobile
+  // we still take the full width, since a 520px dock would overflow.
+  const dockWidth = isMobile ? '100%' : 560;
+  const dockRight = isMobile ? 0 : 24;
+  const dockBottom = isMobile ? 0 : 0;
   return (
-    <Modal onClose={onClose}>
-      <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Send email</h2>
-      {!gmailConnected && (
-        <div style={{ background: '#FEF3C7', color: '#92400E', fontSize: 13, padding: '10px 12px', borderRadius: 6, marginBottom: 14 }}>
-          Gmail isn't connected for your account yet. Connect it from Account → Gmail integration before sending.
-        </div>
-      )}
-      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <FormRow label="To">
-          <input className="input" type="text" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" autoFocus required />
-        </FormRow>
-        <FormRow label="Cc (optional)">
-          <input className="input" type="text" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="comma,separated@example.com" />
-        </FormRow>
-        <FormRow label="Subject">
-          <input className="input" type="text" value={subject} onChange={(e) => setSubject(e.target.value)} required />
-        </FormRow>
-        <FormRow label="Message">
-          <textarea
-            className="input"
-            rows={8}
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            style={{ fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.5 }}
-            required
-          />
-        </FormRow>
-        {gmailConnected && (
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-              Signature (synced from Gmail)
-            </div>
-            {signature === null && (
-              <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Loading signature…</div>
-            )}
-            {signature === '' && (
-              <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>
-                No Gmail signature found — set one in Gmail and reconnect to apply it here.
-              </div>
-            )}
-            {sanitizedSignature && (
-              <div
-                className="email-body"
-                style={{ background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 6, padding: 10, fontSize: 12, lineHeight: 1.5, maxHeight: 160, overflowY: 'auto', wordBreak: 'break-word' }}
-                dangerouslySetInnerHTML={{ __html: sanitizedSignature }}
-              />
-            )}
-          </div>
-        )}
-        {error && (
-          <div style={{ background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '8px 10px', borderRadius: 6 }}>
-            {error}
-          </div>
-        )}
-        <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.5 }}>
-          Sent from {state.gmailAccount?.gmailAddress || 'your connected Gmail'} via the Gmail API — this message will appear in your Gmail Sent folder. The deal is tagged via the X-Squideo-Deal header so replies thread back automatically.
-        </div>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
-          <button type="submit" className="btn" disabled={!gmailConnected || sending || !to.trim() || !subject.trim() || !body.trim()}>
-            {sending ? 'Sending…' : 'Send'}
+    <div
+      role="dialog"
+      aria-modal="false"
+      aria-label="Send email"
+      style={{
+        position: 'fixed',
+        right: dockRight,
+        bottom: dockBottom,
+        width: dockWidth,
+        maxWidth: '100vw',
+        background: 'white',
+        border: '1px solid ' + BRAND.border,
+        borderTopLeftRadius: 10,
+        borderTopRightRadius: 10,
+        borderBottomLeftRadius: isMobile ? 0 : 0,
+        borderBottomRightRadius: isMobile ? 0 : 0,
+        boxShadow: '0 12px 32px rgba(15, 42, 61, 0.24)',
+        zIndex: 2000,
+        display: 'flex',
+        flexDirection: 'column',
+        maxHeight: minimised ? 44 : '80vh',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        onClick={() => setMinimised((m) => !m)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          background: '#0F2A3D',
+          color: 'white',
+          padding: '8px 12px',
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: 'pointer',
+          flexShrink: 0,
+        }}
+      >
+        <span>{subject.trim() ? subject : 'New message'}</span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setMinimised((m) => !m); }}
+            aria-label={minimised ? 'Expand' : 'Minimise'}
+            style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', padding: 2, lineHeight: 1, fontSize: 16 }}
+          >
+            {minimised ? '▴' : '▾'}
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onClose(); }}
+            aria-label="Close"
+            style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', padding: 2, lineHeight: 1 }}
+          >
+            <X size={14} />
           </button>
         </div>
-      </form>
-    </Modal>
+      </div>
+      {!minimised && (
+        <div style={{ overflowY: 'auto', padding: 14 }}>
+          {!gmailConnected && (
+            <div style={{ background: '#FEF3C7', color: '#92400E', fontSize: 13, padding: '10px 12px', borderRadius: 6, marginBottom: 12 }}>
+              Gmail isn't connected for your account yet. Connect it from Account → Gmail integration before sending.
+            </div>
+          )}
+          <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <FormRow label="To">
+              <input className="input" type="text" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" autoFocus required />
+            </FormRow>
+            <FormRow label="Cc (optional)">
+              <input className="input" type="text" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="comma,separated@example.com" />
+            </FormRow>
+            <FormRow label="Subject">
+              <input className="input" type="text" value={subject} onChange={(e) => setSubject(e.target.value)} required />
+            </FormRow>
+            <FormRow label="Message">
+              <textarea
+                className="input"
+                rows={8}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                style={{ fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.5 }}
+                required
+              />
+            </FormRow>
+            {gmailConnected && (
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+                  Signature (synced from Gmail)
+                </div>
+                {signature === null && (
+                  <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Loading signature…</div>
+                )}
+                {signature === '' && (
+                  <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>
+                    No Gmail signature found — set one in Gmail and reconnect to apply it here.
+                  </div>
+                )}
+                {sanitizedSignature && (
+                  <div
+                    className="email-body"
+                    style={{ background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 6, padding: 10, fontSize: 12, lineHeight: 1.5, maxHeight: 160, overflowY: 'auto', wordBreak: 'break-word' }}
+                    dangerouslySetInnerHTML={{ __html: sanitizedSignature }}
+                  />
+                )}
+              </div>
+            )}
+            {error && (
+              <div style={{ background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '8px 10px', borderRadius: 6 }}>
+                {error}
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: BRAND.muted, lineHeight: 1.45 }}>
+              Sent from {state.gmailAccount?.gmailAddress || 'your connected Gmail'} via the Gmail API. The deal is tagged via the X-Squideo-Deal header so replies thread back automatically.
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+              <button type="submit" className="btn" disabled={!gmailConnected || sending || !to.trim() || !subject.trim() || !body.trim()}>
+                {sending ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
   );
 }
 

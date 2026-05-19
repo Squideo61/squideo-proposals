@@ -166,10 +166,35 @@ export async function gmailRoute(req, res, id, action, user) {
     if (!rows.length) {
       return res.status(200).json({ signatureHtml: null, fetchedAt: null });
     }
-    return res.status(200).json({
-      signatureHtml: rows[0].signature_html || null,
-      fetchedAt: rows[0].signature_fetched_at || null,
-    });
+    const cachedHtml = rows[0].signature_html || null;
+    const fetchedAt = rows[0].signature_fetched_at || null;
+    const ageMs = fetchedAt ? Date.now() - new Date(fetchedAt).getTime() : Infinity;
+    const STALE_MS = 60 * 60 * 1000;
+
+    // Empty cache → refresh inline so the modal that just opened sees a
+    // definitive answer (not the stale "set one in Gmail and reconnect"
+    // hint that lingers when someone set their signature AFTER connecting).
+    // Old (>1h) cache → return what we have and refresh in the background.
+    if (!cachedHtml) {
+      try {
+        await refreshSignatureCache(user.email);
+      } catch (err) {
+        console.warn('[gmail signature endpoint] inline refresh failed', err.message);
+      }
+      const fresh = await sql`
+        SELECT signature_html, signature_fetched_at
+        FROM gmail_accounts
+        WHERE user_email = ${user.email} AND disconnected_at IS NULL
+      `;
+      return res.status(200).json({
+        signatureHtml: fresh[0]?.signature_html || null,
+        fetchedAt: fresh[0]?.signature_fetched_at || null,
+      });
+    }
+    if (ageMs > STALE_MS) {
+      waitUntil(refreshSignatureCache(user.email));
+    }
+    return res.status(200).json({ signatureHtml: cachedHtml, fetchedAt });
   }
 
   if (id === 'backfill') {
