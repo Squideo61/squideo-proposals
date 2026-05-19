@@ -1332,6 +1332,50 @@ export function StoreProvider({ children }) {
         });
     },
 
+    // ---------- Secondary contacts on a deal ----------
+    // `payload` is either { contactId } to link an existing CRM contact, or
+    // { email, name?, title?, companyId? } to create a new contact and link
+    // it in one round-trip. The server upserts so a duplicate is a no-op.
+    addDealContact(dealId, payload) {
+      return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/contacts', payload)
+        .then((contact) => {
+          if (!contact || !contact.id) return contact;
+          setState(s => {
+            const detail = s.dealDetail[dealId];
+            const contacts = { ...s.contacts, [contact.id]: contact };
+            if (!detail) return { ...s, contacts };
+            const existing = detail.secondaryContacts || [];
+            const next = existing.some(c => c.id === contact.id)
+              ? existing
+              : [...existing, contact];
+            return {
+              ...s,
+              contacts,
+              dealDetail: { ...s.dealDetail, [dealId]: { ...detail, secondaryContacts: next } },
+            };
+          });
+          return contact;
+        });
+    },
+    removeDealContact(dealId, contactId) {
+      setState(s => {
+        const detail = s.dealDetail[dealId];
+        if (!detail) return s;
+        return {
+          ...s,
+          dealDetail: {
+            ...s.dealDetail,
+            [dealId]: {
+              ...detail,
+              secondaryContacts: (detail.secondaryContacts || []).filter(c => c.id !== contactId),
+            },
+          },
+        };
+      });
+      return api.delete('/api/crm/deals/' + encodeURIComponent(dealId) + '/contacts/' + encodeURIComponent(contactId))
+        .catch(() => actions.loadDealDetail(dealId));
+    },
+
     // ---------- Roles ----------
     refreshRoles() {
       return api.get('/api/roles').then((rows) => {

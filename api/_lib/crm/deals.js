@@ -2,9 +2,10 @@ import crypto from 'node:crypto';
 import { put, del, getDownloadUrl } from '@vercel/blob';
 import sql from '../db.js';
 import { isValidStage } from '../dealStage.js';
-import { makeId, trimOrNull, numberOrNull, ensureMessageDealsTable } from './shared.js';
+import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureMessageDealsTable, ensureDealContactsTable } from './shared.js';
 import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
+import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
@@ -191,6 +192,76 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     })));
   }
 
+  // /deals/:id/contacts — secondary contacts on this deal.
+  //   POST  { contactId }                    → link an existing contact
+  //   POST  { email, name?, title?, companyId? } → create-and-link in one shot
+  //                                            (companyId defaults to the deal's)
+  //   DELETE /:contactId                     → unlink (does not delete the contact)
+  if (action === 'contacts') {
+    await ensureDealContactsTable();
+    const dealRow = (await sql`SELECT id, company_id FROM deals WHERE id = ${id}`)[0];
+    if (!dealRow) return res.status(404).json({ error: 'Not found' });
+
+    if (req.method === 'POST') {
+      const body = req.body || {};
+      let contactId = trimOrNull(body.contactId);
+
+      // Create a new contact when no contactId was supplied. Mirrors the
+      // shape of POST /api/crm/contacts so the deal page and Gmail extension
+      // can both call this in one round-trip when the Cc'd address isn't in
+      // the CRM yet.
+      if (!contactId) {
+        const email = lowerOrNull(body.email);
+        if (!email) return res.status(400).json({ error: 'email or contactId is required' });
+        const existing = (await sql`SELECT id FROM contacts WHERE email = ${email} LIMIT 1`)[0];
+        if (existing) {
+          contactId = existing.id;
+        } else {
+          contactId = makeId('ct');
+          const companyId = trimOrNull(body.companyId) || dealRow.company_id || null;
+          await sql`
+            INSERT INTO contacts (id, email, name, phone, title, company_id, notes, source)
+            VALUES (
+              ${contactId},
+              ${email},
+              ${trimOrNull(body.name)},
+              ${trimOrNull(body.phone)},
+              ${trimOrNull(body.title)},
+              ${companyId},
+              ${trimOrNull(body.notes)},
+              'email-cc'
+            )
+          `;
+        }
+      } else {
+        const existing = (await sql`SELECT id FROM contacts WHERE id = ${contactId}`)[0];
+        if (!existing) return res.status(404).json({ error: 'Contact not found' });
+      }
+
+      await sql`
+        INSERT INTO deal_contacts (deal_id, contact_id, role, added_by)
+        VALUES (${id}, ${contactId}, 'secondary', ${user.email || null})
+        ON CONFLICT (deal_id, contact_id) DO NOTHING
+      `;
+      await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${id}`;
+
+      const contact = (await sql`
+        SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
+        FROM contacts WHERE id = ${contactId}
+      `)[0];
+      return res.status(200).json(serialiseContact(contact));
+    }
+
+    if (req.method === 'DELETE') {
+      const contactId = trimOrNull(subaction);
+      if (!contactId) return res.status(400).json({ error: 'contactId is required' });
+      await sql`DELETE FROM deal_contacts WHERE deal_id = ${id} AND contact_id = ${contactId}`;
+      return res.status(200).json({ ok: true });
+    }
+
+    return res.status(405).end();
+  }
+
   // /deals/:id/files — upload a new file (POST) or list (unused, GET falls through)
   if (action === 'files' && !subaction && req.method === 'POST') {
     if (!process.env.BLOB_READ_WRITE_TOKEN)
@@ -312,9 +383,9 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     const deal = serialiseDeal(rows[0]);
     // The emails query below joins on email_message_deals which is created by
     // a manual migration — self-heal so workspaces that skipped it still load
-    // deals without 'relation does not exist'.
-    await ensureMessageDealsTable();
-    const [proposals, events, tasks, emails, files, comments] = await Promise.all([
+    // deals without 'relation does not exist'. Likewise deal_contacts.
+    await Promise.all([ensureMessageDealsTable(), ensureDealContactsTable()]);
+    const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows] = await Promise.all([
       sql`
         SELECT p.id, p.data, p.number_year, p.number_seq, p.created_at,
                s.data AS signature_data
@@ -373,6 +444,19 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         WHERE c.deal_id = ${id}
         ORDER BY c.created_at ASC
       `,
+      sql`
+        SELECT c.id, c.email, c.name, c.phone, c.title, c.company_id, c.notes,
+               c.provisional, c.source, c.created_at, c.updated_at,
+               dc.added_at, dc.added_by
+        FROM deal_contacts dc
+        JOIN contacts c ON c.id = dc.contact_id
+        WHERE dc.deal_id = ${id} AND dc.role = 'secondary'
+        ORDER BY dc.added_at ASC
+      `,
+      deal.primaryContactId ? sql`
+        SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
+        FROM contacts WHERE id = ${deal.primaryContactId}
+      ` : Promise.resolve([]),
     ]);
 
     // Load reactions for all comments in one query and merge into comments.
@@ -441,6 +525,12 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         createdAt: f.created_at,
       })),
       comments: comments.map(c => serialiseComment(c, reactionsMap[c.id] || {})),
+      secondaryContacts: secondaryContactRows.map(r => ({
+        ...serialiseContact(r),
+        addedAt: r.added_at,
+        addedBy: r.added_by || null,
+      })),
+      primaryContact: primaryContactRows[0] ? serialiseContact(primaryContactRows[0]) : null,
     });
   }
 

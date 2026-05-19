@@ -71,6 +71,21 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
     [state.drafts, dealId],
   );
 
+  // Set of addresses we already consider "linked" to this deal — used by the
+  // email rows to decide whether a Cc'd address counts as "new on this thread"
+  // and worth prompting about. Includes the signed-in user (you are never a
+  // candidate for being added to your own deal as a secondary contact), the
+  // primary contact, and any existing secondary contacts.
+  const linkedEmails = useMemo(() => {
+    const set = new Set();
+    if (state.session?.email) set.add(state.session.email.toLowerCase());
+    if (contact?.email) set.add(contact.email.toLowerCase());
+    for (const sc of (detail?.secondaryContacts || [])) {
+      if (sc.email) set.add(sc.email.toLowerCase());
+    }
+    return set;
+  }, [state.session?.email, contact?.email, detail?.secondaryContacts]);
+
   const overdueTasks  = tasks.filter(t => isTaskOverdue(t));
   const upcomingTasks = tasks.filter(t => !t.doneAt && !isTaskOverdue(t));
   const doneTasks     = tasks.filter(t => !!t.doneAt);
@@ -146,6 +161,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           <Field icon={Calendar} label="Expected close">{deal.expectedCloseAt || <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field label="Last activity">{formatRelativeTime(deal.lastActivityAt)}</Field>
         </div>
+        <SecondaryContactsRow
+          dealId={dealId}
+          primaryContact={contact}
+          secondaryContacts={detail?.secondaryContacts || []}
+          defaultCompanyId={deal.companyId || null}
+        />
         {deal.notes && (
           <div style={{ marginTop: 16, padding: 12, background: '#F8FAFC', borderRadius: 8, fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap' }}>
             {deal.notes}
@@ -263,6 +284,8 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   messages={group.messages}
                   dealId={dealId}
                   dealTitle={deal.title}
+                  linkedEmails={linkedEmails}
+                  defaultCompanyId={deal.companyId || null}
                   onOpenMessage={(id) => setOpenEmailId(id)}
                   onLinkAnother={(target) => setLinkEmailTarget(target)}
                   onCreateNewDeal={(target) => setNewDealFromEmail(target)}
@@ -741,7 +764,7 @@ function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal }) {
 // thread with a "(N messages)" chip when applicable. Expanded: stacks every
 // message oldest→newest with its body inlined (lazy-loaded). Single-message
 // threads keep the original click-to-modal behaviour.
-function ThreadRow({ messages, dealId, dealTitle, onOpenMessage, onLinkAnother, onCreateNewDeal }) {
+function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCompanyId, onOpenMessage, onLinkAnother, onCreateNewDeal }) {
   const [expanded, setExpanded] = useState(false);
   const isMulti = messages.length > 1;
   const latest = messages[messages.length - 1];
@@ -749,6 +772,28 @@ function ThreadRow({ messages, dealId, dealTitle, onOpenMessage, onLinkAnother, 
   const gmailLink = latest.gmailThreadId
     ? `https://mail.google.com/mail/u/0/#all/${latest.gmailThreadId}`
     : null;
+
+  // Addresses Cc'd into any *inbound* message on this thread that aren't
+  // already linked to this deal. We only mine inbound because the user asked
+  // for "Cc'd in replies I get" — outgoing Cc's are the user's own choice and
+  // don't need a prompt.
+  const unknownCcs = useMemo(() => {
+    if (!linkedEmails) return [];
+    const seen = new Set();
+    const out = [];
+    for (const m of messages) {
+      if (m.direction !== 'inbound') continue;
+      const ccs = Array.isArray(m.ccEmails) ? m.ccEmails : [];
+      for (const raw of ccs) {
+        if (!raw || typeof raw !== 'string') continue;
+        const lower = raw.trim().toLowerCase();
+        if (!lower || seen.has(lower) || linkedEmails.has(lower)) continue;
+        seen.add(lower);
+        out.push(raw.trim());
+      }
+    }
+    return out;
+  }, [messages, linkedEmails]);
 
   const handleHeaderClick = () => {
     if (isMulti) {
@@ -769,6 +814,13 @@ function ThreadRow({ messages, dealId, dealTitle, onOpenMessage, onLinkAnother, 
         onLinkAnother={onLinkAnother ? () => onLinkAnother({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
         onCreateNewDeal={onCreateNewDeal ? () => onCreateNewDeal({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
       />
+      {unknownCcs.length > 0 && (
+        <CcSuggestionStrip
+          dealId={dealId}
+          addresses={unknownCcs}
+          defaultCompanyId={defaultCompanyId}
+        />
+      )}
       {expanded && isMulti && (
         <div style={{ marginTop: 8, marginLeft: 22, paddingLeft: 12, borderLeft: '2px solid ' + BRAND.border, display: 'flex', flexDirection: 'column', gap: 10 }}>
           {messages.map((m) => (
@@ -2727,6 +2779,357 @@ export function EmailComposerHost() {
         if (ctx.dealId) actions.loadDealDetail(ctx.dealId);
       }}
     />
+  );
+}
+
+// Secondary contacts strip rendered below the deal header. Shows the primary
+// contact (read-only here — edited via "Edit deal") plus removable chips for
+// each secondary, and a "+ Add" button that opens an existing-or-new picker.
+function SecondaryContactsRow({ dealId, primaryContact, secondaryContacts, defaultCompanyId }) {
+  const { state, actions, showMsg } = useStore();
+  const [picking, setPicking] = useState(false);
+  const [creating, setCreating] = useState(null); // { email, name } prefill
+
+  const remove = async (contactId) => {
+    try {
+      await actions.removeDealContact(dealId, contactId);
+    } catch (e) {
+      showMsg(e?.message || 'Could not remove contact');
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+        Contacts
+      </span>
+      {primaryContact && (
+        <ContactChip
+          contact={primaryContact}
+          label="primary"
+          removable={false}
+        />
+      )}
+      {secondaryContacts.map((c) => (
+        <ContactChip
+          key={c.id}
+          contact={c}
+          label="secondary"
+          removable
+          onRemove={() => remove(c.id)}
+        />
+      ))}
+      <button
+        onClick={() => setPicking(true)}
+        className="btn-ghost"
+        style={{ fontSize: 12, padding: '4px 10px' }}
+        type="button"
+      >
+        <Plus size={12} /> Add contact
+      </button>
+      {picking && (
+        <PickContactModal
+          dealId={dealId}
+          excludeIds={new Set([primaryContact?.id, ...secondaryContacts.map(c => c.id)].filter(Boolean))}
+          defaultCompanyId={defaultCompanyId}
+          onClose={() => setPicking(false)}
+          onPickExisting={async (contactId) => {
+            try {
+              await actions.addDealContact(dealId, { contactId });
+              setPicking(false);
+            } catch (e) {
+              showMsg(e?.message || 'Could not add contact');
+            }
+          }}
+          onCreateNew={(prefill) => {
+            setPicking(false);
+            setCreating(prefill || {});
+          }}
+        />
+      )}
+      {creating && (
+        <CreateContactModal
+          dealId={dealId}
+          defaultCompanyId={defaultCompanyId}
+          prefill={creating}
+          onClose={() => setCreating(null)}
+          onCreated={() => setCreating(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ContactChip({ contact, label, removable, onRemove }) {
+  const display = contact.name || contact.email || '(no email)';
+  const subtitle = contact.name && contact.email ? contact.email : null;
+  return (
+    <span
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '4px 10px', borderRadius: 999,
+        border: '1px solid ' + BRAND.border,
+        background: 'white', fontSize: 12, maxWidth: 320,
+      }}
+      title={subtitle ? `${display} · ${subtitle} (${label})` : `${display} (${label})`}
+    >
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {display}
+      </span>
+      {label === 'primary' && (
+        <span style={{ fontSize: 10, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+          primary
+        </span>
+      )}
+      {removable && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onRemove?.(); }}
+          aria-label="Remove contact"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 16, height: 16, padding: 0, border: 'none', borderRadius: '50%',
+            background: 'transparent', cursor: 'pointer', color: BRAND.muted,
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = '#F4F8FB')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        >
+          <X size={11} />
+        </button>
+      )}
+    </span>
+  );
+}
+
+// Picker for the "+ Add contact" button. Searches existing CRM contacts and
+// also offers "Create new contact" when the typed query looks like an email
+// that isn't in the list yet.
+function PickContactModal({ dealId, excludeIds, defaultCompanyId, onClose, onPickExisting, onCreateNew }) {
+  const { state } = useStore();
+  const [query, setQuery] = useState('');
+  const contacts = useMemo(() => Object.values(state.contacts || {}), [state.contacts]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = contacts.filter((c) => c && !excludeIds.has(c.id));
+    if (!q) return list.slice(0, 30);
+    return list
+      .filter((c) => (c.name || '').toLowerCase().includes(q)
+        || (c.email || '').toLowerCase().includes(q)
+        || (state.companies?.[c.companyId]?.name || '').toLowerCase().includes(q))
+      .slice(0, 30);
+  }, [contacts, query, excludeIds, state.companies]);
+
+  const trimmed = query.trim();
+  const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  const alreadyExists = looksLikeEmail
+    && contacts.some(c => (c.email || '').toLowerCase() === trimmed.toLowerCase());
+
+  return (
+    <Modal onClose={onClose} maxWidth={520}>
+      <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Add a contact to this deal</h2>
+      <input
+        autoFocus
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search by name, email, or company…"
+        className="input"
+        style={{ width: '100%', marginBottom: 12 }}
+      />
+      <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 8 }}>
+        {filtered.length === 0 && (
+          <div style={{ padding: 16, color: BRAND.muted, fontSize: 13, textAlign: 'center' }}>
+            No matches.
+          </div>
+        )}
+        {filtered.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => onPickExisting(c.id)}
+            style={{
+              display: 'block', width: '100%', textAlign: 'left',
+              background: 'white', border: 'none', borderBottom: '1px solid ' + BRAND.border,
+              padding: '10px 12px', cursor: 'pointer', fontFamily: 'inherit',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#F4F8FB')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'white')}
+          >
+            <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink }}>
+              {c.name || <span style={{ fontStyle: 'italic', color: BRAND.muted }}>(no name)</span>}
+              {c.email && <span style={{ color: BRAND.muted, fontWeight: 400 }}> · {c.email}</span>}
+            </div>
+            {c.companyId && state.companies?.[c.companyId]?.name && (
+              <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
+                {state.companies[c.companyId].name}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+      {looksLikeEmail && !alreadyExists && (
+        <button
+          type="button"
+          onClick={() => onCreateNew({ email: trimmed })}
+          className="btn"
+          style={{ marginTop: 12, width: '100%' }}
+        >
+          <Plus size={14} /> Create new contact for {trimmed}
+        </button>
+      )}
+    </Modal>
+  );
+}
+
+// Lightweight create-and-link modal used by the email Cc prompt and the
+// SecondaryContactsRow picker when the typed email isn't in CRM yet.
+function CreateContactModal({ dealId, defaultCompanyId, prefill, onClose, onCreated }) {
+  const { state, actions, showMsg } = useStore();
+  const [email, setEmail] = useState(prefill?.email || '');
+  const [name, setName] = useState(prefill?.name || '');
+  const [title, setTitle] = useState(prefill?.title || '');
+  const [companyId, setCompanyId] = useState(prefill?.companyId || defaultCompanyId || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const companies = useMemo(() => Object.values(state.companies || {})
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+    [state.companies]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!email.trim() || busy) return;
+    setError('');
+    setBusy(true);
+    try {
+      await actions.addDealContact(dealId, {
+        email: email.trim(),
+        name: name.trim() || null,
+        title: title.trim() || null,
+        companyId: companyId || null,
+      });
+      onCreated?.();
+    } catch (err) {
+      setError(err?.message || 'Could not add contact');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} maxWidth={460}>
+      <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Add new contact</h2>
+      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <label style={{ fontSize: 12, color: BRAND.muted }}>
+          Email
+          <input value={email} onChange={(e) => setEmail(e.target.value)} required className="input" style={{ width: '100%', marginTop: 4 }} />
+        </label>
+        <label style={{ fontSize: 12, color: BRAND.muted }}>
+          Name
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Optional" className="input" style={{ width: '100%', marginTop: 4 }} />
+        </label>
+        <label style={{ fontSize: 12, color: BRAND.muted }}>
+          Job title
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Optional" className="input" style={{ width: '100%', marginTop: 4 }} />
+        </label>
+        <label style={{ fontSize: 12, color: BRAND.muted }}>
+          Company
+          <select value={companyId || ''} onChange={(e) => setCompanyId(e.target.value)} className="input" style={{ width: '100%', marginTop: 4 }}>
+            <option value="">— None —</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </label>
+        {error && <div style={{ color: '#DC2626', fontSize: 12 }}>{error}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+          <button type="submit" className="btn" disabled={busy || !email.trim()}>
+            {busy ? 'Adding…' : 'Add to deal'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// Strip rendered below an email row when the message has Cc'd addresses that
+// aren't yet linked to this deal (neither as primary nor secondary). One
+// chip per unknown address; clicking either links the existing CRM contact
+// (when the email matches one) or opens CreateContactModal pre-filled.
+function CcSuggestionStrip({ dealId, addresses, defaultCompanyId }) {
+  const { state, actions, showMsg } = useStore();
+  const [creating, setCreating] = useState(null);
+  const [busyEmail, setBusyEmail] = useState(null);
+
+  if (!addresses.length) return null;
+
+  // Map email → existing contact (for one-click linking).
+  const contactByEmail = useMemo(() => {
+    const m = new Map();
+    for (const c of Object.values(state.contacts || {})) {
+      if (c?.email) m.set(c.email.toLowerCase(), c);
+    }
+    return m;
+  }, [state.contacts]);
+
+  const handleAdd = async (email) => {
+    const existing = contactByEmail.get(email.toLowerCase());
+    if (existing) {
+      setBusyEmail(email);
+      try {
+        await actions.addDealContact(dealId, { contactId: existing.id });
+      } catch (e) {
+        showMsg(e?.message || 'Could not add contact');
+      } finally {
+        setBusyEmail(null);
+      }
+    } else {
+      setCreating({ email });
+    }
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: 8, marginLeft: 22, padding: '8px 12px',
+        background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 8,
+        display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        fontSize: 12,
+      }}
+    >
+      <span style={{ color: '#9A3412', fontWeight: 600 }}>New on this thread:</span>
+      {addresses.map((email) => {
+        const existing = contactByEmail.get(email.toLowerCase());
+        return (
+          <button
+            key={email}
+            type="button"
+            onClick={() => handleAdd(email)}
+            disabled={busyEmail === email}
+            title={existing
+              ? `Add ${existing.name || existing.email} as a secondary contact`
+              : `Create a new contact for ${email} and link it to this deal`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '3px 9px', borderRadius: 999,
+              border: '1px solid #FED7AA', background: 'white', color: BRAND.ink,
+              cursor: busyEmail === email ? 'wait' : 'pointer',
+              fontFamily: 'inherit', fontSize: 12,
+            }}
+          >
+            <Plus size={11} /> {existing ? (existing.name || existing.email) : email}
+          </button>
+        );
+      })}
+      {creating && (
+        <CreateContactModal
+          dealId={dealId}
+          defaultCompanyId={defaultCompanyId}
+          prefill={creating}
+          onClose={() => setCreating(null)}
+          onCreated={() => setCreating(null)}
+        />
+      )}
+    </div>
   );
 }
 

@@ -214,6 +214,33 @@ function UnlinkedView({ gmailThreadId, counterpartyEmail, onChanged }) {
 // -------------------- Deal detail panel (when linked) --------------------
 
 function DealDetail({ detail, gmailThreadId, onChanged }) {
+  // Cc'd addresses on inbound messages of the currently-viewed thread that
+  // aren't already linked to the deal. Drives the "Add as secondary contact"
+  // prompt below.
+  const unknownCcs = useMemo(() => {
+    if (!detail) return [];
+    const linked = new Set();
+    const primaryEmail = detail.primaryContact?.email || null;
+    if (primaryEmail) linked.add(primaryEmail.toLowerCase());
+    for (const sc of (detail.secondaryContacts || [])) {
+      if (sc.email) linked.add(sc.email.toLowerCase());
+    }
+    const seen = new Set();
+    const out = [];
+    for (const em of (detail.emails || [])) {
+      if (em.gmailThreadId !== gmailThreadId) continue;
+      if (em.direction !== 'inbound') continue;
+      for (const raw of (em.ccEmails || [])) {
+        if (!raw || typeof raw !== 'string') continue;
+        const lower = raw.trim().toLowerCase();
+        if (!lower || seen.has(lower) || linked.has(lower)) continue;
+        seen.add(lower);
+        out.push(raw.trim());
+      }
+    }
+    return out;
+  }, [detail, gmailThreadId]);
+
   // Recent activity = last 5 items from events + emails merged.
   const timeline = useMemo(() => {
     const events = (detail.events || []).map(e => ({ kind: 'event', when: e.occurredAt, data: e }));
@@ -259,6 +286,15 @@ function DealDetail({ detail, gmailThreadId, onChanged }) {
           Open in Squideo →
         </a>
       </Section>
+
+      {unknownCcs.length > 0 && (
+        <CcSuggestions
+          dealId={detail.id}
+          addresses={unknownCcs}
+          defaultCompanyId={detail.companyId || null}
+          onAdded={onChanged}
+        />
+      )}
 
       <Section>
         <Label>Open tasks</Label>
@@ -616,6 +652,106 @@ const ghostBtn = {
   padding: '6px 12px', borderRadius: 6, fontSize: 12,
   cursor: 'pointer', fontFamily: 'inherit',
 };
+
+// Inline prompt — one row per unknown Cc address with a + button. Posts to
+// the deals/:id/contacts endpoint which handles "exists already" vs
+// "create new" server-side. When the address isn't a known contact we
+// reveal a small form to collect an optional name before sending.
+function CcSuggestions({ dealId, addresses, defaultCompanyId, onAdded }) {
+  const [expanded, setExpanded] = useState(null); // email being filled in
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(null);
+  const [err, setErr] = useState('');
+
+  const add = async (email, withName = null) => {
+    setErr('');
+    setBusy(email);
+    try {
+      await api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/contacts', {
+        email,
+        name: withName || null,
+        companyId: defaultCompanyId || null,
+      });
+      setExpanded(null);
+      setName('');
+      onAdded();
+    } catch (e) {
+      setErr(e?.message || 'Could not add contact');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Section>
+      <Label>New on this thread</Label>
+      <div style={{
+        marginTop: 6, fontSize: 12, color: BRAND.muted, lineHeight: 1.4,
+      }}>
+        Cc'd in a reply but not yet a contact on this deal.
+      </div>
+      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {addresses.map((email) => {
+          const isOpen = expanded === email;
+          if (!isOpen) {
+            return (
+              <div key={email} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '6px 8px', background: '#FFF7ED',
+                border: '1px solid #FED7AA', borderRadius: 6,
+              }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {email}
+                </span>
+                <button
+                  onClick={() => setExpanded(email)}
+                  disabled={busy === email}
+                  style={{ ...primaryBtn, padding: '3px 8px', fontSize: 11 }}
+                  title="Add as a secondary contact"
+                >
+                  + Add
+                </button>
+              </div>
+            );
+          }
+          return (
+            <div key={email} style={{
+              padding: 8, background: '#FFF7ED',
+              border: '1px solid #FED7AA', borderRadius: 6,
+              display: 'flex', flexDirection: 'column', gap: 6,
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 600 }}>{email}</div>
+              <input
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Name (optional)"
+                style={input}
+              />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={() => add(email, name.trim() || null)}
+                  disabled={busy === email}
+                  style={{ ...primaryBtn, flex: 1 }}
+                >
+                  {busy === email ? 'Adding…' : 'Add to deal'}
+                </button>
+                <button
+                  onClick={() => { setExpanded(null); setName(''); }}
+                  disabled={busy === email}
+                  style={ghostBtn}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {err && <Err msg={err} />}
+    </Section>
+  );
+}
 
 const inputStyle = {
   width: '100%', padding: '5px 8px', marginTop: 6,

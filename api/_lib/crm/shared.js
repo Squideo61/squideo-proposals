@@ -30,6 +30,32 @@ export async function ensureMessageDealsTable() {
   return messageDealsTableEnsured;
 }
 
+// Self-heal for db/migrations/20260519_deal_contacts.sql — secondary contacts
+// per deal. Same module-level cache pattern as ensureMessageDealsTable.
+let dealContactsTableEnsured = null;
+export async function ensureDealContactsTable() {
+  if (dealContactsTableEnsured) return dealContactsTableEnsured;
+  dealContactsTableEnsured = (async () => {
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS deal_contacts (
+          deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+          contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+          role TEXT NOT NULL DEFAULT 'secondary',
+          added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          added_by TEXT,
+          PRIMARY KEY (deal_id, contact_id)
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS deal_contacts_contact_idx ON deal_contacts (contact_id)`;
+    } catch (err) {
+      dealContactsTableEnsured = null;
+      console.warn('[deal_contacts] ensure failed', err.message);
+    }
+  })();
+  return dealContactsTableEnsured;
+}
+
 export const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/gmail.modify',
