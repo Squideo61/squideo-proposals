@@ -22,6 +22,7 @@ const AdminView = lazyNamed(() => import('./components/admin/AdminView.jsx'), 'A
 const AccountSettings = lazyNamed(() => import('./components/AccountSettings.jsx'), 'AccountSettings');
 const PipelineView = lazyNamed(() => import('./components/crm/PipelineView.jsx'), 'PipelineView');
 const DealDetailView = lazyNamed(() => import('./components/crm/DealDetailView.jsx'), 'DealDetailView');
+const EmailComposerHost = lazyNamed(() => import('./components/crm/DealDetailView.jsx'), 'EmailComposerHost');
 const ContactsView = lazyNamed(() => import('./components/crm/ContactsView.jsx'), 'ContactsView');
 const ContactDetailView = lazyNamed(() => import('./components/crm/ContactDetailView.jsx'), 'ContactDetailView');
 const CompanyDetailView = lazyNamed(() => import('./components/crm/CompanyDetailView.jsx'), 'CompanyDetailView');
@@ -374,6 +375,15 @@ function AppShell() {
       {modal && modal.type === 'account' && (
         <Suspense fallback={null}>
           <AccountSettings onClose={() => setModal(null)} onLogout={logout} />
+        </Suspense>
+      )}
+      {/* The composer dock is mounted at the App root so it stays open
+          while the user navigates around the CRM. The host returns null
+          when state.composerContext is clear, so this is free when no
+          email is being composed. */}
+      {state.composerContext && (
+        <Suspense fallback={null}>
+          <EmailComposerHost />
         </Suspense>
       )}
       <Toast msg={toast} />

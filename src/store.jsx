@@ -5,6 +5,29 @@ import { permissionsInclude } from './lib/permissions.js';
 
 const StoreContext = createContext(null);
 
+// Persistent slices live in localStorage so they survive page reloads:
+//   composerContext — the {dealId, dealTitle, contactEmail, initialDraft?}
+//   set when the user clicks Send email. Stays non-null until the user
+//   sends, saves as draft, or discards — even across CRM navigation.
+//   drafts          — the user's saved drafts list.
+const COMPOSER_CONTEXT_KEY = 'sq_composer_context';
+const DRAFTS_KEY = 'sq_email_drafts';
+
+function loadLocal(key, fallback) {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch { return fallback; }
+}
+function saveLocal(key, value) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (value == null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, JSON.stringify(value));
+  } catch { /* quota / disabled — ignore */ }
+}
+
 function emptyStore() {
   return {
     users: {},
@@ -32,6 +55,8 @@ function emptyStore() {
     partnerCreditDetail: {},
     session: null,
     loading: true,
+    composerContext: loadLocal(COMPOSER_CONTEXT_KEY, null),
+    drafts: loadLocal(DRAFTS_KEY, []),
   };
 }
 
@@ -497,7 +522,11 @@ export function StoreProvider({ children }) {
       // first means the auth screen renders instantly even if the network's
       // slow. The cookie is HttpOnly so we can't wipe it from JS.
       api.post('/api/auth/logout', {}).catch(() => {});
-      setState({ ...emptyStore(), loading: false });
+      // Wipe persisted composer + drafts so a shared machine doesn't leak
+      // the previous user's in-progress mail to whoever logs in next.
+      saveLocal(COMPOSER_CONTEXT_KEY, null);
+      saveLocal(DRAFTS_KEY, []);
+      setState({ ...emptyStore(), loading: false, composerContext: null, drafts: [] });
     },
     signup(user) {
       setState(s => ({ ...s, session: {
@@ -1062,6 +1091,76 @@ export function StoreProvider({ children }) {
       return api.delete(
         '/api/crm/threads/' + encodeURIComponent(threadId) + '/link?' + qs.toString(),
       );
+    },
+
+    // ---------- Email composer + drafts ----------
+    // The composer is mounted at App level so it survives CRM navigation —
+    // these actions wire up its open/close lifecycle. composerContext stays
+    // non-null while the composer is alive, which is what App reads to keep
+    // the floating dock visible.
+    openComposer({ dealId, dealTitle, contactEmail = null, initialDraft = null } = {}) {
+      // sessionId changes every time we (re-)open the composer so the host
+      // can use it as a React key — that forces the modal to remount when
+      // the user resumes a different draft, even if it's currently open.
+      // A no-op open for the same deal would still re-key; the caller
+      // should guard against that itself if needed.
+      const ctx = {
+        dealId: dealId || null,
+        dealTitle: dealTitle || null,
+        contactEmail,
+        initialDraft,
+        sessionId: 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      };
+      saveLocal(COMPOSER_CONTEXT_KEY, ctx);
+      setState((s) => ({ ...s, composerContext: ctx }));
+    },
+    closeComposer() {
+      saveLocal(COMPOSER_CONTEXT_KEY, null);
+      setState((s) => ({ ...s, composerContext: null }));
+    },
+    // Snapshot the composer's current form state into the drafts list and
+    // close the composer. The composer passes the snapshot in because the
+    // form state lives inside it; the store just owns the persistent list.
+    saveDraft(snapshot) {
+      const draft = {
+        id: 'd_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        savedAt: new Date().toISOString(),
+        ...snapshot,
+      };
+      setState((s) => {
+        const drafts = [draft, ...(s.drafts || [])];
+        saveLocal(DRAFTS_KEY, drafts);
+        saveLocal(COMPOSER_CONTEXT_KEY, null);
+        return { ...s, drafts, composerContext: null };
+      });
+      return draft;
+    },
+    discardDraft(id) {
+      setState((s) => {
+        const drafts = (s.drafts || []).filter((d) => d.id !== id);
+        saveLocal(DRAFTS_KEY, drafts);
+        return { ...s, drafts };
+      });
+    },
+    // Re-open the composer with this draft's contents and remove it from
+    // the list (so we don't end up with two copies — the user can re-save
+    // when they're done).
+    resumeDraft(id) {
+      setState((s) => {
+        const draft = (s.drafts || []).find((d) => d.id === id);
+        if (!draft) return s;
+        const drafts = (s.drafts || []).filter((d) => d.id !== id);
+        const ctx = {
+          dealId: draft.dealId || null,
+          dealTitle: draft.dealTitle || null,
+          contactEmail: draft.contactEmail || null,
+          initialDraft: draft,
+          sessionId: 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        };
+        saveLocal(DRAFTS_KEY, drafts);
+        saveLocal(COMPOSER_CONTEXT_KEY, ctx);
+        return { ...s, drafts, composerContext: ctx };
+      });
     },
 
     // ---------- Triage (unmatched email messages) ----------

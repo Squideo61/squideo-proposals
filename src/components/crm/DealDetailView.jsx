@@ -21,7 +21,13 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   const [editing, setEditing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
-  const [composingEmail, setComposingEmail] = useState(false);
+  // The composer itself is mounted at App level (see EmailComposerHost) so
+  // it survives navigation. Opening it is now a store action.
+  const openComposerForDeal = () => actions.openComposer({
+    dealId: deal?.id,
+    dealTitle: deal?.title,
+    contactEmail: contact?.email || null,
+  });
   const [openEmailId, setOpenEmailId] = useState(null);
   const [askLost, setAskLost] = useState(false);
   const [prefillTitle, setPrefillTitle] = useState('');
@@ -58,6 +64,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   const tasks = detail?.tasks || [];
   const emails = detail?.emails || [];
   const comments = detail?.comments || [];
+  // Drafts the user explicitly saved while composing on this deal. Filtered
+  // by dealId so each deal page only shows its own. Newest first.
+  const dealDrafts = useMemo(
+    () => (state.drafts || []).filter((d) => d.dealId === dealId).sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || '')),
+    [state.drafts, dealId],
+  );
 
   const overdueTasks  = tasks.filter(t => isTaskOverdue(t));
   const upcomingTasks = tasks.filter(t => !t.doneAt && !isTaskOverdue(t));
@@ -107,7 +119,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Pipeline</button>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={() => setComposingEmail(true)} className="btn"><Mail size={14} /> Send email</button>
+          <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
           <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
           <button
             onClick={() => {
@@ -229,9 +241,19 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           <RetainersCard dealId={dealId} contacts={Object.values(state.contacts || {})} />
         </div>
 
+        {dealDrafts.length > 0 && (
+          <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+            <DealDraftsCard
+              drafts={dealDrafts}
+              onResume={(id) => actions.resumeDraft(id)}
+              onDiscard={(id) => actions.discardDraft(id)}
+            />
+          </div>
+        )}
+
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <Card title="Emails" count={totalEmails} action={
-            <button onClick={() => setComposingEmail(true)} className="btn-ghost"><Mail size={12} /> Send email</button>
+            <button onClick={() => openComposerForDeal()} className="btn-ghost"><Mail size={12} /> Send email</button>
           }>
             {threadGroups.length === 0 && <Empty text="No emails yet" />}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -318,14 +340,8 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           onSaved={() => { setEditingTask(null); actions.loadDealDetail(dealId); }}
         />
       )}
-      {composingEmail && (
-        <EmailComposerModal
-          deal={deal}
-          contact={contact}
-          onClose={() => setComposingEmail(false)}
-          onSent={() => { setComposingEmail(false); actions.loadDealDetail(dealId); }}
-        />
-      )}
+      {/* Composer lives at the App root now (see EmailComposerHost) so it
+          stays open across CRM navigation. Opened via actions.openComposer. */}
       {askLost && (
         <LostReasonModal
           onClose={() => setAskLost(false)}
@@ -1805,21 +1821,91 @@ function FormRow({ label, children }) {
   );
 }
 
-function EmailComposerModal({ deal, contact, onClose, onSent }) {
+// Drafts the user saved while composing on this deal. Clicking Resume
+// loads the snapshot back into the composer; Discard deletes it.
+function DealDraftsCard({ drafts, onResume, onDiscard }) {
+  return (
+    <Card title="Unsent drafts" count={drafts.length}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {drafts.map((d) => {
+          // The "preview" line is the subject if we have one, else the
+          // first line of the body, else a placeholder.
+          const subject = (d.subject || '').trim();
+          const bodyFirstLine = (d.body || '').split('\n').find((l) => l.trim()) || '';
+          const headline = subject || bodyFirstLine || '(no subject)';
+          const sub = subject && bodyFirstLine ? bodyFirstLine : null;
+          return (
+            <div
+              key={d.id}
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+                padding: '8px 10px', border: '1px solid ' + BRAND.border,
+                borderRadius: 8, background: '#FFFBF0',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontWeight: 600, fontSize: 13, color: BRAND.ink,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                  {headline}
+                </div>
+                {sub && (
+                  <div style={{
+                    fontSize: 12, color: BRAND.muted, marginTop: 2,
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {sub}
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 3 }}>
+                  Saved {d.savedAt ? formatRelativeTime(d.savedAt) : 'recently'}
+                  {d.to ? ' · to ' + d.to.split(',')[0].trim() : ''}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <button type="button" className="btn" onClick={() => onResume(d.id)} style={{ fontSize: 12, padding: '2px 10px' }}>
+                  Resume
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => {
+                    if (window.confirm('Discard this draft?')) onDiscard(d.id);
+                  }}
+                  style={{ fontSize: 12, padding: '2px 10px' }}
+                  aria-label="Discard draft"
+                >
+                  Discard
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSent }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const gmailConnected = state.gmailAccount && state.gmailAccount.connected;
   const defaultSubject = deal?.title ? `Re: ${deal.title}` : '';
-  const [to, setTo] = useState(contact?.email || '');
-  const [cc, setCc] = useState('');
-  const [bcc, setBcc] = useState('');
+  // initialDraft (passed when resuming a saved draft) takes precedence over
+  // the contact/deal-derived defaults. Each field falls back through:
+  //   draft snapshot → deal/contact default → empty
+  const [to, setTo] = useState(initialDraft?.to ?? (contact?.email || ''));
+  const [cc, setCc] = useState(initialDraft?.cc ?? '');
+  const [bcc, setBcc] = useState(initialDraft?.bcc ?? '');
   // Gmail-style: hide Cc + Bcc behind buttons. Once revealed they stay
   // visible for the lifetime of the composer (matches Gmail/Streak).
-  const [showCc, setShowCc] = useState(false);
-  const [showBcc, setShowBcc] = useState(false);
-  const [subject, setSubject] = useState(defaultSubject);
-  const [body, setBody] = useState('');
+  const [showCc, setShowCc] = useState(!!initialDraft?.cc);
+  const [showBcc, setShowBcc] = useState(!!initialDraft?.bcc);
+  const [subject, setSubject] = useState(initialDraft?.subject ?? defaultSubject);
+  const [body, setBody] = useState(initialDraft?.body ?? '');
   const [sending, setSending] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [error, setError] = useState('');
   const [signature, setSignature] = useState(null); // null = loading, '' = none
   const [sigDiagnostics, setSigDiagnostics] = useState(null);
@@ -1828,9 +1914,25 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
   // Extra deals to file this email against in addition to the deal we're
   // sending from. Stored as {id,title} so the chip can render without
   // another store lookup. Backend attaches them at thread scope post-send.
-  const [extraDeals, setExtraDeals] = useState([]);
+  const [extraDeals, setExtraDeals] = useState(initialDraft?.extraDeals ?? []);
   const [pickingExtraDeal, setPickingExtraDeal] = useState(false);
   const [creatingExtraDeal, setCreatingExtraDeal] = useState(false);
+
+  const handleSaveDraft = () => {
+    if (savingDraft) return;
+    setSavingDraft(true);
+    actions.saveDraft({
+      dealId: deal?.id || null,
+      dealTitle: deal?.title || null,
+      contactEmail: contact?.email || null,
+      to, cc, bcc, showCc, showBcc, subject, body, extraDeals,
+    });
+    showMsg('Draft saved');
+    // The store action already closes the composer (clears composerContext);
+    // calling onClose too is redundant but harmless if the host happens to
+    // be a non-store-driven caller.
+    onClose?.();
+  };
 
   // Esc closes the composer — preserves the Modal-era keyboard affordance
   // even though we no longer render through Modal.
@@ -2178,7 +2280,16 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
               Sent from {state.gmailAccount?.gmailAddress || 'your connected Gmail'} via the Gmail API.
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+              <button type="button" onClick={onClose} className="btn-ghost">Discard</button>
+              <button
+                type="button"
+                onClick={handleSaveDraft}
+                className="btn-ghost"
+                disabled={savingDraft || (!to.trim() && !subject.trim() && !body.trim())}
+                title="Stash this email in the drafts list and close the composer"
+              >
+                Save as draft
+              </button>
               <button type="submit" className="btn" disabled={!gmailConnected || sending || !to.trim() || !subject.trim() || !body.trim()}>
                 {sending ? 'Sending…' : 'Send'}
               </button>
@@ -2550,5 +2661,43 @@ function bodyToHtml(text) {
   return '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:14px;line-height:1.6;color:#0F2A3D;">'
     + escaped.replace(/\n/g, '<br>')
     + '</div>';
+}
+
+// Thin wrapper that lets App.jsx mount the composer at the top of the tree
+// so it survives CRM navigation. Reads `state.composerContext` (set by
+// `actions.openComposer`) and renders the same EmailComposerModal that
+// used to live inside DealDetailView. Returns null when the composer is
+// closed — the host stays cheap.
+export function EmailComposerHost() {
+  const { state, actions } = useStore();
+  const ctx = state.composerContext;
+  if (!ctx) return null;
+  // If the deal is in state.deals we hand it through (lets the composer
+  // pick up live updates like a stage change). Otherwise synthesise a
+  // minimal stub from the saved context so a deleted-deal draft still
+  // renders without crashing.
+  const deal = (ctx.dealId && state.deals[ctx.dealId])
+    || (ctx.dealId ? { id: ctx.dealId, title: ctx.dealTitle } : null);
+  const contact = ctx.contactEmail
+    ? (Object.values(state.contacts || {}).find((c) => (c?.email || '').toLowerCase() === ctx.contactEmail.toLowerCase())
+       || { email: ctx.contactEmail })
+    : null;
+  return (
+    <EmailComposerModal
+      // sessionId keys the modal so a fresh open / draft resume remounts it
+      // (the in-component useState initialisers re-run with the new draft).
+      // A plain re-render (e.g. state.deals update) doesn't change the key,
+      // so the in-progress form state is preserved.
+      key={ctx.sessionId || 'composer'}
+      deal={deal}
+      contact={contact}
+      initialDraft={ctx.initialDraft || null}
+      onClose={() => actions.closeComposer()}
+      onSent={() => {
+        actions.closeComposer();
+        if (ctx.dealId) actions.loadDealDetail(ctx.dealId);
+      }}
+    />
+  );
 }
 
