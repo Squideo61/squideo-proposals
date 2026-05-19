@@ -170,12 +170,15 @@ export async function gmailRoute(req, res, id, action, user) {
     const fetchedAt = rows[0].signature_fetched_at || null;
     const ageMs = fetchedAt ? Date.now() - new Date(fetchedAt).getTime() : Infinity;
     const STALE_MS = 60 * 60 * 1000;
-    const NULL_RETRY_MS = 5 * 60 * 1000;
 
     // POST = explicit "Refresh from Gmail" click. Force the refresh and
-    // return the full diagnostic so the UI can show why it came back empty
-    // (no sendAs entries, all signatures blank, API errored, etc.).
-    if (req.method === 'POST') {
+    // return the full diagnostic so the UI can show why it came back empty.
+    // GET with an empty cache also refreshes inline (no throttle — Gmail's
+    // sendAs quota is generous, and the throttle stranded users whose first
+    // fetch happened before they set up their signature). The diagnostic
+    // comes back attached so the UI can explain the empty state when it
+    // genuinely is empty.
+    if (req.method === 'POST' || !cachedHtml) {
       const diag = await refreshSignatureCache(user.email);
       const fresh = await sql`
         SELECT signature_html, signature_fetched_at
@@ -188,26 +191,7 @@ export async function gmailRoute(req, res, id, action, user) {
         diagnostics: diag,
       });
     }
-
-    // Empty cache + never-attempted (or attempted >5m ago): refresh inline
-    // so the modal sees a definitive answer instead of the stale "set one
-    // in Gmail and reconnect" hint that lingers when someone configured
-    // their signature AFTER connecting. We throttle so a genuinely-empty
-    // signature doesn't make every modal open hit Gmail.
-    if (!cachedHtml && (!fetchedAt || ageMs > NULL_RETRY_MS)) {
-      const diag = await refreshSignatureCache(user.email);
-      const fresh = await sql`
-        SELECT signature_html, signature_fetched_at
-        FROM gmail_accounts
-        WHERE user_email = ${user.email}
-      `;
-      return res.status(200).json({
-        signatureHtml: fresh[0]?.signature_html || null,
-        fetchedAt: fresh[0]?.signature_fetched_at || null,
-        diagnostics: diag,
-      });
-    }
-    if (cachedHtml && ageMs > STALE_MS) {
+    if (ageMs > STALE_MS) {
       waitUntil(refreshSignatureCache(user.email));
     }
     return res.status(200).json({ signatureHtml: cachedHtml, fetchedAt });

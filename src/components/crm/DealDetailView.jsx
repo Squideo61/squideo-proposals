@@ -1669,53 +1669,73 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
               <input className="input" type="text" value={subject} onChange={(e) => setSubject(e.target.value)} required />
             </FormRow>
             <FormRow label="Message">
-              <textarea
-                className="input"
-                rows={8}
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                style={{ fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.5 }}
-                required
-              />
-            </FormRow>
-            {gmailConnected && (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Signature (synced from Gmail)
+              <div
+                style={{
+                  border: '1px solid ' + BRAND.border,
+                  borderRadius: 6,
+                  background: 'white',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                }}
+              >
+                <textarea
+                  rows={6}
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  required
+                  style={{
+                    border: 'none',
+                    outline: 'none',
+                    padding: '10px 12px',
+                    fontFamily: 'inherit',
+                    fontSize: 14,
+                    lineHeight: 1.5,
+                    resize: 'vertical',
+                    minHeight: 120,
+                    color: BRAND.ink,
+                    background: 'transparent',
+                  }}
+                />
+                {gmailConnected && (
+                  <div style={{ padding: '8px 12px 12px', borderTop: '1px dashed ' + BRAND.border, fontSize: 13 }}>
+                    {signature === null && (
+                      <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 12 }}>Loading signature…</div>
+                    )}
+                    {signature === '' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <SignatureEmptyHint diagnostics={sigDiagnostics} />
+                        <div>
+                          <button
+                            type="button"
+                            onClick={refreshSignature}
+                            disabled={refreshingSig}
+                            className="btn-ghost"
+                            style={{ fontSize: 11, padding: '2px 8px' }}
+                          >
+                            {refreshingSig ? 'Refreshing…' : 'Refresh from Gmail'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {sanitizedSignature && (
+                      <div
+                        className="email-body"
+                        style={{ fontSize: 13, lineHeight: 1.5, color: BRAND.ink, wordBreak: 'break-word' }}
+                        dangerouslySetInnerHTML={{ __html: sanitizedSignature }}
+                      />
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={refreshSignature}
-                    disabled={refreshingSig}
-                    className="btn-ghost"
-                    style={{ fontSize: 11, padding: '2px 8px' }}
-                  >
-                    {refreshingSig ? 'Refreshing…' : 'Refresh from Gmail'}
-                  </button>
-                </div>
-                {signature === null && (
-                  <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Loading signature…</div>
-                )}
-                {signature === '' && (
-                  <SignatureEmptyHint diagnostics={sigDiagnostics} />
-                )}
-                {sanitizedSignature && (
-                  <div
-                    className="email-body"
-                    style={{ background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 6, padding: 10, fontSize: 12, lineHeight: 1.5, maxHeight: 160, overflowY: 'auto', wordBreak: 'break-word' }}
-                    dangerouslySetInnerHTML={{ __html: sanitizedSignature }}
-                  />
                 )}
               </div>
-            )}
+            </FormRow>
             {error && (
               <div style={{ background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '8px 10px', borderRadius: 6 }}>
                 {error}
               </div>
             )}
             <div style={{ fontSize: 11, color: BRAND.muted, lineHeight: 1.45 }}>
-              Sent from {state.gmailAccount?.gmailAddress || 'your connected Gmail'} via the Gmail API. The deal is tagged via the X-Squideo-Deal header so replies thread back automatically.
+              Sent from {state.gmailAccount?.gmailAddress || 'your connected Gmail'} via the Gmail API.
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
