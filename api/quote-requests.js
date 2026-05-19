@@ -162,6 +162,35 @@ export default async function handler(req, res) {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const action = url.searchParams.get('action');
 
+    if (action === 'open' && req.method === 'GET') {
+      // "Open in CRM" redirect. We look up the request's current state and
+      // forward to the right SPA hash route. Unauthenticated: anyone with the
+      // link gets bounced to the SPA, which handles its own auth gate — we're
+      // not leaking anything beyond the existence of a qr id (which the
+      // recipient already has from their own inbox).
+      const qrId = url.searchParams.get('id');
+      const appBase = APP_URL.replace(/\/$/, '');
+      const fallback = `${appBase}/#/quote-requests`;
+      if (!qrId) {
+        res.setHeader('Location', fallback);
+        return res.status(302).end();
+      }
+      let target = fallback;
+      try {
+        const rows = await sql`
+          SELECT status, deal_id FROM quote_requests WHERE id = ${qrId} LIMIT 1
+        `;
+        const row = rows[0];
+        if (row && row.status === 'qualified' && row.deal_id) {
+          target = `${appBase}/#/deal/${encodeURIComponent(row.deal_id)}`;
+        }
+      } catch (err) {
+        console.warn('[quote-requests open] lookup failed', err?.message);
+      }
+      res.setHeader('Location', target);
+      return res.status(302).end();
+    }
+
     if (action === 'action-link' && req.method === 'GET') {
       const token = url.searchParams.get('token');
       const qrId = url.searchParams.get('id');
@@ -456,9 +485,12 @@ export default async function handler(req, res) {
 
     const subjectName = qr.name || qr.email || 'Anonymous';
     const apiBase = APP_URL.replace(/\/$/, '');
-    // SPA has no deep-link route for a specific quote request — the list view
-    // navigates internally, so we just send recipients to the app root.
-    const crmUrl = apiBase;
+    // "Open in CRM" routes through a server-side redirect that checks the
+    // current state at click-time: once the request has been qualified, the
+    // link deep-links to the resulting deal; otherwise it lands on the quote
+    // requests list. Required because the email is sent before qualification
+    // happens, so a baked-in URL can't know where the deal will live.
+    const crmUrl = `${apiBase}/api/quote-requests?action=open&id=${encodeURIComponent(qr.id)}`;
 
     // Resolve recipients ourselves so we can per-recipient: sign tokens bound
     // to each recipient's email, and gate the Disqualify button by admin
