@@ -1812,6 +1812,11 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
   const defaultSubject = deal?.title ? `Re: ${deal.title}` : '';
   const [to, setTo] = useState(contact?.email || '');
   const [cc, setCc] = useState('');
+  const [bcc, setBcc] = useState('');
+  // Gmail-style: hide Cc + Bcc behind buttons. Once revealed they stay
+  // visible for the lifetime of the composer (matches Gmail/Streak).
+  const [showCc, setShowCc] = useState(false);
+  const [showBcc, setShowBcc] = useState(false);
   const [subject, setSubject] = useState(defaultSubject);
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
@@ -1820,6 +1825,12 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
   const [sigDiagnostics, setSigDiagnostics] = useState(null);
   const [refreshingSig, setRefreshingSig] = useState(false);
   const [minimised, setMinimised] = useState(false);
+  // Extra deals to file this email against in addition to the deal we're
+  // sending from. Stored as {id,title} so the chip can render without
+  // another store lookup. Backend attaches them at thread scope post-send.
+  const [extraDeals, setExtraDeals] = useState([]);
+  const [pickingExtraDeal, setPickingExtraDeal] = useState(false);
+  const [creatingExtraDeal, setCreatingExtraDeal] = useState(false);
 
   // Esc closes the composer — preserves the Modal-era keyboard affordance
   // even though we no longer render through Modal.
@@ -1887,10 +1898,12 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
       const resp = await actions.sendGmail({
         to: to.split(',').map(s => s.trim()).filter(Boolean),
         cc: cc ? cc.split(',').map(s => s.trim()).filter(Boolean) : [],
+        bcc: bcc ? bcc.split(',').map(s => s.trim()).filter(Boolean) : [],
         subject: subject.trim(),
         text: body,
         html: bodyToHtml(body),
         dealId: deal.id,
+        extraDealIds: extraDeals.map(d => d.id),
       });
       if (!resp?.ok) throw new Error('Send failed');
       showMsg('Email sent');
@@ -1982,11 +1995,55 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
           )}
           <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <FormRow label="To">
-              <input className="input" type="text" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" autoFocus required />
+              <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+                <input
+                  className="input"
+                  type="text"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  placeholder="name@example.com"
+                  autoFocus
+                  required
+                  style={{ flex: 1, minWidth: 0 }}
+                />
+                {/* Gmail-style: Cc/Bcc start hidden, revealed by a small
+                    button next to the To field. Once revealed they stay. */}
+                <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                  {!showCc && (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ fontSize: 11, padding: '0 8px' }}
+                      onClick={() => setShowCc(true)}
+                      aria-label="Add Cc"
+                    >
+                      Cc
+                    </button>
+                  )}
+                  {!showBcc && (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ fontSize: 11, padding: '0 8px' }}
+                      onClick={() => setShowBcc(true)}
+                      aria-label="Add Bcc"
+                    >
+                      Bcc
+                    </button>
+                  )}
+                </div>
+              </div>
             </FormRow>
-            <FormRow label="Cc (optional)">
-              <input className="input" type="text" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="comma,separated@example.com" />
-            </FormRow>
+            {showCc && (
+              <FormRow label="Cc">
+                <input className="input" type="text" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="comma,separated@example.com" />
+              </FormRow>
+            )}
+            {showBcc && (
+              <FormRow label="Bcc">
+                <input className="input" type="text" value={bcc} onChange={(e) => setBcc(e.target.value)} placeholder="comma,separated@example.com" />
+              </FormRow>
+            )}
             <FormRow label="Subject">
               <input className="input" type="text" value={subject} onChange={(e) => setSubject(e.target.value)} required />
             </FormRow>
@@ -2051,6 +2108,65 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
                 )}
               </div>
             </FormRow>
+            {/* Deal-link summary: shows the primary deal as a static chip
+                plus any extras the user added (removable). The two buttons
+                below open the picker / create-deal flows; backend attaches
+                the extras at thread scope when the message is sent. */}
+            <div style={{
+              fontSize: 12, color: BRAND.muted, display: 'flex', flexDirection: 'column', gap: 6,
+              padding: '8px 10px', background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 6,
+            }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+                <span>Auto-linked to:</span>
+                <span style={{
+                  fontSize: 11, fontWeight: 600, color: BRAND.ink, background: '#E5EFF5',
+                  padding: '2px 8px', borderRadius: 999,
+                }}>
+                  {deal?.title || 'this deal'}
+                </span>
+                {extraDeals.map(d => (
+                  <span
+                    key={d.id}
+                    style={{
+                      fontSize: 11, fontWeight: 600, color: BRAND.ink, background: '#E5EFF5',
+                      padding: '2px 4px 2px 8px', borderRadius: 999, display: 'inline-flex',
+                      alignItems: 'center', gap: 4,
+                    }}
+                  >
+                    {d.title}
+                    <button
+                      type="button"
+                      onClick={() => setExtraDeals(prev => prev.filter(x => x.id !== d.id))}
+                      aria-label={`Remove ${d.title}`}
+                      style={{
+                        background: 'transparent', border: 'none', cursor: 'pointer',
+                        padding: 0, lineHeight: 1, color: BRAND.muted, display: 'flex',
+                      }}
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  style={{ fontSize: 11, padding: '2px 8px' }}
+                  onClick={() => setPickingExtraDeal(true)}
+                >
+                  + Add to another deal
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  style={{ fontSize: 11, padding: '2px 8px' }}
+                  onClick={() => setCreatingExtraDeal(true)}
+                >
+                  + Create new deal
+                </button>
+              </div>
+            </div>
             {error && (
               <div style={{ background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '8px 10px', borderRadius: 6 }}>
                 {error}
@@ -2068,7 +2184,88 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
           </form>
         </div>
       )}
+      {pickingExtraDeal && (
+        <ComposerExtraDealPicker
+          currentDealId={deal.id}
+          excludeIds={[deal.id, ...extraDeals.map(d => d.id)]}
+          onClose={() => setPickingExtraDeal(false)}
+          onPicked={(picked) => {
+            setExtraDeals(prev => prev.some(d => d.id === picked.id) ? prev : [...prev, picked]);
+            setPickingExtraDeal(false);
+          }}
+        />
+      )}
+      {creatingExtraDeal && (
+        <NewDealModal
+          initialTitle={(subject || '').replace(/^(re|fwd?):\s*/i, '').trim()}
+          onClose={() => setCreatingExtraDeal(false)}
+          onCreated={(newDeal) => {
+            if (newDeal?.id) {
+              setExtraDeals(prev => prev.some(d => d.id === newDeal.id) ? prev : [...prev, { id: newDeal.id, title: newDeal.title }]);
+            }
+            setCreatingExtraDeal(false);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// Lightweight picker used by the composer's "Add to another deal" button.
+// Same shape as LinkEmailModal but without the scope radio — new outbound
+// emails always link at thread scope (the message doesn't exist yet so
+// "just this email" doesn't apply meaningfully).
+function ComposerExtraDealPicker({ currentDealId, excludeIds, onClose, onPicked }) {
+  const { state } = useStore();
+  const exclude = new Set(excludeIds || []);
+  const candidates = useMemo(() => {
+    return Object.values(state.deals || {})
+      .filter((d) => d && !exclude.has(d.id) && d.stage !== 'lost' && d.stage !== 'won')
+      .sort((a, b) => {
+        const ta = a.lastActivityAt ? new Date(a.lastActivityAt).getTime() : 0;
+        const tb = b.lastActivityAt ? new Date(b.lastActivityAt).getTime() : 0;
+        return tb - ta;
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.deals, currentDealId, excludeIds.join(',')]);
+  const [dealId, setDealId] = useState(candidates[0]?.id || '');
+
+  return (
+    <Modal onClose={onClose}>
+      <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Add to another deal</h2>
+      {candidates.length === 0 ? (
+        <>
+          <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 16px' }}>
+            No other open deals to link to. Use <strong>Create new deal</strong> instead.
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={onClose} className="btn-ghost">Close</button>
+          </div>
+        </>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const picked = candidates.find(d => d.id === dealId);
+            if (picked) onPicked({ id: picked.id, title: picked.title });
+          }}
+          style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
+        >
+          <label style={{ fontSize: 13, fontWeight: 500 }}>
+            Deal
+            <select className="input" value={dealId} onChange={(e) => setDealId(e.target.value)} style={{ marginTop: 4 }} required>
+              {candidates.map((d) => (
+                <option key={d.id} value={d.id}>{d.title}</option>
+              ))}
+            </select>
+          </label>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+            <button type="submit" className="btn" disabled={!dealId}>Add</button>
+          </div>
+        </form>
+      )}
+    </Modal>
   );
 }
 

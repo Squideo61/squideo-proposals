@@ -507,6 +507,13 @@ export async function gmailSend(req, res, user) {
   const text = body.text || '';
   const dealId = trimOrNull(body.dealId);
   const threadId = trimOrNull(body.gmailThreadId);
+  // Extra deals the user wants this email visible on (added via the
+  // composer's "Add to another deal" / "Create new deal" menu). We attach
+  // them at thread scope, immediately, so the recipient deals show the
+  // conversation without waiting for Pub/Sub to deliver it back.
+  const extraDealIds = Array.isArray(body.extraDealIds)
+    ? Array.from(new Set(body.extraDealIds.map(trimOrNull).filter(Boolean)))
+    : [];
 
   if (!to.length) return res.status(400).json({ error: 'to is required and must contain at least one valid email' });
   if (!subject) return res.status(400).json({ error: 'subject is required' });
@@ -626,10 +633,65 @@ export async function gmailSend(req, res, user) {
     }
   }
 
+  // Eagerly attach the conversation to any extra deals the user picked in
+  // the composer. The primary deal's email_thread_deals row will be created
+  // by the inbound resolver when Pub/Sub delivers the message back (it picks
+  // up the X-Squideo-Deal header); we only need to handle the extras here.
+  // Upsert the thread row first so the FK is satisfied even though no
+  // email_messages row exists yet.
+  if (extraDealIds.length && sent.threadId) {
+    const participants = Array.from(new Set([fromAddress, ...to, ...cc, ...bcc].filter(Boolean).map(s => s.toLowerCase())));
+    try {
+      await sql`
+        INSERT INTO email_threads (gmail_thread_id, user_email, subject, last_message_at, participant_emails)
+        VALUES (${sent.threadId}, ${user.email}, ${subject}, NOW(), ${participants})
+        ON CONFLICT (gmail_thread_id) DO UPDATE SET
+          subject = COALESCE(email_threads.subject, EXCLUDED.subject),
+          last_message_at = GREATEST(COALESCE(email_threads.last_message_at, '-infinity'::timestamptz), EXCLUDED.last_message_at),
+          participant_emails = (
+            SELECT COALESCE(array_agg(DISTINCT p), '{}')
+            FROM unnest(COALESCE(email_threads.participant_emails, '{}') || EXCLUDED.participant_emails) AS p
+          )
+      `;
+      for (const extraId of extraDealIds) {
+        if (extraId === dealId) continue; // Already covered by the primary path.
+        const dealRow = (await sql`SELECT id FROM deals WHERE id = ${extraId}`)[0];
+        if (!dealRow) {
+          console.warn('[gmail send] extra deal not found, skipping', extraId);
+          continue;
+        }
+        await sql`
+          INSERT INTO email_thread_deals (gmail_thread_id, deal_id, resolved_by)
+          VALUES (${sent.threadId}, ${extraId}, 'manual')
+          ON CONFLICT (gmail_thread_id, deal_id) DO NOTHING
+        `;
+        await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${extraId}`;
+        await sql`
+          INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+          VALUES (
+            ${extraId}, 'email_linked',
+            ${JSON.stringify({
+              gmailThreadId: sent.threadId,
+              gmailMessageId: sent.id,
+              scope: 'thread',
+              source: 'compose',
+              primaryDealId: dealId || null,
+            })},
+            ${user.email}
+          )
+        `;
+      }
+    } catch (err) {
+      console.error('[gmail send] extra-deal link failed', err);
+      // Don't fail the whole send — the email left the box already.
+    }
+  }
+
   return res.status(200).json({
     ok: true,
     messageId: sent.id,
     threadId: sent.threadId,
+    extraDealsLinked: extraDealIds.length,
   });
 }
 
