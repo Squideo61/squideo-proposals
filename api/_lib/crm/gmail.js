@@ -164,7 +164,20 @@ export async function gmailRoute(req, res, id, action, user) {
       WHERE user_email = ${user.email} AND disconnected_at IS NULL
     `;
     if (!rows.length) {
-      return res.status(200).json({ signatureHtml: null, fetchedAt: null, gmailConnected: false });
+      // Account row missing or disconnected. The other gmailAccount endpoint
+      // would normally have told the frontend to hide the signature section,
+      // but if state is stale (e.g. account was disconnected after the page
+      // loaded) we may still get hit here — return a diagnostic instead of a
+      // bare null so the UI explains the situation.
+      return res.status(200).json({
+        signatureHtml: null,
+        fetchedAt: null,
+        gmailConnected: false,
+        diagnostics: {
+          html: null, summary: [], pickedEmail: null,
+          error: { stage: 'disconnected', message: 'Gmail account is not connected for this user. Reconnect from Account → Gmail integration.', code: 'NOT_CONNECTED' },
+        },
+      });
     }
     const cachedHtml = rows[0].signature_html || null;
     const fetchedAt = rows[0].signature_fetched_at || null;

@@ -1527,7 +1527,16 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
         setSignature(r?.signatureHtml || '');
         setSigDiagnostics(r?.diagnostics || null);
       })
-      .catch(() => { if (!cancelled) setSignature(''); });
+      .catch((err) => {
+        if (cancelled) return;
+        // Surface the raw transport error (HTTP status text, network error)
+        // so the user sees what actually happened rather than a generic hint.
+        setSignature('');
+        setSigDiagnostics({
+          html: null, summary: [], pickedEmail: null,
+          error: { stage: 'transport', message: err?.message || 'Network error', code: null },
+        });
+      });
     return () => { cancelled = true; };
   }, [gmailConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1538,10 +1547,12 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
       const r = await actions.refreshGmailSignature();
       setSignature(r?.signatureHtml || '');
       setSigDiagnostics(r?.diagnostics || null);
-    } catch {
-      // surface as empty + null diagnostic; the server log has the detail
+    } catch (err) {
       setSignature('');
-      setSigDiagnostics(null);
+      setSigDiagnostics({
+        html: null, summary: [], pickedEmail: null,
+        error: { stage: 'transport', message: err?.message || 'Network error', code: null },
+      });
     } finally {
       setRefreshingSig(false);
     }
@@ -1774,7 +1785,11 @@ function SignatureEmptyHint({ diagnostics }) {
       ? 'authentication'
       : e.stage === 'unexpected'
         ? 'unexpected server error'
-        : `Gmail API ${e.status || 'error'}`;
+        : e.stage === 'transport'
+          ? 'connection error'
+          : e.stage === 'disconnected'
+            ? 'Gmail not connected'
+            : `Gmail API ${e.status || 'error'}`;
     const detail = e.message ? ` — ${e.message}` : '';
     return (
       <div style={baseStyle}>
