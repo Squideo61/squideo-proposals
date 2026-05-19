@@ -85,7 +85,7 @@ async function main() {
     el.setAttribute('data-squideo-sidebar', '');
     const root = createRoot(el);
 
-    threadView.addSidebarContentPanel({
+    const panel = threadView.addSidebarContentPanel({
       title: 'Squideo',
       iconUrl: chrome.runtime.getURL('icon-48.png'),
       el,
@@ -126,6 +126,20 @@ async function main() {
 
     root.render(<Sidebar gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} />);
     threadView.on('destroy', () => root.unmount());
+
+    // Auto-open the sidebar when this thread is associated with a deal.
+    // Reuses the chipResolver so we share the batched/cached result with the
+    // inbox-row chip lookup — usually a cache hit on a thread the user just
+    // saw a chip on, so opening is effectively immediate. We open for any
+    // chip-worthy match (explicit link OR sender-on-deal-contact suggestion),
+    // matching what the inbox chip itself signals.
+    try {
+      const senderEmails = counterpartyEmail ? [counterpartyEmail] : [];
+      const deals = await chipResolver.resolve(gmailThreadId, senderEmails);
+      if (!panel.destroyed && Array.isArray(deals) && deals.length) {
+        try { panel.open(); } catch { /* InboxSDK may no-op if already open */ }
+      }
+    } catch { /* best effort — leaving the panel collapsed is fine */ }
   });
 
   // -------- Compose helpers --------
