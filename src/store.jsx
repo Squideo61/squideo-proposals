@@ -309,13 +309,52 @@ export function StoreProvider({ children }) {
     }, 60_000);
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', refresh);
+
+    // Instant updates on email-driven actions. The one-click Qualify /
+    // Disqualify pages broadcast 'squideo:quote-request-actioned' so any
+    // already-open CRM tab can refresh without waiting for the 60s poll. We
+    // listen on BroadcastChannel (modern browsers) and the localStorage
+    // 'storage' event (fallback). The QuoteRequestsView has its own
+    // current-filter listener; we only refresh the 'new' slice here, which
+    // is what the nav badge reads.
+    const onBroadcast = (msg) => {
+      if (!msg || msg.type !== 'squideo:quote-request-actioned') return;
+      refresh();
+      if (msg.action === 'qualify') {
+        // A new deal was created — pull it in so it surfaces in the deals
+        // list without a manual refresh. Inlined (rather than going through
+        // actions.refreshDeals) because `actions` is defined further down
+        // this file and the closure timing makes that fragile.
+        api.get('/api/crm/deals').then((rows) => {
+          if (cancelled) return;
+          const map = {};
+          for (const d of (Array.isArray(rows) ? rows : [])) map[d.id] = d;
+          setState(s => ({ ...s, deals: map }));
+        }).catch(() => {});
+      }
+    };
+    let bc = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        bc = new BroadcastChannel('squideo');
+        bc.onmessage = (e) => onBroadcast(e.data);
+      }
+    } catch { /* ignore */ }
+    const onStorage = (e) => {
+      if (e.key !== 'squideo:event' || !e.newValue) return;
+      try { onBroadcast(JSON.parse(e.newValue)); } catch { /* ignore */ }
+    };
+    window.addEventListener('storage', onStorage);
+
     return () => {
       cancelled = true;
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', refresh);
+      window.removeEventListener('storage', onStorage);
+      if (bc) { try { bc.close(); } catch { /* ignore */ } }
     };
-  }, [state.session]);
+  }, [state.session]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live dashboard: poll the proposals list every 20s so new signatures,
   // payments, and view counts surface without a manual refresh. We replace

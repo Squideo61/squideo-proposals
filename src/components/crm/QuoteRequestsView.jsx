@@ -16,6 +16,34 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
 
   useEffect(() => { actions.refreshQuoteRequests(filter); }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Instant refresh when someone qualifies / disqualifies from a notification
+  // email. The store's global listener also refreshes (for the nav badge),
+  // but it always pulls status='new' — we re-fetch with the user's current
+  // filter here so the view they're looking at stays correct.
+  useEffect(() => {
+    const onBroadcast = (msg) => {
+      if (msg && msg.type === 'squideo:quote-request-actioned') {
+        actions.refreshQuoteRequests(filter);
+      }
+    };
+    let bc = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        bc = new BroadcastChannel('squideo');
+        bc.onmessage = (e) => onBroadcast(e.data);
+      }
+    } catch { /* ignore */ }
+    const onStorage = (e) => {
+      if (e.key !== 'squideo:event' || !e.newValue) return;
+      try { onBroadcast(JSON.parse(e.newValue)); } catch { /* ignore */ }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      if (bc) { try { bc.close(); } catch { /* ignore */ } }
+    };
+  }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const all = state.quoteRequests || [];
   const requests = useMemo(
     () => all.filter((r) => filter === 'all' || r.status === filter),

@@ -34,8 +34,22 @@ const escapeHtml = (s = '') =>
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
 
-function renderActionPage({ title, body }) {
+function renderActionPage({ title, body, broadcast = null }) {
   const safeTitle = escapeHtml(title);
+  // When the action succeeded, broadcast to any open Squideo tab in the same
+  // browser so the CRM updates instantly without waiting for the next 60s
+  // poll. BroadcastChannel reaches every tab on the same origin (this page is
+  // served from APP_URL, same as the SPA). Storage events are a fallback for
+  // older browsers — they fire in tabs OTHER than this one, which is exactly
+  // what we need. JSON.stringify is safe to inline because the only dynamic
+  // fields are server-controlled enum values (id, action).
+  const broadcastScript = broadcast
+    ? `<script>(function(){try{
+        var m=${JSON.stringify({ type: 'squideo:quote-request-actioned', ...broadcast })};
+        if(typeof BroadcastChannel!=='undefined'){var bc=new BroadcastChannel('squideo');bc.postMessage(m);bc.close();}
+        try{localStorage.setItem('squideo:event',JSON.stringify({...m,ts:Date.now()}));}catch(e){}
+      }catch(e){}})();</script>`
+    : '';
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${safeTitle} · Squideo</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -47,7 +61,7 @@ a.btn{display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;pa
 <h1>${safeTitle}</h1>
 <p>${body}</p>
 <p><a class="btn" href="${escapeHtml(APP_URL)}">Open Squideo</a></p>
-</div></body></html>`;
+</div>${broadcastScript}</body></html>`;
 }
 
 const trimOrNull = (v) => {
@@ -182,6 +196,7 @@ export default async function handler(req, res) {
         return res.status(200).send(renderActionPage({
           title: 'Qualified',
           body: 'A new deal has been created in the <strong>Lead</strong> stage. Open the CRM to assign an owner and continue.',
+          broadcast: { id: qrId, action: 'qualify', dealId: result.dealId || null },
         }));
       }
 
@@ -205,6 +220,7 @@ export default async function handler(req, res) {
         return res.status(200).send(renderActionPage({
           title: 'Disqualified',
           body: 'The quote request and any attachments have been deleted.',
+          broadcast: { id: qrId, action: 'disqualify' },
         }));
       }
 
