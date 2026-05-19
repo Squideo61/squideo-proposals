@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Building2, CheckCircle2, Circle, Edit2, Plus, Search, Trash2, User, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, CheckCircle2, Circle, Edit2, Plus, Search, Trash2, User, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
+import { permissionsInclude } from '../../lib/permissions.js';
 import { Modal } from '../ui.jsx';
 
-export function ContactsView({ onBack, onOpenContact, onOpenCompany }) {
+export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXeroDuplicates }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [view, setView] = useState('contacts'); // 'contacts' | 'organisations'
@@ -66,6 +67,11 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany }) {
             <Tab active={view === 'contacts'} onClick={() => setView('contacts')}>Contacts ({contacts.length})</Tab>
             <Tab active={isOrgsView} onClick={() => setView('organisations')}>Organisations ({companies.length})</Tab>
           </div>
+          {onManageXeroDuplicates && permissionsInclude(state.session?.permissions, 'invoices.manage') && (
+            <button onClick={onManageXeroDuplicates} className="btn-ghost">
+              <AlertTriangle size={14} /> Xero Duplicates
+            </button>
+          )}
           <button onClick={() => setCreating(true)} className="btn">
             <Plus size={16} /> New {isOrgsView ? 'organisation' : 'contact'}
           </button>

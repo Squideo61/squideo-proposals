@@ -254,7 +254,6 @@ function AppShell() {
           onManageTasks={() => navigate('tasks')}
           onManageTriage={() => navigate('triage')}
           onManageQuoteRequests={() => navigate('quote-requests')}
-          onManageXeroDuplicates={() => navigate('xero-duplicates')}
         />
       )}
       {view === 'admin' && (
@@ -283,6 +282,7 @@ function AppShell() {
           onBack={() => navigate('list')}
           onOpenContact={(id) => navigate('contact', id)}
           onOpenCompany={(id) => navigate('company', id)}
+          onManageXeroDuplicates={() => navigate('xero-duplicates')}
         />
       )}
       {view === 'contact' && activeId && (
