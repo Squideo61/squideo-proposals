@@ -4,6 +4,8 @@ import sql from './_lib/db.js';
 import { sendMail, APP_URL } from './_lib/email.js';
 import { sendNotification } from './_lib/notifications.js';
 import { buildResumeEmail } from './_lib/quoteResumeEmail.js';
+import { signQuoteRequestActionToken, verifyQuoteRequestActionToken } from './_lib/auth.js';
+import { qualifyQuoteRequest, disqualifyQuoteRequest } from './_lib/quoteRequestActions.js';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const NOTIFY_TO = process.env.QUOTE_REQUEST_NOTIFY_TO || 'adam@squideo.co.uk';
@@ -30,13 +32,29 @@ const escapeHtml = (s = '') =>
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
 
+function renderActionPage({ title, body }) {
+  const safeTitle = escapeHtml(title);
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>${safeTitle} · Squideo</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0;padding:48px 16px;background:#FAFBFC;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0F2A3D;}
+.card{max-width:480px;margin:0 auto;background:#fff;border:1px solid #E5E9EE;border-radius:12px;padding:32px;text-align:center;}
+h1{margin:0 0 12px;font-size:22px;}p{margin:0 0 20px;color:#3B4A57;line-height:1.5;}
+a.btn{display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;}</style>
+</head><body><div class="card">
+<h1>${safeTitle}</h1>
+<p>${body}</p>
+<p><a class="btn" href="${escapeHtml(APP_URL)}">Open Squideo</a></p>
+</div></body></html>`;
+}
+
 const trimOrNull = (v) => {
   if (v == null) return null;
   const s = String(v).trim();
   return s ? s : null;
 };
 
-function buildNotificationEmail(qr, files) {
+function buildNotificationEmail(qr, files, { qualifyUrl, disqualifyUrl, crmUrl } = {}) {
   const rows = [
     ['Name', qr.name],
     ['Email', qr.email],
@@ -73,6 +91,15 @@ function buildNotificationEmail(qr, files) {
        </ul>`
     : '';
 
+  const ctaHtml = (qualifyUrl && disqualifyUrl)
+    ? `<div style="margin:22px 0 4px;">
+         <a href="${escapeHtml(qualifyUrl)}" style="display:inline-block;background:#16A34A;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;">Qualify — create deal</a>
+         <a href="${escapeHtml(disqualifyUrl)}" style="display:inline-block;background:#DC2626;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;">Disqualify — delete</a>
+         ${crmUrl ? `<a href="${escapeHtml(crmUrl)}" style="display:inline-block;background:#F1F4F7;color:#0F2A3D;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;border:1px solid #E5E9EE;">Open in CRM</a>` : ''}
+       </div>
+       <p style="margin:6px 0 0;font-size:12px;color:#6B7785;">One-click links expire in 14 days. Disqualifying deletes the request and any attachments.</p>`
+    : '';
+
   const html = `<!doctype html>
 <html><body style="margin:0;padding:0;background:#FAFBFC;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0F2A3D;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FAFBFC;padding:32px 16px;">
@@ -87,6 +114,7 @@ function buildNotificationEmail(qr, files) {
           </table>
           ${details}
           ${filesHtml}
+          ${ctaHtml}
           <p style="margin:20px 0 0;font-size:12px;color:#6B7785;">Submitted ${escapeHtml(new Date(qr.created_at).toLocaleString('en-GB'))}.</p>
         </td></tr>
       </table>
@@ -106,12 +134,60 @@ export default async function handler(req, res) {
       return res.status(204).end();
     }
 
-    if (req.method !== 'POST') {
-      return res.status(405).json({ error: 'Method not allowed' });
-    }
-
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const action = url.searchParams.get('action');
+
+    if (action === 'action-link' && req.method === 'GET') {
+      const token = url.searchParams.get('token');
+      const qrId = url.searchParams.get('id');
+      const act = url.searchParams.get('act');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      if (!token || !qrId || !act) {
+        return res.status(400).send(renderActionPage({ title: 'Bad request', body: 'Missing parameters.' }));
+      }
+      let payload;
+      try {
+        payload = await verifyQuoteRequestActionToken(token);
+      } catch {
+        return res.status(401).send(renderActionPage({
+          title: 'Link expired',
+          body: 'This one-click link is no longer valid. Open the CRM to action this request.',
+        }));
+      }
+      if (payload.qrId !== qrId || payload.act !== act) {
+        return res.status(400).send(renderActionPage({ title: 'Bad request', body: 'Token does not match this request.' }));
+      }
+
+      if (act === 'qualify') {
+        const result = await qualifyQuoteRequest(qrId, { actorEmail: NOTIFY_TO || null });
+        if (result.status === 'not_found') {
+          return res.status(404).send(renderActionPage({ title: 'Not found', body: 'This quote request no longer exists — it may have been deleted.' }));
+        }
+        if (result.status === 'already_qualified') {
+          return res.status(200).send(renderActionPage({ title: 'Already qualified', body: 'A deal was already created for this request. Open the CRM to find it.' }));
+        }
+        return res.status(200).send(renderActionPage({
+          title: 'Qualified',
+          body: 'A new deal has been created in the <strong>Lead</strong> stage. Open the CRM to assign an owner and continue.',
+        }));
+      }
+
+      if (act === 'disqualify') {
+        const result = await disqualifyQuoteRequest(qrId);
+        if (result.status === 'not_found') {
+          return res.status(200).send(renderActionPage({ title: 'Already gone', body: 'This quote request was already removed.' }));
+        }
+        if (result.status === 'already_qualified') {
+          return res.status(409).send(renderActionPage({ title: 'Already qualified', body: 'A deal has already been created from this request — disqualifying would lose work. Open the CRM to manage the deal.' }));
+        }
+        return res.status(200).send(renderActionPage({
+          title: 'Disqualified',
+          body: 'The quote request and any attachments have been deleted.',
+        }));
+      }
+
+      return res.status(400).send(renderActionPage({ title: 'Bad request', body: 'Unknown action.' }));
+    }
 
     if (action === 'unsubscribe' && req.method === 'GET') {
       const token = url.searchParams.get('token');
@@ -133,6 +209,11 @@ export default async function handler(req, res) {
       }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).send('<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:40px;max-width:560px;margin:0 auto;line-height:1.5;"><h2>You\'re unsubscribed</h2><p>We won\'t send any more reminders about your unfinished quote request. You can still come back to finish it any time using the link from your previous email.</p><p style="color:#6B7785;font-size:13px;">— Squideo</p></body>');
+    }
+
+    // Remaining actions (and the default form submit) are POST-only.
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
     }
 
     if (action === 'save-and-email') {
@@ -336,9 +417,20 @@ export default async function handler(req, res) {
     }
 
     const subjectName = qr.name || qr.email || 'Anonymous';
+    const apiBase = APP_URL.replace(/\/$/, '');
+    const [qualifyToken, disqualifyToken] = await Promise.all([
+      signQuoteRequestActionToken({ quoteRequestId: qr.id, action: 'qualify' }),
+      signQuoteRequestActionToken({ quoteRequestId: qr.id, action: 'disqualify' }),
+    ]);
+    const qualifyUrl = `${apiBase}/api/quote-requests?action=action-link&id=${encodeURIComponent(qr.id)}&act=qualify&token=${encodeURIComponent(qualifyToken)}`;
+    const disqualifyUrl = `${apiBase}/api/quote-requests?action=action-link&id=${encodeURIComponent(qr.id)}&act=disqualify&token=${encodeURIComponent(disqualifyToken)}`;
+    // SPA has no deep-link route for a specific quote request — the list view
+    // navigates internally, so we just send recipients to the app root.
+    const crmUrl = apiBase;
+
     await sendNotification('quote_request.new', {
       subject: `New quote request from ${subjectName}`,
-      html: buildNotificationEmail(qr, storedFiles),
+      html: buildNotificationEmail(qr, storedFiles, { qualifyUrl, disqualifyUrl, crmUrl }),
       extraRecipients: NOTIFY_TO ? [NOTIFY_TO] : [],
     });
 

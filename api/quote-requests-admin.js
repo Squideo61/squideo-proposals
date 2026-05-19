@@ -1,4 +1,3 @@
-import { del } from '@vercel/blob';
 import sql from './_lib/db.js';
 import { cors, requireAuth } from './_lib/middleware.js';
 import { makeId, trimOrNull, lowerOrNull } from './_lib/crm/shared.js';
@@ -7,45 +6,7 @@ import { serialiseCompany } from './_lib/crm/companies.js';
 import { serialiseDeal } from './_lib/crm/deals.js';
 import { getRole } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
-
-// Domains we never treat as company identifiers. Matching a CRM company by
-// "gmail.com" would lump every Gmail-using requester into one org.
-const FREE_EMAIL_DOMAINS = new Set([
-  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk',
-  'hotmail.com', 'hotmail.co.uk', 'outlook.com', 'live.com', 'msn.com',
-  'icloud.com', 'me.com', 'mac.com',
-  'aol.com', 'protonmail.com', 'proton.me', 'tutanota.com',
-  'yandex.com', 'yandex.ru', 'mail.com', 'gmx.com', 'gmx.co.uk',
-  'fastmail.com', 'zoho.com', 'mail.ru', 'qq.com', '163.com',
-]);
-
-function workEmailDomain(email) {
-  const e = (email || '').toLowerCase().trim();
-  if (!e.includes('@')) return null;
-  const d = e.split('@')[1];
-  if (!d) return null;
-  if (FREE_EMAIL_DOMAINS.has(d)) return null;
-  return d;
-}
-
-// Parse a free-text budget band like "£5k–£10k", "5000-10000", "Under £2k"
-// into a numeric lower bound. Returns null when nothing parseable is found.
-function parseBudgetLower(budget) {
-  if (!budget) return null;
-  const matches = String(budget).match(/(\d[\d,.]*)\s*(k|K)?/g);
-  if (!matches || !matches.length) return null;
-  const nums = matches
-    .map((m) => {
-      const inner = m.match(/(\d[\d,.]*)\s*(k|K)?/);
-      if (!inner) return null;
-      const n = Number(inner[1].replace(/,/g, ''));
-      if (!Number.isFinite(n)) return null;
-      return inner[2] ? n * 1000 : n;
-    })
-    .filter((n) => n != null && n > 0);
-  if (!nums.length) return null;
-  return Math.min(...nums);
-}
+import { qualifyQuoteRequest, disqualifyQuoteRequest } from './_lib/quoteRequestActions.js';
 
 function serialiseQuoteRequest(r, files = []) {
   return {
@@ -176,27 +137,11 @@ export default async function handler(req, res) {
 
     // ── Disqualify (DELETE) ────────────────────────────────────────────────
     if (req.method === 'DELETE') {
-      if (loaded.row.status === 'qualified') {
+      const result = await disqualifyQuoteRequest(id);
+      if (result.status === 'not_found') return res.status(404).json({ error: 'Not found' });
+      if (result.status === 'already_qualified') {
         return res.status(409).json({ error: 'Already qualified — open the deal instead' });
       }
-      // Delete the provisional contact if we created one. Stay defensive: only
-      // delete contacts we tagged provisional + source='quote_request'.
-      if (loaded.row.contact_id) {
-        await sql`
-          DELETE FROM contacts
-          WHERE id = ${loaded.row.contact_id}
-            AND provisional = TRUE
-            AND source = 'quote_request'
-        `;
-      }
-      // Delete blobs (best-effort; ignore failures so DB row still goes).
-      for (const f of loaded.files) {
-        if (f.blob_url) {
-          try { await del(f.blob_url); } catch (e) { console.warn('[quote-requests] blob delete failed', e?.message); }
-        }
-      }
-      await sql`DELETE FROM quote_request_files WHERE quote_request_id = ${id}`;
-      await sql`DELETE FROM quote_requests WHERE id = ${id}`;
       return res.status(200).json({ ok: true });
     }
 
@@ -271,128 +216,13 @@ export default async function handler(req, res) {
 
     // ── Qualify (POST /:id/qualify) ────────────────────────────────────────
     if (req.method === 'POST' && action === 'qualify') {
-      if (loaded.row.status === 'qualified') {
+      const result = await qualifyQuoteRequest(id, { actorEmail: user.email });
+      if (result.status === 'not_found') return res.status(404).json({ error: 'Not found' });
+      if (result.status === 'already_qualified') {
         return res.status(409).json({ error: 'Already qualified' });
       }
 
-      // Ensure contact exists (qualify can run without an explicit /review first).
-      let contactId = loaded.row.contact_id;
-      if (!contactId) {
-        contactId = makeId('ct');
-        await sql`
-          INSERT INTO contacts (id, email, name, phone, title, company_id, notes, provisional, source)
-          VALUES (
-            ${contactId},
-            ${lowerOrNull(loaded.row.email)},
-            ${trimOrNull(loaded.row.name)},
-            ${trimOrNull(loaded.row.phone ? `${loaded.row.country_code || ''} ${loaded.row.phone}`.trim() : null)},
-            ${null},
-            ${null},
-            ${trimOrNull(loaded.row.company ? `Company: ${loaded.row.company}` : null)},
-            TRUE,
-            'quote_request'
-          )
-        `;
-      }
-
-      // Resolve the company to link the deal + contact to. We try, in order:
-      //   1. Case-insensitive match on the form's company name.
-      //   2. Match by the requester's work-email domain (skipping free-email
-      //      domains like gmail.com so we don't lump strangers together).
-      //   3. Create a new company if we have either a name or a usable domain.
-      // The third step also populates the new company's `domain` column so
-      // the next requester from the same work domain auto-matches.
-      let companyId = null;
-      const companyName = trimOrNull(loaded.row.company);
-      const emailDomain = workEmailDomain(loaded.row.email);
-
-      if (companyName) {
-        const byName = await sql`
-          SELECT id FROM companies
-          WHERE LOWER(name) = LOWER(${companyName})
-          LIMIT 1
-        `;
-        if (byName[0]) companyId = byName[0].id;
-      }
-
-      if (!companyId && emailDomain) {
-        const byDomain = await sql`
-          SELECT id FROM companies
-          WHERE LOWER(domain) = ${emailDomain}
-          LIMIT 1
-        `;
-        if (byDomain[0]) companyId = byDomain[0].id;
-      }
-
-      if (!companyId && (companyName || emailDomain)) {
-        companyId = makeId('co');
-        await sql`
-          INSERT INTO companies (id, name, domain)
-          VALUES (
-            ${companyId},
-            ${companyName || emailDomain},
-            ${emailDomain}
-          )
-        `;
-      }
-
-      // Flip provisional → permanent and attach to the company.
-      await sql`
-        UPDATE contacts
-           SET provisional = FALSE,
-               source = COALESCE(source, 'quote_request'),
-               company_id = COALESCE(company_id, ${companyId}),
-               updated_at = NOW()
-         WHERE id = ${contactId}
-      `;
-
-      // Build deal.
-      const dealId = makeId('deal');
-      const dealTitle =
-        trimOrNull(loaded.row.company)
-        || trimOrNull(loaded.row.name)
-        || loaded.row.email
-        || 'Quote request';
-      const dealValue = parseBudgetLower(loaded.row.budget);
-      const notesParts = [];
-      if (loaded.row.project_details) notesParts.push(loaded.row.project_details);
-      if (loaded.row.timeline) notesParts.push(`Timeline: ${loaded.row.timeline}`);
-      if (loaded.row.budget) notesParts.push(`Budget: ${loaded.row.budget}`);
-      if (loaded.row.company) notesParts.push(`Company: ${loaded.row.company}`);
-      const dealNotes = notesParts.join('\n\n') || null;
-
-      await sql`
-        INSERT INTO deals (id, title, company_id, primary_contact_id, owner_email, stage, value, notes)
-        VALUES (
-          ${dealId},
-          ${dealTitle},
-          ${companyId},
-          ${contactId},
-          ${user.email},
-          'lead',
-          ${dealValue},
-          ${dealNotes}
-        )
-      `;
-      await sql`
-        INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
-        VALUES (
-          ${dealId},
-          'deal_created',
-          ${JSON.stringify({ title: dealTitle, stage: 'lead', source: 'quote_request', quoteRequestId: id })},
-          ${user.email || null}
-        )
-      `;
-
-      await sql`
-        UPDATE quote_requests
-           SET status = 'qualified',
-               contact_id = ${contactId},
-               deal_id = ${dealId},
-               reviewed_at = COALESCE(reviewed_at, NOW())
-         WHERE id = ${id}
-      `;
-
+      const { contactId, dealId, companyId } = result;
       const [refreshed, contactRow, dealRow, companyRows] = await Promise.all([
         loadRequest(id),
         loadContact(contactId),
