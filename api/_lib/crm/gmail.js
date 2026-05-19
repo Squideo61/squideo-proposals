@@ -157,41 +157,57 @@ export async function gmailRoute(req, res, id, action, user) {
   }
 
   if (id === 'signature') {
-    if (req.method !== 'GET') return res.status(405).end();
+    if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
     const rows = await sql`
       SELECT signature_html, signature_fetched_at
       FROM gmail_accounts
       WHERE user_email = ${user.email} AND disconnected_at IS NULL
     `;
     if (!rows.length) {
-      return res.status(200).json({ signatureHtml: null, fetchedAt: null });
+      return res.status(200).json({ signatureHtml: null, fetchedAt: null, gmailConnected: false });
     }
     const cachedHtml = rows[0].signature_html || null;
     const fetchedAt = rows[0].signature_fetched_at || null;
     const ageMs = fetchedAt ? Date.now() - new Date(fetchedAt).getTime() : Infinity;
     const STALE_MS = 60 * 60 * 1000;
+    const NULL_RETRY_MS = 5 * 60 * 1000;
 
-    // Empty cache → refresh inline so the modal that just opened sees a
-    // definitive answer (not the stale "set one in Gmail and reconnect"
-    // hint that lingers when someone set their signature AFTER connecting).
-    // Old (>1h) cache → return what we have and refresh in the background.
-    if (!cachedHtml) {
-      try {
-        await refreshSignatureCache(user.email);
-      } catch (err) {
-        console.warn('[gmail signature endpoint] inline refresh failed', err.message);
-      }
+    // POST = explicit "Refresh from Gmail" click. Force the refresh and
+    // return the full diagnostic so the UI can show why it came back empty
+    // (no sendAs entries, all signatures blank, API errored, etc.).
+    if (req.method === 'POST') {
+      const diag = await refreshSignatureCache(user.email);
       const fresh = await sql`
         SELECT signature_html, signature_fetched_at
         FROM gmail_accounts
-        WHERE user_email = ${user.email} AND disconnected_at IS NULL
+        WHERE user_email = ${user.email}
       `;
       return res.status(200).json({
         signatureHtml: fresh[0]?.signature_html || null,
         fetchedAt: fresh[0]?.signature_fetched_at || null,
+        diagnostics: diag,
       });
     }
-    if (ageMs > STALE_MS) {
+
+    // Empty cache + never-attempted (or attempted >5m ago): refresh inline
+    // so the modal sees a definitive answer instead of the stale "set one
+    // in Gmail and reconnect" hint that lingers when someone configured
+    // their signature AFTER connecting. We throttle so a genuinely-empty
+    // signature doesn't make every modal open hit Gmail.
+    if (!cachedHtml && (!fetchedAt || ageMs > NULL_RETRY_MS)) {
+      const diag = await refreshSignatureCache(user.email);
+      const fresh = await sql`
+        SELECT signature_html, signature_fetched_at
+        FROM gmail_accounts
+        WHERE user_email = ${user.email}
+      `;
+      return res.status(200).json({
+        signatureHtml: fresh[0]?.signature_html || null,
+        fetchedAt: fresh[0]?.signature_fetched_at || null,
+        diagnostics: diag,
+      });
+    }
+    if (cachedHtml && ageMs > STALE_MS) {
       waitUntil(refreshSignatureCache(user.email));
     }
     return res.status(200).json({ signatureHtml: cachedHtml, fetchedAt });
@@ -350,20 +366,28 @@ export async function gmailCallback(req, res) {
 // gmail_accounts row. Best-effort — caller should fire-and-forget so a
 // signature outage never blocks send/connect. Reuses getFreshAccessToken so
 // the access token gets refreshed if it had expired.
+//
+// Returns a diagnostic object so an interactive caller can surface a useful
+// reason when the result is null (Gmail returned no sendAs entries, every
+// sendAs has an empty signature, the API call 4xx'd, the access token can't
+// be refreshed, etc.). Old callers ignore the return.
 export async function refreshSignatureCache(userEmail) {
+  let accessToken;
   try {
-    const accessToken = await getFreshAccessToken(userEmail);
-    const sig = await fetchGmailSignature(accessToken);
-    await sql`
-      UPDATE gmail_accounts
-         SET signature_html = ${sig},
-             signature_fetched_at = NOW(),
-             updated_at = NOW()
-       WHERE user_email = ${userEmail}
-    `;
+    accessToken = await getFreshAccessToken(userEmail);
   } catch (err) {
-    console.warn('[gmail signature refresh]', userEmail, err.message);
+    console.warn('[gmail signature refresh] token fetch failed', userEmail, err.message);
+    return { html: null, summary: [], pickedEmail: null, error: { stage: 'token', message: err.message, code: err.code || null } };
   }
+  const result = await fetchGmailSignature(accessToken);
+  await sql`
+    UPDATE gmail_accounts
+       SET signature_html = ${result.html},
+           signature_fetched_at = NOW(),
+           updated_at = NOW()
+     WHERE user_email = ${userEmail}
+  `;
+  return result;
 }
 
 // Fetch a fresh access token, refreshing via Google if the cached one is

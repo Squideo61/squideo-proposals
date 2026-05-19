@@ -148,31 +148,39 @@ export async function stopWatch(accessToken) {
   });
 }
 
-// Fetch the user's primary Gmail signature via users.settings.sendAs.
-// Requires the gmail.modify scope (already granted alongside .readonly).
-// Returns the raw HTML string, or null if no signature is set / call fails.
-//
+// Fetch the user's Gmail signature via users.settings.sendAs.list.
 // Picking the right sendAs is fiddly: a Workspace user often has multiple
 // (aliases, send-on-behalf, custom from-addresses) and the signature lives
 // on whichever one they edited. We prefer primary → default → first non-
-// empty signature, falling back to the first entry only if every signature
-// is empty. Verbose logging on the way through so we can diagnose "no
-// signature found" reports without a redeploy.
+// empty signature, falling back to whatever's there only if every signature
+// is empty.
+//
+// Returns a diagnostic-rich object so callers (and the UI) can surface
+// "why is my signature empty?" without a server log dive:
+//   { html: string|null,
+//     summary: Array<{email, isPrimary, isDefault, hasSig, sigLen}>,
+//     pickedEmail: string|null,
+//     error: { status: number, message: string } | null }
 export async function fetchGmailSignature(accessToken) {
-  const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs', {
-    headers: { Authorization: 'Bearer ' + accessToken },
-  });
+  let res;
+  try {
+    res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs', {
+      headers: { Authorization: 'Bearer ' + accessToken },
+    });
+  } catch (err) {
+    console.warn('[gmail signature] fetch threw', err.message);
+    return { html: null, summary: [], pickedEmail: null, error: { status: 0, message: err.message } };
+  }
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
     console.warn('[gmail signature] sendAs fetch failed', res.status, errText.slice(0, 200));
-    return null;
+    return {
+      html: null, summary: [], pickedEmail: null,
+      error: { status: res.status, message: errText.slice(0, 200) || `HTTP ${res.status}` },
+    };
   }
   const json = await res.json();
   const list = Array.isArray(json.sendAs) ? json.sendAs : [];
-  if (!list.length) {
-    console.warn('[gmail signature] sendAs list empty');
-    return null;
-  }
   const summary = list.map(s => ({
     email: s.sendAsEmail,
     isPrimary: !!s.isPrimary,
@@ -189,8 +197,9 @@ export async function fetchGmailSignature(accessToken) {
     || list.find(hasSig);
   if (picked) {
     console.log('[gmail signature] picked', picked.sendAsEmail, 'len', picked.signature.length);
-    return picked.signature;
+    return { html: picked.signature, summary, pickedEmail: picked.sendAsEmail, error: null };
   }
-  console.warn('[gmail signature] no sendAs entry has a non-empty signature');
-  return null;
+  if (!list.length) console.warn('[gmail signature] sendAs list empty');
+  else console.warn('[gmail signature] no sendAs entry has a non-empty signature');
+  return { html: null, summary, pickedEmail: null, error: null };
 }

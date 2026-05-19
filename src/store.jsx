@@ -1025,9 +1025,15 @@ export function StoreProvider({ children }) {
       return api.post('/api/crm/gmail/send', payload);
     },
     getGmailSignature() {
-      // Returns { signatureHtml, fetchedAt } from the cached gmail_accounts row.
-      // The server refreshes this from users.settings.sendAs in the background.
+      // Returns { signatureHtml, fetchedAt, diagnostics? } from the cached
+      // gmail_accounts row. When the cache is null, the server force-refreshes
+      // inline (with a 5-minute throttle) and includes diagnostics so the UI
+      // can explain why Gmail returned nothing.
       return api.get('/api/crm/gmail/signature');
+    },
+    refreshGmailSignature() {
+      // Force-refresh from Gmail and return the new value + diagnostics.
+      return api.post('/api/crm/gmail/signature', {});
     },
     backfillGmail() {
       // Re-trigger the 30-day backfill manually. Idempotent on the server —

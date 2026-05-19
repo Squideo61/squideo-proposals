@@ -1506,6 +1506,8 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [signature, setSignature] = useState(null); // null = loading, '' = none
+  const [sigDiagnostics, setSigDiagnostics] = useState(null);
+  const [refreshingSig, setRefreshingSig] = useState(false);
   const [minimised, setMinimised] = useState(false);
 
   // Esc closes the composer — preserves the Modal-era keyboard affordance
@@ -1520,10 +1522,30 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
     if (!gmailConnected) { setSignature(''); return; }
     let cancelled = false;
     actions.getGmailSignature()
-      .then(r => { if (!cancelled) setSignature(r?.signatureHtml || ''); })
+      .then(r => {
+        if (cancelled) return;
+        setSignature(r?.signatureHtml || '');
+        setSigDiagnostics(r?.diagnostics || null);
+      })
       .catch(() => { if (!cancelled) setSignature(''); });
     return () => { cancelled = true; };
   }, [gmailConnected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const refreshSignature = async () => {
+    if (refreshingSig) return;
+    setRefreshingSig(true);
+    try {
+      const r = await actions.refreshGmailSignature();
+      setSignature(r?.signatureHtml || '');
+      setSigDiagnostics(r?.diagnostics || null);
+    } catch {
+      // surface as empty + null diagnostic; the server log has the detail
+      setSignature('');
+      setSigDiagnostics(null);
+    } finally {
+      setRefreshingSig(false);
+    }
+  };
 
   const sanitizedSignature = useMemo(() => {
     if (!signature) return null;
@@ -1658,16 +1680,25 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
             </FormRow>
             {gmailConnected && (
               <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-                  Signature (synced from Gmail)
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Signature (synced from Gmail)
+                  </div>
+                  <button
+                    type="button"
+                    onClick={refreshSignature}
+                    disabled={refreshingSig}
+                    className="btn-ghost"
+                    style={{ fontSize: 11, padding: '2px 8px' }}
+                  >
+                    {refreshingSig ? 'Refreshing…' : 'Refresh from Gmail'}
+                  </button>
                 </div>
                 {signature === null && (
                   <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Loading signature…</div>
                 )}
                 {signature === '' && (
-                  <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>
-                    No Gmail signature found — set one in Gmail and reconnect to apply it here.
-                  </div>
+                  <SignatureEmptyHint diagnostics={sigDiagnostics} />
                 )}
                 {sanitizedSignature && (
                   <div
@@ -1695,6 +1726,55 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
           </form>
         </div>
       )}
+    </div>
+  );
+}
+
+// Renders a helpful explanation when Gmail's sendAs.list comes back without
+// a usable signature. The diagnostic from the server has enough detail to
+// distinguish the three real failure modes — bad scope, signature lives on
+// an admin-imposed footer, or genuinely no signature configured — instead
+// of the old vague "set one in Gmail and reconnect".
+function SignatureEmptyHint({ diagnostics }) {
+  const baseStyle = { fontSize: 12, color: BRAND.muted, fontStyle: 'italic', lineHeight: 1.5 };
+  if (!diagnostics) {
+    return (
+      <div style={baseStyle}>
+        No Gmail signature found yet. Click <strong>Refresh from Gmail</strong> after
+        setting your signature in Gmail (Settings → General → Signature).
+      </div>
+    );
+  }
+  if (diagnostics.error) {
+    return (
+      <div style={baseStyle}>
+        Couldn't read your Gmail signature ({diagnostics.error.stage === 'token' ? 'authentication' : `Gmail API ${diagnostics.error.status || 'error'}`}).
+        Try reconnecting Gmail from Account → Gmail integration.
+      </div>
+    );
+  }
+  const summary = Array.isArray(diagnostics.summary) ? diagnostics.summary : [];
+  if (!summary.length) {
+    return (
+      <div style={baseStyle}>
+        Gmail returned no sendAs identities. Reconnect Gmail to refresh the
+        granted scopes.
+      </div>
+    );
+  }
+  const anyHas = summary.some((s) => s.hasSig);
+  if (anyHas) {
+    return (
+      <div style={baseStyle}>
+        Gmail has signatures on {summary.filter((s) => s.hasSig).map((s) => s.email).join(', ')},
+        but none could be picked. Try <strong>Refresh from Gmail</strong>.
+      </div>
+    );
+  }
+  return (
+    <div style={baseStyle}>
+      No signature is configured in Gmail for {summary.map((s) => s.email).join(', ')}.
+      Set one in Gmail (Settings → General → Signature), then click <strong>Refresh from Gmail</strong>.
     </div>
   );
 }
