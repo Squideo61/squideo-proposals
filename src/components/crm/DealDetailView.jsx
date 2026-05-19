@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Mail, MessageSquare, Phone, Plus, Square, Trash2, User, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Mail, MessageSquare, MoreVertical, Phone, Plus, Square, Trash2, User, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile, formatProposalNumber } from '../../utils.js';
 import { Badge, Modal } from '../ui.jsx';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
-import { PIPELINE_STAGES } from './PipelineView.jsx';
+import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 import { Card, Empty } from './Card.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
@@ -26,6 +27,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   const [prefillTitle, setPrefillTitle] = useState('');
   const [replyingTo, setReplyingTo] = useState(null);
   const [editingCommentId, setEditingCommentId] = useState(null);
+  // Linking an email to other deals — populated when the user picks "Add to
+  // another deal" / "Create new deal" from a row's kebab menu. `target`
+  // carries the thread + latest message id; the modal uses both so the user
+  // can choose whole-thread vs single-message scope at submit time.
+  const [linkEmailTarget, setLinkEmailTarget] = useState(null);
+  const [newDealFromEmail, setNewDealFromEmail] = useState(null);
 
   useEffect(() => {
     if (dealId) actions.loadDealDetail(dealId);
@@ -233,7 +240,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   key={group.threadId}
                   messages={group.messages}
                   dealId={dealId}
+                  dealTitle={deal.title}
                   onOpenMessage={(id) => setOpenEmailId(id)}
+                  onLinkAnother={(target) => setLinkEmailTarget(target)}
+                  onCreateNewDeal={(target) => setNewDealFromEmail(target)}
                 />
               ))}
             </div>
@@ -327,6 +337,21 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           gmailMessageId={openEmailId}
           dealId={dealId}
           onClose={() => setOpenEmailId(null)}
+        />
+      )}
+      {linkEmailTarget && (
+        <LinkEmailModal
+          target={linkEmailTarget}
+          currentDealId={dealId}
+          onClose={() => setLinkEmailTarget(null)}
+          onLinked={() => { setLinkEmailTarget(null); actions.loadDealDetail(dealId); }}
+        />
+      )}
+      {newDealFromEmail && (
+        <NewDealFromEmailFlow
+          target={newDealFromEmail}
+          onClose={() => setNewDealFromEmail(null)}
+          onCreated={() => { setNewDealFromEmail(null); actions.loadDealDetail(dealId); }}
         />
       )}
     </div>
@@ -473,7 +498,7 @@ function EventRow({ event, users }) {
   );
 }
 
-function EmailRow({ email, onOpen, threadCount, expanded }) {
+function EmailRow({ email, onOpen, threadCount, expanded, dealTitle, onLinkAnother, onCreateNewDeal }) {
   const inbound = email.direction === 'inbound';
   const arrow = inbound ? '↓' : '↑';
   const accent = inbound ? '#16A34A' : '#2BB8E6';
@@ -485,10 +510,26 @@ function EmailRow({ email, onOpen, threadCount, expanded }) {
     : null;
   const [hover, setHover] = useState(false);
   const hasThreadChip = typeof threadCount === 'number' && threadCount > 1;
+  // Kebab menu state. Anchor ref drives the portal-positioned menu so it
+  // floats above the row regardless of overflow on the parent card.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuAnchorRef = useRef(null);
+  const linkLabel = email.manuallyLinked
+    ? `Linked to ${dealTitle || 'this deal'}`
+    : `Auto-linked to ${dealTitle || 'this deal'}`;
+  // Row uses a div + onKeyDown rather than a <button> so we can nest the
+  // kebab button inside (nested buttons are invalid HTML).
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen?.();
+        }
+      }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       title={hasThreadChip ? (expanded ? 'Collapse thread' : 'Expand thread') : 'Open email'}
@@ -545,6 +586,16 @@ function EmailRow({ email, onOpen, threadCount, expanded }) {
         <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
           {formatRelativeTime(email.sentAt)}{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}
         </div>
+        <div
+          style={{
+            fontSize: 10, color: BRAND.muted, marginTop: 3,
+            display: 'inline-block', background: '#F1F4F7',
+            padding: '1px 6px', borderRadius: 999, letterSpacing: 0.2,
+          }}
+          title={email.manuallyLinked ? 'You added this email to this deal manually.' : 'Squideo auto-linked this email to this deal.'}
+        >
+          {linkLabel}
+        </div>
       </div>
       {hasThreadChip && (
         <div style={{ flexShrink: 0, alignSelf: 'center', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -556,7 +607,117 @@ function EmailRow({ email, onOpen, threadCount, expanded }) {
           <span style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1 }}>{expanded ? '▾' : '▸'}</span>
         </div>
       )}
-    </button>
+      {(onLinkAnother || onCreateNewDeal) && (
+        <div
+          style={{ flexShrink: 0, alignSelf: 'flex-start', marginTop: 1 }}
+          // Stop the kebab's clicks from triggering the row's onOpen.
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <button
+            ref={menuAnchorRef}
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="Email actions"
+            onClick={() => setMenuOpen((o) => !o)}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              padding: 4, color: BRAND.muted, borderRadius: 4,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <MoreVertical size={14} />
+          </button>
+          {menuOpen && (
+            <EmailActionsMenu
+              anchor={menuAnchorRef.current}
+              onClose={() => setMenuOpen(false)}
+              onLinkAnother={onLinkAnother}
+              onCreateNewDeal={onCreateNewDeal}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Portal-positioned actions menu for an email row. Mirrors the ProjectMenu
+// pattern in RetainersCard.jsx (click-outside / Escape closes, fixed-position
+// computed from the anchor's bounding rect).
+function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal }) {
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (!anchor) return;
+    const update = () => {
+      const r = anchor.getBoundingClientRect();
+      // Open below the anchor, right-aligned.
+      const width = 220;
+      setPos({ top: r.bottom + 4, left: Math.max(8, r.right - width) });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [anchor]);
+
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (!menuRef.current) return;
+      if (menuRef.current.contains(e.target)) return;
+      if (anchor && anchor.contains(e.target)) return;
+      onClose();
+    };
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [anchor, onClose]);
+
+  const items = [
+    onLinkAnother && { label: 'Add to another deal', onClick: () => { onClose(); onLinkAnother(); } },
+    onCreateNewDeal && { label: 'Create new deal from this email', onClick: () => { onClose(); onCreateNewDeal(); } },
+  ].filter(Boolean);
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      role="menu"
+      style={{
+        position: 'fixed', top: pos.top, left: pos.left, width: 220,
+        background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
+        boxShadow: '0 8px 20px rgba(15,42,61,0.15)', padding: 4, zIndex: 1500,
+      }}
+    >
+      {items.map((it, i) => (
+        <button
+          key={i}
+          type="button"
+          role="menuitem"
+          onClick={it.onClick}
+          style={{
+            display: 'block', width: '100%', textAlign: 'left',
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            padding: '8px 10px', borderRadius: 6, fontSize: 13, color: BRAND.ink,
+            fontFamily: 'inherit',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = '#F4F8FB')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        >
+          {it.label}
+        </button>
+      ))}
+    </div>,
+    document.body,
   );
 }
 
@@ -564,7 +725,7 @@ function EmailRow({ email, onOpen, threadCount, expanded }) {
 // thread with a "(N messages)" chip when applicable. Expanded: stacks every
 // message oldest→newest with its body inlined (lazy-loaded). Single-message
 // threads keep the original click-to-modal behaviour.
-function ThreadRow({ messages, dealId, onOpenMessage }) {
+function ThreadRow({ messages, dealId, dealTitle, onOpenMessage, onLinkAnother, onCreateNewDeal }) {
   const [expanded, setExpanded] = useState(false);
   const isMulti = messages.length > 1;
   const latest = messages[messages.length - 1];
@@ -588,6 +749,9 @@ function ThreadRow({ messages, dealId, onOpenMessage }) {
         onOpen={handleHeaderClick}
         threadCount={isMulti ? messages.length : null}
         expanded={isMulti ? expanded : false}
+        dealTitle={dealTitle}
+        onLinkAnother={onLinkAnother ? () => onLinkAnother({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
+        onCreateNewDeal={onCreateNewDeal ? () => onCreateNewDeal({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
       />
       {expanded && isMulti && (
         <div style={{ marginTop: 8, marginLeft: 22, paddingLeft: 12, borderLeft: '2px solid ' + BRAND.border, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -684,6 +848,153 @@ function ExpandedMessage({ email, onOpenFull }) {
 // fetch on open and cache by gmail_message_id in the store so re-opens are
 // instant. HTML is sanitized with DOMPurify before render — emails are an
 // untrusted source.
+// Modal opened from an email row's kebab → "Add to another deal". Lets the
+// user pick which deal to attach this conversation (or just the visible
+// message) to. The deal list is read from the store's cached `state.deals`
+// — same source the pipeline + task picker use — filtered to anything that
+// isn't lost and excluding the deal we're already on.
+function LinkEmailModal({ target, currentDealId, onClose, onLinked }) {
+  const { state, actions, showMsg } = useStore();
+  const candidates = useMemo(() => {
+    return Object.values(state.deals || {})
+      .filter((d) => d && d.id !== currentDealId && d.stage !== 'lost' && d.stage !== 'won')
+      .sort((a, b) => {
+        const ta = a.lastActivityAt ? new Date(a.lastActivityAt).getTime() : 0;
+        const tb = b.lastActivityAt ? new Date(b.lastActivityAt).getTime() : 0;
+        return tb - ta;
+      });
+  }, [state.deals, currentDealId]);
+  const [dealId, setDealId] = useState(candidates[0]?.id || '');
+  const [scope, setScope] = useState('thread');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!dealId || submitting) return;
+    setSubmitting(true);
+    try {
+      const r = await actions.linkEmail({
+        threadId: target.threadId,
+        gmailMessageId: target.gmailMessageId,
+        dealId,
+        scope,
+      });
+      showMsg('Linked to ' + (r?.dealTitle || 'deal'));
+      onLinked?.();
+    } catch (err) {
+      showMsg('Could not link: ' + (err?.message || 'unknown error'));
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Add email to another deal</h2>
+      {candidates.length === 0 ? (
+        <>
+          <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 16px' }}>
+            No other open deals to link to. Use <strong>Create new deal from this email</strong> instead.
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={onClose} className="btn-ghost">Close</button>
+          </div>
+        </>
+      ) : (
+        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <label style={{ fontSize: 13, fontWeight: 500 }}>
+            Deal
+            <select className="input" value={dealId} onChange={(e) => setDealId(e.target.value)} style={{ marginTop: 4 }} required>
+              {candidates.map((d) => (
+                <option key={d.id} value={d.id}>{d.title}</option>
+              ))}
+            </select>
+          </label>
+          <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
+            <legend style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Link</legend>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 4 }}>
+              <input type="radio" name="scope" value="thread" checked={scope === 'thread'} onChange={() => setScope('thread')} />
+              The whole conversation
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+              <input type="radio" name="scope" value="message" checked={scope === 'message'} onChange={() => setScope('message')} />
+              Just this email
+            </label>
+          </fieldset>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+            <button type="submit" className="btn" disabled={!dealId || submitting}>
+              {submitting ? 'Linking…' : 'Link'}
+            </button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+// Two-step flow: ask scope (thread/message), open NewDealModal pre-filled
+// with the email subject, then link the just-created deal to the chosen scope.
+// Reuses the existing NewDealModal from PipelineView so creation stays a
+// single code path.
+function NewDealFromEmailFlow({ target, onClose, onCreated }) {
+  const { actions, showMsg } = useStore();
+  const [scope, setScope] = useState('thread');
+  const [step, setStep] = useState('scope'); // 'scope' → 'deal'
+  // Strip Re:/Fwd: prefixes so the suggested deal title is the actual subject.
+  const initialTitle = (target?.subject || '').replace(/^(re|fwd?):\s*/i, '').trim();
+
+  if (step === 'scope') {
+    return (
+      <Modal onClose={onClose}>
+        <h2 style={{ margin: '0 0 12px', fontSize: 18, fontWeight: 700 }}>Create deal from this email</h2>
+        <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 16px' }}>
+          What should be attached to the new deal?
+        </p>
+        <fieldset style={{ border: 'none', padding: 0, margin: '0 0 18px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 4 }}>
+            <input type="radio" name="newdeal-scope" value="thread" checked={scope === 'thread'} onChange={() => setScope('thread')} />
+            The whole conversation
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+            <input type="radio" name="newdeal-scope" value="message" checked={scope === 'message'} onChange={() => setScope('message')} />
+            Just this email
+          </label>
+        </fieldset>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+          <button type="button" className="btn" onClick={() => setStep('deal')}>Next</button>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <NewDealModal
+      initialTitle={initialTitle}
+      onClose={onClose}
+      onCreated={async (deal) => {
+        if (!deal?.id) {
+          showMsg('Deal created');
+          onCreated?.();
+          return;
+        }
+        try {
+          await actions.linkEmail({
+            threadId: target.threadId,
+            gmailMessageId: target.gmailMessageId,
+            dealId: deal.id,
+            scope,
+          });
+          showMsg('Linked to ' + (deal.title || 'new deal'));
+        } catch (err) {
+          showMsg('Deal created, but linking failed: ' + (err?.message || 'unknown'));
+        }
+        onCreated?.();
+      }}
+    />
+  );
+}
+
 function EmailViewerModal({ gmailMessageId, dealId, onClose }) {
   const { state, actions } = useStore();
   const cached = state.emailBodies?.[gmailMessageId] || null;

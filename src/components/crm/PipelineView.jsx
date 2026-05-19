@@ -211,9 +211,9 @@ function daysSince(iso) {
   return Math.max(0, Math.floor((Date.now() - t) / 86400000));
 }
 
-function NewDealModal({ onClose, onCreated }) {
+export function NewDealModal({ onClose, onCreated, initialTitle = '' }) {
   const { state, actions, showMsg } = useStore();
-  const [title, setTitle] = useState('');
+  const [title, setTitle] = useState(initialTitle);
   const [stage, setStage] = useState('lead');
   const [value, setValue] = useState('');
   const [xeroContact, setXeroContact] = useState(null);

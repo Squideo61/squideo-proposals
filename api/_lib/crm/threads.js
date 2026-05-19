@@ -1,11 +1,14 @@
 import sql from '../db.js';
-import { trimOrNull, lowerOrNull } from './shared.js';
+import { trimOrNull, lowerOrNull, ensureMessageDealsTable } from './shared.js';
 
-// Endpoints the Chrome extension needs to talk to. Routes:
-//   POST   /api/crm/threads                    — snapshot ingest from extension
-//   GET    /api/crm/threads/by-contact?email=  — find deal(s) for a sender
-//   GET    /api/crm/threads/by-thread-ids?ids= — bulk lookup for inbox chips
-//   DELETE /api/crm/threads/:threadId?dealId=  — detach a thread from a deal
+// Endpoints the Chrome extension + the SPA talk to. Routes:
+//   POST   /api/crm/threads                            — snapshot ingest from extension
+//   GET    /api/crm/threads/by-contact?email=          — find deal(s) for a sender
+//   GET    /api/crm/threads/by-thread-ids?ids=         — bulk lookup for inbox chips
+//   POST   /api/crm/threads/resolve                    — richer resolver for inbox chips
+//   POST   /api/crm/threads/:threadId/link             — attach a thread or single message to another deal
+//   DELETE /api/crm/threads/:threadId/link?dealId=…    — detach a thread or single message from a deal
+//   DELETE /api/crm/threads/:threadId?dealId=          — legacy thread-only detach
 export async function threadsRoute(req, res, id, action, user) {
   if (!id) {
     if (req.method !== 'POST') return res.status(405).end();
@@ -221,7 +224,96 @@ export async function threadsRoute(req, res, id, action, user) {
     return res.status(200).json(byThread);
   }
 
-  // /api/crm/threads/:gmailThreadId  (DELETE with dealId in query)
+  // /api/crm/threads/:gmailThreadId/link
+  //   POST   body { dealId, scope: 'thread' | 'message', gmailMessageId? }
+  //   DELETE query dealId, scope, gmailMessageId
+  // Scope 'thread' uses the existing email_thread_deals join (resolved_by='manual');
+  // scope 'message' uses the per-message email_message_deals join so a single
+  // email can be filed against a different deal than the rest of its conversation.
+  if (action === 'link') {
+    await ensureMessageDealsTable();
+    if (req.method === 'POST') {
+      const body = req.body || {};
+      const dealId = trimOrNull(body.dealId);
+      const scope = body.scope === 'message' ? 'message' : 'thread';
+      const gmailMessageId = trimOrNull(body.gmailMessageId);
+      if (!dealId) return res.status(400).json({ error: 'dealId required' });
+      if (scope === 'message' && !gmailMessageId) {
+        return res.status(400).json({ error: 'gmailMessageId required when scope=message' });
+      }
+      const dealRow = (await sql`SELECT id, title FROM deals WHERE id = ${dealId}`)[0];
+      if (!dealRow) return res.status(404).json({ error: 'Deal not found' });
+      const threadRow = (await sql`SELECT gmail_thread_id FROM email_threads WHERE gmail_thread_id = ${id}`)[0];
+      if (!threadRow) return res.status(404).json({ error: 'Thread not found' });
+
+      if (scope === 'thread') {
+        await sql`
+          INSERT INTO email_thread_deals (gmail_thread_id, deal_id, resolved_by)
+          VALUES (${id}, ${dealId}, 'manual')
+          ON CONFLICT (gmail_thread_id, deal_id) DO NOTHING
+        `;
+        await sql`UPDATE email_messages SET unmatched = FALSE WHERE gmail_thread_id = ${id}`;
+      } else {
+        // Make sure the message exists and belongs to this thread before linking.
+        const msgRow = (await sql`
+          SELECT gmail_message_id FROM email_messages
+          WHERE gmail_message_id = ${gmailMessageId} AND gmail_thread_id = ${id}
+        `)[0];
+        if (!msgRow) return res.status(404).json({ error: 'Message not found in this thread' });
+        await sql`
+          INSERT INTO email_message_deals (gmail_message_id, deal_id, linked_by_email)
+          VALUES (${gmailMessageId}, ${dealId}, ${user.email || null})
+          ON CONFLICT (gmail_message_id, deal_id) DO NOTHING
+        `;
+        await sql`UPDATE email_messages SET unmatched = FALSE WHERE gmail_message_id = ${gmailMessageId}`;
+      }
+
+      await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${dealId}`;
+      await sql`
+        INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+        VALUES (
+          ${dealId},
+          'email_linked',
+          ${JSON.stringify({ gmailThreadId: id, gmailMessageId: gmailMessageId || null, scope, source: 'manual' })},
+          ${user.email || null}
+        )
+      `;
+      return res.status(200).json({
+        ok: true,
+        dealId,
+        dealTitle: dealRow.title,
+        scope,
+        gmailMessageId: gmailMessageId || null,
+      });
+    }
+
+    if (req.method === 'DELETE') {
+      const dealId = trimOrNull(req.query.dealId);
+      const scope = req.query.scope === 'message' ? 'message' : 'thread';
+      const gmailMessageId = trimOrNull(req.query.gmailMessageId);
+      if (!dealId) return res.status(400).json({ error: 'dealId required' });
+      if (scope === 'message' && !gmailMessageId) {
+        return res.status(400).json({ error: 'gmailMessageId required when scope=message' });
+      }
+      if (scope === 'thread') {
+        await sql`
+          DELETE FROM email_thread_deals
+          WHERE gmail_thread_id = ${id} AND deal_id = ${dealId}
+        `;
+      } else {
+        await sql`
+          DELETE FROM email_message_deals
+          WHERE gmail_message_id = ${gmailMessageId} AND deal_id = ${dealId}
+        `;
+      }
+      return res.status(200).json({ ok: true });
+    }
+
+    return res.status(405).end();
+  }
+
+  // /api/crm/threads/:gmailThreadId  (DELETE with dealId in query) — legacy
+  // thread-only detach kept for the extension's existing call site.
   if (req.method === 'DELETE') {
     const dealId = trimOrNull(req.query.dealId);
     if (!dealId) return res.status(400).json({ error: 'dealId query param required' });

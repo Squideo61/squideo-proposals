@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { put, del, getDownloadUrl } from '@vercel/blob';
 import sql from '../db.js';
 import { isValidStage } from '../dealStage.js';
-import { makeId, trimOrNull, numberOrNull } from './shared.js';
+import { makeId, trimOrNull, numberOrNull, ensureMessageDealsTable } from './shared.js';
 import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { getFreshAccessToken } from './gmail.js';
@@ -310,6 +310,10 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     `;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const deal = serialiseDeal(rows[0]);
+    // The emails query below joins on email_message_deals which is created by
+    // a manual migration — self-heal so workspaces that skipped it still load
+    // deals without 'relation does not exist'.
+    await ensureMessageDealsTable();
     const [proposals, events, tasks, emails, files, comments] = await Promise.all([
       sql`
         SELECT p.id, p.data, p.number_year, p.number_seq, p.created_at,
@@ -329,16 +333,31 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         ORDER BY done_at NULLS FIRST, due_at ASC NULLS LAST
         LIMIT 50
       `,
-      // Every email_message attached to this deal via the M:N join. Cap at
-      // 200 so we don't truncate long threads — Gmail's API itself caps
-      // typical conversations at well under that.
+      // Every email_message attached to this deal — either thread-scope (via
+      // email_thread_deals, the original M:N) or message-scope (via
+      // email_message_deals, added so one email can be filed against several
+      // deals while the rest of its conversation lives elsewhere). The two
+      // extra boolean-ish columns let the UI choose the right label:
+      //   thread_resolved_by = 'manual' OR message_linked = TRUE → "Linked to <deal>"
+      //   else                                                    → "Auto-linked to <deal>"
+      // Cap at 200 messages — Gmail's typical conversations are well under
+      // that and we don't want to bloat the response.
       sql`
         SELECT em.gmail_message_id, em.gmail_thread_id, em.from_email,
                em.to_emails, em.cc_emails, em.subject, em.snippet,
-               em.direction, em.sent_at, em.user_email
+               em.direction, em.sent_at, em.user_email,
+               MIN(etd.resolved_by) AS thread_resolved_by,
+               BOOL_OR(emd.deal_id IS NOT NULL) AS message_linked
         FROM email_messages em
-        JOIN email_thread_deals etd ON etd.gmail_thread_id = em.gmail_thread_id
-        WHERE etd.deal_id = ${id} AND em.internal_only = FALSE
+        LEFT JOIN email_thread_deals etd
+               ON etd.gmail_thread_id = em.gmail_thread_id AND etd.deal_id = ${id}
+        LEFT JOIN email_message_deals emd
+               ON emd.gmail_message_id = em.gmail_message_id AND emd.deal_id = ${id}
+        WHERE (etd.deal_id IS NOT NULL OR emd.deal_id IS NOT NULL)
+          AND em.internal_only = FALSE
+        GROUP BY em.gmail_message_id, em.gmail_thread_id, em.from_email,
+                 em.to_emails, em.cc_emails, em.subject, em.snippet,
+                 em.direction, em.sent_at, em.user_email
         ORDER BY em.sent_at DESC
         LIMIT 200
       `,
@@ -409,6 +428,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         direction: em.direction,
         sentAt: em.sent_at,
         userEmail: em.user_email,
+        // Manual link: the user explicitly attached this message/thread to
+        // this deal via the inbox "Add to another deal" flow. Auto link: the
+        // inbound resolver picked it up (header / contact / domain match).
+        // Used by the row's "(Auto-)Linked to <deal>" label.
+        manuallyLinked: em.thread_resolved_by === 'manual' || em.message_linked === true,
       })),
       files: files.map(f => ({
         id: f.id, filename: f.filename, mimeType: f.mime_type || null,

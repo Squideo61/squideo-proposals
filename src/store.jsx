@@ -1046,6 +1046,23 @@ export function StoreProvider({ children }) {
         return r;
       });
     },
+    // Attach a thread (or a single message) to another deal. The server
+    // upserts the join row; idempotent. No optimistic patch — the current
+    // deal's email list doesn't change, only the target deal's does, and
+    // the toast confirms success.
+    linkEmail({ threadId, gmailMessageId = null, dealId, scope = 'thread' }) {
+      return api.post(
+        '/api/crm/threads/' + encodeURIComponent(threadId) + '/link',
+        { dealId, scope, gmailMessageId },
+      );
+    },
+    unlinkEmail({ threadId, gmailMessageId = null, dealId, scope = 'thread' }) {
+      const qs = new URLSearchParams({ dealId, scope });
+      if (gmailMessageId) qs.set('gmailMessageId', gmailMessageId);
+      return api.delete(
+        '/api/crm/threads/' + encodeURIComponent(threadId) + '/link?' + qs.toString(),
+      );
+    },
 
     // ---------- Triage (unmatched email messages) ----------
     refreshTriage() {
