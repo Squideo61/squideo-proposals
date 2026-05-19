@@ -2092,13 +2092,23 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
         </div>
       </div>
       {!minimised && (
-        <div style={{ overflowY: 'auto', padding: 14 }}>
+        // Flex column so the inner scroll region can grow and shrink while
+        // the action-buttons row stays pinned at the bottom of the dock.
+        // The form's onSubmit fires for either Send or Enter inside an input,
+        // so the buttons need to be inside the <form> — keeping them inside
+        // the same form, but in a separate flex-shrink:0 footer below the
+        // scrollable region.
+        <form
+          onSubmit={submit}
+          style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+        >
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 14 }}>
           {!gmailConnected && (
             <div style={{ background: '#FEF3C7', color: '#92400E', fontSize: 13, padding: '10px 12px', borderRadius: 6, marginBottom: 12 }}>
               Gmail isn't connected for your account yet. Connect it from Account → Gmail integration before sending.
             </div>
           )}
-          <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <FormRow label="To">
               <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -2204,7 +2214,15 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
                     {sanitizedSignature && (
                       <div
                         className="email-body"
-                        style={{ fontSize: 13, lineHeight: 1.5, color: BRAND.ink, wordBreak: 'break-word' }}
+                        // Cap the in-composer signature preview so a long
+                        // image-heavy signature (banner + legal footer)
+                        // doesn't push Send/Save buttons below the viewport.
+                        // Scrolls within its own box; full signature still
+                        // gets appended to the actual send.
+                        style={{
+                          fontSize: 12, lineHeight: 1.4, color: BRAND.ink,
+                          wordBreak: 'break-word', maxHeight: 90, overflowY: 'auto',
+                        }}
                         dangerouslySetInnerHTML={{ __html: sanitizedSignature }}
                       />
                     )}
@@ -2279,23 +2297,34 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
             <div style={{ fontSize: 11, color: BRAND.muted, lineHeight: 1.45 }}>
               Sent from {state.gmailAccount?.gmailAddress || 'your connected Gmail'} via the Gmail API.
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button type="button" onClick={onClose} className="btn-ghost">Discard</button>
-              <button
-                type="button"
-                onClick={handleSaveDraft}
-                className="btn-ghost"
-                disabled={savingDraft || (!to.trim() && !subject.trim() && !body.trim())}
-                title="Stash this email in the drafts list and close the composer"
-              >
-                Save as draft
-              </button>
-              <button type="submit" className="btn" disabled={!gmailConnected || sending || !to.trim() || !subject.trim() || !body.trim()}>
-                {sending ? 'Sending…' : 'Send'}
-              </button>
-            </div>
-          </form>
-        </div>
+          </div>
+          </div>
+          {/* Pinned action footer — sits below the scrolling body so the
+              Discard / Save as draft / Send buttons stay visible no matter
+              how tall the form (or the signature preview) gets. */}
+          <div
+            style={{
+              flexShrink: 0,
+              display: 'flex', gap: 8, justifyContent: 'flex-end',
+              padding: '10px 14px', borderTop: '1px solid ' + BRAND.border,
+              background: 'white',
+            }}
+          >
+            <button type="button" onClick={onClose} className="btn-ghost">Discard</button>
+            <button
+              type="button"
+              onClick={handleSaveDraft}
+              className="btn-ghost"
+              disabled={savingDraft || (!to.trim() && !subject.trim() && !body.trim())}
+              title="Stash this email in the drafts list and close the composer"
+            >
+              Save as draft
+            </button>
+            <button type="submit" className="btn" disabled={!gmailConnected || sending || !to.trim() || !subject.trim() || !body.trim()}>
+              {sending ? 'Sending…' : 'Send'}
+            </button>
+          </div>
+        </form>
       )}
       {pickingExtraDeal && (
         <ComposerExtraDealPicker
