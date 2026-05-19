@@ -1895,10 +1895,13 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
     setError('');
     setSending(true);
     try {
+      // Only include Cc/Bcc if the user has the corresponding field visible.
+      // Lets them type, hide the field, and have the addresses excluded from
+      // the send — without losing the text in case they re-reveal.
       const resp = await actions.sendGmail({
         to: to.split(',').map(s => s.trim()).filter(Boolean),
-        cc: cc ? cc.split(',').map(s => s.trim()).filter(Boolean) : [],
-        bcc: bcc ? bcc.split(',').map(s => s.trim()).filter(Boolean) : [],
+        cc: (showCc && cc) ? cc.split(',').map(s => s.trim()).filter(Boolean) : [],
+        bcc: (showBcc && bcc) ? bcc.split(',').map(s => s.trim()).filter(Boolean) : [],
         subject: subject.trim(),
         text: body,
         html: bodyToHtml(body),
@@ -2007,30 +2010,30 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
                   style={{ flex: 1, minWidth: 0 }}
                 />
                 {/* Gmail-style: Cc/Bcc start hidden, revealed by a small
-                    button next to the To field. Once revealed they stay. */}
+                    toggle next to the To field. Stays visible when on so
+                    the user can click again to hide. Selected state gets
+                    a tinted background to read as a pill toggle. */}
                 <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                  {!showCc && (
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      style={{ fontSize: 11, padding: '0 8px' }}
-                      onClick={() => setShowCc(true)}
-                      aria-label="Add Cc"
-                    >
-                      Cc
-                    </button>
-                  )}
-                  {!showBcc && (
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      style={{ fontSize: 11, padding: '0 8px' }}
-                      onClick={() => setShowBcc(true)}
-                      aria-label="Add Bcc"
-                    >
-                      Bcc
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowCc((s) => !s)}
+                    aria-pressed={showCc}
+                    aria-label={showCc ? 'Hide Cc' : 'Add Cc'}
+                    className={showCc ? 'btn' : 'btn-ghost'}
+                    style={{ fontSize: 11, padding: '0 8px' }}
+                  >
+                    Cc
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowBcc((s) => !s)}
+                    aria-pressed={showBcc}
+                    aria-label={showBcc ? 'Hide Bcc' : 'Add Bcc'}
+                    className={showBcc ? 'btn' : 'btn-ghost'}
+                    style={{ fontSize: 11, padding: '0 8px' }}
+                  >
+                    Bcc
+                  </button>
                 </div>
               </div>
             </FormRow>
