@@ -633,14 +633,15 @@ export async function gmailSend(req, res, user) {
     }
   }
 
-  // Eagerly attach the conversation to any extra deals the user picked in
-  // the composer. The primary deal's email_thread_deals row will be created
-  // by the inbound resolver when Pub/Sub delivers the message back (it picks
-  // up the X-Squideo-Deal header); we only need to handle the extras here.
-  // Upsert the thread row first so the FK is satisfied even though no
-  // email_messages row exists yet.
-  if (extraDealIds.length && sent.threadId) {
+  // Eagerly persist the sent message into our own email_threads /
+  // email_messages / email_thread_deals tables so the Emails section on the
+  // deal page reflects the send immediately, instead of waiting on Pub/Sub
+  // to deliver the message back. Pub/Sub will later upsert the same rows
+  // (ON CONFLICT DO NOTHING) so this is purely a head-start.
+  if (sent.threadId && sent.id) {
     const participants = Array.from(new Set([fromAddress, ...to, ...cc, ...bcc].filter(Boolean).map(s => s.toLowerCase())));
+    const snippetSrc = (text || htmlOut.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+    const snippet = snippetSrc.slice(0, 200);
     try {
       await sql`
         INSERT INTO email_threads (gmail_thread_id, user_email, subject, last_message_at, participant_emails)
@@ -653,8 +654,31 @@ export async function gmailSend(req, res, user) {
             FROM unnest(COALESCE(email_threads.participant_emails, '{}') || EXCLUDED.participant_emails) AS p
           )
       `;
+      await sql`
+        INSERT INTO email_messages (
+          gmail_message_id, gmail_thread_id, user_email,
+          from_email, to_emails, cc_emails, subject, snippet,
+          body_html, body_text,
+          direction, unmatched, internal_only, source, sent_at
+        ) VALUES (
+          ${sent.id}, ${sent.threadId}, ${user.email},
+          ${fromAddress}, ${to}, ${cc}, ${subject}, ${snippet},
+          ${htmlOut ? htmlOut.slice(0, 8 * 1024) : null}, ${textOut ? textOut.slice(0, 8 * 1024) : null},
+          'outgoing', ${!dealId}, FALSE, 'compose', NOW()
+        )
+        ON CONFLICT (gmail_message_id) DO NOTHING
+      `;
+      if (dealId) {
+        await sql`
+          INSERT INTO email_thread_deals (gmail_thread_id, deal_id, resolved_by)
+          VALUES (${sent.threadId}, ${dealId}, 'x-header')
+          ON CONFLICT (gmail_thread_id, deal_id) DO NOTHING
+        `;
+      }
+      // Attach the conversation to any extra deals the user picked in the
+      // composer ("Add to another deal" / "Create new deal").
       for (const extraId of extraDealIds) {
-        if (extraId === dealId) continue; // Already covered by the primary path.
+        if (extraId === dealId) continue;
         const dealRow = (await sql`SELECT id FROM deals WHERE id = ${extraId}`)[0];
         if (!dealRow) {
           console.warn('[gmail send] extra deal not found, skipping', extraId);
@@ -682,8 +706,9 @@ export async function gmailSend(req, res, user) {
         `;
       }
     } catch (err) {
-      console.error('[gmail send] extra-deal link failed', err);
-      // Don't fail the whole send — the email left the box already.
+      console.error('[gmail send] eager persist failed', err);
+      // Don't fail the whole send — the email left the box already; Pub/Sub
+      // will catch up later.
     }
   }
 
