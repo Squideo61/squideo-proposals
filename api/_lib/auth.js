@@ -70,10 +70,12 @@ export async function verifyTaskActionToken(token) {
 }
 
 // One-click email actions on new quote requests (Qualify / Disqualify links
-// embedded in the internal notification email). Same 14d window as task
-// actions so a stale inbox still resolves cleanly.
-export async function signQuoteRequestActionToken({ quoteRequestId, action }) {
-  return new SignJWT({ qrId: quoteRequestId, act: action })
+// embedded in the internal notification email). The recipient email is baked
+// in so the click handler can re-check admin permission server-side — a
+// stale link forwarded to a now-non-admin gets rejected even though it was
+// minted for a then-admin. Same 14d window as task actions.
+export async function signQuoteRequestActionToken({ quoteRequestId, action, email }) {
+  return new SignJWT({ qrId: quoteRequestId, act: action, email })
     .setProtectedHeader({ alg: 'HS256' })
     .setAudience(QR_ACTION_AUD)
     .setExpirationTime('14d')

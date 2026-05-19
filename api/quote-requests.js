@@ -2,10 +2,12 @@ import crypto from 'node:crypto';
 import { put } from '@vercel/blob';
 import sql from './_lib/db.js';
 import { sendMail, APP_URL } from './_lib/email.js';
-import { sendNotification } from './_lib/notifications.js';
+import { resolveRecipients } from './_lib/notifications.js';
 import { buildResumeEmail } from './_lib/quoteResumeEmail.js';
 import { signQuoteRequestActionToken, verifyQuoteRequestActionToken } from './_lib/auth.js';
 import { qualifyQuoteRequest, disqualifyQuoteRequest } from './_lib/quoteRequestActions.js';
+import { getRoleForUser } from './_lib/userRoles.js';
+import { hasPermission } from './_lib/permissions.js';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const NOTIFY_TO = process.env.QUOTE_REQUEST_NOTIFY_TO || 'adam@squideo.co.uk';
@@ -91,13 +93,22 @@ function buildNotificationEmail(qr, files, { qualifyUrl, disqualifyUrl, crmUrl }
        </ul>`
     : '';
 
-  const ctaHtml = (qualifyUrl && disqualifyUrl)
-    ? `<div style="margin:22px 0 4px;">
-         <a href="${escapeHtml(qualifyUrl)}" style="display:inline-block;background:#16A34A;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;">Qualify — create deal</a>
-         <a href="${escapeHtml(disqualifyUrl)}" style="display:inline-block;background:#DC2626;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;">Disqualify — delete</a>
-         ${crmUrl ? `<a href="${escapeHtml(crmUrl)}" style="display:inline-block;background:#F1F4F7;color:#0F2A3D;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;border:1px solid #E5E9EE;">Open in CRM</a>` : ''}
-       </div>
-       <p style="margin:6px 0 0;font-size:12px;color:#6B7785;">One-click links expire in 14 days. Disqualifying deletes the request and any attachments.</p>`
+  const buttons = [];
+  if (qualifyUrl) {
+    buttons.push(`<a href="${escapeHtml(qualifyUrl)}" style="display:inline-block;background:#16A34A;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;">Qualify — create deal</a>`);
+  }
+  if (disqualifyUrl) {
+    buttons.push(`<a href="${escapeHtml(disqualifyUrl)}" style="display:inline-block;background:#DC2626;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;">Disqualify — delete</a>`);
+  }
+  if (crmUrl) {
+    buttons.push(`<a href="${escapeHtml(crmUrl)}" style="display:inline-block;background:#F1F4F7;color:#0F2A3D;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;border:1px solid #E5E9EE;">Open in CRM</a>`);
+  }
+  const footnote = disqualifyUrl
+    ? 'One-click links expire in 14 days. Disqualifying deletes the request and any attachments.'
+    : 'One-click links expire in 14 days.';
+  const ctaHtml = buttons.length
+    ? `<div style="margin:22px 0 4px;">${buttons.join('')}</div>
+       <p style="margin:6px 0 0;font-size:12px;color:#6B7785;">${footnote}</p>`
     : '';
 
   const html = `<!doctype html>
@@ -158,8 +169,10 @@ export default async function handler(req, res) {
         return res.status(400).send(renderActionPage({ title: 'Bad request', body: 'Token does not match this request.' }));
       }
 
+      const actorEmail = (payload.email || '').toLowerCase() || null;
+
       if (act === 'qualify') {
-        const result = await qualifyQuoteRequest(qrId, { actorEmail: NOTIFY_TO || null });
+        const result = await qualifyQuoteRequest(qrId, { actorEmail: actorEmail || NOTIFY_TO || null });
         if (result.status === 'not_found') {
           return res.status(404).send(renderActionPage({ title: 'Not found', body: 'This quote request no longer exists — it may have been deleted.' }));
         }
@@ -173,6 +186,15 @@ export default async function handler(req, res) {
       }
 
       if (act === 'disqualify') {
+        // Re-check admin at click time — a stale token from a now-non-admin
+        // (or a link forwarded to a non-admin) must not delete the request.
+        const role = actorEmail ? await getRoleForUser(actorEmail) : null;
+        if (!hasPermission(role, 'users.manage')) {
+          return res.status(403).send(renderActionPage({
+            title: 'Not allowed',
+            body: 'Only workspace admins can disqualify quote requests. Open the CRM and ask an admin to action it.',
+          }));
+        }
         const result = await disqualifyQuoteRequest(qrId);
         if (result.status === 'not_found') {
           return res.status(200).send(renderActionPage({ title: 'Already gone', body: 'This quote request was already removed.' }));
@@ -418,21 +440,42 @@ export default async function handler(req, res) {
 
     const subjectName = qr.name || qr.email || 'Anonymous';
     const apiBase = APP_URL.replace(/\/$/, '');
-    const [qualifyToken, disqualifyToken] = await Promise.all([
-      signQuoteRequestActionToken({ quoteRequestId: qr.id, action: 'qualify' }),
-      signQuoteRequestActionToken({ quoteRequestId: qr.id, action: 'disqualify' }),
-    ]);
-    const qualifyUrl = `${apiBase}/api/quote-requests?action=action-link&id=${encodeURIComponent(qr.id)}&act=qualify&token=${encodeURIComponent(qualifyToken)}`;
-    const disqualifyUrl = `${apiBase}/api/quote-requests?action=action-link&id=${encodeURIComponent(qr.id)}&act=disqualify&token=${encodeURIComponent(disqualifyToken)}`;
     // SPA has no deep-link route for a specific quote request — the list view
     // navigates internally, so we just send recipients to the app root.
     const crmUrl = apiBase;
 
-    await sendNotification('quote_request.new', {
-      subject: `New quote request from ${subjectName}`,
-      html: buildNotificationEmail(qr, storedFiles, { qualifyUrl, disqualifyUrl, crmUrl }),
-      extraRecipients: NOTIFY_TO ? [NOTIFY_TO] : [],
-    });
+    // Resolve recipients ourselves so we can per-recipient: sign tokens bound
+    // to each recipient's email, and gate the Disqualify button by admin
+    // permission. Non-admins still get Qualify (creating a deal is sensible
+    // for any teammate); only admins see Disqualify (which deletes data).
+    const subscribed = await resolveRecipients('quote_request.new', {});
+    const extras = NOTIFY_TO ? [NOTIFY_TO.toLowerCase()] : [];
+    const recipients = Array.from(new Set([...subscribed, ...extras]));
+    const subject = `New quote request from ${subjectName}`;
+
+    await Promise.allSettled(recipients.map(async (to) => {
+      const role = await getRoleForUser(to);
+      const isAdmin = hasPermission(role, 'users.manage');
+
+      const qualifyToken = await signQuoteRequestActionToken({
+        quoteRequestId: qr.id, action: 'qualify', email: to,
+      });
+      const qualifyUrl = `${apiBase}/api/quote-requests?action=action-link&id=${encodeURIComponent(qr.id)}&act=qualify&token=${encodeURIComponent(qualifyToken)}`;
+
+      let disqualifyUrl = null;
+      if (isAdmin) {
+        const disqualifyToken = await signQuoteRequestActionToken({
+          quoteRequestId: qr.id, action: 'disqualify', email: to,
+        });
+        disqualifyUrl = `${apiBase}/api/quote-requests?action=action-link&id=${encodeURIComponent(qr.id)}&act=disqualify&token=${encodeURIComponent(disqualifyToken)}`;
+      }
+
+      await sendMail({
+        to,
+        subject,
+        html: buildNotificationEmail(qr, storedFiles, { qualifyUrl, disqualifyUrl, crmUrl }),
+      });
+    }));
 
     try {
       if (qr.form_session_id) {
