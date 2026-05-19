@@ -1999,16 +1999,15 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
           <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <FormRow label="To">
               <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
-                <input
-                  className="input"
-                  type="text"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  placeholder="name@example.com"
-                  autoFocus
-                  required
-                  style={{ flex: 1, minWidth: 0 }}
-                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <RecipientInput
+                    value={to}
+                    onChange={setTo}
+                    placeholder="name@example.com"
+                    autoFocus
+                    required
+                  />
+                </div>
                 {/* Gmail-style: Cc/Bcc start hidden, revealed by a small
                     toggle next to the To field. Stays visible when on so
                     the user can click again to hide. Selected state gets
@@ -2039,12 +2038,12 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
             </FormRow>
             {showCc && (
               <FormRow label="Cc">
-                <input className="input" type="text" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="comma,separated@example.com" />
+                <RecipientInput value={cc} onChange={setCc} placeholder="comma,separated@example.com" />
               </FormRow>
             )}
             {showBcc && (
               <FormRow label="Bcc">
-                <input className="input" type="text" value={bcc} onChange={(e) => setBcc(e.target.value)} placeholder="comma,separated@example.com" />
+                <RecipientInput value={bcc} onChange={setBcc} placeholder="comma,separated@example.com" />
               </FormRow>
             )}
             <FormRow label="Subject">
@@ -2209,6 +2208,201 @@ function EmailComposerModal({ deal, contact, onClose, onSent }) {
             setCreatingExtraDeal(false);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+// Email-recipient input with CRM contact typeahead. Wraps a plain <input>
+// (comma-separated emails) with a popup that suggests up to 6 contacts as
+// the user types. Pattern mirrors XeroContactPicker but filters synchronously
+// against state.contacts since the list is already in memory and small
+// enough to scan on every keystroke.
+//
+// The popup is caret-aware: the "current token" is the substring between
+// the last comma before the caret and the caret itself. Picking a suggestion
+// replaces just that token with `<email>, `, leaving any earlier or later
+// tokens intact and parking the caret ready for the next address.
+function RecipientInput({ value, onChange, placeholder, autoFocus, required }) {
+  const { state } = useStore();
+  const inputRef = useRef(null);
+  const wrapperRef = useRef(null);
+  const [caret, setCaret] = useState(0);
+  const [focused, setFocused] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(0);
+
+  // Already-included emails (lowercased) so we don't suggest somebody twice.
+  const includedEmails = useMemo(() => {
+    return new Set(
+      (value || '')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean)
+    );
+  }, [value]);
+
+  // Locate the boundaries of the current token around `caret`.
+  const tokenBounds = useMemo(() => {
+    const v = value || '';
+    let start = caret;
+    while (start > 0 && v[start - 1] !== ',') start--;
+    let end = caret;
+    while (end < v.length && v[end] !== ',') end++;
+    return { start, end };
+  }, [value, caret]);
+  const currentToken = (value || '').slice(tokenBounds.start, tokenBounds.end).trim();
+
+  // Filter contacts. Empty token (just inserted, or empty field) → no popup.
+  const suggestions = useMemo(() => {
+    if (!focused) return [];
+    const q = currentToken.toLowerCase();
+    if (!q) return [];
+    const out = [];
+    for (const c of Object.values(state.contacts || {})) {
+      if (!c?.email) continue;
+      const emailLower = c.email.toLowerCase();
+      if (includedEmails.has(emailLower)) continue;
+      const nameLower = (c.name || '').toLowerCase();
+      const nameHit = nameLower.includes(q);
+      const emailHit = emailLower.includes(q);
+      if (!nameHit && !emailHit) continue;
+      // Score: prefix > substring; name > email at the same tier.
+      let score = 0;
+      if (nameLower.startsWith(q)) score = 4;
+      else if (emailLower.startsWith(q)) score = 3;
+      else if (nameHit) score = 2;
+      else score = 1;
+      out.push({ contact: c, score });
+    }
+    out.sort((a, b) => b.score - a.score || (a.contact.name || a.contact.email).localeCompare(b.contact.name || b.contact.email));
+    return out.slice(0, 6).map((r) => r.contact);
+  }, [state.contacts, focused, currentToken, includedEmails]);
+
+  // Clamp active row when suggestions list changes.
+  useEffect(() => {
+    if (activeIdx >= suggestions.length) setActiveIdx(0);
+  }, [suggestions.length, activeIdx]);
+
+  const updateCaretFromEvent = (e) => {
+    const pos = e.target.selectionStart;
+    if (typeof pos === 'number') setCaret(pos);
+  };
+
+  const handleChange = (e) => {
+    onChange(e.target.value);
+    updateCaretFromEvent(e);
+  };
+
+  // Replace currentToken with `<email>, ` and reposition the caret.
+  const commit = (contact) => {
+    if (!contact?.email) return;
+    const v = value || '';
+    const before = v.slice(0, tokenBounds.start);
+    const after = v.slice(tokenBounds.end);
+    // If `before` doesn't already end with ", " (which it would for tokens
+    // after the first), keep it as-is. We always emit ", " *after* the
+    // inserted address so the caret is parked for the next one.
+    const insert = contact.email + ', ';
+    const next = before + insert + after.replace(/^[ ,]+/, '');
+    onChange(next);
+    const newCaret = (before + insert).length;
+    setActiveIdx(0);
+    // Wait for the controlled value to flush, then move the caret.
+    requestAnimationFrame(() => {
+      if (inputRef.current) {
+        inputRef.current.setSelectionRange(newCaret, newCaret);
+        setCaret(newCaret);
+        inputRef.current.focus();
+      }
+    });
+  };
+
+  const handleKeyDown = (e) => {
+    if (!suggestions.length) {
+      // No popup → don't trap any keys. Track caret on any movement.
+      if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+        setTimeout(() => updateCaretFromEvent(e), 0);
+      }
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIdx((i) => (i + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIdx((i) => (i - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      commit(suggestions[activeIdx]);
+    } else if (e.key === ',') {
+      // Allow comma to commit the current highlight rather than break the token.
+      e.preventDefault();
+      commit(suggestions[activeIdx]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setFocused(false);
+    }
+  };
+
+  return (
+    <div ref={wrapperRef} style={{ position: 'relative', width: '100%' }}>
+      <input
+        ref={inputRef}
+        className="input"
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        required={required}
+        onChange={handleChange}
+        onKeyUp={updateCaretFromEvent}
+        onClick={updateCaretFromEvent}
+        onKeyDown={handleKeyDown}
+        onFocus={(e) => { setFocused(true); updateCaretFromEvent(e); }}
+        // Delay the close so a click on the popup still registers before the
+        // blur tears it down. mousedown on a row would otherwise miss.
+        onBlur={() => setTimeout(() => setFocused(false), 120)}
+        style={{ width: '100%' }}
+        autoComplete="off"
+      />
+      {focused && suggestions.length > 0 && (
+        <div
+          role="listbox"
+          style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2,
+            background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
+            boxShadow: '0 8px 20px rgba(15,42,61,0.15)', zIndex: 10, padding: 4,
+            maxHeight: 280, overflowY: 'auto',
+          }}
+        >
+          {suggestions.map((c, i) => {
+            const companyName = c.companyId ? state.companies?.[c.companyId]?.name : null;
+            const active = i === activeIdx;
+            return (
+              <div
+                key={c.id}
+                role="option"
+                aria-selected={active}
+                onMouseDown={(e) => { e.preventDefault(); commit(c); }}
+                onMouseEnter={() => setActiveIdx(i)}
+                style={{
+                  padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
+                  background: active ? '#F1F4F7' : 'transparent',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontSize: 13 }}>
+                  <span style={{ fontWeight: 600, color: BRAND.ink }}>
+                    {c.name || <span style={{ fontStyle: 'italic', color: BRAND.muted }}>(no name)</span>}
+                  </span>
+                  <span style={{ color: BRAND.muted, fontSize: 12 }}>{c.email}</span>
+                </div>
+                {companyName && (
+                  <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>{companyName}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
