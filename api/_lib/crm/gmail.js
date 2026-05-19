@@ -22,6 +22,31 @@ import {
 } from './shared.js';
 import { gmailBackfill } from './gmailBackfill.js';
 
+// One-shot per cold start: ensure the gmail signature columns exist. Belongs
+// in the manual Neon migration but absent on workspaces where that step was
+// skipped, in which case every SELECT/UPDATE that touches signature_html 500s
+// with 'column does not exist'. The ALTER is idempotent. Module-level cached
+// so a successful first call short-circuits subsequent ones for free.
+let signatureColumnsEnsured = null;
+async function ensureSignatureColumns() {
+  if (signatureColumnsEnsured) return signatureColumnsEnsured;
+  signatureColumnsEnsured = (async () => {
+    try {
+      await sql`
+        ALTER TABLE gmail_accounts
+          ADD COLUMN IF NOT EXISTS signature_html TEXT,
+          ADD COLUMN IF NOT EXISTS signature_fetched_at TIMESTAMPTZ
+      `;
+    } catch (err) {
+      // Don't cache a failure — retry on the next request so a transient DB
+      // hiccup doesn't strand the workspace.
+      signatureColumnsEnsured = null;
+      console.warn('[gmail signature] ensureSignatureColumns failed', err.message);
+    }
+  })();
+  return signatureColumnsEnsured;
+}
+
 export async function gmailRoute(req, res, id, action, user) {
   // /api/crm/gmail               GET   — current connection status for the user
   // /api/crm/gmail/connect       GET   — returns Google auth URL to redirect to
@@ -158,6 +183,13 @@ export async function gmailRoute(req, res, id, action, user) {
 
   if (id === 'signature') {
     if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
+    // Self-heal: db/migrations/20260512_gmail_signature.sql adds these two
+    // columns but has to be applied manually via the Neon SQL editor (see
+    // DEPLOYMENT-GUIDE.md). If a deploy went out without that step, every
+    // query below 500s with 'column "signature_html" does not exist'. The
+    // ALTER is idempotent (IF NOT EXISTS) and module-level cached so we only
+    // pay for it on the first signature request per cold start.
+    await ensureSignatureColumns();
     const rows = await sql`
       SELECT signature_html, signature_fetched_at
       FROM gmail_accounts
@@ -381,6 +413,10 @@ export async function gmailCallback(req, res) {
 // sendAs has an empty signature, the API call 4xx'd, the access token can't
 // be refreshed, etc.). Old callers ignore the return.
 export async function refreshSignatureCache(userEmail) {
+  // Same self-heal as the signature endpoint — refreshSignatureCache is also
+  // called from the OAuth callback (where the endpoint guard hasn't run) and
+  // from the send path's stale-cache background refresh.
+  await ensureSignatureColumns();
   let accessToken;
   try {
     accessToken = await getFreshAccessToken(userEmail);
@@ -486,6 +522,10 @@ export async function gmailSend(req, res, user) {
     throw err;
   }
 
+  // Ensure the signature columns exist before SELECTing them (see comment on
+  // ensureSignatureColumns). Otherwise sending an email 500s on workspaces
+  // that never applied the migration.
+  await ensureSignatureColumns();
   const acctRow = (await sql`
     SELECT gmail_address, signature_html, signature_fetched_at
     FROM gmail_accounts WHERE user_email = ${user.email}
