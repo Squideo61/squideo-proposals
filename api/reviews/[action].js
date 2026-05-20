@@ -190,11 +190,10 @@ async function uploadToken(req, res) {
       onBeforeGenerateToken: async () => {
         const user = await requireAuth(req, res);
         if (!user) throw new Error('Unauthorised');
-        return {
-          allowedContentTypes: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-msvideo', 'video/x-matroska'],
-          maximumSizeInBytes: 2 * 1024 * 1024 * 1024, // 2 GB
-          addRandomSuffix: true,
-        };
+        // Keep the token minimal: a too-large maximumSizeInBytes or an
+        // allowedContentTypes mismatch makes the multipart-create 400. Auth is
+        // already enforced above, so producers can only reach this path.
+        return { addRandomSuffix: true };
       },
       // NB: deliberately no onUploadCompleted. Providing it makes the Blob API
       // embed a callbackUrl and wait for a server-to-server confirmation before
