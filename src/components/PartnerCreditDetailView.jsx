@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Ban, Banknote, Coins, Link2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
+import { permissionsInclude } from '../lib/permissions.js';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, useIsMobile } from '../utils.js';
@@ -39,6 +40,7 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
   const [editingSub, setEditingSub] = useState(null);
   const [payingSub, setPayingSub] = useState(null);
   const isMobile = useIsMobile();
+  const isAdmin = permissionsInclude(state.session?.permissions, 'users.manage');
 
   useEffect(() => {
     let active = true;
@@ -336,6 +338,7 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
           patch={actions.patchManualSubscription}
           remove={actions.deleteManualSubscription}
           showMsg={showMsg}
+          isAdmin={isAdmin}
         />
       )}
 
@@ -656,7 +659,7 @@ function AdjustmentForm({ onSubmit }) {
   );
 }
 
-function EditSubscriptionModal({ subscription, onClose, onSaved, onDeleted, patch, remove, showMsg }) {
+function EditSubscriptionModal({ subscription, onClose, onSaved, onDeleted, patch, remove, showMsg, isAdmin }) {
   const s = subscription;
   const [clientName, setClientName] = useState(s.proposalTitle || '');
   const [creditsPerMonth, setCreditsPerMonth] = useState(String(s.creditsPerMonth ?? ''));
@@ -762,9 +765,11 @@ function EditSubscriptionModal({ subscription, onClose, onSaved, onDeleted, patc
           </select>
         </DetailField>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 4 }}>
-          <button type="button" onClick={handleDelete} disabled={removing} className="btn-ghost" style={{ color: '#B91C1C' }}>
-            <Trash2 size={14} /> {removing ? 'Removing…' : 'Delete subscription'}
-          </button>
+          {isAdmin ? (
+            <button type="button" onClick={handleDelete} disabled={removing} className="btn-ghost" style={{ color: '#B91C1C' }}>
+              <Trash2 size={14} /> {removing ? 'Removing…' : 'Delete subscription'}
+            </button>
+          ) : <span />}
           <div style={{ display: 'flex', gap: 8 }}>
             <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
             <button type="submit" disabled={submitting} className="btn">

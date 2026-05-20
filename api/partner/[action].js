@@ -12,6 +12,8 @@
 import Stripe from 'stripe';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
+import { getRole } from '../_lib/userRoles.js';
+import { hasPermission } from '../_lib/permissions.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -50,7 +52,13 @@ export default async function handler(req, res) {
       const subId = req.query.id ? String(req.query.id) : null;
       if (!subId) return res.status(400).json({ error: 'id required' });
       if (req.method === 'PATCH')  return await patchManualSubscription(req, res, subId);
-      if (req.method === 'DELETE') return await deleteManualSubscription(res, subId);
+      if (req.method === 'DELETE') {
+        // Deleting a subscription is destructive and admin-only.
+        if (!hasPermission(await getRole(user.role), 'users.manage')) {
+          return res.status(403).json({ error: 'Only admins can delete subscriptions' });
+        }
+        return await deleteManualSubscription(res, subId);
+      }
       return res.status(405).end();
     }
 

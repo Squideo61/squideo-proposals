@@ -382,6 +382,8 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
   // discounted project + first month of the partner subscription.
   const dueNowTotal = partnerSelected ? (discountedTotal + partnerTotal) : total;
   const incVat = (n) => formatGBP(n * (1 + (data.vatRate || 0)));
+  // When VAT is 0%, drop every "+ VAT" / "inc. VAT" reference from the proposal.
+  const showVat = (Number(data.vatRate) || 0) > 0;
 
   const handleSign = async () => {
     if (!sigName.trim() || !sigEmail.trim() || !sigAccepted) {
@@ -664,7 +666,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                   <div style={{ fontWeight: 600, fontSize: 14, marginBottom: opt.description ? 6 : 0 }}>{opt.label || `Option ${i + 1}`}</div>
                   {opt.description && <p style={{ fontSize: 14, lineHeight: 1.7, margin: 0, whiteSpace: 'pre-wrap', color: BRAND.text }}>{opt.description}</p>}
                 </div>
-                <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0, paddingTop: 2 }}>{formatGBP(opt.price)} <span style={{ fontWeight: 400, fontSize: 12, color: BRAND.muted }}>+ VAT</span></span>
+                <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0, paddingTop: 2 }}>{formatGBP(opt.price)}{showVat && <span style={{ fontWeight: 400, fontSize: 12, color: BRAND.muted }}> + VAT</span>}</span>
               </label>
             ))}
           </div>
