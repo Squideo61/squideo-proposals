@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -95,7 +95,10 @@ export function VideoRevision({ token, data }) {
   const [comments, setComments] = useState(data.comments || []);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [approvedAt, setApprovedAt] = useState(data.approvedAt || null);
+  // Approval is per-video.
+  const [approvals, setApprovals] = useState(() =>
+    Object.fromEntries((data.videos || []).map(v => [v.id, v.approvedAt || null])));
+  const approvedAt = activeVideo ? approvals[activeVideo.id] : null;
   const [approving, setApproving] = useState(false);
 
   const [draft, setDraft] = useState('');
@@ -180,19 +183,30 @@ export function VideoRevision({ token, data }) {
   }
 
   async function approve() {
-    if (approvedAt) return;
-    if (!window.confirm('Approve all revisions? This finalises the videos and no further comments can be added.')) return;
+    if (!activeVideo || approvedAt) return;
+    const single = videos.length === 1;
+    const msg = single
+      ? 'Approve this video? This finalises it and no further comments can be added.'
+      : `Approve "${activeVideo.title}"? This finalises this video; your other videos stay open.`;
+    if (!window.confirm(msg)) return;
     setApproving(true);
     try {
-      const res = await actions.approveRevision(token, name);
-      setApprovedAt(res.approvedAt || new Date().toISOString());
-      showMsg('Revisions approved — thank you!');
+      const res = await actions.approveRevision(token, activeVideo.id, name);
+      const at = res.approvedAt || new Date().toISOString();
+      setApprovals(prev => ({ ...prev, [activeVideo.id]: at }));
+      showMsg('Video approved — thank you!');
     } catch (err) {
       showMsg(err.message || 'Could not approve');
     } finally {
       setApproving(false);
     }
   }
+
+  // Record a view whenever the client lands on / switches to a draft.
+  useEffect(() => {
+    if (!identified || !version) return;
+    actions.recordRevisionView(token, { versionId: version.id, name, email });
+  }, [identified, version?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Gate screen ─────────────────────────────────────────────────────────────
   if (!identified) {
@@ -267,14 +281,14 @@ export function VideoRevision({ token, data }) {
           {approvedAt ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
               background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600 }}>
-              <CheckCircle2 size={15} /> Revisions approved
+              <CheckCircle2 size={15} /> {videos.length > 1 ? 'Video approved' : 'Revisions approved'}
             </span>
           ) : (
             <button onClick={approve} disabled={approving}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
                 border: 'none', background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600,
                 cursor: approving ? 'default' : 'pointer' }}>
-              <CheckCircle2 size={15} /> {approving ? 'Approving…' : 'Approve Revisions'}
+              <CheckCircle2 size={15} /> {approving ? 'Approving…' : (videos.length > 1 ? 'Approve this video' : 'Approve Revisions')}
             </button>
           )}
         </div>
@@ -355,7 +369,7 @@ export function VideoRevision({ token, data }) {
             <div style={{ borderTop: `1px solid ${BRAND.border}`, padding: 16, textAlign: 'center',
               color: '#16A34A', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center',
               justifyContent: 'center', gap: 6 }}>
-              <CheckCircle2 size={16} /> Revisions approved — these videos are finalised.
+              <CheckCircle2 size={16} /> Approved — this video is finalised.
             </div>
           ) : (
           <div style={{ borderTop: `1px solid ${BRAND.border}`, padding: 12 }}>

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { useIsMobile } from '../../utils.js';
+import { useIsMobile, formatRelativeTime } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { Modal } from '../ui.jsx';
 
@@ -86,11 +86,15 @@ export function RevisionsView({ onBack }) {
               <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setSelectedId(p.id)}>
                 <div style={{ fontWeight: 600, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
                   {p.title}
-                  {p.approvedAt && <span style={APPROVED_CHIP}><CheckCircle2 size={11} /> Approved</span>}
+                  {(p.videoCount || 0) > 0 && (p.approvedVideoCount || 0) === (p.videoCount || 0) &&
+                    <span style={APPROVED_CHIP}><CheckCircle2 size={11} /> All approved</span>}
                 </div>
                 <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>
                   {p.clientName ? p.clientName + ' · ' : ''}
-                  {p.videoCount || 0} video{p.videoCount === 1 ? '' : 's'} · {p.versionCount || 0} draft{p.versionCount === 1 ? '' : 's'} · {p.commentCount || 0} comment{p.commentCount === 1 ? '' : 's'}
+                  {p.videoCount || 0} video{p.videoCount === 1 ? '' : 's'}
+                  {' · '}{p.approvedVideoCount || 0} approved
+                  {' · '}{Math.max(0, (p.videoCount || 0) - (p.approvedVideoCount || 0))} pending review
+                  {' · '}{p.commentCount || 0} comment{p.commentCount === 1 ? '' : 's'}
                 </div>
               </div>
               <CopyLinkButton token={p.shareToken} showMsg={showMsg} />
@@ -222,7 +226,6 @@ function ProjectDetail({ projectId, onBack }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
           <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>{detail.title}</h1>
-          {detail.approvedAt && <span style={APPROVED_CHIP}><CheckCircle2 size={11} /> Approved</span>}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={addVideo} className="btn-ghost"><Plus size={14} /> Add video</button>
@@ -308,6 +311,9 @@ function VideoCard({ projectId, video, commentsByVersion }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <Film size={18} color={BRAND.blue} />
         <strong style={{ color: BRAND.ink, fontSize: 16 }}>{video.title}</strong>
+        {video.approvedAt
+          ? <span style={APPROVED_CHIP}><CheckCircle2 size={11} /> Approved</span>
+          : <span style={{ ...APPROVED_CHIP, background: '#F59E0B' }}>Pending review</span>}
         <span style={{ fontSize: 12, color: BRAND.muted }}>{versions.length} draft{versions.length === 1 ? '' : 's'}</span>
         <button
           onClick={() => { if (window.confirm(`Delete "${video.title}" and all its drafts?`)) actions.deleteRevisionVideo(projectId, video.id); }}
@@ -362,6 +368,18 @@ function VideoCard({ projectId, video, commentsByVersion }) {
             </div>
             {isOpen && (
               <>
+                {(v.views && v.views.length > 0) && (
+                  <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 8 }}>
+                    Viewed by{' '}
+                    {v.views.map((vw, i) => (
+                      <span key={vw.email}>
+                        {i > 0 ? ', ' : ''}
+                        <strong style={{ color: BRAND.ink, fontWeight: 600 }}>{vw.name || vw.email}</strong>
+                        {' '}({formatRelativeTime(vw.lastViewedAt)}{vw.viewCount > 1 ? `, ${vw.viewCount}×` : ''})
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <video src={v.videoUrl} controls style={{ width: '100%', maxHeight: 320, borderRadius: 8, background: '#000' }} />
                 {comments.length > 0 && (
                   <div style={{ marginTop: 10 }}>

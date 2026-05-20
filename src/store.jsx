@@ -1427,9 +1427,14 @@ export function StoreProvider({ children }) {
       return api.post('/api/revisions/viewer?token=' + encodeURIComponent(token), { name, email });
     },
 
-    // Client finalises the project (locks further comments).
-    approveRevision(token, approvedBy) {
-      return api.post('/api/revisions/approve?token=' + encodeURIComponent(token), { approvedBy });
+    // Client finalises one video (locks further comments on its drafts).
+    approveRevision(token, videoId, approvedBy) {
+      return api.post('/api/revisions/approve?token=' + encodeURIComponent(token), { videoId, approvedBy });
+    },
+
+    // Records that the viewer opened a specific draft (per-draft view tracking).
+    recordRevisionView(token, payload) {
+      return api.post('/api/revisions/view?token=' + encodeURIComponent(token), payload).catch(() => {});
     },
 
     // Workspace-wide booking link for the "Schedule Review Call" button.

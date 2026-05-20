@@ -68,6 +68,11 @@ export default async function handler(req, res) {
       if (req.method !== 'POST') return res.status(405).end();
       return await recordViewer(req, res);
     }
+    // Records that a viewer opened a specific draft.
+    if (action === 'view') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return await recordView(req, res);
+    }
 
     // ─── Authenticated producer routes ───────────────────────────────────────
     // The Blob client-upload handshake authenticates inside onBeforeGenerateToken.
@@ -140,11 +145,13 @@ async function listProjects(res) {
       rp.id, rp.title, rp.client_name, rp.share_token, rp.created_by,
       rp.created_at, rp.updated_at, rp.approved_at,
       COALESCE(vid.video_count, 0)::INT AS video_count,
+      COALESCE(vid.approved_video_count, 0)::INT AS approved_video_count,
       COALESCE(v.version_count, 0)::INT AS version_count,
       COALESCE(c.comment_count, 0)::INT AS comment_count
     FROM revision_projects rp
     LEFT JOIN (
-      SELECT project_id, COUNT(*) AS video_count FROM revision_videos GROUP BY project_id
+      SELECT project_id, COUNT(*) AS video_count, COUNT(approved_at) AS approved_video_count
+      FROM revision_videos GROUP BY project_id
     ) vid ON vid.project_id = rp.id
     LEFT JOIN (
       SELECT project_id, COUNT(*) AS version_count FROM revision_versions GROUP BY project_id
@@ -234,7 +241,7 @@ async function projectDetail(res, id) {
   if (!project) return res.status(404).json({ error: 'not found' });
 
   const videos = await sql`
-    SELECT id, title, sort_order, created_at FROM revision_videos
+    SELECT id, title, sort_order, created_at, approved_at, approved_by FROM revision_videos
     WHERE project_id = ${id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -243,6 +250,18 @@ async function projectDetail(res, id) {
     FROM revision_versions WHERE project_id = ${id}
     ORDER BY version_number DESC
   `;
+  const views = await sql`
+    SELECT version_id, viewer_name, viewer_email, view_count, first_viewed_at, last_viewed_at
+    FROM revision_version_views WHERE project_id = ${id}
+    ORDER BY last_viewed_at DESC
+  `;
+  const viewsByVersion = views.reduce((m, vw) => {
+    (m[vw.version_id] = m[vw.version_id] || []).push({
+      name: vw.viewer_name, email: vw.viewer_email, viewCount: vw.view_count,
+      firstViewedAt: vw.first_viewed_at, lastViewedAt: vw.last_viewed_at,
+    });
+    return m;
+  }, {});
   const comments = await sql`
     SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds, rc.body,
            rc.author_name, rc.author_email, rc.created_at,
@@ -260,7 +279,10 @@ async function projectDetail(res, id) {
     ...projectRow(project),
     videos: videos.map(vid => ({
       id: vid.id, title: vid.title, sortOrder: vid.sort_order, createdAt: vid.created_at,
-      versions: versions.filter(v => v.video_id === vid.id).map(versionRow),
+      approvedAt: vid.approved_at || null, approvedBy: vid.approved_by || null,
+      versions: versions.filter(v => v.video_id === vid.id).map(ver => ({
+        ...versionRow(ver), views: viewsByVersion[ver.id] || [],
+      })),
     })),
     comments: comments.map(commentRow),
     viewers: viewers.map(vw => ({ name: vw.name, email: vw.email, firstSeen: vw.first_seen, lastSeen: vw.last_seen })),
@@ -362,13 +384,10 @@ async function registerVersion(req, res, user, videoId) {
     RETURNING id, video_id, version_number, label, filename, mime_type, size_bytes,
               blob_url, uploaded_by, created_at
   `;
-  // A new draft reopens the project: clear any prior approval so the client can
-  // review again and leave comments.
-  await sql`
-    UPDATE revision_projects
-       SET approved_at = NULL, approved_by = NULL, updated_at = NOW()
-     WHERE id = ${video.project_id}
-  `;
+  // A new draft reopens that video: clear its approval so the client can review
+  // again and leave comments.
+  await sql`UPDATE revision_videos SET approved_at = NULL, approved_by = NULL WHERE id = ${videoId}`;
+  await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${video.project_id}`;
   return res.status(201).json(versionRow(row));
 }
 
@@ -389,14 +408,14 @@ async function publicView(req, res) {
   if (!token) return res.status(400).json({ error: 'token required' });
 
   const [project] = await sql`
-    SELECT id, title, client_name, approved_at, approved_by FROM revision_projects WHERE share_token = ${token}
+    SELECT id, title, client_name FROM revision_projects WHERE share_token = ${token}
   `;
   if (!project) return res.status(404).json({ error: 'Not found' });
 
   const [cfg] = await sql`SELECT revision_call_url FROM settings WHERE id = 1`;
 
   const videos = await sql`
-    SELECT id, title, sort_order, created_at FROM revision_videos
+    SELECT id, title, sort_order, created_at, approved_at, approved_by FROM revision_videos
     WHERE project_id = ${project.id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -421,11 +440,10 @@ async function publicView(req, res) {
   return res.status(200).json({
     title: project.title,
     clientName: project.client_name,
-    approvedAt: project.approved_at || null,
-    approvedBy: project.approved_by || null,
     callUrl: (cfg && cfg.revision_call_url) || null,
     videos: videos.map(vid => ({
       id: vid.id, title: vid.title,
+      approvedAt: vid.approved_at || null, approvedBy: vid.approved_by || null,
       versions: versions.filter(v => v.video_id === vid.id).map(mapVersion),
     })),
     comments: comments.map(commentRow),
@@ -453,25 +471,59 @@ async function recordViewer(req, res) {
   return res.status(200).json({ ok: true });
 }
 
-// Client finalises the project: locks it so no further comments can be added.
+// Client finalises one video: locks it so no further comments can be added to
+// its drafts. Other videos in the project stay open.
 async function approveRevision(req, res) {
   const token = req.query.token ? String(req.query.token) : null;
   if (!token) return res.status(400).json({ error: 'token required' });
   const body = parseBody(req);
+  const videoId = (body.videoId || '').trim();
   const approvedBy = (body.approvedBy || '').trim().slice(0, 120) || 'Client';
+  if (!videoId) return res.status(400).json({ error: 'videoId required' });
 
-  const [proj] = await sql`SELECT id, approved_at FROM revision_projects WHERE share_token = ${token}`;
-  if (!proj) return res.status(404).json({ error: 'Not found' });
-  if (proj.approved_at) {
-    return res.status(200).json({ approvedAt: proj.approved_at, approvedBy: null, alreadyApproved: true });
+  // The video must belong to the project this share_token unlocks.
+  const [video] = await sql`
+    SELECT vid.id, vid.approved_at, vid.project_id FROM revision_videos vid
+    JOIN revision_projects rp ON rp.id = vid.project_id
+    WHERE vid.id = ${videoId} AND rp.share_token = ${token}
+  `;
+  if (!video) return res.status(404).json({ error: 'Not found' });
+  if (video.approved_at) {
+    return res.status(200).json({ videoId, approvedAt: video.approved_at, alreadyApproved: true });
   }
   const [row] = await sql`
-    UPDATE revision_projects
-       SET approved_at = NOW(), approved_by = ${approvedBy}, updated_at = NOW()
-     WHERE id = ${proj.id}
+    UPDATE revision_videos SET approved_at = NOW(), approved_by = ${approvedBy} WHERE id = ${videoId}
     RETURNING approved_at, approved_by
   `;
-  return res.status(200).json({ approvedAt: row.approved_at, approvedBy: row.approved_by });
+  await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${video.project_id}`;
+  return res.status(200).json({ videoId, approvedAt: row.approved_at, approvedBy: row.approved_by });
+}
+
+// Upserts a per-draft view record for a reviewer.
+async function recordView(req, res) {
+  const token = req.query.token ? String(req.query.token) : null;
+  if (!token) return res.status(400).json({ error: 'token required' });
+  const body = parseBody(req);
+  const versionId = (body.versionId || '').trim();
+  const name = (body.name || '').trim().slice(0, 120) || null;
+  const email = (body.email || '').trim().slice(0, 255).toLowerCase();
+  if (!versionId || !email) return res.status(400).json({ error: 'versionId and email required' });
+
+  const [match] = await sql`
+    SELECT ver.id, ver.project_id FROM revision_versions ver
+    JOIN revision_projects rp ON rp.id = ver.project_id
+    WHERE ver.id = ${versionId} AND rp.share_token = ${token}
+  `;
+  if (!match) return res.status(404).json({ error: 'Not found' });
+  await sql`
+    INSERT INTO revision_version_views (id, version_id, project_id, viewer_name, viewer_email)
+    VALUES (${crypto.randomUUID()}, ${versionId}, ${match.project_id}, ${name}, ${email})
+    ON CONFLICT (version_id, lower(viewer_email))
+    DO UPDATE SET view_count = revision_version_views.view_count + 1,
+                  viewer_name = EXCLUDED.viewer_name,
+                  last_viewed_at = NOW()
+  `;
+  return res.status(200).json({ ok: true });
 }
 
 async function postComment(req, res) {
@@ -498,15 +550,17 @@ async function postComment(req, res) {
   if (!text && !attachmentUrl) return res.status(400).json({ error: 'comment body or attachment required' });
   if (text.length > 4000) return res.status(400).json({ error: 'comment too long' });
 
-  // The version must belong to the project this share_token unlocks.
+  // The version must belong to the project this share_token unlocks, and its
+  // video must not yet be approved.
   const [match] = await sql`
-    SELECT rv.id, rp.approved_at FROM revision_versions rv
-    JOIN revision_projects rp ON rp.id = rv.project_id
-    WHERE rv.id = ${versionId} AND rp.share_token = ${token}
+    SELECT ver.id, vid.approved_at FROM revision_versions ver
+    JOIN revision_videos vid ON vid.id = ver.video_id
+    JOIN revision_projects rp ON rp.id = ver.project_id
+    WHERE ver.id = ${versionId} AND rp.share_token = ${token}
   `;
   if (!match) return res.status(404).json({ error: 'version not found' });
   if (match.approved_at) {
-    return res.status(403).json({ error: 'These revisions have been approved and are now locked.' });
+    return res.status(403).json({ error: 'This video has been approved and is now locked.' });
   }
 
   // A reply's parent must be on the same version.
@@ -543,6 +597,7 @@ function projectRow(r) {
     approvedAt: r.approved_at || null,
     approvedBy: r.approved_by || null,
     videoCount: r.video_count !== undefined ? r.video_count : undefined,
+    approvedVideoCount: r.approved_video_count !== undefined ? r.approved_video_count : undefined,
     versionCount: r.version_count !== undefined ? r.version_count : undefined,
     commentCount: r.comment_count !== undefined ? r.comment_count : undefined,
   };
