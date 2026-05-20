@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { waitUntil } from '@vercel/functions';
-import { put, del } from '@vercel/blob';
+import { put, del, get } from '@vercel/blob';
 import sql from '../db.js';
 import { APP_URL } from '../email.js';
 import {
@@ -298,11 +298,10 @@ async function gmailAttachments(req, res, user) {
 
     const fileId = crypto.randomUUID();
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    // Public so performGmailSend (and the scheduled-send cron) can fetch the
-    // bytes directly. The path carries a random UUID so it isn't guessable,
-    // and the blob is deleted right after the email is sent or cancelled.
+    // Private store — performGmailSend / the scheduled-send cron read the
+    // bytes back via the authenticated get(). Deleted right after send/cancel.
     const blob = await put(`email-attachments/${user.email}/${fileId}/${safeName}`, fileBuffer, {
-      access: 'public', contentType: mimeType,
+      access: 'private', contentType: mimeType,
     });
     return res.status(201).json({
       filename, mimeType, sizeBytes: fileBuffer.length,
@@ -729,15 +728,16 @@ function buildBodyEntity(htmlOut, textOut) {
 async function buildAttachmentParts(attachments) {
   const parts = [];
   for (const a of attachments || []) {
-    // Attachments are uploaded to a public blob at an unguessable path (then
-    // deleted after send), so the bytes are directly fetchable here.
-    const r = await fetch(a.blobUrl);
-    if (!r.ok) {
-      const e = new Error(`Attachment fetch failed (${r.status}) for ${a.filename}`);
+    // The blob store is private, so read the bytes through the SDK's get()
+    // (it sets the auth header from BLOB_READ_WRITE_TOKEN) rather than a bare
+    // fetch, which would 403.
+    const result = await get(a.blobUrl, { access: 'private' });
+    if (!result || result.statusCode !== 200 || !result.stream) {
+      const e = new Error(`Attachment fetch failed for ${a.filename}`);
       e.code = 'GMAIL_SEND_FAILED';
       throw e;
     }
-    const buf = Buffer.from(await r.arrayBuffer());
+    const buf = Buffer.from(await new Response(result.stream).arrayBuffer());
     const b64 = buf.toString('base64').replace(/(.{76})/g, '$1\r\n');
     const name = (a.filename || 'attachment').replace(/"/g, '');
     parts.push(
