@@ -220,7 +220,12 @@ async function invitesHandler(req, res) {
     const { email, role } = req.body || {};
     if (!email || !email.includes('@')) return res.status(400).json({ error: 'A valid email is required' });
     const cleanEmail = email.trim().toLowerCase();
-    const wantedRole = role === 'admin' ? 'admin' : 'member';
+    // Persist the actual role the admin chose, validated against the roles
+    // table — the invite is the source of truth for the role applied on
+    // signup. Collapsing everything non-admin to 'member' silently dropped
+    // custom roles like Producer.
+    const roleRow = role ? await getRole(role) : null;
+    const wantedRole = roleRow ? roleRow.id : 'member';
 
     const existingUser = await sql`SELECT email FROM users WHERE lower(email) = ${cleanEmail}`;
     if (existingUser.length) return res.status(409).json({ error: 'A user with that email already exists' });
