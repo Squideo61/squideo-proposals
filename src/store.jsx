@@ -43,9 +43,9 @@ function emptyStore() {
     companies: {},
     tasks: [],
     dealDetail: {},
-    // Video reviews (Frame.io-style client review links)
-    reviews: [],
-    reviewDetail: {},
+    // Video revisions (Frame.io-style client revision links)
+    revisions: [],
+    revisionDetail: {},
     gmailAccount: null,
     triage: [],
     quoteRequests: [],
@@ -1335,42 +1335,42 @@ export function StoreProvider({ children }) {
         });
     },
 
-    // ---------- Video reviews (client review links) ----------
-    loadReviews() {
-      return api.get('/api/reviews/projects')
-        .then((list) => { setState(s => ({ ...s, reviews: list || [] })); return list; })
+    // ---------- Video revisions (client revision links) ----------
+    loadRevisions() {
+      return api.get('/api/revisions/projects')
+        .then((list) => { setState(s => ({ ...s, revisions: list || [] })); return list; })
         .catch(() => {});
     },
 
-    createReviewProject(payload) {
-      return api.post('/api/reviews/projects', payload).then((project) => {
-        setState(s => ({ ...s, reviews: [project, ...(s.reviews || [])] }));
+    createRevisionProject(payload) {
+      return api.post('/api/revisions/projects', payload).then((project) => {
+        setState(s => ({ ...s, revisions: [project, ...(s.revisions || [])] }));
         return project;
       });
     },
 
-    deleteReviewProject(id) {
-      setState(s => ({ ...s, reviews: (s.reviews || []).filter(p => p.id !== id) }));
-      return api.delete('/api/reviews/projects?id=' + encodeURIComponent(id))
-        .catch(() => actions.loadReviews());
+    deleteRevisionProject(id) {
+      setState(s => ({ ...s, revisions: (s.revisions || []).filter(p => p.id !== id) }));
+      return api.delete('/api/revisions/projects?id=' + encodeURIComponent(id))
+        .catch(() => actions.loadRevisions());
     },
 
-    loadReviewDetail(id) {
-      return api.get('/api/reviews/detail?id=' + encodeURIComponent(id))
+    loadRevisionDetail(id) {
+      return api.get('/api/revisions/detail?id=' + encodeURIComponent(id))
         .then((detail) => {
-          setState(s => ({ ...s, reviewDetail: { ...s.reviewDetail, [id]: detail } }));
+          setState(s => ({ ...s, revisionDetail: { ...s.revisionDetail, [id]: detail } }));
           return detail;
         });
     },
 
     // Streams the video straight to Vercel Blob (bypassing the serverless body
     // limit), then registers the version row. `onProgress` receives 0–100.
-    async uploadReviewVersion(projectId, file, { label = null, onProgress } = {}) {
+    async uploadRevisionVersion(projectId, file, { label = null, onProgress } = {}) {
       const { upload } = await import('@vercel/blob/client');
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const blob = await upload('review-videos/' + projectId + '/' + safeName, file, {
+      const blob = await upload('revision-videos/' + projectId + '/' + safeName, file, {
         access: 'public',
-        handleUploadUrl: '/api/reviews/upload-token',
+        handleUploadUrl: '/api/revisions/upload-token',
         contentType: file.type || 'video/mp4',
         // Chunk the file into parts. Videos are large; a single-shot PUT to the
         // Blob API fails (server rejects the oversized body with no CORS header,
@@ -1380,43 +1380,43 @@ export function StoreProvider({ children }) {
         onUploadProgress: onProgress ? (e) => onProgress(Math.round(e.percentage)) : undefined,
       });
       const version = await api.post(
-        '/api/reviews/versions?projectId=' + encodeURIComponent(projectId),
+        '/api/revisions/versions?projectId=' + encodeURIComponent(projectId),
         { blobUrl: blob.url, blobPathname: blob.pathname, filename: file.name,
           mimeType: file.type || null, sizeBytes: file.size, label }
       );
       setState(s => {
-        const detail = s.reviewDetail[projectId];
+        const detail = s.revisionDetail[projectId];
         const nextDetail = detail
-          ? { ...s.reviewDetail, [projectId]: { ...detail, versions: [version, ...(detail.versions || [])] } }
-          : s.reviewDetail;
-        const reviews = (s.reviews || []).map(p =>
+          ? { ...s.revisionDetail, [projectId]: { ...detail, versions: [version, ...(detail.versions || [])] } }
+          : s.revisionDetail;
+        const revisions = (s.revisions || []).map(p =>
           p.id === projectId ? { ...p, versionCount: (p.versionCount || 0) + 1 } : p);
-        return { ...s, reviewDetail: nextDetail, reviews };
+        return { ...s, revisionDetail: nextDetail, revisions };
       });
       return version;
     },
 
-    deleteReviewVersion(projectId, versionId) {
+    deleteRevisionVersion(projectId, versionId) {
       setState(s => {
-        const detail = s.reviewDetail[projectId];
+        const detail = s.revisionDetail[projectId];
         if (!detail) return s;
-        return { ...s, reviewDetail: { ...s.reviewDetail, [projectId]:
+        return { ...s, revisionDetail: { ...s.revisionDetail, [projectId]:
           { ...detail, versions: (detail.versions || []).filter(v => v.id !== versionId) } } };
       });
-      return api.delete('/api/reviews/versions?id=' + encodeURIComponent(versionId))
-        .catch(() => actions.loadReviewDetail(projectId));
+      return api.delete('/api/revisions/versions?id=' + encodeURIComponent(versionId))
+        .catch(() => actions.loadRevisionDetail(projectId));
     },
 
-    // ---------- Public review viewer (no auth) ----------
-    loadPublicReview(token) {
+    // ---------- Public revision viewer (no auth) ----------
+    loadPublicRevision(token) {
       setState(s => ({ ...s, loading: true }));
-      return api.get('/api/reviews/public?token=' + encodeURIComponent(token))
+      return api.get('/api/revisions/public?token=' + encodeURIComponent(token))
         .then((data) => { setState(s => ({ ...s, loading: false })); return data; })
         .catch((err) => { setState(s => ({ ...s, loading: false })); throw err; });
     },
 
-    postReviewComment(token, payload) {
-      return api.post('/api/reviews/comment?token=' + encodeURIComponent(token), payload);
+    postRevisionComment(token, payload) {
+      return api.post('/api/revisions/comment?token=' + encodeURIComponent(token), payload);
     },
 
     // ---------- Secondary contacts on a deal ----------

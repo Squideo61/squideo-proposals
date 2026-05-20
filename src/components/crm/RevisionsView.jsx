@@ -14,19 +14,19 @@ function tc(seconds) {
   return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
 }
 
-export function ReviewsView({ onBack }) {
+export function RevisionsView({ onBack }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [selectedId, setSelectedId] = useState(null);
   const [creating, setCreating] = useState(false);
 
-  useEffect(() => { actions.loadReviews(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { actions.loadRevisions(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (selectedId) {
-    return <ProjectDetail projectId={selectedId} onBack={() => { setSelectedId(null); actions.loadReviews(); }} />;
+    return <ProjectDetail projectId={selectedId} onBack={() => { setSelectedId(null); actions.loadRevisions(); }} />;
   }
 
-  const projects = state.reviews || [];
+  const projects = state.revisions || [];
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: isMobile ? '16px 12px' : '32px 24px' }}>
@@ -34,7 +34,7 @@ export function ReviewsView({ onBack }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
           <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Clapperboard size={22} color={BRAND.blue} /> Video Reviews
+            <Clapperboard size={22} color={BRAND.blue} /> Video Revisions
           </h1>
         </div>
         <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New project</button>
@@ -42,7 +42,7 @@ export function ReviewsView({ onBack }) {
 
       {projects.length === 0 ? (
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
-          No review projects yet. Create one, upload a draft video, and share the link with your client.
+          No revision projects yet. Create one, upload a draft video, and share the link with your client.
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -60,7 +60,7 @@ export function ReviewsView({ onBack }) {
               <CopyLinkButton token={p.shareToken} showMsg={showMsg} />
               <button onClick={() => setSelectedId(p.id)} className="btn-ghost">Open</button>
               <button
-                onClick={() => { if (window.confirm('Delete this project and all its videos?')) actions.deleteReviewProject(p.id); }}
+                onClick={() => { if (window.confirm('Delete this project and all its videos?')) actions.deleteRevisionProject(p.id); }}
                 className="btn-ghost" title="Delete project"><Trash2 size={14} /></button>
             </div>
           ))}
@@ -78,10 +78,10 @@ export function ReviewsView({ onBack }) {
 }
 
 function CopyLinkButton({ token, showMsg }) {
-  const url = PUBLIC_BASE + '/?review=' + token;
+  const url = PUBLIC_BASE + '/?revision=' + token;
   return (
     <button
-      onClick={() => navigator.clipboard.writeText(url).then(() => showMsg('Review link copied')).catch(() => {})}
+      onClick={() => navigator.clipboard.writeText(url).then(() => showMsg('Revision link copied')).catch(() => {})}
       className="btn-ghost" title={url}><Copy size={14} /> Copy link</button>
   );
 }
@@ -96,7 +96,7 @@ function NewProjectModal({ onClose, onCreated }) {
     if (!title.trim()) return;
     setSaving(true);
     try {
-      const proj = await actions.createReviewProject({ title: title.trim(), clientName: clientName.trim() || null });
+      const proj = await actions.createRevisionProject({ title: title.trim(), clientName: clientName.trim() || null });
       onCreated(proj);
     } catch (err) {
       showMsg(err.message || 'Could not create project');
@@ -106,7 +106,7 @@ function NewProjectModal({ onClose, onCreated }) {
 
   return (
     <Modal onClose={onClose}>
-      <h2 style={{ fontSize: 18, margin: '0 0 16px', color: BRAND.ink }}>New review project</h2>
+      <h2 style={{ fontSize: 18, margin: '0 0 16px', color: BRAND.ink }}>New revision project</h2>
       <label style={{ fontSize: 13, color: BRAND.muted }}>Project title</label>
       <input value={title} onChange={e => setTitle(e.target.value)} autoFocus
         placeholder="e.g. UN WCMC video 2"
@@ -128,16 +128,16 @@ function ProjectDetail({ projectId, onBack }) {
   const fileInputRef = useRef(null);
   const [progress, setProgress] = useState(null); // 0–100 while uploading
 
-  useEffect(() => { actions.loadReviewDetail(projectId); }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { actions.loadRevisionDetail(projectId); }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const detail = state.reviewDetail[projectId];
+  const detail = state.revisionDetail[projectId];
 
   async function handleFile(file) {
     if (!file) return;
     if (!file.type.startsWith('video/')) { showMsg('Please choose a video file'); return; }
     setProgress(0);
     try {
-      await actions.uploadReviewVersion(projectId, file, { onProgress: setProgress });
+      await actions.uploadRevisionVersion(projectId, file, { onProgress: setProgress });
       showMsg('Version uploaded');
     } catch (err) {
       showMsg(err.message || 'Upload failed');
@@ -204,7 +204,7 @@ function ProjectDetail({ projectId, onBack }) {
                 <MessageSquare size={13} /> {comments.length}
               </span>
               <button
-                onClick={() => { if (window.confirm('Delete this version?')) actions.deleteReviewVersion(projectId, v.id); }}
+                onClick={() => { if (window.confirm('Delete this version?')) actions.deleteRevisionVersion(projectId, v.id); }}
                 className="btn-ghost" style={{ marginLeft: 'auto' }} title="Delete version"><Trash2 size={14} /></button>
             </div>
             <video src={v.videoUrl} controls style={{ width: '100%', maxHeight: 360, borderRadius: 8, background: '#000' }} />

@@ -2,19 +2,19 @@ import React, { useEffect, useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { Toast } from '../ui.jsx';
-import { VideoReview } from './VideoReview.jsx';
+import { VideoRevision } from './VideoRevision.jsx';
 
-// Public, unauthenticated entry point for a client review link
-// (/?review=<share_token>). Mirrors PublicClientShell: load once, render the
+// Public, unauthenticated entry point for a client revision link
+// (/?revision=<share_token>). Mirrors PublicClientShell: load once, render the
 // viewer, surface a friendly message if the link is dead.
-export function ReviewShell({ token }) {
+export function RevisionShell({ token }) {
   const { actions, toast } = useStore();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     let alive = true;
-    actions.loadPublicReview(token)
+    actions.loadPublicRevision(token)
       .then(d => { if (alive) setData(d); })
       .catch(() => { if (alive) setError(true); });
     return () => { alive = false; };
@@ -22,16 +22,16 @@ export function ReviewShell({ token }) {
 
   if (error) {
     return (
-      <Centered>This review link is no longer available.</Centered>
+      <Centered>This revision link is no longer available.</Centered>
     );
   }
   if (!data) {
-    return <Centered>Loading review…</Centered>;
+    return <Centered>Loading revision…</Centered>;
   }
 
   return (
     <div style={{ background: BRAND.paper, color: BRAND.ink }}>
-      <VideoReview token={token} data={data} />
+      <VideoRevision token={token} data={data} />
       <Toast msg={toast} />
     </div>
   );

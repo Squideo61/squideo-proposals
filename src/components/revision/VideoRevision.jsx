@@ -3,7 +3,7 @@ import { MessageSquare, Send, Clapperboard } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 
-const NAME_KEY = 'squideo.review.name';
+const NAME_KEY = 'squideo.revision.name';
 
 // Diagonal, tiled "DRAFT" watermark as an inline SVG. Rendered as a repeating
 // CSS background over the player so the watermark is never baked into the file.
@@ -27,12 +27,12 @@ function tc(seconds) {
 }
 
 /**
- * Frame.io-style review surface: a video player on the left and a timecoded
+ * Frame.io-style revision surface: a video player on the left and a timecoded
  * comment thread on the right. `data` is the public payload from
- * /api/reviews?action=public. Comments are posted through the store and
+ * /api/revisions/public. Comments are posted through the store and
  * appended locally (no realtime needed for v1).
  */
-export function VideoReview({ token, data }) {
+export function VideoRevision({ token, data }) {
   const { actions, showMsg } = useStore();
   const videoRef = useRef(null);
 
@@ -91,7 +91,7 @@ export function VideoReview({ token, data }) {
     }
     setPosting(true);
     try {
-      const created = await actions.postReviewComment(token, {
+      const created = await actions.postRevisionComment(token, {
         versionId,
         body: text,
         authorName: author,
@@ -111,7 +111,7 @@ export function VideoReview({ token, data }) {
     return (
       <div style={{ padding: 48, textAlign: 'center', color: BRAND.muted }}>
         <Clapperboard size={32} style={{ opacity: 0.4 }} />
-        <p>No video has been uploaded for review yet.</p>
+        <p>No video has been uploaded for revision yet.</p>
       </div>
     );
   }

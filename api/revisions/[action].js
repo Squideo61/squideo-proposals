@@ -3,27 +3,30 @@
 // same pattern as api/partner/[action].js.
 //
 // Producer (authenticated) routes:
-//   GET    /api/reviews/projects                — list projects + version counts
-//   POST   /api/reviews/projects                — create a project
-//   DELETE /api/reviews/projects?id=…           — delete a project (cascade + blobs)
-//   GET    /api/reviews/detail?id=…             — full project + versions + comments
-//   POST   /api/reviews/upload-token            — Vercel Blob client-upload token handler
-//   POST   /api/reviews/versions?projectId=…    — register a freshly-uploaded version
-//   DELETE /api/reviews/versions?id=…           — delete a version (+ blob)
+//   GET    /api/revisions/projects                — list projects + version counts
+//   POST   /api/revisions/projects                — create a project
+//   DELETE /api/revisions/projects?id=…           — delete a project (cascade + blobs)
+//   GET    /api/revisions/detail?id=…             — full project + versions + comments
+//   POST   /api/revisions/upload-token            — Vercel Blob client-upload token handler
+//   POST   /api/revisions/versions?projectId=…    — register a freshly-uploaded version
+//   DELETE /api/revisions/versions?id=…           — delete a version (+ blob)
 //
 // Public (no auth, keyed by share_token) routes:
-//   GET    /api/reviews/public?token=…          — project + versions + comments for the viewer
-//   POST   /api/reviews/comment?token=…         — leave a timecoded comment
+//   GET    /api/revisions/public?token=…          — project + versions + comments for the viewer
+//   POST   /api/revisions/comment?token=…         — leave a timecoded comment
 import crypto from 'crypto';
 import { del } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
 import sql from '../_lib/db.js';
-
-// Review videos live in their own PUBLIC Blob store (separate from the private
-// store used for deal files) so clients can stream them directly via the share
-// link. Its read-write token is exposed under this env var.
-const REVIEW_BLOB_TOKEN = process.env.REVIEW_BLOB_READ_WRITE_TOKEN;
 import { cors, requireAuth } from '../_lib/middleware.js';
+
+// Revision videos live in their own PUBLIC Blob store (separate from the private
+// store used for deal files) so clients can stream them directly via the share
+// link. Reads REVISION_BLOB_READ_WRITE_TOKEN, falling back to the original
+// REVIEW_BLOB_READ_WRITE_TOKEN so the working deployment keeps uploading until
+// (optionally) the store is reconnected under the new prefix.
+const REVISION_BLOB_TOKEN =
+  process.env.REVISION_BLOB_READ_WRITE_TOKEN || process.env.REVIEW_BLOB_READ_WRITE_TOKEN;
 
 function parseBody(req) {
   let body = req.body;
@@ -94,7 +97,7 @@ export default async function handler(req, res) {
 
     return res.status(404).json({ error: 'Unknown action' });
   } catch (err) {
-    console.error('[reviews]', err);
+    console.error('[revisions]', err);
     return res.status(500).json({ error: err?.message || 'Server error' });
   }
 }
@@ -108,13 +111,13 @@ async function listProjects(res) {
       rp.created_at, rp.updated_at,
       COALESCE(v.version_count, 0)::INT AS version_count,
       COALESCE(c.comment_count, 0)::INT AS comment_count
-    FROM review_projects rp
+    FROM revision_projects rp
     LEFT JOIN (
-      SELECT project_id, COUNT(*) AS version_count FROM review_versions GROUP BY project_id
+      SELECT project_id, COUNT(*) AS version_count FROM revision_versions GROUP BY project_id
     ) v ON v.project_id = rp.id
     LEFT JOIN (
       SELECT rv.project_id, COUNT(*) AS comment_count
-      FROM review_comments rc JOIN review_versions rv ON rv.id = rc.version_id
+      FROM revision_comments rc JOIN revision_versions rv ON rv.id = rc.version_id
       GROUP BY rv.project_id
     ) c ON c.project_id = rp.id
     ORDER BY rp.updated_at DESC
@@ -131,7 +134,7 @@ async function createProject(req, res, user) {
   const id = crypto.randomUUID();
   const shareToken = crypto.randomUUID();
   const [row] = await sql`
-    INSERT INTO review_projects (id, title, client_name, share_token, created_by)
+    INSERT INTO revision_projects (id, title, client_name, share_token, created_by)
     VALUES (${id}, ${title}, ${clientName}, ${shareToken}, ${user.email || null})
     RETURNING id, title, client_name, share_token, created_by, created_at, updated_at
   `;
@@ -140,13 +143,13 @@ async function createProject(req, res, user) {
 
 async function deleteProject(res, id) {
   // Remove the blobs first; the DB cascade then clears versions + comments.
-  const versions = await sql`SELECT blob_url FROM review_versions WHERE project_id = ${id}`;
+  const versions = await sql`SELECT blob_url FROM revision_versions WHERE project_id = ${id}`;
   for (const v of versions) {
-    try { await del(v.blob_url, { token: REVIEW_BLOB_TOKEN }); } catch (err) {
-      console.error('[reviews] blob delete failed', err.message);
+    try { await del(v.blob_url, { token: REVISION_BLOB_TOKEN }); } catch (err) {
+      console.error('[revisions] blob delete failed', err.message);
     }
   }
-  const result = await sql`DELETE FROM review_projects WHERE id = ${id} RETURNING id`;
+  const result = await sql`DELETE FROM revision_projects WHERE id = ${id} RETURNING id`;
   if (!result.length) return res.status(404).json({ error: 'not found' });
   return res.status(200).json({ ok: true });
 }
@@ -154,21 +157,21 @@ async function deleteProject(res, id) {
 async function projectDetail(res, id) {
   const [project] = await sql`
     SELECT id, title, client_name, share_token, created_by, created_at, updated_at
-    FROM review_projects WHERE id = ${id}
+    FROM revision_projects WHERE id = ${id}
   `;
   if (!project) return res.status(404).json({ error: 'not found' });
 
   const versions = await sql`
     SELECT id, version_number, label, filename, mime_type, size_bytes,
            blob_url, uploaded_by, created_at
-    FROM review_versions WHERE project_id = ${id}
+    FROM revision_versions WHERE project_id = ${id}
     ORDER BY version_number DESC
   `;
   const comments = await sql`
     SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds, rc.body,
            rc.author_name, rc.author_email, rc.created_at
-    FROM review_comments rc
-    JOIN review_versions rv ON rv.id = rc.version_id
+    FROM revision_comments rc
+    JOIN revision_versions rv ON rv.id = rc.version_id
     WHERE rv.project_id = ${id}
     ORDER BY rc.created_at ASC
   `;
@@ -187,16 +190,16 @@ async function projectDetail(res, id) {
 // registerVersion once the upload resolves (works in local dev too, where the
 // onUploadCompleted callback can't reach localhost).
 async function uploadToken(req, res) {
-  if (!REVIEW_BLOB_TOKEN)
-    return res.status(503).json({ error: 'Review video storage not configured (REVIEW_BLOB_READ_WRITE_TOKEN missing)' });
+  if (!REVISION_BLOB_TOKEN)
+    return res.status(503).json({ error: 'Revision video storage not configured (REVISION_BLOB_READ_WRITE_TOKEN missing)' });
   const body = parseBody(req);
   try {
     const jsonResponse = await handleUpload({
       body,
       request: req,
-      // Mint the client token against the public review store, not the default
+      // Mint the client token against the public revision store, not the default
       // (private) deal-files store.
-      token: REVIEW_BLOB_TOKEN,
+      token: REVISION_BLOB_TOKEN,
       onBeforeGenerateToken: async () => {
         const user = await requireAuth(req, res);
         if (!user) throw new Error('Unauthorised');
@@ -229,16 +232,16 @@ async function registerVersion(req, res, user, projectId) {
   const label = body.label ? String(body.label).trim() : null;
   if (!blobUrl) return res.status(400).json({ error: 'blobUrl required' });
 
-  const [project] = await sql`SELECT id FROM review_projects WHERE id = ${projectId}`;
+  const [project] = await sql`SELECT id FROM revision_projects WHERE id = ${projectId}`;
   if (!project) return res.status(404).json({ error: 'project not found' });
 
   const [{ next }] = await sql`
     SELECT COALESCE(MAX(version_number), 0) + 1 AS next
-    FROM review_versions WHERE project_id = ${projectId}
+    FROM revision_versions WHERE project_id = ${projectId}
   `;
   const id = crypto.randomUUID();
   const [row] = await sql`
-    INSERT INTO review_versions
+    INSERT INTO revision_versions
       (id, project_id, version_number, label, filename, mime_type, size_bytes,
        blob_url, blob_pathname, uploaded_by)
     VALUES
@@ -247,17 +250,17 @@ async function registerVersion(req, res, user, projectId) {
     RETURNING id, version_number, label, filename, mime_type, size_bytes,
               blob_url, uploaded_by, created_at
   `;
-  await sql`UPDATE review_projects SET updated_at = NOW() WHERE id = ${projectId}`;
+  await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${projectId}`;
   return res.status(201).json(versionRow(row));
 }
 
 async function deleteVersion(res, id) {
-  const [row] = await sql`SELECT blob_url FROM review_versions WHERE id = ${id}`;
+  const [row] = await sql`SELECT blob_url FROM revision_versions WHERE id = ${id}`;
   if (!row) return res.status(404).json({ error: 'not found' });
-  try { await del(row.blob_url, { token: REVIEW_BLOB_TOKEN }); } catch (err) {
-    console.error('[reviews] blob delete failed', err.message);
+  try { await del(row.blob_url, { token: REVISION_BLOB_TOKEN }); } catch (err) {
+    console.error('[revisions] blob delete failed', err.message);
   }
-  await sql`DELETE FROM review_versions WHERE id = ${id}`;
+  await sql`DELETE FROM revision_versions WHERE id = ${id}`;
   return res.status(200).json({ ok: true });
 }
 
@@ -268,20 +271,20 @@ async function publicView(req, res) {
   if (!token) return res.status(400).json({ error: 'token required' });
 
   const [project] = await sql`
-    SELECT id, title, client_name FROM review_projects WHERE share_token = ${token}
+    SELECT id, title, client_name FROM revision_projects WHERE share_token = ${token}
   `;
   if (!project) return res.status(404).json({ error: 'Not found' });
 
   const versions = await sql`
     SELECT id, version_number, label, mime_type, blob_url, created_at
-    FROM review_versions WHERE project_id = ${project.id}
+    FROM revision_versions WHERE project_id = ${project.id}
     ORDER BY version_number DESC
   `;
   const comments = await sql`
     SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds, rc.body,
            rc.author_name, rc.created_at
-    FROM review_comments rc
-    JOIN review_versions rv ON rv.id = rc.version_id
+    FROM revision_comments rc
+    JOIN revision_versions rv ON rv.id = rc.version_id
     WHERE rv.project_id = ${project.id}
     ORDER BY rc.created_at ASC
   `;
@@ -321,8 +324,8 @@ async function postComment(req, res) {
 
   // The version must belong to the project this share_token unlocks.
   const [match] = await sql`
-    SELECT rv.id FROM review_versions rv
-    JOIN review_projects rp ON rp.id = rv.project_id
+    SELECT rv.id FROM revision_versions rv
+    JOIN revision_projects rp ON rp.id = rv.project_id
     WHERE rv.id = ${versionId} AND rp.share_token = ${token}
   `;
   if (!match) return res.status(404).json({ error: 'version not found' });
@@ -330,13 +333,13 @@ async function postComment(req, res) {
   // A reply's parent must be on the same version.
   let validParent = null;
   if (parentId) {
-    const [p] = await sql`SELECT id FROM review_comments WHERE id = ${parentId} AND version_id = ${versionId}`;
+    const [p] = await sql`SELECT id FROM revision_comments WHERE id = ${parentId} AND version_id = ${versionId}`;
     if (p) validParent = parentId;
   }
 
   const id = crypto.randomUUID();
   const [row] = await sql`
-    INSERT INTO review_comments
+    INSERT INTO revision_comments
       (id, version_id, parent_id, timecode_seconds, body, author_name)
     VALUES (${id}, ${versionId}, ${validParent}, ${timecode}, ${text}, ${authorName})
     RETURNING id, version_id, parent_id, timecode_seconds, body, author_name, created_at

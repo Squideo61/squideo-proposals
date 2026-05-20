@@ -8,7 +8,7 @@ import { Toast } from './components/ui.jsx';
 import { AuthScreen } from './components/AuthScreen.jsx';
 import { ClientView } from './components/ClientView.jsx';
 import { PublicClientShell } from './components/PublicClientShell.jsx';
-import { ReviewShell } from './components/review/ReviewShell.jsx';
+import { RevisionShell } from './components/revision/RevisionShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
 
 const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: m[name] })));
@@ -31,7 +31,7 @@ const TasksView = lazyNamed(() => import('./components/crm/TasksView.jsx'), 'Tas
 const TriageView = lazyNamed(() => import('./components/crm/TriageView.jsx'), 'TriageView');
 const QuoteRequestsView = lazyNamed(() => import('./components/crm/QuoteRequestsView.jsx'), 'QuoteRequestsView');
 const XeroDuplicatesView = lazyNamed(() => import('./components/crm/XeroDuplicatesView.jsx'), 'XeroDuplicatesView');
-const ReviewsView = lazyNamed(() => import('./components/crm/ReviewsView.jsx'), 'ReviewsView');
+const RevisionsView = lazyNamed(() => import('./components/crm/RevisionsView.jsx'), 'RevisionsView');
 
 function ViewFallback() {
   return (
@@ -256,7 +256,7 @@ function AppShell() {
           onManageTasks={() => navigate('tasks')}
           onManageTriage={() => navigate('triage')}
           onManageQuoteRequests={() => navigate('quote-requests')}
-          onManageReviews={() => navigate('reviews')}
+          onManageRevisions={() => navigate('revisions')}
         />
       )}
       {view === 'admin' && (
@@ -323,8 +323,8 @@ function AppShell() {
           onOpenContact={(id) => navigate('contact', id)}
         />
       )}
-      {view === 'reviews' && (
-        <ReviewsView onBack={() => navigate('list')} />
+      {view === 'revisions' && (
+        <RevisionsView onBack={() => navigate('list')} />
       )}
       {view === 'leaderboard' && (
         <LeaderboardView onBack={() => navigate('list')} />
@@ -410,12 +410,14 @@ export default function App() {
     );
   }
 
-  const reviewToken = params.get('review');
-  if (reviewToken) {
+  // ?revision= is the current public link param; ?review= is still accepted so
+  // any links shared before the rename keep working.
+  const revisionToken = params.get('revision') || params.get('review');
+  if (revisionToken) {
     return (
       <ErrorBoundary>
         <StoreProvider>
-          <ReviewShell token={reviewToken} />
+          <RevisionShell token={revisionToken} />
         </StoreProvider>
       </ErrorBoundary>
     );

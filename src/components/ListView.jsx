@@ -10,7 +10,7 @@ import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
 const TEAM_FILTER_STORAGE_KEY = 'squideo.dashboard.teamMemberFilter';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageAdmin, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage, onManageQuoteRequests, onManageReviews }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageAdmin, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage, onManageQuoteRequests, onManageRevisions }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   const [memberFilter, setMemberFilter] = useState(() => {
@@ -93,7 +93,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
             </button>
           )}
           {onManagePipeline && <button onClick={onManagePipeline} className="btn-ghost"><KanbanSquare size={14} /> Pipeline</button>}
-          {onManageReviews && <button onClick={onManageReviews} className="btn-ghost"><Clapperboard size={14} /> Reviews</button>}
+          {onManageRevisions && <button onClick={onManageRevisions} className="btn-ghost"><Clapperboard size={14} /> Revisions</button>}
           {onManageContacts && <button onClick={onManageContacts} className="btn-ghost"><Contact size={14} /> Contacts</button>}
           {onManageTasks && (
             <button onClick={onManageTasks} className="btn-ghost">
