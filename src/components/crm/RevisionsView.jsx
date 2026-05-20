@@ -189,6 +189,7 @@ function NewProjectModal({ onClose, onCreated }) {
 function ProjectDetail({ projectId, onBack }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
+  const [activeVideoId, setActiveVideoId] = useState(null);
 
   useEffect(() => { actions.loadRevisionDetail(projectId); }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -197,8 +198,10 @@ function ProjectDetail({ projectId, onBack }) {
   async function addVideo() {
     const title = (window.prompt('Name this video (e.g. "Hero film", "Cutdown 30s"):') || '').trim();
     if (!title) return;
-    try { await actions.createRevisionVideo(projectId, title); }
-    catch (err) { showMsg(err.message || 'Could not add video'); }
+    try {
+      const video = await actions.createRevisionVideo(projectId, title);
+      if (video?.id) setActiveVideoId(video.id);
+    } catch (err) { showMsg(err.message || 'Could not add video'); }
   }
 
   if (!detail) {
@@ -206,6 +209,7 @@ function ProjectDetail({ projectId, onBack }) {
   }
 
   const videos = detail.videos || [];
+  const activeVideo = videos.find(v => v.id === activeVideoId) || videos[0] || null;
   const commentsByVersion = (detail.comments || []).reduce((m, c) => {
     (m[c.versionId] = m[c.versionId] || []).push(c);
     return m;
@@ -243,9 +247,28 @@ function ProjectDetail({ projectId, onBack }) {
         <div style={{ color: BRAND.muted, textAlign: 'center', padding: 24 }}>
           No videos yet. Click “Add video”, then upload drafts into it.
         </div>
-      ) : videos.map(video => (
-        <VideoCard key={video.id} projectId={projectId} video={video} commentsByVersion={commentsByVersion} />
-      ))}
+      ) : (
+        <>
+          {videos.length > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <Film size={16} color={BRAND.blue} />
+              <select value={activeVideo.id} onChange={e => setActiveVideoId(e.target.value)}
+                style={{ flex: 1, padding: '9px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border,
+                  fontSize: 14, fontWeight: 600, color: BRAND.ink, background: 'white' }}>
+                {videos.map((v, i) => (
+                  <option key={v.id} value={v.id}>
+                    {v.title} — {(v.versions || []).length} draft{(v.versions || []).length === 1 ? '' : 's'}
+                  </option>
+                ))}
+              </select>
+              <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap' }}>
+                {videos.findIndex(v => v.id === activeVideo.id) + 1} / {videos.length}
+              </span>
+            </div>
+          )}
+          <VideoCard key={activeVideo.id} projectId={projectId} video={activeVideo} commentsByVersion={commentsByVersion} />
+        </>
+      )}
     </div>
   );
 }
