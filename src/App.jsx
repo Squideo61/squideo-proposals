@@ -57,6 +57,8 @@ function buildHash(view, id) {
 function AppShell() {
   const { state, actions, showMsg, toast } = useStore();
   const user = state.session;
+  // "Producer" accounts are scoped to the video Revisions section only.
+  const revisionsOnly = user?.role === 'producer';
   const [view, setView] = useState(() => parseHash().view);
   const [activeId, setActiveId] = useState(() => parseHash().activeId);
   const [modal, setModal] = useState(null);
@@ -235,6 +237,18 @@ function AppShell() {
   const templates = Object.entries(state.templates)
     .map(([id, d]) => ({ id, ...d }))
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+  // Producers only ever see the Revisions section — no dashboard, no other nav.
+  if (revisionsOnly) {
+    return (
+      <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
+        <Suspense fallback={<ViewFallback />}>
+          <RevisionsView onBack={null} />
+        </Suspense>
+        <Toast msg={toast} />
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>

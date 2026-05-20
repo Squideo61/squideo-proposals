@@ -93,7 +93,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
             </button>
           )}
           {onManagePipeline && <button onClick={onManagePipeline} className="btn-ghost"><KanbanSquare size={14} /> Pipeline</button>}
-          {onManageRevisions && <button onClick={onManageRevisions} className="btn-ghost"><Clapperboard size={14} /> Revisions</button>}
+          {onManageRevisions && permissionsInclude(user.permissions, 'revisions.access') && <button onClick={onManageRevisions} className="btn-ghost"><Clapperboard size={14} /> Revisions</button>}
           {onManageContacts && <button onClick={onManageContacts} className="btn-ghost"><Contact size={14} /> Contacts</button>}
           {onManageTasks && (
             <button onClick={onManageTasks} className="btn-ghost">

@@ -25,6 +25,8 @@ export const PERMISSIONS = [
   { slug: 'invoices.manage',      group: 'CRM',        label: 'Manage CRM invoices + Xero sync' },
   { slug: 'quote_requests.manage',group: 'CRM',        label: 'View + qualify quote requests' },
   { slug: 'partner_credits.manage', group: 'CRM',      label: 'Manage partner credits' },
+
+  { slug: 'revisions.access',     group: 'Revisions',  label: 'Access the video revisions section' },
 ];
 
 const VALID_SLUGS = new Set(PERMISSIONS.map(p => p.slug));
