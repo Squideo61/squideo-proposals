@@ -2591,9 +2591,9 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
                 disabled={!gmailConnected || sending || anyUploading || !to.trim() || !subject.trim() || bodyEmpty}
                 aria-label="Schedule send"
                 title="Schedule send"
-                style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: '1px solid rgba(255,255,255,0.35)', padding: '0 8px' }}
+                style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: '1px solid rgba(255,255,255,0.35)', padding: '0 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }}
               >
-                ▾
+                <Clock size={14} /> ▾
               </button>
             </div>
             {showSchedule && (
