@@ -51,6 +51,7 @@ function emptyStore() {
     quoteRequests: [],
     emailBodies: {},
     notificationRecipients: [],
+    revisionCallUrl: '',
     extrasBank: [],
     inclusionsBank: [],
     leaderboard: null,
@@ -284,6 +285,7 @@ export function StoreProvider({ children }) {
         extrasBank: settings?.extrasBank?.length ? settings.extrasBank : JSON.parse(JSON.stringify(DEFAULT_PROPOSAL.optionalExtras)),
         inclusionsBank: settings?.inclusionsBank?.length ? settings.inclusionsBank : DEFAULT_PROPOSAL.baseInclusions.map((inc, i) => ({ id: 'incl_default_' + i, title: inc.title, description: inc.description || '' })),
         notificationRecipients: settings?.notificationRecipients || [],
+        revisionCallUrl: settings?.revisionCallUrl || '',
         loading: false,
       }));
     });
@@ -1417,6 +1419,17 @@ export function StoreProvider({ children }) {
 
     postRevisionComment(token, payload) {
       return api.post('/api/revisions/comment?token=' + encodeURIComponent(token), payload);
+    },
+
+    // Client finalises the project (locks further comments).
+    approveRevision(token, approvedBy) {
+      return api.post('/api/revisions/approve?token=' + encodeURIComponent(token), { approvedBy });
+    },
+
+    // Workspace-wide booking link for the "Schedule Review Call" button.
+    saveRevisionCallUrl(url) {
+      setState(s => ({ ...s, revisionCallUrl: url }));
+      return api.put('/api/settings', { revisionCallUrl: url }).catch(() => {});
     },
 
     // Uploads a comment's supporting asset straight to the public revision Blob

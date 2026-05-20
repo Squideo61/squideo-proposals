@@ -11,12 +11,13 @@ export default async function handler(req, res) {
   if (!user) return;
 
   if (req.method === 'GET') {
-    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients FROM settings WHERE id = 1`;
+    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url FROM settings WHERE id = 1`;
     const row = rows[0];
     return res.status(200).json({
       extrasBank: row.extras_bank,
       inclusionsBank: row.inclusions_bank,
       notificationRecipients: row.notification_recipients,
+      revisionCallUrl: row.revision_call_url || '',
     });
   }
 
@@ -27,12 +28,13 @@ export default async function handler(req, res) {
     if (!hasPermission(await getRole(user.role), 'settings.manage')) {
       return res.status(403).json({ error: 'You do not have permission to edit workspace settings' });
     }
-    const { extrasBank, inclusionsBank, notificationRecipients } = req.body || {};
+    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl } = req.body || {};
     await sql`
       UPDATE settings SET
         extras_bank             = COALESCE(${extrasBank ? JSON.stringify(extrasBank) : null}::jsonb, extras_bank),
         inclusions_bank         = COALESCE(${inclusionsBank ? JSON.stringify(inclusionsBank) : null}::jsonb, inclusions_bank),
-        notification_recipients = COALESCE(${notificationRecipients ? JSON.stringify(notificationRecipients) : null}::jsonb, notification_recipients)
+        notification_recipients = COALESCE(${notificationRecipients ? JSON.stringify(notificationRecipients) : null}::jsonb, notification_recipients),
+        revision_call_url       = COALESCE(${revisionCallUrl !== undefined ? String(revisionCallUrl) : null}, revision_call_url)
       WHERE id = 1
     `;
     return res.status(200).json({ ok: true });

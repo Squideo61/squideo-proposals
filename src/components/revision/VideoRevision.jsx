@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown } from 'lucide-react';
+import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 
@@ -72,6 +72,8 @@ export function VideoRevision({ token, data }) {
   const [comments, setComments] = useState(data.comments || []);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [approvedAt, setApprovedAt] = useState(data.approvedAt || null);
+  const [approving, setApproving] = useState(false);
 
   const [name, setName] = useState(() => localStorage.getItem(NAME_KEY) || '');
   const [draft, setDraft] = useState('');
@@ -158,6 +160,28 @@ export function VideoRevision({ token, data }) {
     }
   }
 
+  async function approve() {
+    if (approvedAt) return;
+    let approver = name.trim();
+    if (!approver) {
+      approver = (window.prompt('Your name (to confirm approval):') || '').trim();
+      if (!approver) return;
+      setName(approver);
+      localStorage.setItem(NAME_KEY, approver);
+    }
+    if (!window.confirm('Approve all revisions? This finalises the video and no further comments can be added.')) return;
+    setApproving(true);
+    try {
+      const res = await actions.approveRevision(token, approver);
+      setApprovedAt(res.approvedAt || new Date().toISOString());
+      showMsg('Revisions approved — thank you!');
+    } catch (err) {
+      showMsg(err.message || 'Could not approve');
+    } finally {
+      setApproving(false);
+    }
+  }
+
   if (!version) {
     return (
       <div style={{ padding: 48, textAlign: 'center', color: BRAND.muted }}>
@@ -175,7 +199,7 @@ export function VideoRevision({ token, data }) {
         <Clapperboard size={20} color={BRAND.blue} />
         <strong style={{ color: BRAND.ink, fontSize: 15 }}>{data.title}</strong>
         {data.clientName && <span style={{ color: BRAND.muted, fontSize: 13 }}>· {data.clientName}</span>}
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {versions.length > 1 && (
             <select value={versionId} onChange={e => setVersionId(e.target.value)}
               style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`, fontSize: 13 }}>
@@ -183,6 +207,27 @@ export function VideoRevision({ token, data }) {
                 <option key={v.id} value={v.id}>{draftLabel(v)}</option>
               ))}
             </select>
+          )}
+          {data.callUrl && (
+            <a href={data.callUrl} target="_blank" rel="noreferrer"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
+                border: `1px solid ${BRAND.border}`, background: '#fff', color: BRAND.ink, fontSize: 13,
+                fontWeight: 600, textDecoration: 'none' }}>
+              <CalendarClock size={15} color={BRAND.blue} /> Schedule Review Call
+            </a>
+          )}
+          {approvedAt ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
+              background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600 }}>
+              <CheckCircle2 size={15} /> Revisions approved
+            </span>
+          ) : (
+            <button onClick={approve} disabled={approving}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
+                border: 'none', background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600,
+                cursor: approving ? 'default' : 'pointer' }}>
+              <CheckCircle2 size={15} /> {approving ? 'Approving…' : 'Approve Revisions'}
+            </button>
           )}
         </div>
       </div>
@@ -260,7 +305,14 @@ export function VideoRevision({ token, data }) {
             ))}
           </div>
 
-          {/* Composer */}
+          {/* Composer (hidden once approved) */}
+          {approvedAt ? (
+            <div style={{ borderTop: `1px solid ${BRAND.border}`, padding: 16, textAlign: 'center',
+              color: '#16A34A', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', gap: 6 }}>
+              <CheckCircle2 size={16} /> Revisions approved — this video is finalised.
+            </div>
+          ) : (
           <div style={{ borderTop: `1px solid ${BRAND.border}`, padding: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
@@ -315,6 +367,7 @@ export function VideoRevision({ token, data }) {
               </button>
             </div>
           </div>
+          )}
         </div>
       </div>
     </div>

@@ -1,9 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, CalendarClock } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
+import { permissionsInclude } from '../../lib/permissions.js';
 import { Modal } from '../ui.jsx';
+
+const APPROVED_CHIP = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
+  borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: 11, fontWeight: 700 };
 
 const PUBLIC_BASE = 'https://app.squideo.com';
 
@@ -67,6 +71,8 @@ export function RevisionsView({ onBack }) {
         <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New project</button>
       </header>
 
+      {permissionsInclude(state.session?.permissions, 'settings.manage') && <BookingLinkEditor />}
+
       {projects.length === 0 ? (
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
           No revision projects yet. Create one, upload a draft video, and share the link with your client.
@@ -78,7 +84,10 @@ export function RevisionsView({ onBack }) {
               display: 'flex', alignItems: 'center', gap: 14 }}>
               <Film size={20} color={BRAND.blue} />
               <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setSelectedId(p.id)}>
-                <div style={{ fontWeight: 600, color: BRAND.ink }}>{p.title}</div>
+                <div style={{ fontWeight: 600, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {p.title}
+                  {p.approvedAt && <span style={APPROVED_CHIP}><CheckCircle2 size={11} /> Approved</span>}
+                </div>
                 <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>
                   {p.clientName ? p.clientName + ' · ' : ''}
                   {p.versionCount || 0} version{p.versionCount === 1 ? '' : 's'} · {p.commentCount || 0} comment{p.commentCount === 1 ? '' : 's'}
@@ -110,6 +119,34 @@ function CopyLinkButton({ token, showMsg }) {
     <button
       onClick={() => navigator.clipboard.writeText(url).then(() => showMsg('Revision link copied')).catch(() => {})}
       className="btn-ghost" title={url}><Copy size={14} /> Copy link</button>
+  );
+}
+
+// Team-wide booking link for the client "Schedule Review Call" button. Only
+// rendered for users who can manage workspace settings.
+function BookingLinkEditor() {
+  const { state, actions, showMsg } = useStore();
+  const [url, setUrl] = useState(state.revisionCallUrl || '');
+  const [saving, setSaving] = useState(false);
+  const dirty = url !== (state.revisionCallUrl || '');
+
+  const save = async () => {
+    setSaving(true);
+    try { await actions.saveRevisionCallUrl(url.trim()); showMsg('Booking link saved'); }
+    catch (e) { showMsg(e.message || 'Could not save'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, padding: '10px 14px',
+      background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, flexWrap: 'wrap' }}>
+      <CalendarClock size={16} color={BRAND.blue} />
+      <label style={{ fontSize: 13, color: BRAND.muted }}>Review-call booking link</label>
+      <input value={url} onChange={e => setUrl(e.target.value)}
+        placeholder="https://calendly.com/your-team/review-call"
+        style={{ flex: 1, minWidth: 220, padding: 8, borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+      <button onClick={save} disabled={!dirty || saving} className="btn">{saving ? 'Saving…' : 'Save'}</button>
+    </div>
   );
 }
 
@@ -189,6 +226,7 @@ function ProjectDetail({ projectId, onBack }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
           <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>{detail.title}</h1>
+          {detail.approvedAt && <span style={APPROVED_CHIP}><CheckCircle2 size={11} /> Approved</span>}
         </div>
         <CopyLinkButton token={detail.shareToken} showMsg={showMsg} />
       </header>

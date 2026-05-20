@@ -59,6 +59,10 @@ export default async function handler(req, res) {
       if (req.method !== 'POST') return res.status(405).end();
       return await assetUploadToken(req, res);
     }
+    if (action === 'approve') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return await approveRevision(req, res);
+    }
 
     // ─── Authenticated producer routes ───────────────────────────────────────
     // The Blob client-upload handshake authenticates inside onBeforeGenerateToken.
@@ -115,7 +119,7 @@ async function listProjects(res) {
   const rows = await sql`
     SELECT
       rp.id, rp.title, rp.client_name, rp.share_token, rp.created_by,
-      rp.created_at, rp.updated_at,
+      rp.created_at, rp.updated_at, rp.approved_at,
       COALESCE(v.version_count, 0)::INT AS version_count,
       COALESCE(c.comment_count, 0)::INT AS comment_count
     FROM revision_projects rp
@@ -163,7 +167,7 @@ async function deleteProject(res, id) {
 
 async function projectDetail(res, id) {
   const [project] = await sql`
-    SELECT id, title, client_name, share_token, created_by, created_at, updated_at
+    SELECT id, title, client_name, share_token, created_by, created_at, updated_at, approved_at, approved_by
     FROM revision_projects WHERE id = ${id}
   `;
   if (!project) return res.status(404).json({ error: 'not found' });
@@ -305,9 +309,11 @@ async function publicView(req, res) {
   if (!token) return res.status(400).json({ error: 'token required' });
 
   const [project] = await sql`
-    SELECT id, title, client_name FROM revision_projects WHERE share_token = ${token}
+    SELECT id, title, client_name, approved_at, approved_by FROM revision_projects WHERE share_token = ${token}
   `;
   if (!project) return res.status(404).json({ error: 'Not found' });
+
+  const [cfg] = await sql`SELECT revision_call_url FROM settings WHERE id = 1`;
 
   const versions = await sql`
     SELECT id, version_number, label, mime_type, blob_url, created_at
@@ -327,6 +333,9 @@ async function publicView(req, res) {
   return res.status(200).json({
     title: project.title,
     clientName: project.client_name,
+    approvedAt: project.approved_at || null,
+    approvedBy: project.approved_by || null,
+    callUrl: (cfg && cfg.revision_call_url) || null,
     versions: versions.map(v => ({
       id: v.id,
       versionNumber: v.version_number,
@@ -337,6 +346,27 @@ async function publicView(req, res) {
     })),
     comments: comments.map(commentRow),
   });
+}
+
+// Client finalises the project: locks it so no further comments can be added.
+async function approveRevision(req, res) {
+  const token = req.query.token ? String(req.query.token) : null;
+  if (!token) return res.status(400).json({ error: 'token required' });
+  const body = parseBody(req);
+  const approvedBy = (body.approvedBy || '').trim().slice(0, 120) || 'Client';
+
+  const [proj] = await sql`SELECT id, approved_at FROM revision_projects WHERE share_token = ${token}`;
+  if (!proj) return res.status(404).json({ error: 'Not found' });
+  if (proj.approved_at) {
+    return res.status(200).json({ approvedAt: proj.approved_at, approvedBy: null, alreadyApproved: true });
+  }
+  const [row] = await sql`
+    UPDATE revision_projects
+       SET approved_at = NOW(), approved_by = ${approvedBy}, updated_at = NOW()
+     WHERE id = ${proj.id}
+    RETURNING approved_at, approved_by
+  `;
+  return res.status(200).json({ approvedAt: row.approved_at, approvedBy: row.approved_by });
 }
 
 async function postComment(req, res) {
@@ -364,11 +394,14 @@ async function postComment(req, res) {
 
   // The version must belong to the project this share_token unlocks.
   const [match] = await sql`
-    SELECT rv.id FROM revision_versions rv
+    SELECT rv.id, rp.approved_at FROM revision_versions rv
     JOIN revision_projects rp ON rp.id = rv.project_id
     WHERE rv.id = ${versionId} AND rp.share_token = ${token}
   `;
   if (!match) return res.status(404).json({ error: 'version not found' });
+  if (match.approved_at) {
+    return res.status(403).json({ error: 'These revisions have been approved and are now locked.' });
+  }
 
   // A reply's parent must be on the same version.
   let validParent = null;
@@ -401,6 +434,8 @@ function projectRow(r) {
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    approvedAt: r.approved_at || null,
+    approvedBy: r.approved_by || null,
     versionCount: r.version_count !== undefined ? r.version_count : undefined,
     commentCount: r.comment_count !== undefined ? r.comment_count : undefined,
   };
