@@ -154,6 +154,16 @@ export function inviteHtml({ inviterName, link, expiresInDays = 7 }) {
   return shell(inner);
 }
 
+export function inviteAcceptedHtml({ name, email, roleName, invitedByEmail, link }) {
+  const who = name ? `${escapeHtml(name)}${email ? ` (${escapeHtml(email)})` : ''}` : escapeHtml(email || 'A new teammate');
+  const inner = `
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">👋 New teammate joined</h2>
+    <p style="margin:0 0 16px;"><strong>${who}</strong> has accepted ${invitedByEmail ? `${escapeHtml(invitedByEmail)}'s ` : 'their '}invite and set up their account${roleName ? ` as <strong>${escapeHtml(roleName)}</strong>` : ''}.</p>
+    ${link ? `<p style="margin:0;"><a href="${escapeHtml(link)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Manage users</a></p>` : ''}
+  `;
+  return shell(inner);
+}
+
 export function firstViewHtml({ title, clientName, country, city, link }) {
   const where = [city, country].filter(Boolean).join(', ');
   const inner = `

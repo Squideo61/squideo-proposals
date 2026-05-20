@@ -14,7 +14,8 @@ import {
   sessionCookieHeader,
   clearSessionCookieHeader,
 } from '../_lib/middleware.js';
-import { sendMail, twoFactorCodeHtml } from '../_lib/email.js';
+import { sendMail, twoFactorCodeHtml, inviteAcceptedHtml, APP_URL } from '../_lib/email.js';
+import { sendNotification } from '../_lib/notifications.js';
 import { getRole } from '../_lib/userRoles.js';
 import {
   generateTotpSecret,
@@ -267,12 +268,27 @@ export default async function handler(req, res) {
 
     const consumed = await sql`UPDATE invites SET used_at = now()
       WHERE token = ${token} AND used_at IS NULL AND revoked_at IS NULL AND expires_at > now()
-      RETURNING role`;
+      RETURNING role, invited_by_email`;
     if (!consumed.length) return res.status(409).json({ error: 'Invite already used' });
     const role = consumed[0].role || 'member';
+    const invitedByEmail = consumed[0].invited_by_email || null;
 
     const password_hash = await bcrypt.hash(password, BCRYPT_COST);
     await sql`INSERT INTO users (email, name, password_hash, role) VALUES (${email}, ${name}, ${password_hash}, ${role})`;
+
+    // Notify subscribed staff (admins by default) that a teammate joined.
+    // Best-effort: never block account creation on the alert email.
+    try {
+      const roleRow = await getRole(role);
+      await sendNotification('user.invite_accepted', {
+        subject: `👋 ${name} joined the Squideo workspace`,
+        html: inviteAcceptedHtml({ name, email, roleName: roleRow?.name || role, invitedByEmail, link: `${APP_URL}/#/admin/users` }),
+        text: `${name} (${email}) accepted their invite and set up an account${roleRow?.name ? ` as ${roleRow.name}` : ''}.`,
+        excludeEmails: [email],
+      });
+    } catch (err) {
+      console.warn('[signup] invite-accepted notification failed', err.message);
+    }
 
     const enrolment_token = await signEnrolmentToken({ email });
     return res.status(201).json({ requiresEnrolment: true, enrolment_token, user: { email, name, avatar: null, role } });

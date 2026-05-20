@@ -4,6 +4,13 @@
 
 export const NOTIFICATIONS = [
   {
+    key: 'user.invite_accepted',
+    label: 'New teammate joined',
+    description: 'Someone accepts a workspace invite and finishes setting up their account.',
+    audience: 'broadcast',
+    group: 'Workspace',
+  },
+  {
     key: 'proposal.signed',
     label: 'Proposal signed',
     description: 'A client accepts and signs a proposal you sent.',
