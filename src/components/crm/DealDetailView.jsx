@@ -3096,10 +3096,9 @@ function RichTextToolbar({ editorRef, onChange, onAttach }) {
       <Btn cmd="insertUnorderedList" title="Bulleted list">• —</Btn>
       <Btn cmd="insertOrderedList" title="Numbered list">1.</Btn>
       <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
+      <Btn onClick={onAttach} title="Attach files">📎</Btn>
       <Btn onClick={addLink} title="Insert link">🔗</Btn>
       <Btn onClick={() => exec('removeFormat')} title="Clear formatting">⨯</Btn>
-      <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
-      <Btn onClick={onAttach} title="Attach files">📎</Btn>
     </div>
   );
 }
