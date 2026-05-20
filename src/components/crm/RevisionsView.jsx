@@ -14,6 +14,12 @@ function tc(seconds) {
   return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
 }
 
+// A draft's display name. Older versions were auto-labelled "Version N"; treat
+// those (and empty labels) as "Draft N" so the wording is consistent.
+function draftLabel(v) {
+  return (v.label && !/^Version \d+$/.test(v.label)) ? v.label : ('Draft ' + v.versionNumber);
+}
+
 export function RevisionsView({ onBack }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
@@ -138,7 +144,7 @@ function ProjectDetail({ projectId, onBack }) {
     setProgress(0);
     try {
       await actions.uploadRevisionVersion(projectId, file, { onProgress: setProgress });
-      showMsg('Version uploaded');
+      showMsg('Draft uploaded');
     } catch (err) {
       showMsg(err.message || 'Upload failed');
     } finally {
@@ -199,7 +205,7 @@ function ProjectDetail({ projectId, onBack }) {
           <div key={v.id} style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
               <Film size={18} color={BRAND.blue} />
-              <strong style={{ color: BRAND.ink }}>{v.label || ('Version ' + v.versionNumber)}</strong>
+              <strong style={{ color: BRAND.ink }}>{draftLabel(v)}</strong>
               <span style={{ fontSize: 12, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 4 }}>
                 <MessageSquare size={13} /> {comments.length}
               </span>

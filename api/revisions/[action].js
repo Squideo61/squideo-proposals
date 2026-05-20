@@ -245,7 +245,7 @@ async function registerVersion(req, res, user, projectId) {
       (id, project_id, version_number, label, filename, mime_type, size_bytes,
        blob_url, blob_pathname, uploaded_by)
     VALUES
-      (${id}, ${projectId}, ${next}, ${label || ('Version ' + next)}, ${filename},
+      (${id}, ${projectId}, ${next}, ${label || null}, ${filename},
        ${mimeType}, ${sizeBytes}, ${blobUrl}, ${blobPathname}, ${user.email || null})
     RETURNING id, version_number, label, filename, mime_type, size_bytes,
               blob_url, uploaded_by, created_at

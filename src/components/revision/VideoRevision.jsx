@@ -14,6 +14,12 @@ const DRAFT_SVG = encodeURIComponent(
   "letter-spacing='4'>DRAFT</text></svg>"
 );
 
+// A draft's display name. Older versions were auto-labelled "Version N"; treat
+// those (and empty labels) as "Draft N" so the wording is consistent.
+function draftLabel(v) {
+  return (v.label && !/^Version \d+$/.test(v.label)) ? v.label : ('Draft ' + v.versionNumber);
+}
+
 // mm:ss (or h:mm:ss for long videos) — the timecode style clients expect.
 function tc(seconds) {
   if (seconds == null || !Number.isFinite(seconds)) return '';
@@ -129,7 +135,7 @@ export function VideoRevision({ token, data }) {
             <select value={versionId} onChange={e => setVersionId(e.target.value)}
               style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`, fontSize: 13 }}>
               {versions.map(v => (
-                <option key={v.id} value={v.id}>{v.label || ('Version ' + v.versionNumber)}</option>
+                <option key={v.id} value={v.id}>{draftLabel(v)}</option>
               ))}
             </select>
           )}
