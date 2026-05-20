@@ -191,13 +191,16 @@ async function uploadToken(req, res) {
         const user = await requireAuth(req, res);
         if (!user) throw new Error('Unauthorised');
         return {
-          allowedContentTypes: ['video/*'],
+          allowedContentTypes: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-msvideo', 'video/x-matroska'],
           maximumSizeInBytes: 2 * 1024 * 1024 * 1024, // 2 GB
           addRandomSuffix: true,
         };
       },
-      // Row creation happens in registerVersion; nothing to do here.
-      onUploadCompleted: async () => {},
+      // NB: deliberately no onUploadCompleted. Providing it makes the Blob API
+      // embed a callbackUrl and wait for a server-to-server confirmation before
+      // the browser's upload() resolves — which never arrives on localhost (and
+      // adds a fragile round-trip in prod), freezing the upload. The version row
+      // is created instead by registerVersion right after upload() resolves.
     });
     return res.status(200).json(jsonResponse);
   } catch (err) {
