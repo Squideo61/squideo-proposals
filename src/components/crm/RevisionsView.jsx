@@ -90,7 +90,7 @@ export function RevisionsView({ onBack }) {
                 </div>
                 <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>
                   {p.clientName ? p.clientName + ' · ' : ''}
-                  {p.versionCount || 0} version{p.versionCount === 1 ? '' : 's'} · {p.commentCount || 0} comment{p.commentCount === 1 ? '' : 's'}
+                  {p.videoCount || 0} video{p.videoCount === 1 ? '' : 's'} · {p.versionCount || 0} draft{p.versionCount === 1 ? '' : 's'} · {p.commentCount || 0} comment{p.commentCount === 1 ? '' : 's'}
                 </div>
               </div>
               <CopyLinkButton token={p.shareToken} showMsg={showMsg} />
@@ -189,36 +189,28 @@ function NewProjectModal({ onClose, onCreated }) {
 function ProjectDetail({ projectId, onBack }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
-  const fileInputRef = useRef(null);
-  const [progress, setProgress] = useState(null); // 0–100 while uploading
 
   useEffect(() => { actions.loadRevisionDetail(projectId); }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const detail = state.revisionDetail[projectId];
 
-  async function handleFile(file) {
-    if (!file) return;
-    if (!file.type.startsWith('video/')) { showMsg('Please choose a video file'); return; }
-    setProgress(0);
-    try {
-      await actions.uploadRevisionVersion(projectId, file, { onProgress: setProgress });
-      showMsg('Draft uploaded');
-    } catch (err) {
-      showMsg(err.message || 'Upload failed');
-    } finally {
-      setProgress(null);
-    }
+  async function addVideo() {
+    const title = (window.prompt('Name this video (e.g. "Hero film", "Cutdown 30s"):') || '').trim();
+    if (!title) return;
+    try { await actions.createRevisionVideo(projectId, title); }
+    catch (err) { showMsg(err.message || 'Could not add video'); }
   }
 
   if (!detail) {
     return <div style={{ maxWidth: 900, margin: '0 auto', padding: 32, color: BRAND.muted }}>Loading…</div>;
   }
 
-  const versions = detail.versions || [];
+  const videos = detail.videos || [];
   const commentsByVersion = (detail.comments || []).reduce((m, c) => {
     (m[c.versionId] = m[c.versionId] || []).push(c);
     return m;
   }, {});
+  const viewers = detail.viewers || [];
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: isMobile ? '16px 12px' : '32px 24px' }}>
@@ -228,20 +220,80 @@ function ProjectDetail({ projectId, onBack }) {
           <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>{detail.title}</h1>
           {detail.approvedAt && <span style={APPROVED_CHIP}><CheckCircle2 size={11} /> Approved</span>}
         </div>
-        <CopyLinkButton token={detail.shareToken} showMsg={showMsg} />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={addVideo} className="btn-ghost"><Plus size={14} /> Add video</button>
+          <CopyLinkButton token={detail.shareToken} showMsg={showMsg} />
+        </div>
       </header>
 
-      {/* Upload */}
+      {viewers.length > 0 && (
+        <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '10px 14px', marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 4 }}>Viewers ({viewers.length})</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {viewers.map(v => (
+              <span key={v.email} style={{ fontSize: 12, color: BRAND.ink, background: '#F1F5F9', borderRadius: 999, padding: '2px 10px' }}>
+                {v.name} · {v.email}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {videos.length === 0 ? (
+        <div style={{ color: BRAND.muted, textAlign: 'center', padding: 24 }}>
+          No videos yet. Click “Add video”, then upload drafts into it.
+        </div>
+      ) : videos.map(video => (
+        <VideoCard key={video.id} projectId={projectId} video={video} commentsByVersion={commentsByVersion} />
+      ))}
+    </div>
+  );
+}
+
+// One video within a project: its own upload dropzone + list of drafts.
+function VideoCard({ projectId, video, commentsByVersion }) {
+  const { actions, showMsg } = useStore();
+  const fileInputRef = useRef(null);
+  const [progress, setProgress] = useState(null);
+
+  async function handleFile(file) {
+    if (!file) return;
+    if (!file.type.startsWith('video/')) { showMsg('Please choose a video file'); return; }
+    setProgress(0);
+    try {
+      await actions.uploadRevisionVersion(projectId, video.id, file, { onProgress: setProgress });
+      showMsg('Draft uploaded');
+    } catch (err) {
+      showMsg(err.message || 'Upload failed');
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  const versions = video.versions || [];
+
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 16, marginBottom: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <Film size={18} color={BRAND.blue} />
+        <strong style={{ color: BRAND.ink, fontSize: 16 }}>{video.title}</strong>
+        <span style={{ fontSize: 12, color: BRAND.muted }}>{versions.length} draft{versions.length === 1 ? '' : 's'}</span>
+        <button
+          onClick={() => { if (window.confirm(`Delete "${video.title}" and all its drafts?`)) actions.deleteRevisionVideo(projectId, video.id); }}
+          className="btn-ghost" style={{ marginLeft: 'auto' }} title="Delete video"><Trash2 size={14} /></button>
+      </div>
+
+      {/* Upload a new draft for this video */}
       <div
         onClick={() => progress == null && fileInputRef.current?.click()}
         onDragOver={e => e.preventDefault()}
         onDrop={e => { e.preventDefault(); if (progress == null) handleFile(e.dataTransfer.files?.[0]); }}
-        style={{ border: `2px dashed ${BRAND.border}`, borderRadius: 10, padding: 24, textAlign: 'center',
-          color: BRAND.muted, cursor: progress == null ? 'pointer' : 'default', marginBottom: 20, background: 'white' }}>
+        style={{ border: `2px dashed ${BRAND.border}`, borderRadius: 10, padding: 16, textAlign: 'center',
+          color: BRAND.muted, cursor: progress == null ? 'pointer' : 'default', marginBottom: 14, fontSize: 13 }}>
         <input ref={fileInputRef} type="file" accept="video/*" style={{ display: 'none' }}
           onChange={e => handleFile(e.target.files?.[0])} />
         {progress == null ? (
-          <><Upload size={18} /> <div style={{ marginTop: 6 }}>Drop a draft video here, or click to upload a new version</div></>
+          <><Upload size={16} /> <span style={{ marginLeft: 6 }}>Drop a new draft here, or click to upload</span></>
         ) : (
           <div>
             <div style={{ marginBottom: 8 }}>Uploading… {progress}%</div>
@@ -253,7 +305,7 @@ function ProjectDetail({ projectId, onBack }) {
       </div>
 
       {versions.length === 0 ? (
-        <div style={{ color: BRAND.muted, textAlign: 'center', padding: 24 }}>No versions uploaded yet.</div>
+        <div style={{ color: BRAND.muted, textAlign: 'center', padding: 12, fontSize: 13 }}>No drafts uploaded yet.</div>
       ) : versions.map(v => {
         const comments = (commentsByVersion[v.id] || []).slice().sort((a, b) => {
           const at = a.timecodeSeconds, bt = b.timecodeSeconds;
@@ -261,20 +313,19 @@ function ProjectDetail({ projectId, onBack }) {
           if (at == null) return 1; if (bt == null) return -1; return at - bt;
         });
         return (
-          <div key={v.id} style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-              <Film size={18} color={BRAND.blue} />
-              <strong style={{ color: BRAND.ink }}>{draftLabel(v)}</strong>
+          <div key={v.id} style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 12, marginTop: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <strong style={{ color: BRAND.ink, fontSize: 14 }}>{draftLabel(v)}</strong>
               <span style={{ fontSize: 12, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 4 }}>
                 <MessageSquare size={13} /> {comments.length}
               </span>
               <button
-                onClick={() => { if (window.confirm('Delete this version?')) actions.deleteRevisionVersion(projectId, v.id); }}
-                className="btn-ghost" style={{ marginLeft: 'auto' }} title="Delete version"><Trash2 size={14} /></button>
+                onClick={() => { if (window.confirm('Delete this draft?')) actions.deleteRevisionVersion(projectId, v.id); }}
+                className="btn-ghost" style={{ marginLeft: 'auto' }} title="Delete draft"><Trash2 size={14} /></button>
             </div>
-            <video src={v.videoUrl} controls style={{ width: '100%', maxHeight: 360, borderRadius: 8, background: '#000' }} />
+            <video src={v.videoUrl} controls style={{ width: '100%', maxHeight: 320, borderRadius: 8, background: '#000' }} />
             {comments.length > 0 && (
-              <div style={{ marginTop: 12, borderTop: '1px solid ' + BRAND.border, paddingTop: 12 }}>
+              <div style={{ marginTop: 10 }}>
                 {comments.map(c => (
                   <div key={c.id} style={{ marginBottom: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>

@@ -63,6 +63,11 @@ export default async function handler(req, res) {
       if (req.method !== 'POST') return res.status(405).end();
       return await approveRevision(req, res);
     }
+    // Name + email gate: records the viewer before they see the videos.
+    if (action === 'viewer') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return await recordViewer(req, res);
+    }
 
     // ─── Authenticated producer routes ───────────────────────────────────────
     // The Blob client-upload handshake authenticates inside onBeforeGenerateToken.
@@ -92,11 +97,25 @@ export default async function handler(req, res) {
       return await projectDetail(res, id);
     }
 
-    if (action === 'versions') {
+    if (action === 'videos') {
       if (req.method === 'POST') {
         const projectId = req.query.projectId ? String(req.query.projectId) : null;
         if (!projectId) return res.status(400).json({ error: 'projectId required' });
-        return await registerVersion(req, res, user, projectId);
+        return await createVideo(req, res, projectId);
+      }
+      if (req.method === 'DELETE') {
+        const id = req.query.id ? String(req.query.id) : null;
+        if (!id) return res.status(400).json({ error: 'id required' });
+        return await deleteVideo(res, id);
+      }
+      return res.status(405).end();
+    }
+
+    if (action === 'versions') {
+      if (req.method === 'POST') {
+        const videoId = req.query.videoId ? String(req.query.videoId) : null;
+        if (!videoId) return res.status(400).json({ error: 'videoId required' });
+        return await registerVersion(req, res, user, videoId);
       }
       if (req.method === 'DELETE') {
         const id = req.query.id ? String(req.query.id) : null;
@@ -120,9 +139,13 @@ async function listProjects(res) {
     SELECT
       rp.id, rp.title, rp.client_name, rp.share_token, rp.created_by,
       rp.created_at, rp.updated_at, rp.approved_at,
+      COALESCE(vid.video_count, 0)::INT AS video_count,
       COALESCE(v.version_count, 0)::INT AS version_count,
       COALESCE(c.comment_count, 0)::INT AS comment_count
     FROM revision_projects rp
+    LEFT JOIN (
+      SELECT project_id, COUNT(*) AS video_count FROM revision_videos GROUP BY project_id
+    ) vid ON vid.project_id = rp.id
     LEFT JOIN (
       SELECT project_id, COUNT(*) AS version_count FROM revision_versions GROUP BY project_id
     ) v ON v.project_id = rp.id
@@ -149,7 +172,45 @@ async function createProject(req, res, user) {
     VALUES (${id}, ${title}, ${clientName}, ${shareToken}, ${user.email || null})
     RETURNING id, title, client_name, share_token, created_by, created_at, updated_at
   `;
-  return res.status(201).json({ ...projectRow(row), versionCount: 0, commentCount: 0 });
+  // Every project starts with one video so the common single-video case needs
+  // no extra step; producers can add more.
+  await sql`
+    INSERT INTO revision_videos (id, project_id, title, sort_order)
+    VALUES (${crypto.randomUUID()}, ${id}, 'Video 1', 0)
+  `;
+  return res.status(201).json({ ...projectRow(row), videoCount: 1, versionCount: 0, commentCount: 0 });
+}
+
+// ─── Producer: videos ──────────────────────────────────────────────────────
+
+async function createVideo(req, res, projectId) {
+  const body = parseBody(req);
+  const [project] = await sql`SELECT id FROM revision_projects WHERE id = ${projectId}`;
+  if (!project) return res.status(404).json({ error: 'project not found' });
+  const [{ next }] = await sql`
+    SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM revision_videos WHERE project_id = ${projectId}
+  `;
+  const title = (body.title || '').trim() || ('Video ' + (Number(next) + 1));
+  const id = crypto.randomUUID();
+  const [row] = await sql`
+    INSERT INTO revision_videos (id, project_id, title, sort_order)
+    VALUES (${id}, ${projectId}, ${title}, ${next})
+    RETURNING id, title, sort_order, created_at
+  `;
+  await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${projectId}`;
+  return res.status(201).json({ id: row.id, title: row.title, sortOrder: row.sort_order, createdAt: row.created_at, versions: [] });
+}
+
+async function deleteVideo(res, id) {
+  const versions = await sql`SELECT blob_url FROM revision_versions WHERE video_id = ${id}`;
+  for (const v of versions) {
+    try { await del(v.blob_url, { token: REVISION_BLOB_TOKEN }); } catch (err) {
+      console.error('[revisions] blob delete failed', err.message);
+    }
+  }
+  const result = await sql`DELETE FROM revision_videos WHERE id = ${id} RETURNING id`;
+  if (!result.length) return res.status(404).json({ error: 'not found' });
+  return res.status(200).json({ ok: true });
 }
 
 async function deleteProject(res, id) {
@@ -172,8 +233,12 @@ async function projectDetail(res, id) {
   `;
   if (!project) return res.status(404).json({ error: 'not found' });
 
+  const videos = await sql`
+    SELECT id, title, sort_order, created_at FROM revision_videos
+    WHERE project_id = ${id} ORDER BY sort_order, created_at
+  `;
   const versions = await sql`
-    SELECT id, version_number, label, filename, mime_type, size_bytes,
+    SELECT id, video_id, version_number, label, filename, mime_type, size_bytes,
            blob_url, uploaded_by, created_at
     FROM revision_versions WHERE project_id = ${id}
     ORDER BY version_number DESC
@@ -187,10 +252,18 @@ async function projectDetail(res, id) {
     WHERE rv.project_id = ${id}
     ORDER BY rc.created_at ASC
   `;
+  const viewers = await sql`
+    SELECT name, email, first_seen, last_seen FROM revision_viewers
+    WHERE project_id = ${id} ORDER BY last_seen DESC
+  `;
   return res.status(200).json({
     ...projectRow(project),
-    versions: versions.map(versionRow),
+    videos: videos.map(vid => ({
+      id: vid.id, title: vid.title, sortOrder: vid.sort_order, createdAt: vid.created_at,
+      versions: versions.filter(v => v.video_id === vid.id).map(versionRow),
+    })),
     comments: comments.map(commentRow),
+    viewers: viewers.map(vw => ({ name: vw.name, email: vw.email, firstSeen: vw.first_seen, lastSeen: vw.last_seen })),
   });
 }
 
@@ -260,7 +333,7 @@ async function assetUploadToken(req, res) {
   }
 }
 
-async function registerVersion(req, res, user, projectId) {
+async function registerVersion(req, res, user, videoId) {
   const body = parseBody(req);
   const blobUrl = (body.blobUrl || '').trim();
   const blobPathname = body.blobPathname ? String(body.blobPathname) : null;
@@ -270,25 +343,26 @@ async function registerVersion(req, res, user, projectId) {
   const label = body.label ? String(body.label).trim() : null;
   if (!blobUrl) return res.status(400).json({ error: 'blobUrl required' });
 
-  const [project] = await sql`SELECT id FROM revision_projects WHERE id = ${projectId}`;
-  if (!project) return res.status(404).json({ error: 'project not found' });
+  const [video] = await sql`SELECT id, project_id FROM revision_videos WHERE id = ${videoId}`;
+  if (!video) return res.status(404).json({ error: 'video not found' });
 
+  // Draft numbers run per video.
   const [{ next }] = await sql`
     SELECT COALESCE(MAX(version_number), 0) + 1 AS next
-    FROM revision_versions WHERE project_id = ${projectId}
+    FROM revision_versions WHERE video_id = ${videoId}
   `;
   const id = crypto.randomUUID();
   const [row] = await sql`
     INSERT INTO revision_versions
-      (id, project_id, version_number, label, filename, mime_type, size_bytes,
+      (id, project_id, video_id, version_number, label, filename, mime_type, size_bytes,
        blob_url, blob_pathname, uploaded_by)
     VALUES
-      (${id}, ${projectId}, ${next}, ${label || null}, ${filename},
+      (${id}, ${video.project_id}, ${videoId}, ${next}, ${label || null}, ${filename},
        ${mimeType}, ${sizeBytes}, ${blobUrl}, ${blobPathname}, ${user.email || null})
-    RETURNING id, version_number, label, filename, mime_type, size_bytes,
+    RETURNING id, video_id, version_number, label, filename, mime_type, size_bytes,
               blob_url, uploaded_by, created_at
   `;
-  await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${projectId}`;
+  await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${video.project_id}`;
   return res.status(201).json(versionRow(row));
 }
 
@@ -315,8 +389,12 @@ async function publicView(req, res) {
 
   const [cfg] = await sql`SELECT revision_call_url FROM settings WHERE id = 1`;
 
+  const videos = await sql`
+    SELECT id, title, sort_order, created_at FROM revision_videos
+    WHERE project_id = ${project.id} ORDER BY sort_order, created_at
+  `;
   const versions = await sql`
-    SELECT id, version_number, label, mime_type, blob_url, created_at
+    SELECT id, video_id, version_number, label, mime_type, blob_url, created_at
     FROM revision_versions WHERE project_id = ${project.id}
     ORDER BY version_number DESC
   `;
@@ -329,6 +407,10 @@ async function publicView(req, res) {
     WHERE rv.project_id = ${project.id}
     ORDER BY rc.created_at ASC
   `;
+  const mapVersion = (v) => ({
+    id: v.id, videoId: v.video_id, versionNumber: v.version_number, label: v.label,
+    mimeType: v.mime_type, videoUrl: v.blob_url, createdAt: v.created_at,
+  });
   // Field allowlist: only what the viewer needs. No created_by, share_token, etc.
   return res.status(200).json({
     title: project.title,
@@ -336,16 +418,33 @@ async function publicView(req, res) {
     approvedAt: project.approved_at || null,
     approvedBy: project.approved_by || null,
     callUrl: (cfg && cfg.revision_call_url) || null,
-    versions: versions.map(v => ({
-      id: v.id,
-      versionNumber: v.version_number,
-      label: v.label,
-      mimeType: v.mime_type,
-      videoUrl: v.blob_url,
-      createdAt: v.created_at,
+    videos: videos.map(vid => ({
+      id: vid.id, title: vid.title,
+      versions: versions.filter(v => v.video_id === vid.id).map(mapVersion),
     })),
     comments: comments.map(commentRow),
   });
+}
+
+// Records (upserts) a reviewer who passed the name + email gate.
+async function recordViewer(req, res) {
+  const token = req.query.token ? String(req.query.token) : null;
+  if (!token) return res.status(400).json({ error: 'token required' });
+  const body = parseBody(req);
+  const name = (body.name || '').trim().slice(0, 120);
+  const email = (body.email || '').trim().slice(0, 255).toLowerCase();
+  if (!name || !email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return res.status(400).json({ error: 'A valid name and email are required' });
+  }
+  const [proj] = await sql`SELECT id FROM revision_projects WHERE share_token = ${token}`;
+  if (!proj) return res.status(404).json({ error: 'Not found' });
+  await sql`
+    INSERT INTO revision_viewers (id, project_id, name, email)
+    VALUES (${crypto.randomUUID()}, ${proj.id}, ${name}, ${email})
+    ON CONFLICT (project_id, lower(email))
+    DO UPDATE SET name = EXCLUDED.name, last_seen = NOW()
+  `;
+  return res.status(200).json({ ok: true });
 }
 
 // Client finalises the project: locks it so no further comments can be added.
@@ -377,6 +476,7 @@ async function postComment(req, res) {
   const versionId = (body.versionId || '').trim();
   const text = (body.body || '').trim();
   const authorName = (body.authorName || '').trim().slice(0, 120) || 'Guest';
+  const authorEmail = (body.authorEmail || '').trim().slice(0, 255) || null;
   const parentId = body.parentId ? String(body.parentId) : null;
   // Optional supporting asset (already uploaded to our public revision store).
   const attachmentUrl = (typeof body.attachmentUrl === 'string' && body.attachmentUrl.startsWith('https://'))
@@ -413,11 +513,11 @@ async function postComment(req, res) {
   const id = crypto.randomUUID();
   const [row] = await sql`
     INSERT INTO revision_comments
-      (id, version_id, parent_id, timecode_seconds, body, author_name,
+      (id, version_id, parent_id, timecode_seconds, body, author_name, author_email,
        attachment_url, attachment_name, attachment_type)
-    VALUES (${id}, ${versionId}, ${validParent}, ${timecode}, ${text}, ${authorName},
+    VALUES (${id}, ${versionId}, ${validParent}, ${timecode}, ${text}, ${authorName}, ${authorEmail},
             ${attachmentUrl}, ${attachmentName}, ${attachmentType})
-    RETURNING id, version_id, parent_id, timecode_seconds, body, author_name, created_at,
+    RETURNING id, version_id, parent_id, timecode_seconds, body, author_name, author_email, created_at,
               attachment_url, attachment_name, attachment_type
   `;
   return res.status(201).json(commentRow(row));
@@ -436,6 +536,7 @@ function projectRow(r) {
     updatedAt: r.updated_at,
     approvedAt: r.approved_at || null,
     approvedBy: r.approved_by || null,
+    videoCount: r.video_count !== undefined ? r.video_count : undefined,
     versionCount: r.version_count !== undefined ? r.version_count : undefined,
     commentCount: r.comment_count !== undefined ? r.comment_count : undefined,
   };
@@ -444,6 +545,7 @@ function projectRow(r) {
 function versionRow(r) {
   return {
     id: r.id,
+    videoId: r.video_id,
     versionNumber: r.version_number,
     label: r.label,
     filename: r.filename,

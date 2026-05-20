@@ -4,12 +4,40 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 
 const NAME_KEY = 'squideo.revision.name';
+const EMAIL_KEY = 'squideo.revision.email';
 
-// Renders a comment's supporting asset: an inline thumbnail for images, or a
-// download chip for anything else (PDFs, design files, etc.).
+// Diagonal, tiled "DRAFT" watermark as an inline SVG. Rendered as a repeating
+// CSS background over the player so the watermark is never baked into the file.
+const DRAFT_SVG = encodeURIComponent(
+  "<svg xmlns='http://www.w3.org/2000/svg' width='280' height='190'>" +
+  "<text x='10' y='120' transform='rotate(-28 140 95)' fill='rgba(255,255,255,0.20)' " +
+  "font-size='38' font-weight='700' font-family='Arial, Helvetica, sans-serif' " +
+  "letter-spacing='4'>DRAFT</text></svg>"
+);
+
+const isEmail = (e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
+
+// A draft's display name. Older drafts were auto-labelled "Version N"; treat
+// those (and empty labels) as "Draft N" so the wording is consistent.
+function draftLabel(v) {
+  return (v.label && !/^Version \d+$/.test(v.label)) ? v.label : ('Draft ' + v.versionNumber);
+}
+
+// mm:ss (or h:mm:ss for long videos) — the timecode style clients expect.
+function tc(seconds) {
+  if (seconds == null || !Number.isFinite(seconds)) return '';
+  const s = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(r).padStart(2, '0');
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+// Renders a comment's supporting asset: inline thumbnail for images, download chip otherwise.
 function CommentAttachment({ url, name, type }) {
-  const isImage = (type || '').startsWith('image/');
-  if (isImage) {
+  if ((type || '').startsWith('image/')) {
     return (
       <a href={url} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 6 }}>
         <img src={url} alt={name || 'attachment'}
@@ -28,45 +56,40 @@ function CommentAttachment({ url, name, type }) {
   );
 }
 
-// Diagonal, tiled "DRAFT" watermark as an inline SVG. Rendered as a repeating
-// CSS background over the player so the watermark is never baked into the file.
-const DRAFT_SVG = encodeURIComponent(
-  "<svg xmlns='http://www.w3.org/2000/svg' width='280' height='190'>" +
-  "<text x='10' y='120' transform='rotate(-28 140 95)' fill='rgba(255,255,255,0.20)' " +
-  "font-size='38' font-weight='700' font-family='Arial, Helvetica, sans-serif' " +
-  "letter-spacing='4'>DRAFT</text></svg>"
-);
-
-// A draft's display name. Older versions were auto-labelled "Version N"; treat
-// those (and empty labels) as "Draft N" so the wording is consistent.
-function draftLabel(v) {
-  return (v.label && !/^Version \d+$/.test(v.label)) ? v.label : ('Draft ' + v.versionNumber);
-}
-
-// mm:ss (or h:mm:ss for long videos) — the timecode style clients expect.
-function tc(seconds) {
-  if (seconds == null || !Number.isFinite(seconds)) return '';
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const r = s % 60;
-  const mm = String(h ? m : m).padStart(2, '0');
-  const ss = String(r).padStart(2, '0');
-  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
 /**
- * Frame.io-style revision surface: a video player on the left and a timecoded
- * comment thread on the right. `data` is the public payload from
- * /api/revisions/public. Comments are posted through the store and
- * appended locally (no realtime needed for v1).
+ * Frame.io-style revision surface. `data` is the public payload from
+ * /api/revisions/public: a project with one or more videos, each with drafts.
+ * Reviewers must enter their name + email before viewing.
  */
 export function VideoRevision({ token, data }) {
   const { actions, showMsg } = useStore();
   const videoRef = useRef(null);
 
-  const versions = data.versions || [];
+  // ── Name + email gate ──────────────────────────────────────────────────────
+  const [name, setName] = useState(() => localStorage.getItem(NAME_KEY) || '');
+  const [email, setEmail] = useState(() => localStorage.getItem(EMAIL_KEY) || '');
+  const [identified, setIdentified] = useState(() => !!localStorage.getItem(NAME_KEY) && isEmail(localStorage.getItem(EMAIL_KEY) || ''));
+  const [gateName, setGateName] = useState(name);
+  const [gateEmail, setGateEmail] = useState(email);
+
+  function submitGate(e) {
+    e.preventDefault();
+    const n = gateName.trim();
+    const em = gateEmail.trim();
+    if (!n || !isEmail(em)) { showMsg('Please enter your name and a valid email'); return; }
+    localStorage.setItem(NAME_KEY, n);
+    localStorage.setItem(EMAIL_KEY, em);
+    setName(n); setEmail(em); setIdentified(true);
+    actions.recordRevisionViewer(token, { name: n, email: em }).catch(() => {});
+  }
+
+  // ── Video + draft selection ─────────────────────────────────────────────────
+  const videos = data.videos || [];
+  const [videoId, setVideoId] = useState(videos[0]?.id || null);
+  const activeVideo = videos.find(v => v.id === videoId) || videos[0] || null;
+  const versions = activeVideo?.versions || [];
   const [versionId, setVersionId] = useState(versions[0]?.id || null);
+  // Keep a valid draft selected as the video changes.
   const version = versions.find(v => v.id === versionId) || versions[0] || null;
 
   const [comments, setComments] = useState(data.comments || []);
@@ -75,14 +98,45 @@ export function VideoRevision({ token, data }) {
   const [approvedAt, setApprovedAt] = useState(data.approvedAt || null);
   const [approving, setApproving] = useState(false);
 
-  const [name, setName] = useState(() => localStorage.getItem(NAME_KEY) || '');
   const [draft, setDraft] = useState('');
-  const [pinTime, setPinTime] = useState(null);   // timecode the comment will attach to
-  const [pinned, setPinned] = useState(true);     // whether to attach a timecode at all
+  const [pinTime, setPinTime] = useState(null);
+  const [pinned, setPinned] = useState(true);
   const [posting, setPosting] = useState(false);
-  const [asset, setAsset] = useState(null);        // uploaded { url, name, type }
+  const [asset, setAsset] = useState(null);
   const [assetUploading, setAssetUploading] = useState(false);
   const fileRef = useRef(null);
+
+  function selectVideo(id) {
+    setVideoId(id);
+    const v = videos.find(x => x.id === id);
+    setVersionId(v?.versions?.[0]?.id || null);
+  }
+
+  const versionComments = useMemo(() => {
+    const activeVersionId = version?.id;
+    return comments
+      .filter(c => c.versionId === activeVersionId)
+      .sort((a, b) => {
+        const at = a.timecodeSeconds, bt = b.timecodeSeconds;
+        if (at == null && bt == null) return new Date(a.createdAt) - new Date(b.createdAt);
+        if (at == null) return 1;
+        if (bt == null) return -1;
+        return at - bt;
+      });
+  }, [comments, version]);
+
+  const markers = versionComments.filter(c => c.timecodeSeconds != null);
+
+  function seekTo(seconds) {
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = seconds;
+    v.pause();
+  }
+
+  function onComposerFocus() {
+    setPinTime(videoRef.current ? videoRef.current.currentTime : 0);
+  }
 
   async function attachFile(file) {
     if (!file) return;
@@ -99,51 +153,16 @@ export function VideoRevision({ token, data }) {
     }
   }
 
-  // Comments for the active version, with timecoded ones ordered by time and
-  // general ones last.
-  const versionComments = useMemo(() => {
-    return comments
-      .filter(c => c.versionId === versionId)
-      .sort((a, b) => {
-        const at = a.timecodeSeconds, bt = b.timecodeSeconds;
-        if (at == null && bt == null) return new Date(a.createdAt) - new Date(b.createdAt);
-        if (at == null) return 1;
-        if (bt == null) return -1;
-        return at - bt;
-      });
-  }, [comments, versionId]);
-
-  const markers = versionComments.filter(c => c.timecodeSeconds != null);
-
-  function seekTo(seconds) {
-    const v = videoRef.current;
-    if (!v) return;
-    v.currentTime = seconds;
-    v.pause();
-  }
-
-  // Capture the current frame's time when the client starts writing, so the
-  // comment pins to where they paused — just like Frame.io.
-  function onComposerFocus() {
-    setPinTime(videoRef.current ? videoRef.current.currentTime : 0);
-  }
-
   async function submit() {
     const text = draft.trim();
-    if (!text && !asset) return;
-    let author = name.trim();
-    if (!author) {
-      author = (window.prompt('Your name (shown with your comments):') || '').trim();
-      if (!author) return;
-      setName(author);
-      localStorage.setItem(NAME_KEY, author);
-    }
+    if ((!text && !asset) || !version) return;
     setPosting(true);
     try {
       const created = await actions.postRevisionComment(token, {
-        versionId,
+        versionId: version.id,
         body: text,
-        authorName: author,
+        authorName: name,
+        authorEmail: email,
         timecodeSeconds: pinned ? (pinTime ?? 0) : null,
         attachmentUrl: asset?.url || null,
         attachmentName: asset?.name || null,
@@ -162,17 +181,10 @@ export function VideoRevision({ token, data }) {
 
   async function approve() {
     if (approvedAt) return;
-    let approver = name.trim();
-    if (!approver) {
-      approver = (window.prompt('Your name (to confirm approval):') || '').trim();
-      if (!approver) return;
-      setName(approver);
-      localStorage.setItem(NAME_KEY, approver);
-    }
-    if (!window.confirm('Approve all revisions? This finalises the video and no further comments can be added.')) return;
+    if (!window.confirm('Approve all revisions? This finalises the videos and no further comments can be added.')) return;
     setApproving(true);
     try {
-      const res = await actions.approveRevision(token, approver);
+      const res = await actions.approveRevision(token, name);
       setApprovedAt(res.approvedAt || new Date().toISOString());
       showMsg('Revisions approved — thank you!');
     } catch (err) {
@@ -182,11 +194,43 @@ export function VideoRevision({ token, data }) {
     }
   }
 
-  if (!version) {
+  // ── Gate screen ─────────────────────────────────────────────────────────────
+  if (!identified) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: BRAND.paper, padding: 20 }}>
+        <form onSubmit={submitGate} style={{ width: '100%', maxWidth: 380, background: '#fff',
+          border: `1px solid ${BRAND.border}`, borderRadius: 12, padding: 28 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <Clapperboard size={20} color={BRAND.blue} />
+            <strong style={{ fontSize: 16, color: BRAND.ink }}>{data.title}</strong>
+          </div>
+          <p style={{ color: BRAND.muted, fontSize: 13, margin: '0 0 18px' }}>
+            Please enter your details to view and comment on this revision.
+          </p>
+          <label style={{ fontSize: 12, color: BRAND.muted }}>Your name</label>
+          <input value={gateName} onChange={e => setGateName(e.target.value)} autoFocus
+            style={{ width: '100%', padding: 9, borderRadius: 8, border: `1px solid ${BRAND.border}`,
+              margin: '4px 0 12px', boxSizing: 'border-box', fontSize: 14 }} />
+          <label style={{ fontSize: 12, color: BRAND.muted }}>Your email</label>
+          <input value={gateEmail} onChange={e => setGateEmail(e.target.value)} type="email"
+            style={{ width: '100%', padding: 9, borderRadius: 8, border: `1px solid ${BRAND.border}`,
+              margin: '4px 0 18px', boxSizing: 'border-box', fontSize: 14 }} />
+          <button type="submit"
+            style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: 'none',
+              background: BRAND.blue, color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+            View revisions
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  if (!activeVideo || !version) {
     return (
       <div style={{ padding: 48, textAlign: 'center', color: BRAND.muted }}>
         <Clapperboard size={32} style={{ opacity: 0.4 }} />
-        <p>No video has been uploaded for revision yet.</p>
+        <p>No video has been uploaded for review yet.</p>
       </div>
     );
   }
@@ -195,17 +239,21 @@ export function VideoRevision({ token, data }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px',
-        borderBottom: `1px solid ${BRAND.border}`, background: '#fff' }}>
+        borderBottom: `1px solid ${BRAND.border}`, background: '#fff', flexWrap: 'wrap' }}>
         <Clapperboard size={20} color={BRAND.blue} />
         <strong style={{ color: BRAND.ink, fontSize: 15 }}>{data.title}</strong>
         {data.clientName && <span style={{ color: BRAND.muted, fontSize: 13 }}>· {data.clientName}</span>}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {videos.length > 1 && (
+            <select value={videoId} onChange={e => selectVideo(e.target.value)}
+              style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`, fontSize: 13, fontWeight: 600 }}>
+              {videos.map(v => <option key={v.id} value={v.id}>{v.title}</option>)}
+            </select>
+          )}
           {versions.length > 1 && (
-            <select value={versionId} onChange={e => setVersionId(e.target.value)}
+            <select value={version.id} onChange={e => setVersionId(e.target.value)}
               style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`, fontSize: 13 }}>
-              {versions.map(v => (
-                <option key={v.id} value={v.id}>{draftLabel(v)}</option>
-              ))}
+              {versions.map(v => <option key={v.id} value={v.id}>{draftLabel(v)}</option>)}
             </select>
           )}
           {data.callUrl && (
@@ -239,6 +287,7 @@ export function VideoRevision({ token, data }) {
             <div style={{ position: 'relative', display: 'inline-flex', maxWidth: '100%', maxHeight: '100%' }}>
               <video
                 ref={videoRef}
+                key={version.id}
                 src={version.videoUrl}
                 controls
                 controlsList="nodownload"
@@ -247,9 +296,6 @@ export function VideoRevision({ token, data }) {
                 onTimeUpdate={e => setCurrentTime(e.target.currentTime || 0)}
                 style={{ display: 'block', maxWidth: '100%', maxHeight: '100%' }}
               />
-              {/* Tiled "DRAFT" watermark — overlaid in CSS so we never have to
-                  burn it into the video file. pointer-events:none keeps the
-                  player fully usable underneath. */}
               <div aria-hidden style={{
                 position: 'absolute', inset: 0, pointerEvents: 'none',
                 backgroundImage: `url("data:image/svg+xml,${DRAFT_SVG}")`,
@@ -257,7 +303,6 @@ export function VideoRevision({ token, data }) {
               }} />
             </div>
           </div>
-          {/* Comment markers along the timeline */}
           <div style={{ position: 'relative', height: 28, background: '#0B1B26',
             borderTop: '1px solid rgba(255,255,255,0.08)' }}>
             {duration > 0 && markers.map(c => (
@@ -310,7 +355,7 @@ export function VideoRevision({ token, data }) {
             <div style={{ borderTop: `1px solid ${BRAND.border}`, padding: 16, textAlign: 'center',
               color: '#16A34A', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center',
               justifyContent: 'center', gap: 6 }}>
-              <CheckCircle2 size={16} /> Revisions approved — this video is finalised.
+              <CheckCircle2 size={16} /> Revisions approved — these videos are finalised.
             </div>
           ) : (
           <div style={{ borderTop: `1px solid ${BRAND.border}`, padding: 12 }}>
@@ -324,12 +369,11 @@ export function VideoRevision({ token, data }) {
               value={draft}
               onChange={e => setDraft(e.target.value)}
               onFocus={onComposerFocus}
-              placeholder={name ? 'Leave your comment here…' : 'Leave your comment here… (we\'ll ask your name)'}
+              placeholder="Leave your comment here…"
               rows={3}
               style={{ width: '100%', resize: 'none', padding: 8, borderRadius: 8,
                 border: `1px solid ${BRAND.border}`, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
             />
-            {/* Pending attachment chip */}
             {(asset || assetUploading) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12, color: BRAND.muted }}>
                 <Paperclip size={13} />

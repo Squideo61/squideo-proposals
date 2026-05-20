@@ -1365,12 +1365,26 @@ export function StoreProvider({ children }) {
         });
     },
 
-    // Streams the video straight to Vercel Blob (bypassing the serverless body
-    // limit), then registers the version row. `onProgress` receives 0–100.
-    async uploadRevisionVersion(projectId, file, { label = null, onProgress } = {}) {
+    // Add / remove videos within a project. Both reload the project detail so
+    // the nested videos→drafts structure stays in sync.
+    createRevisionVideo(projectId, title) {
+      return api.post('/api/revisions/videos?projectId=' + encodeURIComponent(projectId), { title })
+        .then((video) => actions.loadRevisionDetail(projectId).then(() => video));
+    },
+
+    deleteRevisionVideo(projectId, videoId) {
+      return api.delete('/api/revisions/videos?id=' + encodeURIComponent(videoId))
+        .then(() => actions.loadRevisionDetail(projectId))
+        .catch(() => actions.loadRevisionDetail(projectId));
+    },
+
+    // Streams a draft straight to Vercel Blob (bypassing the serverless body
+    // limit), registers it under a video, then reloads the project detail.
+    // `onProgress` receives 0–100.
+    async uploadRevisionVersion(projectId, videoId, file, { label = null, onProgress } = {}) {
       const { upload } = await import('@vercel/blob/client');
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const blob = await upload('revision-videos/' + projectId + '/' + safeName, file, {
+      const blob = await upload('revision-videos/' + videoId + '/' + safeName, file, {
         access: 'public',
         handleUploadUrl: '/api/revisions/upload-token',
         contentType: file.type || 'video/mp4',
@@ -1382,30 +1396,17 @@ export function StoreProvider({ children }) {
         onUploadProgress: onProgress ? (e) => onProgress(Math.round(e.percentage)) : undefined,
       });
       const version = await api.post(
-        '/api/revisions/versions?projectId=' + encodeURIComponent(projectId),
+        '/api/revisions/versions?videoId=' + encodeURIComponent(videoId),
         { blobUrl: blob.url, blobPathname: blob.pathname, filename: file.name,
           mimeType: file.type || null, sizeBytes: file.size, label }
       );
-      setState(s => {
-        const detail = s.revisionDetail[projectId];
-        const nextDetail = detail
-          ? { ...s.revisionDetail, [projectId]: { ...detail, versions: [version, ...(detail.versions || [])] } }
-          : s.revisionDetail;
-        const revisions = (s.revisions || []).map(p =>
-          p.id === projectId ? { ...p, versionCount: (p.versionCount || 0) + 1 } : p);
-        return { ...s, revisionDetail: nextDetail, revisions };
-      });
+      await actions.loadRevisionDetail(projectId);
       return version;
     },
 
     deleteRevisionVersion(projectId, versionId) {
-      setState(s => {
-        const detail = s.revisionDetail[projectId];
-        if (!detail) return s;
-        return { ...s, revisionDetail: { ...s.revisionDetail, [projectId]:
-          { ...detail, versions: (detail.versions || []).filter(v => v.id !== versionId) } } };
-      });
       return api.delete('/api/revisions/versions?id=' + encodeURIComponent(versionId))
+        .then(() => actions.loadRevisionDetail(projectId))
         .catch(() => actions.loadRevisionDetail(projectId));
     },
 
@@ -1419,6 +1420,11 @@ export function StoreProvider({ children }) {
 
     postRevisionComment(token, payload) {
       return api.post('/api/revisions/comment?token=' + encodeURIComponent(token), payload);
+    },
+
+    // Name + email gate: records the viewer before they see the videos.
+    recordRevisionViewer(token, { name, email }) {
+      return api.post('/api/revisions/viewer?token=' + encodeURIComponent(token), { name, email });
     },
 
     // Client finalises the project (locks further comments).
