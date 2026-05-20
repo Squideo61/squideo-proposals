@@ -2364,7 +2364,14 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
             <FormRow label="Subject">
               <input className="input" type="text" value={subject} onChange={(e) => setSubject(e.target.value)} required />
             </FormRow>
-            <FormRow label="Message">
+            {/* Message field is NOT wrapped in FormRow's <label> on purpose:
+                that label carries font-weight:500, and Grammarly drops the
+                editor's inline weight when it instruments the field, so the
+                text would fall back to that inherited 500 and look bold. By
+                keeping the weight on the label text only, the editor's
+                inherited baseline stays a normal 400. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 13, fontWeight: 500 }}>Message</span>
               <div
                 style={{
                   border: '1px solid ' + BRAND.border,
@@ -2422,7 +2429,7 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
                   onAttach={() => fileInputRef.current && fileInputRef.current.click()}
                 />
               </div>
-            </FormRow>
+            </div>
             {/* Attachments: hidden file input (opened from the toolbar's attach
                 button); each picked
                 file uploads to a temporary blob and shows as a chip until it's
