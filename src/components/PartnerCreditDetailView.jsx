@@ -10,6 +10,12 @@ function fmtCredits(n) {
   return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, '');
 }
 
+function ordinal(n) {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
 function fmtDate(s) {
   if (!s) return '—';
   const d = new Date(s);
@@ -131,6 +137,15 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
                       ? (s.startDate ? 'Started ' + fmtDate(s.startDate) : 'Started ' + fmtDate(s.createdAt))
                       : (s.currentPeriodEnd ? 'Renews ' + fmtDate(s.currentPeriodEnd) : '—')}
                     {s.canceledAt && <div>Cancelled {fmtDate(s.canceledAt)}</div>}
+                    {s.isManual && s.autoCredit && s.creditsPerMonth > 0 && (() => {
+                      const day = new Date(s.startDate || s.createdAt).getDate();
+                      return (
+                        <div style={{ marginTop: 4, color: BRAND.blue, fontSize: 11 }}>
+                          {fmtCredits(s.creditsPerMonth)} credit{s.creditsPerMonth === 1 ? '' : 's'} added automatically on the {ordinal(day)} of each month
+                          {day >= 29 && <span style={{ color: BRAND.muted }}> (or the last day of shorter months)</span>}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td style={{ padding: '10px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                     {s.isManual && (
