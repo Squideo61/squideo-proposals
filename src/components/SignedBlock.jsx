@@ -196,7 +196,7 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
           </h3>
           <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
             {isDeposit
-              ? 'Pay your 50% deposit of ' + formatGBP(amountDue) + ' now to start production immediately.'
+              ? 'Pay your 50% deposit of ' + formatGBP(amountDue) + ' now to reserve your place in our production schedule.'
               : signed.partnerSelected
                 ? 'Pay the full amount of ' + formatGBP(amountDue) + ' now to start production and activate your Partner Programme.'
                 : 'Pay the full amount of ' + formatGBP(amountDue) + ' now to lock in your free subtitled version.'}
