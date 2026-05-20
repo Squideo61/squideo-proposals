@@ -61,6 +61,13 @@ export default async function handler(req, res) {
       return await cancelSubscription(res, subId);
     }
 
+    if (action === 'mark-month-paid') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const subId = req.query.id ? String(req.query.id) : null;
+      if (!subId) return res.status(400).json({ error: 'id required' });
+      return await markMonthPaid(req, res, user, subId);
+    }
+
     return res.status(404).json({ error: 'Unknown action' });
   } catch (err) {
     console.error('[partner]', err);
@@ -192,6 +199,8 @@ async function clientDetail(res, key) {
         ps.created_at,
         ps.start_date,
         ps.auto_credit,
+        ps.xero_contact_id,
+        ps.xero_invoice_reference,
         p.number_year,
         p.number_seq,
         (p.data->>'proposalTitle') AS proposal_title,
@@ -277,6 +286,8 @@ async function clientDetail(res, key) {
       createdAt: s.created_at,
       startDate: s.start_date,
       autoCredit: !!s.auto_credit,
+      xeroContactId: s.xero_contact_id || null,
+      xeroInvoiceReference: s.xero_invoice_reference || null,
       isManual: manual,
       creditsIssuedFromSub: issuedFromSub,
     };
@@ -500,6 +511,15 @@ async function patchManualSubscription(req, res, subId) {
   if (typeof body.clientName === 'string' && body.clientName.trim()) {
     updates.push(sql`UPDATE partner_subscriptions SET client_name = ${body.clientName.trim()}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);
   }
+  // Xero recurring-invoice link. Empty string clears the link.
+  if ('xeroContactId' in body) {
+    const v = body.xeroContactId ? String(body.xeroContactId).trim() : null;
+    updates.push(sql`UPDATE partner_subscriptions SET xero_contact_id = ${v || null}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);
+  }
+  if ('xeroInvoiceReference' in body) {
+    const v = body.xeroInvoiceReference ? String(body.xeroInvoiceReference).trim().slice(0, 200) : null;
+    updates.push(sql`UPDATE partner_subscriptions SET xero_invoice_reference = ${v || null}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);
+  }
 
   if (updates.length === 0) {
     return res.status(400).json({ error: 'no patchable fields supplied' });
@@ -543,6 +563,60 @@ async function cancelSubscription(res, subId) {
   `;
 
   return res.status(200).json({ ok: true });
+}
+
+// One-click "this month's invoice was paid" — records the subscription's
+// credits_per_month as a positive adjustment, dated today. Used for BACS (and
+// any payment Xero didn't auto-detect). Mirrors how the Xero webhook credits,
+// but is operator-initiated and labelled as a manual payment.
+async function markMonthPaid(req, res, user, subId) {
+  let body = req.body;
+  if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
+  body = body || {};
+
+  const [sub] = await sql`
+    SELECT client_key, client_name, credits_per_month, status
+      FROM partner_subscriptions WHERE stripe_subscription_id = ${subId}
+  `;
+  if (!sub) return res.status(404).json({ error: 'subscription not found' });
+
+  const credits = Number(sub.credits_per_month) || 0;
+  if (credits <= 0) {
+    return res.status(400).json({ error: 'Set a "credits per month" amount on this subscription first.' });
+  }
+
+  // Bare date (YYYY-MM-DD) anchored midday UTC so it doesn't drift timezone.
+  let allocatedAt = null;
+  if (body.date) {
+    const raw = String(body.date);
+    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+    const d = new Date(isDateOnly ? raw + 'T12:00:00Z' : raw);
+    if (!isNaN(d.getTime())) allocatedAt = d.toISOString();
+  }
+  const method = (body.method || 'BACS').toString().slice(0, 40);
+
+  const [row] = await sql`
+    INSERT INTO credit_allocations
+      (client_key, proposal_id, description, credit_cost, kind, allocated_by, notes, allocated_at)
+    VALUES
+      (${sub.client_key}, NULL, 'Monthly subscription payment', ${credits}, 'adjustment',
+       ${user.email || null}, ${'Marked paid manually (' + method + ')'},
+       COALESCE(${allocatedAt}::TIMESTAMPTZ, NOW()))
+    RETURNING id, client_key, proposal_id, description, credit_cost, kind,
+              allocated_at, allocated_by, notes
+  `;
+
+  return res.status(201).json({
+    id: row.id,
+    clientKey: row.client_key,
+    proposalId: row.proposal_id,
+    description: row.description,
+    creditCost: Number(row.credit_cost) || 0,
+    kind: row.kind,
+    allocatedAt: row.allocated_at,
+    allocatedBy: row.allocated_by,
+    notes: row.notes,
+  });
 }
 
 async function deleteManualSubscription(res, subId) {

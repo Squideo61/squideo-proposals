@@ -771,6 +771,12 @@ export function StoreProvider({ children }) {
         setState(s => ({ ...s, partnerCreditsList: null, partnerCreditDetail: {} }));
       });
     },
+    markMonthPaid(clientKey, subId, input = {}) {
+      return api.post('/api/partner/mark-month-paid?id=' + encodeURIComponent(subId), input).then((row) => {
+        applyOptimisticAllocationChange(setState, clientKey, (allocations) => [row, ...allocations]);
+        return row;
+      });
+    },
     cancelPartnerSubscription(subId) {
       return api.post('/api/partner/cancel-subscription?id=' + encodeURIComponent(subId), {}).then(() => {
         setState(s => ({ ...s, partnerCreditsList: null, partnerCreditDetail: {} }));

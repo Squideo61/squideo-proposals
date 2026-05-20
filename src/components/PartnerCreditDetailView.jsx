@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Ban, Coins, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Ban, Banknote, Coins, Link2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { api } from '../api.js';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, useIsMobile } from '../utils.js';
@@ -36,6 +37,7 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
   const [loading, setLoading] = useState(!cached);
   const [error, setError] = useState(null);
   const [editingSub, setEditingSub] = useState(null);
+  const [payingSub, setPayingSub] = useState(null);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -149,12 +151,22 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
                     })()}
                   </td>
                   <td style={{ padding: '10px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    {s.status === 'active' && s.creditsPerMonth > 0 && (
+                      <button
+                        onClick={() => setPayingSub(s)}
+                        className="btn-icon"
+                        aria-label="Mark this month's payment received"
+                        title="Mark month paid (BACS / manual)"
+                        style={{ color: '#15803D' }}
+                      ><Banknote size={14} /></button>
+                    )}
                     {s.isManual && (
                       <button
                         onClick={() => setEditingSub(s)}
                         className="btn-icon"
                         aria-label="Edit subscription"
                         title="Edit subscription"
+                        style={{ marginLeft: 4 }}
                       ><Pencil size={14} /></button>
                     )}
                     {s.status === 'active' && (
@@ -326,7 +338,68 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
           showMsg={showMsg}
         />
       )}
+
+      {payingSub && (
+        <MarkPaidModal
+          subscription={payingSub}
+          onClose={() => setPayingSub(null)}
+          onConfirm={async ({ date, method }) => {
+            try {
+              await actions.markMonthPaid(clientKey, payingSub.stripeSubscriptionId, { date, method });
+              setPayingSub(null);
+              showMsg(`${fmtCredits(payingSub.creditsPerMonth)} credits added`);
+            } catch (err) {
+              showMsg(err?.message || 'Failed to record payment');
+            }
+          }}
+        />
+      )}
     </Shell>
+  );
+}
+
+function MarkPaidModal({ subscription, onClose, onConfirm }) {
+  const s = subscription;
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [method, setMethod] = useState('BACS');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try { await onConfirm({ date, method }); }
+    finally { setSubmitting(false); }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>Mark month paid</h3>
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted }}>
+        Records this month's payment and adds <strong>{fmtCredits(s.creditsPerMonth)} credit{s.creditsPerMonth === 1 ? '' : 's'}</strong> to {s.proposalTitle || 'this client'}.
+        Use this for BACS, or any payment Xero didn't pick up automatically.
+      </p>
+      <form onSubmit={submit} style={{ display: 'grid', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <DetailField label="Payment date">
+            <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </DetailField>
+          <DetailField label="Method">
+            <select className="input" value={method} onChange={(e) => setMethod(e.target.value)}>
+              <option value="BACS">BACS</option>
+              <option value="Card">Card</option>
+              <option value="Cheque">Cheque</option>
+              <option value="Other">Other</option>
+            </select>
+          </DetailField>
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+          <button type="submit" disabled={submitting} className="btn">
+            <Banknote size={14} /> {submitting ? 'Saving…' : 'Add credits'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -590,6 +663,8 @@ function EditSubscriptionModal({ subscription, onClose, onSaved, onDeleted, patc
   const [startDate, setStartDate] = useState((s.startDate || s.createdAt || '').slice(0, 10));
   const [autoCredit, setAutoCredit] = useState(!!s.autoCredit);
   const [status, setStatus] = useState(s.status || 'active');
+  const [xeroContactId, setXeroContactId] = useState(s.xeroContactId || '');
+  const [xeroInvoiceReference, setXeroInvoiceReference] = useState(s.xeroInvoiceReference || '');
   const [submitting, setSubmitting] = useState(false);
   const [removing, setRemoving] = useState(false);
 
@@ -605,6 +680,8 @@ function EditSubscriptionModal({ subscription, onClose, onSaved, onDeleted, patc
         startDate: startDate || null,
         autoCredit,
         status,
+        xeroContactId: xeroContactId || '',
+        xeroInvoiceReference: xeroInvoiceReference || '',
       });
       onSaved();
     } catch (err) {
@@ -649,6 +726,34 @@ function EditSubscriptionModal({ subscription, onClose, onSaved, onDeleted, patc
           <input type="checkbox" checked={autoCredit} onChange={(e) => setAutoCredit(e.target.checked)} />
           Auto-credit each month from the start date
         </label>
+
+        {/* Xero recurring-invoice link — credits when the linked invoice is paid */}
+        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, background: '#F8FAFC' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <Link2 size={14} color={BRAND.blue} />
+            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: BRAND.muted }}>Xero recurring invoice</span>
+          </div>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: BRAND.muted, lineHeight: 1.5 }}>
+            Link the Xero customer whose recurring invoice covers this subscription. When that
+            invoice is paid (card via Xero's Stripe link, or BACS), <strong>{fmtCredits(s.creditsPerMonth)} credit{s.creditsPerMonth === 1 ? '' : 's'}</strong> are
+            added automatically. Leave “auto-credit” above <strong>off</strong> so credits come from payments, not the calendar.
+          </p>
+          <XeroContactPicker value={xeroContactId} onChange={setXeroContactId} />
+          <div style={{ marginTop: 10 }}>
+            <DetailField label="Only count invoices whose reference contains (optional)">
+              <input
+                className="input"
+                value={xeroInvoiceReference}
+                onChange={(e) => setXeroInvoiceReference(e.target.value)}
+                placeholder="e.g. Partner Programme"
+              />
+            </DetailField>
+            <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>
+              Stops one-off project invoices to the same customer from adding credits. Match the reference on the repeating invoice.
+            </div>
+          </div>
+        </div>
+
         <DetailField label="Status">
           <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="active">Active</option>
@@ -669,6 +774,82 @@ function EditSubscriptionModal({ subscription, onClose, onSaved, onDeleted, patc
         </div>
       </form>
     </Modal>
+  );
+}
+
+// Typeahead over the local Xero contacts mirror (/api/crm/xero-contacts).
+// `value` is the selected Xero ContactID (or ''); `onChange` receives the id.
+function XeroContactPicker({ value, onChange }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [selectedName, setSelectedName] = useState('');
+
+  // Resolve the name of a pre-linked contact so we can show it on open.
+  useEffect(() => {
+    let active = true;
+    if (value && !selectedName) {
+      api.get('/api/crm/xero-contacts/' + encodeURIComponent(value))
+        .then(c => { if (active && c?.name) setSelectedName(c.name); })
+        .catch(() => {});
+    }
+    return () => { active = false; };
+  }, [value, selectedName]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) { setResults([]); return; }
+    let active = true;
+    const t = setTimeout(() => {
+      api.get('/api/crm/xero-contacts/search?q=' + encodeURIComponent(q) + '&limit=8')
+        .then(rows => { if (active) setResults(Array.isArray(rows) ? rows : []); })
+        .catch(() => { if (active) setResults([]); });
+    }, 200);
+    return () => { active = false; clearTimeout(t); };
+  }, [query]);
+
+  if (value) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ flex: 1, padding: '8px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8, background: 'white', fontSize: 13 }}>
+          <span style={{ fontWeight: 600 }}>{selectedName || 'Linked Xero contact'}</span>
+        </div>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => { onChange(''); setSelectedName(''); setQuery(''); }}
+        >Unlink</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        className="input"
+        value={query}
+        placeholder="Search Xero customers…"
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && results.length > 0 && (
+        <div style={{ position: 'absolute', zIndex: 20, top: '100%', left: 0, right: 0, marginTop: 4, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.12)', maxHeight: 220, overflowY: 'auto' }}>
+          {results.map(c => (
+            <button
+              key={c.id}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onChange(c.id); setSelectedName(c.name); setOpen(false); }}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13 }}
+            >
+              <div style={{ fontWeight: 600 }}>{c.name}</div>
+              {c.email && <div style={{ fontSize: 11, color: BRAND.muted }}>{c.email}</div>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
