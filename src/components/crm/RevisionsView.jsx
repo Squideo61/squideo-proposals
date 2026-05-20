@@ -281,14 +281,12 @@ function VideoCard({ projectId, video, commentsByVersion }) {
   const { actions, showMsg } = useStore();
   const fileInputRef = useRef(null);
   const [progress, setProgress] = useState(null);
-  // Latest draft is expanded by default; older ones collapse to a header.
+  // Latest draft is open by default (recomputed each render, so a freshly
+  // uploaded draft auto-expands); older ones collapse. Manual toggles override.
   const latestId = (video.versions || [])[0]?.id;
-  const [expanded, setExpanded] = useState(() => new Set(latestId ? [latestId] : []));
-  const toggle = (id) => setExpanded(prev => {
-    const next = new Set(prev);
-    next.has(id) ? next.delete(id) : next.add(id);
-    return next;
-  });
+  const [overrides, setOverrides] = useState({}); // versionId -> explicit open/closed
+  const isDraftOpen = (id) => (id in overrides ? overrides[id] : id === latestId);
+  const toggle = (id) => setOverrides(prev => ({ ...prev, [id]: !isDraftOpen(id) }));
 
   async function handleFile(file) {
     if (!file) return;
@@ -349,7 +347,7 @@ function VideoCard({ projectId, video, commentsByVersion }) {
           if (at == null && bt == null) return new Date(a.createdAt) - new Date(b.createdAt);
           if (at == null) return 1; if (bt == null) return -1; return at - bt;
         });
-        const isOpen = expanded.has(v.id);
+        const isOpen = isDraftOpen(v.id);
         return (
           <div key={v.id} style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 12, marginTop: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: isOpen ? 8 : 0 }}>
