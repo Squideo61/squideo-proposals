@@ -15,9 +15,14 @@
 //   GET    /api/reviews/public?token=…          — project + versions + comments for the viewer
 //   POST   /api/reviews/comment?token=…         — leave a timecoded comment
 import crypto from 'crypto';
-import { put, del } from '@vercel/blob';
+import { del } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
 import sql from '../_lib/db.js';
+
+// Review videos live in their own PUBLIC Blob store (separate from the private
+// store used for deal files) so clients can stream them directly via the share
+// link. Its read-write token is exposed under this env var.
+const REVIEW_BLOB_TOKEN = process.env.REVIEW_BLOB_READ_WRITE_TOKEN;
 import { cors, requireAuth } from '../_lib/middleware.js';
 
 function parseBody(req) {
@@ -54,22 +59,6 @@ export default async function handler(req, res) {
 
     const user = await requireAuth(req, res);
     if (!user) return;
-
-    // TEMP diagnostic — runs a server-side put() with the runtime Blob token and
-    // returns the raw outcome (same-origin JSON, so no CORS hides the error).
-    // Remove once the upload issue is resolved.
-    if (action === 'diag') {
-      const rw = process.env.BLOB_READ_WRITE_TOKEN || '';
-      const out = { hasToken: !!rw, tokenStore: rw ? rw.split('_').slice(0, 4).join('_') + '_…' : null };
-      try {
-        const blob = await put('review-videos/diag/' + Date.now() + '.txt', 'diag', {
-          access: 'public', addRandomSuffix: true,
-        });
-        return res.status(200).json({ ...out, put: 'ok', url: blob.url });
-      } catch (e) {
-        return res.status(200).json({ ...out, put: 'failed', error: e?.message || String(e) });
-      }
-    }
 
     if (action === 'projects') {
       if (req.method === 'GET')    return await listProjects(res);
@@ -153,7 +142,7 @@ async function deleteProject(res, id) {
   // Remove the blobs first; the DB cascade then clears versions + comments.
   const versions = await sql`SELECT blob_url FROM review_versions WHERE project_id = ${id}`;
   for (const v of versions) {
-    try { await del(v.blob_url); } catch (err) {
+    try { await del(v.blob_url, { token: REVIEW_BLOB_TOKEN }); } catch (err) {
       console.error('[reviews] blob delete failed', err.message);
     }
   }
@@ -198,11 +187,16 @@ async function projectDetail(res, id) {
 // registerVersion once the upload resolves (works in local dev too, where the
 // onUploadCompleted callback can't reach localhost).
 async function uploadToken(req, res) {
+  if (!REVIEW_BLOB_TOKEN)
+    return res.status(503).json({ error: 'Review video storage not configured (REVIEW_BLOB_READ_WRITE_TOKEN missing)' });
   const body = parseBody(req);
   try {
     const jsonResponse = await handleUpload({
       body,
       request: req,
+      // Mint the client token against the public review store, not the default
+      // (private) deal-files store.
+      token: REVIEW_BLOB_TOKEN,
       onBeforeGenerateToken: async () => {
         const user = await requireAuth(req, res);
         if (!user) throw new Error('Unauthorised');
@@ -260,7 +254,7 @@ async function registerVersion(req, res, user, projectId) {
 async function deleteVersion(res, id) {
   const [row] = await sql`SELECT blob_url FROM review_versions WHERE id = ${id}`;
   if (!row) return res.status(404).json({ error: 'not found' });
-  try { await del(row.blob_url); } catch (err) {
+  try { await del(row.blob_url, { token: REVIEW_BLOB_TOKEN }); } catch (err) {
     console.error('[reviews] blob delete failed', err.message);
   }
   await sql`DELETE FROM review_versions WHERE id = ${id}`;
