@@ -1372,6 +1372,11 @@ export function StoreProvider({ children }) {
         access: 'public',
         handleUploadUrl: '/api/reviews/upload-token',
         contentType: file.type || 'video/mp4',
+        // Chunk the file into parts. Videos are large; a single-shot PUT to the
+        // Blob API fails (server rejects the oversized body with no CORS header,
+        // which the browser surfaces as a CORS error and the SDK retries in a
+        // loop). Multipart uploads each chunk separately and resumes cleanly.
+        multipart: true,
         onUploadProgress: onProgress ? (e) => onProgress(Math.round(e.percentage)) : undefined,
       });
       const version = await api.post(
