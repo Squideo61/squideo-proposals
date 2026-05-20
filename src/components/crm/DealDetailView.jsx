@@ -2031,7 +2031,7 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
   const [showBcc, setShowBcc] = useState(!!initialDraft?.bcc);
   const [subject, setSubject] = useState(initialDraft?.subject ?? defaultSubject);
   // body now holds HTML (rich-text editor). Older drafts may carry plain text;
-  // RichTextBody seeds its contentEditable from it either way.
+  // RichTextEditor seeds its contentEditable from it either way.
   const [body, setBody] = useState(initialDraft?.body ?? '');
   const [sending, setSending] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -2039,6 +2039,9 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
   // Each: { id, filename, mimeType, sizeBytes, blobUrl?, blobPathname?, uploading?, error? }.
   const [attachments, setAttachments] = useState(initialDraft?.attachments ?? []);
   const fileInputRef = useRef(null);
+  // Shared by the body editor and its toolbar (the toolbar sits below the
+  // signature but drives this same contentEditable element).
+  const editorRef = useRef(null);
   // Scheduled-send popover state.
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleAt, setScheduleAt] = useState('');
@@ -2372,7 +2375,7 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
                   overflow: 'hidden',
                 }}
               >
-                <RichTextBody initialHtml={body} onChange={setBody} />
+                <RichTextEditor editorRef={editorRef} initialHtml={body} onChange={setBody} />
                 {gmailConnected && (
                   <div style={{ padding: '8px 12px 12px', borderTop: '1px dashed ' + BRAND.border, fontSize: 13 }}>
                     {signature === null && (
@@ -2411,9 +2414,17 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
                     )}
                   </div>
                 )}
+                {/* Formatting + attach toolbar, Gmail-style: below the body and
+                    signature so it sits just above the send controls. */}
+                <RichTextToolbar
+                  editorRef={editorRef}
+                  onChange={setBody}
+                  onAttach={() => fileInputRef.current && fileInputRef.current.click()}
+                />
               </div>
             </FormRow>
-            {/* Attachments: paperclip opens the hidden file input; each picked
+            {/* Attachments: hidden file input (opened from the toolbar's attach
+                button); each picked
                 file uploads to a temporary blob and shows as a chip until it's
                 embedded into the message at send (or scheduled-send) time. */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2424,21 +2435,11 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
                 style={{ display: 'none' }}
                 onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = ''; }}
               />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                  style={{ fontSize: 12, padding: '4px 10px' }}
-                >
-                  📎 Attach files
-                </button>
-                {attachments.length > 0 && (
-                  <span style={{ fontSize: 11, color: BRAND.muted }}>
-                    {fileSizeLabel(uploadedBytes)} / 20 MB
-                  </span>
-                )}
-              </div>
+              {attachments.length > 0 && (
+                <span style={{ fontSize: 11, color: BRAND.muted }}>
+                  Attachments · {fileSizeLabel(uploadedBytes)} / 20 MB
+                </span>
+              )}
               {attachments.length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {attachments.map((a) => (
@@ -3021,21 +3022,42 @@ function toDatetimeLocal(d) {
 function defaultScheduleValue() { return toDatetimeLocal(new Date(Date.now() + 60 * 60 * 1000)); }
 function defaultScheduleValueNow() { return toDatetimeLocal(new Date()); }
 
-// Rich-text body editor: a contentEditable div with a small toolbar driven by
-// document.execCommand (deprecated but universally supported and dependency-
-// free). Uncontrolled — the DOM owns the HTML; we seed it once and report
-// changes up via onChange so cursor position is never disturbed by re-renders.
-function RichTextBody({ initialHtml, onChange }) {
-  const ref = useRef(null);
+// Rich-text body editor (just the editable area). Uncontrolled — the DOM owns
+// the HTML; we seed it once and report changes up via onChange so cursor
+// position is never disturbed by re-renders. The formatting controls live in
+// RichTextToolbar (rendered separately, below the signature) and act on this
+// same editorRef.
+function RichTextEditor({ editorRef, initialHtml, onChange }) {
   useEffect(() => {
-    if (ref.current) ref.current.innerHTML = initialHtml || '';
+    if (editorRef.current) editorRef.current.innerHTML = initialHtml || '';
     // Seed once on mount; remounts (new draft) come with a fresh key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const emit = () => { if (ref.current) onChange(ref.current.innerHTML); };
+  return (
+    <div
+      ref={editorRef}
+      contentEditable
+      suppressContentEditableWarning
+      onInput={() => editorRef.current && onChange(editorRef.current.innerHTML)}
+      className="email-body"
+      style={{
+        outline: 'none', padding: '10px 12px', fontFamily: 'inherit', fontSize: 14,
+        lineHeight: 1.5, minHeight: 120, maxHeight: 280, overflowY: 'auto',
+        color: BRAND.ink, background: 'transparent',
+      }}
+    />
+  );
+}
+
+// Formatting toolbar driven by document.execCommand (deprecated but universally
+// supported and dependency-free), plus the attach-files button. Acts on the
+// shared editorRef. Rendered at the bottom of the message box, below the
+// signature (Gmail-style).
+function RichTextToolbar({ editorRef, onChange, onAttach }) {
+  const emit = () => { if (editorRef.current) onChange(editorRef.current.innerHTML); };
   const exec = (cmd, val = null) => {
     document.execCommand(cmd, false, val);
-    if (ref.current) ref.current.focus();
+    if (editorRef.current) editorRef.current.focus();
     emit();
   };
   const addLink = () => {
@@ -3063,34 +3085,22 @@ function RichTextBody({ initialHtml, onChange }) {
     </button>
   );
   return (
-    <>
-      <div style={{
-        display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center',
-        padding: '4px 6px', borderBottom: '1px solid ' + BRAND.border, background: '#FAFBFC',
-      }}>
-        <Btn cmd="bold" title="Bold"><strong>B</strong></Btn>
-        <Btn cmd="italic" title="Italic"><em>I</em></Btn>
-        <Btn cmd="underline" title="Underline"><span style={{ textDecoration: 'underline' }}>U</span></Btn>
-        <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
-        <Btn cmd="insertUnorderedList" title="Bulleted list">• —</Btn>
-        <Btn cmd="insertOrderedList" title="Numbered list">1.</Btn>
-        <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
-        <Btn onClick={addLink} title="Insert link">🔗</Btn>
-        <Btn onClick={() => exec('removeFormat')} title="Clear formatting">⨯</Btn>
-      </div>
-      <div
-        ref={ref}
-        contentEditable
-        suppressContentEditableWarning
-        onInput={emit}
-        className="email-body"
-        style={{
-          outline: 'none', padding: '10px 12px', fontFamily: 'inherit', fontSize: 14,
-          lineHeight: 1.5, minHeight: 120, maxHeight: 280, overflowY: 'auto',
-          color: BRAND.ink, background: 'transparent',
-        }}
-      />
-    </>
+    <div style={{
+      display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center',
+      padding: '4px 6px', borderTop: '1px solid ' + BRAND.border, background: '#FAFBFC',
+    }}>
+      <Btn cmd="bold" title="Bold"><strong>B</strong></Btn>
+      <Btn cmd="italic" title="Italic"><em>I</em></Btn>
+      <Btn cmd="underline" title="Underline"><span style={{ textDecoration: 'underline' }}>U</span></Btn>
+      <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
+      <Btn cmd="insertUnorderedList" title="Bulleted list">• —</Btn>
+      <Btn cmd="insertOrderedList" title="Numbered list">1.</Btn>
+      <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
+      <Btn onClick={addLink} title="Insert link">🔗</Btn>
+      <Btn onClick={() => exec('removeFormat')} title="Clear formatting">⨯</Btn>
+      <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
+      <Btn onClick={onAttach} title="Attach files">📎</Btn>
+    </div>
   );
 }
 
