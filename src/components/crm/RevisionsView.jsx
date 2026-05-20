@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, CalendarClock } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -255,6 +255,14 @@ function VideoCard({ projectId, video, commentsByVersion }) {
   const { actions, showMsg } = useStore();
   const fileInputRef = useRef(null);
   const [progress, setProgress] = useState(null);
+  // Latest draft is expanded by default; older ones collapse to a header.
+  const latestId = (video.versions || [])[0]?.id;
+  const [expanded, setExpanded] = useState(() => new Set(latestId ? [latestId] : []));
+  const toggle = (id) => setExpanded(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
 
   async function handleFile(file) {
     if (!file) return;
@@ -312,33 +320,43 @@ function VideoCard({ projectId, video, commentsByVersion }) {
           if (at == null && bt == null) return new Date(a.createdAt) - new Date(b.createdAt);
           if (at == null) return 1; if (bt == null) return -1; return at - bt;
         });
+        const isOpen = expanded.has(v.id);
         return (
           <div key={v.id} style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 12, marginTop: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-              <strong style={{ color: BRAND.ink, fontSize: 14 }}>{draftLabel(v)}</strong>
-              <span style={{ fontSize: 12, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <MessageSquare size={13} /> {comments.length}
-              </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: isOpen ? 8 : 0 }}>
+              <button onClick={() => toggle(v.id)}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: 'none',
+                  cursor: 'pointer', padding: 0, flex: 1, textAlign: 'left' }}>
+                {isOpen ? <ChevronDown size={16} color={BRAND.muted} /> : <ChevronRight size={16} color={BRAND.muted} />}
+                <strong style={{ color: BRAND.ink, fontSize: 14 }}>{draftLabel(v)}</strong>
+                <span style={{ fontSize: 12, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <MessageSquare size={13} /> {comments.length}
+                </span>
+              </button>
               <button
                 onClick={() => { if (window.confirm('Delete this draft?')) actions.deleteRevisionVersion(projectId, v.id); }}
-                className="btn-ghost" style={{ marginLeft: 'auto' }} title="Delete draft"><Trash2 size={14} /></button>
+                className="btn-ghost" title="Delete draft"><Trash2 size={14} /></button>
             </div>
-            <video src={v.videoUrl} controls style={{ width: '100%', maxHeight: 320, borderRadius: 8, background: '#000' }} />
-            {comments.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                {comments.map(c => (
-                  <div key={c.id} style={{ marginBottom: 10 }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                      <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
-                      {c.timecodeSeconds != null && (
-                        <span style={{ color: BRAND.blue, fontSize: 12, fontWeight: 700 }}>{tc(c.timecodeSeconds)}</span>
-                      )}
-                    </div>
-                    {c.body && <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap' }}>{c.body}</div>}
-                    {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
+            {isOpen && (
+              <>
+                <video src={v.videoUrl} controls style={{ width: '100%', maxHeight: 320, borderRadius: 8, background: '#000' }} />
+                {comments.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    {comments.map(c => (
+                      <div key={c.id} style={{ marginBottom: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                          <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
+                          {c.timecodeSeconds != null && (
+                            <span style={{ color: BRAND.blue, fontSize: 12, fontWeight: 700 }}>{tc(c.timecodeSeconds)}</span>
+                          )}
+                        </div>
+                        {c.body && <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap' }}>{c.body}</div>}
+                        {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                )}
+              </>
             )}
           </div>
         );
