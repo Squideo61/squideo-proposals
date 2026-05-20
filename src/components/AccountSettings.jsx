@@ -188,11 +188,11 @@ export function AccountSettings({ onClose, onLogout }) {
 
       <div>
         <h3 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Bell size={14} /> Email notifications
+          <Bell size={14} /> Notifications
         </h3>
         <p style={{ margin: '0 0 12px', fontSize: 13, color: BRAND.muted }}>
-          Choose which notifications you want to receive by email. Defaults
-          come from your role; overrides apply to you alone.
+          Choose which notifications you receive — both by email and in the
+          in-app bell. Defaults come from your role; overrides apply to you alone.
         </p>
         <button onClick={() => setNotifEditor(true)} className="btn" style={{ width: '100%', justifyContent: 'center' }}>
           Edit my notification preferences
