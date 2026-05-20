@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Bell, Check, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
-import { formatRelativeTime } from '../utils.js';
+import { formatRelativeTime, useIsMobile } from '../utils.js';
 
 // Floating notification center. Mounted once at the app root so the bell is
 // available on every screen. Sits in the right-hand gutter of the centered
@@ -14,6 +14,7 @@ import { formatRelativeTime } from '../utils.js';
 // without a full reload.
 export function NotificationBell({ onOpenLink }) {
   const { state, actions } = useStore();
+  const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
@@ -44,7 +45,7 @@ export function NotificationBell({ onOpenLink }) {
   const badge = unread > 9 ? '9+' : String(unread);
 
   return (
-    <div ref={wrapRef} style={{ position: 'fixed', top: 14, right: 16, zIndex: 95 }}>
+    <div ref={wrapRef} style={{ position: 'fixed', top: isMobile ? 10 : 14, right: isMobile ? 10 : 16, zIndex: 95 }}>
       <button
         onClick={() => setOpen(o => !o)}
         aria-label={unread > 0 ? `Notifications (${unread} unread)` : 'Notifications'}
@@ -70,8 +71,10 @@ export function NotificationBell({ onOpenLink }) {
 
       {open && (
         <div style={{
-          position: 'absolute', top: 48, right: 0, width: 360, maxWidth: 'calc(100vw - 32px)',
-          maxHeight: '70vh', display: 'flex', flexDirection: 'column',
+          position: 'absolute', top: 48, right: 0,
+          width: isMobile ? 'calc(100vw - 20px)' : 360,
+          maxHeight: isMobile ? 'calc(100vh - 72px)' : '70vh',
+          display: 'flex', flexDirection: 'column',
           background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12,
           boxShadow: '0 12px 32px rgba(15,42,61,0.18)', overflow: 'hidden',
         }}>
