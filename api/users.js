@@ -25,13 +25,23 @@ export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  if (req.query._kind === 'invites') {
-    return invitesHandler(req, res);
+  // Wrap every branch so an unexpected throw returns a JSON error the SPA can
+  // render, instead of Vercel's plain-text "A server error has occurred" 500
+  // (which surfaces as a confusing "...not valid JSON" toast).
+  try {
+    if (req.query._kind === 'invites') {
+      return await invitesHandler(req, res);
+    }
+    if (req.query._kind === 'notifications') {
+      return await notificationsHandler(req, res);
+    }
+    return await usersHandler(req, res);
+  } catch (err) {
+    console.error('[users] handler error', err);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: err?.message || 'Server error' });
+    }
   }
-  if (req.query._kind === 'notifications') {
-    return notificationsHandler(req, res);
-  }
-  return usersHandler(req, res);
 }
 
 async function usersHandler(req, res) {
