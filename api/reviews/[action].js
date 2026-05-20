@@ -15,7 +15,7 @@
 //   GET    /api/reviews/public?token=…          — project + versions + comments for the viewer
 //   POST   /api/reviews/comment?token=…         — leave a timecoded comment
 import crypto from 'crypto';
-import { del } from '@vercel/blob';
+import { put, del } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
 import sql from '../_lib/db.js';
 
@@ -59,6 +59,24 @@ export default async function handler(req, res) {
 
     const user = await requireAuth(req, res);
     if (!user) return;
+
+    // TEMP diagnostic — verifies the review (public) Blob store token is loaded
+    // and usable. Remove once uploads work.
+    if (action === 'diag') {
+      const out = {
+        hasReviewToken: !!REVIEW_BLOB_TOKEN,
+        reviewTokenStore: REVIEW_BLOB_TOKEN ? REVIEW_BLOB_TOKEN.split('_').slice(0, 4).join('_') + '_…' : null,
+      };
+      if (!REVIEW_BLOB_TOKEN) return res.status(200).json({ ...out, note: 'REVIEW_BLOB_READ_WRITE_TOKEN missing — redeploy after connecting the store, and confirm it is attached to Production.' });
+      try {
+        const blob = await put('review-videos/diag/' + Date.now() + '.txt', 'diag', {
+          access: 'public', token: REVIEW_BLOB_TOKEN, addRandomSuffix: true,
+        });
+        return res.status(200).json({ ...out, put: 'ok', url: blob.url });
+      } catch (e) {
+        return res.status(200).json({ ...out, put: 'failed', error: e?.message || String(e) });
+      }
+    }
 
     if (action === 'projects') {
       if (req.method === 'GET')    return await listProjects(res);
