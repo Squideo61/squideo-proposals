@@ -362,7 +362,13 @@ async function registerVersion(req, res, user, videoId) {
     RETURNING id, video_id, version_number, label, filename, mime_type, size_bytes,
               blob_url, uploaded_by, created_at
   `;
-  await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${video.project_id}`;
+  // A new draft reopens the project: clear any prior approval so the client can
+  // review again and leave comments.
+  await sql`
+    UPDATE revision_projects
+       SET approved_at = NULL, approved_by = NULL, updated_at = NOW()
+     WHERE id = ${video.project_id}
+  `;
   return res.status(201).json(versionRow(row));
 }
 
