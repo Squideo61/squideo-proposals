@@ -89,6 +89,7 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
   const title = proposal.proposalTitle || proposal.clientName || 'your proposal';
   const clientName = signed?.name || proposal.clientName;
   const totalExVat = proposal.vatRate && signed?.total ? signed.total / (1 + proposal.vatRate) : signed?.total;
+  const showVat = (Number(proposal.vatRate) || 0) > 0;
   const isPO = signed?.paymentOption === 'po';
   const isDeposit = signed?.paymentOption === '5050';
   const amountDue = signed ? (isDeposit ? signed.total / 2 : signed.total) : 0;
@@ -194,7 +195,7 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
             <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 14, lineHeight: 1.6 }}>
               <div>Signed by <strong style={{ color: BRAND.ink }}>{signed.name}</strong> ({signed.email})</div>
               <div>On {new Date(signed.signedAt).toLocaleString('en-GB')}</div>
-              {totalExVat ? <div>Committed total: <strong style={{ color: BRAND.ink }}>{formatGBP(totalExVat)} + VAT</strong></div> : null}
+              {totalExVat ? <div>Committed total: <strong style={{ color: BRAND.ink }}>{formatGBP(totalExVat)}{showVat && ' + VAT'}</strong></div> : null}
               {payment && (
                 <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid ' + BRAND.border }}>
                   Paid <strong style={{ color: BRAND.ink }}>{formatGBP(payment.amount)}</strong>

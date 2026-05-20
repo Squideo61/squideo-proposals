@@ -102,6 +102,8 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   const subtotal = data.basePrice + extrasTotal;
   const vat = subtotal * data.vatRate;
   const total = subtotal + vat;
+  // When VAT is 0%, omit every VAT line / "+ VAT" suffix from the printed proposal.
+  const showVat = (Number(data.vatRate) || 0) > 0;
   // Pick the rate to render the discount line at:
   // - When the proposal is already signed, use the locked-in rate from the signature.
   // - Otherwise compute from the partner-programme tier ladder (default to base, since
@@ -303,10 +305,10 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
         ${optLabel ? `<div><strong>Payment option:</strong> ${esc(optLabel)}</div>` : ''}
         ${signed.partnerSelected && signed.amountBreakdown ? `
           <div style="margin-top:12px;padding-top:12px;border-top:1px solid #BBF7D0;">
-            <div style="display:flex;justify-content:space-between;"><span>Project (discounted)</span><span><strong>${formatGBP(signed.amountBreakdown.projectExVat)}</strong> + VAT</span></div>
-            <div style="display:flex;justify-content:space-between;"><span>First month Partner Programme</span><span><strong>${formatGBP(signed.amountBreakdown.partnerExVat)}</strong> + VAT</span></div>
-            <div style="display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #BBF7D0;font-weight:700;"><span>Total committed today</span><span>${formatGBP(signed.amountBreakdown.projectExVat + signed.amountBreakdown.partnerExVat)} + VAT</span></div>
-            <div style="font-size:12px;color:#15803D;margin-top:6px;">Then ${formatGBP(signed.amountBreakdown.partnerExVat)} + VAT / month - cancel any time.</div>
+            <div style="display:flex;justify-content:space-between;"><span>Project (discounted)</span><span><strong>${formatGBP(signed.amountBreakdown.projectExVat)}</strong>${showVat ? ' + VAT' : ''}</span></div>
+            <div style="display:flex;justify-content:space-between;"><span>First month Partner Programme</span><span><strong>${formatGBP(signed.amountBreakdown.partnerExVat)}</strong>${showVat ? ' + VAT' : ''}</span></div>
+            <div style="display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #BBF7D0;font-weight:700;"><span>Total committed today</span><span>${formatGBP(signed.amountBreakdown.projectExVat + signed.amountBreakdown.partnerExVat)}${showVat ? ' + VAT' : ''}</span></div>
+            <div style="font-size:12px;color:#15803D;margin-top:6px;">Then ${formatGBP(signed.amountBreakdown.partnerExVat)}${showVat ? ' + VAT' : ''} / month - cancel any time.</div>
           </div>
         ` : (totalCommitted !== null ? `<div><strong>Total committed:</strong> ${formatGBP(totalCommitted)}</div>` : '')}
       </div>
@@ -404,6 +406,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
 
   <!-- Base pricing -->
   <div style="border:1px solid #E5E9EE;border-radius:8px;overflow:hidden;margin-bottom:20px;">
+    ${showVat ? `
     <div style="display:flex;justify-content:space-between;padding:10px 16px;font-size:13px;border-bottom:1px solid #E5E9EE;">
       <span class="muted">Subtotal</span><span>${formatGBP(data.basePrice)}</span>
     </div>
@@ -412,7 +415,10 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
     </div>
     <div style="display:flex;justify-content:space-between;padding:12px 16px;font-size:16px;font-weight:700;background:#F8FAFC;">
       <span>Base total</span><span>${formatGBP(data.basePrice * (1 + data.vatRate))}</span>
-    </div>
+    </div>` : `
+    <div style="display:flex;justify-content:space-between;padding:12px 16px;font-size:16px;font-weight:700;background:#F8FAFC;">
+      <span>Project base price</span><span>${formatGBP(data.basePrice)}</span>
+    </div>`}
   </div>
 
   ${partnerBlock}
@@ -427,7 +433,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   ${(extrasTotal > 0 || partnerSelected) ? `
   <div style="background:#0F2A3D;color:white;padding:16px 20px;border-radius:10px;margin-bottom:28px;">
     <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;opacity:0.8;"><span>Subtotal${extrasTotal > 0 ? ' (with selected extras)' : ''}</span><span>${formatGBP(partnerSelected ? discountedSubtotal : subtotal)}</span></div>
-    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:${partnerSelected ? '4px' : '10px'};opacity:0.8;"><span>VAT</span><span>${formatGBP(partnerSelected ? discountedVat : vat)}</span></div>
+    ${showVat ? `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:${partnerSelected ? '4px' : '10px'};opacity:0.8;"><span>VAT</span><span>${formatGBP(partnerSelected ? discountedVat : vat)}</span></div>` : ''}
     ${partnerSelected ? `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:10px;color:#FFD54F;"><span>${Math.round(discountRate * 100)}% partner discount</span><span>−${formatGBP(partnerDiscount)}</span></div>` : ''}
     <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:700;padding-top:10px;border-top:1px solid rgba(255,255,255,0.2);">
       <span>Project total</span>
@@ -481,6 +487,7 @@ export function openPrintWindow(data, opts = {}) {
 
 function buildReceiptHTML(data, signed, payment) {
   const vatRate = Number(data.vatRate) || 0;
+  const showVat = vatRate > 0;
   const paidAt = payment.paidAt ? new Date(payment.paidAt) : new Date();
   const paidAtStr = paidAt.toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -584,7 +591,7 @@ function buildReceiptHTML(data, signed, payment) {
     <thead>
       <tr style="background:#F8FAFC;">
         <th style="padding:10px 14px;text-align:left;font-size:11px;color:#6B7785;text-transform:uppercase;letter-spacing:0.6px;font-weight:700;">Description</th>
-        <th style="padding:10px 14px;text-align:right;font-size:11px;color:#6B7785;text-transform:uppercase;letter-spacing:0.6px;font-weight:700;">Amount (ex VAT)</th>
+        <th style="padding:10px 14px;text-align:right;font-size:11px;color:#6B7785;text-transform:uppercase;letter-spacing:0.6px;font-weight:700;">${showVat ? 'Amount (ex VAT)' : 'Amount'}</th>
       </tr>
     </thead>
     <tbody>
@@ -596,7 +603,7 @@ function buildReceiptHTML(data, signed, payment) {
   <div style="display:flex;justify-content:flex-end;margin-bottom:24px;">
     <table style="border-collapse:collapse;font-size:13px;min-width:280px;">
       <tr><td style="padding:6px 14px 6px 0;color:#6B7785;">Subtotal</td><td style="padding:6px 0;text-align:right;font-variant-numeric:tabular-nums;">${formatGBP(subtotalEx)}</td></tr>
-      <tr><td style="padding:6px 14px 6px 0;color:#6B7785;">VAT (${(vatRate * 100).toFixed(0)}%)</td><td style="padding:6px 0;text-align:right;font-variant-numeric:tabular-nums;">${formatGBP(vat)}</td></tr>
+      ${showVat ? `<tr><td style="padding:6px 14px 6px 0;color:#6B7785;">VAT (${(vatRate * 100).toFixed(0)}%)</td><td style="padding:6px 0;text-align:right;font-variant-numeric:tabular-nums;">${formatGBP(vat)}</td></tr>` : ''}
       <tr><td style="padding:10px 14px 10px 0;border-top:2px solid #0F2A3D;font-weight:700;font-size:15px;">Total paid</td><td style="padding:10px 0;border-top:2px solid #0F2A3D;text-align:right;font-weight:700;font-size:15px;font-variant-numeric:tabular-nums;">${formatGBP(total)}</td></tr>
     </table>
   </div>

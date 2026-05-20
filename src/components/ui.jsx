@@ -198,7 +198,7 @@ export function Modal({ children, onClose, maxWidth = 440 }) {
   );
 }
 
-export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, phone, email, emailName, onSign }) {
+export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, phone, email, emailName, onSign, showVat = true }) {
   const isMobile = useIsMobile();
   const telHref = phone ? 'tel:' + String(phone).replace(/[^+\d]/g, '') : null;
   return (
@@ -231,11 +231,11 @@ export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, ph
           <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>Total</div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: isMobile ? 16 : 18, fontWeight: 700, color: BRAND.ink }}>
-              {formatGBP(totalExVat)} <span style={{ fontSize: 12, color: BRAND.muted, fontWeight: 500 }}>+ VAT</span>
+              {formatGBP(totalExVat)}{showVat && <span style={{ fontSize: 12, color: BRAND.muted, fontWeight: 500 }}> + VAT</span>}
             </span>
             {partnerSelected && partnerMonthlyExVat > 0 && (
               <span style={{ fontSize: 11, color: '#92400E', background: '#FFFAEB', border: '1px solid #FDE68A', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>
-                + {formatGBP(partnerMonthlyExVat)} + VAT/mo
+                + {formatGBP(partnerMonthlyExVat)}{showVat && ' + VAT'}/mo
               </span>
             )}
           </div>

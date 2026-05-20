@@ -724,7 +724,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           <span>
             {videoOptions ? (videoOptions[selectedVideoOptionIdx]?.label || `Option ${selectedVideoOptionIdx + 1}`) : 'Project base price'}
           </span>
-          <span>{formatGBP(effectiveBasePrice)} <span style={{ fontWeight: 500, fontSize: 13, color: BRAND.muted }}>+ VAT</span></span>
+          <span>{formatGBP(effectiveBasePrice)}{showVat && <span style={{ fontWeight: 500, fontSize: 13, color: BRAND.muted }}> + VAT</span>}</span>
         </div>
 
         <PageTitle>Optional Extras</PageTitle>
@@ -864,7 +864,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                 )}
                 <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 15, fontWeight: 700 }}>
                   <span>Monthly subscription</span>
-                  <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>+ VAT / month</span></span>
+                  <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>{showVat ? '+ VAT / month' : '/ month'}</span></span>
                 </div>
                 <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5, padding: '4px 2px' }}>
                   💳 <strong>First month charged when you sign.</strong> Renews monthly - cancel any time, even mid-project.
@@ -919,19 +919,19 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           {partnerSelected && (
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, opacity: 0.8 }}>
               <span>Project price (without Partner)</span>
-              <span style={{ textDecoration: 'line-through' }}>{formatGBP(subtotal)} + VAT</span>
+              <span style={{ textDecoration: 'line-through' }}>{formatGBP(subtotal)}{showVat && ' + VAT'}</span>
             </div>
           )}
           {partnerSelected && (
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 12, color: '#FFD54F' }}>
               <span>Partner discount ({formatPct(effectiveDiscount)}%)</span>
-              <span>−{formatGBP(partnerDiscount)} + VAT</span>
+              <span>−{formatGBP(partnerDiscount)}{showVat && ' + VAT'}</span>
             </div>
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: partnerSelected ? 15 : 18, fontWeight: partnerSelected ? 600 : 700, paddingTop: partnerSelected ? 12 : 0, borderTop: partnerSelected ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
             <span>{partnerSelected ? 'Project (discounted)' : `Project total${extrasTotal > 0 ? ' (including selected extras)' : ''}`}</span>
             <span>
-              {formatGBP(partnerSelected ? discountedSubtotal : subtotal)} <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(partnerSelected ? discountedSubtotal : subtotal)} inc.</span></span>
+              {formatGBP(partnerSelected ? discountedSubtotal : subtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(partnerSelected ? discountedSubtotal : subtotal)} inc.</span></span>}
             </span>
           </div>
           {partnerSelected && (
@@ -943,14 +943,14 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                     ({partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'}/mo)
                   </span>
                 </span>
-                <span>{formatGBP(partnerSubtotal)} <span style={{ fontWeight: 500, fontSize: 13, opacity: 0.7 }}>+ VAT</span></span>
+                <span>{formatGBP(partnerSubtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 13, opacity: 0.7 }}>+ VAT</span>}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
                 <span>Due today</span>
-                <span>{formatGBP(discountedSubtotal + partnerSubtotal)} <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(discountedSubtotal + partnerSubtotal)} inc.</span></span></span>
+                <span>{formatGBP(discountedSubtotal + partnerSubtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(discountedSubtotal + partnerSubtotal)} inc.</span></span>}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 8, color: '#FFD54F' }}>
-                <span>Then {formatGBP(partnerSubtotal)} + VAT / month for {partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'} of content credit, cancel any time</span>
+                <span>Then {formatGBP(partnerSubtotal)}{showVat && ' + VAT'} / month for {partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'} of content credit, cancel any time</span>
                 <span></span>
               </div>
             </>
@@ -998,7 +998,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
         {(() => {
           const exVat = partnerSelected ? discountedSubtotal : subtotal;
           const half = exVat / 2;
-          const vatNote = <span style={{ color: BRAND.muted, fontWeight: 500 }}>+ VAT</span>;
+          const vatNote = showVat ? <span style={{ color: BRAND.muted, fontWeight: 500 }}>+ VAT</span> : null;
           const dueExVat = partnerSelected ? (discountedSubtotal + partnerSubtotal) : exVat;
           let line = null;
           if (paymentOption === '5050') {
@@ -1099,11 +1099,11 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
               <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.95 }}>
                 {partnerSelected ? (
                   <>
-                    {formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month = <strong>{formatGBP(discountedSubtotal + partnerSubtotal)} + VAT</strong> <span style={{ opacity: 0.75 }}>· {incVat(discountedSubtotal + partnerSubtotal)} inc.</span>
+                    {formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month = <strong>{formatGBP(discountedSubtotal + partnerSubtotal)}{showVat && ' + VAT'}</strong>{showVat && <span style={{ opacity: 0.75 }}> · {incVat(discountedSubtotal + partnerSubtotal)} inc.</span>}
                   </>
                 ) : (
                   <>
-                    <strong>{formatGBP(subtotal)} + VAT</strong> <span style={{ opacity: 0.75 }}>· {incVat(subtotal)} inc.</span>
+                    <strong>{formatGBP(subtotal)}{showVat && ' + VAT'}</strong>{showVat && <span style={{ opacity: 0.75 }}> · {incVat(subtotal)} inc.</span>}
                   </>
                 )}
               </span>
@@ -1120,6 +1120,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
         <StickyCTA
           totalExVat={partnerSelected ? discountedSubtotal : subtotal}
           partnerMonthlyExVat={partnerSubtotal}
+          showVat={showVat}
           partnerSelected={partnerSelected}
           phone={CONFIG.company.phone}
           email={data.preparedByEmail}

@@ -9,6 +9,7 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
   const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
   const isDeposit = signed.paymentOption === '5050';
   const totalExVat = vatRate ? signed.total / (1 + vatRate) : signed.total;
+  const showVat = (Number(vatRate) || 0) > 0;
 
   const [billing, setBilling] = useState(() => emptyBilling(signed.email));
   const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
@@ -69,22 +70,22 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #A5D6A7' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span>Project (discounted)</span>
-                <span><strong>{formatGBP(signed.amountBreakdown.projectExVat)}</strong> + VAT</span>
+                <span><strong>{formatGBP(signed.amountBreakdown.projectExVat)}</strong>{showVat && ' + VAT'}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span>First month Partner Programme</span>
-                <span><strong>{formatGBP(signed.amountBreakdown.partnerExVat)}</strong> + VAT</span>
+                <span><strong>{formatGBP(signed.amountBreakdown.partnerExVat)}</strong>{showVat && ' + VAT'}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid #A5D6A7', fontWeight: 700 }}>
                 <span>Total committed today</span>
-                <span>{formatGBP(signed.amountBreakdown.projectExVat + signed.amountBreakdown.partnerExVat)} + VAT</span>
+                <span>{formatGBP(signed.amountBreakdown.projectExVat + signed.amountBreakdown.partnerExVat)}{showVat && ' + VAT'}</span>
               </div>
               <div style={{ fontSize: 12, color: '#15803D', marginTop: 6 }}>
-                Then {formatGBP(signed.amountBreakdown.partnerExVat)} + VAT / month - cancel any time.
+                Then {formatGBP(signed.amountBreakdown.partnerExVat)}{showVat && ' + VAT'} / month - cancel any time.
               </div>
             </div>
           ) : (
-            <div style={{ marginTop: 8 }}>Total committed: <strong>{formatGBP(totalExVat)} + VAT</strong></div>
+            <div style={{ marginTop: 8 }}>Total committed: <strong>{formatGBP(totalExVat)}{showVat && ' + VAT'}</strong></div>
           )}
         </div>
         {onDownloadSignedProposal && (
