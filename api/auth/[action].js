@@ -285,6 +285,11 @@ export default async function handler(req, res) {
         html: inviteAcceptedHtml({ name, email, roleName: roleRow?.name || role, invitedByEmail, link: `${APP_URL}/#/admin/users` }),
         text: `${name} (${email}) accepted their invite and set up an account${roleRow?.name ? ` as ${roleRow.name}` : ''}.`,
         excludeEmails: [email],
+        inApp: {
+          title: `${name} joined the workspace`,
+          body: `${email}${roleRow?.name ? ` · ${roleRow.name}` : ''}`,
+          link: '#/admin/users',
+        },
       });
     } catch (err) {
       console.warn('[signup] invite-accepted notification failed', err.message);

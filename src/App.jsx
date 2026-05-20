@@ -10,6 +10,7 @@ import { ClientView } from './components/ClientView.jsx';
 import { PublicClientShell } from './components/PublicClientShell.jsx';
 import { RevisionShell } from './components/revision/RevisionShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
+import { NotificationBell } from './components/NotificationBell.jsx';
 
 const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: m[name] })));
 
@@ -78,6 +79,17 @@ function AppShell() {
     setView(newView);
     setActiveId(newId);
   }, []);
+
+  // Navigate from an in-app notification's hash link (e.g. '#/admin/users',
+  // '#/deal/<id>'). Mirrors parseHash but works off the supplied string.
+  const openLink = useCallback((link) => {
+    if (!link) return;
+    const raw = String(link).replace(/^#?\/?/, '');
+    if (!raw) { navigate('list'); return; }
+    const sep = raw.indexOf('/');
+    if (sep === -1) navigate(raw);
+    else navigate(raw.slice(0, sep), decodeURIComponent(raw.slice(sep + 1)) || null);
+  }, [navigate]);
 
   if (state.loading) {
     return (
@@ -406,6 +418,7 @@ function AppShell() {
           <EmailComposerHost />
         </Suspense>
       )}
+      <NotificationBell onOpenLink={openLink} />
       <Toast msg={toast} />
     </div>
   );

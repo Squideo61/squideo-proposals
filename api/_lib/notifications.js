@@ -142,8 +142,19 @@ export async function sendNotification(key, {
   excludeEmails = null,
   extraRecipients = null,
   throwOnError = false,
+  inApp = null,
 } = {}) {
   const recipients = await resolveRecipients(key, { ownerEmail, assigneeEmails, excludeEmails });
+
+  // Persist an in-app feed entry for every pref-resolved recipient so the bell
+  // mirrors the email. These are always real workspace users (the resolver
+  // only returns users), so the FK holds. `extraRecipients` (env-var fallbacks
+  // that may not be users) are intentionally excluded — they only get email.
+  // Best-effort: an in-app write must never stop the email going out.
+  if (recipients.length) {
+    await persistInApp(key, recipients, { subject, text, inApp });
+  }
+
   const extras = (extraRecipients || [])
     .filter(Boolean)
     .map(e => e.toLowerCase())
@@ -152,4 +163,25 @@ export async function sendNotification(key, {
   if (to.length === 0) return { sent: 0, recipients: [] };
   await sendMail({ to, subject, html, text, throwOnError });
   return { sent: to.length, recipients: to };
+}
+
+// Write one in-app notification row per recipient. Title/body default from the
+// email's subject/text; callers can override via `inApp`. `link` should be an
+// in-app hash route (e.g. '#/admin/users') so the bell navigates without a
+// full reload — distinct from the absolute APP_URL link used in the email.
+async function persistInApp(key, recipients, { subject, text, inApp }) {
+  const title = String(inApp?.title || subject || 'Notification').slice(0, 200);
+  const body = inApp?.body != null
+    ? String(inApp.body).slice(0, 500)
+    : (text ? (String(text).replace(/\s*https?:\/\/\S+\s*$/i, '').trim().slice(0, 500) || null) : null);
+  const link = inApp?.link || null;
+  try {
+    for (const email of recipients) {
+      // eslint-disable-next-line no-await-in-loop
+      await sql`INSERT INTO in_app_notifications (user_email, notification_key, title, body, link)
+                VALUES (${email}, ${key}, ${title}, ${body}, ${link})`;
+    }
+  } catch (err) {
+    console.warn('[notifications] in-app persist failed', err.message);
+  }
 }

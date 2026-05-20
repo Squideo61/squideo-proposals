@@ -57,6 +57,10 @@ function emptyStore() {
     leaderboard: null,
     partnerCreditsList: null,
     partnerCreditDetail: {},
+    // In-app notification feed (the bell). notifications: newest-first list,
+    // notificationsUnread: server-reported unread count.
+    notifications: [],
+    notificationsUnread: 0,
     session: null,
     loading: true,
     composerContext: loadLocal(COMPOSER_CONTEXT_KEY, null),
@@ -332,7 +336,12 @@ export function StoreProvider({ children }) {
         if (cancelled) return;
         setState(s => ({ ...s, triage: Array.isArray(rows) ? rows : [] }));
       }).catch(() => {});
+      api.get('/api/notifications').then((r) => {
+        if (cancelled || !r) return;
+        setState(s => ({ ...s, notifications: Array.isArray(r.items) ? r.items : [], notificationsUnread: r.unread || 0 }));
+      }).catch(() => {});
     };
+    refresh(); // prime immediately so the bell badge is populated on load
     const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') refresh();
@@ -1579,6 +1588,29 @@ export function StoreProvider({ children }) {
     },
     saveUserNotifications(email, overrides) {
       return api.put('/api/users?_kind=notifications&email=' + encodeURIComponent(email), { overrides });
+    },
+
+    // ---------- In-app notification feed (the bell) ----------
+    loadNotifications() {
+      return api.get('/api/notifications').then((r) => {
+        setState(s => ({ ...s, notifications: Array.isArray(r?.items) ? r.items : [], notificationsUnread: r?.unread || 0 }));
+        return r;
+      });
+    },
+    // Optimistically flag the given ids read and recompute the badge from the
+    // loaded list, then persist. Server failure is non-fatal — the next poll
+    // reconciles.
+    markNotificationsRead(ids) {
+      const idset = new Set(ids);
+      setState(s => {
+        const notifications = s.notifications.map(n => (idset.has(n.id) ? { ...n, read: true } : n));
+        return { ...s, notifications, notificationsUnread: notifications.filter(n => !n.read).length };
+      });
+      return api.post('/api/notifications', { ids }).catch(() => {});
+    },
+    markAllNotificationsRead() {
+      setState(s => ({ ...s, notifications: s.notifications.map(n => ({ ...n, read: true })), notificationsUnread: 0 }));
+      return api.post('/api/notifications', { all: true }).catch(() => {});
     },
 
     // ---------- Proposal client resolver ----------
