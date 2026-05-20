@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { waitUntil } from '@vercel/functions';
+import { put, del } from '@vercel/blob';
 import sql from '../db.js';
 import { APP_URL } from '../email.js';
 import {
@@ -259,7 +260,138 @@ export async function gmailRoute(req, res, id, action, user) {
     return gmailBackfill(req, res, user);
   }
 
+  if (id === 'attachments') {
+    return gmailAttachments(req, res, user);
+  }
+
+  if (id === 'schedule') {
+    return gmailSchedule(req, res, user);
+  }
+
   return res.status(404).json({ error: 'Unknown gmail action: ' + id });
+}
+
+// Upload (POST, raw binary) / delete (DELETE ?pathname=) a temporary email
+// attachment. Stored in a private Vercel Blob namespace per user; embedded
+// into the outgoing message at send time, then deleted. Mirrors the deal-file
+// upload pattern in deals.js.
+const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+
+async function gmailAttachments(req, res, user) {
+  if (req.method === 'POST') {
+    if (!process.env.BLOB_READ_WRITE_TOKEN)
+      return res.status(503).json({ error: 'File storage not configured' });
+
+    const filename = decodeURIComponent(req.headers['x-filename'] || 'attachment');
+    const mimeType = req.headers['content-type'] || 'application/octet-stream';
+
+    let fileBuffer = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : null;
+    if (!fileBuffer) {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      fileBuffer = Buffer.concat(chunks);
+    }
+    if (!fileBuffer || fileBuffer.length === 0)
+      return res.status(400).json({ error: 'No file data received' });
+    if (fileBuffer.length > ATTACHMENT_MAX_BYTES)
+      return res.status(413).json({ error: 'File too large (max 20 MB)' });
+
+    const fileId = crypto.randomUUID();
+    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blob = await put(`email-attachments/${user.email}/${fileId}/${safeName}`, fileBuffer, {
+      access: 'private', contentType: mimeType,
+    });
+    return res.status(201).json({
+      filename, mimeType, sizeBytes: fileBuffer.length,
+      blobUrl: blob.url, blobPathname: blob.pathname,
+    });
+  }
+
+  if (req.method === 'DELETE') {
+    const pathname = (req.query && req.query.pathname)
+      || new URLSearchParams((req.url || '').split('?')[1] || '').get('pathname');
+    if (pathname) {
+      try { await del(pathname); } catch (err) { console.warn('[gmail attachments] delete failed', err?.message); }
+    }
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).end();
+}
+
+// Schedule an email to send later, list a deal's pending scheduled sends, or
+// cancel one. The actual send is performed by cronScheduledEmails (cron.js)
+// once scheduled_for passes.
+async function gmailSchedule(req, res, user) {
+  if (req.method === 'GET') {
+    const dealId = (req.query && req.query.dealId)
+      || new URLSearchParams((req.url || '').split('?')[1] || '').get('dealId');
+    if (!dealId) return res.status(400).json({ error: 'dealId is required' });
+    const rows = await sql`
+      SELECT id, payload, scheduled_for, created_at
+      FROM scheduled_emails
+      WHERE deal_id = ${dealId} AND user_email = ${user.email} AND status = 'pending'
+      ORDER BY scheduled_for ASC
+    `;
+    return res.status(200).json(rows.map(r => ({
+      id: r.id,
+      subject: r.payload?.subject || '(no subject)',
+      to: r.payload?.to || [],
+      scheduledFor: r.scheduled_for,
+      createdAt: r.created_at,
+      attachmentCount: Array.isArray(r.payload?.attachments) ? r.payload.attachments.length : 0,
+    })));
+  }
+
+  if (req.method === 'POST') {
+    const payload = normaliseSendPayload(req.body || {});
+    if (!payload.to.length) return res.status(400).json({ error: 'to is required and must contain at least one valid email' });
+    if (!payload.subject) return res.status(400).json({ error: 'subject is required' });
+    if (!payload.html && !payload.text) return res.status(400).json({ error: 'html or text body is required' });
+
+    const scheduledFor = req.body?.scheduledFor ? new Date(req.body.scheduledFor) : null;
+    if (!scheduledFor || isNaN(scheduledFor.getTime()))
+      return res.status(400).json({ error: 'A valid scheduledFor time is required' });
+    if (scheduledFor.getTime() <= Date.now())
+      return res.status(400).json({ error: 'scheduledFor must be in the future' });
+
+    const id = 'se_' + crypto.randomUUID();
+    await sql`
+      INSERT INTO scheduled_emails (id, user_email, deal_id, payload, scheduled_for, status)
+      VALUES (${id}, ${user.email}, ${payload.dealId}, ${JSON.stringify(payload)}, ${scheduledFor.toISOString()}, 'pending')
+    `;
+    if (payload.dealId) {
+      try {
+        await sql`
+          INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+          VALUES (
+            ${payload.dealId}, 'email_scheduled',
+            ${JSON.stringify({ scheduledEmailId: id, subject: payload.subject, to: payload.to, scheduledFor: scheduledFor.toISOString() })},
+            ${user.email}
+          )
+        `;
+      } catch (err) {
+        console.error('[gmail schedule] deal_events insert failed', err);
+      }
+    }
+    return res.status(201).json({ id, scheduledFor: scheduledFor.toISOString() });
+  }
+
+  if (req.method === 'DELETE') {
+    const sid = (req.query && req.query.id)
+      || new URLSearchParams((req.url || '').split('?')[1] || '').get('id');
+    if (!sid) return res.status(400).json({ error: 'id is required' });
+    const rows = await sql`
+      SELECT payload FROM scheduled_emails
+      WHERE id = ${sid} AND user_email = ${user.email} AND status = 'pending'
+    `;
+    if (!rows.length) return res.status(404).json({ error: 'Scheduled email not found' });
+    await sql`UPDATE scheduled_emails SET status = 'cancelled' WHERE id = ${sid} AND user_email = ${user.email}`;
+    deleteAttachmentBlobs(rows[0].payload?.attachments || []);
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).end();
 }
 
 export async function gmailCallback(req, res) {
@@ -497,37 +629,130 @@ function cleanEmailList(value) {
     .filter(v => EMAIL_RX.test(v));
 }
 
+// Thin HTTP wrapper around performGmailSend. Validates the request, maps the
+// connection errors performGmailSend throws onto HTTP status codes, and after
+// a successful immediate send removes any temporary attachment blobs (the
+// scheduled-send cron does the same after it fires).
 export async function gmailSend(req, res, user) {
-  const body = req.body || {};
-  const to = cleanEmailList(body.to);
-  const cc = cleanEmailList(body.cc);
-  const bcc = cleanEmailList(body.bcc);
-  const subject = trimOrNull(body.subject);
-  const html = body.html || '';
-  const text = body.text || '';
-  const dealId = trimOrNull(body.dealId);
-  const threadId = trimOrNull(body.gmailThreadId);
-  // Extra deals the user wants this email visible on (added via the
-  // composer's "Add to another deal" / "Create new deal" menu). We attach
-  // them at thread scope, immediately, so the recipient deals show the
-  // conversation without waiting for Pub/Sub to deliver it back.
-  const extraDealIds = Array.isArray(body.extraDealIds)
-    ? Array.from(new Set(body.extraDealIds.map(trimOrNull).filter(Boolean)))
-    : [];
+  const payload = normaliseSendPayload(req.body || {});
+  if (!payload.to.length) return res.status(400).json({ error: 'to is required and must contain at least one valid email' });
+  if (!payload.subject) return res.status(400).json({ error: 'subject is required' });
+  if (!payload.html && !payload.text) return res.status(400).json({ error: 'html or text body is required' });
 
-  if (!to.length) return res.status(400).json({ error: 'to is required and must contain at least one valid email' });
-  if (!subject) return res.status(400).json({ error: 'subject is required' });
-  if (!html && !text) return res.status(400).json({ error: 'html or text body is required' });
-
-  let accessToken;
+  let result;
   try {
-    accessToken = await getFreshAccessToken(user.email);
+    result = await performGmailSend(user, payload);
   } catch (err) {
     if (err.code === 'NOT_CONNECTED' || err.code === 'REAUTH') {
       return res.status(409).json({ error: err.message, code: err.code });
     }
+    if (err.code === 'GMAIL_SEND_FAILED') {
+      return res.status(502).json({ error: err.message });
+    }
     throw err;
   }
+
+  deleteAttachmentBlobs(payload.attachments);
+
+  return res.status(200).json({
+    ok: true,
+    messageId: result.messageId,
+    threadId: result.threadId,
+    extraDealsLinked: result.extraDealsLinked,
+  });
+}
+
+// Coerce a raw send payload (from an HTTP body or a stored scheduled_emails
+// row) into the canonical shape performGmailSend expects.
+export function normaliseSendPayload(body) {
+  return {
+    to: cleanEmailList(body.to),
+    cc: cleanEmailList(body.cc),
+    bcc: cleanEmailList(body.bcc),
+    subject: trimOrNull(body.subject),
+    html: body.html || '',
+    text: body.text || '',
+    dealId: trimOrNull(body.dealId),
+    threadId: trimOrNull(body.gmailThreadId),
+    // Extra deals the user wants this email visible on (added via the
+    // composer's "Add to another deal" / "Create new deal" menu). We attach
+    // them at thread scope, immediately, so the recipient deals show the
+    // conversation without waiting for Pub/Sub to deliver it back.
+    extraDealIds: Array.isArray(body.extraDealIds)
+      ? Array.from(new Set(body.extraDealIds.map(trimOrNull).filter(Boolean)))
+      : [],
+    // Attachment refs uploaded to Vercel Blob: { blobUrl, filename, mimeType, sizeBytes }.
+    attachments: Array.isArray(body.attachments)
+      ? body.attachments.filter(a => a && a.blobUrl).map(a => ({
+          blobUrl: a.blobUrl,
+          blobPathname: a.blobPathname || null,
+          filename: a.filename || 'attachment',
+          mimeType: a.mimeType || 'application/octet-stream',
+          sizeBytes: a.sizeBytes || 0,
+        }))
+      : [],
+  };
+}
+
+// Best-effort cleanup of temporary attachment blobs once the message has left
+// the box (or been cancelled). Fire-and-forget — a failure just leaves an
+// orphan the optional prune cron can sweep later.
+function deleteAttachmentBlobs(attachments) {
+  for (const a of attachments || []) {
+    const target = a.blobUrl || a.blobPathname;
+    if (!target) continue;
+    Promise.resolve(del(target)).catch((err) =>
+      console.warn('[gmail send] attachment blob delete failed', err?.message));
+  }
+}
+
+// Build a MIME body entity (its own Content-Type header + the body). Used
+// either as the whole message body or as the first part inside a
+// multipart/mixed when there are attachments.
+function buildBodyEntity(htmlOut, textOut) {
+  if (htmlOut && textOut) {
+    const b = 'sqd_alt_' + crypto.randomBytes(8).toString('hex');
+    return `Content-Type: multipart/alternative; boundary="${b}"\r\n\r\n`
+      + `--${b}\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${textOut}\r\n`
+      + `--${b}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${htmlOut}\r\n`
+      + `--${b}--\r\n`;
+  } else if (htmlOut) {
+    return `Content-Type: text/html; charset=UTF-8\r\n\r\n${htmlOut}`;
+  }
+  return `Content-Type: text/plain; charset=UTF-8\r\n\r\n${textOut}`;
+}
+
+// Fetch each attachment blob and render it as a base64 MIME part string.
+async function buildAttachmentParts(attachments) {
+  const parts = [];
+  for (const a of attachments || []) {
+    const r = await fetch(a.blobUrl);
+    if (!r.ok) {
+      const e = new Error(`Attachment fetch failed (${r.status}) for ${a.filename}`);
+      e.code = 'GMAIL_SEND_FAILED';
+      throw e;
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    const b64 = buf.toString('base64').replace(/(.{76})/g, '$1\r\n');
+    const name = (a.filename || 'attachment').replace(/"/g, '');
+    parts.push(
+      `Content-Type: ${a.mimeType || 'application/octet-stream'}; name="${name}"\r\n`
+      + `Content-Disposition: attachment; filename="${name}"\r\n`
+      + `Content-Transfer-Encoding: base64\r\n\r\n${b64}`
+    );
+  }
+  return parts;
+}
+
+// Core send: resolves a fresh access token, builds the RFC 2822 message
+// (optionally multipart/mixed with attachments), POSTs it to Gmail, then logs
+// to the deal timeline and eager-persists the message into our own tables.
+// Throws errors tagged with .code ('NOT_CONNECTED' | 'REAUTH' | 'GMAIL_SEND_FAILED')
+// so both the HTTP wrapper and the scheduled-send cron can react. Callers are
+// responsible for cleaning up attachment blobs after a successful send.
+export async function performGmailSend(user, payload) {
+  const { to, cc, bcc, subject, html, text, dealId, threadId, extraDealIds, attachments } = payload;
+  const accessToken = await getFreshAccessToken(user.email);
 
   // Ensure the signature columns exist before SELECTing them (see comment on
   // ensureSignatureColumns). Otherwise sending an email 500s on workspaces
@@ -575,20 +800,23 @@ export async function gmailSend(req, res, user) {
     dealId ? `X-Squideo-Deal: ${dealId}` : null,
   ].filter(Boolean);
 
+  // When there are attachments, wrap the body entity (text/html or
+  // multipart/alternative) as the first part of a multipart/mixed and append
+  // one base64 part per file. With no attachments the body entity's
+  // Content-Type just becomes the last header — byte-for-byte the previous
+  // multipart/alternative / single-part output.
+  const attachmentParts = await buildAttachmentParts(attachments);
+  const bodyEntity = buildBodyEntity(htmlOut, textOut);
   let mime;
-  if (htmlOut && textOut) {
-    const boundary = 'sqd_' + crypto.randomBytes(8).toString('hex');
-    headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+  if (attachmentParts.length) {
+    const mb = 'sqd_mixed_' + crypto.randomBytes(8).toString('hex');
+    headers.push(`Content-Type: multipart/mixed; boundary="${mb}"`);
     mime = headers.join('\r\n') + '\r\n\r\n'
-      + `--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${textOut}\r\n`
-      + `--${boundary}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${htmlOut}\r\n`
-      + `--${boundary}--\r\n`;
-  } else if (htmlOut) {
-    headers.push('Content-Type: text/html; charset=UTF-8');
-    mime = headers.join('\r\n') + '\r\n\r\n' + htmlOut;
+      + `--${mb}\r\n` + bodyEntity + '\r\n'
+      + attachmentParts.map(p => `--${mb}\r\n${p}\r\n`).join('')
+      + `--${mb}--\r\n`;
   } else {
-    headers.push('Content-Type: text/plain; charset=UTF-8');
-    mime = headers.join('\r\n') + '\r\n\r\n' + textOut;
+    mime = headers.join('\r\n') + '\r\n' + bodyEntity;
   }
 
   const raw = Buffer.from(mime, 'utf8').toString('base64url');
@@ -607,7 +835,9 @@ export async function gmailSend(req, res, user) {
   if (!sendRes.ok) {
     const errBody = await sendRes.text();
     console.error('[gmail send] failed', sendRes.status, errBody);
-    return res.status(502).json({ error: `Gmail send failed (${sendRes.status})` });
+    const e = new Error(`Gmail send failed (${sendRes.status})`);
+    e.code = 'GMAIL_SEND_FAILED';
+    throw e;
   }
   const sent = await sendRes.json();
 
@@ -623,6 +853,7 @@ export async function gmailSend(req, res, user) {
             threadId: sent.threadId,
             to, cc, subject,
             fromAddress,
+            attachments: attachments.map(a => a.filename),
           })},
           ${user.email}
         )
@@ -659,12 +890,14 @@ export async function gmailSend(req, res, user) {
           gmail_message_id, gmail_thread_id, user_email,
           from_email, to_emails, cc_emails, subject, snippet,
           body_html, body_text,
-          direction, unmatched, internal_only, source, sent_at
+          direction, unmatched, internal_only, source, sent_at,
+          gmail_attachments
         ) VALUES (
           ${sent.id}, ${sent.threadId}, ${user.email},
           ${fromAddress}, ${to}, ${cc}, ${subject}, ${snippet},
           ${htmlOut ? htmlOut.slice(0, 8 * 1024) : null}, ${textOut ? textOut.slice(0, 8 * 1024) : null},
-          'outgoing', ${!dealId}, FALSE, 'compose', NOW()
+          'outgoing', ${!dealId}, FALSE, 'compose', NOW(),
+          ${attachments.length ? JSON.stringify(attachments.map(a => ({ filename: a.filename, mimeType: a.mimeType, sizeBytes: a.sizeBytes }))) : null}
         )
         ON CONFLICT (gmail_message_id) DO NOTHING
       `;
@@ -712,12 +945,11 @@ export async function gmailSend(req, res, user) {
     }
   }
 
-  return res.status(200).json({
-    ok: true,
+  return {
     messageId: sent.id,
     threadId: sent.threadId,
     extraDealsLinked: extraDealIds.length,
-  });
+  };
 }
 
 // Encode a header value with RFC 2047 if it contains non-ASCII.

@@ -4,7 +4,8 @@ import { sendNotification, resolveRecipients } from '../notifications.js';
 import { registerWatch } from '../gmailTokens.js';
 import { syncHistory } from '../gmailSync.js';
 import { escapeHtml } from './shared.js';
-import { getFreshAccessToken } from './gmail.js';
+import { getFreshAccessToken, performGmailSend } from './gmail.js';
+import { del } from '@vercel/blob';
 import { buildResumeEmail } from '../quoteResumeEmail.js';
 import { signTaskActionToken } from '../auth.js';
 
@@ -29,6 +30,7 @@ export async function cronHandler(req, res, action) {
     case 'prune-views':       return cronPruneViews(res);
     case 'quote-partials':    return cronQuotePartials(res);
     case 'quote-resume':      return cronQuoteResume(res);
+    case 'scheduled-emails':  return cronScheduledEmails(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }
@@ -120,6 +122,41 @@ export async function cronQuoteResume(res) {
       sent++;
     } catch (err) {
       console.error('[cron quote-resume] send failed', { id: r.id, err: err.message });
+    }
+  }
+
+  return res.status(200).json({ ok: true, found: due.length, sent });
+}
+
+// Dispatch composer-scheduled emails whose time has come. Runs as the user who
+// queued each one (refresh token persists server-side, like gmail-watch-renew),
+// calls the shared performGmailSend, then cleans up the attachment blobs.
+export async function cronScheduledEmails(res) {
+  const due = await sql`
+    SELECT id, user_email, payload
+    FROM scheduled_emails
+    WHERE status = 'pending' AND scheduled_for <= NOW()
+    ORDER BY scheduled_for ASC
+    LIMIT 50
+  `;
+
+  let sent = 0;
+  for (const row of due) {
+    try {
+      const nameRow = (await sql`SELECT name FROM users WHERE email = ${row.user_email}`)[0];
+      const user = { email: row.user_email, name: nameRow?.name || null };
+      await performGmailSend(user, row.payload);
+      await sql`UPDATE scheduled_emails SET status = 'sent', sent_at = NOW() WHERE id = ${row.id}`;
+      // Best-effort blob cleanup — orphans are harmless.
+      for (const a of row.payload?.attachments || []) {
+        const target = a.blobUrl || a.blobPathname;
+        if (target) { try { await del(target); } catch (_) { /* ignore */ } }
+      }
+      sent++;
+    } catch (err) {
+      console.error('[cron scheduled-emails] send failed', { id: row.id, err: err.message });
+      // Mark failed so we don't retry forever; the user can re-send manually.
+      await sql`UPDATE scheduled_emails SET status = 'failed', error = ${String(err.message || err).slice(0, 500)} WHERE id = ${row.id}`;
     }
   }
 

@@ -41,7 +41,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   const [newDealFromEmail, setNewDealFromEmail] = useState(null);
 
   useEffect(() => {
-    if (dealId) actions.loadDealDetail(dealId);
+    if (dealId) {
+      actions.loadDealDetail(dealId);
+      actions.loadScheduledEmails(dealId);
+    }
   }, [dealId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const detail = state.dealDetail[dealId];
@@ -70,6 +73,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
     () => (state.drafts || []).filter((d) => d.dealId === dealId).sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || '')),
     [state.drafts, dealId],
   );
+  const dealScheduled = (state.scheduledEmails && state.scheduledEmails[dealId]) || [];
 
   // Set of addresses we already consider "linked" to this deal — used by the
   // email rows to decide whether a Cc'd address counts as "new on this thread"
@@ -268,6 +272,15 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               drafts={dealDrafts}
               onResume={(id) => actions.resumeDraft(id)}
               onDiscard={(id) => actions.discardDraft(id)}
+            />
+          </div>
+        )}
+
+        {dealScheduled.length > 0 && (
+          <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+            <DealScheduledCard
+              scheduled={dealScheduled}
+              onCancel={(id) => actions.cancelScheduledEmail(dealId, id)}
             />
           </div>
         )}
@@ -1939,6 +1952,68 @@ function DealDraftsCard({ drafts, onResume, onDiscard }) {
   );
 }
 
+// Pending scheduled emails for this deal — sends queued via the composer's
+// "Schedule send" that the scheduled-emails cron will dispatch when their time
+// comes. Cancel sets status='cancelled' server-side and drops the row here.
+function DealScheduledCard({ scheduled, onCancel }) {
+  const fmt = (iso) => {
+    try { return new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }); }
+    catch { return iso; }
+  };
+  return (
+    <Card title="Scheduled emails" count={scheduled.length}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {scheduled.map((s) => {
+          const headline = (s.subject || '').trim() || '(no subject)';
+          const recipients = Array.isArray(s.to) ? s.to.join(', ') : (s.to || '');
+          return (
+            <div
+              key={s.id}
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+                padding: '8px 10px', border: '1px solid ' + BRAND.border,
+                borderRadius: 8, background: '#F0F7FB',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontWeight: 600, fontSize: 13, color: BRAND.ink,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                  {headline}
+                </div>
+                {recipients && (
+                  <div style={{
+                    fontSize: 12, color: BRAND.muted, marginTop: 2,
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    To {recipients}
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Clock size={11} /> Sends {fmt(s.scheduledFor)}
+                  {s.attachmentCount ? ` · ${s.attachmentCount} attachment${s.attachmentCount > 1 ? 's' : ''}` : ''}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => { if (window.confirm('Cancel this scheduled email?')) onCancel(s.id); }}
+                  style={{ fontSize: 12, padding: '2px 10px' }}
+                  aria-label="Cancel scheduled email"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSent }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
@@ -1955,9 +2030,19 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
   const [showCc, setShowCc] = useState(!!initialDraft?.cc);
   const [showBcc, setShowBcc] = useState(!!initialDraft?.bcc);
   const [subject, setSubject] = useState(initialDraft?.subject ?? defaultSubject);
+  // body now holds HTML (rich-text editor). Older drafts may carry plain text;
+  // RichTextBody seeds its contentEditable from it either way.
   const [body, setBody] = useState(initialDraft?.body ?? '');
   const [sending, setSending] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
+  // Attachment refs uploaded to the temporary email-attachments blob store.
+  // Each: { id, filename, mimeType, sizeBytes, blobUrl?, blobPathname?, uploading?, error? }.
+  const [attachments, setAttachments] = useState(initialDraft?.attachments ?? []);
+  const fileInputRef = useRef(null);
+  // Scheduled-send popover state.
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleAt, setScheduleAt] = useState('');
+  const [scheduling, setScheduling] = useState(false);
   const [error, setError] = useState('');
   const [signature, setSignature] = useState(null); // null = loading, '' = none
   const [sigDiagnostics, setSigDiagnostics] = useState(null);
@@ -1978,6 +2063,9 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
       dealTitle: deal?.title || null,
       contactEmail: contact?.email || null,
       to, cc, bcc, showCc, showBcc, subject, body, extraDeals,
+      // Persist only fully-uploaded attachment refs so a resumed draft can
+      // still send them (the blobs live until the email is sent/cancelled).
+      attachments: attachments.filter(a => a.blobUrl && !a.uploading),
     });
     showMsg('Draft saved');
     // The store action already closes the composer (clears composerContext);
@@ -2043,25 +2131,63 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
     });
   }, [signature]);
 
+  // The body editor holds HTML; treat a tags-only / whitespace value as empty
+  // for the disabled-button guards and the can't-send check.
+  const bodyEmpty = isHtmlEmpty(body);
+  const uploadedBytes = attachments.reduce((n, a) => n + (a.sizeBytes || 0), 0);
+  const anyUploading = attachments.some(a => a.uploading);
+
+  // Upload picked files to the temporary blob store, enforcing the 20 MB
+  // running total. Each shows as a chip with a spinner until its ref lands.
+  const handleFilesSelected = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    let running = uploadedBytes + attachments.filter(a => a.uploading).reduce((n, a) => n + (a.sizeBytes || 0), 0);
+    for (const file of files) {
+      if (running + file.size > EMAIL_ATTACH_MAX_BYTES) {
+        setError('Attachments exceed the 20 MB total limit.');
+        continue;
+      }
+      running += file.size;
+      const tempId = 'a_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      setAttachments(prev => [...prev, { id: tempId, filename: file.name, mimeType: file.type || 'application/octet-stream', sizeBytes: file.size, uploading: true }]);
+      try {
+        const ref = await actions.uploadEmailAttachment(file);
+        setAttachments(prev => prev.map(a => a.id === tempId ? { ...a, ...ref, uploading: false } : a));
+      } catch (err) {
+        setAttachments(prev => prev.map(a => a.id === tempId ? { ...a, uploading: false, error: err?.message || 'Upload failed' } : a));
+      }
+    }
+  };
+
+  const removeAttachment = (att) => {
+    setAttachments(prev => prev.filter(a => a.id !== att.id));
+    if (att.blobPathname) actions.deleteEmailAttachment(att.blobPathname);
+  };
+
+  // Shared payload for both immediate send and scheduled send. Cc/Bcc only
+  // included if the user has the field visible (lets them type, hide, exclude).
+  const buildPayload = () => ({
+    to: to.split(',').map(s => s.trim()).filter(Boolean),
+    cc: (showCc && cc) ? cc.split(',').map(s => s.trim()).filter(Boolean) : [],
+    bcc: (showBcc && bcc) ? bcc.split(',').map(s => s.trim()).filter(Boolean) : [],
+    subject: subject.trim(),
+    html: sanitizeEmailHtml(body),
+    text: htmlToPlainText(body),
+    dealId: deal.id,
+    extraDealIds: extraDeals.map(d => d.id),
+    attachments: attachments
+      .filter(a => a.blobUrl && !a.uploading)
+      .map(a => ({ blobUrl: a.blobUrl, blobPathname: a.blobPathname, filename: a.filename, mimeType: a.mimeType, sizeBytes: a.sizeBytes })),
+  });
+
   const submit = async (e) => {
     e.preventDefault();
-    if (!to.trim() || !subject.trim() || !body.trim() || sending) return;
+    if (!to.trim() || !subject.trim() || bodyEmpty || sending || anyUploading) return;
     setError('');
     setSending(true);
     try {
-      // Only include Cc/Bcc if the user has the corresponding field visible.
-      // Lets them type, hide the field, and have the addresses excluded from
-      // the send — without losing the text in case they re-reveal.
-      const resp = await actions.sendGmail({
-        to: to.split(',').map(s => s.trim()).filter(Boolean),
-        cc: (showCc && cc) ? cc.split(',').map(s => s.trim()).filter(Boolean) : [],
-        bcc: (showBcc && bcc) ? bcc.split(',').map(s => s.trim()).filter(Boolean) : [],
-        subject: subject.trim(),
-        text: body,
-        html: bodyToHtml(body),
-        dealId: deal.id,
-        extraDealIds: extraDeals.map(d => d.id),
-      });
+      const resp = await actions.sendGmail(buildPayload());
       if (!resp?.ok) throw new Error('Send failed');
       showMsg('Email sent');
       onSent?.();
@@ -2074,6 +2200,28 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
       }
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleSchedule = async () => {
+    if (!to.trim() || !subject.trim() || bodyEmpty || scheduling || anyUploading) return;
+    const when = scheduleAt ? new Date(scheduleAt) : null;
+    if (!when || isNaN(when.getTime()) || when.getTime() <= Date.now()) {
+      setError('Pick a send time in the future.');
+      return;
+    }
+    setError('');
+    setScheduling(true);
+    try {
+      await actions.scheduleGmail({ ...buildPayload(), scheduledFor: when.toISOString() });
+      actions.loadScheduledEmails(deal.id);
+      showMsg('Email scheduled for ' + when.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }));
+      setShowSchedule(false);
+      onClose?.();
+    } catch (err) {
+      setError(err?.message || 'Failed to schedule');
+    } finally {
+      setScheduling(false);
     }
   };
 
@@ -2224,24 +2372,7 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
                   overflow: 'hidden',
                 }}
               >
-                <textarea
-                  rows={6}
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                  required
-                  style={{
-                    border: 'none',
-                    outline: 'none',
-                    padding: '10px 12px',
-                    fontFamily: 'inherit',
-                    fontSize: 14,
-                    lineHeight: 1.5,
-                    resize: 'vertical',
-                    minHeight: 120,
-                    color: BRAND.ink,
-                    background: 'transparent',
-                  }}
-                />
+                <RichTextBody initialHtml={body} onChange={setBody} />
                 {gmailConnected && (
                   <div style={{ padding: '8px 12px 12px', borderTop: '1px dashed ' + BRAND.border, fontSize: 13 }}>
                     {signature === null && (
@@ -2282,6 +2413,63 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
                 )}
               </div>
             </FormRow>
+            {/* Attachments: paperclip opens the hidden file input; each picked
+                file uploads to a temporary blob and shows as a chip until it's
+                embedded into the message at send (or scheduled-send) time. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = ''; }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                  style={{ fontSize: 12, padding: '4px 10px' }}
+                >
+                  📎 Attach files
+                </button>
+                {attachments.length > 0 && (
+                  <span style={{ fontSize: 11, color: BRAND.muted }}>
+                    {fileSizeLabel(uploadedBytes)} / 20 MB
+                  </span>
+                )}
+              </div>
+              {attachments.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {attachments.map((a) => (
+                    <span
+                      key={a.id}
+                      title={a.error || a.filename}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%',
+                        fontSize: 12, color: a.error ? '#991B1B' : BRAND.ink,
+                        background: a.error ? '#FEE2E2' : '#EEF3F6',
+                        border: '1px solid ' + (a.error ? '#FCA5A5' : BRAND.border),
+                        padding: '3px 4px 3px 9px', borderRadius: 999,
+                      }}
+                    >
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>
+                        {a.uploading ? 'Uploading… ' : ''}{a.filename}
+                      </span>
+                      <span style={{ color: BRAND.muted, flexShrink: 0 }}>{fileSizeLabel(a.sizeBytes)}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(a)}
+                        aria-label={`Remove ${a.filename}`}
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, lineHeight: 1, color: BRAND.muted, display: 'flex', flexShrink: 0 }}
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
             {/* Deal-link summary: shows the primary deal as a static chip
                 plus any extras the user added (removable). The two buttons
                 below open the picker / create-deal flows; backend attaches
@@ -2356,8 +2544,8 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
               how tall the form (or the signature preview) gets. */}
           <div
             style={{
-              flexShrink: 0,
-              display: 'flex', gap: 8, justifyContent: 'flex-end',
+              flexShrink: 0, position: 'relative',
+              display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center',
               padding: '10px 14px', borderTop: '1px solid ' + BRAND.border,
               background: 'white',
             }}
@@ -2367,14 +2555,67 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
               type="button"
               onClick={handleSaveDraft}
               className="btn-ghost"
-              disabled={savingDraft || (!to.trim() && !subject.trim() && !body.trim())}
+              disabled={savingDraft || (!to.trim() && !subject.trim() && bodyEmpty)}
               title="Stash this email in the drafts list and close the composer"
             >
               Save as draft
             </button>
-            <button type="submit" className="btn" disabled={!gmailConnected || sending || !to.trim() || !subject.trim() || !body.trim()}>
-              {sending ? 'Sending…' : 'Send'}
-            </button>
+            {/* Split Send button: the main half sends now, the ▾ half opens a
+                popover to schedule the send for later. */}
+            <div style={{ display: 'flex' }}>
+              <button
+                type="submit"
+                className="btn"
+                disabled={!gmailConnected || sending || anyUploading || !to.trim() || !subject.trim() || bodyEmpty}
+                style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+              >
+                {sending ? 'Sending…' : 'Send'}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setShowSchedule((v) => {
+                    if (!v && !scheduleAt) setScheduleAt(defaultScheduleValue());
+                    return !v;
+                  });
+                }}
+                disabled={!gmailConnected || sending || anyUploading || !to.trim() || !subject.trim() || bodyEmpty}
+                aria-label="Schedule send"
+                title="Schedule send"
+                style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: '1px solid rgba(255,255,255,0.35)', padding: '0 8px' }}
+              >
+                ▾
+              </button>
+            </div>
+            {showSchedule && (
+              <div
+                style={{
+                  position: 'absolute', right: 14, bottom: 'calc(100% + 6px)',
+                  background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
+                  boxShadow: '0 8px 24px rgba(15,42,61,0.18)', padding: 12, width: 260, zIndex: 10,
+                  display: 'flex', flexDirection: 'column', gap: 8,
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>Schedule send</div>
+                <input
+                  className="input"
+                  type="datetime-local"
+                  value={scheduleAt}
+                  min={defaultScheduleValueNow()}
+                  onChange={(e) => setScheduleAt(e.target.value)}
+                  style={{ fontSize: 13 }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+                  <button type="button" className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setShowSchedule(false)}>
+                    Cancel
+                  </button>
+                  <button type="button" className="btn" style={{ fontSize: 12 }} disabled={scheduling || !scheduleAt} onClick={handleSchedule}>
+                    {scheduling ? 'Scheduling…' : 'Schedule'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </form>
       )}
@@ -2732,16 +2973,125 @@ function SignatureEmptyHint({ diagnostics }) {
   );
 }
 
-function bodyToHtml(text) {
-  // Minimal text→HTML: escape and turn newlines into <br>. Keeps the email
-  // simple — Phase 5 templates will give us proper rich content.
-  const escaped = String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+// 20 MB total attachment cap — matches the deal-file cap and stays under
+// Gmail's 25 MB message limit once base64 inflates the payload ~33%.
+const EMAIL_ATTACH_MAX_BYTES = 20 * 1024 * 1024;
+
+// Tags the rich-text toolbar can produce. Anything else (scripts, styles,
+// inline event handlers) is stripped before the HTML leaves the browser.
+const EMAIL_HTML_SANITIZE = {
+  ALLOWED_TAGS: ['b', 'strong', 'i', 'em', 'u', 'a', 'ul', 'ol', 'li', 'p', 'br', 'span', 'div'],
+  ALLOWED_ATTR: ['href', 'target', 'rel'],
+};
+
+function sanitizeEmailHtml(html) {
+  const clean = DOMPurify.sanitize(html || '', EMAIL_HTML_SANITIZE);
+  // Wrap so recipients get a sensible default font/size/colour even if the
+  // body has no block wrapper of its own.
   return '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:14px;line-height:1.6;color:#0F2A3D;">'
-    + escaped.replace(/\n/g, '<br>')
-    + '</div>';
+    + clean + '</div>';
+}
+
+// Plain-text fallback for the multipart/alternative text part: turn block ends
+// and <br> into newlines, strip the rest, decode entities.
+function htmlToPlainText(html) {
+  if (!html) return '';
+  const withBreaks = String(html)
+    .replace(/<\/(p|div|li)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+  const ta = document.createElement('textarea');
+  ta.innerHTML = withBreaks;
+  return ta.value.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function isHtmlEmpty(html) {
+  if (!html) return true;
+  const stripped = String(html).replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, '').replace(/\s/g, '');
+  return stripped.length === 0;
+}
+
+// Format a Date as the value a <input type="datetime-local"> expects (local
+// time, no timezone, minute precision): "YYYY-MM-DDTHH:mm".
+function toDatetimeLocal(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+// Default the picker to one hour from now; min is the current minute.
+function defaultScheduleValue() { return toDatetimeLocal(new Date(Date.now() + 60 * 60 * 1000)); }
+function defaultScheduleValueNow() { return toDatetimeLocal(new Date()); }
+
+// Rich-text body editor: a contentEditable div with a small toolbar driven by
+// document.execCommand (deprecated but universally supported and dependency-
+// free). Uncontrolled — the DOM owns the HTML; we seed it once and report
+// changes up via onChange so cursor position is never disturbed by re-renders.
+function RichTextBody({ initialHtml, onChange }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current) ref.current.innerHTML = initialHtml || '';
+    // Seed once on mount; remounts (new draft) come with a fresh key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const emit = () => { if (ref.current) onChange(ref.current.innerHTML); };
+  const exec = (cmd, val = null) => {
+    document.execCommand(cmd, false, val);
+    if (ref.current) ref.current.focus();
+    emit();
+  };
+  const addLink = () => {
+    const url = window.prompt('Link URL (include https://):', 'https://');
+    if (url && url !== 'https://') exec('createLink', url);
+  };
+  const toolBtn = {
+    background: 'transparent', border: '1px solid transparent', borderRadius: 4,
+    cursor: 'pointer', color: BRAND.ink, fontSize: 13, lineHeight: 1,
+    padding: '4px 7px', minWidth: 28,
+  };
+  const Btn = ({ cmd, onClick, title, children }) => (
+    <button
+      type="button"
+      title={title}
+      // preventDefault on mousedown so clicking the toolbar doesn't blur the
+      // editor and lose the current selection before execCommand runs.
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick || (() => exec(cmd))}
+      style={toolBtn}
+      onMouseEnter={(e) => { e.currentTarget.style.background = '#EEF3F6'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+    >
+      {children}
+    </button>
+  );
+  return (
+    <>
+      <div style={{
+        display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center',
+        padding: '4px 6px', borderBottom: '1px solid ' + BRAND.border, background: '#FAFBFC',
+      }}>
+        <Btn cmd="bold" title="Bold"><strong>B</strong></Btn>
+        <Btn cmd="italic" title="Italic"><em>I</em></Btn>
+        <Btn cmd="underline" title="Underline"><span style={{ textDecoration: 'underline' }}>U</span></Btn>
+        <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
+        <Btn cmd="insertUnorderedList" title="Bulleted list">• —</Btn>
+        <Btn cmd="insertOrderedList" title="Numbered list">1.</Btn>
+        <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
+        <Btn onClick={addLink} title="Insert link">🔗</Btn>
+        <Btn onClick={() => exec('removeFormat')} title="Clear formatting">⨯</Btn>
+      </div>
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={emit}
+        className="email-body"
+        style={{
+          outline: 'none', padding: '10px 12px', fontFamily: 'inherit', fontSize: 14,
+          lineHeight: 1.5, minHeight: 120, maxHeight: 280, overflowY: 'auto',
+          color: BRAND.ink, background: 'transparent',
+        }}
+      />
+    </>
+  );
 }
 
 // Thin wrapper that lets App.jsx mount the composer at the top of the tree

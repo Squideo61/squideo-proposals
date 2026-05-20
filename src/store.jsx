@@ -43,6 +43,8 @@ function emptyStore() {
     companies: {},
     tasks: [],
     dealDetail: {},
+    // Pending scheduled emails, keyed by deal id (for the deal-page card).
+    scheduledEmails: {},
     // Video revisions (Frame.io-style client revision links)
     revisions: [],
     revisionDetail: {},
@@ -1070,8 +1072,52 @@ export function StoreProvider({ children }) {
       return api.post('/api/crm/gmail/disconnect', {}).catch(() => {});
     },
     sendGmail(payload) {
-      // payload: { to: string|string[], cc?, bcc?, subject, html, text, dealId? }
+      // payload: { to: string|string[], cc?, bcc?, subject, html, text, dealId?, attachments? }
       return api.post('/api/crm/gmail/send', payload);
+    },
+    // Upload one attachment to the temporary email-attachments blob namespace.
+    // Sends the binary raw (not JSON) like uploadDealFile. Returns the ref
+    // { filename, mimeType, sizeBytes, blobUrl, blobPathname } the composer
+    // stashes and later passes to send/schedule.
+    uploadEmailAttachment(file) {
+      return fetch('/api/crm/gmail/attachments', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          'X-Filename': encodeURIComponent(file.name),
+        },
+        body: file,
+      }).then(async (res) => {
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
+        return res.json();
+      });
+    },
+    deleteEmailAttachment(pathname) {
+      if (!pathname) return Promise.resolve();
+      return api.delete('/api/crm/gmail/attachments?pathname=' + encodeURIComponent(pathname)).catch(() => {});
+    },
+    // Schedule an email to send at a future time. payload mirrors sendGmail
+    // plus { scheduledFor: ISO string }.
+    scheduleGmail(payload) {
+      return api.post('/api/crm/gmail/schedule', payload);
+    },
+    loadScheduledEmails(dealId) {
+      return api.get('/api/crm/gmail/schedule?dealId=' + encodeURIComponent(dealId))
+        .then((rows) => {
+          const list = Array.isArray(rows) ? rows : [];
+          setState(s => ({ ...s, scheduledEmails: { ...s.scheduledEmails, [dealId]: list } }));
+          return list;
+        })
+        .catch(() => {});
+    },
+    cancelScheduledEmail(dealId, id) {
+      setState(s => {
+        const cur = (s.scheduledEmails && s.scheduledEmails[dealId]) || [];
+        return { ...s, scheduledEmails: { ...s.scheduledEmails, [dealId]: cur.filter(e => e.id !== id) } };
+      });
+      return api.delete('/api/crm/gmail/schedule?id=' + encodeURIComponent(id))
+        .catch(() => actions.loadScheduledEmails(dealId));
     },
     getGmailSignature() {
       // Returns { signatureHtml, fetchedAt, diagnostics? } from the cached

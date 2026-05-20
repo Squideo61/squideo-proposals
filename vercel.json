@@ -19,7 +19,8 @@
     { "path": "/api/crm/cron/gmail-watch-renew", "schedule": "0 5 * * *" },
     { "path": "/api/crm/cron/prune-views", "schedule": "0 3 * * 1" },
     { "path": "/api/crm/cron/quote-partials", "schedule": "*/5 * * * *" },
-    { "path": "/api/crm/cron/quote-resume", "schedule": "*/15 * * * *" }
+    { "path": "/api/crm/cron/quote-resume", "schedule": "*/15 * * * *" },
+    { "path": "/api/crm/cron/scheduled-emails", "schedule": "* * * * *" }
   ],
   "headers": [
     {
