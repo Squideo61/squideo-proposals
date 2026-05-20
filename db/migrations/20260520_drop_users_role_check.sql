@@ -1,0 +1,14 @@
+-- Drop the legacy CHECK constraint on users.role.
+--
+-- Before the roles table existed, users.role was free-text guarded by a CHECK
+-- constraint that only allowed the two hard-coded values ('admin', 'member').
+-- The 20260515 roles migration replaced that model with a real roles table and
+-- a foreign key (users_role_fkey → roles.id), but left the old CHECK in place.
+--
+-- The stale CHECK now rejects every custom/system role id beyond the original
+-- two — e.g. assigning the 'producer' role fails with:
+--   new row for relation "users" violates check constraint "users_role_check"
+--
+-- The FK already guarantees role validity, so the CHECK is both redundant and
+-- incorrect. Drop it (idempotent — safe to re-run / no-op if already gone).
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
