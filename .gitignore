@@ -6,3 +6,5 @@ dist
 
 # Claude Code internal artifacts
 .claude/worktrees/
+
+.env*.local
