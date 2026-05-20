@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { waitUntil } from '@vercel/functions';
-import { put, del } from '@vercel/blob';
+import { put, del, getDownloadUrl } from '@vercel/blob';
 import sql from '../db.js';
 import { APP_URL } from '../email.js';
 import {
@@ -726,7 +726,10 @@ function buildBodyEntity(htmlOut, textOut) {
 async function buildAttachmentParts(attachments) {
   const parts = [];
   for (const a of attachments || []) {
-    const r = await fetch(a.blobUrl);
+    // The attachment lives in a private blob, so the bare blobUrl 403s on a
+    // direct fetch — sign it first (same as the deal-file download path).
+    const downloadUrl = await getDownloadUrl(a.blobUrl);
+    const r = await fetch(downloadUrl);
     if (!r.ok) {
       const e = new Error(`Attachment fetch failed (${r.status}) for ${a.filename}`);
       e.code = 'GMAIL_SEND_FAILED';
