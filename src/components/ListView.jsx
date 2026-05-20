@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BarChart3, Check, CheckSquare, ChevronDown, Clock, Contact, Copy, Coins, Download, ExternalLink, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Receipt, Search, Settings, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
+import { BarChart3, Check, CheckSquare, ChevronDown, Clapperboard, Clock, Contact, Copy, Coins, Download, ExternalLink, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Receipt, Search, Settings, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, proposalSignedTotalExVat, useIsMobile } from '../utils.js';
@@ -10,7 +10,7 @@ import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
 const TEAM_FILTER_STORAGE_KEY = 'squideo.dashboard.teamMemberFilter';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageAdmin, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage, onManageQuoteRequests }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageAdmin, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage, onManageQuoteRequests, onManageReviews }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   const [memberFilter, setMemberFilter] = useState(() => {
@@ -93,6 +93,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
             </button>
           )}
           {onManagePipeline && <button onClick={onManagePipeline} className="btn-ghost"><KanbanSquare size={14} /> Pipeline</button>}
+          {onManageReviews && <button onClick={onManageReviews} className="btn-ghost"><Clapperboard size={14} /> Reviews</button>}
           {onManageContacts && <button onClick={onManageContacts} className="btn-ghost"><Contact size={14} /> Contacts</button>}
           {onManageTasks && (
             <button onClick={onManageTasks} className="btn-ghost">

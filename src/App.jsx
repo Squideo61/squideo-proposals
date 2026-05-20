@@ -8,6 +8,7 @@ import { Toast } from './components/ui.jsx';
 import { AuthScreen } from './components/AuthScreen.jsx';
 import { ClientView } from './components/ClientView.jsx';
 import { PublicClientShell } from './components/PublicClientShell.jsx';
+import { ReviewShell } from './components/review/ReviewShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
 
 const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: m[name] })));
@@ -30,6 +31,7 @@ const TasksView = lazyNamed(() => import('./components/crm/TasksView.jsx'), 'Tas
 const TriageView = lazyNamed(() => import('./components/crm/TriageView.jsx'), 'TriageView');
 const QuoteRequestsView = lazyNamed(() => import('./components/crm/QuoteRequestsView.jsx'), 'QuoteRequestsView');
 const XeroDuplicatesView = lazyNamed(() => import('./components/crm/XeroDuplicatesView.jsx'), 'XeroDuplicatesView');
+const ReviewsView = lazyNamed(() => import('./components/crm/ReviewsView.jsx'), 'ReviewsView');
 
 function ViewFallback() {
   return (
@@ -254,6 +256,7 @@ function AppShell() {
           onManageTasks={() => navigate('tasks')}
           onManageTriage={() => navigate('triage')}
           onManageQuoteRequests={() => navigate('quote-requests')}
+          onManageReviews={() => navigate('reviews')}
         />
       )}
       {view === 'admin' && (
@@ -319,6 +322,9 @@ function AppShell() {
           onOpenDeal={(id) => navigate('deal', id)}
           onOpenContact={(id) => navigate('contact', id)}
         />
+      )}
+      {view === 'reviews' && (
+        <ReviewsView onBack={() => navigate('list')} />
       )}
       {view === 'leaderboard' && (
         <LeaderboardView onBack={() => navigate('list')} />
@@ -392,12 +398,24 @@ function AppShell() {
 }
 
 export default function App() {
-  const proposalId = new URLSearchParams(window.location.search).get('proposal');
+  const params = new URLSearchParams(window.location.search);
+  const proposalId = params.get('proposal');
   if (proposalId) {
     return (
       <ErrorBoundary>
         <StoreProvider>
           <PublicClientShell proposalId={proposalId} />
+        </StoreProvider>
+      </ErrorBoundary>
+    );
+  }
+
+  const reviewToken = params.get('review');
+  if (reviewToken) {
+    return (
+      <ErrorBoundary>
+        <StoreProvider>
+          <ReviewShell token={reviewToken} />
         </StoreProvider>
       </ErrorBoundary>
     );
