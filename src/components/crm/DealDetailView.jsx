@@ -3041,7 +3041,11 @@ function RichTextEditor({ editorRef, initialHtml, onChange }) {
       onInput={() => editorRef.current && onChange(editorRef.current.innerHTML)}
       className="email-body"
       style={{
-        outline: 'none', padding: '10px 12px', fontFamily: 'inherit', fontSize: 14,
+        // Match the To/Subject inputs: same font stack and normal weight.
+        // Without an explicit weight the editor inherits the FormRow <label>'s
+        // font-weight:500, which made typed text look bold.
+        outline: 'none', padding: '10px 12px',
+        fontFamily: '-apple-system, system-ui, sans-serif', fontSize: 14, fontWeight: 400,
         lineHeight: 1.5, minHeight: 120, maxHeight: 280, overflowY: 'auto',
         color: BRAND.ink, background: 'transparent',
       }}
