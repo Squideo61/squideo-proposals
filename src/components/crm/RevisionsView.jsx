@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -18,6 +18,27 @@ function tc(seconds) {
 // those (and empty labels) as "Draft N" so the wording is consistent.
 function draftLabel(v) {
   return (v.label && !/^Version \d+$/.test(v.label)) ? v.label : ('Draft ' + v.versionNumber);
+}
+
+// A comment's supporting asset: inline thumbnail for images, download chip otherwise.
+function CommentAttachment({ url, name, type }) {
+  if ((type || '').startsWith('image/')) {
+    return (
+      <a href={url} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 4 }}>
+        <img src={url} alt={name || 'attachment'}
+          style={{ maxWidth: 220, maxHeight: 140, borderRadius: 6, border: '1px solid ' + BRAND.border, display: 'block' }} />
+      </a>
+    );
+  }
+  return (
+    <a href={url} target="_blank" rel="noreferrer" download
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, padding: '5px 9px',
+        borderRadius: 6, border: '1px solid ' + BRAND.border, background: '#F8FAFC', color: BRAND.ink,
+        fontSize: 12, textDecoration: 'none' }}>
+      <FileDown size={13} color={BRAND.blue} />
+      {name || 'Download file'}
+    </a>
+  );
 }
 
 export function RevisionsView({ onBack }) {
@@ -224,7 +245,8 @@ function ProjectDetail({ projectId, onBack }) {
                         <span style={{ color: BRAND.blue, fontSize: 12, fontWeight: 700 }}>{tc(c.timecodeSeconds)}</span>
                       )}
                     </div>
-                    <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap' }}>{c.body}</div>
+                    {c.body && <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap' }}>{c.body}</div>}
+                    {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
                   </div>
                 ))}
               </div>

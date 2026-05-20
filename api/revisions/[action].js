@@ -52,6 +52,13 @@ export default async function handler(req, res) {
       if (req.method !== 'POST') return res.status(405).end();
       return await postComment(req, res);
     }
+    // Public client-upload token for a comment's supporting asset. Authorised by
+    // the share_token (the same unguessable link that unlocks the revision), so
+    // unauthenticated reviewers can attach a file without a login.
+    if (action === 'asset-token') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return await assetUploadToken(req, res);
+    }
 
     // ─── Authenticated producer routes ───────────────────────────────────────
     // The Blob client-upload handshake authenticates inside onBeforeGenerateToken.
@@ -169,7 +176,8 @@ async function projectDetail(res, id) {
   `;
   const comments = await sql`
     SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds, rc.body,
-           rc.author_name, rc.author_email, rc.created_at
+           rc.author_name, rc.author_email, rc.created_at,
+           rc.attachment_url, rc.attachment_name, rc.attachment_type
     FROM revision_comments rc
     JOIN revision_versions rv ON rv.id = rc.version_id
     WHERE rv.project_id = ${id}
@@ -217,6 +225,32 @@ async function uploadToken(req, res) {
     return res.status(200).json(jsonResponse);
   } catch (err) {
     // requireAuth may already have sent a 401 for an unauthenticated caller.
+    if (res.headersSent) return;
+    return res.status(400).json({ error: err?.message || 'Upload authorisation failed' });
+  }
+}
+
+// Mints a client-upload token for a comment attachment, authorised by the
+// share_token rather than a login.
+async function assetUploadToken(req, res) {
+  if (!REVISION_BLOB_TOKEN)
+    return res.status(503).json({ error: 'Revision storage not configured' });
+  const shareToken = req.query.token ? String(req.query.token) : null;
+  const body = parseBody(req);
+  try {
+    const jsonResponse = await handleUpload({
+      body,
+      request: req,
+      token: REVISION_BLOB_TOKEN,
+      onBeforeGenerateToken: async () => {
+        if (!shareToken) throw new Error('token required');
+        const [proj] = await sql`SELECT id FROM revision_projects WHERE share_token = ${shareToken}`;
+        if (!proj) throw new Error('Invalid link');
+        return { addRandomSuffix: true };
+      },
+    });
+    return res.status(200).json(jsonResponse);
+  } catch (err) {
     if (res.headersSent) return;
     return res.status(400).json({ error: err?.message || 'Upload authorisation failed' });
   }
@@ -282,7 +316,8 @@ async function publicView(req, res) {
   `;
   const comments = await sql`
     SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds, rc.body,
-           rc.author_name, rc.created_at
+           rc.author_name, rc.created_at,
+           rc.attachment_url, rc.attachment_name, rc.attachment_type
     FROM revision_comments rc
     JOIN revision_versions rv ON rv.id = rc.version_id
     WHERE rv.project_id = ${project.id}
@@ -313,13 +348,18 @@ async function postComment(req, res) {
   const text = (body.body || '').trim();
   const authorName = (body.authorName || '').trim().slice(0, 120) || 'Guest';
   const parentId = body.parentId ? String(body.parentId) : null;
+  // Optional supporting asset (already uploaded to our public revision store).
+  const attachmentUrl = (typeof body.attachmentUrl === 'string' && body.attachmentUrl.startsWith('https://'))
+    ? body.attachmentUrl.slice(0, 1000) : null;
+  const attachmentName = attachmentUrl && body.attachmentName ? String(body.attachmentName).slice(0, 255) : null;
+  const attachmentType = attachmentUrl && body.attachmentType ? String(body.attachmentType).slice(0, 120) : null;
   let timecode = null;
   if (body.timecodeSeconds !== null && body.timecodeSeconds !== undefined && body.timecodeSeconds !== '') {
     const t = Number(body.timecodeSeconds);
     if (Number.isFinite(t) && t >= 0) timecode = Math.round(t * 100) / 100;
   }
   if (!versionId) return res.status(400).json({ error: 'versionId required' });
-  if (!text) return res.status(400).json({ error: 'comment body required' });
+  if (!text && !attachmentUrl) return res.status(400).json({ error: 'comment body or attachment required' });
   if (text.length > 4000) return res.status(400).json({ error: 'comment too long' });
 
   // The version must belong to the project this share_token unlocks.
@@ -340,9 +380,12 @@ async function postComment(req, res) {
   const id = crypto.randomUUID();
   const [row] = await sql`
     INSERT INTO revision_comments
-      (id, version_id, parent_id, timecode_seconds, body, author_name)
-    VALUES (${id}, ${versionId}, ${validParent}, ${timecode}, ${text}, ${authorName})
-    RETURNING id, version_id, parent_id, timecode_seconds, body, author_name, created_at
+      (id, version_id, parent_id, timecode_seconds, body, author_name,
+       attachment_url, attachment_name, attachment_type)
+    VALUES (${id}, ${versionId}, ${validParent}, ${timecode}, ${text}, ${authorName},
+            ${attachmentUrl}, ${attachmentName}, ${attachmentType})
+    RETURNING id, version_id, parent_id, timecode_seconds, body, author_name, created_at,
+              attachment_url, attachment_name, attachment_type
   `;
   return res.status(201).json(commentRow(row));
 }
@@ -387,5 +430,8 @@ function commentRow(r) {
     authorName: r.author_name,
     authorEmail: r.author_email,
     createdAt: r.created_at,
+    attachmentUrl: r.attachment_url || null,
+    attachmentName: r.attachment_name || null,
+    attachmentType: r.attachment_type || null,
   };
 }

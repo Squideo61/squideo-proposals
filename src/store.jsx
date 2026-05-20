@@ -1419,6 +1419,21 @@ export function StoreProvider({ children }) {
       return api.post('/api/revisions/comment?token=' + encodeURIComponent(token), payload);
     },
 
+    // Uploads a comment's supporting asset straight to the public revision Blob
+    // store (gated by the share token), returning { url, name, type }.
+    async uploadRevisionAsset(token, file, { onProgress } = {}) {
+      const { upload } = await import('@vercel/blob/client');
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await upload('revision-assets/' + token + '/' + Date.now() + '-' + safeName, file, {
+        access: 'public',
+        handleUploadUrl: '/api/revisions/asset-token?token=' + encodeURIComponent(token),
+        contentType: file.type || 'application/octet-stream',
+        multipart: true,
+        onUploadProgress: onProgress ? (e) => onProgress(Math.round(e.percentage)) : undefined,
+      });
+      return { url: blob.url, name: file.name, type: file.type || null };
+    },
+
     // ---------- Secondary contacts on a deal ----------
     // `payload` is either { contactId } to link an existing CRM contact, or
     // { email, name?, title?, companyId? } to create a new contact and link

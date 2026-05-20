@@ -1,9 +1,32 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, Clapperboard } from 'lucide-react';
+import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 
 const NAME_KEY = 'squideo.revision.name';
+
+// Renders a comment's supporting asset: an inline thumbnail for images, or a
+// download chip for anything else (PDFs, design files, etc.).
+function CommentAttachment({ url, name, type }) {
+  const isImage = (type || '').startsWith('image/');
+  if (isImage) {
+    return (
+      <a href={url} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 6 }}>
+        <img src={url} alt={name || 'attachment'}
+          style={{ maxWidth: '100%', maxHeight: 160, borderRadius: 8, border: `1px solid ${BRAND.border}`, display: 'block' }} />
+      </a>
+    );
+  }
+  return (
+    <a href={url} target="_blank" rel="noreferrer" download
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 6, padding: '6px 10px',
+        borderRadius: 8, border: `1px solid ${BRAND.border}`, background: '#F8FAFC', color: BRAND.ink,
+        fontSize: 12, textDecoration: 'none', maxWidth: '100%' }}>
+      <FileDown size={14} color={BRAND.blue} />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name || 'Download file'}</span>
+    </a>
+  );
+}
 
 // Diagonal, tiled "DRAFT" watermark as an inline SVG. Rendered as a repeating
 // CSS background over the player so the watermark is never baked into the file.
@@ -55,6 +78,24 @@ export function VideoRevision({ token, data }) {
   const [pinTime, setPinTime] = useState(null);   // timecode the comment will attach to
   const [pinned, setPinned] = useState(true);     // whether to attach a timecode at all
   const [posting, setPosting] = useState(false);
+  const [asset, setAsset] = useState(null);        // uploaded { url, name, type }
+  const [assetUploading, setAssetUploading] = useState(false);
+  const fileRef = useRef(null);
+
+  async function attachFile(file) {
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) { showMsg('File too large (max 100 MB)'); return; }
+    setAssetUploading(true);
+    try {
+      const uploaded = await actions.uploadRevisionAsset(token, file);
+      setAsset(uploaded);
+    } catch (err) {
+      showMsg(err.message || 'Could not upload file');
+    } finally {
+      setAssetUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
 
   // Comments for the active version, with timecoded ones ordered by time and
   // general ones last.
@@ -87,7 +128,7 @@ export function VideoRevision({ token, data }) {
 
   async function submit() {
     const text = draft.trim();
-    if (!text) return;
+    if (!text && !asset) return;
     let author = name.trim();
     if (!author) {
       author = (window.prompt('Your name (shown with your comments):') || '').trim();
@@ -102,10 +143,14 @@ export function VideoRevision({ token, data }) {
         body: text,
         authorName: author,
         timecodeSeconds: pinned ? (pinTime ?? 0) : null,
+        attachmentUrl: asset?.url || null,
+        attachmentName: asset?.name || null,
+        attachmentType: asset?.type || null,
       });
       setComments(prev => [...prev, created]);
       setDraft('');
       setPinTime(null);
+      setAsset(null);
     } catch (err) {
       showMsg(err.message || 'Could not post comment');
     } finally {
@@ -209,7 +254,8 @@ export function VideoRevision({ token, data }) {
                     </button>
                   )}
                 </div>
-                <div style={{ fontSize: 13, color: BRAND.ink, marginTop: 2, whiteSpace: 'pre-wrap' }}>{c.body}</div>
+                {c.body && <div style={{ fontSize: 13, color: BRAND.ink, marginTop: 2, whiteSpace: 'pre-wrap' }}>{c.body}</div>}
+                {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
               </div>
             ))}
           </div>
@@ -231,15 +277,43 @@ export function VideoRevision({ token, data }) {
               style={{ width: '100%', resize: 'none', padding: 8, borderRadius: 8,
                 border: `1px solid ${BRAND.border}`, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
             />
-            <button
-              onClick={submit}
-              disabled={posting || !draft.trim()}
-              style={{ marginTop: 6, width: '100%', padding: '8px 12px', borderRadius: 8, border: 'none',
-                background: draft.trim() ? BRAND.blue : BRAND.border, color: '#fff', fontWeight: 600,
-                fontSize: 13, cursor: draft.trim() ? 'pointer' : 'default',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-              <Send size={14} /> {posting ? 'Sending…' : 'Send'}
-            </button>
+            {/* Pending attachment chip */}
+            {(asset || assetUploading) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12, color: BRAND.muted }}>
+                <Paperclip size={13} />
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {assetUploading ? 'Uploading attachment…' : asset.name}
+                </span>
+                {asset && !assetUploading && (
+                  <button onClick={() => setAsset(null)} title="Remove"
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: BRAND.muted, padding: 0, display: 'flex' }}>
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            )}
+            <input ref={fileRef} type="file" style={{ display: 'none' }}
+              onChange={e => attachFile(e.target.files?.[0])} />
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={assetUploading || posting}
+                title="Attach a file (e.g. a replacement logo)"
+                style={{ padding: '8px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`,
+                  background: '#fff', color: BRAND.ink, cursor: assetUploading ? 'default' : 'pointer',
+                  display: 'flex', alignItems: 'center' }}>
+                <Paperclip size={15} />
+              </button>
+              <button
+                onClick={submit}
+                disabled={posting || assetUploading || (!draft.trim() && !asset)}
+                style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: 'none',
+                  background: (draft.trim() || asset) ? BRAND.blue : BRAND.border, color: '#fff', fontWeight: 600,
+                  fontSize: 13, cursor: (draft.trim() || asset) ? 'pointer' : 'default',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Send size={14} /> {posting ? 'Sending…' : 'Send'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
