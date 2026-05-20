@@ -63,7 +63,8 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
   }
 
   const { clientName, subscriptions, payments, allocations, totals } = detail;
-  const anyActive = subscriptions.some(s => s.status === 'active');
+  const clientStatus = detail.status
+    || (subscriptions.some(s => s.status === 'active') ? 'active' : 'inactive');
   const proposalOptions = subscriptions
     .filter(s => s.proposalId)
     .map(s => ({ id: s.proposalId, label: s.proposalTitle || s.proposalNumber || s.proposalId }));
@@ -77,7 +78,7 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
             <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>{clientName || clientKey}</h1>
           </div>
           <div style={{ fontSize: 13, color: BRAND.muted }}>
-            <StatusPill status={anyActive ? 'active' : 'inactive'} />
+            <StatusPill status={clientStatus} />
             <span style={{ marginLeft: 10 }}>
               {subscriptions.length} subscription{subscriptions.length === 1 ? '' : 's'} on file
             </span>
@@ -681,11 +682,11 @@ function DetailField({ label, children }) {
 }
 
 function StatusPill({ status }) {
-  const active = status === 'active';
-  const canceled = status === 'canceled';
-  const colors = active
+  const colors = status === 'active'
     ? { bg: '#DCFCE7', fg: '#15803D', label: 'Active' }
-    : canceled
+    : status === 'credits_only'
+      ? { bg: '#DBEAFE', fg: '#1E40AF', label: 'Credits Only' }
+    : status === 'canceled'
       ? { bg: '#FEE2E2', fg: '#B91C1C', label: 'Cancelled' }
       : { bg: '#F3F4F6', fg: '#6B7280', label: status || 'Inactive' };
   return (
