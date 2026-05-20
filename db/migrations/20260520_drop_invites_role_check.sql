@@ -1,0 +1,13 @@
+-- Drop the legacy CHECK constraint on invites.role.
+--
+-- Same story as users_role_check (see 20260520_drop_users_role_check.sql):
+-- before the roles table existed, invites.role was free-text guarded by a
+-- CHECK that only allowed the two hard-coded values ('admin', 'member'). The
+-- roles model (20260515) made role ids open-ended, but this CHECK was left in
+-- place, so inviting a teammate as any other role (e.g. 'producer') fails:
+--   new row for relation "invites" violates check constraint "invites_role_check"
+--
+-- Invite creation validates the requested role against the roles table in
+-- application code (api/users.js), so the CHECK is redundant. Drop it
+-- (idempotent — safe to re-run / no-op if already gone).
+ALTER TABLE invites DROP CONSTRAINT IF EXISTS invites_role_check;
