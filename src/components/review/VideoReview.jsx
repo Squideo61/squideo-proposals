@@ -5,6 +5,15 @@ import { useStore } from '../../store.jsx';
 
 const NAME_KEY = 'squideo.review.name';
 
+// Diagonal, tiled "DRAFT" watermark as an inline SVG. Rendered as a repeating
+// CSS background over the player so the watermark is never baked into the file.
+const DRAFT_SVG = encodeURIComponent(
+  "<svg xmlns='http://www.w3.org/2000/svg' width='280' height='190'>" +
+  "<text x='10' y='120' transform='rotate(-28 140 95)' fill='rgba(255,255,255,0.20)' " +
+  "font-size='38' font-weight='700' font-family='Arial, Helvetica, sans-serif' " +
+  "letter-spacing='4'>DRAFT</text></svg>"
+);
+
 // mm:ss (or h:mm:ss for long videos) — the timecode style clients expect.
 function tc(seconds) {
   if (seconds == null || !Number.isFinite(seconds)) return '';
@@ -131,14 +140,26 @@ export function VideoReview({ token, data }) {
         {/* Player + marker strip */}
         <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', background: '#0B1B26', minWidth: 0 }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
-            <video
-              ref={videoRef}
-              src={version.videoUrl}
-              controls
-              onLoadedMetadata={e => setDuration(e.target.duration || 0)}
-              onTimeUpdate={e => setCurrentTime(e.target.currentTime || 0)}
-              style={{ maxWidth: '100%', maxHeight: '100%' }}
-            />
+            <div style={{ position: 'relative', display: 'inline-flex', maxWidth: '100%', maxHeight: '100%' }}>
+              <video
+                ref={videoRef}
+                src={version.videoUrl}
+                controls
+                controlsList="nodownload"
+                onContextMenu={e => e.preventDefault()}
+                onLoadedMetadata={e => setDuration(e.target.duration || 0)}
+                onTimeUpdate={e => setCurrentTime(e.target.currentTime || 0)}
+                style={{ display: 'block', maxWidth: '100%', maxHeight: '100%' }}
+              />
+              {/* Tiled "DRAFT" watermark — overlaid in CSS so we never have to
+                  burn it into the video file. pointer-events:none keeps the
+                  player fully usable underneath. */}
+              <div aria-hidden style={{
+                position: 'absolute', inset: 0, pointerEvents: 'none',
+                backgroundImage: `url("data:image/svg+xml,${DRAFT_SVG}")`,
+                backgroundRepeat: 'repeat',
+              }} />
+            </div>
           </div>
           {/* Comment markers along the timeline */}
           <div style={{ position: 'relative', height: 28, background: '#0B1B26',
