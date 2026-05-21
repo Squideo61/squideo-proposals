@@ -77,7 +77,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
   const analyticsProposal = analyticsId ? proposals.find((p) => p.id === analyticsId) : null;
 
   return (
-    <div style={{ padding: isMobile ? '20px 16px' : '32px 24px' }}>
+    <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Proposals</h1>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
