@@ -2050,6 +2050,8 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
   const [showTemplates, setShowTemplates] = useState(false);
   const [templateBusy, setTemplateBusy] = useState(false);
   const templates = state.emailTemplates || [];
+  const teamTemplates = templates.filter(t => t.visibility !== 'private');
+  const privateTemplates = templates.filter(t => t.visibility === 'private');
   const [error, setError] = useState('');
   const [signature, setSignature] = useState(null); // null = loading, '' = none
   const [sigDiagnostics, setSigDiagnostics] = useState(null);
@@ -2128,19 +2130,20 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
     showMsg(`Loaded template “${t.name}”`);
   };
 
-  // Save the current subject/body as a new named template.
-  const saveAsNewTemplate = async () => {
+  // Save the current subject/body as a new named template, either team-wide
+  // ('team') or just for this user ('private').
+  const saveAsNewTemplate = async (visibility) => {
     if (templateBusy) return;
     if (!subject.trim() && isHtmlEmpty(body)) { setError('Add a subject or message before saving a template.'); return; }
-    const name = window.prompt('Template name:');
+    const name = window.prompt(visibility === 'private' ? 'Private template name:' : 'Team template name:');
     if (!name || !name.trim()) return;
     setTemplateBusy(true);
     try {
       await actions.saveEmailTemplate({
         name: name.trim(), subject: subject.trim() || null,
-        bodyHtml: body, bodyText: htmlToPlainText(body),
+        bodyHtml: body, bodyText: htmlToPlainText(body), visibility,
       });
-      showMsg('Template saved');
+      showMsg(visibility === 'private' ? 'Private template saved' : 'Team template saved');
     } catch (err) {
       setError(err?.message || 'Failed to save template');
     } finally {
@@ -2719,63 +2722,84 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
                     <X size={14} />
                   </button>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
                   {templates.length === 0 && (
                     <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic', padding: '4px 2px' }}>
-                      No saved templates yet. Compose an email, then “Save current as new template”.
+                      No saved templates yet. Compose an email, then save it as a team or private template below.
                     </div>
                   )}
-                  {templates.map((t) => (
-                    <div
-                      key={t.id}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 4,
-                        border: '1px solid ' + BRAND.border, borderRadius: 6, padding: '4px 4px 4px 8px',
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => loadTemplate(t)}
-                        title="Load this template into the email"
-                        style={{
-                          flex: 1, minWidth: 0, textAlign: 'left', background: 'transparent', border: 'none',
-                          cursor: 'pointer', color: BRAND.ink, fontSize: 13, padding: '2px 0',
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {t.name}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => overwriteTemplate(t)}
-                        disabled={templateBusy}
-                        title="Overwrite with the current email"
-                        className="btn-ghost"
-                        style={{ fontSize: 11, padding: '2px 8px', flexShrink: 0 }}
-                      >
-                        Overwrite
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => removeTemplate(t)}
-                        aria-label={`Delete ${t.name}`}
-                        title="Delete template"
-                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: BRAND.muted, display: 'flex', padding: 2, flexShrink: 0 }}
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                  {[
+                    { key: 'team', label: 'Team templates', list: teamTemplates },
+                    { key: 'private', label: 'My private templates', list: privateTemplates },
+                  ].filter(g => g.list.length > 0).map((g) => (
+                    <div key={g.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: BRAND.muted }}>
+                        {g.label}
+                      </div>
+                      {g.list.map((t) => (
+                        <div
+                          key={t.id}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 4,
+                            border: '1px solid ' + BRAND.border, borderRadius: 6, padding: '4px 4px 4px 8px',
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => loadTemplate(t)}
+                            title="Load this template into the email"
+                            style={{
+                              flex: 1, minWidth: 0, textAlign: 'left', background: 'transparent', border: 'none',
+                              cursor: 'pointer', color: BRAND.ink, fontSize: 13, padding: '2px 0',
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {t.name}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => overwriteTemplate(t)}
+                            disabled={templateBusy}
+                            title="Overwrite with the current email"
+                            className="btn-ghost"
+                            style={{ fontSize: 11, padding: '2px 8px', flexShrink: 0 }}
+                          >
+                            Overwrite
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeTemplate(t)}
+                            aria-label={`Delete ${t.name}`}
+                            title="Delete template"
+                            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: BRAND.muted, display: 'flex', padding: 2, flexShrink: 0 }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>
-                <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8 }}>
+                <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8, display: 'flex', gap: 6 }}>
                   <button
                     type="button"
                     className="btn-ghost"
-                    onClick={saveAsNewTemplate}
+                    onClick={() => saveAsNewTemplate('team')}
                     disabled={templateBusy}
-                    style={{ fontSize: 12, width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                    style={{ fontSize: 12, flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                    title="Save the current email as a team-wide template"
                   >
-                    <Plus size={13} /> Save current as new template
+                    <Plus size={13} /> Save as team
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => saveAsNewTemplate('private')}
+                    disabled={templateBusy}
+                    style={{ fontSize: 12, flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                    title="Save the current email as a private template only you can see"
+                  >
+                    <Plus size={13} /> Save as private
                   </button>
                 </div>
               </div>

@@ -1132,8 +1132,8 @@ export function StoreProvider({ children }) {
         })
         .catch(() => []);
     },
-    saveEmailTemplate({ name, subject, bodyHtml, bodyText }) {
-      return api.post('/api/crm/templates', { name, subject, bodyHtml, bodyText })
+    saveEmailTemplate({ name, subject, bodyHtml, bodyText, visibility = 'team' }) {
+      return api.post('/api/crm/templates', { name, subject, bodyHtml, bodyText, visibility })
         .then((tpl) => {
           setState(s => ({ ...s, emailTemplates: [...(s.emailTemplates || []), tpl].sort((a, b) => (a.name || '').localeCompare(b.name || '')) }));
           return tpl;
