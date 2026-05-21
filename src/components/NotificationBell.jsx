@@ -12,7 +12,7 @@ import { formatRelativeTime, useIsMobile } from '../utils.js';
 // purely presentational + marks things read. `onOpenLink` receives an in-app
 // hash route (e.g. '#/admin/users') so clicking a notification navigates
 // without a full reload.
-export function NotificationBell({ onOpenLink }) {
+export function NotificationBell({ onOpenLink, inline = false }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
@@ -44,8 +44,14 @@ export function NotificationBell({ onOpenLink }) {
 
   const badge = unread > 9 ? '9+' : String(unread);
 
+  // Inline: flows inside the top bar's right-hand group. Floating: a fixed
+  // pill in the corner, used on views that have no top bar (builder, client).
+  const wrapStyle = inline
+    ? { position: 'relative', zIndex: 95 }
+    : { position: 'fixed', top: isMobile ? 10 : 14, right: isMobile ? 10 : 16, zIndex: 95 };
+
   return (
-    <div ref={wrapRef} style={{ position: 'fixed', top: isMobile ? 10 : 14, right: isMobile ? 10 : 16, zIndex: 95 }}>
+    <div ref={wrapRef} style={wrapStyle}>
       <button
         onClick={() => setOpen(o => !o)}
         aria-label={unread > 0 ? `Notifications (${unread} unread)` : 'Notifications'}
@@ -54,7 +60,7 @@ export function NotificationBell({ onOpenLink }) {
           position: 'relative',
           width: 40, height: 40, borderRadius: '50%',
           background: 'white', border: '1px solid ' + BRAND.border,
-          boxShadow: '0 2px 8px rgba(15,42,61,0.12)',
+          boxShadow: inline ? 'none' : '0 2px 8px rgba(15,42,61,0.12)',
           cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
           color: open ? BRAND.blue : BRAND.ink,
         }}

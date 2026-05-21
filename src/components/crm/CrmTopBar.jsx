@@ -5,13 +5,14 @@ import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { Logo } from '../ui.jsx';
+import { NotificationBell } from '../NotificationBell.jsx';
 
 const BADGE = '#FB923C';
 
 // Persistent Xero-style top bar shown across every CRM view. Navigation is
 // grouped into three section dropdowns (Business / Sales / Projects); Admin,
 // Account and "New Proposal" sit as standalone utilities on the right.
-export function CrmTopBar({ view, navigate, onCreate, onManageAccount }) {
+export function CrmTopBar({ view, navigate, onCreate, onManageAccount, onOpenLink }) {
   const { state } = useStore();
   const isMobile = useIsMobile();
   const [openMenu, setOpenMenu] = useState(null);
@@ -163,6 +164,7 @@ export function CrmTopBar({ view, navigate, onCreate, onManageAccount }) {
 
         <div style={{ flex: 1 }} />
 
+        <NotificationBell onOpenLink={onOpenLink} inline />
         {canAdmin && (
           <button onClick={() => navigate('admin', 'users')} className="btn-ghost" title="Admin">
             <Settings size={14} />{!isMobile && ' Admin'}

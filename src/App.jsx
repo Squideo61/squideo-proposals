@@ -274,6 +274,7 @@ function AppShell() {
           navigate={navigate}
           onCreate={createNew}
           onManageAccount={() => setModal({ type: 'account' })}
+          onOpenLink={openLink}
         />
       )}
       <Suspense fallback={<ViewFallback />}>
@@ -421,7 +422,9 @@ function AppShell() {
           <EmailComposerHost />
         </Suspense>
       )}
-      <NotificationBell onOpenLink={openLink} />
+      {/* The top bar hosts the bell on CRM views; on the focused editor /
+          public views (no top bar) keep the floating bell so it's never lost. */}
+      {NO_TOPBAR_VIEWS.has(view) && <NotificationBell onOpenLink={openLink} />}
       <Toast msg={toast} />
     </div>
   );
