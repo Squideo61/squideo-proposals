@@ -9,7 +9,6 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatRelativeTime, useIsMobile } from '../../utils.js';
 import { Modal } from '../ui.jsx';
-import { ThreadRow, AssignModal } from './TriageView.jsx';
 import { DealContextPanel, DealChip } from './DealContextPanel.jsx';
 
 // 'deals' + 'triage' are DB-backed (CRM-aware); the rest proxy live to Gmail
@@ -47,7 +46,6 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   const [search, setSearch] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
   const [openRef, setOpenRef] = useState(null);     // { kind, threadId, unread } for the conversation modal
-  const [assigning, setAssigning] = useState(null);  // triage row being assigned
 
   useEffect(() => { setSearch(''); setAppliedQuery(''); }, [active]);
 
@@ -224,8 +222,7 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
               hasMore={slice.next != null}
               onLoadMore={loadMore}
               onOpen={(row) => setOpenRef(toOpenRef(def, row))}
-              onAssign={(row) => setAssigning(row)}
-              onDismiss={(row) => { if (window.confirm('Dismiss this thread? It stays archived but leaves triage.')) { actions.triageDismiss(row.gmailThreadId); showMsg('Dismissed'); } }}
+              onDismiss={(row) => { if (window.confirm('Dismiss this conversation? It stays archived but leaves Triage.')) { actions.triageDismiss(row.gmailThreadId); showMsg('Dismissed'); } }}
               onAction={(action, id) => doAction(actions, active, action, id, showMsg)}
             />
           )}
@@ -238,15 +235,9 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
           folder={active}
           folderKind={def.kind}
           connected={connected}
-          onClose={() => setOpenRef(null)}
-          onOpenDeal={onOpenDeal}
-        />
-      )}
-      {assigning && (
-        <AssignModal
-          message={assigning}
-          onClose={() => setAssigning(null)}
-          onAssign={async (gmailThreadId, dealId) => { await actions.triageAssign(gmailThreadId, dealId); showMsg('Assigned to deal'); setAssigning(null); }}
+          // Attaching to a deal from the panel clears the unmatched flag, so a
+          // triaged conversation should drop off the list once we close.
+          onClose={() => { setOpenRef(null); if (active === 'triage') actions.refreshTriage(); }}
           onOpenDeal={onOpenDeal}
         />
       )}
@@ -284,7 +275,7 @@ function NotConnected({ onConnect }) {
   );
 }
 
-function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onAssign, onDismiss, onAction }) {
+function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onDismiss, onAction }) {
   if (loading && rows.length === 0) {
     return <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>Loading…</div>;
   }
@@ -300,7 +291,7 @@ function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onAssign, onDis
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
         {def.kind === 'triage'
           ? rows.map((m, i) => (
-              <ThreadRow key={m.gmailMessageId} message={m} first={i === 0} onAssign={() => onAssign(m)} onDismiss={() => onDismiss(m)} />
+              <TriageRow key={m.gmailMessageId} message={m} first={i === 0} onOpen={() => onOpen(m)} onDismiss={() => onDismiss(m)} />
             ))
           : def.kind === 'gmail'
             ? rows.map((m, i) => <GmailThreadRow key={m.id} row={m} folder={def.id} first={i === 0} onOpen={() => onOpen(m)} onAction={onAction} />)
@@ -322,6 +313,28 @@ function CountPill({ n }) {
     <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: BRAND.muted, background: '#EEF3F6', borderRadius: 999, padding: '0 6px', minWidth: 18, textAlign: 'center' }}>
       {n}
     </span>
+  );
+}
+
+// A Triage row — an inbound conversation not yet on any deal. Click to read it
+// and attach via the deal panel; Dismiss drops it from Triage without filing.
+function TriageRow({ message, first, onOpen, onDismiss }) {
+  const inbound = message.direction === 'inbound';
+  const counterparty = inbound ? message.fromEmail : (message.toEmails?.[0] || '');
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 16px', borderTop: first ? 'none' : '1px solid ' + BRAND.border, background: 'white' }}>
+      <span style={{ flexShrink: 0, marginTop: 2, padding: '1px 5px', borderRadius: 3, fontSize: 10, fontWeight: 700, background: (inbound ? '#16A34A' : '#2BB8E6') + '22', color: inbound ? '#16A34A' : '#2BB8E6' }}>{inbound ? 'IN' : 'OUT'}</span>
+      <button onClick={onOpen} style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 14, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {message.subject || <span style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no subject)</span>}
+        </div>
+        {message.snippet && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{message.snippet}</div>}
+        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>
+          {formatRelativeTime(message.sentAt)}{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}
+        </div>
+      </button>
+      <button onClick={onDismiss} className="btn-ghost" title="Dismiss — not on a deal" aria-label="Dismiss" style={{ flexShrink: 0 }}><X size={14} /></button>
+    </div>
   );
 }
 
