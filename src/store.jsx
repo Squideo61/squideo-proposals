@@ -254,6 +254,11 @@ export function StoreProvider({ children }) {
   const [toast, setToast] = useState(null);
   const saveTimers = useRef({});
   const fetchAllRef = useRef(null);
+  // Proposal ids whose signature was just unmarked locally, mapped to an expiry
+  // timestamp. The 20s poll (and focus-triggered ticks) must not resurrect a
+  // signature from an in-flight /api/proposals read taken before the DELETE
+  // committed — the unmark DELETE also voids the Xero invoice, so it's slow.
+  const recentlyRemovedSigs = useRef(new Map());
 
   const showMsg = useCallback((m) => {
     setToast(m);
@@ -438,10 +443,15 @@ export function StoreProvider({ children }) {
           const nextProposals = { ...s.proposals };
           const nextSignatures = {};
           const nextPayments = {};
+          const now = Date.now();
           for (const [pid, p] of Object.entries(proposals)) {
-            if (p?._signature) nextSignatures[pid] = p._signature;
+            // Skip a signature the user just unmarked — the server read may
+            // predate the DELETE committing. The tombstone expires shortly
+            // after the authoritative refetch in removeSignature.
+            const tombstoned = (recentlyRemovedSigs.current.get(pid) || 0) > now;
+            if (p?._signature && !tombstoned) nextSignatures[pid] = p._signature;
             if (p?._payment)   nextPayments[pid]   = p._payment;
-            if (p?._signature && !s.signatures[pid]) newlySigned.push({ id: pid, sig: p._signature, name: p.clientName || p.contactBusinessName || 'a proposal' });
+            if (p?._signature && !tombstoned && !s.signatures[pid]) newlySigned.push({ id: pid, sig: p._signature, name: p.clientName || p.contactBusinessName || 'a proposal' });
             if (p?._payment   && !s.payments[pid])   newlyPaid.push({ id: pid, pay: p._payment, name: p.clientName || p.contactBusinessName || 'a proposal' });
             const editing = !!saveTimers.current[pid];
             if (editing && s.proposals[pid]) {
@@ -715,12 +725,24 @@ export function StoreProvider({ children }) {
       api.post('/api/signatures/' + id, sig).catch(() => {});
     },
     removeSignature(id) {
+      // Tombstone so a focus/interval poll doesn't resurrect the signature
+      // from a stale /api/proposals read while the DELETE is in flight.
+      recentlyRemovedSigs.current.set(id, Date.now() + 25_000);
       setState(s => {
         const signatures = { ...s.signatures };
         delete signatures[id];
-        return { ...s, signatures };
+        // Keep the cached proposal in sync so nothing re-derives "signed".
+        const proposals = s.proposals[id]?._signature
+          ? { ...s.proposals, [id]: { ...s.proposals[id], _signature: null } }
+          : s.proposals;
+        return { ...s, signatures, proposals };
       });
-      return api.delete('/api/signatures/' + id).catch(() => {});
+      return api.delete('/api/signatures/' + id)
+        .then(() => { fetchAllRef.current?.(); })
+        .catch(() => {})
+        // Drop the tombstone a moment after the refetch so a genuine re-sign
+        // can surface again; on failure the next poll correctly restores it.
+        .finally(() => { setTimeout(() => recentlyRemovedSigs.current.delete(id), 3_000); });
     },
     savePayment(id, payment) {
       setState(s => ({ ...s, payments: { ...s.payments, [id]: payment } }));
