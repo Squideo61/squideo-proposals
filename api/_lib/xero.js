@@ -228,6 +228,7 @@ export async function createInvoice({ contactId, lineItems, reference, invoiceNu
       TaxType: li.taxType,
       AccountCode: li.accountCode,
       DiscountRate: li.discountRate || undefined,
+      DiscountAmount: li.discountAmount || undefined,
     })),
   };
   const res = await xeroFetch('/api.xro/2.0/Invoices', {

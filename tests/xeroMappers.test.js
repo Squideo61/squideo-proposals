@@ -78,20 +78,26 @@ describe('lineItemsForProject', () => {
     expect(lineItemsForProject({ proposalTitle: 'X', vatRate: 20 }, {}, null)[0].unitAmount).toBe(0);
   });
 
-  it('subtracts a locked manual discount from the base line only (extras stay full)', () => {
+  it('puts a % discount in the Xero DiscountRate field on the base line only (full unit price, no note)', () => {
     const signed = {
       discountApplied: { type: 'percent', value: 10, label: 'Loyalty', amount: 100 },
       selectedExtras: [{ label: 'Subtitles', price: 50, quantity: 1 }],
     };
     const lines = lineItemsForProject(proposal, signed, null);
-    expect(lines[0].unitAmount).toBe(900); // 1000 − 100
-    expect(lines[0].description).toBe('Brand video (Discount: Loyalty −100.00)');
-    expect(lines[1].unitAmount).toBe(50);  // extra unaffected
+    expect(lines[0].unitAmount).toBe(1000);          // full, undiscounted
+    expect(lines[0].discountRate).toBe(10);          // shows in Xero's discount column
+    expect(lines[0].discountAmount).toBeUndefined();
+    expect(lines[0].description).toBe('Brand video'); // no baked-in note
+    expect(lines[1].unitAmount).toBe(50);            // extra unaffected
+    expect(lines[1].discountRate).toBeUndefined();
   });
 
-  it('flows the discounted base into the deposit fraction', () => {
-    const signed = { discountApplied: { amount: 100, label: 'Loyalty' } };
-    expect(depositLineItems(proposal, signed, 0.5, null)[0].unitAmount).toBe(450); // (1000−100)/2
+  it('uses DiscountAmount for a fixed-£ discount', () => {
+    const signed = { discountApplied: { type: 'amount', value: 150, label: 'Promo', amount: 150 } };
+    const line = lineItemsForProject(proposal, signed, null)[0];
+    expect(line.unitAmount).toBe(1000);
+    expect(line.discountAmount).toBe(150);
+    expect(line.discountRate).toBeUndefined();
   });
 });
 
@@ -102,6 +108,23 @@ describe('depositLineItems', () => {
     const lines = depositLineItems(proposal, signed, 0.5, null);
     expect(lines[0]).toMatchObject({ description: 'Brand video (50% deposit)', unitAmount: 500 });
     expect(lines[1]).toMatchObject({ description: 'Subs (50% deposit)', unitAmount: 50 });
+  });
+
+  it('keeps a % discount rate unchanged on the deposit (rate on the halved unit = half the discount)', () => {
+    const proposal = { proposalTitle: 'Brand video', vatRate: 20, basePrice: 1000 };
+    const signed = { discountApplied: { type: 'percent', value: 10, amount: 100 } };
+    const line = depositLineItems(proposal, signed, 0.5, null)[0];
+    expect(line.unitAmount).toBe(500);
+    expect(line.discountRate).toBe(10);
+    expect(line.discountAmount).toBeUndefined();
+  });
+
+  it('halves a fixed-£ discount amount on the deposit', () => {
+    const proposal = { proposalTitle: 'Brand video', vatRate: 20, basePrice: 1000 };
+    const signed = { discountApplied: { type: 'amount', value: 150, amount: 150 } };
+    const line = depositLineItems(proposal, signed, 0.5, null)[0];
+    expect(line.unitAmount).toBe(500);
+    expect(line.discountAmount).toBe(75); // half the discount on the 50% deposit
   });
 
   it('supports arbitrary fractions', () => {

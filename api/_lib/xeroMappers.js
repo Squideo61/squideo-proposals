@@ -31,20 +31,27 @@ export function lineItemsForProject(proposal, signed, proposalNumber) {
     || 'Video production';
   const prefix = proposalNumber ? `${proposalNumber} — ` : '';
   // Simple manual discount, locked into the signature at sign time. Applies to
-  // the project base line only (extras stay full price). Only ever set on the
-  // standard flow — the Partner path uses lineItemsForDiscountedProject instead.
-  const baseDiscount = Number(signed?.discountApplied?.amount) || 0;
+  // the project base line only (extras stay full price) and is expressed via
+  // Xero's native discount field — DiscountRate for a %, DiscountAmount for a
+  // fixed £ — so it shows in the invoice's Discount column rather than being
+  // baked into the unit price. Only ever set on the standard flow; the Partner
+  // path uses lineItemsForDiscountedProject instead.
   const baseUnit = Number(signed?.selectedVideoOption?.price ?? proposal.basePrice) || 0;
-  const discountNote = baseDiscount > 0
-    ? ` (Discount: ${(signed?.discountApplied?.label || '').trim() || 'discount'} −${baseDiscount.toFixed(2)})`
-    : '';
-  const lines = [{
-    description: prefix + requirementText + discountNote,
+  const discountType = signed?.discountApplied?.type;
+  const discountValue = Number(signed?.discountApplied?.value) || 0;
+  const discountAmount = Number(signed?.discountApplied?.amount) || 0;
+  const projectLine = {
+    description: prefix + requirementText,
     quantity: 1,
-    unitAmount: Number((baseUnit - baseDiscount).toFixed(2)),
+    unitAmount: baseUnit,
     taxType,
     accountCode: SALES_ACCOUNT,
-  }];
+  };
+  if (discountAmount > 0) {
+    if (discountType === 'amount') projectLine.discountAmount = Number(discountAmount.toFixed(2));
+    else projectLine.discountRate = discountValue; // percentage, e.g. 10 = 10%
+  }
+  const lines = [projectLine];
 
   const chosen = Array.isArray(signed?.selectedExtras) ? signed.selectedExtras : [];
   for (const extra of chosen) {
@@ -66,11 +73,18 @@ export function lineItemsForProject(proposal, signed, proposalNumber) {
 export function depositLineItems(proposal, signed, fraction = 0.5, proposalNumber) {
   const projectLines = lineItemsForProject(proposal, signed, proposalNumber);
   const pct = Math.round(fraction * 100);
-  return projectLines.map(l => ({
-    ...l,
-    description: `${l.description} (${pct}% deposit)`,
-    unitAmount: Number((l.unitAmount * fraction).toFixed(2)),
-  }));
+  return projectLines.map(l => {
+    const out = {
+      ...l,
+      description: `${l.description} (${pct}% deposit)`,
+      unitAmount: Number((l.unitAmount * fraction).toFixed(2)),
+    };
+    // A fixed-£ discount must scale with the deposit (half the discount on a
+    // 50% deposit). A percentage rate needs no change — it already applies to
+    // the halved unit price, which yields half the discount.
+    if (l.discountAmount != null) out.discountAmount = Number((l.discountAmount * fraction).toFixed(2));
+    return out;
+  });
 }
 
 // Discounted project lines for the Partner Programme path: applies the
