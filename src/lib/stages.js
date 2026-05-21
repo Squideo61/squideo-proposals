@@ -18,3 +18,8 @@ export const PIPELINE_STAGES = [
 export const STAGE_COLOURS = Object.fromEntries(
   PIPELINE_STAGES.map(s => [s.id, { bg: s.bg, fg: s.fg }])
 );
+
+// { stageId: 'Human label' } — used for stage pills/badges.
+export const STAGE_LABEL = Object.fromEntries(
+  PIPELINE_STAGES.map(s => [s.id, s.label])
+);

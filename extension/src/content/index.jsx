@@ -10,7 +10,7 @@ import { chipResolver } from './chipResolver.js';
 import { installBoxesNav } from './BoxesNav.jsx';
 import { ComposeBar } from './ComposeBar.jsx';
 import { api, auth } from '../lib/api.js';
-import { STAGE_COLOURS } from '../lib/stages.js';
+import { STAGE_COLOURS, STAGE_LABEL } from '../lib/stages.js';
 
 const INBOXSDK_APP_ID = 'sdk_SquideoCRM_398be07a2b';
 
@@ -63,7 +63,7 @@ async function main() {
           const c = STAGE_COLOURS[deal.stage] || STAGE_COLOURS.lead;
           try {
             threadRowView.addLabel({
-              title: deal.title,
+              title: STAGE_LABEL[deal.stage] || deal.stage || 'Lead',
               foregroundColor: c.fg,
               backgroundColor: c.bg,
             });

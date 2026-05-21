@@ -95,7 +95,7 @@ async function listDealEmails(req, res, user) { // eslint-disable-line no-unused
     SELECT th.tid AS gmail_thread_id, th.message_count, th.last_at,
            COALESCE(et.subject, lm.subject) AS subject,
            lm.from_email AS last_from, lm.snippet AS last_snippet, lm.direction AS last_direction,
-           da.deal_ids, da.deal_titles
+           da.deal_ids, da.deal_titles, da.deal_stages
     FROM threads th
     LEFT JOIN email_threads et ON et.gmail_thread_id = th.tid
     JOIN LATERAL (
@@ -107,7 +107,9 @@ async function listDealEmails(req, res, user) { // eslint-disable-line no-unused
       LIMIT 1
     ) lm ON TRUE
     LEFT JOIN LATERAL (
-      SELECT ARRAY_AGG(DISTINCT d.id) AS deal_ids, ARRAY_AGG(DISTINCT d.title) AS deal_titles
+      SELECT ARRAY_AGG(d.id ORDER BY d.id) AS deal_ids,
+             ARRAY_AGG(d.title ORDER BY d.id) AS deal_titles,
+             ARRAY_AGG(d.stage ORDER BY d.id) AS deal_stages
       FROM deals d
       WHERE d.stage <> 'lost' AND (
         EXISTS (SELECT 1 FROM email_thread_deals etd
@@ -135,6 +137,7 @@ async function listDealEmails(req, res, user) { // eslint-disable-line no-unused
       messageCount: Number(t.message_count) || 1,
       dealIds: (t.deal_ids || []).filter(Boolean),
       dealTitles: (t.deal_titles || []).filter(Boolean),
+      dealStages: (t.deal_stages || []).filter(Boolean),
     })),
     nextCursor: hasMore ? offset + DEAL_FOLDER_PAGE : null,
   });

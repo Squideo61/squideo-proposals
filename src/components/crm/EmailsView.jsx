@@ -8,7 +8,8 @@ import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatRelativeTime, useIsMobile } from '../../utils.js';
-import { DealContextPanel, DealChip } from './DealContextPanel.jsx';
+import { DealContextPanel } from './DealContextPanel.jsx';
+import { STAGE_COLOURS, STAGE_LABEL } from '../../lib/stages.js';
 
 // 'deals' + 'triage' are DB-backed (CRM-aware); the rest proxy live to Gmail
 // via /api/crm/gmail/folder. kind drives which store action loads each folder.
@@ -326,6 +327,17 @@ function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onDismiss, onAc
   );
 }
 
+// Deal-stage pill shown on conversation rows — the in-app twin of the Gmail
+// extension's inbox-row chip. Same stage palette so the two mirror each other.
+function StagePill({ stage }) {
+  const c = STAGE_COLOURS[stage] || STAGE_COLOURS.lead;
+  return (
+    <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, background: c.bg, color: c.fg, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
+      {STAGE_LABEL[stage] || stage}
+    </span>
+  );
+}
+
 // Small "3" pill shown next to multi-message conversations (Gmail-style).
 function CountPill({ n }) {
   if (!n || n < 2) return null;
@@ -385,10 +397,8 @@ function DealThreadRow({ row, first, onOpen }) {
           <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.lastSnippet}</div>
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5, flexWrap: 'wrap' }}>
-          {(row.dealTitles || []).slice(0, 3).map((t, i) => (
-            <span key={i} style={{ fontSize: 10.5, fontWeight: 600, color: '#0D47A1', background: '#E3F2FD', padding: '1px 7px', borderRadius: 10, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {t}
-            </span>
+          {(row.dealStages || []).slice(0, 3).map((s, i) => (
+            <StagePill key={i} stage={s} />
           ))}
         </div>
       </div>
@@ -434,7 +444,7 @@ function GmailThreadRow({ row, folder, first, onOpen, onAction }) {
       </button>
       {chips.length > 0 && (
         <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, maxWidth: 190, overflow: 'hidden' }}>
-          <DealChip title={chips[0].title} stage={chips[0].stage} />
+          <StagePill stage={chips[0].stage} />
           {chips.length > 1 && <span style={{ fontSize: 10.5, fontWeight: 700, color: BRAND.muted }}>+{chips.length - 1}</span>}
         </div>
       )}
