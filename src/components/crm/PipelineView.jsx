@@ -40,7 +40,7 @@ export function PipelineView({ onBack, onOpenDeal }) {
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
           <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
             <KanbanSquare size={22} color={BRAND.blue} />
-            Pipeline
+            Sales Pipeline
           </h1>
           <span style={{ fontSize: 13, color: BRAND.muted }}>{deals.length} deals</span>
         </div>

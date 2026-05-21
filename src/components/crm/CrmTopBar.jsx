@@ -57,7 +57,7 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
       items: [
         { label: 'Quote Requests', icon: MailQuestion, go: () => navigate('quote-requests'), count: newQuoteRequestsCount },
         { label: 'Proposals', icon: FileText, go: () => navigate('list') },
-        { label: 'Pipeline', icon: KanbanSquare, go: () => navigate('pipeline') },
+        { label: 'Sales Pipeline', icon: KanbanSquare, go: () => navigate('pipeline') },
         { label: 'Leaderboard', icon: Trophy, go: () => navigate('leaderboard') },
       ],
     },
