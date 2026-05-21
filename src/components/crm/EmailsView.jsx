@@ -36,6 +36,18 @@ const VIEW_SANITIZE = {
 };
 const sanitizeBody = (html) => (html ? DOMPurify.sanitize(html, VIEW_SANITIZE) : null);
 
+// Sanitizer for the full message viewer, which renders inside a sandboxed
+// iframe (see EmailFrame). Unlike VIEW_SANITIZE we KEEP <style> blocks and
+// inline style attributes so the email looks the way the sender intended —
+// the iframe isolates that CSS from the rest of the app. Scripts, handlers
+// and other active content are still stripped (and the sandbox blocks JS too).
+const FRAME_SANITIZE = {
+  USE_PROFILES: { html: true },
+  ADD_TAGS: ['style'],
+  FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
+  FORBID_ATTR: ['onerror', 'onload', 'onclick'],
+};
+
 export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolder }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
@@ -633,7 +645,7 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
 function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
   const [open, setOpen] = useState(!!defaultExpanded);
   const outbound = message.outbound || (message.fromEmail && message.fromEmail.toLowerCase() === myEmail);
-  const sanitized = useMemo(() => sanitizeBody(message.html), [message.html]);
+  const hasHtml = !!(message.html && message.html.trim());
   const who = displayName(message.from) || message.fromEmail || (outbound ? 'me' : '—');
 
   return (
@@ -662,8 +674,8 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
             {message.cc?.length ? <div>cc {message.cc.join(', ')}</div> : null}
           </div>
           <div className="email-body" style={{ fontSize: 13.5, lineHeight: 1.6, wordBreak: 'break-word' }}>
-            {sanitized
-              ? <div dangerouslySetInnerHTML={{ __html: sanitized }} />
+            {hasHtml
+              ? <EmailFrame html={message.html} />
               : message.text
                 ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{message.text}</pre>
                 : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body)</div>}
@@ -678,6 +690,64 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
         </div>
       )}
     </div>
+  );
+}
+
+// Renders an HTML email inside a sandboxed iframe so the sender's own CSS
+// (style blocks + inline styles) applies and renders faithfully — just like
+// Gmail — without leaking into or breaking the surrounding app. No
+// allow-scripts in the sandbox, so nothing in the email can execute JS; the
+// HTML is sanitised first as defence-in-depth. Height auto-fits the content.
+function EmailFrame({ html }) {
+  const ref = useRef(null);
+  const [height, setHeight] = useState(360);
+
+  const srcDoc = useMemo(() => {
+    const clean = DOMPurify.sanitize(html || '', FRAME_SANITIZE);
+    return '<!doctype html><html><head><meta charset="utf-8">'
+      + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+      + '<base target="_blank">'
+      + '<style>'
+      + 'html,body{margin:0;padding:0;}'
+      + "body{font-family:-apple-system,system-ui,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.6;color:#0F2A3D;word-break:break-word;overflow-x:auto;}"
+      + 'img{max-width:100%;height:auto;}'
+      + 'a{color:#2BB8E6;}'
+      + '</style></head><body>' + clean + '</body></html>';
+  }, [html]);
+
+  const resize = () => {
+    const f = ref.current;
+    if (!f || !f.contentWindow) return;
+    try {
+      const doc = f.contentWindow.document;
+      const h = Math.max(doc.body?.scrollHeight || 0, doc.documentElement?.scrollHeight || 0);
+      if (h) setHeight(h + 4);
+    } catch { /* cross-origin guard — shouldn't happen with srcDoc */ }
+  };
+
+  const onLoad = () => {
+    resize();
+    // Images usually finish loading after the document, changing the height.
+    try {
+      const doc = ref.current.contentWindow.document;
+      doc.querySelectorAll('img').forEach((img) => {
+        if (!img.complete) img.addEventListener('load', resize, { once: true });
+      });
+    } catch { /* ignore */ }
+    // A couple of delayed re-measures catch late reflow (web fonts, slow images).
+    setTimeout(resize, 250);
+    setTimeout(resize, 1000);
+  };
+
+  return (
+    <iframe
+      ref={ref}
+      title="Email message"
+      onLoad={onLoad}
+      srcDoc={srcDoc}
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      style={{ width: '100%', border: 'none', height: height + 'px', display: 'block' }}
+    />
   );
 }
 
