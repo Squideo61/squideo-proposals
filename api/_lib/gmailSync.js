@@ -281,7 +281,7 @@ export async function resolveDealForMessage({
 
 // ---------- Header / body parsing helpers ----------
 
-function parseHeaders(arr) {
+export function parseHeaders(arr) {
   const out = {};
   for (const h of arr) out[String(h.name || '').toLowerCase()] = h.value || '';
   return out;
@@ -312,7 +312,7 @@ export function unwrapAngled(value) {
 
 // Walks the MIME tree and returns { html, text }. Prefers the first text/html
 // and text/plain parts at any depth.
-function extractBody(payload) {
+export function extractBody(payload) {
   let html = null;
   let text = null;
 
@@ -332,7 +332,7 @@ function extractBody(payload) {
   return { html, text };
 }
 
-function extractAttachments(payload) {
+export function extractAttachments(payload) {
   const results = [];
   const walk = (part) => {
     if (!part) return;

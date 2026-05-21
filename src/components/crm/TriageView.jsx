@@ -73,7 +73,7 @@ export function TriageView({ onBack, onOpenDeal }) {
   );
 }
 
-function ThreadRow({ message, first, onAssign, onDismiss }) {
+export function ThreadRow({ message, first, onAssign, onDismiss }) {
   const inbound = message.direction === 'inbound';
   const counterparty = inbound ? message.fromEmail : (message.toEmails?.[0] || '');
   return (
@@ -119,7 +119,7 @@ function ThreadRow({ message, first, onAssign, onDismiss }) {
   );
 }
 
-function AssignModal({ message, onClose, onAssign, onOpenDeal }) {
+export function AssignModal({ message, onClose, onAssign, onOpenDeal }) {
   const { state } = useStore();
   const [search, setSearch] = useState('');
   const [picked, setPicked] = useState(null);

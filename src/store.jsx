@@ -54,6 +54,15 @@ function emptyStore() {
     triage: [],
     quoteRequests: [],
     emailBodies: {},
+    // Emails section. mailbox is keyed by folder id ('deals' | 'inbox' |
+    // 'sent' | 'drafts' | 'starred' | 'spam' | 'trash' | 'all') →
+    // { rows, next, loading, loaded }, where `next` is an opaque cursor (a
+    // numeric offset for the DB-backed Deals folder, a Gmail pageToken for the
+    // live folders). mailboxMessages caches live Gmail message bodies by id;
+    // mailboxLabels holds unread/total counts for the sidebar badges.
+    mailbox: {},
+    mailboxMessages: {},
+    mailboxLabels: {},
     notificationRecipients: [],
     revisionCallUrl: '',
     extrasBank: [],
@@ -1409,6 +1418,98 @@ export function StoreProvider({ children }) {
         }
         return data;
       });
+    },
+
+    // ---------- Emails section (mailbox folders) ----------
+    // The DB-backed "Deals" folder: emails linked to active deals. Pass a
+    // cursor (the previous response's nextCursor) to append the next page.
+    loadDealEmails(cursor = null) {
+      const append = cursor != null;
+      setState(s => ({ ...s, mailbox: { ...s.mailbox, deals: { ...(s.mailbox?.deals || {}), loading: true } } }));
+      return api.get('/api/crm/emails' + (append ? '?cursor=' + encodeURIComponent(cursor) : ''))
+        .then((data) => {
+          const incoming = Array.isArray(data?.rows) ? data.rows : [];
+          setState(s => {
+            const prev = s.mailbox?.deals || {};
+            const rows = append ? [...(prev.rows || []), ...incoming] : incoming;
+            return { ...s, mailbox: { ...s.mailbox, deals: { rows, next: data?.nextCursor ?? null, loading: false, loaded: true } } };
+          });
+          return data;
+        })
+        .catch((err) => {
+          setState(s => ({ ...s, mailbox: { ...s.mailbox, deals: { ...(s.mailbox?.deals || {}), loading: false, loaded: true, error: err?.message || 'Failed to load' } } }));
+        });
+    },
+    // A live Gmail folder. Pass a pageToken to append the next page; pass q to
+    // search within the folder (Gmail search syntax).
+    loadMailboxFolder(folder, { pageToken = null, q = '' } = {}) {
+      const append = pageToken != null;
+      setState(s => ({ ...s, mailbox: { ...s.mailbox, [folder]: { ...(s.mailbox?.[folder] || {}), loading: true } } }));
+      const params = new URLSearchParams({ label: folder });
+      if (pageToken) params.set('pageToken', pageToken);
+      if (q) params.set('q', q);
+      return api.get('/api/crm/gmail/folder?' + params.toString())
+        .then((data) => {
+          const incoming = Array.isArray(data?.rows) ? data.rows : [];
+          setState(s => {
+            const prev = s.mailbox?.[folder] || {};
+            const rows = append ? [...(prev.rows || []), ...incoming] : incoming;
+            return { ...s, mailbox: { ...s.mailbox, [folder]: { rows, next: data?.nextPageToken ?? null, loading: false, loaded: true } } };
+          });
+          return data;
+        })
+        .catch((err) => {
+          setState(s => ({ ...s, mailbox: { ...s.mailbox, [folder]: { ...(s.mailbox?.[folder] || {}), loading: false, loaded: true, error: err?.message || 'Failed to load' } } }));
+        });
+    },
+    // Full body for a live Gmail message (Deals/Triage bodies use loadEmailBody).
+    loadMailboxMessage(id) {
+      return api.get('/api/crm/gmail/message?id=' + encodeURIComponent(id)).then((data) => {
+        if (data && data.id) setState(s => ({ ...s, mailboxMessages: { ...s.mailboxMessages, [data.id]: data } }));
+        return data;
+      });
+    },
+    // Apply a Gmail action to one or more message ids, with an optimistic
+    // update of the affected folder. Actions that move a message out of the
+    // current folder drop the row; flag toggles (read/star) update in place.
+    mailboxAction(folder, action, ids) {
+      const idList = Array.isArray(ids) ? ids : [ids];
+      const idSet = new Set(idList);
+      const removesFromFolder = (
+        (action === 'archive'  && folder === 'inbox') ||
+        (action === 'trash'    && folder !== 'trash') ||
+        (action === 'spam'     && folder !== 'spam') ||
+        (action === 'unspam'   && folder === 'spam') ||
+        (action === 'untrash'  && folder === 'trash') ||
+        (action === 'unstar'   && folder === 'starred')
+      );
+      setState(s => {
+        const f = s.mailbox?.[folder];
+        if (!f || !Array.isArray(f.rows)) return s;
+        const rows = removesFromFolder
+          ? f.rows.filter(r => !idSet.has(r.id))
+          : f.rows.map(r => {
+              if (!idSet.has(r.id)) return r;
+              if (action === 'markRead')   return { ...r, unread: false };
+              if (action === 'markUnread') return { ...r, unread: true };
+              if (action === 'star')       return { ...r, starred: true };
+              if (action === 'unstar')     return { ...r, starred: false };
+              return r;
+            });
+        return { ...s, mailbox: { ...s.mailbox, [folder]: { ...f, rows } } };
+      });
+      return api.post('/api/crm/gmail/modify', { action, ids: idList })
+        .catch((err) => {
+          // Re-sync the folder so the optimistic change doesn't stick on error.
+          actions.loadMailboxFolder(folder);
+          throw err;
+        });
+    },
+    // Unread/total counts for the folder sidebar badges.
+    loadMailboxLabels() {
+      return api.get('/api/crm/gmail/labels')
+        .then((data) => { setState(s => ({ ...s, mailboxLabels: data || {} })); return data; })
+        .catch(() => {});
     },
 
     // ---------- Deal files ----------

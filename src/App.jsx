@@ -29,7 +29,7 @@ const ContactsView = lazyNamed(() => import('./components/crm/ContactsView.jsx')
 const ContactDetailView = lazyNamed(() => import('./components/crm/ContactDetailView.jsx'), 'ContactDetailView');
 const CompanyDetailView = lazyNamed(() => import('./components/crm/CompanyDetailView.jsx'), 'CompanyDetailView');
 const TasksView = lazyNamed(() => import('./components/crm/TasksView.jsx'), 'TasksView');
-const TriageView = lazyNamed(() => import('./components/crm/TriageView.jsx'), 'TriageView');
+const EmailsView = lazyNamed(() => import('./components/crm/EmailsView.jsx'), 'EmailsView');
 const QuoteRequestsView = lazyNamed(() => import('./components/crm/QuoteRequestsView.jsx'), 'QuoteRequestsView');
 const XeroDuplicatesView = lazyNamed(() => import('./components/crm/XeroDuplicatesView.jsx'), 'XeroDuplicatesView');
 const RevisionsView = lazyNamed(() => import('./components/crm/RevisionsView.jsx'), 'RevisionsView');
@@ -280,7 +280,7 @@ function AppShell() {
           onManagePipeline={() => navigate('pipeline')}
           onManageContacts={() => navigate('contacts')}
           onManageTasks={() => navigate('tasks')}
-          onManageTriage={() => navigate('triage')}
+          onManageEmails={() => navigate('emails')}
           onManageQuoteRequests={() => navigate('quote-requests')}
           onManageRevisions={() => navigate('revisions')}
         />
@@ -336,10 +336,12 @@ function AppShell() {
           onOpenDeal={(id) => navigate('deal', id)}
         />
       )}
-      {view === 'triage' && (
-        <TriageView
+      {(view === 'emails' || view === 'triage') && (
+        <EmailsView
+          folder={view === 'triage' ? 'triage' : (activeId || 'deals')}
           onBack={() => navigate('list')}
           onOpenDeal={(id) => navigate('deal', id)}
+          onSelectFolder={(f) => navigate('emails', f === 'deals' ? null : f)}
         />
       )}
       {view === 'quote-requests' && (

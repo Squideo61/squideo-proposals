@@ -2063,6 +2063,9 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
   const [extraDeals, setExtraDeals] = useState(initialDraft?.extraDeals ?? []);
   const [pickingExtraDeal, setPickingExtraDeal] = useState(false);
   const [creatingExtraDeal, setCreatingExtraDeal] = useState(false);
+  // Set when the composer is opened as a reply from the Emails section — keeps
+  // the send inside the existing Gmail conversation. null for fresh compose.
+  const replyThreadId = initialDraft?.gmailThreadId || null;
 
   const handleSaveDraft = () => {
     if (savingDraft) return;
@@ -2071,6 +2074,7 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
       dealId: deal?.id || null,
       dealTitle: deal?.title || null,
       contactEmail: contact?.email || null,
+      gmailThreadId: replyThreadId || null,
       to, cc, bcc, showCc, showBcc, subject, body, extraDeals,
       // Persist only fully-uploaded attachment refs so a resumed draft can
       // still send them (the blobs live until the email is sent/cancelled).
@@ -2248,7 +2252,8 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
     subject: subject.trim(),
     html: sanitizeEmailHtml(body),
     text: htmlToPlainText(body),
-    dealId: deal.id,
+    dealId: deal?.id || null,
+    gmailThreadId: replyThreadId || undefined,
     extraDealIds: extraDeals.map(d => d.id),
     attachments: attachments
       .filter(a => a.blobUrl && !a.uploading)
@@ -2288,7 +2293,7 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
     setScheduling(true);
     try {
       await actions.scheduleGmail({ ...buildPayload(), scheduledFor: when.toISOString() });
-      actions.loadScheduledEmails(deal.id);
+      if (deal?.id) actions.loadScheduledEmails(deal.id);
       showMsg('Email scheduled for ' + when.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }));
       setShowSchedule(false);
       onClose?.();
@@ -2809,8 +2814,8 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
       )}
       {pickingExtraDeal && (
         <ComposerExtraDealPicker
-          currentDealId={deal.id}
-          excludeIds={[deal.id, ...extraDeals.map(d => d.id)]}
+          currentDealId={deal?.id || null}
+          excludeIds={[deal?.id, ...extraDeals.map(d => d.id)].filter(Boolean)}
           onClose={() => setPickingExtraDeal(false)}
           onPicked={(picked) => {
             setExtraDeals(prev => prev.some(d => d.id === picked.id) ? prev : [...prev, picked]);

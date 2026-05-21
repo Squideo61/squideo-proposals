@@ -22,6 +22,7 @@ import {
   trimOrNull,
 } from './shared.js';
 import { gmailBackfill } from './gmailBackfill.js';
+import { mailboxLive } from './mailbox.js';
 
 // One-shot per cold start: ensure the gmail signature columns exist. Belongs
 // in the manual Neon migration but absent on workspaces where that step was
@@ -266,6 +267,13 @@ export async function gmailRoute(req, res, id, action, user) {
 
   if (id === 'schedule') {
     return gmailSchedule(req, res, user);
+  }
+
+  // Live Gmail mailbox proxy for the Emails section's folders (Inbox, Sent,
+  // Drafts, Spam, Trash, Starred, All Mail) + per-message actions. Delegated
+  // to mailbox.js; reuses this resource's proven 2-segment routing.
+  if (['folder', 'message', 'attachment', 'modify', 'labels'].includes(id)) {
+    return mailboxLive(req, res, id, user);
   }
 
   return res.status(404).json({ error: 'Unknown gmail action: ' + id });

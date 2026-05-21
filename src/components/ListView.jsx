@@ -10,7 +10,7 @@ import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
 const TEAM_FILTER_STORAGE_KEY = 'squideo.dashboard.teamMemberFilter';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageAdmin, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage, onManageQuoteRequests, onManageRevisions }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageAdmin, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageEmails, onManageQuoteRequests, onManageRevisions }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   // Quick status filter: null = all (non-archived) | 'open' | 'signed' | 'archive'.
@@ -123,12 +123,14 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
               )}
             </button>
           )}
-          {onManageTriage && triageCount > 0 && (
-            <button onClick={onManageTriage} className="btn-ghost">
-              <Inbox size={14} /> Triage
-              <span style={{ background: '#FB923C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, marginLeft: 4 }}>
-                {triageCount}
-              </span>
+          {onManageEmails && (
+            <button onClick={onManageEmails} className="btn-ghost">
+              <Mail size={14} /> Emails
+              {triageCount > 0 && (
+                <span style={{ background: '#FB923C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, marginLeft: 4 }}>
+                  {triageCount}
+                </span>
+              )}
             </button>
           )}
           <button onClick={onManageLeaderboard} className="btn-ghost"><Trophy size={14} /> Leaderboard</button>
