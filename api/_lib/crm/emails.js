@@ -72,6 +72,7 @@ async function listDealEmails(req, res, user) { // eslint-disable-line no-unused
       SELECT DISTINCT em.gmail_thread_id AS tid
       FROM email_messages em
       WHERE em.internal_only = FALSE
+        AND em.gmail_message_id NOT LIKE '%-stub'
         AND EXISTS (
           SELECT 1 FROM deals d
           WHERE d.stage <> 'lost' AND (
@@ -88,6 +89,7 @@ async function listDealEmails(req, res, user) { // eslint-disable-line no-unused
              MAX(em.sent_at)            AS last_at
       FROM qualifying q
       JOIN email_messages em ON em.gmail_thread_id = q.tid AND em.internal_only = FALSE
+                            AND em.gmail_message_id NOT LIKE '%-stub'
       GROUP BY q.tid
     )
     SELECT th.tid AS gmail_thread_id, th.message_count, th.last_at,
@@ -100,6 +102,7 @@ async function listDealEmails(req, res, user) { // eslint-disable-line no-unused
       SELECT from_email, snippet, direction, subject
       FROM email_messages
       WHERE gmail_thread_id = th.tid AND internal_only = FALSE
+        AND gmail_message_id NOT LIKE '%-stub'
       ORDER BY sent_at DESC
       LIMIT 1
     ) lm ON TRUE
@@ -146,6 +149,7 @@ async function getDealThread(req, res, threadId) {
            subject, snippet, body_html, body_text, direction, sent_at, gmail_attachments
     FROM email_messages
     WHERE gmail_thread_id = ${threadId} AND internal_only = FALSE
+      AND gmail_message_id NOT LIKE '%-stub'
     ORDER BY sent_at ASC
   `;
   if (!rows.length) return res.status(404).json({ error: 'Not found' });

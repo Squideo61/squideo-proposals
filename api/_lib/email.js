@@ -175,6 +175,64 @@ export function firstViewHtml({ title, clientName, country, city, link }) {
   return shell(inner);
 }
 
+// How the client chose to pay, as stored on the signature (ClientView).
+const PAYMENT_OPTION_LABELS = {
+  '5050': '50/50 split — 50% deposit, balance on approval',
+  'full': 'Pay in full (card / BACS)',
+  'po': 'Purchase Order',
+};
+
+// A quick-reference order breakdown built from what the client actually
+// selected on the signature: the chosen video option (or project base) plus any
+// optional extras. Prices are the ex-VAT list prices stored on the proposal.
+function orderBreakdownHtml({ proposal, signature }) {
+  const showVat = (Number(proposal.vatRate) || 0) > 0;
+  const rows = [];
+
+  const vo = signature?.selectedVideoOption;
+  const baseLabel = vo?.label || 'Project base price';
+  const basePrice = Number.isFinite(Number(vo?.price)) ? Number(vo.price)
+    : (Number.isFinite(Number(proposal.basePrice)) ? Number(proposal.basePrice) : null);
+  if (basePrice != null) rows.push([baseLabel, basePrice]);
+
+  const extras = Array.isArray(signature?.selectedExtras) ? signature.selectedExtras : [];
+  for (const e of extras) {
+    const qty = e?.variantsEnabled ? Math.max(1, Number(e.quantity) || 1) : 1;
+    const price = Number.isFinite(Number(e?.price)) ? Number(e.price) * qty : null;
+    const label = (e?.label || 'Extra') + (qty > 1 ? ` ×${qty}` : '');
+    rows.push([label, price]);
+  }
+
+  if (!rows.length) return '';
+
+  const rowHtml = rows.map(([label, price]) => `
+    <tr>
+      <td style="padding:5px 12px 5px 0;font-size:13px;color:#0F2A3D;">${escapeHtml(label)}</td>
+      <td style="padding:5px 0;font-size:13px;text-align:right;white-space:nowrap;color:#0F2A3D;">${price != null ? formatGBP(price) : '—'}</td>
+    </tr>`).join('');
+
+  const partnerNote = signature?.partnerSelected
+    ? `<tr><td colspan="2" style="padding:6px 0 0;font-size:12px;color:#6B7785;">+ Partner Programme${signature.partnerCredits ? ` — ${signature.partnerCredits} credit${Number(signature.partnerCredits) === 1 ? '' : 's'}/month` : ''}</td></tr>`
+    : '';
+
+  const noteBits = [];
+  if (showVat) noteBits.push('exclude VAT');
+  if (signature?.partnerSelected) noteBits.push('shown before Partner Programme discount');
+  const note = noteBits.length
+    ? `<div style="font-size:11px;color:#9AA5B1;margin:8px 0 0;">Prices ${noteBits.join('; ')}.</div>`
+    : '';
+
+  return `
+    <div style="border:1px solid #E5E9EE;border-radius:8px;padding:12px 14px;margin:0 0 20px;">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#6B7785;margin:0 0 8px;">Order breakdown</div>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+        ${rowHtml}
+        ${partnerNote}
+      </table>
+      ${note}
+    </div>`;
+}
+
 export function signedHtml({ proposal, signature, signerName, signerEmail, signedAt, link }) {
   const title = proposal.proposalTitle || proposal.clientName || 'Proposal';
   const vatRate = proposal.vatRate || 0;
@@ -184,6 +242,9 @@ export function signedHtml({ proposal, signature, signerName, signerEmail, signe
     : (proposal.basePrice ? proposal.basePrice * (1 + vatRate) : null);
   const totalExVat = totalIncVat != null ? totalIncVat / (1 + vatRate) : null;
   const dateStr = signedAt ? new Date(signedAt).toLocaleString('en-GB') : '';
+  const paymentLabel = signature?.paymentOption
+    ? (PAYMENT_OPTION_LABELS[signature.paymentOption] || signature.paymentOption)
+    : '';
   const inner = `
     <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">🎉 Proposal signed</h2>
     <p style="margin:0 0 16px;"><strong>${escapeHtml(signerName || 'Someone')}</strong>${signerEmail ? ` (${escapeHtml(signerEmail)})` : ''} just signed <strong>${escapeHtml(title)}</strong>${proposal.clientName && proposal.clientName !== title ? ` for ${escapeHtml(proposal.clientName)}` : ''}.</p>
@@ -191,9 +252,11 @@ export function signedHtml({ proposal, signature, signerName, signerEmail, signe
       ${proposal.contactBusinessName ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Business</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(proposal.contactBusinessName)}</td></tr>` : ''}
       ${totalExVat != null ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Sale value</td><td style="padding:4px 0;font-size:13px;font-weight:600;">${formatGBP(totalExVat)}${vatRate ? ' + VAT' : ''}</td></tr>` : ''}
       ${totalIncVat != null && vatRate ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Total inc VAT</td><td style="padding:4px 0;font-size:13px;">${formatGBP(totalIncVat)}</td></tr>` : ''}
+      ${paymentLabel ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Payment choice</td><td style="padding:4px 0;font-size:13px;font-weight:600;">${escapeHtml(paymentLabel)}</td></tr>` : ''}
       ${dateStr ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Signed at</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(dateStr)}</td></tr>` : ''}
       ${proposal.preparedBy ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Prepared by</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(proposal.preparedBy)}</td></tr>` : ''}
     </table>
+    ${orderBreakdownHtml({ proposal, signature })}
     ${link ? `<p style="margin:0;"><a href="${escapeHtml(link)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open proposal</a></p>` : ''}
   `;
   return shell(inner);

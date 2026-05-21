@@ -10,6 +10,7 @@ import { useStore } from '../../store.jsx';
 import { formatRelativeTime, useIsMobile } from '../../utils.js';
 import { Modal } from '../ui.jsx';
 import { ThreadRow, AssignModal } from './TriageView.jsx';
+import { DealContextPanel, DealChip } from './DealContextPanel.jsx';
 
 // 'deals' + 'triage' are DB-backed (CRM-aware); the rest proxy live to Gmail
 // via /api/crm/gmail/folder. kind drives which store action loads each folder.
@@ -63,6 +64,20 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   useEffect(() => { if (connected) actions.loadMailboxLabels(); }, [connected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const slice = state.mailbox?.[active] || {};
+  const rawRowsForResolve = def.kind === 'triage' ? [] : (slice.rows || []);
+  // Resolve which deal(s) each visible conversation belongs to (extension-style
+  // chips). Skips threads already resolved; re-runs as rows load / paginate.
+  useEffect(() => {
+    if (def.kind === 'triage') return;
+    const items = [];
+    for (const r of rawRowsForResolve) {
+      const tid = def.kind === 'gmail' ? r.id : r.gmailThreadId;
+      if (!tid || state.threadDeals?.[tid] !== undefined) continue;
+      const sender = def.kind === 'gmail' ? r.fromEmail : r.lastFrom;
+      items.push({ threadId: tid, senderEmails: sender ? [sender] : [] });
+    }
+    if (items.length) actions.resolveThreadDeals(items);
+  }, [rawRowsForResolve, active]); // eslint-disable-line react-hooks/exhaustive-deps
   const rawRows = def.kind === 'triage' ? (state.triage || []) : (slice.rows || []);
 
   // deals/triage search filters in memory; Gmail folders search server-side.
@@ -354,6 +369,8 @@ function DealThreadRow({ row, first, onOpen }) {
 
 // A conversation row in a live Gmail folder, with inline star + quick actions.
 function GmailThreadRow({ row, folder, first, onOpen, onAction }) {
+  const { state } = useStore();
+  const chips = state.threadDeals?.[row.id] || [];
   const who = (row.participants && row.participants.length ? row.participants.join(', ') : null)
     || displayName(row.from) || row.fromEmail || '(unknown)';
   return (
@@ -382,6 +399,12 @@ function GmailThreadRow({ row, folder, first, onOpen, onAction }) {
           {row.snippet && <span style={{ color: BRAND.muted, fontWeight: 400 }}> — {row.snippet}</span>}
         </span>
       </button>
+      {chips.length > 0 && (
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, maxWidth: 190, overflow: 'hidden' }}>
+          <DealChip title={chips[0].title} stage={chips[0].stage} />
+          {chips.length > 1 && <span style={{ fontSize: 10.5, fontWeight: 700, color: BRAND.muted }}>+{chips.length - 1}</span>}
+        </div>
+      )}
       <span style={{ flexShrink: 0, fontSize: 11, color: BRAND.muted, width: 64, textAlign: 'right' }}>{formatRelativeTime(row.date)}</span>
       <div style={{ flexShrink: 0, display: 'flex', gap: 2 }}>
         {row.unread && (
@@ -404,6 +427,7 @@ function ConversationModal({ openRef, folder, folderKind, connected, onClose, on
   const { state, actions, showMsg } = useStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const isMobile = useIsMobile();
 
   const isGmail = openRef.kind === 'gmail';
   const thread = state.threadCache?.[openRef.threadId];
@@ -424,6 +448,15 @@ function ConversationModal({ openRef, folder, folderKind, connected, onClose, on
 
   const latest = messages[messages.length - 1] || null;
   const subject = thread?.subject || latest?.subject || '(no subject)';
+  // The other party of the conversation — drives the deal panel's contact
+  // suggestions and the attach snapshot.
+  const counterparty = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const fe = messages[i]?.fromEmail;
+      if (fe && fe.toLowerCase() !== myEmail) return fe;
+    }
+    return latest?.fromEmail || null;
+  }, [messages, myEmail, latest]);
 
   // Reply goes to the other party of the latest message.
   const replyRecipient = (msg) => {
@@ -481,7 +514,7 @@ function ConversationModal({ openRef, folder, folderKind, connected, onClose, on
   const gmailWeb = openRef.threadId ? `https://mail.google.com/mail/u/0/#all/${openRef.threadId}` : null;
 
   return (
-    <Modal onClose={onClose} maxWidth={760}>
+    <Modal onClose={onClose} maxWidth={isMobile ? 760 : 1060}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, wordBreak: 'break-word' }}>
           {subject}
@@ -490,42 +523,62 @@ function ConversationModal({ openRef, folder, folderKind, connected, onClose, on
         <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
       </div>
 
-      {/* Action bar — once the conversation has loaded (reply/forward read it). */}
-      {latest && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingBottom: 12, marginBottom: 12, borderBottom: '1px solid ' + BRAND.border }}>
-          {folder === 'drafts'
-            ? <button onClick={continueDraft} className="btn"><PenSquare size={14} /> Continue in composer</button>
-            : <button onClick={() => reply(false)} className="btn"><Reply size={14} /> Reply</button>}
-          {folder !== 'drafts' && <button onClick={forward} className="btn-ghost"><Forward size={14} /> Forward</button>}
-          {isGmail && folder !== 'sent' && folder !== 'drafts' && folder !== 'trash' && folder !== 'spam' && (
-            <button onClick={() => act('archive')} className="btn-ghost"><Archive size={14} /> Archive</button>
+      <div style={{ display: 'flex', gap: 16, flexDirection: isMobile ? 'column' : 'row' }}>
+        {/* Conversation (left) */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Action bar — once the conversation has loaded (reply/forward read it). */}
+          {latest && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingBottom: 12, marginBottom: 12, borderBottom: '1px solid ' + BRAND.border }}>
+              {folder === 'drafts'
+                ? <button onClick={continueDraft} className="btn"><PenSquare size={14} /> Continue in composer</button>
+                : <button onClick={() => reply(false)} className="btn"><Reply size={14} /> Reply</button>}
+              {folder !== 'drafts' && <button onClick={forward} className="btn-ghost"><Forward size={14} /> Forward</button>}
+              {isGmail && folder !== 'sent' && folder !== 'drafts' && folder !== 'trash' && folder !== 'spam' && (
+                <button onClick={() => act('archive')} className="btn-ghost"><Archive size={14} /> Archive</button>
+              )}
+              {isGmail && (folder === 'trash'
+                ? <button onClick={() => act('untrash')} className="btn-ghost"><RefreshCw size={14} /> Restore</button>
+                : <button onClick={() => act('trash')} className="btn-ghost"><Trash2 size={14} /> Delete</button>)}
+              {isGmail && folder !== 'spam' && folder !== 'drafts' && <button onClick={() => act('spam')} className="btn-ghost"><ShieldAlert size={14} /> Spam</button>}
+              {isGmail && folder === 'spam' && <button onClick={() => act('unspam')} className="btn-ghost"><ShieldAlert size={14} /> Not spam</button>}
+              {isGmail && folder !== 'drafts' && <button onClick={() => act('markUnread')} className="btn-ghost"><MailOpen size={14} /> Mark unread</button>}
+              {gmailWeb && <a href={gmailWeb} target="_blank" rel="noreferrer" className="btn-ghost" style={{ textDecoration: 'none' }}><ExternalLink size={14} /> Gmail</a>}
+            </div>
           )}
-          {isGmail && (folder === 'trash'
-            ? <button onClick={() => act('untrash')} className="btn-ghost"><RefreshCw size={14} /> Restore</button>
-            : <button onClick={() => act('trash')} className="btn-ghost"><Trash2 size={14} /> Delete</button>)}
-          {isGmail && folder !== 'spam' && folder !== 'drafts' && <button onClick={() => act('spam')} className="btn-ghost"><ShieldAlert size={14} /> Spam</button>}
-          {isGmail && folder === 'spam' && <button onClick={() => act('unspam')} className="btn-ghost"><ShieldAlert size={14} /> Not spam</button>}
-          {isGmail && folder !== 'drafts' && <button onClick={() => act('markUnread')} className="btn-ghost"><MailOpen size={14} /> Mark unread</button>}
-          {gmailWeb && <a href={gmailWeb} target="_blank" rel="noreferrer" className="btn-ghost" style={{ textDecoration: 'none' }}><ExternalLink size={14} /> Gmail</a>}
-        </div>
-      )}
 
-      {loading && <div style={{ color: BRAND.muted, fontSize: 13, padding: 20, textAlign: 'center' }}>Loading…</div>}
-      {error && <div style={{ color: '#DC2626', fontSize: 13 }}>{error}</div>}
-      {!loading && !error && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '60vh', overflowY: 'auto' }}>
-          {messages.map((m, i) => (
-            <MessageBlock
-              key={m.id || i}
-              message={m}
-              myEmail={myEmail}
-              connected={connected}
-              defaultExpanded={i === messages.length - 1 || m.unread}
-            />
-          ))}
-          {messages.length === 0 && <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 13 }}>(no messages)</div>}
+          {loading && <div style={{ color: BRAND.muted, fontSize: 13, padding: 20, textAlign: 'center' }}>Loading…</div>}
+          {error && <div style={{ color: '#DC2626', fontSize: 13 }}>{error}</div>}
+          {!loading && !error && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: isMobile ? 'none' : '60vh', overflowY: 'auto' }}>
+              {messages.map((m, i) => (
+                <MessageBlock
+                  key={m.id || i}
+                  message={m}
+                  myEmail={myEmail}
+                  connected={connected}
+                  defaultExpanded={i === messages.length - 1 || m.unread}
+                />
+              ))}
+              {messages.length === 0 && <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 13 }}>(no messages)</div>}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Deal context panel (right) — the in-app twin of the extension sidebar. */}
+        <div style={{
+          width: isMobile ? 'auto' : 320, flexShrink: 0,
+          borderLeft: isMobile ? 'none' : '1px solid ' + BRAND.border,
+          borderTop: isMobile ? '1px solid ' + BRAND.border : 'none',
+          paddingLeft: isMobile ? 0 : 16, paddingTop: isMobile ? 14 : 0,
+          maxHeight: isMobile ? 'none' : '64vh', overflowY: 'auto',
+        }}>
+          <DealContextPanel
+            gmailThreadId={openRef.threadId}
+            counterpartyEmail={counterparty}
+            onOpenDeal={(id) => { onClose(); onOpenDeal?.(id); }}
+          />
+        </div>
+      </div>
     </Modal>
   );
 }

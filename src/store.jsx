@@ -64,6 +64,10 @@ function emptyStore() {
     mailbox: {},
     threadCache: {},
     mailboxLabels: {},
+    // Deal association per email thread (extension-style chips + right panel),
+    // gmailThreadId → [{ dealId, title, stage, source }]. source 'explicit' =
+    // an email_thread_deals link; 'contact' = the sender matches a deal contact.
+    threadDeals: {},
     notificationRecipients: [],
     revisionCallUrl: '',
     extrasBank: [],
@@ -1520,6 +1524,51 @@ export function StoreProvider({ children }) {
       return api.get('/api/crm/gmail/labels')
         .then((data) => { setState(s => ({ ...s, mailboxLabels: data || {} })); return data; })
         .catch(() => {});
+    },
+
+    // ---------- Deal association for email threads (extension chips + panel) ----------
+    // Batch-resolve which deal(s) each thread belongs to. items: [{ threadId,
+    // senderEmails }]. Mirrors the extension's chip resolver — explicit links
+    // win, otherwise sender→contact matches surface as 'contact' suggestions.
+    resolveThreadDeals(items) {
+      const list = Array.isArray(items) ? items.filter(i => i && i.threadId) : [];
+      if (!list.length) return Promise.resolve({});
+      return api.post('/api/crm/threads/resolve', { items: list })
+        .then((byThread) => {
+          const map = (byThread && typeof byThread === 'object') ? byThread : {};
+          setState(s => {
+            const next = { ...s.threadDeals };
+            // Record every requested thread (even empty) so we don't refetch.
+            for (const it of list) next[it.threadId] = Array.isArray(map[it.threadId]) ? map[it.threadId] : [];
+            return { ...s, threadDeals: next };
+          });
+          return map;
+        })
+        .catch(() => ({}));
+    },
+    // Attach a thread to a deal via the snapshot endpoint (same as the
+    // extension) — works whether or not the thread has been synced yet, since
+    // it upserts the thread row first. Drops the cached association so it
+    // re-resolves with the new link.
+    attachThreadToDeal({ gmailThreadId, counterpartyEmail, dealId }) {
+      return api.post('/api/crm/threads', {
+        gmailThreadId,
+        gmailMessageId: gmailThreadId + ':panel-stub',
+        dealId,
+        fromEmail: counterpartyEmail || null,
+        direction: 'inbound',
+        sentAt: new Date().toISOString(),
+      }).then((r) => {
+        setState(s => { const t = { ...s.threadDeals }; delete t[gmailThreadId]; return { ...s, threadDeals: t }; });
+        return r;
+      });
+    },
+    detachThreadFromDeal({ gmailThreadId, dealId }) {
+      return api.delete('/api/crm/threads/' + encodeURIComponent(gmailThreadId) + '?dealId=' + encodeURIComponent(dealId))
+        .then((r) => {
+          setState(s => { const t = { ...s.threadDeals }; delete t[gmailThreadId]; return { ...s, threadDeals: t }; });
+          return r;
+        });
     },
 
     // ---------- Deal files ----------
