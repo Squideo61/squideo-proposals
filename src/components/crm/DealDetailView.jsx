@@ -2029,6 +2029,10 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
   // visible for the lifetime of the composer (matches Gmail/Streak).
   const [showCc, setShowCc] = useState(!!initialDraft?.cc);
   const [showBcc, setShowBcc] = useState(!!initialDraft?.bcc);
+  // Inline (Gmail-style reply): start with the recipients/subject collapsed to
+  // a one-line "to …" summary when we already have a recipient. The dock
+  // composer and a recipient-less inline forward stay expanded.
+  const [recipientsExpanded, setRecipientsExpanded] = useState(!inline || !(initialDraft?.to));
   const [subject, setSubject] = useState(initialDraft?.subject ?? defaultSubject);
   // body now holds HTML (rich-text editor). Older drafts may carry plain text;
   // RichTextEditor seeds its contentEditable from it either way.
@@ -2389,58 +2393,86 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
             </div>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <FormRow label="To">
-              <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <RecipientInput
-                    value={to}
-                    onChange={setTo}
-                    placeholder="name@example.com"
-                    autoFocus
-                    required
-                  />
-                </div>
-                {/* Gmail-style: Cc/Bcc start hidden, revealed by a small
-                    toggle next to the To field. Stays visible when on so
-                    the user can click again to hide. Selected state gets
-                    a tinted background to read as a pill toggle. */}
+            {inline && !recipientsExpanded ? (
+              // Collapsed Gmail-style recipients line. Click to expand the full
+              // To/Cc/Bcc fields; the Cc/Bcc buttons expand straight to that field.
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid ' + BRAND.border, paddingBottom: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setRecipientsExpanded(true)}
+                  style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, color: BRAND.ink, textAlign: 'left', padding: '2px 0' }}
+                >
+                  <span style={{ color: BRAND.muted }}>to</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {[to, (showCc && cc) ? cc : ''].filter(Boolean).join(', ') || '(no recipient)'}
+                  </span>
+                  <span style={{ flexShrink: 0, opacity: 0.6 }}>▾</span>
+                </button>
                 <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                  <button
-                    type="button"
-                    onClick={() => setShowCc((s) => !s)}
-                    aria-pressed={showCc}
-                    aria-label={showCc ? 'Hide Cc' : 'Add Cc'}
-                    className={showCc ? 'btn' : 'btn-ghost'}
-                    style={{ fontSize: 11, padding: '0 8px' }}
-                  >
-                    Cc
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowBcc((s) => !s)}
-                    aria-pressed={showBcc}
-                    aria-label={showBcc ? 'Hide Bcc' : 'Add Bcc'}
-                    className={showBcc ? 'btn' : 'btn-ghost'}
-                    style={{ fontSize: 11, padding: '0 8px' }}
-                  >
-                    Bcc
-                  </button>
+                  <button type="button" onClick={() => { setShowCc(true); setRecipientsExpanded(true); }} className="btn-ghost" style={{ fontSize: 11, padding: '0 8px' }}>Cc</button>
+                  <button type="button" onClick={() => { setShowBcc(true); setRecipientsExpanded(true); }} className="btn-ghost" style={{ fontSize: 11, padding: '0 8px' }}>Bcc</button>
                 </div>
               </div>
-            </FormRow>
-            {showCc && (
-              <FormRow label="Cc">
-                <RecipientInput value={cc} onChange={setCc} placeholder="comma,separated@example.com" />
-              </FormRow>
+            ) : (
+              <>
+                <FormRow label="To">
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <RecipientInput
+                        value={to}
+                        onChange={setTo}
+                        placeholder="name@example.com"
+                        autoFocus
+                        required
+                      />
+                    </div>
+                    {/* Gmail-style: Cc/Bcc start hidden, revealed by a small
+                        toggle next to the To field. Stays visible when on so
+                        the user can click again to hide. Selected state gets
+                        a tinted background to read as a pill toggle. */}
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        onClick={() => setShowCc((s) => !s)}
+                        aria-pressed={showCc}
+                        aria-label={showCc ? 'Hide Cc' : 'Add Cc'}
+                        className={showCc ? 'btn' : 'btn-ghost'}
+                        style={{ fontSize: 11, padding: '0 8px' }}
+                      >
+                        Cc
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowBcc((s) => !s)}
+                        aria-pressed={showBcc}
+                        aria-label={showBcc ? 'Hide Bcc' : 'Add Bcc'}
+                        className={showBcc ? 'btn' : 'btn-ghost'}
+                        style={{ fontSize: 11, padding: '0 8px' }}
+                      >
+                        Bcc
+                      </button>
+                    </div>
+                  </div>
+                </FormRow>
+                {showCc && (
+                  <FormRow label="Cc">
+                    <RecipientInput value={cc} onChange={setCc} placeholder="comma,separated@example.com" />
+                  </FormRow>
+                )}
+                {showBcc && (
+                  <FormRow label="Bcc">
+                    <RecipientInput value={bcc} onChange={setBcc} placeholder="comma,separated@example.com" />
+                  </FormRow>
+                )}
+                {/* Inline replies keep the subject fixed (Re: …) like Gmail, so
+                    the subject field only shows in the full dock composer. */}
+                {!inline && (
+                  <FormRow label="Subject">
+                    <input className="input" type="text" value={subject} onChange={(e) => setSubject(e.target.value)} required />
+                  </FormRow>
+                )}
+              </>
             )}
-            {showBcc && (
-              <FormRow label="Bcc">
-                <RecipientInput value={bcc} onChange={setBcc} placeholder="comma,separated@example.com" />
-              </FormRow>
-            )}
-            <FormRow label="Subject">
-              <input className="input" type="text" value={subject} onChange={(e) => setSubject(e.target.value)} required />
-            </FormRow>
             {/* Message field is NOT wrapped in FormRow's <label> on purpose:
                 that label carries font-weight:500, and Grammarly drops the
                 editor's inline weight when it instruments the field, so the
