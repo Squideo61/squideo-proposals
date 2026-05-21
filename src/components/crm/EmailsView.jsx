@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft, Mail, Inbox, Send, FileText, Star, ShieldAlert, Trash2, Archive,
   Search, X, RefreshCw, MailOpen, Reply, Forward, Paperclip, Download,
-  Briefcase, PenSquare, ExternalLink,
+  Briefcase, PenSquare, ExternalLink, ChevronDown,
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
@@ -33,6 +33,7 @@ const VIEW_SANITIZE = {
   FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form'],
   FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
 };
+const sanitizeBody = (html) => (html ? DOMPurify.sanitize(html, VIEW_SANITIZE) : null);
 
 export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolder }) {
   const { state, actions, showMsg } = useStore();
@@ -43,14 +44,11 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   const connected = !!(state.gmailAccount && state.gmailAccount.connected);
   const [search, setSearch] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
-  const [openMsg, setOpenMsg] = useState(null);   // { kind, id, threadId, ... } for the reading modal
-  const [assigning, setAssigning] = useState(null); // triage row being assigned
+  const [openRef, setOpenRef] = useState(null);     // { kind, threadId, unread } for the conversation modal
+  const [assigning, setAssigning] = useState(null);  // triage row being assigned
 
-  // Reset the search box when switching folders.
   useEffect(() => { setSearch(''); setAppliedQuery(''); }, [active]);
 
-  // Load the active folder. DB folders are cached after first load; Gmail
-  // folders too (the Refresh button forces a reload).
   useEffect(() => {
     if (def.kind === 'deals') {
       if (!state.mailbox?.deals?.loaded) actions.loadDealEmails();
@@ -61,7 +59,6 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
     }
   }, [active, connected]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sidebar badge counts (Gmail unread). Cheap; refreshed on mount + reconnect.
   useEffect(() => { if (connected) actions.loadMailboxLabels(); }, [connected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const slice = state.mailbox?.[active] || {};
@@ -73,7 +70,7 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
     const q = search.trim().toLowerCase();
     if (!q) return rawRows;
     return rawRows.filter((r) => {
-      const hay = [r.subject, r.snippet, r.fromEmail, ...(r.toEmails || [])].join(' ').toLowerCase();
+      const hay = [r.subject, r.snippet, r.lastSnippet, r.lastFrom, r.fromEmail, ...(r.toEmails || [])].join(' ').toLowerCase();
       return hay.includes(q);
     });
   }, [rawRows, search, def.kind]);
@@ -101,13 +98,10 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   const compose = () => actions.openComposer({});
 
   const triageBadge = (state.triage || []).length;
-  const inboxUnread = state.mailboxLabels?.INBOX?.unread || 0;
-  const spamCount = state.mailboxLabels?.SPAM?.unread || 0;
-
   const badgeFor = (f) => {
     if (f.id === 'triage') return triageBadge || null;
-    if (f.id === 'inbox') return inboxUnread || null;
-    if (f.id === 'spam') return spamCount || null;
+    if (f.id === 'inbox') return state.mailboxLabels?.INBOX?.unread || null;
+    if (f.id === 'spam') return state.mailboxLabels?.SPAM?.unread || null;
     return null;
   };
 
@@ -164,7 +158,6 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
 
         {/* Main pane */}
         <div style={{ flex: 1, minWidth: 0, width: '100%' }}>
-          {/* Toolbar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 7 }}>
               <def.icon size={16} color={BRAND.blue} /> {def.label}
@@ -193,10 +186,9 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
             </div>
           </div>
 
-          {/* Folder description */}
           {def.kind === 'deals' && (
             <p style={{ fontSize: 12.5, color: BRAND.muted, margin: '0 0 12px' }}>
-              Every email linked to an active deal, newest first. Emails on Lost deals stay in the Gmail folders.
+              Conversations linked to an active deal, newest first. Emails on Lost deals stay in the Gmail folders.
             </p>
           )}
           {def.kind === 'triage' && (
@@ -205,7 +197,6 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
             </p>
           )}
 
-          {/* Gmail not connected */}
           {def.kind === 'gmail' && !connected ? (
             <NotConnected onConnect={() => actions.connectGmail().then((url) => { if (url) window.location.href = url; })} />
           ) : (
@@ -215,7 +206,7 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
               loading={!!slice.loading}
               hasMore={slice.next != null}
               onLoadMore={loadMore}
-              onOpen={(row) => setOpenMsg(toOpenRef(def, row))}
+              onOpen={(row) => setOpenRef(toOpenRef(def, row))}
               onAssign={(row) => setAssigning(row)}
               onDismiss={(row) => { if (window.confirm('Dismiss this thread? It stays archived but leaves triage.')) { actions.triageDismiss(row.gmailThreadId); showMsg('Dismissed'); } }}
               onAction={(action, id) => doAction(actions, active, action, id, showMsg)}
@@ -224,13 +215,13 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
         </div>
       </div>
 
-      {openMsg && (
-        <EmailDetailModal
-          openRef={openMsg}
+      {openRef && (
+        <ConversationModal
+          openRef={openRef}
           folder={active}
           folderKind={def.kind}
           connected={connected}
-          onClose={() => setOpenMsg(null)}
+          onClose={() => setOpenRef(null)}
           onOpenDeal={onOpenDeal}
         />
       )}
@@ -246,17 +237,14 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   );
 }
 
-// Normalise a list row into the reference the reading modal loads from.
+// Normalise a list row into the reference the conversation modal loads from.
 function toOpenRef(def, row) {
-  if (def.kind === 'gmail') {
-    return { kind: 'gmail', id: row.id, threadId: row.threadId, unread: row.unread };
-  }
-  // deals + triage rows are DB-backed email_messages.
-  return { kind: 'db', id: row.gmailMessageId, threadId: row.gmailThreadId };
+  if (def.kind === 'gmail') return { kind: 'gmail', threadId: row.id, unread: row.unread };
+  return { kind: 'db', threadId: row.gmailThreadId, unread: false };
 }
 
-function doAction(actions, folder, action, id, showMsg) {
-  actions.mailboxAction(folder, action, id)
+function doAction(actions, folder, action, threadId, showMsg) {
+  actions.mailboxAction(folder, action, threadId)
     .then(() => { if (showMsg) showMsg(ACTION_TOAST[action] || 'Done'); })
     .catch(() => { if (showMsg) showMsg('Action failed'); });
 }
@@ -286,7 +274,7 @@ function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onAssign, onDis
   if (rows.length === 0) {
     return (
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
-        {def.kind === 'triage' ? 'Nothing to triage.' : def.kind === 'deals' ? 'No emails linked to active deals yet.' : 'This folder is empty.'}
+        {def.kind === 'triage' ? 'Nothing to triage.' : def.kind === 'deals' ? 'No conversations linked to active deals yet.' : 'This folder is empty.'}
       </div>
     );
   }
@@ -298,8 +286,8 @@ function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onAssign, onDis
               <ThreadRow key={m.gmailMessageId} message={m} first={i === 0} onAssign={() => onAssign(m)} onDismiss={() => onDismiss(m)} />
             ))
           : def.kind === 'gmail'
-            ? rows.map((m, i) => <GmailRow key={m.id} row={m} folder={def.id} first={i === 0} onOpen={() => onOpen(m)} onAction={onAction} />)
-            : rows.map((m, i) => <DealEmailRow key={m.gmailMessageId} row={m} first={i === 0} onOpen={() => onOpen(m)} />)}
+            ? rows.map((m, i) => <GmailThreadRow key={m.id} row={m} folder={def.id} first={i === 0} onOpen={() => onOpen(m)} onAction={onAction} />)
+            : rows.map((m, i) => <DealThreadRow key={m.gmailThreadId} row={m} first={i === 0} onOpen={() => onOpen(m)} />)}
       </div>
       {hasMore && (
         <div style={{ textAlign: 'center', marginTop: 12 }}>
@@ -310,10 +298,19 @@ function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onAssign, onDis
   );
 }
 
-// A row in the DB-backed Deals folder. Shows direction + deal chips.
-function DealEmailRow({ row, first, onOpen }) {
-  const inbound = row.direction === 'inbound';
-  const counterparty = inbound ? row.fromEmail : (row.toEmails?.[0] || '');
+// Small "3" pill shown next to multi-message conversations (Gmail-style).
+function CountPill({ n }) {
+  if (!n || n < 2) return null;
+  return (
+    <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: BRAND.muted, background: '#EEF3F6', borderRadius: 999, padding: '0 6px', minWidth: 18, textAlign: 'center' }}>
+      {n}
+    </span>
+  );
+}
+
+// A conversation row in the DB-backed Deals folder.
+function DealThreadRow({ row, first, onOpen }) {
+  const inbound = row.lastDirection === 'inbound';
   return (
     <button
       onClick={onOpen}
@@ -328,11 +325,14 @@ function DealEmailRow({ row, first, onOpen }) {
         background: (inbound ? '#16A34A' : '#2BB8E6') + '22', color: inbound ? '#16A34A' : '#2BB8E6',
       }}>{inbound ? 'IN' : 'OUT'}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: 14, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {row.subject || <span style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no subject)</span>}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontWeight: 600, fontSize: 14, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {row.subject || <span style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no subject)</span>}
+          </span>
+          <CountPill n={row.messageCount} />
         </div>
-        {row.snippet && (
-          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.snippet}</div>
+        {row.lastSnippet && (
+          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.lastSnippet}</div>
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5, flexWrap: 'wrap' }}>
           {(row.dealTitles || []).slice(0, 3).map((t, i) => (
@@ -344,15 +344,16 @@ function DealEmailRow({ row, first, onOpen }) {
       </div>
       <div style={{ flexShrink: 0, textAlign: 'right', fontSize: 11, color: BRAND.muted }}>
         <div>{formatRelativeTime(row.sentAt)}</div>
-        <div style={{ marginTop: 2 }}>{inbound ? 'from' : 'to'} {counterparty || '—'}</div>
+        <div style={{ marginTop: 2 }}>{inbound ? 'from' : 'to'} {row.lastFrom || '—'}</div>
       </div>
     </button>
   );
 }
 
-// A row in a live Gmail folder, with inline star + quick actions.
-function GmailRow({ row, folder, first, onOpen, onAction }) {
-  const sender = displayName(row.from) || row.fromEmail || '(unknown)';
+// A conversation row in a live Gmail folder, with inline star + quick actions.
+function GmailThreadRow({ row, folder, first, onOpen, onAction }) {
+  const who = (row.participants && row.participants.length ? row.participants.join(', ') : null)
+    || displayName(row.from) || row.fromEmail || '(unknown)';
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10,
@@ -370,8 +371,9 @@ function GmailRow({ row, folder, first, onOpen, onAction }) {
         onClick={onOpen}
         style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 10, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0 }}
       >
-        <span style={{ width: 160, flexShrink: 0, fontSize: 13, fontWeight: row.unread ? 700 : 500, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {sender}
+        <span style={{ width: 170, flexShrink: 0, display: 'flex', alignItems: 'baseline', gap: 5, fontSize: 13, fontWeight: row.unread ? 700 : 500, color: BRAND.ink, overflow: 'hidden' }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
+          <CountPill n={row.messageCount} />
         </span>
         <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           <span style={{ fontWeight: row.unread ? 700 : 500 }}>{row.subject || '(no subject)'}</span>
@@ -391,103 +393,100 @@ function GmailRow({ row, folder, first, onOpen, onAction }) {
   );
 }
 
-// Full-message reading modal. Loads the body from the right source based on
-// folderKind: live Gmail (loadMailboxMessage) vs DB email (loadEmailBody).
-function EmailDetailModal({ openRef, folder, folderKind, connected, onClose, onOpenDeal }) { // eslint-disable-line no-unused-vars
+// Full conversation modal: loads the thread (live Gmail or DB) and renders
+// every message stacked, newest expanded and older ones collapsible.
+function ConversationModal({ openRef, folder, folderKind, connected, onClose, onOpenDeal }) { // eslint-disable-line no-unused-vars
   const { state, actions, showMsg } = useStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const isGmail = openRef.kind === 'gmail';
-  const cached = isGmail ? state.mailboxMessages?.[openRef.id] : state.emailBodies?.[openRef.id];
+  const thread = state.threadCache?.[openRef.threadId];
+  const messages = thread?.messages || [];
+  const myEmail = (state.gmailAccount?.gmailAddress || '').toLowerCase();
 
   useEffect(() => {
     let cancelled = false;
     setError('');
-    setLoading(!cached);
-    const loader = isGmail ? actions.loadMailboxMessage(openRef.id) : actions.loadEmailBody(openRef.id);
+    setLoading(!thread);
+    const loader = isGmail ? actions.loadMailboxThread(openRef.threadId) : actions.loadDealThread(openRef.threadId);
     loader.then(() => { if (!cancelled) setLoading(false); })
           .catch((e) => { if (!cancelled) { setError(e?.message || 'Failed to load'); setLoading(false); } });
-    // Mark a freshly-opened unread Gmail message as read (mirrors Gmail).
-    if (isGmail && openRef.unread) actions.mailboxAction(folder, 'markRead', openRef.id);
+    // Opening an unread conversation marks the whole thread read (like Gmail).
+    if (isGmail && openRef.unread) actions.mailboxAction(folder, 'markRead', openRef.threadId);
     return () => { cancelled = true; };
-  }, [openRef.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [openRef.threadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const msg = useMemo(() => normaliseMessage(openRef, cached), [openRef, cached]);
+  const latest = messages[messages.length - 1] || null;
+  const subject = thread?.subject || latest?.subject || '(no subject)';
 
-  const sanitized = useMemo(() => {
-    if (!msg?.html) return null;
-    return DOMPurify.sanitize(msg.html, VIEW_SANITIZE);
-  }, [msg?.html]);
-
-  // Already-sanitized body for quoting (never inject raw email HTML into the
-  // composer's contentEditable).
-  const bodyForQuote = sanitized || (msg?.text ? escapeText(msg.text).replace(/\n/g, '<br>') : '');
+  // Reply goes to the other party of the latest message.
+  const replyRecipient = (msg) => {
+    if (!msg) return '';
+    if (msg.fromEmail && msg.fromEmail.toLowerCase() !== myEmail) return msg.fromEmail;
+    return (msg.to || [])[0] || msg.fromEmail || '';
+  };
 
   const reply = (all = false) => {
-    const subject = msg.subject || '';
+    if (!latest) return;
     const quoted = `<br><br><div style="border-left:2px solid #ccc;padding-left:12px;color:#555;">`
-      + `On ${msg.dateLabel}, ${escapeText(msg.from || msg.fromEmail || '')} wrote:<br>`
-      + bodyForQuote + '</div>';
+      + `On ${formatDateLabel(latest.date)}, ${escapeText(latest.from || latest.fromEmail || '')} wrote:<br>`
+      + (sanitizeBody(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : '')) + '</div>';
     actions.openComposer({
       initialDraft: {
-        to: msg.fromEmail || '',
-        cc: all ? (msg.cc || []).join(', ') : '',
+        to: replyRecipient(latest),
+        cc: all ? (latest.cc || []).filter(e => e.toLowerCase() !== myEmail).join(', ') : '',
         subject: /^re:/i.test(subject) ? subject : 'Re: ' + subject,
         body: quoted,
-        gmailThreadId: msg.threadId || null,
+        gmailThreadId: openRef.threadId,
       },
     });
     onClose();
   };
 
   const forward = () => {
-    const subject = msg.subject || '';
+    if (!latest) return;
     const quoted = `<br><br>---------- Forwarded message ----------<br>`
-      + `From: ${escapeText(msg.from || msg.fromEmail || '')}<br>Subject: ${escapeText(subject)}<br><br>`
-      + bodyForQuote;
+      + `From: ${escapeText(latest.from || latest.fromEmail || '')}<br>Subject: ${escapeText(subject)}<br><br>`
+      + (sanitizeBody(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : ''));
     actions.openComposer({ initialDraft: { to: '', subject: /^fwd:/i.test(subject) ? subject : 'Fwd: ' + subject, body: quoted } });
     onClose();
   };
 
   const continueDraft = () => {
+    if (!latest) return;
     actions.openComposer({
       initialDraft: {
-        to: (msg.to || []).join(', '),
-        cc: (msg.cc || []).join(', '),
-        subject: msg.subject || '',
-        body: bodyForQuote,
-        gmailThreadId: msg.threadId || null,
+        to: (latest.to || []).join(', '),
+        cc: (latest.cc || []).join(', '),
+        subject: latest.subject || subject,
+        body: sanitizeBody(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : ''),
+        gmailThreadId: openRef.threadId,
       },
     });
     onClose();
   };
 
   const act = (action) => {
-    actions.mailboxAction(folder, action, openRef.id)
+    actions.mailboxAction(folder, action, openRef.threadId)
       .then(() => { showMsg(ACTION_TOAST[action] || 'Done'); onClose(); })
       .catch(() => showMsg('Action failed'));
   };
 
-  const gmailWeb = msg?.threadId ? `https://mail.google.com/mail/u/0/#all/${msg.threadId}` : null;
+  const gmailWeb = openRef.threadId ? `https://mail.google.com/mail/u/0/#all/${openRef.threadId}` : null;
 
   return (
     <Modal onClose={onClose} maxWidth={760}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, wordBreak: 'break-word' }}>{msg?.subject || '(no subject)'}</h2>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, wordBreak: 'break-word' }}>
+          {subject}
+          {messages.length > 1 && <span style={{ color: BRAND.muted, fontWeight: 500 }}> · {messages.length} messages</span>}
+        </h2>
         <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
       </div>
-      {msg && (
-        <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 12, lineHeight: 1.6 }}>
-          <div><strong style={{ color: BRAND.ink }}>{msg.from || msg.fromEmail || '—'}</strong></div>
-          {msg.to?.length ? <div>to {msg.to.join(', ')}</div> : null}
-          {msg.cc?.length ? <div>cc {msg.cc.join(', ')}</div> : null}
-          <div>{msg.dateLabel}</div>
-        </div>
-      )}
 
-      {/* Action bar — only once the message has loaded (reply/forward read it). */}
-      {msg && (
+      {/* Action bar — once the conversation has loaded (reply/forward read it). */}
+      {latest && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingBottom: 12, marginBottom: 12, borderBottom: '1px solid ' + BRAND.border }}>
           {folder === 'drafts'
             ? <button onClick={continueDraft} className="btn"><PenSquare size={14} /> Continue in composer</button>
@@ -508,36 +507,80 @@ function EmailDetailModal({ openRef, folder, folderKind, connected, onClose, onO
 
       {loading && <div style={{ color: BRAND.muted, fontSize: 13, padding: 20, textAlign: 'center' }}>Loading…</div>}
       {error && <div style={{ color: '#DC2626', fontSize: 13 }}>{error}</div>}
-      {!loading && !error && msg && (
-        <>
-          <div className="email-body" style={{ fontSize: 13.5, lineHeight: 1.6, wordBreak: 'break-word', maxHeight: '52vh', overflowY: 'auto' }}>
-            {sanitized
-              ? <div dangerouslySetInnerHTML={{ __html: sanitized }} />
-              : msg.text
-                ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{msg.text}</pre>
-                : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body)</div>}
-          </div>
-          {msg.attachments?.length > 0 && (
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid ' + BRAND.border }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-                <Paperclip size={12} style={{ verticalAlign: -1 }} /> {msg.attachments.length} attachment{msg.attachments.length > 1 ? 's' : ''}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {msg.attachments.map((a, i) => (
-                  <AttachmentChip key={i} att={a} messageId={openRef.id} connected={connected} />
-                ))}
-              </div>
-            </div>
-          )}
-        </>
+      {!loading && !error && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '60vh', overflowY: 'auto' }}>
+          {messages.map((m, i) => (
+            <MessageBlock
+              key={m.id || i}
+              message={m}
+              myEmail={myEmail}
+              connected={connected}
+              defaultExpanded={i === messages.length - 1 || m.unread}
+            />
+          ))}
+          {messages.length === 0 && <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 13 }}>(no messages)</div>}
+        </div>
       )}
     </Modal>
   );
 }
 
+// One message inside a conversation. Collapsed shows a one-line header; click
+// to expand the full sanitised body + attachments.
+function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
+  const [open, setOpen] = useState(!!defaultExpanded);
+  const outbound = message.outbound || (message.fromEmail && message.fromEmail.toLowerCase() === myEmail);
+  const sanitized = useMemo(() => sanitizeBody(message.html), [message.html]);
+  const who = displayName(message.from) || message.fromEmail || (outbound ? 'me' : '—');
+
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden', background: 'white' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px',
+          background: open ? '#FAFBFC' : 'white', border: 'none', borderBottom: open ? '1px solid ' + BRAND.border : 'none',
+          cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+        }}
+      >
+        <span style={{
+          flexShrink: 0, padding: '1px 5px', borderRadius: 3, fontSize: 10, fontWeight: 700,
+          background: (outbound ? '#2BB8E6' : '#16A34A') + '22', color: outbound ? '#2BB8E6' : '#16A34A',
+        }}>{outbound ? 'OUT' : 'IN'}</span>
+        <span style={{ fontWeight: 600, fontSize: 13, color: BRAND.ink, flexShrink: 0, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
+        {!open && <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{message.snippet}</span>}
+        <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11, color: BRAND.muted }}>{formatDateLabel(message.date)}</span>
+        <ChevronDown size={14} color={BRAND.muted} style={{ flexShrink: 0, transition: 'transform 150ms', transform: open ? 'none' : 'rotate(-90deg)' }} />
+      </button>
+      {open && (
+        <div style={{ padding: 12 }}>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5 }}>
+            {message.to?.length ? <div>to {message.to.join(', ')}</div> : null}
+            {message.cc?.length ? <div>cc {message.cc.join(', ')}</div> : null}
+          </div>
+          <div className="email-body" style={{ fontSize: 13.5, lineHeight: 1.6, wordBreak: 'break-word' }}>
+            {sanitized
+              ? <div dangerouslySetInnerHTML={{ __html: sanitized }} />
+              : message.text
+                ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{message.text}</pre>
+                : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body)</div>}
+          </div>
+          {message.attachments?.length > 0 && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {message.attachments.map((a, i) => (
+                <AttachmentChip key={i} att={a} messageId={message.id} connected={connected} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AttachmentChip({ att, messageId, connected }) {
   const id = att.attachmentId;
-  const href = (connected && id)
+  const href = (connected && id && messageId)
     ? '/api/crm/gmail/attachment?' + new URLSearchParams({
         messageId, attachmentId: id, filename: att.filename || 'attachment', mimeType: att.mimeType || 'application/octet-stream',
       }).toString()
@@ -553,26 +596,6 @@ function AttachmentChip({ att, messageId, connected }) {
   return href
     ? <a href={href} target="_blank" rel="noreferrer" style={{ ...style, cursor: 'pointer' }}>{inner}</a>
     : <span style={{ ...style, color: BRAND.muted }} title="Connect Gmail to download">{inner}</span>;
-}
-
-// Merge the list-row hint with the loaded body into one shape the modal renders.
-function normaliseMessage(openRef, cached) {
-  if (!cached) return null;
-  if (openRef.kind === 'gmail') {
-    return {
-      subject: cached.subject, from: cached.from, fromEmail: cached.fromEmail,
-      to: cached.to || [], cc: cached.cc || [],
-      html: cached.html, text: cached.text, attachments: cached.attachments || [],
-      threadId: cached.threadId, dateLabel: formatDateLabel(cached.date),
-    };
-  }
-  // DB email body (loadEmailBody shape).
-  return {
-    subject: cached.subject, from: cached.fromEmail, fromEmail: cached.fromEmail,
-    to: cached.toEmails || [], cc: cached.ccEmails || [],
-    html: cached.bodyHtml, text: cached.bodyText, attachments: cached.attachments || [],
-    threadId: cached.gmailThreadId, dateLabel: formatDateLabel(cached.sentAt),
-  };
 }
 
 function displayName(fromHeader) {

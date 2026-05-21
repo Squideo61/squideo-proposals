@@ -2,8 +2,12 @@
 // Drafts, Spam, Trash, Starred, All Mail). Unlike the Deals/Triage folders —
 // which read our own email_messages table — these folders are fetched on
 // demand straight from the Gmail REST API so they always mirror Gmail exactly
-// without us mass-storing the whole mailbox. Reuses getFreshAccessToken (token
-// refresh, with REAUTH handling) and the MIME parsers from gmailSync.js.
+// without us mass-storing the whole mailbox.
+//
+// Conversation-centric, like Gmail: folders list one row per THREAD
+// (users.threads.list + a metadata threads.get per thread), opening a row
+// returns the whole conversation (threads.get?format=full), and actions are
+// applied at thread scope (threads.modify / trash / untrash).
 //
 // All routes are reached via the existing `gmail` resource (e.g.
 // /api/crm/gmail/folder) — gmailRoute delegates here — so they inherit the
@@ -19,7 +23,7 @@ import {
 } from '../gmailSync.js';
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 20;
 
 // Folder id (from the UI) → Gmail label. 'all' (All Mail) applies no label
 // filter; 'deals' and 'triage' are DB-backed and never reach this module.
@@ -74,9 +78,9 @@ export async function mailboxLive(req, res, id, user) {
 
   try {
     if (id === 'folder')     return await listFolder(req, res, accessToken);
-    if (id === 'message')    return await getMessage(req, res, accessToken);
+    if (id === 'thread')     return await getThread(req, res, accessToken);
     if (id === 'attachment') return await getAttachment(req, res, accessToken);
-    if (id === 'modify')     return await modifyMessages(req, res, accessToken);
+    if (id === 'modify')     return await modifyThreads(req, res, accessToken);
     if (id === 'labels')     return await listLabelCounts(req, res, accessToken);
   } catch (err) {
     if (err.code === 'GMAIL_API_FAILED') {
@@ -89,8 +93,8 @@ export async function mailboxLive(req, res, id, user) {
 }
 
 // GET /api/crm/gmail/folder?label=inbox&pageToken=&q=
-// Lists a page of messages for the folder, then fetches lightweight metadata
-// (From/To/Subject/Date + labels) per id in parallel to build the rows.
+// Lists a page of threads for the folder, then fetches lightweight metadata
+// per thread in parallel to build the conversation summary rows.
 async function listFolder(req, res, accessToken) {
   if (req.method !== 'GET') return res.status(405).end();
   const folder = String(qp(req, 'label') || 'inbox').toLowerCase();
@@ -110,30 +114,16 @@ async function listFolder(req, res, accessToken) {
     params.set('includeSpamTrash', 'true');
   }
 
-  const listJson = await (await gmailFetch(accessToken, '/messages?' + params.toString())).json();
-  const ids = (listJson.messages || []).map(m => m.id);
+  const listJson = await (await gmailFetch(accessToken, '/threads?' + params.toString())).json();
+  const ids = (listJson.threads || []).map(t => t.id);
 
-  const rows = await Promise.all(ids.map(async (mid) => {
-    const m = await (await gmailFetch(
+  const rows = await Promise.all(ids.map(async (tid) => {
+    const t = await (await gmailFetch(
       accessToken,
-      `/messages/${encodeURIComponent(mid)}?format=metadata`
+      `/threads/${encodeURIComponent(tid)}?format=metadata`
         + '&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date',
     )).json();
-    const h = parseHeaders(m.payload?.headers || []);
-    const labelIds = m.labelIds || [];
-    return {
-      id: m.id,
-      threadId: m.threadId,
-      from: h.from || null,
-      fromEmail: extractEmail(h.from),
-      to: h.to || null,
-      subject: h.subject || null,
-      snippet: m.snippet || '',
-      date: headerDate(h.date, m.internalDate),
-      labelIds,
-      unread: labelIds.includes('UNREAD'),
-      starred: labelIds.includes('STARRED'),
-    };
+    return summariseThread(t);
   }));
 
   return res.status(200).json({
@@ -142,31 +132,69 @@ async function listFolder(req, res, accessToken) {
   });
 }
 
-// GET /api/crm/gmail/message?id=<gmailMessageId> — one full message.
-async function getMessage(req, res, accessToken) {
+// Build a conversation-summary row from a metadata threads.get response.
+function summariseThread(t) {
+  const msgs = t.messages || [];
+  const first = msgs[0] || {};
+  const last = msgs[msgs.length - 1] || {};
+  const firstH = parseHeaders(first.payload?.headers || []);
+  const lastH = parseHeaders(last.payload?.headers || []);
+  const labelIds = new Set();
+  const senders = [];
+  for (const m of msgs) {
+    for (const l of (m.labelIds || [])) labelIds.add(l);
+    const name = displayNameOrEmail(parseHeaders(m.payload?.headers || []).from);
+    if (name && !senders.includes(name)) senders.push(name);
+  }
+  return {
+    id: t.id,
+    threadId: t.id,
+    subject: firstH.subject || lastH.subject || null,
+    from: lastH.from || null,
+    fromEmail: extractEmail(lastH.from),
+    participants: senders,
+    snippet: last.snippet || t.snippet || '',
+    date: headerDate(lastH.date, last.internalDate),
+    messageCount: msgs.length,
+    unread: msgs.some(m => (m.labelIds || []).includes('UNREAD')),
+    starred: msgs.some(m => (m.labelIds || []).includes('STARRED')),
+    labelIds: Array.from(labelIds),
+  };
+}
+
+// GET /api/crm/gmail/thread?id=<threadId> — the full conversation.
+async function getThread(req, res, accessToken) {
   if (req.method !== 'GET') return res.status(405).end();
-  const mid = qp(req, 'id');
-  if (!mid) return res.status(400).json({ error: 'id required' });
+  const tid = qp(req, 'id');
+  if (!tid) return res.status(400).json({ error: 'id required' });
 
-  const m = await (await gmailFetch(accessToken, `/messages/${encodeURIComponent(mid)}?format=full`)).json();
-  const h = parseHeaders(m.payload?.headers || []);
-  const { html, text } = extractBody(m.payload);
-  const attachments = extractAttachments(m.payload);
-
+  const t = await (await gmailFetch(accessToken, `/threads/${encodeURIComponent(tid)}?format=full`)).json();
+  const messages = (t.messages || []).map((m) => {
+    const h = parseHeaders(m.payload?.headers || []);
+    const { html, text } = extractBody(m.payload);
+    const labelIds = m.labelIds || [];
+    return {
+      id: m.id,
+      from: h.from || null,
+      fromEmail: extractEmail(h.from),
+      to: parseAddressList(h.to),
+      cc: parseAddressList(h.cc),
+      subject: h.subject || null,
+      date: headerDate(h.date, m.internalDate),
+      snippet: m.snippet || '',
+      html: html || null,
+      text: text || null,
+      attachments: extractAttachments(m.payload),
+      labelIds,
+      unread: labelIds.includes('UNREAD'),
+      outbound: false, // the client decides direction against the account address
+    };
+  });
   return res.status(200).json({
-    id: m.id,
-    threadId: m.threadId,
-    from: h.from || null,
-    fromEmail: extractEmail(h.from),
-    to: parseAddressList(h.to),
-    cc: parseAddressList(h.cc),
-    subject: h.subject || null,
-    date: headerDate(h.date, m.internalDate),
-    snippet: m.snippet || '',
-    html: html || null,
-    text: text || null,
-    labelIds: m.labelIds || [],
-    attachments,
+    id: t.id,
+    threadId: t.id,
+    subject: messages[0]?.subject || null,
+    messages,
   });
 }
 
@@ -191,8 +219,10 @@ async function getAttachment(req, res, accessToken) {
   return res.status(200).end(buf);
 }
 
-// POST /api/crm/gmail/modify  { action, ids: [] }
-async function modifyMessages(req, res, accessToken) {
+// POST /api/crm/gmail/modify  { action, ids: [threadId, ...] }
+// Applies the action to whole conversations (Gmail's own behaviour — archiving
+// a conversation archives every message in it).
+async function modifyThreads(req, res, accessToken) {
   if (req.method !== 'POST') return res.status(405).end();
   const { action, ids } = req.body || {};
   const idList = Array.isArray(ids) ? ids.filter(Boolean) : (ids ? [ids] : []);
@@ -201,22 +231,18 @@ async function modifyMessages(req, res, accessToken) {
   if (!map) return res.status(400).json({ error: 'Unknown action: ' + action });
 
   if (map.trash || map.untrash) {
-    // No batch endpoint for trash/untrash — fire them in parallel.
     const op = map.trash ? 'trash' : 'untrash';
-    await Promise.all(idList.map(mid =>
-      gmailFetch(accessToken, `/messages/${encodeURIComponent(mid)}/${op}`, { method: 'POST' })));
+    await Promise.all(idList.map(tid =>
+      gmailFetch(accessToken, `/threads/${encodeURIComponent(tid)}/${op}`, { method: 'POST' })));
     return res.status(200).json({ ok: true });
   }
 
-  // batchModify applies the label delta to up to 1000 ids in one call (204).
-  await gmailFetch(accessToken, '/messages/batchModify', {
-    method: 'POST',
-    body: JSON.stringify({
-      ids: idList,
-      addLabelIds: map.add || [],
-      removeLabelIds: map.remove || [],
-    }),
-  });
+  // threads.modify has no batch form — apply the label delta per thread.
+  await Promise.all(idList.map(tid =>
+    gmailFetch(accessToken, `/threads/${encodeURIComponent(tid)}/modify`, {
+      method: 'POST',
+      body: JSON.stringify({ addLabelIds: map.add || [], removeLabelIds: map.remove || [] }),
+    })));
   return res.status(200).json({ ok: true });
 }
 
@@ -234,6 +260,14 @@ async function listLabelCounts(req, res, accessToken) {
     }
   }));
   return res.status(200).json(out);
+}
+
+// "John Doe" from `John Doe <a@b.com>`, else the bare address, else null.
+function displayNameOrEmail(fromHeader) {
+  if (!fromHeader) return null;
+  const m = String(fromHeader).match(/^\s*"?([^"<]+?)"?\s*<.+>/);
+  if (m) return m[1].trim();
+  return extractEmail(fromHeader) || String(fromHeader).trim() || null;
 }
 
 function headerDate(dateHeader, internalDate) {

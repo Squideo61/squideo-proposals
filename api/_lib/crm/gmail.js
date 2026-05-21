@@ -272,7 +272,7 @@ export async function gmailRoute(req, res, id, action, user) {
   // Live Gmail mailbox proxy for the Emails section's folders (Inbox, Sent,
   // Drafts, Spam, Trash, Starred, All Mail) + per-message actions. Delegated
   // to mailbox.js; reuses this resource's proven 2-segment routing.
-  if (['folder', 'message', 'attachment', 'modify', 'labels'].includes(id)) {
+  if (['folder', 'thread', 'attachment', 'modify', 'labels'].includes(id)) {
     return mailboxLive(req, res, id, user);
   }
 

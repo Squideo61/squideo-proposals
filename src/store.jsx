@@ -56,12 +56,13 @@ function emptyStore() {
     emailBodies: {},
     // Emails section. mailbox is keyed by folder id ('deals' | 'inbox' |
     // 'sent' | 'drafts' | 'starred' | 'spam' | 'trash' | 'all') →
-    // { rows, next, loading, loaded }, where `next` is an opaque cursor (a
-    // numeric offset for the DB-backed Deals folder, a Gmail pageToken for the
-    // live folders). mailboxMessages caches live Gmail message bodies by id;
-    // mailboxLabels holds unread/total counts for the sidebar badges.
+    // { rows, next, loading, loaded } where each row is a CONVERSATION summary
+    // and `next` is an opaque cursor (a numeric offset for the DB-backed Deals
+    // folder, a Gmail pageToken for the live folders). threadCache holds opened
+    // conversations keyed by thread id → { subject, messages }; mailboxLabels
+    // holds unread/total counts for the sidebar badges.
     mailbox: {},
-    mailboxMessages: {},
+    threadCache: {},
     mailboxLabels: {},
     notificationRecipients: [],
     revisionCallUrl: '',
@@ -1462,10 +1463,17 @@ export function StoreProvider({ children }) {
           setState(s => ({ ...s, mailbox: { ...s.mailbox, [folder]: { ...(s.mailbox?.[folder] || {}), loading: false, loaded: true, error: err?.message || 'Failed to load' } } }));
         });
     },
-    // Full body for a live Gmail message (Deals/Triage bodies use loadEmailBody).
-    loadMailboxMessage(id) {
-      return api.get('/api/crm/gmail/message?id=' + encodeURIComponent(id)).then((data) => {
-        if (data && data.id) setState(s => ({ ...s, mailboxMessages: { ...s.mailboxMessages, [data.id]: data } }));
+    // Full conversation for a live Gmail thread → { id, subject, messages[] }.
+    loadMailboxThread(threadId) {
+      return api.get('/api/crm/gmail/thread?id=' + encodeURIComponent(threadId)).then((data) => {
+        if (data && data.id) setState(s => ({ ...s, threadCache: { ...s.threadCache, [data.id]: data } }));
+        return data;
+      });
+    },
+    // Full conversation for a DB-backed (Deals/Triage) thread, same shape.
+    loadDealThread(threadId) {
+      return api.get('/api/crm/emails?threadId=' + encodeURIComponent(threadId)).then((data) => {
+        if (data && data.id) setState(s => ({ ...s, threadCache: { ...s.threadCache, [data.id]: data } }));
         return data;
       });
     },
