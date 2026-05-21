@@ -542,19 +542,19 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
           {latest && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingBottom: 12, marginBottom: 12, borderBottom: '1px solid ' + BRAND.border }}>
               {folder === 'drafts'
-                ? <button onClick={continueDraft} className="btn"><PenSquare size={14} /> Continue in composer</button>
-                : <button onClick={() => reply(false)} className="btn"><Reply size={14} /> Reply</button>}
-              {folder !== 'drafts' && <button onClick={forward} className="btn-ghost"><Forward size={14} /> Forward</button>}
+                ? <button onClick={continueDraft} className="btn-icon" title="Continue in composer" aria-label="Continue in composer"><PenSquare size={16} /></button>
+                : <button onClick={() => reply(false)} className="btn-icon" title="Reply" aria-label="Reply"><Reply size={16} /></button>}
+              {folder !== 'drafts' && <button onClick={forward} className="btn-icon" title="Forward" aria-label="Forward"><Forward size={16} /></button>}
               {isGmail && folder !== 'sent' && folder !== 'drafts' && folder !== 'trash' && folder !== 'spam' && (
-                <button onClick={() => act('archive')} className="btn-ghost"><Archive size={14} /> Archive</button>
+                <button onClick={() => act('archive')} className="btn-icon" title="Archive" aria-label="Archive"><Archive size={16} /></button>
               )}
               {isGmail && (folder === 'trash'
-                ? <button onClick={() => act('untrash')} className="btn-ghost"><RefreshCw size={14} /> Restore</button>
-                : <button onClick={() => act('trash')} className="btn-ghost"><Trash2 size={14} /> Delete</button>)}
-              {isGmail && folder !== 'spam' && folder !== 'drafts' && <button onClick={() => act('spam')} className="btn-ghost"><ShieldAlert size={14} /> Spam</button>}
-              {isGmail && folder === 'spam' && <button onClick={() => act('unspam')} className="btn-ghost"><ShieldAlert size={14} /> Not spam</button>}
-              {isGmail && folder !== 'drafts' && <button onClick={() => act('markUnread')} className="btn-ghost"><MailOpen size={14} /> Mark unread</button>}
-              {gmailWeb && <a href={gmailWeb} target="_blank" rel="noreferrer" className="btn-ghost" style={{ textDecoration: 'none' }}><ExternalLink size={14} /> Gmail</a>}
+                ? <button onClick={() => act('untrash')} className="btn-icon" title="Restore" aria-label="Restore"><RefreshCw size={16} /></button>
+                : <button onClick={() => act('trash')} className="btn-icon" title="Delete" aria-label="Delete"><Trash2 size={16} /></button>)}
+              {isGmail && folder !== 'spam' && folder !== 'drafts' && <button onClick={() => act('spam')} className="btn-icon" title="Mark as spam" aria-label="Mark as spam"><ShieldAlert size={16} /></button>}
+              {isGmail && folder === 'spam' && <button onClick={() => act('unspam')} className="btn-icon" title="Not spam" aria-label="Not spam"><ShieldAlert size={16} /></button>}
+              {isGmail && folder !== 'drafts' && <button onClick={() => act('markUnread')} className="btn-icon" title="Mark unread" aria-label="Mark unread"><MailOpen size={16} /></button>}
+              {gmailWeb && <a href={gmailWeb} target="_blank" rel="noreferrer" className="btn-icon" title="Open in Gmail" aria-label="Open in Gmail" style={{ textDecoration: 'none' }}><ExternalLink size={16} /></a>}
             </div>
           )}
 
