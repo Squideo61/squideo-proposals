@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Mail, Inbox, Send, FileText, Star, ShieldAlert, Trash2, Archive,
   Search, X, RefreshCw, MailOpen, Reply, Forward, Paperclip, Download,
@@ -276,6 +276,23 @@ function NotConnected({ onConnect }) {
 }
 
 function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onDismiss, onAction }) {
+  // Infinite scroll: a sentinel near the list's end auto-loads the next page
+  // when it scrolls into view. The "Load more" button stays as a fallback.
+  const sentinelRef = useRef(null);
+  const loadMoreRef = useRef(onLoadMore);
+  loadMoreRef.current = onLoadMore;
+
+  useEffect(() => {
+    if (!hasMore || loading) return undefined;
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) loadMoreRef.current?.();
+    }, { rootMargin: '400px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loading, rows.length]);
+
   if (loading && rows.length === 0) {
     return <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>Loading…</div>;
   }
@@ -298,9 +315,12 @@ function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onDismiss, onAc
             : rows.map((m, i) => <DealThreadRow key={m.gmailThreadId} row={m} first={i === 0} onOpen={() => onOpen(m)} />)}
       </div>
       {hasMore && (
-        <div style={{ textAlign: 'center', marginTop: 12 }}>
-          <button onClick={onLoadMore} className="btn-ghost" disabled={loading}>{loading ? 'Loading…' : 'Load more'}</button>
-        </div>
+        <>
+          <div ref={sentinelRef} aria-hidden style={{ height: 1 }} />
+          <div style={{ textAlign: 'center', marginTop: 12 }}>
+            <button onClick={onLoadMore} className="btn-ghost" disabled={loading}>{loading ? 'Loading…' : 'Load more'}</button>
+          </div>
+        </>
       )}
     </>
   );
