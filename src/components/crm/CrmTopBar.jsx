@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Clapperboard, CheckSquare, Coins, Contact, FileText, KanbanSquare, Mail, MailQuestion, Settings, Trophy, UserCog } from 'lucide-react';
+import { ChevronDown, Clapperboard, CheckSquare, Coins, FileText, KanbanSquare, Mail, MailQuestion, Settings, Trophy, UserCog } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -40,15 +40,6 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
 
   const sections = [
     {
-      key: 'business',
-      label: 'Business',
-      views: ['contacts', 'contact', 'company', 'xero-duplicates', 'partner-credits', 'partner-credit-detail'],
-      items: [
-        { label: 'Contacts', icon: Contact, go: () => navigate('contacts') },
-        { label: 'Partner Credits', icon: Coins, go: () => navigate('partner-credits') },
-      ],
-    },
-    {
       key: 'sales',
       label: 'Sales',
       views: ['list', 'pipeline', 'deal', 'quote-requests', 'templates', 'leaderboard'],
@@ -62,14 +53,16 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
     {
       key: 'projects',
       label: 'Projects',
-      views: ['revisions'],
+      views: ['revisions', 'partner-credits', 'partner-credit-detail'],
       items: [
         ...(canRevisions ? [{ label: 'Revisions', icon: Clapperboard, go: () => navigate('revisions') }] : []),
+        { label: 'Partner Credits', icon: Coins, go: () => navigate('partner-credits') },
       ],
     },
   ].filter(s => s.items.length > 0);
 
   const activeSection = sections.find(s => s.views.includes(view))?.key;
+  const contactsActive = ['contacts', 'contact', 'company', 'xero-duplicates'].includes(view);
 
   useEffect(() => {
     if (!openMenu) return;
@@ -162,6 +155,18 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
               </div>
             );
           })}
+          <button
+            type="button"
+            onClick={() => navigate('contacts')}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '8px 12px', border: 'none', borderRadius: 8, cursor: 'pointer',
+              fontSize: 14, fontWeight: contactsActive ? 600 : 500, color: BRAND.ink,
+              background: contactsActive ? '#EEF3F6' : 'transparent',
+            }}
+          >
+            Contacts
+          </button>
         </nav>
 
         <div style={{ flex: 1 }} />
