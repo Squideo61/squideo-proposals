@@ -162,6 +162,62 @@ function PriceInput({ value, onChange, ...props }) {
   );
 }
 
+// Optional manual discount on the project base price. Collapsed behind an
+// "Add discount" button by default; auto-expands when a proposal already
+// carries a discount. "Remove" clears it and collapses again.
+function DiscountEditor({ basePrice, discount, onChange, isMobile }) {
+  const d = discount || { type: 'percent', value: 0, label: '' };
+  const value = Number(d.value) || 0;
+  const [open, setOpen] = useState(value > 0);
+  const setDiscount = (patch) => onChange({ ...d, ...patch });
+  const isPct = d.type !== 'amount';
+  const amount = computeBaseDiscount(basePrice, d);
+
+  if (!open) {
+    return (
+      <button type="button" className="btn-ghost" style={{ marginTop: 4, alignSelf: 'flex-start' }} onClick={() => setOpen(true)}>
+        <Plus size={14} /> Add discount
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '12px 14px', marginTop: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Discount</div>
+        <button
+          type="button"
+          className="btn-ghost"
+          style={{ color: '#B91C1C', fontSize: 12, padding: '2px 8px' }}
+          onClick={() => { onChange({ ...d, value: 0 }); setOpen(false); }}
+        >
+          <X size={13} /> Remove
+        </button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '130px 1fr', gap: 12 }}>
+        <Field label="Type">
+          <select className="input" value={isPct ? 'percent' : 'amount'} onChange={(e) => setDiscount({ type: e.target.value })}>
+            <option value="percent">% off</option>
+            <option value="amount">£ off</option>
+          </select>
+        </Field>
+        <Field label={isPct ? 'Percentage off (%)' : 'Amount off (£, ex VAT)'}>
+          <PriceInput min="0" step={isPct ? '1' : '0.01'} className="input" value={value} onChange={(n) => setDiscount({ value: n })} />
+        </Field>
+      </div>
+      <Field label="Label shown on the proposal (optional)">
+        <input className="input" value={d.label || ''} placeholder="e.g. Loyalty discount" onChange={(e) => setDiscount({ label: e.target.value })} />
+      </Field>
+      {value > 0 && basePrice > 0 && (
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
+          Base {formatGBP(basePrice)} → <strong style={{ color: '#15803d' }}>{formatGBP(basePrice - amount)}</strong>
+          {' '}({isPct ? `${value}% off` : `${formatGBP(amount)} off`}). Optional extras stay full price; ignored if the client opts into the Partner Programme.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SectionStatus({ issues }) {
   if (!issues || issues.length === 0) return (
     <span style={{ fontSize: 11, color: '#15803d', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}>
@@ -618,52 +674,12 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         </div>
 
         {/* Simple manual discount on the base price (standard flow only). */}
-        {(() => {
-          const discount = data.discount || { type: 'percent', value: 0, label: '' };
-          const setDiscount = (patch) => update({ discount: { ...discount, ...patch } });
-          const value = Number(discount.value) || 0;
-          const amount = computeBaseDiscount(data.basePrice, discount);
-          const isPct = discount.type !== 'amount';
-          return (
-            <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '12px 14px', marginTop: 4 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Discount (optional)</div>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '130px 1fr', gap: 12 }}>
-                <Field label="Type">
-                  <select
-                    className="input"
-                    value={isPct ? 'percent' : 'amount'}
-                    onChange={(e) => setDiscount({ type: e.target.value })}
-                  >
-                    <option value="percent">% off</option>
-                    <option value="amount">£ off</option>
-                  </select>
-                </Field>
-                <Field label={isPct ? 'Percentage off (%)' : 'Amount off (£, ex VAT)'}>
-                  <PriceInput
-                    min="0" step={isPct ? '1' : '0.01'}
-                    className="input"
-                    value={value}
-                    onChange={(n) => setDiscount({ value: n })}
-                  />
-                </Field>
-              </div>
-              <Field label="Label shown on the proposal (optional)">
-                <input
-                  className="input"
-                  value={discount.label || ''}
-                  placeholder="e.g. Loyalty discount"
-                  onChange={(e) => setDiscount({ label: e.target.value })}
-                />
-              </Field>
-              {value > 0 && data.basePrice > 0 && (
-                <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
-                  Base {formatGBP(data.basePrice)} → <strong style={{ color: '#15803d' }}>{formatGBP(data.basePrice - amount)}</strong>
-                  {' '}({isPct ? `${value}% off` : `${formatGBP(amount)} off`}). Optional extras stay full price; ignored if the client opts into the Partner Programme.
-                </div>
-              )}
-            </div>
-          );
-        })()}
+        <DiscountEditor
+          basePrice={data.basePrice}
+          discount={data.discount}
+          onChange={(discount) => update({ discount })}
+          isMobile={isMobile}
+        />
         <Field label="Standard rate per minute (£/min)">
           <PriceInput
             min="0" step="1"
