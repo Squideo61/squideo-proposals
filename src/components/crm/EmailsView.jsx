@@ -37,6 +37,34 @@ const VIEW_SANITIZE = {
 };
 const sanitizeBody = (html) => (html ? DOMPurify.sanitize(html, VIEW_SANITIZE) : null);
 
+// Build the quoted source for a reply/forward. The composer renders the quote
+// without the original email's CSS, so anything the sender hid with CSS
+// (preheaders, tracking/metadata blocks like emailMetaData={…}) would otherwise
+// resurface as visible text. Gmail keeps it hidden; we strip those nodes out
+// entirely before quoting so they never appear.
+const quoteSourceHtml = (html) => {
+  if (!html) return '';
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(html, 'text/html');
+  } catch {
+    return sanitizeBody(html) || '';
+  }
+  doc.querySelectorAll('style, script, link, meta, title').forEach(el => el.remove());
+  doc.querySelectorAll('[hidden], [aria-hidden="true"]').forEach(el => el.remove());
+  doc.querySelectorAll('[style]').forEach(el => {
+    const s = (el.getAttribute('style') || '').toLowerCase().replace(/\s+/g, '');
+    if (s.includes('display:none')
+      || s.includes('visibility:hidden')
+      || s.includes('opacity:0')
+      || /(^|;)max-height:0(px)?(;|$)/.test(s)
+      || /(^|;)font-size:0(px)?(;|$)/.test(s)) {
+      el.remove();
+    }
+  });
+  return sanitizeBody(doc.body ? doc.body.innerHTML : html) || '';
+};
+
 // Sanitizer for the full message viewer, which renders inside a sandboxed
 // iframe (see EmailFrame). Unlike VIEW_SANITIZE we KEEP <style> blocks and
 // inline style attributes so the email looks the way the sender intended —
@@ -541,7 +569,7 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
   const quotedReply = () =>
     `<br><br><div style="border-left:2px solid #ccc;padding-left:12px;color:#555;">`
     + `On ${formatDateLabel(latest.date)}, ${escapeText(latest.from || latest.fromEmail || '')} wrote:<br>`
-    + (sanitizeBody(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : '')) + '</div>';
+    + (quoteSourceHtml(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : '')) + '</div>';
 
   // Build the seed draft for the inline composer for each mode.
   const draftFor = (mode) => {
@@ -552,7 +580,7 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
         subject: /^fwd:/i.test(subject) ? subject : 'Fwd: ' + subject,
         body: `<br><br>---------- Forwarded message ----------<br>`
           + `From: ${escapeText(latest.from || latest.fromEmail || '')}<br>Subject: ${escapeText(subject)}<br><br>`
-          + (sanitizeBody(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : '')),
+          + (quoteSourceHtml(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : '')),
       };
     }
     const primary = replyRecipient(latest);
