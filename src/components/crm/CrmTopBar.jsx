@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Clapperboard, CheckSquare, Coins, FileText, KanbanSquare, Mail, MailQuestion, Settings, Trophy, UserCog } from 'lucide-react';
+import { ChevronDown, Clapperboard, CheckSquare, Coins, FileText, KanbanSquare, LayoutDashboard, Mail, MailQuestion, PoundSterling, Settings, TrendingUp, Trophy, UserCog } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -39,6 +39,16 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
     || permissionsInclude(perms, 'settings.manage');
 
   const sections = [
+    {
+      key: 'business',
+      label: 'Business',
+      views: [],
+      items: [
+        { label: 'Overview', icon: LayoutDashboard, go: () => {}, soon: true },
+        { label: 'Performance', icon: TrendingUp, go: () => {}, soon: true },
+        { label: 'Finance', icon: PoundSterling, go: () => {}, soon: true },
+      ],
+    },
     {
       key: 'sales',
       label: 'Sales',
@@ -145,6 +155,11 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
                           {item.count > 0 && (
                             <span style={{ background: BADGE, color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999 }}>
                               {item.count}
+                            </span>
+                          )}
+                          {item.soon && (
+                            <span style={{ background: '#EEF1F4', color: BRAND.muted, fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                              Soon
                             </span>
                           )}
                         </button>
