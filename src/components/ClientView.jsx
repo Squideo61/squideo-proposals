@@ -7,7 +7,7 @@ import {
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants } from '../defaults.js';
 import { useStore } from '../store.jsx';
-import { formatGBP, sendNotification, useIsMobile } from '../utils.js';
+import { formatGBP, sendNotification, useIsMobile, computeBaseDiscount } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
 import { startStripeCheckout } from '../utils/stripeCheckout.js';
 import { Field, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
@@ -352,7 +352,15 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
     const qty = extraHasVariants(e) ? Math.max(1, Number(getMeta(e.id).quantity) || 1) : 1;
     return s + e.price * qty;
   }, 0);
-  const subtotal = effectiveBasePrice + extrasTotal;
+  // Simple manual discount on the base price — standard flow only. When the
+  // client opts into the Partner Programme its own discount takes over and this
+  // is ignored. Once signed, the agreed amount is locked in signed.discountApplied.
+  const manualDiscount = partnerSelected
+    ? 0
+    : (signed?.discountApplied?.amount ?? computeBaseDiscount(effectiveBasePrice, data.discount));
+  const netBasePrice = effectiveBasePrice - manualDiscount;
+  const discountLabel = (signed?.discountApplied?.label || data.discount?.label || '').trim() || 'Discount';
+  const subtotal = netBasePrice + extrasTotal;
   const vat = subtotal * data.vatRate;
   const total = subtotal + vat;
   // Tiered project-discount ladder: base + (extra * (credits-1)), capped at max.
@@ -414,6 +422,17 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
         discountRate: effectiveDiscount,
         vatRate: data.vatRate,
       } : null,
+      // Lock the agreed manual discount so later edits to data.discount don't
+      // change a signed/invoiced proposal (mirrors amountBreakdown for Partner).
+      ...(!partnerSelected && manualDiscount > 0 ? {
+        discountApplied: {
+          type: data.discount?.type || 'percent',
+          value: Number(data.discount?.value) || 0,
+          label: (data.discount?.label || '').trim(),
+          amount: manualDiscount,
+          basePrice: effectiveBasePrice,
+        },
+      } : {}),
     };
 
     if (isPreview) {
@@ -724,8 +743,19 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           <span>
             {videoOptions ? (videoOptions[selectedVideoOptionIdx]?.label || `Option ${selectedVideoOptionIdx + 1}`) : 'Project base price'}
           </span>
-          <span>{formatGBP(effectiveBasePrice)}{showVat && <span style={{ fontWeight: 500, fontSize: 13, color: BRAND.muted }}> + VAT</span>}</span>
+          <span>
+            {manualDiscount > 0 && (
+              <span style={{ fontWeight: 500, fontSize: 14, color: BRAND.muted, textDecoration: 'line-through', marginRight: 8 }}>{formatGBP(effectiveBasePrice)}</span>
+            )}
+            {formatGBP(netBasePrice)}{showVat && <span style={{ fontWeight: 500, fontSize: 13, color: BRAND.muted }}> + VAT</span>}
+          </span>
         </div>
+        {manualDiscount > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '8px 16px', fontSize: 13, color: '#15803d', fontWeight: 600 }}>
+            <span>{discountLabel}{(signed?.discountApplied?.type ?? data.discount?.type) !== 'amount' && (Number(signed?.discountApplied?.value ?? data.discount?.value) > 0) ? ` (${Number(signed?.discountApplied?.value ?? data.discount?.value)}% off)` : ''}</span>
+            <span>−{formatGBP(manualDiscount)}</span>
+          </div>
+        )}
 
         <PageTitle>Optional Extras</PageTitle>
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden', marginBottom: 24 }}>

@@ -77,6 +77,22 @@ describe('lineItemsForProject', () => {
   it('coerces non-numeric base price to 0 (defensive)', () => {
     expect(lineItemsForProject({ proposalTitle: 'X', vatRate: 20 }, {}, null)[0].unitAmount).toBe(0);
   });
+
+  it('subtracts a locked manual discount from the base line only (extras stay full)', () => {
+    const signed = {
+      discountApplied: { type: 'percent', value: 10, label: 'Loyalty', amount: 100 },
+      selectedExtras: [{ label: 'Subtitles', price: 50, quantity: 1 }],
+    };
+    const lines = lineItemsForProject(proposal, signed, null);
+    expect(lines[0].unitAmount).toBe(900); // 1000 − 100
+    expect(lines[0].description).toBe('Brand video (Discount: Loyalty −100.00)');
+    expect(lines[1].unitAmount).toBe(50);  // extra unaffected
+  });
+
+  it('flows the discounted base into the deposit fraction', () => {
+    const signed = { discountApplied: { amount: 100, label: 'Loyalty' } };
+    expect(depositLineItems(proposal, signed, 0.5, null)[0].unitAmount).toBe(450); // (1000−100)/2
+  });
 });
 
 describe('depositLineItems', () => {

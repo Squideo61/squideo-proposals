@@ -30,10 +30,18 @@ export function lineItemsForProject(proposal, signed, proposalNumber) {
     || proposal.clientName
     || 'Video production';
   const prefix = proposalNumber ? `${proposalNumber} — ` : '';
+  // Simple manual discount, locked into the signature at sign time. Applies to
+  // the project base line only (extras stay full price). Only ever set on the
+  // standard flow — the Partner path uses lineItemsForDiscountedProject instead.
+  const baseDiscount = Number(signed?.discountApplied?.amount) || 0;
+  const baseUnit = Number(signed?.selectedVideoOption?.price ?? proposal.basePrice) || 0;
+  const discountNote = baseDiscount > 0
+    ? ` (Discount: ${(signed?.discountApplied?.label || '').trim() || 'discount'} −${baseDiscount.toFixed(2)})`
+    : '';
   const lines = [{
-    description: prefix + requirementText,
+    description: prefix + requirementText + discountNote,
     quantity: 1,
-    unitAmount: Number(signed?.selectedVideoOption?.price ?? proposal.basePrice) || 0,
+    unitAmount: Number((baseUnit - baseDiscount).toFixed(2)),
     taxType,
     accountCode: SALES_ACCOUNT,
   }];

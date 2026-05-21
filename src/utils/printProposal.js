@@ -1,6 +1,6 @@
 import { SQUIDEO_LOGO, extraHasVariants } from '../defaults.js';
 import { CONFIG, DEFAULT_PHOTOS } from '../theme.js';
-import { formatGBP } from '../utils.js';
+import { formatGBP, computeBaseDiscount } from '../utils.js';
 
 // Resolve relative public paths to absolute so they load inside the popup window.
 const abs = (src) => src && src.startsWith('/') ? window.location.origin + src : src;
@@ -99,7 +99,14 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
     if (!selectedExtras[e.id]) return s;
     return s + e.price * getQty(e);
   }, 0);
-  const subtotal = data.basePrice + extrasTotal;
+  // Simple manual discount on the base price — standard flow only. Ignored when
+  // the client is on the Partner Programme. Locked into signed.discountApplied.
+  const manualDiscount = partnerSelected
+    ? 0
+    : (signed?.discountApplied?.amount ?? computeBaseDiscount(data.basePrice, data.discount));
+  const netBasePrice = data.basePrice - manualDiscount;
+  const discountLabel = (signed?.discountApplied?.label || data.discount?.label || '').trim() || 'Discount';
+  const subtotal = netBasePrice + extrasTotal;
   const vat = subtotal * data.vatRate;
   const total = subtotal + vat;
   // When VAT is 0%, omit every VAT line / "+ VAT" suffix from the printed proposal.
@@ -406,18 +413,25 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
 
   <!-- Base pricing -->
   <div style="border:1px solid #E5E9EE;border-radius:8px;overflow:hidden;margin-bottom:20px;">
+    ${manualDiscount > 0 ? `
+    <div style="display:flex;justify-content:space-between;padding:10px 16px;font-size:13px;border-bottom:1px solid #E5E9EE;">
+      <span class="muted">Project base price</span><span>${formatGBP(data.basePrice)}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:10px 16px;font-size:13px;border-bottom:1px solid #E5E9EE;color:#15803d;font-weight:600;">
+      <span>${esc(discountLabel)}</span><span>−${formatGBP(manualDiscount)}</span>
+    </div>` : ''}
     ${showVat ? `
     <div style="display:flex;justify-content:space-between;padding:10px 16px;font-size:13px;border-bottom:1px solid #E5E9EE;">
-      <span class="muted">Subtotal</span><span>${formatGBP(data.basePrice)}</span>
+      <span class="muted">Subtotal</span><span>${formatGBP(netBasePrice)}</span>
     </div>
     <div style="display:flex;justify-content:space-between;padding:10px 16px;font-size:13px;border-bottom:1px solid #E5E9EE;">
-      <span class="muted">VAT (${(data.vatRate * 100).toFixed(0)}%)</span><span>${formatGBP(data.basePrice * data.vatRate)}</span>
+      <span class="muted">VAT (${(data.vatRate * 100).toFixed(0)}%)</span><span>${formatGBP(netBasePrice * data.vatRate)}</span>
     </div>
     <div style="display:flex;justify-content:space-between;padding:12px 16px;font-size:16px;font-weight:700;background:#F8FAFC;">
-      <span>Base total</span><span>${formatGBP(data.basePrice * (1 + data.vatRate))}</span>
+      <span>Base total</span><span>${formatGBP(netBasePrice * (1 + data.vatRate))}</span>
     </div>` : `
     <div style="display:flex;justify-content:space-between;padding:12px 16px;font-size:16px;font-weight:700;background:#F8FAFC;">
-      <span>Project base price</span><span>${formatGBP(data.basePrice)}</span>
+      <span>Project base price${manualDiscount > 0 ? ' (discounted)' : ''}</span><span>${formatGBP(netBasePrice)}</span>
     </div>`}
   </div>
 

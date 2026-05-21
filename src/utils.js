@@ -14,6 +14,17 @@ export function useIsMobile() {
 
 export const formatGBP = (n) => '£' + (Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
+// £ value of the simple manual discount on a base price; 0 when none.
+// Percentage clamps to 0–100; fixed amount clamps to the base price so the
+// project line can never go negative. Legacy proposals (no discount) → 0.
+export function computeBaseDiscount(basePrice, discount) {
+  const v = Number(discount?.value) || 0;
+  if (v <= 0) return 0;
+  const base = Number(basePrice) || 0;
+  if (discount.type === 'amount') return Math.min(v, base);
+  return base * Math.min(v, 100) / 100;
+}
+
 // Ex-VAT value of a proposal that best reflects the actual deal value.
 // Mirrors computeProposalTotalExVat in api/_lib/crm/deals.js so the dashboard
 // and CRM agree. Signed: prefer signature.amountBreakdown.projectExVat

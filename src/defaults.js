@@ -73,6 +73,10 @@ export const DEFAULT_PROPOSAL = {
   processVideoUrl: 'https://vimeo.com/625502459',
   showProcessVideo: true,
   vatRate: 0.20,
+  // Simple manual discount on the project base price (extras stay full price).
+  // Applies only on the standard flow — ignored when the client opts into the
+  // Partner Programme. value <= 0 means no discount. type: 'percent' | 'amount'.
+  discount: { type: 'percent', value: 0, label: '' },
   validityDays: 28,
   paymentOptions: ['5050', 'full'],
   paymentOptionDescs: {}
