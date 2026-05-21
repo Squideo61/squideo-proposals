@@ -53,9 +53,9 @@ export function CrmTopBar({ view, navigate, onCreate, onManageAccount }) {
       label: 'Sales',
       views: ['list', 'pipeline', 'deal', 'quote-requests', 'templates', 'leaderboard'],
       items: [
+        { label: 'Quote Requests', icon: MailQuestion, go: () => navigate('quote-requests'), count: newQuoteRequestsCount },
         { label: 'Proposals', icon: FileText, go: () => navigate('list') },
         { label: 'Pipeline', icon: KanbanSquare, go: () => navigate('pipeline') },
-        { label: 'Quote Requests', icon: MailQuestion, go: () => navigate('quote-requests'), count: newQuoteRequestsCount },
         { label: 'Templates', icon: LayoutTemplate, go: () => navigate('templates') },
         { label: 'Leaderboard', icon: Trophy, go: () => navigate('leaderboard') },
       ],
