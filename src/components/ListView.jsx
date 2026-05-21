@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BarChart3, Check, CheckSquare, ChevronDown, Clapperboard, Clock, Contact, Copy, Coins, Download, ExternalLink, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Receipt, Search, Settings, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
+import { Archive, ArchiveRestore, BarChart3, Check, CheckSquare, ChevronDown, Clapperboard, Clock, Contact, Copy, Coins, Download, ExternalLink, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Receipt, Search, Settings, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, proposalSignedTotalExVat, useIsMobile } from '../utils.js';
@@ -13,6 +13,8 @@ const TEAM_FILTER_STORAGE_KEY = 'squideo.dashboard.teamMemberFilter';
 export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageAdmin, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageTriage, onManageQuoteRequests, onManageRevisions }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
+  // Quick status filter: null = all (non-archived) | 'open' | 'signed' | 'archive'.
+  const [statusFilter, setStatusFilter] = useState(null);
   const [memberFilter, setMemberFilter] = useState(() => {
     try {
       const stored = localStorage.getItem(TEAM_FILTER_STORAGE_KEY);
@@ -41,8 +43,24 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
     ? proposals.filter((p) => p.preparedByEmail === memberFilter)
     : proposals;
 
+  // Status quick-filter. Archived proposals are hidden everywhere except the
+  // Archive filter. Open = not signed; Signed = signed.
+  const isSignedProposal = (p) => !!state.signatures[p.id];
+  const statusCounts = {
+    open: afterMember.filter((p) => !p.archived && !isSignedProposal(p)).length,
+    signed: afterMember.filter((p) => !p.archived && isSignedProposal(p)).length,
+    archive: afterMember.filter((p) => !!p.archived).length,
+  };
+  const afterStatus = afterMember.filter((p) => {
+    if (statusFilter === 'archive') return !!p.archived;
+    if (p.archived) return false;
+    if (statusFilter === 'open') return !isSignedProposal(p);
+    if (statusFilter === 'signed') return isSignedProposal(p);
+    return true; // default: all non-archived
+  });
+
   const filtered = search.trim()
-    ? afterMember.filter((p) => {
+    ? afterStatus.filter((p) => {
         const q = search.toLowerCase();
         const num = p._number ? formatProposalNumber(p._number).toLowerCase() : '';
         return (
@@ -53,12 +71,12 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
           num.includes(q)
         );
       })
-    : afterMember;
+    : afterStatus;
 
   const memberFilterName = memberFilter
     ? (state.users?.[memberFilter]?.name || memberFilter)
     : '';
-  const filtersActive = Boolean(search.trim() || memberFilter);
+  const filtersActive = Boolean(search.trim() || memberFilter || statusFilter);
 
   const sessionUser = state.session;
   const userRecord = state.users[sessionUser?.email];
@@ -148,6 +166,36 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
           totalCount={proposals.length}
         />
         {proposals.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            {[
+              { key: 'open', label: 'Open', count: statusCounts.open },
+              { key: 'signed', label: 'Signed', count: statusCounts.signed },
+              { key: 'archive', label: 'Archive', count: statusCounts.archive },
+            ].map((f) => {
+              const active = statusFilter === f.key;
+              return (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => setStatusFilter(active ? null : f.key)}
+                  className={active ? 'btn' : 'btn-ghost'}
+                  aria-pressed={active}
+                  style={{ fontSize: 13, padding: '6px 12px', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  {f.label}
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, borderRadius: 999, padding: '0 6px', minWidth: 18, textAlign: 'center',
+                    background: active ? 'rgba(255,255,255,0.25)' : '#EEF3F6',
+                    color: active ? 'white' : BRAND.muted,
+                  }}>
+                    {f.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {proposals.length > 0 && (
           <div style={{ position: 'relative', width: isMobile ? '100%' : 260 }}>
             <Search size={14} color={BRAND.muted} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
             <input
@@ -188,6 +236,10 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
               ? <>No proposals for <strong>{memberFilterName}</strong> match "<strong>{search}</strong>".</>
               : search.trim()
               ? <>No proposals match "<strong>{search}</strong>". Try a different search term.</>
+              : statusFilter === 'archive'
+              ? <>No archived proposals{memberFilter ? <> for <strong>{memberFilterName}</strong></> : ''}.</>
+              : statusFilter
+              ? <>No {statusFilter} proposals{memberFilter ? <> for <strong>{memberFilterName}</strong></> : ''}.</>
               : <>No proposals for <strong>{memberFilterName}</strong> yet.</>}
           </p>
         </div>
@@ -458,6 +510,7 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
             </span>
           )}
           <h3 style={{ margin: 0, fontSize: isMobile ? 14 : 16, fontWeight: 600 }}>{proposal.clientName || 'Untitled Proposal'}</h3>
+          {proposal.archived && <Badge color="grey">ARCHIVED</Badge>}
           {signed && <Badge color="green">ACCEPTED</Badge>}
           {!signed && opened && <Badge color="yellow">OPENED</Badge>}
           {payment && <Badge color="blue">PAID {formatGBP(payment.amount)}</Badge>}
@@ -528,6 +581,16 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
               : []),
             ...(signed && !payment ? [{ label: 'Mark as paid', icon: Check, onClick: handleMarkPaid }] : []),
             ...(signed && !payment ? [{ label: 'Unmark as accepted', icon: Undo2, onClick: handleUnmarkAccepted }] : []),
+            {
+              label: proposal.archived ? 'Unarchive' : 'Archive',
+              icon: proposal.archived ? ArchiveRestore : Archive,
+              onClick: () => {
+                const next = !proposal.archived;
+                actions.setProposalArchived(proposal.id, next)
+                  .then(() => showMsg(next ? 'Proposal archived' : 'Proposal unarchived'))
+                  .catch(() => showMsg('Failed to update proposal'));
+              },
+            },
             { label: 'Delete', icon: Trash2, onClick: () => onDelete(proposal.id), danger: true },
           ]}
         />

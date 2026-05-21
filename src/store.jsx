@@ -619,6 +619,31 @@ export function StoreProvider({ children }) {
         }).catch(() => {});
       }, 800);
     },
+    // Toggle a proposal's archived flag. PUT replaces the whole data blob, so
+    // we send the full proposal (minus client-only metadata) with archived set,
+    // optimistically updating state and reverting on failure.
+    setProposalArchived(id, archived) {
+      let payload = null;
+      setState(s => {
+        const cur = s.proposals[id];
+        if (!cur) return s;
+        const next = { ...cur, archived };
+        payload = next;
+        return { ...s, proposals: { ...s.proposals, [id]: next } };
+      });
+      if (!payload) return Promise.resolve();
+      const body = { ...payload };
+      delete body._number; delete body._views; delete body._createdAt;
+      return api.put('/api/proposals/' + id, body).catch((err) => {
+        // Revert the optimistic flip on failure.
+        setState(s => {
+          const cur = s.proposals[id];
+          if (!cur) return s;
+          return { ...s, proposals: { ...s.proposals, [id]: { ...cur, archived: !archived } } };
+        });
+        throw err;
+      });
+    },
     deleteProposal(id) {
       // Cancel any pending debounced save — otherwise an in-flight PUT (e.g.
       // user typed in the builder, hit Back, then deleted within 800ms) fires
