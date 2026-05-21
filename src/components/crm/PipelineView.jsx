@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Plus, KanbanSquare } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, Check, ChevronDown, Plus, KanbanSquare } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
@@ -12,12 +12,33 @@ export { PIPELINE_STAGES };
 
 const STAGE_BY_ID = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s]));
 
+const OWNER_FILTER_STORAGE_KEY = 'squideo.pipeline.ownerFilter';
+
 export function PipelineView({ onBack, onOpenDeal }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [creating, setCreating] = useState(false);
 
-  const deals = useMemo(() => Object.values(state.deals || {}), [state.deals]);
+  // Owner filter — defaults to "All deals" (unlike the proposals list, which
+  // defaults to the signed-in user). Persisted so it survives navigation.
+  const sessionEmail = state.session?.email || '';
+  const [ownerFilter, setOwnerFilter] = useState(() => {
+    try { return localStorage.getItem(OWNER_FILTER_STORAGE_KEY) || ''; } catch { return ''; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(OWNER_FILTER_STORAGE_KEY, ownerFilter); } catch {}
+  }, [ownerFilter]);
+
+  const allDeals = useMemo(() => Object.values(state.deals || {}), [state.deals]);
+  const deals = useMemo(
+    () => (ownerFilter ? allDeals.filter(d => d.ownerEmail === ownerFilter) : allDeals),
+    [allDeals, ownerFilter],
+  );
+
+  const memberOptions = useMemo(() => Object.entries(state.users || {})
+    .map(([email, u]) => ({ email, name: u.name || email }))
+    .sort((a, b) => a.name.localeCompare(b.name)), [state.users]);
+
   const grouped = useMemo(() => {
     const out = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, []]));
     for (const d of deals) {
@@ -42,6 +63,12 @@ export function PipelineView({ onBack, onOpenDeal }) {
             <KanbanSquare size={22} color={BRAND.blue} />
             Sales Pipeline
           </h1>
+          <OwnerFilter
+            ownerFilter={ownerFilter}
+            setOwnerFilter={setOwnerFilter}
+            memberOptions={memberOptions}
+            sessionEmail={sessionEmail}
+          />
           <span style={{ fontSize: 13, color: BRAND.muted }}>{deals.length} deals</span>
         </div>
         <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New deal</button>
@@ -76,6 +103,91 @@ export function PipelineView({ onBack, onOpenDeal }) {
 
       {creating && <NewDealModal onClose={() => setCreating(false)} onCreated={(d) => { setCreating(false); if (d) onOpenDeal(d.id); }} />}
     </div>
+  );
+}
+
+// Owner filter for the pipeline — "All deals" / "My deals" / "<Name>'s deals".
+// Mirrors the proposals list's team-member filter for a consistent feel.
+function OwnerFilter({ ownerFilter, setOwnerFilter, memberOptions, sessionEmail }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
+  const selectedName = ownerFilter ? (memberOptions.find(m => m.email === ownerFilter)?.name || ownerFilter) : '';
+  const label = !ownerFilter
+    ? 'All deals'
+    : ownerFilter === sessionEmail
+    ? 'My deals'
+    : `${selectedName.split(' ')[0]}'s deals`;
+
+  const choose = (email) => { setOwnerFilter(email); setOpen(false); };
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="btn-ghost"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+      >
+        {label}
+        <ChevronDown size={14} style={{ opacity: 0.6 }} />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+            background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)', minWidth: 220, padding: 4,
+            zIndex: 50, maxHeight: 320, overflowY: 'auto',
+          }}
+        >
+          <OwnerOption label="All team members" selected={!ownerFilter} onClick={() => choose('')} />
+          {memberOptions.map((m) => (
+            <OwnerOption
+              key={m.email}
+              label={m.email === sessionEmail ? `${m.name} (me)` : m.name}
+              selected={ownerFilter === m.email}
+              onClick={() => choose(m.email)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OwnerOption({ label, selected, onClick }) {
+  return (
+    <button
+      role="option"
+      aria-selected={selected}
+      onClick={onClick}
+      onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = selected ? '#EFF8FC' : 'transparent'; }}
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%',
+        padding: '8px 10px', border: 'none', background: selected ? '#EFF8FC' : 'transparent', borderRadius: 6,
+        cursor: 'pointer', fontSize: 13, color: BRAND.ink, textAlign: 'left',
+      }}
+    >
+      <span>{label}</span>
+      {selected && <Check size={14} color={BRAND.blue} />}
+    </button>
   );
 }
 
