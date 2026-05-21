@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Clapperboard, CheckSquare, Coins, Contact, FileText, KanbanSquare, Mail, MailQuestion, Settings, Trophy } from 'lucide-react';
+import { ChevronDown, Clapperboard, CheckSquare, Coins, Contact, FileText, KanbanSquare, Mail, MailQuestion, Settings, Trophy, UserCog } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -17,6 +17,7 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
   const isMobile = useIsMobile();
   const [openMenu, setOpenMenu] = useState(null);
   const navRef = useRef(null);
+  const accountRef = useRef(null);
 
   const sessionUser = state.session || {};
   const userRecord = state.users?.[sessionUser?.email];
@@ -74,7 +75,11 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
 
   useEffect(() => {
     if (!openMenu) return;
-    const onDown = (e) => { if (navRef.current && !navRef.current.contains(e.target)) setOpenMenu(null); };
+    const onDown = (e) => {
+      const inNav = navRef.current && navRef.current.contains(e.target);
+      const inAccount = accountRef.current && accountRef.current.contains(e.target);
+      if (!inNav && !inAccount) setOpenMenu(null);
+    };
     const onEsc = (e) => { if (e.key === 'Escape') setOpenMenu(null); };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onEsc);
@@ -164,22 +169,60 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
         <div style={{ flex: 1 }} />
 
         <NotificationBell onOpenLink={onOpenLink} inline />
-        {canAdmin && (
-          <button onClick={() => navigate('admin', 'users')} className="btn-ghost" title="Admin">
-            <Settings size={14} />{!isMobile && ' Admin'}
+
+        <div ref={accountRef} style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setOpenMenu(openMenu === 'account' ? null : 'account')}
+            className="btn-ghost"
+            title="Account"
+            aria-haspopup="menu"
+            aria-expanded={openMenu === 'account'}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px 4px 6px', borderRadius: 20 }}
+          >
+            {user.avatar
+              ? <img src={user.avatar} alt={user.name} style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
+              : <div style={{ width: 24, height: 24, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11 }}>{(user.name || '?')[0].toUpperCase()}</div>}
+            {!isMobile && 'Account'}
+            <ChevronDown size={14} style={{ opacity: 0.6 }} />
           </button>
-        )}
-        <button
-          onClick={onManageAccount}
-          className="btn-ghost"
-          title="Account"
-          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 12px 4px 6px', borderRadius: 20 }}
-        >
-          {user.avatar
-            ? <img src={user.avatar} alt={user.name} style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
-            : <div style={{ width: 24, height: 24, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11 }}>{(user.name || '?')[0].toUpperCase()}</div>}
-          {!isMobile && 'Account'}
-        </button>
+          {openMenu === 'account' && (
+            <div
+              role="menu"
+              style={{
+                position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+                background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10,
+                boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)', minWidth: 200, padding: 6,
+                zIndex: 50, display: 'flex', flexDirection: 'column', gap: 2,
+              }}
+            >
+              {[
+                { label: 'Account settings', icon: UserCog, go: () => onManageAccount(), show: true },
+                { label: 'Admin', icon: Settings, go: () => navigate('admin', 'users'), show: canAdmin },
+              ].filter(i => i.show).map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.label}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { item.go(); setOpenMenu(null); }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                      padding: '8px 10px', border: 'none', background: 'transparent', borderRadius: 8,
+                      cursor: 'pointer', fontSize: 14, color: BRAND.ink, textAlign: 'left',
+                    }}
+                  >
+                    <Icon size={15} color={BRAND.muted} />
+                    <span style={{ flex: 1 }}>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
