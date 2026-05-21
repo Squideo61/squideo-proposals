@@ -47,6 +47,10 @@ export async function ensureDealContactsTable() {
           PRIMARY KEY (deal_id, contact_id)
         )
       `;
+      // Patch tables created by an earlier version that lacked these columns.
+      await sql`ALTER TABLE deal_contacts ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'secondary'`;
+      await sql`ALTER TABLE deal_contacts ADD COLUMN IF NOT EXISTS added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+      await sql`ALTER TABLE deal_contacts ADD COLUMN IF NOT EXISTS added_by TEXT`;
       await sql`CREATE INDEX IF NOT EXISTS deal_contacts_contact_idx ON deal_contacts (contact_id)`;
     } catch (err) {
       dealContactsTableEnsured = null;
