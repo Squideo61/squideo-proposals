@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Mail, Inbox, Send, FileText, Star, ShieldAlert, Trash2, Archive,
-  Search, X, RefreshCw, MailOpen, Reply, Forward, Paperclip, Download,
+  Search, X, RefreshCw, MailOpen, Reply, ReplyAll, Forward, Paperclip, Download,
   Briefcase, PenSquare, ExternalLink, ChevronDown, CircleDot,
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
@@ -9,6 +9,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatRelativeTime, useIsMobile } from '../../utils.js';
 import { DealContextPanel } from './DealContextPanel.jsx';
+import { EmailComposerModal } from './DealDetailView.jsx';
 import { STAGE_COLOURS, STAGE_LABEL } from '../../lib/stages.js';
 
 // 'deals' + 'triage' are DB-backed (CRM-aware); the rest proxy live to Gmail
@@ -514,6 +515,10 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
     return latest?.fromEmail || null;
   }, [messages, myEmail, latest]);
 
+  // Inline reply composer at the foot of the thread (Gmail-style).
+  // null | 'reply' | 'replyAll' | 'forward'.
+  const [composeMode, setComposeMode] = useState(null);
+
   // Reply goes to the other party of the latest message.
   const replyRecipient = (msg) => {
     if (!msg) return '';
@@ -521,31 +526,56 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
     return (msg.to || [])[0] || msg.fromEmail || '';
   };
 
-  // Reply/forward/continue open the floating composer dock and leave the
-  // conversation in view (the dock floats over it); actions that move the
-  // conversation out of the folder send us back to the list.
-  const reply = (all = false) => {
-    if (!latest) return;
-    const quoted = `<br><br><div style="border-left:2px solid #ccc;padding-left:12px;color:#555;">`
-      + `On ${formatDateLabel(latest.date)}, ${escapeText(latest.from || latest.fromEmail || '')} wrote:<br>`
-      + (sanitizeBody(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : '')) + '</div>';
-    actions.openComposer({
-      initialDraft: {
-        to: replyRecipient(latest),
-        cc: all ? (latest.cc || []).filter(e => e.toLowerCase() !== myEmail).join(', ') : '',
-        subject: /^re:/i.test(subject) ? subject : 'Re: ' + subject,
-        body: quoted,
-        gmailThreadId: openRef.threadId,
-      },
-    });
+  // Everyone on the latest message except me — drives the "Reply all" button,
+  // which only appears when more than one other person is on the thread.
+  const otherParticipants = useMemo(() => {
+    const set = new Set();
+    for (const e of [...(latest?.to || []), ...(latest?.cc || []), latest?.fromEmail].filter(Boolean)) {
+      const l = String(e).toLowerCase();
+      if (l && l !== myEmail) set.add(l);
+    }
+    return set;
+  }, [latest, myEmail]);
+  const canReplyAll = otherParticipants.size > 1;
+
+  const quotedReply = () =>
+    `<br><br><div style="border-left:2px solid #ccc;padding-left:12px;color:#555;">`
+    + `On ${formatDateLabel(latest.date)}, ${escapeText(latest.from || latest.fromEmail || '')} wrote:<br>`
+    + (sanitizeBody(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : '')) + '</div>';
+
+  // Build the seed draft for the inline composer for each mode.
+  const draftFor = (mode) => {
+    if (!latest) return null;
+    if (mode === 'forward') {
+      return {
+        to: '',
+        subject: /^fwd:/i.test(subject) ? subject : 'Fwd: ' + subject,
+        body: `<br><br>---------- Forwarded message ----------<br>`
+          + `From: ${escapeText(latest.from || latest.fromEmail || '')}<br>Subject: ${escapeText(subject)}<br><br>`
+          + (sanitizeBody(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : '')),
+      };
+    }
+    const primary = replyRecipient(latest);
+    let ccList = [];
+    if (mode === 'replyAll') {
+      const seen = new Set([myEmail, (primary || '').toLowerCase()]);
+      for (const e of [...(latest.to || []), ...(latest.cc || [])]) {
+        const l = String(e || '').toLowerCase();
+        if (l && !seen.has(l)) { seen.add(l); ccList.push(e); }
+      }
+    }
+    return {
+      to: primary,
+      cc: ccList.join(', '),
+      subject: /^re:/i.test(subject) ? subject : 'Re: ' + subject,
+      body: quotedReply(),
+      gmailThreadId: openRef.threadId,
+    };
   };
 
-  const forward = () => {
-    if (!latest) return;
-    const quoted = `<br><br>---------- Forwarded message ----------<br>`
-      + `From: ${escapeText(latest.from || latest.fromEmail || '')}<br>Subject: ${escapeText(subject)}<br><br>`
-      + (sanitizeBody(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : ''));
-    actions.openComposer({ initialDraft: { to: '', subject: /^fwd:/i.test(subject) ? subject : 'Fwd: ' + subject, body: quoted } });
+  // Re-fetch the thread after a send so the new message appears in place.
+  const reloadThread = () => {
+    (isGmail ? actions.loadMailboxThread(openRef.threadId) : actions.loadDealThread(openRef.threadId)).catch(() => {});
   };
 
   const continueDraft = () => {
@@ -580,22 +610,19 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
       <div style={{ display: 'flex', gap: 18, flexDirection: isMobile ? 'column' : 'row', alignItems: 'flex-start' }}>
         {/* Conversation (left) */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Action bar — once the conversation has loaded (reply/forward read it). */}
-          {latest && (
+          {/* Action bar — folder management (Gmail folders only). Reply /
+              Forward live at the foot of the thread, Gmail-style. */}
+          {latest && isGmail && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingBottom: 12, marginBottom: 12, borderBottom: '1px solid ' + BRAND.border }}>
-              {folder === 'drafts'
-                ? <button onClick={continueDraft} className="btn-icon" title="Continue in composer" aria-label="Continue in composer"><PenSquare size={16} /></button>
-                : <button onClick={() => reply(false)} className="btn-icon" title="Reply" aria-label="Reply"><Reply size={16} /></button>}
-              {folder !== 'drafts' && <button onClick={forward} className="btn-icon" title="Forward" aria-label="Forward"><Forward size={16} /></button>}
-              {isGmail && folder !== 'sent' && folder !== 'drafts' && folder !== 'trash' && folder !== 'spam' && (
+              {folder !== 'sent' && folder !== 'drafts' && folder !== 'trash' && folder !== 'spam' && (
                 <button onClick={() => act('archive')} className="btn-icon" title="Archive" aria-label="Archive"><Archive size={16} /></button>
               )}
-              {isGmail && (folder === 'trash'
+              {folder === 'trash'
                 ? <button onClick={() => act('untrash')} className="btn-icon" title="Restore" aria-label="Restore"><RefreshCw size={16} /></button>
-                : <button onClick={() => act('trash')} className="btn-icon" title="Delete" aria-label="Delete"><Trash2 size={16} /></button>)}
-              {isGmail && folder !== 'spam' && folder !== 'drafts' && <button onClick={() => act('spam')} className="btn-icon" title="Mark as spam" aria-label="Mark as spam"><ShieldAlert size={16} /></button>}
-              {isGmail && folder === 'spam' && <button onClick={() => act('unspam')} className="btn-icon" title="Not spam" aria-label="Not spam"><ShieldAlert size={16} /></button>}
-              {isGmail && folder !== 'drafts' && <button onClick={() => act('markUnread')} className="btn-icon" title="Mark unread" aria-label="Mark unread"><MailOpen size={16} /></button>}
+                : <button onClick={() => act('trash')} className="btn-icon" title="Delete" aria-label="Delete"><Trash2 size={16} /></button>}
+              {folder !== 'spam' && folder !== 'drafts' && <button onClick={() => act('spam')} className="btn-icon" title="Mark as spam" aria-label="Mark as spam"><ShieldAlert size={16} /></button>}
+              {folder === 'spam' && <button onClick={() => act('unspam')} className="btn-icon" title="Not spam" aria-label="Not spam"><ShieldAlert size={16} /></button>}
+              {folder !== 'drafts' && <button onClick={() => act('markUnread')} className="btn-icon" title="Mark unread" aria-label="Mark unread"><MailOpen size={16} /></button>}
               {gmailWeb && <a href={gmailWeb} target="_blank" rel="noreferrer" className="btn-icon" title="Open in Gmail" aria-label="Open in Gmail" style={{ textDecoration: 'none' }}><ExternalLink size={16} /></a>}
             </div>
           )}
@@ -615,6 +642,38 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
               ))}
               {messages.length === 0 && <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 13 }}>(no messages)</div>}
             </div>
+          )}
+
+          {/* Reply / forward at the foot of the thread, Gmail-style. */}
+          {!loading && !error && latest && folder === 'drafts' && (
+            <div style={{ marginTop: 14 }}>
+              <button onClick={continueDraft} className="btn"><PenSquare size={15} /> Continue editing</button>
+            </div>
+          )}
+          {!loading && !error && latest && folder !== 'drafts' && (
+            composeMode
+              ? (
+                <div style={{ marginTop: 14 }}>
+                  <EmailComposerModal
+                    key={composeMode}
+                    inline
+                    deal={null}
+                    contact={null}
+                    initialDraft={draftFor(composeMode)}
+                    onClose={() => setComposeMode(null)}
+                    onSent={() => { setComposeMode(null); reloadThread(); }}
+                  />
+                </div>
+              )
+              : (
+                <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+                  {canReplyAll && (
+                    <button onClick={() => setComposeMode('replyAll')} className="btn-ghost"><ReplyAll size={15} /> Reply all</button>
+                  )}
+                  <button onClick={() => setComposeMode('reply')} className="btn-ghost"><Reply size={15} /> Reply</button>
+                  <button onClick={() => setComposeMode('forward')} className="btn-ghost"><Forward size={15} /> Forward</button>
+                </div>
+              )
           )}
         </div>
 

@@ -2014,7 +2014,7 @@ function DealScheduledCard({ scheduled, onCancel }) {
   );
 }
 
-function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSent }) {
+export function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSent, inline = false }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const gmailConnected = state.gmailAccount && state.gmailAccount.connected;
@@ -2310,33 +2310,32 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
   const dockWidth = isMobile ? '100%' : 560;
   const dockRight = isMobile ? 0 : 24;
   const dockBottom = isMobile ? 0 : 0;
+  // Inline mode (used by the Emails thread view) renders the composer in normal
+  // flow at the foot of the conversation, Gmail-style. The default dock mode is
+  // a fixed, minimisable bottom-right panel.
+  const wrapStyle = inline
+    ? {
+        position: 'relative', width: '100%', background: 'white',
+        border: '1px solid ' + BRAND.border, borderRadius: 10,
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      }
+    : {
+        position: 'fixed', right: dockRight, bottom: dockBottom, width: dockWidth, maxWidth: '100vw',
+        background: 'white', border: '1px solid ' + BRAND.border,
+        borderTopLeftRadius: 10, borderTopRightRadius: 10,
+        boxShadow: '0 12px 32px rgba(15, 42, 61, 0.24)', zIndex: 2000,
+        display: 'flex', flexDirection: 'column', maxHeight: minimised ? 44 : '80vh', overflow: 'hidden',
+      };
+  const collapsed = !inline && minimised;
   return (
     <div
       role="dialog"
       aria-modal="false"
       aria-label="Send email"
-      style={{
-        position: 'fixed',
-        right: dockRight,
-        bottom: dockBottom,
-        width: dockWidth,
-        maxWidth: '100vw',
-        background: 'white',
-        border: '1px solid ' + BRAND.border,
-        borderTopLeftRadius: 10,
-        borderTopRightRadius: 10,
-        borderBottomLeftRadius: isMobile ? 0 : 0,
-        borderBottomRightRadius: isMobile ? 0 : 0,
-        boxShadow: '0 12px 32px rgba(15, 42, 61, 0.24)',
-        zIndex: 2000,
-        display: 'flex',
-        flexDirection: 'column',
-        maxHeight: minimised ? 44 : '80vh',
-        overflow: 'hidden',
-      }}
+      style={wrapStyle}
     >
       <div
-        onClick={() => setMinimised((m) => !m)}
+        onClick={inline ? undefined : () => setMinimised((m) => !m)}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -2346,20 +2345,22 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
           padding: '8px 12px',
           fontSize: 13,
           fontWeight: 600,
-          cursor: 'pointer',
+          cursor: inline ? 'default' : 'pointer',
           flexShrink: 0,
         }}
       >
         <span>{subject.trim() ? subject : 'New message'}</span>
         <div style={{ display: 'flex', gap: 4 }}>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setMinimised((m) => !m); }}
-            aria-label={minimised ? 'Expand' : 'Minimise'}
-            style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', padding: 2, lineHeight: 1, fontSize: 16 }}
-          >
-            {minimised ? '▴' : '▾'}
-          </button>
+          {!inline && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setMinimised((m) => !m); }}
+              aria-label={minimised ? 'Expand' : 'Minimise'}
+              style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', padding: 2, lineHeight: 1, fontSize: 16 }}
+            >
+              {minimised ? '▴' : '▾'}
+            </button>
+          )}
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onClose(); }}
@@ -2370,7 +2371,7 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
           </button>
         </div>
       </div>
-      {!minimised && (
+      {!collapsed && (
         // Flex column so the inner scroll region can grow and shrink while
         // the action-buttons row stays pinned at the bottom of the dock.
         // The form's onSubmit fires for either Send or Enter inside an input,
@@ -2379,9 +2380,9 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
         // scrollable region.
         <form
           onSubmit={submit}
-          style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+          style={inline ? { display: 'flex', flexDirection: 'column' } : { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
         >
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 14 }}>
+          <div style={inline ? { padding: 14 } : { flex: 1, minHeight: 0, overflowY: 'auto', padding: 14 }}>
           {!gmailConnected && (
             <div style={{ background: '#FEF3C7', color: '#92400E', fontSize: 13, padding: '10px 12px', borderRadius: 6, marginBottom: 12 }}>
               Gmail isn't connected for your account yet. Connect it from Account → Gmail integration before sending.
