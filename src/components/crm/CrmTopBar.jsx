@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Clapperboard, CheckSquare, Coins, Contact, FileText, KanbanSquare, LayoutTemplate, Mail, MailQuestion, Plus, Settings, Trophy } from 'lucide-react';
+import { ChevronDown, Clapperboard, CheckSquare, Coins, Contact, FileText, KanbanSquare, Mail, MailQuestion, Settings, Trophy } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -12,7 +12,7 @@ const BADGE = '#FB923C';
 // Persistent Xero-style top bar shown across every CRM view. Navigation is
 // grouped into three section dropdowns (Business / Sales / Projects); Admin,
 // Account and "New Proposal" sit as standalone utilities on the right.
-export function CrmTopBar({ view, navigate, onCreate, onManageAccount, onOpenLink }) {
+export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
   const { state } = useStore();
   const isMobile = useIsMobile();
   const [openMenu, setOpenMenu] = useState(null);
@@ -57,7 +57,6 @@ export function CrmTopBar({ view, navigate, onCreate, onManageAccount, onOpenLin
         { label: 'Quote Requests', icon: MailQuestion, go: () => navigate('quote-requests'), count: newQuoteRequestsCount },
         { label: 'Proposals', icon: FileText, go: () => navigate('list') },
         { label: 'Pipeline', icon: KanbanSquare, go: () => navigate('pipeline') },
-        { label: 'Templates', icon: LayoutTemplate, go: () => navigate('templates') },
         { label: 'Leaderboard', icon: Trophy, go: () => navigate('leaderboard') },
       ],
     },
@@ -180,9 +179,6 @@ export function CrmTopBar({ view, navigate, onCreate, onManageAccount, onOpenLin
             ? <img src={user.avatar} alt={user.name} style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
             : <div style={{ width: 24, height: 24, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11 }}>{(user.name || '?')[0].toUpperCase()}</div>}
           {!isMobile && 'Account'}
-        </button>
-        <button onClick={onCreate} className="btn" title="New Proposal">
-          <Plus size={16} />{!isMobile && ' New Proposal'}
         </button>
       </div>
     </div>

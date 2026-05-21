@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, BarChart3, Check, ChevronDown, Clock, Copy, Download, ExternalLink, Eye, FileText, Inbox, Link2, MoreVertical, Plus, Receipt, Search, Trash2, Undo2, Users, X } from 'lucide-react';
+import { Archive, ArchiveRestore, BarChart3, Check, ChevronDown, Clock, Copy, Download, ExternalLink, Eye, FileText, Inbox, LayoutTemplate, Link2, MoreVertical, Plus, Receipt, Search, Trash2, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, proposalSignedTotalExVat, useIsMobile } from '../utils.js';
@@ -9,7 +9,7 @@ import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
 const TEAM_FILTER_STORAGE_KEY = 'squideo.dashboard.teamMemberFilter';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageTemplates }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   // Quick status filter: null = all (non-archived) | 'open' | 'signed' | 'archive'.
@@ -80,7 +80,12 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate })
     <div style={{ padding: isMobile ? '20px 16px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Proposals</h1>
-        <button onClick={onCreate} className="btn"><Plus size={16} /> New Proposal</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {onManageTemplates && (
+            <button onClick={onManageTemplates} className="btn-ghost"><LayoutTemplate size={14} /> Proposal Templates</button>
+          )}
+          <button onClick={onCreate} className="btn"><Plus size={16} /> New Proposal</button>
+        </div>
       </header>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>

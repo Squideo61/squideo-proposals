@@ -22,7 +22,7 @@ export function TemplatesView({ onBack, onUse, onEdit, onCreate, onDelete }) {
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
             <Logo size={36} />
-            <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Templates</h1>
+            <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Proposal Templates</h1>
           </div>
           <p style={{ fontSize: 14, color: BRAND.muted, margin: 0, marginLeft: 48 }}>
             Reusable proposal blueprints. Use one to create a new proposal, or edit to update.

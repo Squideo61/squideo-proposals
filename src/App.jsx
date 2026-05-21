@@ -272,7 +272,6 @@ function AppShell() {
         <CrmTopBar
           view={view}
           navigate={navigate}
-          onCreate={createNew}
           onManageAccount={() => setModal({ type: 'account' })}
           onOpenLink={openLink}
         />
@@ -285,6 +284,7 @@ function AppShell() {
           onPreview={(id) => navigate('client', id)}
           onDelete={deleteProposal}
           onDuplicate={duplicateProposal}
+          onManageTemplates={() => navigate('templates')}
         />
       )}
       {view === 'admin' && (
