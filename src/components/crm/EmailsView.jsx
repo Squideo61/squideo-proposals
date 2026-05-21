@@ -8,7 +8,6 @@ import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatRelativeTime, useIsMobile } from '../../utils.js';
-import { Modal } from '../ui.jsx';
 import { DealContextPanel, DealChip } from './DealContextPanel.jsx';
 
 // 'deals' + 'triage' are DB-backed (CRM-aware); the rest proxy live to Gmail
@@ -47,7 +46,7 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   const [appliedQuery, setAppliedQuery] = useState('');
   const [openRef, setOpenRef] = useState(null);     // { kind, threadId, unread } for the conversation modal
 
-  useEffect(() => { setSearch(''); setAppliedQuery(''); }, [active]);
+  useEffect(() => { setSearch(''); setAppliedQuery(''); setOpenRef(null); }, [active]);
 
   useEffect(() => {
     if (def.kind === 'deals') {
@@ -173,6 +172,18 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
 
         {/* Main pane */}
         <div style={{ flex: 1, minWidth: 0, width: '100%' }}>
+          {openRef ? (
+            // Open the conversation full-width in the main area (like Gmail),
+            // not a pop-up. The folder sidebar stays put; Back returns to list.
+            <ConversationView
+              openRef={openRef}
+              folder={active}
+              connected={connected}
+              onBack={() => { setOpenRef(null); if (active === 'triage') actions.refreshTriage(); }}
+              onOpenDeal={onOpenDeal}
+            />
+          ) : (
+          <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 7 }}>
               <def.icon size={16} color={BRAND.blue} /> {def.label}
@@ -208,7 +219,7 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
           )}
           {def.kind === 'triage' && (
             <p style={{ fontSize: 12.5, color: BRAND.muted, margin: '0 0 12px' }}>
-              Emails that didn't match any deal automatically. Assign them to the right deal, or dismiss if they're personal/spam.
+              Emails that didn't match any deal automatically. Open one to read it and attach it to a deal, or dismiss if it's personal/spam.
             </p>
           )}
 
@@ -226,21 +237,10 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
               onAction={(action, id) => doAction(actions, active, action, id, showMsg)}
             />
           )}
+          </>
+          )}
         </div>
       </div>
-
-      {openRef && (
-        <ConversationModal
-          openRef={openRef}
-          folder={active}
-          folderKind={def.kind}
-          connected={connected}
-          // Attaching to a deal from the panel clears the unmatched flag, so a
-          // triaged conversation should drop off the list once we close.
-          onClose={() => { setOpenRef(null); if (active === 'triage') actions.refreshTriage(); }}
-          onOpenDeal={onOpenDeal}
-        />
-      )}
     </div>
   );
 }
@@ -436,7 +436,7 @@ function GmailThreadRow({ row, folder, first, onOpen, onAction }) {
 
 // Full conversation modal: loads the thread (live Gmail or DB) and renders
 // every message stacked, newest expanded and older ones collapsible.
-function ConversationModal({ openRef, folder, folderKind, connected, onClose, onOpenDeal }) { // eslint-disable-line no-unused-vars
+function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
   const { state, actions, showMsg } = useStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -446,6 +446,7 @@ function ConversationModal({ openRef, folder, folderKind, connected, onClose, on
   const thread = state.threadCache?.[openRef.threadId];
   const messages = thread?.messages || [];
   const myEmail = (state.gmailAccount?.gmailAddress || '').toLowerCase();
+  const folderLabel = FOLDER_BY_ID[folder]?.label || 'list';
 
   useEffect(() => {
     let cancelled = false;
@@ -478,6 +479,9 @@ function ConversationModal({ openRef, folder, folderKind, connected, onClose, on
     return (msg.to || [])[0] || msg.fromEmail || '';
   };
 
+  // Reply/forward/continue open the floating composer dock and leave the
+  // conversation in view (the dock floats over it); actions that move the
+  // conversation out of the folder send us back to the list.
   const reply = (all = false) => {
     if (!latest) return;
     const quoted = `<br><br><div style="border-left:2px solid #ccc;padding-left:12px;color:#555;">`
@@ -492,7 +496,6 @@ function ConversationModal({ openRef, folder, folderKind, connected, onClose, on
         gmailThreadId: openRef.threadId,
       },
     });
-    onClose();
   };
 
   const forward = () => {
@@ -501,7 +504,6 @@ function ConversationModal({ openRef, folder, folderKind, connected, onClose, on
       + `From: ${escapeText(latest.from || latest.fromEmail || '')}<br>Subject: ${escapeText(subject)}<br><br>`
       + (sanitizeBody(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : ''));
     actions.openComposer({ initialDraft: { to: '', subject: /^fwd:/i.test(subject) ? subject : 'Fwd: ' + subject, body: quoted } });
-    onClose();
   };
 
   const continueDraft = () => {
@@ -515,28 +517,25 @@ function ConversationModal({ openRef, folder, folderKind, connected, onClose, on
         gmailThreadId: openRef.threadId,
       },
     });
-    onClose();
   };
 
   const act = (action) => {
     actions.mailboxAction(folder, action, openRef.threadId)
-      .then(() => { showMsg(ACTION_TOAST[action] || 'Done'); onClose(); })
+      .then(() => { showMsg(ACTION_TOAST[action] || 'Done'); onBack(); })
       .catch(() => showMsg('Action failed'));
   };
 
   const gmailWeb = openRef.threadId ? `https://mail.google.com/mail/u/0/#all/${openRef.threadId}` : null;
 
   return (
-    <Modal onClose={onClose} maxWidth={isMobile ? 760 : 1060}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, wordBreak: 'break-word' }}>
-          {subject}
-          {messages.length > 1 && <span style={{ color: BRAND.muted, fontWeight: 500 }}> · {messages.length} messages</span>}
-        </h2>
-        <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
-      </div>
+    <div>
+      <button onClick={onBack} className="btn-ghost" style={{ marginBottom: 10 }}><ArrowLeft size={14} /> {folderLabel}</button>
+      <h2 style={{ margin: '0 0 14px', fontSize: 19, fontWeight: 700, wordBreak: 'break-word' }}>
+        {subject}
+        {messages.length > 1 && <span style={{ color: BRAND.muted, fontWeight: 500 }}> · {messages.length} messages</span>}
+      </h2>
 
-      <div style={{ display: 'flex', gap: 16, flexDirection: isMobile ? 'column' : 'row' }}>
+      <div style={{ display: 'flex', gap: 18, flexDirection: isMobile ? 'column' : 'row', alignItems: 'flex-start' }}>
         {/* Conversation (left) */}
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Action bar — once the conversation has loaded (reply/forward read it). */}
@@ -562,7 +561,7 @@ function ConversationModal({ openRef, folder, folderKind, connected, onClose, on
           {loading && <div style={{ color: BRAND.muted, fontSize: 13, padding: 20, textAlign: 'center' }}>Loading…</div>}
           {error && <div style={{ color: '#DC2626', fontSize: 13 }}>{error}</div>}
           {!loading && !error && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: isMobile ? 'none' : '60vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {messages.map((m, i) => (
                 <MessageBlock
                   key={m.id || i}
@@ -577,22 +576,25 @@ function ConversationModal({ openRef, folder, folderKind, connected, onClose, on
           )}
         </div>
 
-        {/* Deal context panel (right) — the in-app twin of the extension sidebar. */}
+        {/* Deal context panel (right) — shown for every conversation, so emails
+            already on a deal display their deal here too. Sticks in view as the
+            conversation scrolls. */}
         <div style={{
-          width: isMobile ? 'auto' : 320, flexShrink: 0,
+          width: isMobile ? '100%' : 320, flexShrink: 0,
           borderLeft: isMobile ? 'none' : '1px solid ' + BRAND.border,
           borderTop: isMobile ? '1px solid ' + BRAND.border : 'none',
-          paddingLeft: isMobile ? 0 : 16, paddingTop: isMobile ? 14 : 0,
-          maxHeight: isMobile ? 'none' : '64vh', overflowY: 'auto',
+          paddingLeft: isMobile ? 0 : 18, paddingTop: isMobile ? 14 : 0,
+          position: isMobile ? 'static' : 'sticky', top: isMobile ? undefined : 16,
+          alignSelf: 'flex-start', maxHeight: isMobile ? 'none' : 'calc(100vh - 32px)', overflowY: 'auto',
         }}>
           <DealContextPanel
             gmailThreadId={openRef.threadId}
             counterpartyEmail={counterparty}
-            onOpenDeal={(id) => { onClose(); onOpenDeal?.(id); }}
+            onOpenDeal={(id) => { onBack(); onOpenDeal?.(id); }}
           />
         </div>
       </div>
-    </Modal>
+    </div>
   );
 }
 
