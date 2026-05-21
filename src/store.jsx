@@ -45,6 +45,8 @@ function emptyStore() {
     dealDetail: {},
     // Pending scheduled emails, keyed by deal id (for the deal-page card).
     scheduledEmails: {},
+    // Reusable email templates (composer "Templates" menu).
+    emailTemplates: [],
     // Video revisions (Frame.io-style client revision links)
     revisions: [],
     revisionDetail: {},
@@ -1118,6 +1120,43 @@ export function StoreProvider({ children }) {
       });
       return api.delete('/api/crm/gmail/schedule?id=' + encodeURIComponent(id))
         .catch(() => actions.loadScheduledEmails(dealId));
+    },
+
+    // ---------- Email templates (composer Templates menu) ----------
+    loadEmailTemplates() {
+      return api.get('/api/crm/templates')
+        .then((rows) => {
+          const list = Array.isArray(rows) ? rows : [];
+          setState(s => ({ ...s, emailTemplates: list }));
+          return list;
+        })
+        .catch(() => []);
+    },
+    saveEmailTemplate({ name, subject, bodyHtml, bodyText }) {
+      return api.post('/api/crm/templates', { name, subject, bodyHtml, bodyText })
+        .then((tpl) => {
+          setState(s => ({ ...s, emailTemplates: [...(s.emailTemplates || []), tpl].sort((a, b) => (a.name || '').localeCompare(b.name || '')) }));
+          return tpl;
+        });
+    },
+    // Overwrite an existing template (PATCH). Used by the composer's "overwrite"
+    // action so the user can update a saved template with the current email.
+    updateEmailTemplate(id, { name, subject, bodyHtml, bodyText }) {
+      const payload = {};
+      if (name !== undefined) payload.name = name;
+      if (subject !== undefined) payload.subject = subject;
+      if (bodyHtml !== undefined) payload.bodyHtml = bodyHtml;
+      if (bodyText !== undefined) payload.bodyText = bodyText;
+      return api.patch('/api/crm/templates/' + encodeURIComponent(id), payload)
+        .then((tpl) => {
+          setState(s => ({ ...s, emailTemplates: (s.emailTemplates || []).map(t => t.id === id ? tpl : t) }));
+          return tpl;
+        });
+    },
+    deleteEmailTemplate(id) {
+      setState(s => ({ ...s, emailTemplates: (s.emailTemplates || []).filter(t => t.id !== id) }));
+      return api.delete('/api/crm/templates/' + encodeURIComponent(id))
+        .catch(() => actions.loadEmailTemplates());
     },
     getGmailSignature() {
       // Returns { signatureHtml, fetchedAt, diagnostics? } from the cached

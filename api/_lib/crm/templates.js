@@ -3,7 +3,39 @@ import { makeId, trimOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
+// Self-heal: db/migrations/20260520_crm_email_templates.sql creates this table
+// but is applied manually in Neon. If a deploy went out before that step, every
+// query below 500s with 'relation "crm_email_templates" does not exist'. The
+// CREATE is idempotent and module-level cached so we only pay for it on the
+// first templates request per cold start. Same pattern as ensureSignatureColumns.
+let templatesTableEnsured = null;
+function ensureEmailTemplatesTable() {
+  if (templatesTableEnsured) return templatesTableEnsured;
+  templatesTableEnsured = (async () => {
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS crm_email_templates (
+          id         TEXT        PRIMARY KEY,
+          name       TEXT        NOT NULL,
+          subject    TEXT,
+          body_html  TEXT,
+          body_text  TEXT,
+          stage      TEXT,
+          created_by TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+    } catch (err) {
+      templatesTableEnsured = null; // retry next request on a transient failure
+      console.warn('[crm templates] ensureEmailTemplatesTable failed', err.message);
+    }
+  })();
+  return templatesTableEnsured;
+}
+
 export async function templatesRoute(req, res, id, action, user) {
+  await ensureEmailTemplatesTable();
   if (!id) {
     if (req.method === 'GET') {
       // Optional ?stage=… filter — returns templates either pinned to that

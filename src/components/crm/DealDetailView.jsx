@@ -2046,6 +2046,10 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleAt, setScheduleAt] = useState('');
   const [scheduling, setScheduling] = useState(false);
+  // Templates popover state.
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const templates = state.emailTemplates || [];
   const [error, setError] = useState('');
   const [signature, setSignature] = useState(null); // null = loading, '' = none
   const [sigDiagnostics, setSigDiagnostics] = useState(null);
@@ -2106,6 +2110,70 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
       });
     return () => { cancelled = true; };
   }, [gmailConnected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load saved templates once when the composer opens.
+  useEffect(() => {
+    actions.loadEmailTemplates();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load a template into the composer. Sets the subject (if the template has
+  // one) and replaces the body — pushing the HTML straight into the
+  // contentEditable since the editor is uncontrolled.
+  const loadTemplate = (t) => {
+    if (t.subject) setSubject(t.subject);
+    const html = t.bodyHtml || '';
+    setBody(html);
+    if (editorRef.current) editorRef.current.innerHTML = html;
+    setShowTemplates(false);
+    showMsg(`Loaded template “${t.name}”`);
+  };
+
+  // Save the current subject/body as a new named template.
+  const saveAsNewTemplate = async () => {
+    if (templateBusy) return;
+    if (!subject.trim() && isHtmlEmpty(body)) { setError('Add a subject or message before saving a template.'); return; }
+    const name = window.prompt('Template name:');
+    if (!name || !name.trim()) return;
+    setTemplateBusy(true);
+    try {
+      await actions.saveEmailTemplate({
+        name: name.trim(), subject: subject.trim() || null,
+        bodyHtml: body, bodyText: htmlToPlainText(body),
+      });
+      showMsg('Template saved');
+    } catch (err) {
+      setError(err?.message || 'Failed to save template');
+    } finally {
+      setTemplateBusy(false);
+    }
+  };
+
+  // Overwrite an existing template with the current subject/body.
+  const overwriteTemplate = async (t) => {
+    if (templateBusy) return;
+    if (!window.confirm(`Overwrite “${t.name}” with the current email?`)) return;
+    setTemplateBusy(true);
+    try {
+      await actions.updateEmailTemplate(t.id, {
+        subject: subject.trim() || null,
+        bodyHtml: body, bodyText: htmlToPlainText(body),
+      });
+      showMsg(`Updated template “${t.name}”`);
+    } catch (err) {
+      setError(err?.message || 'Failed to update template');
+    } finally {
+      setTemplateBusy(false);
+    }
+  };
+
+  const removeTemplate = async (t) => {
+    if (!window.confirm(`Delete template “${t.name}”?`)) return;
+    try {
+      await actions.deleteEmailTemplate(t.id);
+    } catch (err) {
+      setError(err?.message || 'Failed to delete template');
+    }
+  };
 
   const refreshSignature = async () => {
     if (refreshingSig) return;
@@ -2558,6 +2626,18 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
               background: 'white',
             }}
           >
+            {/* Templates menu, pushed to the left so it reads as a separate
+                control from the Discard/Save/Send actions. */}
+            <button
+              type="button"
+              onClick={() => { setShowSchedule(false); setShowTemplates((v) => !v); }}
+              className="btn-ghost"
+              style={{ marginRight: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              aria-expanded={showTemplates}
+              title="Insert or save an email template"
+            >
+              <FileText size={14} /> Templates
+            </button>
             <button type="button" onClick={onClose} className="btn-ghost">Discard</button>
             <button
               type="button"
@@ -2620,6 +2700,82 @@ function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSen
                   </button>
                   <button type="button" className="btn" style={{ fontSize: 12 }} disabled={scheduling || !scheduleAt} onClick={handleSchedule}>
                     {scheduling ? 'Scheduling…' : 'Schedule'}
+                  </button>
+                </div>
+              </div>
+            )}
+            {showTemplates && (
+              <div
+                style={{
+                  position: 'absolute', left: 14, bottom: 'calc(100% + 6px)',
+                  background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
+                  boxShadow: '0 8px 24px rgba(15,42,61,0.18)', padding: 10, width: 300, zIndex: 10,
+                  display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>Templates</div>
+                  <button type="button" onClick={() => setShowTemplates(false)} aria-label="Close templates" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: BRAND.muted, display: 'flex', padding: 2 }}>
+                    <X size={14} />
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto' }}>
+                  {templates.length === 0 && (
+                    <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic', padding: '4px 2px' }}>
+                      No saved templates yet. Compose an email, then “Save current as new template”.
+                    </div>
+                  )}
+                  {templates.map((t) => (
+                    <div
+                      key={t.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 4,
+                        border: '1px solid ' + BRAND.border, borderRadius: 6, padding: '4px 4px 4px 8px',
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => loadTemplate(t)}
+                        title="Load this template into the email"
+                        style={{
+                          flex: 1, minWidth: 0, textAlign: 'left', background: 'transparent', border: 'none',
+                          cursor: 'pointer', color: BRAND.ink, fontSize: 13, padding: '2px 0',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {t.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => overwriteTemplate(t)}
+                        disabled={templateBusy}
+                        title="Overwrite with the current email"
+                        className="btn-ghost"
+                        style={{ fontSize: 11, padding: '2px 8px', flexShrink: 0 }}
+                      >
+                        Overwrite
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeTemplate(t)}
+                        aria-label={`Delete ${t.name}`}
+                        title="Delete template"
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: BRAND.muted, display: 'flex', padding: 2, flexShrink: 0 }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8 }}>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={saveAsNewTemplate}
+                    disabled={templateBusy}
+                    style={{ fontSize: 12, width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                  >
+                    <Plus size={13} /> Save current as new template
                   </button>
                 </div>
               </div>
