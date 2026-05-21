@@ -42,11 +42,9 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
     {
       key: 'business',
       label: 'Business',
-      views: ['contacts', 'contact', 'company', 'xero-duplicates', 'tasks', 'emails', 'triage', 'partner-credits', 'partner-credit-detail'],
+      views: ['contacts', 'contact', 'company', 'xero-duplicates', 'partner-credits', 'partner-credit-detail'],
       items: [
         { label: 'Contacts', icon: Contact, go: () => navigate('contacts') },
-        { label: 'Tasks', icon: CheckSquare, go: () => navigate('tasks'), count: openTasksDue },
-        { label: 'Emails', icon: Mail, go: () => navigate('emails'), count: triageCount },
         { label: 'Partner Credits', icon: Coins, go: () => navigate('partner-credits') },
       ],
     },
@@ -167,6 +165,30 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
         </nav>
 
         <div style={{ flex: 1 }} />
+
+        {[
+          { label: 'Tasks', icon: CheckSquare, views: ['tasks'], go: () => navigate('tasks'), count: openTasksDue },
+          { label: 'Emails', icon: Mail, views: ['emails', 'triage'], go: () => navigate('emails'), count: triageCount },
+        ].map((item) => {
+          const Icon = item.icon;
+          const active = item.views.includes(view);
+          return (
+            <button
+              key={item.label}
+              type="button"
+              onClick={item.go}
+              className="btn-ghost"
+              title={item.label}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: active ? '#EEF3F6' : undefined }}
+            >
+              <Icon size={16} />
+              {!isMobile && <span>{item.label}</span>}
+              {item.count > 0 && (
+                <span style={{ background: BADGE, color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999 }}>{item.count}</span>
+              )}
+            </button>
+          );
+        })}
 
         <NotificationBell onOpenLink={onOpenLink} inline />
 
