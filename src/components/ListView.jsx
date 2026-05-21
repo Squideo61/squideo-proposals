@@ -1,16 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, BarChart3, Check, CheckSquare, ChevronDown, Clapperboard, Clock, Contact, Copy, Coins, Download, ExternalLink, Eye, FileText, Inbox, KanbanSquare, LayoutTemplate, Link2, Mail, MailQuestion, MoreVertical, Plus, Receipt, Search, Settings, Trash2, Trophy, Undo2, Users, X } from 'lucide-react';
+import { Archive, ArchiveRestore, BarChart3, Check, ChevronDown, Clock, Copy, Download, ExternalLink, Eye, FileText, Inbox, Link2, MoreVertical, Plus, Receipt, Search, Trash2, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, proposalSignedTotalExVat, useIsMobile } from '../utils.js';
 import { openPrintWindow, printOptionsForSigned } from '../utils/printProposal.js';
-import { permissionsInclude } from '../lib/permissions.js';
-import { Badge, Logo } from './ui.jsx';
+import { Badge } from './ui.jsx';
 import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
 const TEAM_FILTER_STORAGE_KEY = 'squideo.dashboard.teamMemberFilter';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageAdmin, onManageAccount, onManageTemplates, onManageLeaderboard, onManagePartnerCredits, onManagePipeline, onManageContacts, onManageTasks, onManageEmails, onManageQuoteRequests, onManageRevisions }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   // Quick status filter: null = all (non-archived) | 'open' | 'signed' | 'archive'.
@@ -25,9 +24,6 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
   useEffect(() => {
     try { localStorage.setItem(TEAM_FILTER_STORAGE_KEY, memberFilter); } catch {}
   }, [memberFilter]);
-  const openTasksDue = (state.tasks || []).filter(t => !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= Date.now() + 24 * 60 * 60 * 1000).length;
-  const triageCount = (state.triage || []).length;
-  const newQuoteRequestsCount = (state.quoteRequests || []).filter(q => q.status === 'new').length;
   const [analyticsId, setAnalyticsId] = useState(null);
   const isMobile = useIsMobile();
 
@@ -78,82 +74,13 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
     : '';
   const filtersActive = Boolean(search.trim() || memberFilter || statusFilter);
 
-  const sessionUser = state.session;
-  const userRecord = state.users[sessionUser?.email];
-  const user = {
-    ...sessionUser,
-    avatar: sessionUser?.avatar ?? userRecord?.avatar ?? null,
-    name: sessionUser?.name || userRecord?.name || '',
-  };
   const analyticsProposal = analyticsId ? proposals.find((p) => p.id === analyticsId) : null;
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px' : '40px 24px' }}>
-      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 32, gap: 16, flexWrap: 'wrap' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-            <Logo size={36} />
-            <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Squideo CRM</h1>
-          </div>
-          <p style={{ fontSize: 14, color: BRAND.muted, margin: 0, marginLeft: 48 }}>
-            Signed in as <strong style={{ color: BRAND.ink }}>{user.name}</strong> · Shared workspace
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {onManageQuoteRequests && (
-            <button onClick={onManageQuoteRequests} className="btn-ghost">
-              <MailQuestion size={14} /> Quote Requests
-              {newQuoteRequestsCount > 0 && (
-                <span style={{ background: '#FB923C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, marginLeft: 4 }}>
-                  {newQuoteRequestsCount}
-                </span>
-              )}
-            </button>
-          )}
-          {onManagePipeline && <button onClick={onManagePipeline} className="btn-ghost"><KanbanSquare size={14} /> Pipeline</button>}
-          {onManageRevisions && permissionsInclude(user.permissions, 'revisions.access') && <button onClick={onManageRevisions} className="btn-ghost"><Clapperboard size={14} /> Revisions</button>}
-          {onManageContacts && <button onClick={onManageContacts} className="btn-ghost"><Contact size={14} /> Contacts</button>}
-          {onManageTasks && (
-            <button onClick={onManageTasks} className="btn-ghost">
-              <CheckSquare size={14} /> Tasks
-              {openTasksDue > 0 && (
-                <span style={{ background: '#FB923C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, marginLeft: 4 }}>
-                  {openTasksDue}
-                </span>
-              )}
-            </button>
-          )}
-          {onManageEmails && (
-            <button onClick={onManageEmails} className="btn-ghost">
-              <Mail size={14} /> Emails
-              {triageCount > 0 && (
-                <span style={{ background: '#FB923C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, marginLeft: 4 }}>
-                  {triageCount}
-                </span>
-              )}
-            </button>
-          )}
-          <button onClick={onManageLeaderboard} className="btn-ghost"><Trophy size={14} /> Leaderboard</button>
-          <button onClick={onManagePartnerCredits} className="btn-ghost"><Coins size={14} /> Partner Credits</button>
-          <button onClick={onManageTemplates} className="btn-ghost"><LayoutTemplate size={14} /> Templates</button>
-          {(permissionsInclude(user.permissions, 'users.manage')
-            || permissionsInclude(user.permissions, 'roles.manage')
-            || permissionsInclude(user.permissions, 'settings.manage')) && (
-            <button onClick={onManageAdmin} className="btn-ghost"><Settings size={14} /> Admin</button>
-          )}
-          <button
-            onClick={onManageAccount}
-            className="btn-ghost"
-            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 12px 4px 6px', borderRadius: 20 }}
-          >
-            {user.avatar
-              ? <img src={user.avatar} alt={user.name} style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
-              : <div style={{ width: 24, height: 24, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 11 }}>{(user.name || '?')[0].toUpperCase()}</div>
-            }
-            Account
-          </button>
-          <button onClick={onCreate} className="btn"><Plus size={16} /> New Proposal</button>
-        </div>
+    <div style={{ padding: isMobile ? '20px 16px' : '32px 24px' }}>
+      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Proposals</h1>
+        <button onClick={onCreate} className="btn"><Plus size={16} /> New Proposal</button>
       </header>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>

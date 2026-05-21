@@ -55,7 +55,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
 
   if (!deal) {
     return (
-      <div style={{ maxWidth: 900, margin: '0 auto', padding: 32 }}>
+      <div style={{ padding: 32 }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
         <p style={{ marginTop: 24, color: BRAND.muted }}>Loading deal…</p>
       </div>
@@ -134,7 +134,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   };
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '16px 12px' : '32px 24px' }}>
+    <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Pipeline</button>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

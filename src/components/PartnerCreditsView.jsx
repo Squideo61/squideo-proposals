@@ -40,7 +40,7 @@ export function PartnerCreditsView({ onBack, onOpen }) {
   const filtered = filter === 'all' ? list : list.filter(r => r.status === filter);
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px' : '40px 24px' }}>
+    <div style={{ padding: isMobile ? '20px 16px' : '40px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, flexWrap: 'wrap', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>

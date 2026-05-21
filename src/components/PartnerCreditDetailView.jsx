@@ -536,7 +536,7 @@ function Donut({ used, remaining }) {
 function Shell({ onBack, children }) {
   const isMobile = useIsMobile();
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px' : '40px 24px' }}>
+    <div style={{ padding: isMobile ? '20px 16px' : '40px 24px' }}>
       <button onClick={onBack} className="btn-ghost" style={{ marginBottom: 16 }}>
         <ArrowLeft size={14} /> Back to credits
       </button>

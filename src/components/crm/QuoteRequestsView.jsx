@@ -97,7 +97,7 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
   const newCount = all.filter((r) => r.status === 'new').length;
 
   return (
-    <div style={{ maxWidth: 960, margin: '0 auto', padding: isMobile ? '16px 12px' : '32px 24px' }}>
+    <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>

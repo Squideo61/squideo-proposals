@@ -83,7 +83,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
 
   if (!detail) {
     return (
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: 32 }}>
+      <div style={{ padding: 32 }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
         <div style={{ padding: 40, textAlign: 'center', color: BRAND.muted }}>Loading…</div>
       </div>
@@ -91,7 +91,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '16px 12px' : '32px 24px' }}>
+    <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Contacts</button>
         <button onClick={() => onEdit?.(detail)} className="btn-ghost"><Edit2 size={14} /> Edit company</button>

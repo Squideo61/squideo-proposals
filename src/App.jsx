@@ -11,8 +11,12 @@ import { PublicClientShell } from './components/PublicClientShell.jsx';
 import { RevisionShell } from './components/revision/RevisionShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
 import { NotificationBell } from './components/NotificationBell.jsx';
+import { CrmTopBar } from './components/crm/CrmTopBar.jsx';
 
 const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: m[name] })));
+
+// Focused editor / public-facing views that should NOT show the CRM top bar.
+const NO_TOPBAR_VIEWS = new Set(['builder', 'template-builder', 'client']);
 
 const ListView = lazyNamed(() => import('./components/ListView.jsx'), 'ListView');
 const BuilderView = lazyNamed(() => import('./components/BuilderView.jsx'), 'BuilderView');
@@ -264,6 +268,14 @@ function AppShell() {
 
   return (
     <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
+      {!NO_TOPBAR_VIEWS.has(view) && (
+        <CrmTopBar
+          view={view}
+          navigate={navigate}
+          onCreate={createNew}
+          onManageAccount={() => setModal({ type: 'account' })}
+        />
+      )}
       <Suspense fallback={<ViewFallback />}>
       {view === 'list' && (
         <ListView
@@ -272,17 +284,6 @@ function AppShell() {
           onPreview={(id) => navigate('client', id)}
           onDelete={deleteProposal}
           onDuplicate={duplicateProposal}
-          onManageAdmin={() => navigate('admin', 'users')}
-          onManageAccount={() => setModal({ type: 'account' })}
-          onManageTemplates={() => navigate('templates')}
-          onManageLeaderboard={() => navigate('leaderboard')}
-          onManagePartnerCredits={() => navigate('partner-credits')}
-          onManagePipeline={() => navigate('pipeline')}
-          onManageContacts={() => navigate('contacts')}
-          onManageTasks={() => navigate('tasks')}
-          onManageEmails={() => navigate('emails')}
-          onManageQuoteRequests={() => navigate('quote-requests')}
-          onManageRevisions={() => navigate('revisions')}
         />
       )}
       {view === 'admin' && (

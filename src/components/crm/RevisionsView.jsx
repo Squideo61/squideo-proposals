@@ -60,7 +60,7 @@ export function RevisionsView({ onBack }) {
   const projects = state.revisions || [];
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: isMobile ? '16px 12px' : '32px 24px' }}>
+    <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {onBack && <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>}
@@ -209,7 +209,7 @@ function ProjectDetail({ projectId, onBack }) {
   }
 
   if (!detail) {
-    return <div style={{ maxWidth: 900, margin: '0 auto', padding: 32, color: BRAND.muted }}>Loading…</div>;
+    return <div style={{ padding: 32, color: BRAND.muted }}>Loading…</div>;
   }
 
   const videos = detail.videos || [];
@@ -221,7 +221,7 @@ function ProjectDetail({ projectId, onBack }) {
   const viewers = detail.viewers || [];
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: isMobile ? '16px 12px' : '32px 24px' }}>
+    <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>

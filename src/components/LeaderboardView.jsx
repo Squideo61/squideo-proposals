@@ -94,7 +94,7 @@ export function LeaderboardView({ onBack }) {
   const isStale = board.range && board.range !== range;
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px' : '40px 24px' }}>
+    <div style={{ padding: isMobile ? '20px 16px' : '40px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>

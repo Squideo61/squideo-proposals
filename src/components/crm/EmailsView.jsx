@@ -120,7 +120,7 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   };
 
   return (
-    <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '14px 10px' : '28px 24px' }}>
+    <div style={{ padding: isMobile ? '14px 10px' : '28px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
