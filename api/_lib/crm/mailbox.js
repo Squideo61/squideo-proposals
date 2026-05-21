@@ -29,6 +29,7 @@ const PAGE_SIZE = 20;
 // filter; 'deals' and 'triage' are DB-backed and never reach this module.
 const FOLDER_LABELS = {
   inbox: 'INBOX',
+  unread: 'UNREAD',
   sent: 'SENT',
   drafts: 'DRAFT',
   starred: 'STARRED',
@@ -249,14 +250,19 @@ async function modifyThreads(req, res, accessToken) {
 // GET /api/crm/gmail/labels — unread/total counts for the sidebar badges.
 async function listLabelCounts(req, res, accessToken) {
   if (req.method !== 'GET') return res.status(405).end();
-  const wanted = ['INBOX', 'SPAM', 'DRAFT'];
+  const wanted = ['INBOX', 'UNREAD', 'SPAM', 'DRAFT'];
   const out = {};
   await Promise.all(wanted.map(async (lbl) => {
     try {
       const j = await (await gmailFetch(accessToken, `/labels/${lbl}`)).json();
-      out[lbl] = { unread: j.messagesUnread ?? 0, total: j.messagesTotal ?? 0 };
+      out[lbl] = {
+        unread: j.messagesUnread ?? 0,
+        total: j.messagesTotal ?? 0,
+        threadsUnread: j.threadsUnread ?? 0,
+        threadsTotal: j.threadsTotal ?? 0,
+      };
     } catch {
-      out[lbl] = { unread: 0, total: 0 };
+      out[lbl] = { unread: 0, total: 0, threadsUnread: 0, threadsTotal: 0 };
     }
   }));
   return res.status(200).json(out);

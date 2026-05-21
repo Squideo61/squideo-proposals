@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft, Mail, Inbox, Send, FileText, Star, ShieldAlert, Trash2, Archive,
   Search, X, RefreshCw, MailOpen, Reply, Forward, Paperclip, Download,
-  Briefcase, PenSquare, ExternalLink, ChevronDown,
+  Briefcase, PenSquare, ExternalLink, ChevronDown, CircleDot,
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
@@ -17,6 +17,7 @@ const FOLDERS = [
   { id: 'deals',   label: 'Deals',    icon: Briefcase,   kind: 'deals'  },
   { id: 'triage',  label: 'Triage',   icon: Inbox,       kind: 'triage' },
   { id: 'inbox',   label: 'Inbox',    icon: Mail,        kind: 'gmail'  },
+  { id: 'unread',  label: 'Unread',   icon: CircleDot,   kind: 'gmail'  },
   { id: 'sent',    label: 'Sent',     icon: Send,        kind: 'gmail'  },
   { id: 'drafts',  label: 'Drafts',   icon: FileText,    kind: 'gmail'  },
   { id: 'starred', label: 'Starred',  icon: Star,        kind: 'gmail'  },
@@ -100,8 +101,9 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   const triageBadge = (state.triage || []).length;
   const badgeFor = (f) => {
     if (f.id === 'triage') return triageBadge || null;
-    if (f.id === 'inbox') return state.mailboxLabels?.INBOX?.unread || null;
-    if (f.id === 'spam') return state.mailboxLabels?.SPAM?.unread || null;
+    if (f.id === 'inbox') return state.mailboxLabels?.INBOX?.threadsUnread || null;
+    if (f.id === 'unread') return state.mailboxLabels?.UNREAD?.threadsTotal || null;
+    if (f.id === 'spam') return state.mailboxLabels?.SPAM?.threadsUnread || null;
     return null;
   };
 
@@ -382,6 +384,9 @@ function GmailThreadRow({ row, folder, first, onOpen, onAction }) {
       </button>
       <span style={{ flexShrink: 0, fontSize: 11, color: BRAND.muted, width: 64, textAlign: 'right' }}>{formatRelativeTime(row.date)}</span>
       <div style={{ flexShrink: 0, display: 'flex', gap: 2 }}>
+        {row.unread && (
+          <button onClick={() => onAction('markRead', row.id)} className="btn-icon" title="Mark read" aria-label="Mark read"><MailOpen size={14} /></button>
+        )}
         {folder !== 'trash' && folder !== 'spam' && folder !== 'sent' && folder !== 'drafts' && (
           <button onClick={() => onAction('archive', row.id)} className="btn-icon" title="Archive" aria-label="Archive"><Archive size={14} /></button>
         )}

@@ -1489,7 +1489,8 @@ export function StoreProvider({ children }) {
         (action === 'spam'     && folder !== 'spam') ||
         (action === 'unspam'   && folder === 'spam') ||
         (action === 'untrash'  && folder === 'trash') ||
-        (action === 'unstar'   && folder === 'starred')
+        (action === 'unstar'   && folder === 'starred') ||
+        (action === 'markRead' && folder === 'unread')
       );
       setState(s => {
         const f = s.mailbox?.[folder];
@@ -1507,6 +1508,7 @@ export function StoreProvider({ children }) {
         return { ...s, mailbox: { ...s.mailbox, [folder]: { ...f, rows } } };
       });
       return api.post('/api/crm/gmail/modify', { action, ids: idList })
+        .then((r) => { actions.loadMailboxLabels(); return r; }) // keep sidebar counts honest
         .catch((err) => {
           // Re-sync the folder so the optimistic change doesn't stick on error.
           actions.loadMailboxFolder(folder);
