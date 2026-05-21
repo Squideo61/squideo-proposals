@@ -62,7 +62,7 @@ function LinkedView({ linked, gmailThreadId, counterpartyEmail, onOpenDeal }) {
         ))}
       </div>
 
-      {detail && <DealDetailBlock detail={detail} onOpenDeal={onOpenDeal} />}
+      {detail && <DealDetailBlock detail={detail} gmailThreadId={gmailThreadId} onOpenDeal={onOpenDeal} />}
 
       <AttachPicker
         gmailThreadId={gmailThreadId}
@@ -124,13 +124,40 @@ function UnlinkedView({ gmailThreadId, counterpartyEmail }) {
 
 // ---- Deal detail (when linked) ----
 
-function DealDetailBlock({ detail, onOpenDeal }) {
+function DealDetailBlock({ detail, gmailThreadId, onOpenDeal }) {
   const openTasks = (detail.tasks || []).filter(t => !t.doneAt).slice(0, 3);
   const timeline = useMemo(() => {
     const events = (detail.events || []).map(e => ({ kind: 'event', when: e.occurredAt, data: e }));
     const emails = (detail.emails || []).map(em => ({ kind: 'email', when: em.sentAt, data: em }));
     return [...events, ...emails].sort((a, b) => new Date(b.when) - new Date(a.when)).slice(0, 5);
   }, [detail]);
+
+  // Cc'd addresses on inbound messages of the currently-viewed thread that
+  // aren't already a contact on this deal — drives the "New on this thread"
+  // add-as-contact prompt. Mirrors the Chrome extension's sidebar.
+  const unknownCcs = useMemo(() => {
+    const linked = new Set();
+    if (detail.primaryContact?.email) linked.add(detail.primaryContact.email.toLowerCase());
+    for (const sc of (detail.secondaryContacts || [])) {
+      if (sc.email) linked.add(sc.email.toLowerCase());
+    }
+    const seen = new Set();
+    const out = [];
+    for (const em of (detail.emails || [])) {
+      if (gmailThreadId && em.gmailThreadId !== gmailThreadId) continue;
+      if (em.direction !== 'inbound') continue;
+      for (const raw of (em.ccEmails || [])) {
+        if (!raw || typeof raw !== 'string') continue;
+        const lower = raw.trim().toLowerCase();
+        if (!lower || seen.has(lower) || linked.has(lower)) continue;
+        seen.add(lower);
+        out.push(raw.trim());
+      }
+    }
+    return out;
+  }, [detail, gmailThreadId]);
+
+  const proposals = (detail.proposals || []).slice(0, 3);
 
   return (
     <>
@@ -143,8 +170,12 @@ function DealDetailBlock({ detail, onOpenDeal }) {
         </button>
       </div>
 
+      {unknownCcs.length > 0 && (
+        <CcSuggestions dealId={detail.id} addresses={unknownCcs} defaultCompanyId={detail.companyId || null} />
+      )}
+
       <Label>Open tasks</Label>
-      <div style={{ margin: '6px 0 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ margin: '6px 0 6px', display: 'flex', flexDirection: 'column', gap: 6 }}>
         {openTasks.length === 0 ? <Muted>No open tasks.</Muted> : openTasks.map(t => (
           <div key={t.id} style={{ display: 'flex', gap: 6, fontSize: 12.5 }}>
             <span style={{ flexShrink: 0, width: 12, height: 12, marginTop: 2, border: '1.5px solid ' + BRAND.muted, borderRadius: 3 }} />
@@ -154,6 +185,9 @@ function DealDetailBlock({ detail, onOpenDeal }) {
             </div>
           </div>
         ))}
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <AddTaskForm dealId={detail.id} />
       </div>
 
       {timeline.length > 0 && (
@@ -166,6 +200,112 @@ function DealDetailBlock({ detail, onOpenDeal }) {
           </div>
         </>
       )}
+
+      {proposals.length > 0 && (
+        <>
+          <Label>Linked proposals</Label>
+          <div style={{ margin: '6px 0 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {proposals.map(p => (
+              <div key={p.id} style={{ fontSize: 12 }}>
+                {p.contactBusinessName || p.clientName || '(untitled)'}
+                {p.basePrice != null && <span style={{ color: BRAND.muted }}> — £{Number(p.basePrice).toLocaleString('en-GB')}</span>}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+// Inline "+ Add task" — the in-app twin of the extension's quick task form.
+// createTask threads the new row into state.dealDetail[dealId].tasks, so the
+// open-tasks list above refreshes without a manual reload.
+function AddTaskForm({ dealId }) {
+  const { actions, showMsg } = useStore();
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState('');
+  const [dueAt, setDueAt] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!title.trim()) return;
+    setBusy(true);
+    try {
+      await actions.createTask({ dealId, title: title.trim(), dueAt: dueAt ? new Date(dueAt).toISOString() : undefined });
+      setTitle(''); setDueAt(''); setOpen(false);
+    } catch (err) {
+      showMsg(err?.message || 'Could not add task');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return <button onClick={() => setOpen(true)} className="btn-ghost" style={{ fontSize: 12 }}>+ Add task</button>;
+  }
+
+  return (
+    <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <input autoFocus className="input" value={title} onChange={e => setTitle(e.target.value)} placeholder="Task title" required style={{ fontSize: 12 }} />
+      <input type="date" className="input" value={dueAt} onChange={e => setDueAt(e.target.value)} style={{ fontSize: 12 }} />
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button type="submit" disabled={busy || !title.trim()} className="btn" style={{ flex: 1, fontSize: 12, justifyContent: 'center' }}>{busy ? 'Adding…' : 'Add'}</button>
+        <button type="button" onClick={() => { setOpen(false); setTitle(''); setDueAt(''); }} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+// "New on this thread" — Cc'd addresses not yet on the deal, with a one-tap
+// add (and optional name). addDealContact upserts and updates secondaryContacts
+// in place, so an added address drops out of this list automatically.
+function CcSuggestions({ dealId, addresses, defaultCompanyId }) {
+  const { actions, showMsg } = useStore();
+  const [expanded, setExpanded] = useState(null);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(null);
+
+  const add = async (email, withName = null) => {
+    setBusy(email);
+    try {
+      await actions.addDealContact(dealId, { email, name: withName || null, companyId: defaultCompanyId || null });
+      setExpanded(null); setName('');
+    } catch (e) {
+      showMsg(e?.message || 'Could not add contact');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <>
+      <Label>New on this thread</Label>
+      <Muted style={{ margin: '4px 0 8px' }}>Cc'd in a reply but not yet a contact on this deal.</Muted>
+      <div style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {addresses.map((email) => {
+          const isOpen = expanded === email;
+          if (!isOpen) {
+            return (
+              <div key={email} style={ccRow}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</span>
+                <button onClick={() => setExpanded(email)} disabled={busy === email} className="btn" style={{ fontSize: 11, padding: '3px 8px' }} title="Add as a contact on this deal">+ Add</button>
+              </div>
+            );
+          }
+          return (
+            <div key={email} style={{ ...ccRow, flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+              <div style={{ fontSize: 12, fontWeight: 600 }}>{email}</div>
+              <input autoFocus className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional)" style={{ fontSize: 12 }} />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={() => add(email, name.trim() || null)} disabled={busy === email} className="btn" style={{ flex: 1, fontSize: 12, justifyContent: 'center' }}>{busy === email ? 'Adding…' : 'Add to deal'}</button>
+                <button onClick={() => { setExpanded(null); setName(''); }} disabled={busy === email} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </>
   );
 }
@@ -296,6 +436,10 @@ const pickerRow = {
   display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', marginTop: 4, width: '100%',
   background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, fontSize: 12,
   cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', color: BRAND.ink,
+};
+const ccRow = {
+  display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px',
+  background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 6,
 };
 const linkBtn = {
   background: 'none', border: 'none', padding: 0, margin: 0, cursor: 'pointer',
