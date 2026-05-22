@@ -127,7 +127,7 @@ export function EmailsView({ folder = 'inbox', onBack, onOpenDeal, onSelectFolde
     try { localStorage.setItem(DENSITY_KEY, d); } catch { /* ignore */ }
   };
 
-  useEffect(() => { setSearch(''); setAppliedQuery(''); setUnreadOnly(false); setOpenRef(null); }, [active]);
+  useEffect(() => { setSearch(''); setAppliedQuery(''); setOpenRef(null); }, [active]);
 
   useEffect(() => {
     if (def.kind === 'deals') {
@@ -135,9 +135,22 @@ export function EmailsView({ folder = 'inbox', onBack, onOpenDeal, onSelectFolde
     } else if (def.kind === 'triage') {
       actions.refreshTriage();
     } else if (def.kind === 'gmail' && connected) {
-      if (!state.mailbox?.[active]?.loaded) actions.loadMailboxFolder(active);
+      if (!state.mailbox?.[active]?.loaded) actions.loadMailboxFolder(active, { unread: unreadOnly });
     }
   }, [active, connected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live search: search the mailbox as the user types (Gmail folders), debounced
+  // so we don't hit Gmail on every keystroke. Enter still triggers immediately.
+  useEffect(() => {
+    if (def.kind !== 'gmail' || !connected) return;
+    const q = search.trim();
+    if (q === appliedQuery) return;
+    const t = setTimeout(() => {
+      setAppliedQuery(q);
+      actions.loadMailboxFolder(active, { q, unread: unreadOnly });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [search, active, connected, def.kind, appliedQuery, unreadOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if (connected) actions.loadMailboxLabels(); }, [connected]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -327,12 +340,12 @@ export function EmailsView({ folder = 'inbox', onBack, onOpenDeal, onSelectFolde
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') runGmailSearch(); }}
-                placeholder={def.kind === 'gmail' ? 'Search Gmail… (Enter)' : 'Filter ' + def.label.toLowerCase() + '…'}
+                placeholder={def.kind === 'gmail' ? 'Search Gmail…' : 'Filter ' + def.label.toLowerCase() + '…'}
                 style={{ paddingLeft: 34, paddingRight: search ? 34 : 12 }}
               />
               {search && (
                 <button
-                  onClick={() => { setSearch(''); if (def.kind === 'gmail' && appliedQuery) { setAppliedQuery(''); actions.loadMailboxFolder(active); } }}
+                  onClick={() => { setSearch(''); if (def.kind === 'gmail' && appliedQuery) { setAppliedQuery(''); actions.loadMailboxFolder(active, { unread: unreadOnly }); } }}
                   aria-label="Clear search"
                   style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: BRAND.muted }}
                 >
