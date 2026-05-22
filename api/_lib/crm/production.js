@@ -14,7 +14,7 @@ import crypto from 'node:crypto';
 import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { serialiseDeal } from './deals.js';
-import { enterProduction } from '../production.js';
+import { enterProduction, ensureProductionSchema } from '../production.js';
 import { isValidStage } from '../dealStage.js';
 import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms } from '../productionStages.js';
 import { getRole } from '../userRoles.js';
@@ -27,6 +27,7 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
   if (!hasPermission(await getRole(user.role), 'production.access')) {
     return res.status(403).json({ error: 'You do not have permission to access production' });
   }
+  await ensureProductionSchema();
 
   // ── Create a project from scratch (and put it straight into production) ────
   // POST /api/crm/production  { title, companyId?, primaryContactId?, producerEmail?, ownerEmail?, value?, stage? }
