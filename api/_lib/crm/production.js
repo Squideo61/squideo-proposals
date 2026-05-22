@@ -15,6 +15,7 @@ import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { serialiseDeal } from './deals.js';
 import { enterProduction } from '../production.js';
+import { isValidStage } from '../dealStage.js';
 import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms } from '../productionStages.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
@@ -25,6 +26,32 @@ const REVISION_PUBLIC_BASE = 'https://app.squideo.com';
 export async function productionRoute(req, res, id, action, user, subaction = null) {
   if (!hasPermission(await getRole(user.role), 'production.access')) {
     return res.status(403).json({ error: 'You do not have permission to access production' });
+  }
+
+  // ── Create a project from scratch (and put it straight into production) ────
+  // POST /api/crm/production  { title, companyId?, primaryContactId?, producerEmail?, ownerEmail?, value?, stage? }
+  // The project IS a deal; a manually-created one defaults to the 'paid' sales
+  // stage (committed work), changeable later via the deal's stage picker.
+  if (!id) {
+    if (req.method !== 'POST') return res.status(405).end();
+    const body = req.body || {};
+    const title = trimOrNull(body.title);
+    if (!title) return res.status(400).json({ error: 'title is required' });
+    const newId = makeId('deal');
+    const stage = isValidStage(body.stage) ? body.stage : 'paid';
+    await sql`
+      INSERT INTO deals (id, title, company_id, primary_contact_id, owner_email, producer_email, stage, value)
+      VALUES (${newId}, ${title}, ${trimOrNull(body.companyId)}, ${trimOrNull(body.primaryContactId)},
+              ${trimOrNull(body.ownerEmail) || user.email}, ${trimOrNull(body.producerEmail)},
+              ${stage}, ${numberOrNull(body.value)})
+    `;
+    await sql`
+      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+      VALUES (${newId}, 'deal_created', ${JSON.stringify({ title, stage, source: 'production-manual' })}, ${user.email || null})
+    `;
+    await enterProduction(newId, { source: 'manual-create', actorEmail: user.email });
+    const row = (await sql`SELECT * FROM deals WHERE id = ${newId}`)[0];
+    return res.status(201).json(serialiseDeal(row));
   }
 
   // ── Video-scoped: /production/video/:videoId[/send-for-review] ─────────────

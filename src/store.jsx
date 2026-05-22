@@ -921,6 +921,13 @@ export function StoreProvider({ children }) {
     loadProduction() {
       return actions.refreshDeals();
     },
+    // Create a project from scratch and drop it straight onto the board.
+    createProject(input) {
+      return api.post('/api/crm/production', input).then((deal) => {
+        if (deal && deal.id) setState(s => ({ ...s, deals: { ...s.deals, [deal.id]: deal } }));
+        return deal;
+      });
+    },
     moveProjectStage(dealId, phase, stage) {
       const patch = { productionPhase: phase, productionStage: stage, productionStageChangedAt: new Date().toISOString() };
       return mutate(

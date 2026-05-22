@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronDown, Clapperboard, Film, CalendarClock } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, Clapperboard, Film, CalendarClock, Plus } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
+import { Modal } from '../ui.jsx';
+import { XeroContactPicker } from './XeroContactPicker.jsx';
+import { api } from '../../api.js';
 import {
   PRODUCTION_PHASES, PHASE_BY_ID, PAYMENT_TERMS_LABEL,
 } from '../../lib/productionStages.js';
@@ -19,6 +22,7 @@ export function ProductionView({ onBack, onOpenDeal }) {
 
   useEffect(() => { actions.loadProduction(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [creating, setCreating] = useState(false);
   const [activePhase, setActivePhase] = useState(() => {
     try { return localStorage.getItem(PHASE_STORAGE_KEY) || PRODUCTION_PHASES[0].id; } catch { return PRODUCTION_PHASES[0].id; }
   });
@@ -86,7 +90,7 @@ export function ProductionView({ onBack, onOpenDeal }) {
     <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
+          {onBack && <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>}
           <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
             <Clapperboard size={22} color={BRAND.blue} /> Production
           </h1>
@@ -98,6 +102,7 @@ export function ProductionView({ onBack, onOpenDeal }) {
           />
           <span style={{ fontSize: 13, color: BRAND.muted }}>{filtered.length} projects</span>
         </div>
+        <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New project</button>
       </header>
 
       {/* Phase tabs — also drop targets for cross-phase moves. */}
@@ -126,6 +131,13 @@ export function ProductionView({ onBack, onOpenDeal }) {
           />
         ))}
       </div>
+
+      {creating && (
+        <NewProjectModal
+          onClose={() => setCreating(false)}
+          onCreated={(deal) => { setCreating(false); if (deal) onOpenDeal(deal.id); }}
+        />
+      )}
     </div>
   );
 }
@@ -335,4 +347,95 @@ function formatDate(d) {
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return String(d);
   return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+// Create a project from scratch and assign it to a customer. Mirrors the
+// pipeline's "New deal" modal (Xero contact → company), but the result lands
+// straight on the production board with one video.
+function NewProjectModal({ onClose, onCreated }) {
+  const { state, actions, showMsg } = useStore();
+  const [title, setTitle] = useState('');
+  const [xeroContact, setXeroContact] = useState(null);
+  const [primaryContactId, setPrimaryContactId] = useState('');
+  const [producerEmail, setProducerEmail] = useState('');
+  const [value, setValue] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const contacts = Object.values(state.contacts || {});
+  const memberOptions = Object.entries(state.users || {})
+    .map(([email, u]) => ({ email, name: u.name || email }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  function handleXeroPick(c) {
+    setXeroContact(c);
+    if (c && !title.trim()) setTitle(c.name);
+  }
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!title.trim() || submitting) return;
+    setSubmitting(true);
+    try {
+      // Resolve the picked Xero contact → local company (find or create + link).
+      let companyId = null;
+      if (xeroContact) {
+        const company = await api.post('/api/crm/companies/from-xero-contact', { xeroContactId: xeroContact.id });
+        companyId = company.id;
+      }
+      const deal = await actions.createProject({
+        title: title.trim(),
+        companyId,
+        primaryContactId: primaryContactId || null,
+        producerEmail: producerEmail || null,
+        value: value === '' ? null : Number(value),
+      });
+      onCreated?.(deal);
+    } catch (err) {
+      showMsg?.('Failed to create project: ' + (err?.message || 'unknown error'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>New project</h2>
+      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <label style={{ fontSize: 13, fontWeight: 500 }}>
+          Customer (Xero contact)
+          <div style={{ marginTop: 4 }}>
+            <XeroContactPicker value={xeroContact} onChange={handleXeroPick} placeholder="Search Xero contacts…" />
+          </div>
+        </label>
+        <label style={{ fontSize: 13, fontWeight: 500 }}>
+          Project title
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Acme Corp — Brand explainer" style={{ marginTop: 4 }} required />
+        </label>
+        <label style={{ fontSize: 13, fontWeight: 500 }}>
+          Primary contact (optional)
+          <select className="input" value={primaryContactId} onChange={(e) => setPrimaryContactId(e.target.value)} style={{ marginTop: 4 }}>
+            <option value="">—</option>
+            {contacts.map(c => <option key={c.id} value={c.id}>{c.name || c.email}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: 13, fontWeight: 500 }}>
+          Producer (optional)
+          <select className="input" value={producerEmail} onChange={(e) => setProducerEmail(e.target.value)} style={{ marginTop: 4 }}>
+            <option value="">— Unassigned —</option>
+            {memberOptions.map(m => <option key={m.email} value={m.email}>{m.name}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: 13, fontWeight: 500 }}>
+          Value (£, ex VAT, optional)
+          <input className="input" type="number" min="0" step="0.01" value={value} onChange={(e) => setValue(e.target.value)} style={{ marginTop: 4 }} />
+        </label>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+          <button type="submit" className="btn" disabled={!title.trim() || submitting}>
+            {submitting ? 'Creating…' : 'Create project'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
 }
