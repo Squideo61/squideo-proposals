@@ -913,54 +913,79 @@ export function StoreProvider({ children }) {
       );
     },
 
-    // ---------- Production board ----------
-    // The board reads deals from state.deals (filtered to those in production),
-    // so loading is just refreshing deals; moving a card patches the deal like
-    // moveDealStage. Video/credit mutations reload the deal detail to keep the
-    // nested videos list in sync (same approach as the revisions actions).
-    loadProduction() {
-      return actions.refreshDeals();
+    // ---------- Production board (videos move through stages) ----------
+    // The board + Projects overview both read state.productionVideos (every
+    // video joined to its project). The per-video page reads videoDetail.
+    loadProductionVideos() {
+      return api.get('/api/crm/production')
+        .then((list) => { setState(s => ({ ...s, productionVideos: Array.isArray(list) ? list : [] })); return list; })
+        .catch(() => {});
     },
-    // Create a project from scratch and drop it straight onto the board.
+    loadVideo(videoId) {
+      return api.get('/api/crm/production/video/' + encodeURIComponent(videoId))
+        .then((video) => {
+          if (!video || video.error) return null;
+          setState(s => ({ ...s, videoDetail: { ...s.videoDetail, [videoId]: video } }));
+          return video;
+        }).catch(() => null);
+    },
+    // Merge a server video row into every cache that holds it (board list,
+    // per-video detail, and the parent deal's nested videos).
+    _mergeVideo(video) {
+      if (!video || !video.id) return;
+      setState(s => {
+        const list = s.productionVideos || [];
+        const productionVideos = list.some(v => v.id === video.id)
+          ? list.map(v => (v.id === video.id ? { ...v, ...video } : v))
+          : [...list, video];
+        const videoDetail = { ...s.videoDetail, [video.id]: { ...(s.videoDetail?.[video.id] || {}), ...video } };
+        let dealDetail = s.dealDetail;
+        const detail = video.dealId && s.dealDetail?.[video.dealId];
+        if (detail?.videos) {
+          dealDetail = { ...s.dealDetail, [video.dealId]: { ...detail, videos: detail.videos.map(v => (v.id === video.id ? { ...v, ...video } : v)) } };
+        }
+        return { ...s, productionVideos, videoDetail, dealDetail };
+      });
+    },
+    moveVideoStage(videoId, phase, stage) {
+      let snapshot = null;
+      setState(s => {
+        snapshot = s.productionVideos;
+        const productionVideos = (s.productionVideos || []).map(v =>
+          v.id === videoId ? { ...v, productionPhase: phase, productionStage: stage, productionStageChangedAt: new Date().toISOString() } : v);
+        return { ...s, productionVideos };
+      });
+      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/move', { phase, stage })
+        .then((video) => { actions._mergeVideo(video); return video; })
+        .catch(() => { setState(s => ({ ...s, productionVideos: snapshot ?? s.productionVideos })); showMsg('Failed to move video'); });
+    },
+    updateVideo(videoId, fields) {
+      return api.patch('/api/crm/production/video/' + encodeURIComponent(videoId), fields)
+        .then((video) => { actions._mergeVideo(video); return video; })
+        .catch((err) => { showMsg('Failed to update video'); throw err; });
+    },
+    // Create a project (deal) from scratch + its first video.
     createProject(input) {
       return api.post('/api/crm/production', input).then((deal) => {
         if (deal && deal.id) setState(s => ({ ...s, deals: { ...s.deals, [deal.id]: deal } }));
+        actions.loadProductionVideos();
         return deal;
       });
-    },
-    moveProjectStage(dealId, phase, stage) {
-      const patch = { productionPhase: phase, productionStage: stage, productionStageChangedAt: new Date().toISOString() };
-      return mutate(
-        { kind: 'deal', id: dealId, patch, errorMsg: 'Failed to move project' },
-        () => api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/move', { phase, stage }),
-      );
-    },
-    updateProjectProduction(dealId, fields) {
-      // fields: { producerEmail?, paymentTerms?, deliveryDeadline?, textDirectionDeadline? }
-      return mutate(
-        { kind: 'deal', id: dealId, patch: { ...fields }, errorMsg: 'Failed to update project' },
-        () => api.patch('/api/crm/production/' + encodeURIComponent(dealId), fields),
-      );
     },
     enterProduction(dealId) {
       return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/enter', {})
         .then((deal) => {
           if (deal && deal.id) setState(s => applyOne(s, { kind: 'deal', id: deal.id, patch: deal }));
-          return actions.loadDealDetail(dealId);
+          return Promise.all([actions.loadDealDetail(dealId), actions.loadProductionVideos()]);
         });
     },
     addProjectVideo(dealId, title, { fromCredit = false } = {}) {
       return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/videos', { title, fromCredit })
-        .then((video) => actions.loadDealDetail(dealId).then(() => video));
-    },
-    updateProjectVideo(dealId, videoId, fields) {
-      return api.patch('/api/crm/production/video/' + encodeURIComponent(videoId), fields)
-        .then(() => actions.loadDealDetail(dealId));
+        .then((video) => Promise.all([actions.loadDealDetail(dealId), actions.loadProductionVideos()]).then(() => video));
     },
     deleteProjectVideo(dealId, videoId) {
-      return api.delete('/api/crm/production/video/' + encodeURIComponent(videoId))
-        .then(() => actions.loadDealDetail(dealId))
-        .catch(() => actions.loadDealDetail(dealId));
+      const done = () => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadProductionVideos()]);
+      return api.delete('/api/crm/production/video/' + encodeURIComponent(videoId)).then(done).catch(done);
     },
     addProjectCredits(dealId, delta) {
       return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/credits', { delta })
@@ -976,7 +1001,7 @@ export function StoreProvider({ children }) {
     },
     sendVideoForReview(dealId, videoId) {
       return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/send-for-review', {})
-        .then((resp) => actions.loadDealDetail(dealId).then(() => resp));
+        .then((resp) => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadVideo(videoId)]).then(() => resp));
     },
     createContact(input) {
       return api.post('/api/crm/contacts', input).then((c) => {

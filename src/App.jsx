@@ -39,6 +39,8 @@ const XeroDuplicatesView = lazyNamed(() => import('./components/crm/XeroDuplicat
 const RevisionsView = lazyNamed(() => import('./components/crm/RevisionsView.jsx'), 'RevisionsView');
 const ProductionView = lazyNamed(() => import('./components/crm/ProductionView.jsx'), 'ProductionView');
 const ProjectDetailView = lazyNamed(() => import('./components/crm/ProjectDetailView.jsx'), 'ProjectDetailView');
+const VideoDetailView = lazyNamed(() => import('./components/crm/VideoDetailView.jsx'), 'VideoDetailView');
+const ProjectsOverviewView = lazyNamed(() => import('./components/crm/ProjectsOverviewView.jsx'), 'ProjectsOverviewView');
 
 function ViewFallback() {
   return (
@@ -268,16 +270,16 @@ function AppShell() {
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <Suspense fallback={<ViewFallback />}>
-          {view === 'project' && activeId ? (
-            <ProjectDetailView
-              dealId={activeId}
-              onBack={() => navigate('production')}
-              onOpenFullDeal={null}
-            />
+          {view === 'video' && activeId ? (
+            <VideoDetailView videoId={activeId} onBack={() => navigate('production')} onOpenProject={(id) => navigate('project', id)} />
+          ) : view === 'project' && activeId ? (
+            <ProjectDetailView dealId={activeId} onBack={() => navigate('production')} onOpenFullDeal={null} onOpenVideo={(id) => navigate('video', id)} />
+          ) : view === 'projects' ? (
+            <ProjectsOverviewView onBack={() => navigate('production')} onOpenProject={(id) => navigate('project', id)} />
           ) : view === 'revisions' ? (
             <RevisionsView onBack={() => navigate('production')} />
           ) : (
-            <ProductionView onBack={null} onOpenDeal={(id) => navigate('project', id)} />
+            <ProductionView onBack={null} onOpenVideo={(id) => navigate('video', id)} onOpenProject={(id) => navigate('project', id)} onOpenProjects={() => navigate('projects')} />
           )}
         </Suspense>
         <Toast msg={toast} />
@@ -325,6 +327,7 @@ function AppShell() {
           onBack={() => navigate('pipeline')}
           onOpenProposal={(id) => navigate('builder', id)}
           onCreateProposal={createProposalForDeal}
+          onOpenVideo={(id) => navigate('video', id)}
         />
       )}
       {view === 'contacts' && (
@@ -378,7 +381,15 @@ function AppShell() {
       {view === 'production' && (
         <ProductionView
           onBack={() => navigate('list')}
-          onOpenDeal={(id) => navigate('project', id)}
+          onOpenVideo={(id) => navigate('video', id)}
+          onOpenProject={(id) => navigate('project', id)}
+          onOpenProjects={() => navigate('projects')}
+        />
+      )}
+      {view === 'projects' && (
+        <ProjectsOverviewView
+          onBack={() => navigate('production')}
+          onOpenProject={(id) => navigate('project', id)}
         />
       )}
       {view === 'project' && activeId && (
@@ -386,6 +397,14 @@ function AppShell() {
           dealId={activeId}
           onBack={() => navigate('production')}
           onOpenFullDeal={(id) => navigate('deal', id)}
+          onOpenVideo={(id) => navigate('video', id)}
+        />
+      )}
+      {view === 'video' && activeId && (
+        <VideoDetailView
+          videoId={activeId}
+          onBack={() => navigate('production')}
+          onOpenProject={(id) => navigate('project', id)}
         />
       )}
       {view === 'leaderboard' && (

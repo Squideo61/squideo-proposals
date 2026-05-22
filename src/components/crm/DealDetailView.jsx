@@ -16,7 +16,7 @@ import { ProductionPanel } from './ProductionPanel.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
-export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposal }) {
+export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposal, onOpenVideo }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
@@ -184,7 +184,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         )}
       </div>
 
-      <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} isMobile={isMobile} />
+      <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} isMobile={isMobile} onOpenVideo={onOpenVideo} />
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
         <Card

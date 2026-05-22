@@ -9,7 +9,7 @@ import { ProductionPanel } from './ProductionPanel.jsx';
 // page (sales pipeline, proposals, emails…), this shows just the production
 // essentials — customer, the Production controls, and the videos — with an
 // "Open full deal" escape hatch back to the CRM record.
-export function ProjectDetailView({ dealId, onBack, onOpenFullDeal }) {
+export function ProjectDetailView({ dealId, onBack, onOpenFullDeal, onOpenVideo }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
 
@@ -53,7 +53,7 @@ export function ProjectDetailView({ dealId, onBack, onOpenFullDeal }) {
         </div>
       </div>
 
-      <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} isMobile={isMobile} />
+      <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} isMobile={isMobile} onOpenVideo={onOpenVideo} />
     </div>
   );
 }

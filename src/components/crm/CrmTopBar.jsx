@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Clapperboard, CheckSquare, Coins, FileText, KanbanSquare, LayoutDashboard, Mail, MailQuestion, PoundSterling, Settings, TrendingUp, Trophy, UserCog } from 'lucide-react';
+import { ChevronDown, Clapperboard, CheckSquare, Coins, FileText, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, PoundSterling, Settings, TrendingUp, Trophy, UserCog } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -64,9 +64,10 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
     {
       key: 'projects',
       label: 'Projects',
-      views: ['production', 'revisions', 'partner-credits', 'partner-credit-detail'],
+      views: ['production', 'projects', 'project', 'video', 'revisions', 'partner-credits', 'partner-credit-detail'],
       items: [
-        ...(canProduction ? [{ label: 'Production', icon: KanbanSquare, go: () => navigate('production') }] : []),
+        ...(canProduction ? [{ label: 'Production board', icon: KanbanSquare, go: () => navigate('production') }] : []),
+        ...(canProduction ? [{ label: 'Projects', icon: LayoutGrid, go: () => navigate('projects') }] : []),
         ...(canRevisions ? [{ label: 'Revisions', icon: Clapperboard, go: () => navigate('revisions') }] : []),
         { label: 'Partner Credits', icon: Coins, go: () => navigate('partner-credits') },
       ],

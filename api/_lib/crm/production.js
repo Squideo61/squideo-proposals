@@ -1,27 +1,38 @@
-// Production board API — moving paid deals (now "projects") through the
-// production workflow, plus their videos and pre-paid credit balance. Routed
-// from api/crm/[...slug].js as `case 'production'`.
+// Production board API. VIDEOS move through the board; a project (deal) is the
+// container that groups a client's videos. Routed from api/crm/[...slug].js as
+// `case 'production'`.
 //
-//   POST   /api/crm/production/:dealId/move      { phase, stage }   — move on the board
-//   POST   /api/crm/production/:dealId/enter                        — manual "Add to production"
-//   POST   /api/crm/production/:dealId/credits   { delta }          — adjust credit balance
+//   GET    /api/crm/production                     — all videos for the board (joined to project + customer)
+//   POST   /api/crm/production   { title, companyId?, ... }   — create a project (deal) + first video
+//   POST   /api/crm/production/:dealId/enter                  — manual "Add to production"
+//   POST   /api/crm/production/:dealId/credits   { delta }    — adjust the project credit balance
 //   POST   /api/crm/production/:dealId/videos    { title?, fromCredit? } — add a video
-//   PATCH  /api/crm/production/:dealId           { producerEmail?, paymentTerms?, deliveryDeadline?, textDirectionDeadline? }
-//   PATCH  /api/crm/production/video/:videoId    { title?, status?, sortOrder? }
+//   GET    /api/crm/production/video/:videoId                 — one video + project context
+//   POST   /api/crm/production/video/:videoId/move  { phase, stage }     — move the video on the board
+//   PATCH  /api/crm/production/video/:videoId    { title?, status?, paymentTerms?, videoLength?, deliveryDeadline?, textDirectionDeadline?, producerEmail?, sortOrder? }
 //   DELETE /api/crm/production/video/:videoId
-//   POST   /api/crm/production/video/:videoId/send-for-review       — hand off to Revisions
+//   POST   /api/crm/production/video/:videoId/send-for-review — hand off to Revisions
 import crypto from 'node:crypto';
 import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { serialiseDeal } from './deals.js';
 import { enterProduction, ensureProductionSchema } from '../production.js';
 import { isValidStage } from '../dealStage.js';
-import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms } from '../productionStages.js';
+import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, FIRST_PRODUCTION } from '../productionStages.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
 // Public base for client revision share links (matches RevisionsView.jsx).
 const REVISION_PUBLIC_BASE = 'https://app.squideo.com';
+
+// Board / single-video query: a video joined to its project (deal) + customer.
+const VIDEO_SELECT = (whereSql) => sql`
+  SELECT pv.*, d.title AS project_title, c.name AS company_name
+    FROM project_videos pv
+    JOIN deals d ON d.id = pv.deal_id
+    LEFT JOIN companies c ON c.id = d.company_id
+   ${whereSql}
+`;
 
 export async function productionRoute(req, res, id, action, user, subaction = null) {
   if (!hasPermission(await getRole(user.role), 'production.access')) {
@@ -29,11 +40,24 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
   }
   await ensureProductionSchema();
 
-  // ── Create a project from scratch (and put it straight into production) ────
-  // POST /api/crm/production  { title, companyId?, primaryContactId?, producerEmail?, ownerEmail?, value?, stage? }
-  // The project IS a deal; a manually-created one defaults to the 'paid' sales
-  // stage (committed work), changeable later via the deal's stage picker.
+  // ── Board list + project creation ─────────────────────────────────────────
   if (!id) {
+    // GET: every video on the board (the Projects overview is derived from this
+    // same list client-side, grouping by project).
+    if (req.method === 'GET') {
+      const rows = await sql`
+        SELECT pv.*, d.title AS project_title, c.name AS company_name
+          FROM project_videos pv
+          JOIN deals d ON d.id = pv.deal_id
+          LEFT JOIN companies c ON c.id = d.company_id
+         WHERE pv.production_phase IS NOT NULL
+         ORDER BY pv.sort_order, pv.created_at
+      `;
+      return res.status(200).json(rows.map(serialiseVideo));
+    }
+
+    // POST: create a project (deal) from scratch + its first video. Manually-
+    // created projects default to the 'paid' sales stage (committed work).
     if (req.method !== 'POST') return res.status(405).end();
     const body = req.body || {};
     const title = trimOrNull(body.title);
@@ -55,7 +79,7 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     return res.status(201).json(serialiseDeal(row));
   }
 
-  // ── Video-scoped: /production/video/:videoId[/send-for-review] ─────────────
+  // ── Video-scoped: /production/video/:videoId[/move|/send-for-review] ───────
   if (id === 'video') {
     const videoId = action;
     if (!videoId) return res.status(400).json({ error: 'videoId required' });
@@ -63,6 +87,15 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     if (subaction === 'send-for-review') {
       if (req.method !== 'POST') return res.status(405).end();
       return sendVideoForReview(res, videoId, user);
+    }
+    if (subaction === 'move') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return moveVideo(req, res, videoId, user);
+    }
+    if (req.method === 'GET') {
+      const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
+      if (!row) return res.status(404).json({ error: 'Video not found' });
+      return res.status(200).json(serialiseVideo(row));
     }
     if (req.method === 'PATCH') return updateVideo(req, res, videoId);
     if (req.method === 'DELETE') {
@@ -73,37 +106,10 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     return res.status(405).end();
   }
 
-  // ── Project-scoped: /production/:dealId/... ───────────────────────────────
+  // ── Project-scoped: /production/:dealId/{enter,credits,videos} ─────────────
   const dealId = id;
-  if (!dealId) return res.status(404).json({ error: 'Not found' });
   const deal = (await sql`SELECT id FROM deals WHERE id = ${dealId}`)[0];
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
-
-  // Move on the board (change phase/stage).
-  if (action === 'move') {
-    if (req.method !== 'POST') return res.status(405).end();
-    const { phase, stage } = req.body || {};
-    if (!isValidProductionStage(phase, stage)) return res.status(400).json({ error: 'Invalid phase/stage' });
-    const cur = (await sql`SELECT production_phase, production_stage FROM deals WHERE id = ${dealId}`)[0];
-    if (cur.production_phase === phase && cur.production_stage === stage) {
-      const same = (await sql`SELECT * FROM deals WHERE id = ${dealId}`)[0];
-      return res.status(200).json(serialiseDeal(same));
-    }
-    await sql`
-      UPDATE deals
-         SET production_phase = ${phase}, production_stage = ${stage},
-             production_stage_changed_at = NOW(), last_activity_at = NOW(), updated_at = NOW()
-       WHERE id = ${dealId}
-    `;
-    await sql`
-      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
-      VALUES (${dealId}, 'production_stage_change',
-              ${JSON.stringify({ fromPhase: cur.production_phase, fromStage: cur.production_stage, toPhase: phase, toStage: stage })},
-              ${user.email || null})
-    `;
-    const row = (await sql`SELECT * FROM deals WHERE id = ${dealId}`)[0];
-    return res.status(200).json(serialiseDeal(row));
-  }
 
   // Manual "Add to production" for a paid deal that wasn't auto-added.
   if (action === 'enter') {
@@ -113,7 +119,7 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     return res.status(200).json({ ...serialiseDeal(row), entered: result.entered });
   }
 
-  // Adjust the pre-paid credit balance (+N to add, -N to spend manually).
+  // Adjust the project's pre-paid credit balance (+N to add, -N to spend).
   if (action === 'credits') {
     if (req.method !== 'POST') return res.status(405).end();
     const delta = Math.trunc(Number((req.body || {}).delta));
@@ -127,7 +133,7 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     return res.status(200).json({ ok: true, productionCredits: row.production_credits });
   }
 
-  // Add a video (optionally drawing one from the credit balance).
+  // Add a video (lands at Pre-Production / New Project), optionally from credit.
   if (action === 'videos') {
     if (req.method !== 'POST') return res.status(405).end();
     const body = req.body || {};
@@ -144,40 +150,41 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     }
 
     const vid = makeId('pvid');
-    const [row] = await sql`
-      INSERT INTO project_videos (id, deal_id, title, status, sort_order, created_by)
-      VALUES (${vid}, ${dealId}, ${title}, 'not_started', ${next}, ${user.email || null})
-      RETURNING id, deal_id, title, status, sort_order, revision_video_id, created_at, updated_at
+    await sql`
+      INSERT INTO project_videos
+        (id, deal_id, title, status, sort_order, production_phase, production_stage, production_stage_changed_at, created_by)
+      VALUES
+        (${vid}, ${dealId}, ${title}, 'not_started', ${next}, ${FIRST_PRODUCTION.phase}, ${FIRST_PRODUCTION.stage}, NOW(), ${user.email || null})
     `;
+    const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${vid}`);
     return res.status(201).json(serialiseVideo(row));
   }
 
-  // Update the project's production scheduling fields.
-  if (!action && req.method === 'PATCH') {
-    const body = req.body || {};
-    const cur = (await sql`
-      SELECT producer_email, payment_terms, delivery_deadline, text_direction_deadline, video_length
-        FROM deals WHERE id = ${dealId}
-    `)[0];
-    const producerEmail          = 'producerEmail'          in body ? trimOrNull(body.producerEmail)          : cur.producer_email;
-    const paymentTerms           = 'paymentTerms'           in body ? trimOrNull(body.paymentTerms)           : cur.payment_terms;
-    const deliveryDeadline       = 'deliveryDeadline'       in body ? trimOrNull(body.deliveryDeadline)       : cur.delivery_deadline;
-    const textDirectionDeadline  = 'textDirectionDeadline'  in body ? trimOrNull(body.textDirectionDeadline)  : cur.text_direction_deadline;
-    const videoLength            = 'videoLength'            in body ? trimOrNull(body.videoLength)            : cur.video_length;
-    if (!isValidPaymentTerms(paymentTerms)) return res.status(400).json({ error: 'Invalid payment terms' });
-    await sql`
-      UPDATE deals
-         SET producer_email = ${producerEmail}, payment_terms = ${paymentTerms},
-             delivery_deadline = ${deliveryDeadline}, text_direction_deadline = ${textDirectionDeadline},
-             video_length = ${videoLength},
-             updated_at = NOW()
-       WHERE id = ${dealId}
-    `;
-    const row = (await sql`SELECT * FROM deals WHERE id = ${dealId}`)[0];
-    return res.status(200).json(serialiseDeal(row));
-  }
-
   return res.status(405).end();
+}
+
+// Move a video to a new phase/stage on the board.
+async function moveVideo(req, res, videoId, user) {
+  const { phase, stage } = req.body || {};
+  if (!isValidProductionStage(phase, stage)) return res.status(400).json({ error: 'Invalid phase/stage' });
+  const cur = (await sql`SELECT deal_id, production_phase, production_stage FROM project_videos WHERE id = ${videoId}`)[0];
+  if (!cur) return res.status(404).json({ error: 'Video not found' });
+  if (cur.production_phase !== phase || cur.production_stage !== stage) {
+    await sql`
+      UPDATE project_videos
+         SET production_phase = ${phase}, production_stage = ${stage}, production_stage_changed_at = NOW(), updated_at = NOW()
+       WHERE id = ${videoId}
+    `;
+    await sql`
+      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+      VALUES (${cur.deal_id}, 'video_stage_change',
+              ${JSON.stringify({ videoId, fromPhase: cur.production_phase, fromStage: cur.production_stage, toPhase: phase, toStage: stage })},
+              ${user.email || null})
+    `;
+    await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${cur.deal_id}`;
+  }
+  const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
+  return res.status(200).json(serialiseVideo(row));
 }
 
 async function updateVideo(req, res, videoId) {
@@ -187,13 +194,24 @@ async function updateVideo(req, res, videoId) {
   const title  = 'title'  in body ? (trimOrNull(body.title) || cur.title) : cur.title;
   const status = 'status' in body ? trimOrNull(body.status) : cur.status;
   if (!isValidVideoStatus(status)) return res.status(400).json({ error: 'Invalid status' });
+  const paymentTerms          = 'paymentTerms'          in body ? trimOrNull(body.paymentTerms)          : cur.payment_terms;
+  if (!isValidPaymentTerms(paymentTerms)) return res.status(400).json({ error: 'Invalid payment terms' });
+  const videoLength           = 'videoLength'           in body ? trimOrNull(body.videoLength)           : cur.video_length;
+  const deliveryDeadline      = 'deliveryDeadline'      in body ? trimOrNull(body.deliveryDeadline)      : cur.delivery_deadline;
+  const textDirectionDeadline = 'textDirectionDeadline' in body ? trimOrNull(body.textDirectionDeadline) : cur.text_direction_deadline;
+  const producerEmail         = 'producerEmail'         in body ? trimOrNull(body.producerEmail)         : cur.producer_email;
   const sortRaw = 'sortOrder' in body ? numberOrNull(body.sortOrder) : null;
   const sortOrder = sortRaw == null ? cur.sort_order : Math.trunc(sortRaw);
   await sql`
-    UPDATE project_videos SET title = ${title}, status = ${status}, sort_order = ${sortOrder}, updated_at = NOW()
+    UPDATE project_videos
+       SET title = ${title}, status = ${status}, payment_terms = ${paymentTerms},
+           video_length = ${videoLength}, delivery_deadline = ${deliveryDeadline},
+           text_direction_deadline = ${textDirectionDeadline}, producer_email = ${producerEmail},
+           sort_order = ${sortOrder}, updated_at = NOW()
      WHERE id = ${videoId}
   `;
-  return res.status(200).json(serialiseVideo({ ...cur, title, status, sort_order: sortOrder }));
+  const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
+  return res.status(200).json(serialiseVideo(row));
 }
 
 // Hand a video off to the Revisions (client-review) section: create the deal's
@@ -209,7 +227,6 @@ async function sendVideoForReview(res, videoId, user) {
   `)[0];
   if (!video) return res.status(404).json({ error: 'Video not found' });
 
-  // Ensure a revision project exists for this deal.
   let revProjectId = video.revision_project_id;
   let shareToken = revProjectId
     ? (await sql`SELECT share_token FROM revision_projects WHERE id = ${revProjectId}`)[0]?.share_token || null
@@ -227,7 +244,6 @@ async function sendVideoForReview(res, videoId, user) {
     await sql`UPDATE deals SET revision_project_id = ${revProjectId} WHERE id = ${video.deal_id}`;
   }
 
-  // Ensure a revision video exists and is linked back to this project video.
   let revVideoId = video.revision_video_id;
   if (!revVideoId) {
     const [{ next }] = await sql`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM revision_videos WHERE project_id = ${revProjectId}`;
@@ -250,14 +266,25 @@ async function sendVideoForReview(res, videoId, user) {
 }
 
 export function serialiseVideo(r) {
-  return {
+  const out = {
     id: r.id,
     dealId: r.deal_id,
     title: r.title,
     status: r.status,
+    productionPhase: r.production_phase || null,
+    productionStage: r.production_stage || null,
+    productionStageChangedAt: r.production_stage_changed_at || null,
+    paymentTerms: r.payment_terms || null,
+    videoLength: r.video_length || null,
+    deliveryDeadline: r.delivery_deadline || null,
+    textDirectionDeadline: r.text_direction_deadline || null,
+    producerEmail: r.producer_email || null,
     sortOrder: r.sort_order,
     revisionVideoId: r.revision_video_id || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at || null,
   };
+  if ('project_title' in r) out.projectTitle = r.project_title || null;
+  if ('company_name' in r) out.companyName = r.company_name || null;
+  return out;
 }

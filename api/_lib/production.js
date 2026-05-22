@@ -43,6 +43,27 @@ export async function ensureProductionSchema() {
         )
       `;
       await sql`CREATE INDEX IF NOT EXISTS project_videos_deal_idx ON project_videos(deal_id, sort_order, created_at)`;
+      // Per-video board fields (videos, not projects, move through the board).
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS production_phase TEXT`;
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS production_stage TEXT`;
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS production_stage_changed_at TIMESTAMPTZ`;
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS payment_terms TEXT`;
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS video_length TEXT`;
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS delivery_deadline DATE`;
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS text_direction_deadline DATE`;
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS producer_email TEXT`;
+      await sql`CREATE INDEX IF NOT EXISTS project_videos_stage_idx ON project_videos(production_phase, production_stage)`;
+      // One-time backfill: existing videos onto the board, inheriting project-level values.
+      await sql`
+        UPDATE project_videos v
+           SET production_phase = 'pre_production', production_stage = 'new_project',
+               production_stage_changed_at = NOW(),
+               producer_email = d.producer_email, payment_terms = d.payment_terms,
+               video_length = d.video_length, delivery_deadline = d.delivery_deadline,
+               text_direction_deadline = d.text_direction_deadline
+          FROM deals d
+         WHERE d.id = v.deal_id AND v.production_phase IS NULL
+      `;
     } catch (err) {
       productionSchemaEnsured = null;
       console.warn('[production] schema ensure failed', err.message);
@@ -82,8 +103,10 @@ export async function enterProduction(dealId, { source = null, actorEmail = null
   const existing = await sql`SELECT 1 FROM project_videos WHERE deal_id = ${dealId} LIMIT 1`;
   if (!existing.length) {
     await sql`
-      INSERT INTO project_videos (id, deal_id, title, status, sort_order, created_by)
-      VALUES (${makeId('pvid')}, ${dealId}, 'Video 1', 'not_started', 0, ${actorEmail})
+      INSERT INTO project_videos
+        (id, deal_id, title, status, sort_order, production_phase, production_stage, production_stage_changed_at, created_by)
+      VALUES
+        (${makeId('pvid')}, ${dealId}, 'Video 1', 'not_started', 0, ${phase}, ${stage}, NOW(), ${actorEmail})
     `;
   }
 

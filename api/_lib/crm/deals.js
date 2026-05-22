@@ -468,12 +468,17 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     // applied the production migration still loads the deal page.
     let videos = [];
     try {
-      const vrows = await sql`
-        SELECT id, deal_id, title, status, sort_order, revision_video_id, created_at, updated_at
-        FROM project_videos WHERE deal_id = ${id} ORDER BY sort_order, created_at
-      `;
+      const vrows = await sql`SELECT * FROM project_videos WHERE deal_id = ${id} ORDER BY sort_order, created_at`;
       videos = vrows.map(v => ({
         id: v.id, dealId: v.deal_id, title: v.title, status: v.status,
+        productionPhase: v.production_phase || null,
+        productionStage: v.production_stage || null,
+        productionStageChangedAt: v.production_stage_changed_at || null,
+        paymentTerms: v.payment_terms || null,
+        videoLength: v.video_length || null,
+        deliveryDeadline: v.delivery_deadline || null,
+        textDirectionDeadline: v.text_direction_deadline || null,
+        producerEmail: v.producer_email || null,
         sortOrder: v.sort_order, revisionVideoId: v.revision_video_id || null,
         createdAt: v.created_at, updatedAt: v.updated_at || null,
       }));

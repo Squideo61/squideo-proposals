@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronDown, Clapperboard, Film, Plus } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, Clapperboard, Film, Plus, LayoutGrid } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -13,21 +13,19 @@ import {
 const PRODUCER_FILTER_STORAGE_KEY = 'squideo.production.producerFilter';
 const PHASE_STORAGE_KEY = 'squideo.production.phase';
 
-// Table columns, mirroring Monday's main table: Item | Payment | Length |
-// Text direction | Delivery | Producer. Shared by the header and every row so
-// columns line up across the stage groups.
+// Table columns, mirroring Monday's main table. Each row is a VIDEO.
 const COLS = 'minmax(220px, 2.2fr) 110px 100px 120px 120px 170px';
 const chip = { display: 'inline-block', fontSize: 11, color: BRAND.ink, background: '#F1F5F9', borderRadius: 999, padding: '2px 8px' };
 
-// Production board: paid deals ("projects") moving through the video-production
-// workflow, laid out like Monday's main table — stage groups of rows with
-// Payment / Length / Producer columns. Phase tabs switch boards; dragging a row
-// onto a stage group (or a phase tab) moves the project.
-export function ProductionView({ onBack, onOpenDeal }) {
+// Production board: VIDEOS move through the workflow (a project just groups
+// them). Stage groups of rows with Payment / Length / Producer columns; phase
+// tabs switch boards. Dragging a video onto a stage group (or phase tab) moves
+// it; clicking opens that video's page.
+export function ProductionView({ onBack, onOpenVideo, onOpenProject, onOpenProjects }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
 
-  useEffect(() => { actions.loadProduction(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { actions.loadProductionVideos(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [creating, setCreating] = useState(false);
   const [activePhase, setActivePhase] = useState(() => {
@@ -40,18 +38,15 @@ export function ProductionView({ onBack, onOpenDeal }) {
   });
   useEffect(() => { try { localStorage.setItem(PRODUCER_FILTER_STORAGE_KEY, producerFilter); } catch {} }, [producerFilter]);
 
-  const projects = useMemo(
-    () => Object.values(state.deals || {}).filter(d => d.productionPhase),
-    [state.deals],
-  );
+  const videos = useMemo(() => (state.productionVideos || []), [state.productionVideos]);
   const filtered = useMemo(
-    () => (producerFilter ? projects.filter(p => p.producerEmail === producerFilter) : projects),
-    [projects, producerFilter],
+    () => (producerFilter ? videos.filter(v => v.producerEmail === producerFilter) : videos),
+    [videos, producerFilter],
   );
 
   const countByPhase = useMemo(() => {
     const out = Object.fromEntries(PRODUCTION_PHASES.map(p => [p.id, 0]));
-    for (const p of filtered) if (out[p.productionPhase] != null) out[p.productionPhase] += 1;
+    for (const v of filtered) if (out[v.productionPhase] != null) out[v.productionPhase] += 1;
     return out;
   }, [filtered]);
 
@@ -59,10 +54,10 @@ export function ProductionView({ onBack, onOpenDeal }) {
   const grouped = useMemo(() => {
     const out = Object.fromEntries(phase.stages.map(s => [s.id, []]));
     const fallback = phase.stages[0]?.id;
-    for (const p of filtered) {
-      if (p.productionPhase !== phase.id) continue;
-      const stage = out[p.productionStage] ? p.productionStage : fallback;
-      (out[stage] || out[fallback]).push(p);
+    for (const v of filtered) {
+      if (v.productionPhase !== phase.id) continue;
+      const stage = out[v.productionStage] ? v.productionStage : fallback;
+      (out[stage] || out[fallback]).push(v);
     }
     return out;
   }, [filtered, phase]);
@@ -71,20 +66,20 @@ export function ProductionView({ onBack, onOpenDeal }) {
     .map(([email, u]) => ({ email, name: u.name || email }))
     .sort((a, b) => a.name.localeCompare(b.name)), [state.users]);
 
-  const handleDropOnStage = (deal, stageId) => {
-    if (!deal) return;
-    if (deal.productionPhase === phase.id && deal.productionStage === stageId) return;
-    actions.moveProjectStage(deal.id, phase.id, stageId);
+  const handleDropOnStage = (video, stageId) => {
+    if (!video) return;
+    if (video.productionPhase === phase.id && video.productionStage === stageId) return;
+    actions.moveVideoStage(video.id, phase.id, stageId);
     showMsg(`Moved to ${phase.stages.find(s => s.id === stageId)?.label || stageId}`);
   };
 
-  const handleDropOnPhase = (deal, phaseId) => {
-    if (!deal) return;
+  const handleDropOnPhase = (video, phaseId) => {
+    if (!video) return;
     const target = PHASE_BY_ID[phaseId];
     if (!target) return;
     const firstStage = target.stages[0]?.id;
-    if (deal.productionPhase === phaseId && deal.productionStage === firstStage) return;
-    actions.moveProjectStage(deal.id, phaseId, firstStage);
+    if (video.productionPhase === phaseId && video.productionStage === firstStage) return;
+    actions.moveVideoStage(video.id, phaseId, firstStage);
     setActivePhase(phaseId);
     showMsg(`Moved to ${target.label}`);
   };
@@ -103,9 +98,12 @@ export function ProductionView({ onBack, onOpenDeal }) {
             memberOptions={memberOptions}
             sessionEmail={state.session?.email || ''}
           />
-          <span style={{ fontSize: 13, color: BRAND.muted }}>{filtered.length} projects</span>
+          <span style={{ fontSize: 13, color: BRAND.muted }}>{filtered.length} videos</span>
         </div>
-        <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New project</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {onOpenProjects && <button onClick={onOpenProjects} className="btn-ghost"><LayoutGrid size={14} /> Projects</button>}
+          <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New project</button>
+        </div>
       </header>
 
       {/* Phase tabs — also drop targets for cross-phase moves. */}
@@ -117,7 +115,7 @@ export function ProductionView({ onBack, onOpenDeal }) {
             active={p.id === activePhase}
             count={countByPhase[p.id] || 0}
             onSelect={() => setActivePhase(p.id)}
-            onDropDeal={(deal) => handleDropOnPhase(deal, p.id)}
+            onDropVideo={(video) => handleDropOnPhase(video, p.id)}
           />
         ))}
       </div>
@@ -131,9 +129,9 @@ export function ProductionView({ onBack, onOpenDeal }) {
                 key={s.id}
                 stage={s}
                 color={phase.color}
-                deals={grouped[s.id] || []}
-                onDrop={(deal) => handleDropOnStage(deal, s.id)}
-                onOpenDeal={onOpenDeal}
+                videos={grouped[s.id] || []}
+                onDrop={(video) => handleDropOnStage(video, s.id)}
+                onOpenVideo={onOpenVideo}
               />
             ))}
           </div>
@@ -143,7 +141,7 @@ export function ProductionView({ onBack, onOpenDeal }) {
       {creating && (
         <NewProjectModal
           onClose={() => setCreating(false)}
-          onCreated={(deal) => { setCreating(false); if (deal) onOpenDeal(deal.id); }}
+          onCreated={(deal) => { setCreating(false); if (deal) onOpenProject(deal.id); }}
         />
       )}
     </div>
@@ -154,7 +152,7 @@ function ColumnsHeader() {
   const cell = { fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 };
   return (
     <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, alignItems: 'center', padding: '0 13px 6px 16px' }}>
-      <span style={cell}>Item</span>
+      <span style={cell}>Video</span>
       <span style={cell}>Payment</span>
       <span style={cell}>Length</span>
       <span style={cell}>Text direction</span>
@@ -164,7 +162,7 @@ function ColumnsHeader() {
   );
 }
 
-function PhaseTab({ phase, active, count, onSelect, onDropDeal }) {
+function PhaseTab({ phase, active, count, onSelect, onDropVideo }) {
   const [hover, setHover] = useState(false);
   return (
     <button
@@ -175,7 +173,7 @@ function PhaseTab({ phase, active, count, onSelect, onDropDeal }) {
       onDrop={(e) => {
         e.preventDefault();
         setHover(false);
-        try { onDropDeal(JSON.parse(e.dataTransfer.getData('application/json'))); } catch {}
+        try { onDropVideo(JSON.parse(e.dataTransfer.getData('application/json'))); } catch {}
       }}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px',
@@ -192,9 +190,7 @@ function PhaseTab({ phase, active, count, onSelect, onDropDeal }) {
   );
 }
 
-// One stage = one Monday-style group: a coloured header line and its rows. The
-// whole box is a drop target so a dragged row can land anywhere in the group.
-function StageGroup({ stage, color, deals, onDrop, onOpenDeal }) {
+function StageGroup({ stage, color, videos, onDrop, onOpenVideo }) {
   const [hover, setHover] = useState(false);
   return (
     <div
@@ -214,27 +210,24 @@ function StageGroup({ stage, color, deals, onDrop, onOpenDeal }) {
         transition: 'background 100ms, border-color 100ms',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: deals.length ? 6 : 0 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: videos.length ? 6 : 0 }}>
         <span style={{ fontSize: 13, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: 0.4 }}>{stage.label}</span>
-        <span style={{ fontSize: 12, color: BRAND.muted }}>· {deals.length}</span>
+        <span style={{ fontSize: 12, color: BRAND.muted }}>· {videos.length}</span>
       </div>
-      {deals.length === 0
-        ? <div style={{ padding: '6px 2px', color: BRAND.muted, fontSize: 12, fontStyle: 'italic' }}>No projects</div>
-        : deals.map(d => <ProjectRow key={d.id} deal={d} onOpen={() => onOpenDeal(d.id)} />)}
+      {videos.length === 0
+        ? <div style={{ padding: '6px 2px', color: BRAND.muted, fontSize: 12, fontStyle: 'italic' }}>No videos</div>
+        : videos.map(v => <VideoRow key={v.id} video={v} onOpen={() => onOpenVideo(v.id)} />)}
     </div>
   );
 }
 
-function ProjectRow({ deal, onOpen }) {
+function VideoRow({ video, onOpen }) {
   const { state } = useStore();
-  const producer = deal.producerEmail ? state.users[deal.producerEmail] : null;
-  const company = deal.companyId ? state.companies[deal.companyId] : null;
-  const videoCount = deal.videoCount || 0;
-  const credits = deal.productionCredits || 0;
+  const producer = video.producerEmail ? state.users[video.producerEmail] : null;
   return (
     <div
       draggable
-      onDragStart={(e) => e.dataTransfer.setData('application/json', JSON.stringify(deal))}
+      onDragStart={(e) => e.dataTransfer.setData('application/json', JSON.stringify(video))}
       onClick={onOpen}
       role="button"
       tabIndex={0}
@@ -244,31 +237,29 @@ function ProjectRow({ deal, onOpen }) {
         padding: '9px 0', borderTop: '1px solid ' + BRAND.border, cursor: 'grab', fontSize: 13,
       }}
     >
-      {/* Item */}
+      {/* Video (+ its project / customer) */}
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{deal.title}</div>
-        <div style={{ fontSize: 11, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {company?.name ? <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{company.name}</span> : null}
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}><Film size={10} /> {videoCount}</span>
-          {credits > 0 && <span style={{ color: '#92400E', flexShrink: 0 }}>+{credits} cr</span>}
+        <div style={{ fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{video.title}</div>
+        <div style={{ fontSize: 11, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {[video.projectTitle, video.companyName].filter(Boolean).join(' · ') || '—'}
         </div>
       </div>
       {/* Payment */}
-      <div>{deal.paymentTerms
-        ? <span style={chip}>{PAYMENT_TERMS_LABEL[deal.paymentTerms] || deal.paymentTerms}</span>
+      <div>{video.paymentTerms
+        ? <span style={chip}>{PAYMENT_TERMS_LABEL[video.paymentTerms] || video.paymentTerms}</span>
         : <span style={{ color: BRAND.muted }}>—</span>}</div>
       {/* Length */}
-      <div style={{ color: deal.videoLength ? BRAND.ink : BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{deal.videoLength || '—'}</div>
+      <div style={{ color: video.videoLength ? BRAND.ink : BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{video.videoLength || '—'}</div>
       {/* Text direction */}
-      <div style={{ color: deal.textDirectionDeadline ? BRAND.ink : BRAND.muted }}>{deal.textDirectionDeadline ? formatDate(deal.textDirectionDeadline) : '—'}</div>
+      <div style={{ color: video.textDirectionDeadline ? BRAND.ink : BRAND.muted }}>{video.textDirectionDeadline ? formatDate(video.textDirectionDeadline) : '—'}</div>
       {/* Delivery */}
-      <div style={{ color: deal.deliveryDeadline ? BRAND.ink : BRAND.muted }}>{deal.deliveryDeadline ? formatDate(deal.deliveryDeadline) : '—'}</div>
+      <div style={{ color: video.deliveryDeadline ? BRAND.ink : BRAND.muted }}>{video.deliveryDeadline ? formatDate(video.deliveryDeadline) : '—'}</div>
       {/* Producer */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-        {producer || deal.producerEmail
+        {producer || video.producerEmail
           ? <>
-              <Avatar user={producer} fallback={deal.producerEmail} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{producer?.name || deal.producerEmail}</span>
+              <Avatar user={producer} fallback={video.producerEmail} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{producer?.name || video.producerEmail}</span>
             </>
           : <span style={{ color: BRAND.muted }}>Unassigned</span>}
       </div>
@@ -290,7 +281,7 @@ function ProducerFilter({ producerFilter, setProducerFilter, memberOptions, sess
   }, [open]);
 
   const selectedName = producerFilter ? (memberOptions.find(m => m.email === producerFilter)?.name || producerFilter) : '';
-  const label = !producerFilter ? 'All producers' : `${selectedName.split(' ')[0]}'s projects`;
+  const label = !producerFilter ? 'All producers' : `${selectedName.split(' ')[0]}'s videos`;
   const choose = (email) => { setProducerFilter(email); setOpen(false); };
 
   return (
@@ -352,9 +343,9 @@ function formatDate(d) {
   return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
-// Create a project from scratch and assign it to a customer. Mirrors the
-// pipeline's "New deal" modal (Xero contact → company), but the result lands
-// straight on the production board with one video.
+// Create a project and assign it to a customer. Mirrors the pipeline's "New
+// deal" modal (Xero contact → company); the result lands on the board as a
+// project with one video.
 function NewProjectModal({ onClose, onCreated }) {
   const { state, actions, showMsg } = useStore();
   const [title, setTitle] = useState('');
@@ -379,7 +370,6 @@ function NewProjectModal({ onClose, onCreated }) {
     if (!title.trim() || submitting) return;
     setSubmitting(true);
     try {
-      // Resolve the picked Xero contact → local company (find or create + link).
       let companyId = null;
       if (xeroContact) {
         const company = await api.post('/api/crm/companies/from-xero-contact', { xeroContactId: xeroContact.id });
