@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Clapperboard, Film, Plus, Trash2, Send, Coins, ExternalLink, Edit2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -115,6 +115,10 @@ export function ProductionPanel({ dealId, deal, videos, isMobile }) {
           <input type="date" style={ctrl} value={(deal.textDirectionDeadline || '').slice(0, 10)}
             onChange={(e) => patch({ textDirectionDeadline: e.target.value || null })} />
         </div>
+        <div>
+          <label style={labelStyle}>Video length</label>
+          <InlineText value={deal.videoLength} placeholder="e.g. 90s, 1.5m, 606w" onSave={(v) => patch({ videoLength: v })} />
+        </div>
       </div>
 
       {/* Videos */}
@@ -205,5 +209,20 @@ function VideoRow({ dealId, video }) {
         className="btn-icon" title="Delete video"
       ><Trash2 size={13} /></button>
     </div>
+  );
+}
+
+// Text input that only saves on blur / Enter (not per keystroke), and re-syncs
+// when the underlying value changes after a reload.
+function InlineText({ value, placeholder, onSave }) {
+  const [draft, setDraft] = useState(value || '');
+  useEffect(() => { setDraft(value || ''); }, [value]);
+  const commit = () => { const v = draft.trim() || null; if (v !== (value || null)) onSave(v); };
+  return (
+    <input
+      type="text" style={ctrl} value={draft} placeholder={placeholder}
+      onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+    />
   );
 }

@@ -636,6 +636,7 @@ export function serialiseDeal(r) {
     out.paymentTerms               = r.payment_terms || null;
     out.deliveryDeadline           = r.delivery_deadline || null;
     out.textDirectionDeadline      = r.text_direction_deadline || null;
+    out.videoLength                = r.video_length || null;
   }
   return out;
 }

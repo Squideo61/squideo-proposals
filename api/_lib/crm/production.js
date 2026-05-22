@@ -155,18 +155,20 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
   if (!action && req.method === 'PATCH') {
     const body = req.body || {};
     const cur = (await sql`
-      SELECT producer_email, payment_terms, delivery_deadline, text_direction_deadline
+      SELECT producer_email, payment_terms, delivery_deadline, text_direction_deadline, video_length
         FROM deals WHERE id = ${dealId}
     `)[0];
     const producerEmail          = 'producerEmail'          in body ? trimOrNull(body.producerEmail)          : cur.producer_email;
     const paymentTerms           = 'paymentTerms'           in body ? trimOrNull(body.paymentTerms)           : cur.payment_terms;
     const deliveryDeadline       = 'deliveryDeadline'       in body ? trimOrNull(body.deliveryDeadline)       : cur.delivery_deadline;
     const textDirectionDeadline  = 'textDirectionDeadline'  in body ? trimOrNull(body.textDirectionDeadline)  : cur.text_direction_deadline;
+    const videoLength            = 'videoLength'            in body ? trimOrNull(body.videoLength)            : cur.video_length;
     if (!isValidPaymentTerms(paymentTerms)) return res.status(400).json({ error: 'Invalid payment terms' });
     await sql`
       UPDATE deals
          SET producer_email = ${producerEmail}, payment_terms = ${paymentTerms},
              delivery_deadline = ${deliveryDeadline}, text_direction_deadline = ${textDirectionDeadline},
+             video_length = ${videoLength},
              updated_at = NOW()
        WHERE id = ${dealId}
     `;
