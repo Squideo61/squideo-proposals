@@ -103,9 +103,10 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   const connected = !!(state.gmailAccount && state.gmailAccount.connected);
   const [search, setSearch] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
+  const [unreadOnly, setUnreadOnly] = useState(false);
   const [openRef, setOpenRef] = useState(null);     // { kind, threadId, unread } for the conversation modal
 
-  useEffect(() => { setSearch(''); setAppliedQuery(''); setOpenRef(null); }, [active]);
+  useEffect(() => { setSearch(''); setAppliedQuery(''); setUnreadOnly(false); setOpenRef(null); }, [active]);
 
   useEffect(() => {
     if (def.kind === 'deals') {
@@ -151,20 +152,27 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
     if (def.kind !== 'gmail' || !connected) return;
     const q = search.trim();
     setAppliedQuery(q);
-    actions.loadMailboxFolder(active, { q });
+    actions.loadMailboxFolder(active, { q, unread: unreadOnly });
+  };
+
+  const toggleUnreadOnly = () => {
+    if (def.kind !== 'gmail' || !connected) return;
+    const next = !unreadOnly;
+    setUnreadOnly(next);
+    actions.loadMailboxFolder(active, { q: appliedQuery, unread: next });
   };
 
   const refresh = () => {
     if (def.kind === 'deals') actions.loadDealEmails();
     else if (def.kind === 'triage') actions.refreshTriage();
-    else if (connected) actions.loadMailboxFolder(active, { q: appliedQuery });
+    else if (connected) actions.loadMailboxFolder(active, { q: appliedQuery, unread: unreadOnly });
     if (connected) actions.loadMailboxLabels();
   };
 
   const loadMore = () => {
     if (slice.loading || slice.next == null) return;
     if (def.kind === 'deals') actions.loadDealEmails(slice.next);
-    else if (def.kind === 'gmail') actions.loadMailboxFolder(active, { pageToken: slice.next, q: appliedQuery });
+    else if (def.kind === 'gmail') actions.loadMailboxFolder(active, { pageToken: slice.next, q: appliedQuery, unread: unreadOnly });
   };
 
   const compose = () => actions.openComposer({});
@@ -249,6 +257,23 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
               <def.icon size={16} color={BRAND.blue} /> {def.label}
             </h2>
             <button onClick={refresh} className="btn-icon" title="Refresh" aria-label="Refresh"><RefreshCw size={15} /></button>
+            {def.kind === 'gmail' && active !== 'unread' && (
+              <button
+                onClick={toggleUnreadOnly}
+                title="Show only unread"
+                aria-pressed={unreadOnly}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5,
+                  padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontSize: 12,
+                  fontFamily: 'inherit', fontWeight: 600,
+                  border: '1px solid ' + (unreadOnly ? BRAND.blue : BRAND.border),
+                  background: unreadOnly ? BRAND.blue + '14' : 'white',
+                  color: unreadOnly ? BRAND.blue : BRAND.muted,
+                }}
+              >
+                <CircleDot size={13} /> Unread only
+              </button>
+            )}
             <div style={{ flex: 1 }} />
             <div style={{ position: 'relative', width: isMobile ? '100%' : 280 }}>
               <Search size={14} color={BRAND.muted} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />

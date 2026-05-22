@@ -1469,12 +1469,13 @@ export function StoreProvider({ children }) {
     },
     // A live Gmail folder. Pass a pageToken to append the next page; pass q to
     // search within the folder (Gmail search syntax).
-    loadMailboxFolder(folder, { pageToken = null, q = '' } = {}) {
+    loadMailboxFolder(folder, { pageToken = null, q = '', unread = false } = {}) {
       const append = pageToken != null;
       setState(s => ({ ...s, mailbox: { ...s.mailbox, [folder]: { ...(s.mailbox?.[folder] || {}), loading: true } } }));
       const params = new URLSearchParams({ label: folder });
       if (pageToken) params.set('pageToken', pageToken);
       if (q) params.set('q', q);
+      if (unread) params.set('unread', '1');
       return api.get('/api/crm/gmail/folder?' + params.toString())
         .then((data) => {
           const incoming = Array.isArray(data?.rows) ? data.rows : [];

@@ -109,10 +109,15 @@ async function listFolder(req, res, accessToken) {
   const label = FOLDER_LABELS[folder];
   const pageToken = qp(req, 'pageToken');
   const q = qp(req, 'q');
+  const unreadOnly = qp(req, 'unread') === '1';
 
   const params = new URLSearchParams();
   params.set('maxResults', String(PAGE_SIZE));
-  if (label) params.set('labelIds', label);
+  if (label) params.append('labelIds', label);
+  // "Unread only" filter: Gmail ANDs multiple labelIds, so adding UNREAD
+  // narrows any folder/category to its unread threads without pulling in
+  // Spam/Trash (which the q-based path would).
+  if (unreadOnly && label !== 'UNREAD') params.append('labelIds', 'UNREAD');
   if (q) params.set('q', q);
   if (pageToken) params.set('pageToken', pageToken);
   // Spam/Trash are excluded from list results unless we opt in; All Mail and
