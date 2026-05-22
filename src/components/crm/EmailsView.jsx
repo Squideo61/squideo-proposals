@@ -3,7 +3,7 @@ import {
   ArrowLeft, Mail, Inbox, Send, FileText, Star, ShieldAlert, Trash2, Archive,
   Search, X, RefreshCw, MailOpen, Reply, ReplyAll, Forward, Paperclip, Download,
   Briefcase, PenSquare, ExternalLink, ChevronDown, CircleDot,
-  Users, Info, MessagesSquare, Tag,
+  Users, Info, MessagesSquare, Tag, Settings,
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
@@ -37,6 +37,16 @@ const CATEGORY_FOLDERS = [
   { id: 'promotions', label: 'Promotions', icon: Tag,            kind: 'gmail', categoryLabel: 'CATEGORY_PROMOTIONS' },
 ];
 const FOLDER_BY_ID = Object.fromEntries([...FOLDERS, ...CATEGORY_FOLDERS].map(f => [f.id, f]));
+
+// List row density (Gmail-style). Drives the vertical padding of list rows.
+const DENSITY_KEY = 'squideo.emails.density';
+const DENSITY_OPTIONS = [
+  { id: 'comfortable', label: 'Comfortable' },
+  { id: 'default',     label: 'Default'     },
+  { id: 'compact',     label: 'Compact'     },
+];
+const ROW_VPAD = { comfortable: '14px', default: '10px', compact: '5px' };
+const vpad = (d) => ROW_VPAD[d] || ROW_VPAD.default;
 
 // DOMPurify config mirrors the deal-detail email viewer: permissive enough to
 // render real mail (images, links, tables) but strips scripts/inline handlers.
@@ -105,6 +115,14 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   const [appliedQuery, setAppliedQuery] = useState('');
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [openRef, setOpenRef] = useState(null);     // { kind, threadId, unread } for the conversation modal
+  const [density, setDensity] = useState(() => {
+    try { return localStorage.getItem(DENSITY_KEY) || 'default'; } catch { return 'default'; }
+  });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const changeDensity = (d) => {
+    setDensity(d);
+    try { localStorage.setItem(DENSITY_KEY, d); } catch { /* ignore */ }
+  };
 
   useEffect(() => { setSearch(''); setAppliedQuery(''); setUnreadOnly(false); setOpenRef(null); }, [active]);
 
@@ -195,6 +213,29 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
           <Mail size={22} color={BRAND.blue} /> Emails
         </h1>
         <div style={{ flex: 1 }} />
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={() => setSettingsOpen(o => !o)}
+            className="btn-icon"
+            title="Display settings"
+            aria-label="Display settings"
+            aria-expanded={settingsOpen}
+          ><Settings size={16} /></button>
+          {settingsOpen && (
+            <>
+              <div onClick={() => setSettingsOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
+              <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 6, zIndex: 31, width: 220, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.14)', padding: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: BRAND.muted, marginBottom: 8 }}>Density</div>
+                {DENSITY_OPTIONS.map(opt => (
+                  <label key={opt.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', fontSize: 13, cursor: 'pointer' }}>
+                    <input type="radio" name="email-density" checked={density === opt.id} onChange={() => changeDensity(opt.id)} />
+                    {opt.label}
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <button onClick={compose} className="btn"><PenSquare size={14} /> Compose</button>
       </header>
 
@@ -314,6 +355,7 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
             <Body
               def={def}
               rows={rows}
+              density={density}
               loading={!!slice.loading}
               hasMore={slice.next != null}
               onLoadMore={loadMore}
@@ -360,7 +402,7 @@ function NotConnected({ onConnect }) {
   );
 }
 
-function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onDismiss, onAction }) {
+function Body({ def, rows, density = 'default', loading, hasMore, onLoadMore, onOpen, onDismiss, onAction }) {
   // Infinite scroll: a sentinel near the list's end auto-loads the next page
   // when it scrolls into view. The "Load more" button stays as a fallback.
   const sentinelRef = useRef(null);
@@ -419,11 +461,11 @@ function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onDismiss, onAc
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
         {def.kind === 'triage'
           ? rows.map((m, i) => (
-              <TriageRow key={m.gmailMessageId} message={m} first={i === 0} onOpen={() => onOpen(m)} onDismiss={() => onDismiss(m)} />
+              <TriageRow key={m.gmailMessageId} message={m} first={i === 0} density={density} onOpen={() => onOpen(m)} onDismiss={() => onDismiss(m)} />
             ))
           : def.kind === 'gmail'
-            ? rows.map((m, i) => <GmailThreadRow key={m.id} row={m} folder={def.id} first={i === 0} onOpen={() => onOpen(m)} onAction={onAction} selected={selected.has(m.id)} onToggleSelect={() => toggleOne(m.id)} />)
-            : rows.map((m, i) => <DealThreadRow key={m.gmailThreadId} row={m} first={i === 0} onOpen={() => onOpen(m)} />)}
+            ? rows.map((m, i) => <GmailThreadRow key={m.id} row={m} folder={def.id} first={i === 0} density={density} onOpen={() => onOpen(m)} onAction={onAction} selected={selected.has(m.id)} onToggleSelect={() => toggleOne(m.id)} />)
+            : rows.map((m, i) => <DealThreadRow key={m.gmailThreadId} row={m} first={i === 0} density={density} onOpen={() => onOpen(m)} />)}
       </div>
       {hasMore && (
         <>
@@ -460,11 +502,11 @@ function CountPill({ n }) {
 
 // A Triage row — an inbound conversation not yet on any deal. Click to read it
 // and attach via the deal panel; Dismiss drops it from Triage without filing.
-function TriageRow({ message, first, onOpen, onDismiss }) {
+function TriageRow({ message, first, density, onOpen, onDismiss }) {
   const inbound = message.direction === 'inbound';
   const counterparty = inbound ? message.fromEmail : (message.toEmails?.[0] || '');
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 16px', borderTop: first ? 'none' : '1px solid ' + BRAND.border, background: 'white' }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: vpad(density) + ' 16px', borderTop: first ? 'none' : '1px solid ' + BRAND.border, background: 'white' }}>
       <span style={{ flexShrink: 0, marginTop: 2, padding: '1px 5px', borderRadius: 3, fontSize: 10, fontWeight: 700, background: (inbound ? '#16A34A' : '#2BB8E6') + '22', color: inbound ? '#16A34A' : '#2BB8E6' }}>{inbound ? 'IN' : 'OUT'}</span>
       <button onClick={onOpen} style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0 }}>
         <div style={{ fontWeight: 600, fontSize: 14, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -481,14 +523,14 @@ function TriageRow({ message, first, onOpen, onDismiss }) {
 }
 
 // A conversation row in the DB-backed Deals folder.
-function DealThreadRow({ row, first, onOpen }) {
+function DealThreadRow({ row, first, density, onOpen }) {
   const inbound = row.lastDirection === 'inbound';
   return (
     <button
       onClick={onOpen}
       style={{
         display: 'flex', alignItems: 'flex-start', gap: 12, width: '100%',
-        padding: '12px 16px', borderTop: first ? 'none' : '1px solid ' + BRAND.border,
+        padding: vpad(density) + ' 16px', borderTop: first ? 'none' : '1px solid ' + BRAND.border,
         background: 'white', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
       }}
     >
@@ -563,7 +605,7 @@ function BulkBar({ folder, count, allSelected, onToggleAll, onClear, onBulk }) {
   );
 }
 
-function GmailThreadRow({ row, folder, first, onOpen, onAction, selected, onToggleSelect }) {
+function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selected, onToggleSelect }) {
   const { state } = useStore();
   const chips = state.threadDeals?.[row.id] || [];
   const who = (row.participants && row.participants.length ? row.participants.join(', ') : null)
@@ -571,7 +613,7 @@ function GmailThreadRow({ row, folder, first, onOpen, onAction, selected, onTogg
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10,
-      padding: '10px 14px', borderTop: first ? 'none' : '1px solid ' + BRAND.border,
+      padding: vpad(density) + ' 14px', borderTop: first ? 'none' : '1px solid ' + BRAND.border,
       background: selected ? '#FEF9E7' : row.unread ? '#F4FAFE' : 'white',
     }}>
       <input
