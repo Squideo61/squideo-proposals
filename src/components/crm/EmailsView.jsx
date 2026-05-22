@@ -514,7 +514,7 @@ function TriageRow({ message, first, density, onOpen, onDismiss }) {
         </div>
         {message.snippet && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{message.snippet}</div>}
         <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>
-          {formatMailDate(message.sentAt)}{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}
+          <span style={{ fontWeight: 700 }}>{formatMailDate(message.sentAt)}</span>{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}
         </div>
       </button>
       <button onClick={onDismiss} className="btn-ghost" title="Dismiss — not on a deal" aria-label="Dismiss" style={{ flexShrink: 0 }}><X size={14} /></button>
@@ -555,7 +555,7 @@ function DealThreadRow({ row, first, density, onOpen }) {
         </div>
       </div>
       <div style={{ flexShrink: 0, textAlign: 'right', fontSize: 11, color: BRAND.muted }}>
-        <div>{formatMailDate(row.sentAt)}</div>
+        <div style={{ fontWeight: 700 }}>{formatMailDate(row.sentAt)}</div>
         <div style={{ marginTop: 2 }}>{inbound ? 'from' : 'to'} {row.lastFrom || '—'}</div>
       </div>
     </button>
@@ -651,7 +651,7 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
           {chips.length > 1 && <span style={{ fontSize: 10.5, fontWeight: 700, color: BRAND.muted }}>+{chips.length - 1}</span>}
         </div>
       )}
-      <span style={{ flexShrink: 0, fontSize: 11, color: BRAND.muted, width: 78, textAlign: 'right' }}>{formatMailDate(row.date)}</span>
+      <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: BRAND.muted, width: 78, textAlign: 'right' }}>{formatMailDate(row.date)}</span>
       <div style={{ flexShrink: 0, display: 'flex', gap: 2 }}>
         {row.unread && (
           <button onClick={() => onAction('markRead', row.id)} className="btn-icon" title="Mark read" aria-label="Mark read"><MailOpen size={14} /></button>
