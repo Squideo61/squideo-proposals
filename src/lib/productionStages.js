@@ -26,11 +26,15 @@ export const PRODUCTION_PHASES = [
   {
     id: 'production', label: 'Production', color: '#0EA5E9',
     stages: [
-      { id: 'filming',         label: 'Filming / Assets' },
-      { id: 'edit',            label: 'Animation / Edit' },
-      { id: 'internal_review', label: 'Internal Review' },
-      { id: 'client_review',   label: 'Client Review' },
-      { id: 'final_amends',    label: 'Final Amends' },
+      { id: 'in_production',          label: 'Production' },
+      { id: 'amends_2',               label: 'Amends 2' },
+      { id: 'signed_off',             label: 'Signed Off' },
+      { id: 'pending_group_sign_off', label: 'Pending Group Sign Off' },
+      { id: 'back_up',                label: 'Back-up' },
+      { id: 'on_hold',                label: 'On Hold' },
+      { id: 'reserved',               label: 'Reserved' },
+      { id: 'reserved_express',       label: 'Reserved (Express - Cannot move)' },
+      { id: 'days_off_various',       label: 'Days Off / Various' },
     ],
   },
   {
