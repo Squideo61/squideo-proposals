@@ -80,6 +80,22 @@ export const formatRelativeTime = (iso) => {
   return new Date(iso).toLocaleDateString('en-GB');
 };
 
+// Gmail-style timestamp for mail lists: today → time (09:25); this year →
+// day + month (21 May); earlier years → DD/MM/YYYY (18/10/2023).
+export const formatMailDate = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  }
+  if (d.getFullYear() === now.getFullYear()) {
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  }
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+};
+
 export const formatDuration = (s) => {
   s = Math.max(0, Math.round(Number(s) || 0));
   if (s < 60) return s + 's';
