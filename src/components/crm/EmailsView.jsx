@@ -324,6 +324,22 @@ function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onDismiss, onAc
   const loadMoreRef = useRef(onLoadMore);
   loadMoreRef.current = onLoadMore;
 
+  // Gmail-style multi-select (Gmail folders only). Selection is by thread id and
+  // resets when the folder changes. mailboxAction already takes an array of ids,
+  // so a bulk action is a single call that toasts once.
+  const selectable = def.kind === 'gmail';
+  const [selected, setSelected] = useState(() => new Set());
+  useEffect(() => { setSelected(new Set()); }, [def.id]);
+  const selectedIds = useMemo(() => rows.filter(r => selected.has(r.id)).map(r => r.id), [rows, selected]);
+  const allSelected = rows.length > 0 && selectedIds.length === rows.length;
+  const toggleOne = (id) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(rows.map(r => r.id)));
+  const bulk = (action) => { if (!selectedIds.length) return; onAction(action, selectedIds); setSelected(new Set()); };
+
   useEffect(() => {
     if (!hasMore || loading) return undefined;
     const el = sentinelRef.current;
@@ -347,13 +363,23 @@ function Body({ def, rows, loading, hasMore, onLoadMore, onOpen, onDismiss, onAc
   }
   return (
     <>
+      {selectable && (
+        <BulkBar
+          folder={def.id}
+          count={selectedIds.length}
+          allSelected={allSelected}
+          onToggleAll={toggleAll}
+          onClear={() => setSelected(new Set())}
+          onBulk={bulk}
+        />
+      )}
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
         {def.kind === 'triage'
           ? rows.map((m, i) => (
               <TriageRow key={m.gmailMessageId} message={m} first={i === 0} onOpen={() => onOpen(m)} onDismiss={() => onDismiss(m)} />
             ))
           : def.kind === 'gmail'
-            ? rows.map((m, i) => <GmailThreadRow key={m.id} row={m} folder={def.id} first={i === 0} onOpen={() => onOpen(m)} onAction={onAction} />)
+            ? rows.map((m, i) => <GmailThreadRow key={m.id} row={m} folder={def.id} first={i === 0} onOpen={() => onOpen(m)} onAction={onAction} selected={selected.has(m.id)} onToggleSelect={() => toggleOne(m.id)} />)
             : rows.map((m, i) => <DealThreadRow key={m.gmailThreadId} row={m} first={i === 0} onOpen={() => onOpen(m)} />)}
       </div>
       {hasMore && (
@@ -452,7 +478,49 @@ function DealThreadRow({ row, first, onOpen }) {
 }
 
 // A conversation row in a live Gmail folder, with inline star + quick actions.
-function GmailThreadRow({ row, folder, first, onOpen, onAction }) {
+// Gmail-style bulk action bar: a select-all checkbox and, once anything is
+// selected, the actions that apply to the current folder. Hidden actions
+// mirror the per-row buttons (no Archive in trash/spam/sent/drafts; Restore
+// instead of Delete in trash).
+function BulkBar({ folder, count, allSelected, onToggleAll, onClear, onBulk }) {
+  const checkRef = useRef(null);
+  const some = count > 0;
+  useEffect(() => { if (checkRef.current) checkRef.current.indeterminate = some && !allSelected; }, [some, allSelected]);
+  const canArchive = !['trash', 'spam', 'sent', 'drafts'].includes(folder);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', marginBottom: 8, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10 }}>
+      <input
+        ref={checkRef}
+        type="checkbox"
+        checked={allSelected}
+        onChange={onToggleAll}
+        title="Select all"
+        aria-label="Select all conversations"
+        style={{ width: 16, height: 16, cursor: 'pointer' }}
+      />
+      {some ? (
+        <>
+          <span style={{ fontSize: 13, color: BRAND.muted, minWidth: 76 }}>{count} selected</span>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            <button onClick={() => onBulk('markRead')} className="btn-ghost" style={{ fontSize: 12 }}><MailOpen size={14} /> Mark read</button>
+            <button onClick={() => onBulk('markUnread')} className="btn-ghost" style={{ fontSize: 12 }}><Mail size={14} /> Mark unread</button>
+            {canArchive && (
+              <button onClick={() => onBulk('archive')} className="btn-ghost" style={{ fontSize: 12 }}><Archive size={14} /> Archive</button>
+            )}
+            {folder === 'trash'
+              ? <button onClick={() => onBulk('untrash')} className="btn-ghost" style={{ fontSize: 12 }}><RefreshCw size={14} /> Restore</button>
+              : <button onClick={() => onBulk('trash')} className="btn-ghost" style={{ fontSize: 12, color: '#B91C1C' }}><Trash2 size={14} /> Delete</button>}
+          </div>
+          <button onClick={onClear} className="btn-ghost" style={{ fontSize: 12, marginLeft: 'auto' }}>Clear</button>
+        </>
+      ) : (
+        <span style={{ fontSize: 13, color: BRAND.muted }}>Select to mark read, archive or delete in bulk</span>
+      )}
+    </div>
+  );
+}
+
+function GmailThreadRow({ row, folder, first, onOpen, onAction, selected, onToggleSelect }) {
   const { state } = useStore();
   const chips = state.threadDeals?.[row.id] || [];
   const who = (row.participants && row.participants.length ? row.participants.join(', ') : null)
@@ -461,8 +529,17 @@ function GmailThreadRow({ row, folder, first, onOpen, onAction }) {
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10,
       padding: '10px 14px', borderTop: first ? 'none' : '1px solid ' + BRAND.border,
-      background: row.unread ? '#F4FAFE' : 'white',
+      background: selected ? '#FEF9E7' : row.unread ? '#F4FAFE' : 'white',
     }}>
+      <input
+        type="checkbox"
+        checked={!!selected}
+        onChange={onToggleSelect}
+        onClick={(e) => e.stopPropagation()}
+        title="Select"
+        aria-label="Select conversation"
+        style={{ width: 16, height: 16, flexShrink: 0, cursor: 'pointer' }}
+      />
       <button
         onClick={(e) => { e.stopPropagation(); onAction(row.starred ? 'unstar' : 'star', row.id); }}
         title={row.starred ? 'Unstar' : 'Star'}
