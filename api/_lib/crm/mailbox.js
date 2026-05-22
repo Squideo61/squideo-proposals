@@ -237,20 +237,53 @@ async function modifyThreads(req, res, accessToken) {
   const map = actionToLabels(action);
   if (!map) return res.status(400).json({ error: 'Unknown action: ' + action });
 
-  if (map.trash || map.untrash) {
-    const op = map.trash ? 'trash' : 'untrash';
-    await Promise.all(idList.map(tid =>
-      gmailFetch(accessToken, `/threads/${encodeURIComponent(tid)}/${op}`, { method: 'POST' })));
-    return res.status(200).json({ ok: true });
-  }
+  const op = map.trash ? 'trash' : map.untrash ? 'untrash' : null;
+  const run = (tid) => op
+    ? gmailFetch(accessToken, `/threads/${encodeURIComponent(tid)}/${op}`, { method: 'POST' })
+    // threads.modify has no batch form — apply the label delta per thread.
+    : gmailFetch(accessToken, `/threads/${encodeURIComponent(tid)}/modify`, {
+        method: 'POST',
+        body: JSON.stringify({ addLabelIds: map.add || [], removeLabelIds: map.remove || [] }),
+      });
 
-  // threads.modify has no batch form — apply the label delta per thread.
-  await Promise.all(idList.map(tid =>
-    gmailFetch(accessToken, `/threads/${encodeURIComponent(tid)}/modify`, {
-      method: 'POST',
-      body: JSON.stringify({ addLabelIds: map.add || [], removeLabelIds: map.remove || [] }),
-    })));
-  return res.status(200).json({ ok: true });
+  // Gmail rate-limits bursts (threads.modify costs 10 quota units; the per-user
+  // ceiling is ~250/sec). Firing all ids at once made large bulk actions 429
+  // and fail wholesale, so cap concurrency and retry transient errors. Only a
+  // total failure is surfaced as an error — partial success still 200s.
+  const failed = await runBatched(idList, 5, (tid) => withRetry(() => run(tid)));
+  if (failed.length === idList.length) {
+    const e = new Error('Gmail bulk modify failed');
+    e.code = 'GMAIL_API_FAILED';
+    throw e;
+  }
+  return res.status(200).json({ ok: true, modified: idList.length - failed.length, failed: failed.length });
+}
+
+// Retry a Gmail call on transient errors (rate limit / 5xx) with backoff.
+async function withRetry(fn, attempts = 4) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try { return await fn(); }
+    catch (err) {
+      lastErr = err;
+      const status = err?.status;
+      if (status !== 429 && status !== 500 && status !== 503) break; // non-transient
+      await new Promise(r => setTimeout(r, 250 * 2 ** i + Math.random() * 150));
+    }
+  }
+  throw lastErr;
+}
+
+// Run `fn` over items with a concurrency cap. Returns the items that failed
+// (all attempts exhausted) so the caller can decide whether to surface an error.
+async function runBatched(items, limit, fn) {
+  const failed = [];
+  for (let i = 0; i < items.length; i += limit) {
+    const chunk = items.slice(i, i + limit);
+    const results = await Promise.allSettled(chunk.map(fn));
+    results.forEach((r, j) => { if (r.status === 'rejected') failed.push(chunk[j]); });
+  }
+  return failed;
 }
 
 // GET /api/crm/gmail/labels — unread/total counts for the sidebar badges.
