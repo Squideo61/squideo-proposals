@@ -310,29 +310,6 @@ async function listLabelCounts(req, res, accessToken) {
       out[lbl] = { unread: 0, total: 0, threadsUnread: 0, threadsTotal: 0 };
     }
   }));
-
-  // labels.get keeps counting category mail that's been trashed (Gmail leaves
-  // the CATEGORY_* label on trashed threads), so the badge wouldn't drop when a
-  // category is emptied. Re-derive the unread badge from a search, which
-  // excludes Spam/Trash by default — matching the folder view and Gmail's UI.
-  const CATEGORY_SEARCH = {
-    CATEGORY_SOCIAL: 'category:social',
-    CATEGORY_UPDATES: 'category:updates',
-    CATEGORY_FORUMS: 'category:forums',
-    CATEGORY_PROMOTIONS: 'category:promotions',
-  };
-  await Promise.all(Object.entries(CATEGORY_SEARCH).map(async ([lbl, cat]) => {
-    try {
-      const j = await (await gmailFetch(
-        accessToken,
-        `/threads?q=${encodeURIComponent(cat + ' is:unread')}&maxResults=1`,
-      )).json();
-      if (out[lbl] && typeof j.resultSizeEstimate === 'number') {
-        out[lbl].threadsUnread = j.resultSizeEstimate;
-      }
-    } catch { /* keep the labels.get value on failure */ }
-  }));
-
   return res.status(200).json(out);
 }
 

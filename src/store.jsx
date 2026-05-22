@@ -1519,9 +1519,25 @@ export function StoreProvider({ children }) {
         (action === 'unstar'   && folder === 'starred') ||
         (action === 'markRead' && folder === 'unread')
       );
+      // Which sidebar badge this folder drives, and whether it's an unread or a
+      // total count. Used to adjust the badge optimistically — Gmail's own
+      // label/search counts lag a few seconds after a modify, so we can't rely
+      // on an immediate re-fetch (that's what made the pill look stuck).
+      const FOLDER_LABEL = {
+        inbox:      { key: 'INBOX',               field: 'threadsUnread' },
+        unread:     { key: 'UNREAD',              field: 'threadsTotal'  },
+        spam:       { key: 'SPAM',                field: 'threadsUnread' },
+        social:     { key: 'CATEGORY_SOCIAL',     field: 'threadsUnread' },
+        updates:    { key: 'CATEGORY_UPDATES',    field: 'threadsUnread' },
+        forums:     { key: 'CATEGORY_FORUMS',     field: 'threadsUnread' },
+        promotions: { key: 'CATEGORY_PROMOTIONS', field: 'threadsUnread' },
+      };
       setState(s => {
         const f = s.mailbox?.[folder];
         if (!f || !Array.isArray(f.rows)) return s;
+        const acted = f.rows.filter(r => idSet.has(r.id));
+        const actedUnread = acted.filter(r => r.unread).length;
+        const actedRead = acted.length - actedUnread;
         const rows = removesFromFolder
           ? f.rows.filter(r => !idSet.has(r.id))
           : f.rows.map(r => {
@@ -1532,13 +1548,40 @@ export function StoreProvider({ children }) {
               if (action === 'unstar')     return { ...r, starred: false };
               return r;
             });
-        return { ...s, mailbox: { ...s.mailbox, [folder]: { ...f, rows } } };
+
+        // Optimistic badge maths so the sidebar updates instantly.
+        const labels = { ...(s.mailboxLabels || {}) };
+        const bump = (key, field, delta) => {
+          if (!key || !delta || !labels[key]) return;
+          labels[key] = { ...labels[key], [field]: Math.max(0, (labels[key][field] || 0) + delta) };
+        };
+        const fk = FOLDER_LABEL[folder];
+        if (fk?.field === 'threadsUnread') {
+          if (action === 'markRead')        bump(fk.key, 'threadsUnread', -actedUnread);
+          else if (action === 'markUnread') bump(fk.key, 'threadsUnread', +actedRead);
+          else if (removesFromFolder)       bump(fk.key, 'threadsUnread', -actedUnread);
+        } else if (fk?.field === 'threadsTotal') { // the dedicated "Unread" folder
+          if (action === 'markRead' || removesFromFolder) bump(fk.key, 'threadsTotal', -acted.length);
+        }
+        // Keep the global "Unread" sidebar count honest too (skip if it's the
+        // active folder, already handled above).
+        if (folder !== 'unread') {
+          if (action === 'markRead')        bump('UNREAD', 'threadsTotal', -actedUnread);
+          else if (action === 'markUnread') bump('UNREAD', 'threadsTotal', +actedRead);
+          else if (removesFromFolder)       bump('UNREAD', 'threadsTotal', -actedUnread);
+        }
+
+        return { ...s, mailbox: { ...s.mailbox, [folder]: { ...f, rows } }, mailboxLabels: labels };
       });
+      // No immediate label re-fetch: Gmail's counts lag after a modify and
+      // would overwrite the (correct) optimistic badge with a stale value.
+      // Counts reconcile on folder switch / manual refresh, by which point
+      // Gmail has caught up.
       return api.post('/api/crm/gmail/modify', { action, ids: idList })
-        .then((r) => { actions.loadMailboxLabels(); return r; }) // keep sidebar counts honest
         .catch((err) => {
-          // Re-sync the folder so the optimistic change doesn't stick on error.
+          // Re-sync folder + labels so the optimistic changes don't stick on error.
           actions.loadMailboxFolder(folder);
+          actions.loadMailboxLabels();
           throw err;
         });
     },
