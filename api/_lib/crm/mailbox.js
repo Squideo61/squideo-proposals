@@ -59,7 +59,8 @@ function decodeEntities(s) {
       const code = ent[1] === 'x' || ent[1] === 'X'
         ? parseInt(ent.slice(2), 16)
         : parseInt(ent.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+      if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return m;
+      try { return String.fromCodePoint(code); } catch { return m; }
     }
     const named = NAMED_ENTITIES[ent.toLowerCase()];
     return named != null ? named : m;
@@ -130,7 +131,12 @@ async function listFolder(req, res, accessToken) {
 
   const params = new URLSearchParams();
   params.set('maxResults', String(PAGE_SIZE));
-  if (label) params.append('labelIds', label);
+  // A search query behaves like Gmail's own search box: it spans the whole
+  // mailbox, not just the current folder. So when q is present we drop the
+  // folder label entirely (otherwise searching from Inbox would never find
+  // archived mail or anything outside Inbox). Without a query we filter to the
+  // folder's label as usual.
+  if (label && !q) params.append('labelIds', label);
   // "Unread only" filter: Gmail ANDs multiple labelIds, so adding UNREAD
   // narrows any folder/category to its unread threads without pulling in
   // Spam/Trash (which the q-based path would).
