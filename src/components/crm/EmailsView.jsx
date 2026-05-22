@@ -46,7 +46,7 @@ const DENSITY_OPTIONS = [
   { id: 'default',     label: 'Default'     },
   { id: 'compact',     label: 'Compact'     },
 ];
-const ROW_VPAD = { comfortable: '14px', default: '10px', compact: '5px' };
+const ROW_VPAD = { comfortable: '14px', default: '9px', compact: '2px' };
 const vpad = (d) => ROW_VPAD[d] || ROW_VPAD.default;
 
 // DOMPurify config mirrors the deal-detail email viewer: permissive enough to
@@ -687,14 +687,27 @@ function TrackingCard({ tracking }) {
 
 function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selected, onToggleSelect }) {
   const { state } = useStore();
+  const [hover, setHover] = useState(false);
   const chips = state.threadDeals?.[row.id] || [];
   const who = (row.participants && row.participants.length ? row.participants.join(', ') : null)
     || displayName(row.from) || row.fromEmail || '(unknown)';
   return (
-    <div style={{
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
       display: 'flex', alignItems: 'center', gap: 10,
-      padding: vpad(density) + ' 14px', borderTop: first ? 'none' : '1px solid ' + BRAND.border,
-      background: selected ? '#FEF9E7' : row.unread ? '#F4FAFE' : 'white',
+      padding: vpad(density) + ' 14px',
+      borderTop: first ? 'none' : '1px solid ' + (hover ? 'transparent' : BRAND.border),
+      background: selected ? '#FEF9E7' : hover ? 'white' : row.unread ? '#F4FAFE' : 'white',
+      // Gmail-style hover "pop": the row lifts on a soft shadow above its
+      // neighbours. position+zIndex keep the shadow over the next row's border.
+      position: 'relative',
+      zIndex: hover ? 1 : 0,
+      boxShadow: hover ? '0 1px 6px rgba(15,42,61,0.16), 0 0 0 1px rgba(15,42,61,0.06)' : 'none',
+      borderRadius: hover ? 6 : 0,
+      cursor: 'pointer',
+      transition: 'box-shadow 120ms ease, background 120ms ease',
     }}>
       <input
         type="checkbox"
