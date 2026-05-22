@@ -11,6 +11,7 @@ import { installBoxesNav } from './BoxesNav.jsx';
 import { ComposeBar } from './ComposeBar.jsx';
 import { api, auth } from '../lib/api.js';
 import { STAGE_COLOURS, STAGE_LABEL } from '../lib/stages.js';
+import { instrumentHtml, newTrackingToken } from '../lib/tracking.js';
 
 const INBOXSDK_APP_ID = 'sdk_SquideoCRM_398be07a2b';
 
@@ -213,18 +214,59 @@ async function installComposeBar(composeView) {
     try { root.unmount(); } catch {}
   });
 
+  // -------- Email tracking --------
+  // Just before Gmail sends, instrument the compose body with an open pixel +
+  // click-tracked links (Streak-style), and register the token so the open/
+  // click endpoints can attribute activity. The token is captured here and
+  // linked to the Gmail thread/message ids in the 'sent' handler below.
+  const trackRef = { token: null };
+  composeView.on('presending', () => {
+    try {
+      const body = composeView.getBodyElement && composeView.getBodyElement();
+      if (!body) return;
+      const token = newTrackingToken();
+      const { html, links } = instrumentHtml(body.innerHTML, token);
+      body.innerHTML = html;
+      trackRef.token = token;
+
+      let subject = null;
+      let recipients = [];
+      try {
+        subject = composeView.getSubject ? composeView.getSubject() : null;
+        recipients = [
+          ...(composeView.getToRecipients() || []),
+          ...(composeView.getCcRecipients() || []),
+        ].map(r => r.emailAddress).filter(Boolean);
+      } catch {}
+
+      // Fire-and-forget: registering must not delay or block the send.
+      api.post('/api/crm/tracking/register', { token, links, subject, recipients })
+        .catch(err => console.warn('[Squideo] tracking register failed', err));
+    } catch (err) {
+      console.warn('[Squideo] tracking instrument failed', err);
+    }
+  });
+
   // After send: if a deal is selected, attach the new message to it.
   // event.data.getThreadID() / getMessageID() return the IDs Gmail assigned
   // to the sent message; we POST those to /api/crm/threads so the timeline
   // updates immediately rather than waiting on Pub/Sub.
   composeView.getEventStream().filter(e => e.eventName === 'sent').onValue(async (event) => {
     try {
-      const dealId = controllerRef.current?.getSelectedDealId();
-      if (!dealId) return;
       const [gmailThreadId, gmailMessageId] = await Promise.all([
         event.data?.getThreadID(),
         event.data?.getMessageID(),
       ]);
+
+      // Link the tracking token to the Gmail ids so the CRM inbox eye attaches
+      // to this thread. Independent of the deal-attach below.
+      if (trackRef.token && gmailThreadId) {
+        api.post('/api/crm/tracking/link', { token: trackRef.token, gmailThreadId, gmailMessageId })
+          .catch(err => console.warn('[Squideo] tracking link failed', err));
+      }
+
+      const dealId = controllerRef.current?.getSelectedDealId();
+      if (!dealId) return;
       if (!gmailThreadId || !gmailMessageId) return;
 
       // Recipient info for the snapshot. Best-effort — server's auto-link
