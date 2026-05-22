@@ -14,6 +14,7 @@
 // proven 2-segment routing and the dispatcher's requireAuth.
 import { getFreshAccessToken } from './gmail.js';
 import { actionToLabels } from './mailboxLabels.js';
+import { trackingForThreads } from './tracking.js';
 import {
   extractBody,
   extractAttachments,
@@ -102,8 +103,8 @@ export async function mailboxLive(req, res, id, user) {
   }
 
   try {
-    if (id === 'folder')     return await listFolder(req, res, accessToken);
-    if (id === 'thread')     return await getThread(req, res, accessToken);
+    if (id === 'folder')     return await listFolder(req, res, accessToken, user);
+    if (id === 'thread')     return await getThread(req, res, accessToken, user);
     if (id === 'attachment') return await getAttachment(req, res, accessToken);
     if (id === 'modify')     return await modifyThreads(req, res, accessToken);
     if (id === 'labels')     return await listLabelCounts(req, res, accessToken);
@@ -120,7 +121,7 @@ export async function mailboxLive(req, res, id, user) {
 // GET /api/crm/gmail/folder?label=inbox&pageToken=&q=
 // Lists a page of threads for the folder, then fetches lightweight metadata
 // per thread in parallel to build the conversation summary rows.
-async function listFolder(req, res, accessToken) {
+async function listFolder(req, res, accessToken, user) {
   if (req.method !== 'GET') return res.status(405).end();
   const folder = String(qp(req, 'label') || 'inbox').toLowerCase();
   if (!(folder in FOLDER_LABELS)) return res.status(400).json({ error: 'Unknown folder: ' + folder });
@@ -156,10 +157,18 @@ async function listFolder(req, res, accessToken) {
     const t = await (await gmailFetch(
       accessToken,
       `/threads/${encodeURIComponent(tid)}?format=metadata`
-        + '&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date',
+        + '&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date'
+        + '&metadataHeaders=Content-Type',
     )).json();
     return summariseThread(t);
   }));
+
+  // Attach Streak-style open/click tracking for any of these threads the user
+  // sent through us. Best-effort — failures degrade to no tracking.
+  if (user?.email && rows.length) {
+    const tracking = await trackingForThreads(user.email, rows.map(r => r.id));
+    for (const r of rows) if (tracking[r.id]) r.tracking = tracking[r.id];
+  }
 
   return res.status(200).json({
     rows,
@@ -176,10 +185,12 @@ function summariseThread(t) {
   const lastH = parseHeaders(last.payload?.headers || []);
   const labelIds = new Set();
   const senders = [];
+  let hasAttachments = false;
   for (const m of msgs) {
     for (const l of (m.labelIds || [])) labelIds.add(l);
     const name = displayNameOrEmail(parseHeaders(m.payload?.headers || []).from);
     if (name && !senders.includes(name)) senders.push(name);
+    if (!hasAttachments && messageHasAttachment(m)) hasAttachments = true;
   }
   return {
     id: t.id,
@@ -191,14 +202,25 @@ function summariseThread(t) {
     snippet: decodeEntities(last.snippet || t.snippet || ''),
     date: headerDate(lastH.date, last.internalDate),
     messageCount: msgs.length,
+    hasAttachments,
     unread: msgs.some(m => (m.labelIds || []).includes('UNREAD')),
     starred: msgs.some(m => (m.labelIds || []).includes('STARRED')),
     labelIds: Array.from(labelIds),
   };
 }
 
+// Does a metadata message carry a real (downloadable) attachment? Prefer the
+// MIME tree (a part with a filename + attachmentId); fall back to a
+// multipart/mixed top-level Content-Type when the metadata payload omits the
+// part bodies. Inline images (multipart/related) deliberately don't count.
+function messageHasAttachment(m) {
+  if (extractAttachments(m.payload).length > 0) return true;
+  const ct = parseHeaders(m.payload?.headers || [])['content-type'] || '';
+  return /multipart\/mixed/i.test(ct);
+}
+
 // GET /api/crm/gmail/thread?id=<threadId> — the full conversation.
-async function getThread(req, res, accessToken) {
+async function getThread(req, res, accessToken, user) {
   if (req.method !== 'GET') return res.status(405).end();
   const tid = qp(req, 'id');
   if (!tid) return res.status(400).json({ error: 'id required' });
@@ -225,11 +247,17 @@ async function getThread(req, res, accessToken) {
       outbound: false, // the client decides direction against the account address
     };
   });
+  let tracking = null;
+  if (user?.email) {
+    const map = await trackingForThreads(user.email, [t.id]);
+    tracking = map[t.id] || null;
+  }
   return res.status(200).json({
     id: t.id,
     threadId: t.id,
     subject: messages[0]?.subject || null,
     messages,
+    tracking,
   });
 }
 

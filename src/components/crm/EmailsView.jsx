@@ -3,12 +3,12 @@ import {
   ArrowLeft, Mail, Inbox, Send, FileText, Star, ShieldAlert, Trash2, Archive,
   Search, X, RefreshCw, MailOpen, Reply, ReplyAll, Forward, Paperclip, Download,
   Briefcase, PenSquare, ExternalLink, ChevronDown, CircleDot,
-  Users, Info, MessagesSquare, Tag, Settings,
+  Users, Info, MessagesSquare, Tag, Settings, Eye, MousePointerClick,
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatMailDate, useIsMobile } from '../../utils.js';
+import { formatMailDate, formatRelativeTime, useIsMobile } from '../../utils.js';
 import { DealContextPanel } from './DealContextPanel.jsx';
 import { EmailComposerModal } from './DealDetailView.jsx';
 import { STAGE_COLOURS, STAGE_LABEL } from '../../lib/stages.js';
@@ -622,6 +622,69 @@ function BulkBar({ folder, count, allSelected, onToggleAll, onClear, onBulk }) {
   );
 }
 
+// Streak-style open/click indicator. Green eye once the recipient has opened
+// the email; a faint hollow eye while it's sent-but-unopened. Hovering reveals
+// the detail card (views, last opened, location, link clicks).
+function TrackingEye({ tracking }) {
+  const [hover, setHover] = useState(false);
+  if (!tracking?.tracked) return null;
+  const opened = tracking.opens > 0;
+  const colour = opened ? '#16A34A' : BRAND.muted;
+  return (
+    <span
+      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <Eye size={14} color={colour} fill={opened ? colour + '22' : 'none'} />
+      {opened && (
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: colour }}>
+          {formatRelativeTime(tracking.lastOpenedAt).replace(' ago', '')}
+        </span>
+      )}
+      {hover && <TrackingCard tracking={tracking} />}
+    </span>
+  );
+}
+
+function TrackingCard({ tracking }) {
+  const opened = tracking.opens > 0;
+  return (
+    <div style={{
+      position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 50,
+      width: 240, padding: '10px 12px', background: 'white', textAlign: 'left',
+      border: '1px solid ' + BRAND.border, borderRadius: 8,
+      boxShadow: '0 6px 24px rgba(0,0,0,0.14)', cursor: 'default', whiteSpace: 'normal',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 12.5, color: opened ? '#16A34A' : BRAND.ink }}>
+        <Eye size={14} />
+        {opened ? `${tracking.opens} view${tracking.opens === 1 ? '' : 's'}` : 'Sent · not opened yet'}
+      </div>
+      {opened && tracking.lastOpenedAt && (
+        <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 3 }}>
+          Last opened {formatRelativeTime(tracking.lastOpenedAt)}
+        </div>
+      )}
+      {opened && tracking.locations?.length > 0 && (
+        <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 3 }}>
+          {tracking.locations.slice(0, 3).join(', ')}
+        </div>
+      )}
+      {tracking.clicks > 0 && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid ' + BRAND.border }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 12, color: BRAND.blue }}>
+            <MousePointerClick size={13} />
+            {tracking.clicks} link click{tracking.clicks === 1 ? '' : 's'}
+          </div>
+          {(tracking.clickedUrls || []).slice(0, 3).map((u, i) => (
+            <div key={i} style={{ fontSize: 11, color: BRAND.muted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selected, onToggleSelect }) {
   const { state } = useStore();
   const chips = state.threadDeals?.[row.id] || [];
@@ -668,6 +731,8 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
           {chips.length > 1 && <span style={{ fontSize: 10.5, fontWeight: 700, color: BRAND.muted }}>+{chips.length - 1}</span>}
         </div>
       )}
+      <TrackingEye tracking={row.tracking} />
+      {row.hasAttachments && <Paperclip size={13} color={BRAND.muted} style={{ flexShrink: 0 }} title="Has attachment" />}
       <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: BRAND.muted, width: 78, textAlign: 'right' }}>{formatMailDate(row.date)}</span>
       <div style={{ flexShrink: 0, display: 'flex', gap: 2 }}>
         {row.unread && (
@@ -686,6 +751,36 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
 
 // Full conversation modal: loads the thread (live Gmail or DB) and renders
 // every message stacked, newest expanded and older ones collapsible.
+// Tracking summary shown at the top of a tracked conversation.
+function TrackingBanner({ tracking }) {
+  const opened = tracking.opens > 0;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+      padding: '8px 12px', marginBottom: 14, borderRadius: 8,
+      background: opened ? '#16A34A14' : BRAND.subtle || '#F3F4F6',
+      border: '1px solid ' + (opened ? '#16A34A44' : BRAND.border),
+      fontSize: 12.5,
+    }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, color: opened ? '#16A34A' : BRAND.muted }}>
+        <Eye size={15} />
+        {opened ? `Opened ${tracking.opens}×` : 'Sent · not opened yet'}
+      </span>
+      {opened && tracking.lastOpenedAt && (
+        <span style={{ color: BRAND.muted }}>Last opened {formatRelativeTime(tracking.lastOpenedAt)}</span>
+      )}
+      {opened && tracking.locations?.length > 0 && (
+        <span style={{ color: BRAND.muted }}>{tracking.locations.slice(0, 3).join(', ')}</span>
+      )}
+      {tracking.clicks > 0 && (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, color: BRAND.blue }}>
+          <MousePointerClick size={14} /> {tracking.clicks} link click{tracking.clicks === 1 ? '' : 's'}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
   const { state, actions, showMsg } = useStore();
   const [loading, setLoading] = useState(true);
@@ -813,6 +908,7 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
         {subject}
         {messages.length > 1 && <span style={{ color: BRAND.muted, fontWeight: 500 }}> · {messages.length} messages</span>}
       </h2>
+      {thread?.tracking?.tracked && <TrackingBanner tracking={thread.tracking} />}
 
       <div style={{ display: 'flex', gap: 18, flexDirection: isMobile ? 'column' : 'row', alignItems: 'flex-start' }}>
         {/* Conversation (left) */}

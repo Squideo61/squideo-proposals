@@ -23,6 +23,7 @@ import {
 } from './shared.js';
 import { gmailBackfill } from './gmailBackfill.js';
 import { mailboxLive } from './mailbox.js';
+import { instrumentHtml, newTrackingToken, recordTrackedSend } from './tracking.js';
 
 // One-shot per cold start: ensure the gmail signature columns exist. Belongs
 // in the manual Neon migration but absent on workspaces where that step was
@@ -797,6 +798,18 @@ export async function performGmailSend(user, payload) {
     if (textOut) textOut = textOut + '\n\n' + signatureHtml.replace(/<[^>]+>/g, '').replace(/\s+\n/g, '\n').trim();
   }
 
+  // Email tracking: instrument the HTML body with an open pixel + click-tracked
+  // links. Only HTML emails can be tracked (a pixel needs HTML); text-only
+  // sends go out untouched. The token is embedded now; the DB row is written
+  // after the send below, once we have the Gmail message/thread ids.
+  const trackToken = htmlOut ? newTrackingToken() : null;
+  let trackLinks = [];
+  if (trackToken) {
+    const instrumented = instrumentHtml(htmlOut, trackToken);
+    htmlOut = instrumented.html;
+    trackLinks = instrumented.links;
+  }
+
   // Build the RFC 2822 message. Add the X-Squideo-Deal header so server-side
   // sync (Phase 3) can thread continuity even if the recipient drops it.
   const fromName = user.name || fromAddress;
@@ -853,6 +866,21 @@ export async function performGmailSend(user, payload) {
     throw e;
   }
   const sent = await sendRes.json();
+
+  // Persist the tracking row now that we have the Gmail ids. Best-effort:
+  // recordTrackedSend swallows its own errors so tracking never breaks a send.
+  if (trackToken) {
+    await recordTrackedSend({
+      token: trackToken,
+      userEmail: user.email,
+      messageId: sent.id,
+      threadId: sent.threadId,
+      subject,
+      recipients: Array.from(new Set([...to, ...cc].filter(Boolean))),
+      links: trackLinks,
+      source: 'crm',
+    });
+  }
 
   // Log to the deal timeline so the user sees what they sent.
   if (dealId) {
