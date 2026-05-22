@@ -38,6 +38,7 @@ const QuoteRequestsView = lazyNamed(() => import('./components/crm/QuoteRequests
 const XeroDuplicatesView = lazyNamed(() => import('./components/crm/XeroDuplicatesView.jsx'), 'XeroDuplicatesView');
 const RevisionsView = lazyNamed(() => import('./components/crm/RevisionsView.jsx'), 'RevisionsView');
 const ProductionView = lazyNamed(() => import('./components/crm/ProductionView.jsx'), 'ProductionView');
+const ProjectDetailView = lazyNamed(() => import('./components/crm/ProjectDetailView.jsx'), 'ProjectDetailView');
 
 function ViewFallback() {
   return (
@@ -267,17 +268,16 @@ function AppShell() {
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <Suspense fallback={<ViewFallback />}>
-          {view === 'deal' && activeId ? (
-            <DealDetailView
+          {view === 'project' && activeId ? (
+            <ProjectDetailView
               dealId={activeId}
               onBack={() => navigate('production')}
-              onOpenProposal={() => {}}
-              onCreateProposal={null}
+              onOpenFullDeal={null}
             />
           ) : view === 'revisions' ? (
             <RevisionsView onBack={() => navigate('production')} />
           ) : (
-            <ProductionView onBack={null} onOpenDeal={(id) => navigate('deal', id)} />
+            <ProductionView onBack={null} onOpenDeal={(id) => navigate('project', id)} />
           )}
         </Suspense>
         <Toast msg={toast} />
@@ -378,7 +378,14 @@ function AppShell() {
       {view === 'production' && (
         <ProductionView
           onBack={() => navigate('list')}
-          onOpenDeal={(id) => navigate('deal', id)}
+          onOpenDeal={(id) => navigate('project', id)}
+        />
+      )}
+      {view === 'project' && activeId && (
+        <ProjectDetailView
+          dealId={activeId}
+          onBack={() => navigate('production')}
+          onOpenFullDeal={(id) => navigate('deal', id)}
         />
       )}
       {view === 'leaderboard' && (
