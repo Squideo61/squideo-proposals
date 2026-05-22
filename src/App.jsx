@@ -347,7 +347,7 @@ function AppShell() {
           folder={view === 'triage' ? 'triage' : (activeId || 'inbox')}
           onBack={() => navigate('list')}
           onOpenDeal={(id) => navigate('deal', id)}
-          onSelectFolder={(f) => navigate('emails', f === 'deals' ? null : f)}
+          onSelectFolder={(f) => navigate('emails', f)}
         />
       )}
       {view === 'quote-requests' && (
