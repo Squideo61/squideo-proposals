@@ -35,7 +35,10 @@ export function PipelineView({ onBack, onOpenDeal }) {
     [allDeals, ownerFilter],
   );
 
+  // Producers are scoped to the video Revisions section and never own sales
+  // deals, so they're excluded from the pipeline's owner filter.
   const memberOptions = useMemo(() => Object.entries(state.users || {})
+    .filter(([, u]) => u.role !== 'producer')
     .map(([email, u]) => ({ email, name: u.name || email }))
     .sort((a, b) => a.name.localeCompare(b.name)), [state.users]);
 
