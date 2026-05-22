@@ -40,6 +40,7 @@ const FOLDER_BY_ID = Object.fromEntries([...FOLDERS, ...CATEGORY_FOLDERS].map(f 
 
 // List row density (Gmail-style). Drives the vertical padding of list rows.
 const DENSITY_KEY = 'squideo.emails.density';
+const UNREAD_ONLY_KEY = 'squideo.emails.unreadOnly';
 const DENSITY_OPTIONS = [
   { id: 'comfortable', label: 'Comfortable' },
   { id: 'default',     label: 'Default'     },
@@ -97,10 +98,10 @@ const FRAME_SANITIZE = {
   FORBID_ATTR: ['onerror', 'onload', 'onclick'],
 };
 
-export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolder }) {
+export function EmailsView({ folder = 'inbox', onBack, onOpenDeal, onSelectFolder }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
-  const active = FOLDER_BY_ID[folder] ? folder : 'deals';
+  const active = FOLDER_BY_ID[folder] ? folder : 'inbox';
   const def = FOLDER_BY_ID[active];
 
   // Gmail's smart categories appear only when the account actually uses them
@@ -113,7 +114,9 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   const connected = !!(state.gmailAccount && state.gmailAccount.connected);
   const [search, setSearch] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
-  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [unreadOnly, setUnreadOnly] = useState(() => {
+    try { return localStorage.getItem(UNREAD_ONLY_KEY) === '1'; } catch { return false; }
+  });
   const [openRef, setOpenRef] = useState(null);     // { kind, threadId, unread } for the conversation modal
   const [density, setDensity] = useState(() => {
     try { return localStorage.getItem(DENSITY_KEY) || 'default'; } catch { return 'default'; }
@@ -177,6 +180,7 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
     if (def.kind !== 'gmail' || !connected) return;
     const next = !unreadOnly;
     setUnreadOnly(next);
+    try { localStorage.setItem(UNREAD_ONLY_KEY, next ? '1' : '0'); } catch { /* ignore */ }
     actions.loadMailboxFolder(active, { q: appliedQuery, unread: next });
   };
 
