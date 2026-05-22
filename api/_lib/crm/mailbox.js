@@ -49,6 +49,23 @@ function qp(req, key) {
   return new URLSearchParams((req.url || '').split('?')[1] || '').get(key);
 }
 
+// Gmail returns `snippet` HTML-escaped (e.g. "I&#39;m", "&amp;"). Decode the
+// common named + numeric entities so the CRM shows real punctuation, not markup.
+const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+function decodeEntities(s) {
+  if (!s) return s;
+  return String(s).replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, ent) => {
+    if (ent[0] === '#') {
+      const code = ent[1] === 'x' || ent[1] === 'X'
+        ? parseInt(ent.slice(2), 16)
+        : parseInt(ent.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+    }
+    const named = NAMED_ENTITIES[ent.toLowerCase()];
+    return named != null ? named : m;
+  });
+}
+
 // Thin wrapper around the Gmail REST API. `path` is relative to GMAIL_API.
 // Throws an error tagged GMAIL_API_FAILED on a non-2xx so mailboxLive maps it
 // to a 502 rather than leaking Gmail's raw response.
@@ -165,7 +182,7 @@ function summariseThread(t) {
     from: lastH.from || null,
     fromEmail: extractEmail(lastH.from),
     participants: senders,
-    snippet: last.snippet || t.snippet || '',
+    snippet: decodeEntities(last.snippet || t.snippet || ''),
     date: headerDate(lastH.date, last.internalDate),
     messageCount: msgs.length,
     unread: msgs.some(m => (m.labelIds || []).includes('UNREAD')),
@@ -193,7 +210,7 @@ async function getThread(req, res, accessToken) {
       cc: parseAddressList(h.cc),
       subject: h.subject || null,
       date: headerDate(h.date, m.internalDate),
-      snippet: m.snippet || '',
+      snippet: decodeEntities(m.snippet || ''),
       html: html || null,
       text: text || null,
       attachments: extractAttachments(m.payload),
