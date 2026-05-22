@@ -3,6 +3,7 @@ import {
   ArrowLeft, Mail, Inbox, Send, FileText, Star, ShieldAlert, Trash2, Archive,
   Search, X, RefreshCw, MailOpen, Reply, ReplyAll, Forward, Paperclip, Download,
   Briefcase, PenSquare, ExternalLink, ChevronDown, CircleDot,
+  Users, Info, MessagesSquare, Tag,
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
@@ -26,7 +27,16 @@ const FOLDERS = [
   { id: 'trash',   label: 'Trash',    icon: Trash2,      kind: 'gmail'  },
   { id: 'all',     label: 'All Mail', icon: Archive,     kind: 'gmail'  },
 ];
-const FOLDER_BY_ID = Object.fromEntries(FOLDERS.map(f => [f.id, f]));
+// Gmail's smart categories. Shown only when the connected account actually uses
+// them (inferred from label counts) — otherwise the mailbox is unchanged, just
+// like Gmail hides the tabs when they're off.
+const CATEGORY_FOLDERS = [
+  { id: 'social',     label: 'Social',     icon: Users,          kind: 'gmail', categoryLabel: 'CATEGORY_SOCIAL' },
+  { id: 'updates',    label: 'Updates',    icon: Info,           kind: 'gmail', categoryLabel: 'CATEGORY_UPDATES' },
+  { id: 'forums',     label: 'Forums',     icon: MessagesSquare, kind: 'gmail', categoryLabel: 'CATEGORY_FORUMS' },
+  { id: 'promotions', label: 'Promotions', icon: Tag,            kind: 'gmail', categoryLabel: 'CATEGORY_PROMOTIONS' },
+];
+const FOLDER_BY_ID = Object.fromEntries([...FOLDERS, ...CATEGORY_FOLDERS].map(f => [f.id, f]));
 
 // DOMPurify config mirrors the deal-detail email viewer: permissive enough to
 // render real mail (images, links, tables) but strips scripts/inline handlers.
@@ -82,6 +92,13 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
   const isMobile = useIsMobile();
   const active = FOLDER_BY_ID[folder] ? folder : 'deals';
   const def = FOLDER_BY_ID[active];
+
+  // Gmail's smart categories appear only when the account actually uses them
+  // (any category label carries mail). Otherwise the mailbox is unchanged.
+  const categoriesEnabled = CATEGORY_FOLDERS.some(
+    f => (state.mailboxLabels?.[f.categoryLabel]?.threadsTotal || 0) > 0
+  );
+  const folders = categoriesEnabled ? [...FOLDERS, ...CATEGORY_FOLDERS] : FOLDERS;
 
   const connected = !!(state.gmailAccount && state.gmailAccount.connected);
   const [search, setSearch] = useState('');
@@ -158,6 +175,7 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
     if (f.id === 'inbox') return state.mailboxLabels?.INBOX?.threadsUnread || null;
     if (f.id === 'unread') return state.mailboxLabels?.UNREAD?.threadsTotal || null;
     if (f.id === 'spam') return state.mailboxLabels?.SPAM?.threadsUnread || null;
+    if (f.categoryLabel) return state.mailboxLabels?.[f.categoryLabel]?.threadsUnread || null;
     return null;
   };
 
@@ -180,7 +198,7 @@ export function EmailsView({ folder = 'deals', onBack, onOpenDeal, onSelectFolde
           gap: 2, overflowX: isMobile ? 'auto' : 'visible',
           marginBottom: isMobile ? 12 : 0,
         }}>
-          {FOLDERS.map((f) => {
+          {folders.map((f) => {
             const isActive = f.id === active;
             const badge = badgeFor(f);
             const Icon = f.icon;

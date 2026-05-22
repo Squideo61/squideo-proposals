@@ -36,6 +36,12 @@ const FOLDER_LABELS = {
   spam: 'SPAM',
   trash: 'TRASH',
   all: null,
+  // Gmail's smart categories — only surfaced in the UI when the account uses
+  // them. A single category label behaves like any other folder here.
+  social: 'CATEGORY_SOCIAL',
+  updates: 'CATEGORY_UPDATES',
+  forums: 'CATEGORY_FORUMS',
+  promotions: 'CATEGORY_PROMOTIONS',
 };
 
 function qp(req, key) {
@@ -250,7 +256,8 @@ async function modifyThreads(req, res, accessToken) {
 // GET /api/crm/gmail/labels — unread/total counts for the sidebar badges.
 async function listLabelCounts(req, res, accessToken) {
   if (req.method !== 'GET') return res.status(405).end();
-  const wanted = ['INBOX', 'UNREAD', 'SPAM', 'DRAFT'];
+  const wanted = ['INBOX', 'UNREAD', 'SPAM', 'DRAFT',
+    'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS', 'CATEGORY_PROMOTIONS'];
   const out = {};
   await Promise.all(wanted.map(async (lbl) => {
     try {
