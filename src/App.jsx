@@ -37,6 +37,7 @@ const EmailsView = lazyNamed(() => import('./components/crm/EmailsView.jsx'), 'E
 const QuoteRequestsView = lazyNamed(() => import('./components/crm/QuoteRequestsView.jsx'), 'QuoteRequestsView');
 const XeroDuplicatesView = lazyNamed(() => import('./components/crm/XeroDuplicatesView.jsx'), 'XeroDuplicatesView');
 const RevisionsView = lazyNamed(() => import('./components/crm/RevisionsView.jsx'), 'RevisionsView');
+const ProductionView = lazyNamed(() => import('./components/crm/ProductionView.jsx'), 'ProductionView');
 
 function ViewFallback() {
   return (
@@ -62,8 +63,9 @@ function buildHash(view, id) {
 function AppShell() {
   const { state, actions, showMsg, toast } = useStore();
   const user = state.session;
-  // "Producer" accounts are scoped to the video Revisions section only.
-  const revisionsOnly = user?.role === 'producer';
+  // "Producer" accounts are scoped to the production board, the project (deal)
+  // pages they work on, and the Revisions section — no sales/admin nav.
+  const producerOnly = user?.role === 'producer';
   const [view, setView] = useState(() => parseHash().view);
   const [activeId, setActiveId] = useState(() => parseHash().activeId);
   const [modal, setModal] = useState(null);
@@ -258,12 +260,25 @@ function AppShell() {
     .map(([id, d]) => ({ id, ...d }))
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-  // Producers only ever see the Revisions section — no dashboard, no other nav.
-  if (revisionsOnly) {
+  // Producers get a stripped shell: the production board by default, the
+  // project (deal) pages they open from it, and the Revisions section — no
+  // sales pipeline, dashboard, or admin nav.
+  if (producerOnly) {
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <Suspense fallback={<ViewFallback />}>
-          <RevisionsView onBack={null} />
+          {view === 'deal' && activeId ? (
+            <DealDetailView
+              dealId={activeId}
+              onBack={() => navigate('production')}
+              onOpenProposal={() => {}}
+              onCreateProposal={null}
+            />
+          ) : view === 'revisions' ? (
+            <RevisionsView onBack={() => navigate('production')} />
+          ) : (
+            <ProductionView onBack={null} onOpenDeal={(id) => navigate('deal', id)} />
+          )}
         </Suspense>
         <Toast msg={toast} />
       </div>
@@ -359,6 +374,12 @@ function AppShell() {
       )}
       {view === 'revisions' && (
         <RevisionsView onBack={() => navigate('list')} />
+      )}
+      {view === 'production' && (
+        <ProductionView
+          onBack={() => navigate('list')}
+          onOpenDeal={(id) => navigate('deal', id)}
+        />
       )}
       {view === 'leaderboard' && (
         <LeaderboardView onBack={() => navigate('list')} />

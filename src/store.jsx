@@ -131,7 +131,7 @@ function applyOptimisticAllocationChange(setState, clientKey, transform) {
 // tidier deal record can sit in state.deals (the Kanban list).
 function stripDetail(d) {
   if (!d) return d;
-  const { proposals, events, tasks, files, comments, ...rest } = d;
+  const { proposals, events, tasks, files, comments, videos, ...rest } = d;
   return rest;
 }
 
@@ -911,6 +911,65 @@ export function StoreProvider({ children }) {
         { kind: 'deal', id: dealId, delete: true, errorMsg: 'Failed to delete deal' },
         () => api.delete('/api/crm/deals/' + encodeURIComponent(dealId)),
       );
+    },
+
+    // ---------- Production board ----------
+    // The board reads deals from state.deals (filtered to those in production),
+    // so loading is just refreshing deals; moving a card patches the deal like
+    // moveDealStage. Video/credit mutations reload the deal detail to keep the
+    // nested videos list in sync (same approach as the revisions actions).
+    loadProduction() {
+      return actions.refreshDeals();
+    },
+    moveProjectStage(dealId, phase, stage) {
+      const patch = { productionPhase: phase, productionStage: stage, productionStageChangedAt: new Date().toISOString() };
+      return mutate(
+        { kind: 'deal', id: dealId, patch, errorMsg: 'Failed to move project' },
+        () => api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/move', { phase, stage }),
+      );
+    },
+    updateProjectProduction(dealId, fields) {
+      // fields: { producerEmail?, paymentTerms?, deliveryDeadline?, textDirectionDeadline? }
+      return mutate(
+        { kind: 'deal', id: dealId, patch: { ...fields }, errorMsg: 'Failed to update project' },
+        () => api.patch('/api/crm/production/' + encodeURIComponent(dealId), fields),
+      );
+    },
+    enterProduction(dealId) {
+      return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/enter', {})
+        .then((deal) => {
+          if (deal && deal.id) setState(s => applyOne(s, { kind: 'deal', id: deal.id, patch: deal }));
+          return actions.loadDealDetail(dealId);
+        });
+    },
+    addProjectVideo(dealId, title, { fromCredit = false } = {}) {
+      return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/videos', { title, fromCredit })
+        .then((video) => actions.loadDealDetail(dealId).then(() => video));
+    },
+    updateProjectVideo(dealId, videoId, fields) {
+      return api.patch('/api/crm/production/video/' + encodeURIComponent(videoId), fields)
+        .then(() => actions.loadDealDetail(dealId));
+    },
+    deleteProjectVideo(dealId, videoId) {
+      return api.delete('/api/crm/production/video/' + encodeURIComponent(videoId))
+        .then(() => actions.loadDealDetail(dealId))
+        .catch(() => actions.loadDealDetail(dealId));
+    },
+    addProjectCredits(dealId, delta) {
+      return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/credits', { delta })
+        .then((resp) => {
+          if (resp && typeof resp.productionCredits === 'number') {
+            setState(s => applyOne(s, { kind: 'deal', id: dealId, patch: { productionCredits: resp.productionCredits } }));
+          }
+          return resp;
+        });
+    },
+    useProjectCredit(dealId, title) {
+      return actions.addProjectVideo(dealId, title, { fromCredit: true });
+    },
+    sendVideoForReview(dealId, videoId) {
+      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/send-for-review', {})
+        .then((resp) => actions.loadDealDetail(dealId).then(() => resp));
     },
     createContact(input) {
       return api.post('/api/crm/contacts', input).then((c) => {

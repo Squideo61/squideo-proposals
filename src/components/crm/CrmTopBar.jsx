@@ -34,6 +34,7 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
   const newQuoteRequestsCount = (state.quoteRequests || []).filter(q => q.status === 'new').length;
 
   const canRevisions = permissionsInclude(perms, 'revisions.access');
+  const canProduction = permissionsInclude(perms, 'production.access');
   const canAdmin = permissionsInclude(perms, 'users.manage')
     || permissionsInclude(perms, 'roles.manage')
     || permissionsInclude(perms, 'settings.manage');
@@ -63,8 +64,9 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
     {
       key: 'projects',
       label: 'Projects',
-      views: ['revisions', 'partner-credits', 'partner-credit-detail'],
+      views: ['production', 'revisions', 'partner-credits', 'partner-credit-detail'],
       items: [
+        ...(canProduction ? [{ label: 'Production', icon: KanbanSquare, go: () => navigate('production') }] : []),
         ...(canRevisions ? [{ label: 'Revisions', icon: Clapperboard, go: () => navigate('revisions') }] : []),
         { label: 'Partner Credits', icon: Coins, go: () => navigate('partner-credits') },
       ],

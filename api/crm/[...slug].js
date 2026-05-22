@@ -14,6 +14,7 @@ import { commentsRoute } from '../_lib/crm/comments.js';
 import { paymentsRoute } from '../_lib/crm/payments.js';
 import { invoicesRoute } from '../_lib/crm/invoices.js';
 import { retainersRoute } from '../_lib/crm/retainers.js';
+import { productionRoute } from '../_lib/crm/production.js';
 import { xeroContactsRoute } from '../_lib/crm/xeroContacts.js';
 import { gmailRoute, gmailCallback } from '../_lib/crm/gmail.js';
 import { gmailPush } from '../_lib/crm/gmailPush.js';
@@ -98,6 +99,7 @@ export default async function handler(req, res) {
       case 'payments':  return await paymentsRoute(req, res, id, action, user);
       case 'invoices':   return await invoicesRoute(req, res, id, action, user);
       case 'retainers':  return await retainersRoute(req, res, id, action, user);
+      case 'production': return await productionRoute(req, res, id, action, user, subaction);
       case 'xero-contacts': return await xeroContactsRoute(req, res, id, action, user);
       case 'resolve-client': return await resolveClientRoute(req, res, id, action, user);
       case 'tracking':  return await trackingRoute(req, res, id, action, user);

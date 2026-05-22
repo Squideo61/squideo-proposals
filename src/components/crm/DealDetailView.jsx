@@ -12,6 +12,7 @@ import { TaskFormModal } from './TaskFormModal.jsx';
 import { Card, Empty } from './Card.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
+import { ProductionPanel } from './ProductionPanel.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
@@ -182,6 +183,8 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           </div>
         )}
       </div>
+
+      <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} isMobile={isMobile} />
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
         <Card

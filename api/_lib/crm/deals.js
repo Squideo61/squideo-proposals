@@ -19,32 +19,13 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       const owner = req.query.owner ? String(req.query.owner) : null;
       let rows;
       if (stage && owner) {
-        rows = await sql`
-          SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-                 value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
-          FROM deals WHERE stage = ${stage} AND owner_email = ${owner}
-          ORDER BY stage_changed_at DESC
-        `;
+        rows = await sql`SELECT * FROM deals WHERE stage = ${stage} AND owner_email = ${owner} ORDER BY stage_changed_at DESC`;
       } else if (stage) {
-        rows = await sql`
-          SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-                 value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
-          FROM deals WHERE stage = ${stage}
-          ORDER BY stage_changed_at DESC
-        `;
+        rows = await sql`SELECT * FROM deals WHERE stage = ${stage} ORDER BY stage_changed_at DESC`;
       } else if (owner) {
-        rows = await sql`
-          SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-                 value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
-          FROM deals WHERE owner_email = ${owner}
-          ORDER BY stage_changed_at DESC
-        `;
+        rows = await sql`SELECT * FROM deals WHERE owner_email = ${owner} ORDER BY stage_changed_at DESC`;
       } else {
-        rows = await sql`
-          SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-                 value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
-          FROM deals ORDER BY stage_changed_at DESC
-        `;
+        rows = await sql`SELECT * FROM deals ORDER BY stage_changed_at DESC`;
       }
 
       // Annotate with primary contact + linked-proposal counts so the Kanban
@@ -55,9 +36,20 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         : [];
       const propMap = new Map(proposalCounts.map(r => [r.deal_id, r.n]));
 
+      // Video count for the production board's cards. Guarded so a workspace
+      // that hasn't applied the production migration still lists deals.
+      let vidMap = new Map();
+      try {
+        const videoCounts = ids.length
+          ? await sql`SELECT deal_id, COUNT(*)::int AS n FROM project_videos WHERE deal_id = ANY(${ids}) GROUP BY deal_id`
+          : [];
+        vidMap = new Map(videoCounts.map(r => [r.deal_id, r.n]));
+      } catch (_) { /* project_videos not yet migrated */ }
+
       return res.status(200).json(rows.map(r => ({
         ...serialiseDeal(r),
         proposalCount: propMap.get(r.id) || 0,
+        videoCount: vidMap.get(r.id) || 0,
       })));
     }
     if (req.method === 'POST') {
@@ -374,11 +366,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 
   // /deals/:id (no action)
   if (req.method === 'GET') {
-    const rows = await sql`
-      SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-             value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
-      FROM deals WHERE id = ${id}
-    `;
+    const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const deal = serialiseDeal(rows[0]);
     // The emails query below joins on email_message_deals which is created by
@@ -476,8 +464,24 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       }
     } catch (_) { /* table not yet migrated — reactions load as empty */ }
 
+    // Production videos (project_videos). Guarded so a workspace that hasn't
+    // applied the production migration still loads the deal page.
+    let videos = [];
+    try {
+      const vrows = await sql`
+        SELECT id, deal_id, title, status, sort_order, revision_video_id, created_at, updated_at
+        FROM project_videos WHERE deal_id = ${id} ORDER BY sort_order, created_at
+      `;
+      videos = vrows.map(v => ({
+        id: v.id, dealId: v.deal_id, title: v.title, status: v.status,
+        sortOrder: v.sort_order, revisionVideoId: v.revision_video_id || null,
+        createdAt: v.created_at, updatedAt: v.updated_at || null,
+      }));
+    } catch (_) { /* project_videos not yet migrated */ }
+
     return res.status(200).json({
       ...deal,
+      videos,
       proposals: proposals.map(p => ({
         id: p.id,
         clientName: p.data?.clientName || null,
@@ -602,7 +606,7 @@ export function computeProposalTotalExVat(proposalData, signatureData) {
 }
 
 export function serialiseDeal(r) {
-  return {
+  const out = {
     id: r.id,
     title: r.title,
     companyId: r.company_id || null,
@@ -618,4 +622,20 @@ export function serialiseDeal(r) {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
+  // Production fields are only carried on rows selected with them (the deals
+  // list and detail use SELECT *). Partial selects — a sales-stage move, a
+  // deal edit — omit these keys so they're never blanked out in the cached
+  // deal by the optimistic merge.
+  if ('production_phase' in r) {
+    out.productionPhase           = r.production_phase || null;
+    out.productionStage           = r.production_stage || null;
+    out.productionEnteredAt        = r.production_entered_at || null;
+    out.productionStageChangedAt   = r.production_stage_changed_at || null;
+    out.productionCredits          = r.production_credits == null ? 0 : Number(r.production_credits);
+    out.producerEmail              = r.producer_email || null;
+    out.paymentTerms               = r.payment_terms || null;
+    out.deliveryDeadline           = r.delivery_deadline || null;
+    out.textDirectionDeadline      = r.text_direction_deadline || null;
+  }
+  return out;
 }

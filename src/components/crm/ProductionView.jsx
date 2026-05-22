@@ -1,0 +1,338 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, Check, ChevronDown, Clapperboard, Film, CalendarClock } from 'lucide-react';
+import { BRAND } from '../../theme.js';
+import { useStore } from '../../store.jsx';
+import { formatGBP, useIsMobile } from '../../utils.js';
+import {
+  PRODUCTION_PHASES, PHASE_BY_ID, PAYMENT_TERMS_LABEL,
+} from '../../lib/productionStages.js';
+
+const PRODUCER_FILTER_STORAGE_KEY = 'squideo.production.producerFilter';
+const PHASE_STORAGE_KEY = 'squideo.production.phase';
+
+// Production board: paid deals ("projects") moving through the video-production
+// workflow. Phase tabs (Pre-Production / Production / …) each show their stages
+// as droppable rows — the same native drag/drop as the sales PipelineView.
+export function ProductionView({ onBack, onOpenDeal }) {
+  const { state, actions, showMsg } = useStore();
+  const isMobile = useIsMobile();
+
+  useEffect(() => { actions.loadProduction(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [activePhase, setActivePhase] = useState(() => {
+    try { return localStorage.getItem(PHASE_STORAGE_KEY) || PRODUCTION_PHASES[0].id; } catch { return PRODUCTION_PHASES[0].id; }
+  });
+  useEffect(() => { try { localStorage.setItem(PHASE_STORAGE_KEY, activePhase); } catch {} }, [activePhase]);
+
+  const [producerFilter, setProducerFilter] = useState(() => {
+    try { return localStorage.getItem(PRODUCER_FILTER_STORAGE_KEY) || ''; } catch { return ''; }
+  });
+  useEffect(() => { try { localStorage.setItem(PRODUCER_FILTER_STORAGE_KEY, producerFilter); } catch {} }, [producerFilter]);
+
+  // Every deal that has entered production.
+  const projects = useMemo(
+    () => Object.values(state.deals || {}).filter(d => d.productionPhase),
+    [state.deals],
+  );
+  const filtered = useMemo(
+    () => (producerFilter ? projects.filter(p => p.producerEmail === producerFilter) : projects),
+    [projects, producerFilter],
+  );
+
+  // Per-phase counts (for the tab badges) and the active phase's grouping.
+  const countByPhase = useMemo(() => {
+    const out = Object.fromEntries(PRODUCTION_PHASES.map(p => [p.id, 0]));
+    for (const p of filtered) if (out[p.productionPhase] != null) out[p.productionPhase] += 1;
+    return out;
+  }, [filtered]);
+
+  const phase = PHASE_BY_ID[activePhase] || PRODUCTION_PHASES[0];
+  const grouped = useMemo(() => {
+    const out = Object.fromEntries(phase.stages.map(s => [s.id, []]));
+    const fallback = phase.stages[0]?.id;
+    for (const p of filtered) {
+      if (p.productionPhase !== phase.id) continue;
+      const stage = out[p.productionStage] ? p.productionStage : fallback;
+      (out[stage] || out[fallback]).push(p);
+    }
+    return out;
+  }, [filtered, phase]);
+
+  const memberOptions = useMemo(() => Object.entries(state.users || {})
+    .map(([email, u]) => ({ email, name: u.name || email }))
+    .sort((a, b) => a.name.localeCompare(b.name)), [state.users]);
+
+  // Drop a card into a stage of the active phase.
+  const handleDropOnStage = (deal, stageId) => {
+    if (!deal) return;
+    if (deal.productionPhase === phase.id && deal.productionStage === stageId) return;
+    actions.moveProjectStage(deal.id, phase.id, stageId);
+    showMsg(`Moved to ${phase.stages.find(s => s.id === stageId)?.label || stageId}`);
+  };
+
+  // Drop a card onto a phase tab → move it to that phase's first stage.
+  const handleDropOnPhase = (deal, phaseId) => {
+    if (!deal) return;
+    const target = PHASE_BY_ID[phaseId];
+    if (!target) return;
+    const firstStage = target.stages[0]?.id;
+    if (deal.productionPhase === phaseId && deal.productionStage === firstStage) return;
+    actions.moveProjectStage(deal.id, phaseId, firstStage);
+    setActivePhase(phaseId);
+    showMsg(`Moved to ${target.label}`);
+  };
+
+  return (
+    <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
+      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
+          <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Clapperboard size={22} color={BRAND.blue} /> Production
+          </h1>
+          <ProducerFilter
+            producerFilter={producerFilter}
+            setProducerFilter={setProducerFilter}
+            memberOptions={memberOptions}
+            sessionEmail={state.session?.email || ''}
+          />
+          <span style={{ fontSize: 13, color: BRAND.muted }}>{filtered.length} projects</span>
+        </div>
+      </header>
+
+      {/* Phase tabs — also drop targets for cross-phase moves. */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid ' + BRAND.border, flexWrap: 'wrap' }}>
+        {PRODUCTION_PHASES.map(p => (
+          <PhaseTab
+            key={p.id}
+            phase={p}
+            active={p.id === activePhase}
+            count={countByPhase[p.id] || 0}
+            onSelect={() => setActivePhase(p.id)}
+            onDropDeal={(deal) => handleDropOnPhase(deal, p.id)}
+          />
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {phase.stages.map(s => (
+          <StageRow
+            key={s.id}
+            stage={s}
+            color={phase.color}
+            deals={grouped[s.id] || []}
+            onDrop={(deal) => handleDropOnStage(deal, s.id)}
+            onOpenDeal={onOpenDeal}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PhaseTab({ phase, active, count, onSelect, onDropDeal }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      onDragOver={(e) => { e.preventDefault(); setHover(true); }}
+      onDragLeave={() => setHover(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setHover(false);
+        try { onDropDeal(JSON.parse(e.dataTransfer.getData('application/json'))); } catch {}
+      }}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px',
+        border: 'none', borderBottom: '2px solid ' + (active ? phase.color : 'transparent'),
+        background: hover ? '#F0F9FF' : 'transparent', cursor: 'pointer',
+        fontSize: 14, fontWeight: active ? 700 : 500, color: active ? BRAND.ink : BRAND.muted,
+        marginBottom: -1,
+      }}
+    >
+      <span style={{ width: 9, height: 9, borderRadius: '50%', background: phase.color, opacity: active ? 1 : 0.5 }} />
+      {phase.label}
+      <span style={{ fontSize: 12, color: BRAND.muted, fontWeight: 500 }}>· {count}</span>
+    </button>
+  );
+}
+
+function StageRow({ stage, color, deals, onDrop, onOpenDeal }) {
+  const [hover, setHover] = useState(false);
+  const total = deals.reduce((s, d) => s + (Number(d.value) || 0), 0);
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setHover(true); }}
+      onDragLeave={() => setHover(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setHover(false);
+        try { onDrop(JSON.parse(e.dataTransfer.getData('application/json'))); } catch {}
+      }}
+      style={{
+        background: hover ? '#F0F9FF' : '#F8FAFC',
+        border: hover ? '1px dashed ' + BRAND.blue : '1px solid ' + BRAND.border,
+        borderLeft: '4px solid ' + color,
+        borderRadius: 10,
+        padding: 12,
+        transition: 'background 100ms, border-color 100ms',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '0 2px', marginBottom: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+          {stage.label}
+        </span>
+        <span style={{ fontSize: 12, color: BRAND.muted }}>· {deals.length}</span>
+        {total > 0 && (
+          <span style={{ fontSize: 12, color: BRAND.muted, fontVariantNumeric: 'tabular-nums' }}>· {formatGBP(total)}</span>
+        )}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 8 }}>
+        {deals.map(d => <ProjectCard key={d.id} deal={d} onOpen={() => onOpenDeal(d.id)} />)}
+        {deals.length === 0 && (
+          <div style={{ padding: '16px 8px', color: BRAND.muted, fontSize: 12, fontStyle: 'italic' }}>No projects</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProjectCard({ deal, onOpen }) {
+  const { state } = useStore();
+  const producer = deal.producerEmail ? state.users[deal.producerEmail] : null;
+  const company = deal.companyId ? state.companies[deal.companyId] : null;
+  const ageDays = daysSince(deal.productionStageChangedAt);
+  const videoCount = deal.videoCount || 0;
+  const credits = deal.productionCredits || 0;
+  return (
+    <div
+      draggable
+      onDragStart={(e) => e.dataTransfer.setData('application/json', JSON.stringify(deal))}
+      onClick={onOpen}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+      style={{
+        background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
+        padding: 10, cursor: 'grab', boxShadow: '0 1px 2px rgba(15,42,61,0.04)',
+      }}
+    >
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4, lineHeight: 1.3 }}>{deal.title}</div>
+      {company && <div style={{ fontSize: 11, color: BRAND.muted, marginBottom: 6 }}>{company.name}</div>}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: BRAND.ink, background: '#F1F5F9', borderRadius: 999, padding: '2px 8px' }}>
+          <Film size={11} color={BRAND.blue} /> {videoCount} video{videoCount === 1 ? '' : 's'}
+        </span>
+        {credits > 0 && (
+          <span style={{ fontSize: 11, color: '#92400E', background: '#FEF3C7', borderRadius: 999, padding: '2px 8px' }}>
+            +{credits} credit{credits === 1 ? '' : 's'}
+          </span>
+        )}
+        {deal.paymentTerms && (
+          <span style={{ fontSize: 11, color: BRAND.muted, background: '#F1F5F9', borderRadius: 999, padding: '2px 8px' }}>
+            {PAYMENT_TERMS_LABEL[deal.paymentTerms] || deal.paymentTerms}
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: deal.deliveryDeadline ? BRAND.ink : BRAND.muted }}>
+          {deal.deliveryDeadline
+            ? <><CalendarClock size={11} color={BRAND.muted} /> {formatDate(deal.deliveryDeadline)}</>
+            : <span style={{ color: BRAND.muted }}>—</span>}
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {ageDays != null && (
+            <span style={{ fontSize: 10, color: ageDays > 14 ? '#92400E' : BRAND.muted }} title={`${ageDays} days in stage`}>{ageDays}d</span>
+          )}
+          <Avatar user={producer} fallback={deal.producerEmail} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Producer filter — "All producers" / "<Name>". Mirrors the pipeline owner filter.
+function ProducerFilter({ producerFilter, setProducerFilter, memberOptions, sessionEmail }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+
+  const selectedName = producerFilter ? (memberOptions.find(m => m.email === producerFilter)?.name || producerFilter) : '';
+  const label = !producerFilter ? 'All producers' : `${selectedName.split(' ')[0]}'s projects`;
+  const choose = (email) => { setProducerFilter(email); setOpen(false); };
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen(o => !o)} aria-haspopup="listbox" aria-expanded={open}
+        className="btn-ghost" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+        {label}<ChevronDown size={14} style={{ opacity: 0.6 }} />
+      </button>
+      {open && (
+        <div role="listbox" style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, background: 'white',
+          border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)',
+          minWidth: 220, padding: 4, zIndex: 50, maxHeight: 320, overflowY: 'auto',
+        }}>
+          <FilterOption label="All producers" selected={!producerFilter} onClick={() => choose('')} />
+          {memberOptions.map(m => (
+            <FilterOption key={m.email}
+              label={m.email === sessionEmail ? `${m.name} (me)` : m.name}
+              selected={producerFilter === m.email}
+              onClick={() => choose(m.email)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FilterOption({ label, selected, onClick }) {
+  return (
+    <button role="option" aria-selected={selected} onClick={onClick}
+      onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = selected ? '#EFF8FC' : 'transparent'; }}
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%',
+        padding: '8px 10px', border: 'none', background: selected ? '#EFF8FC' : 'transparent', borderRadius: 6,
+        cursor: 'pointer', fontSize: 13, color: BRAND.ink, textAlign: 'left',
+      }}>
+      <span>{label}</span>{selected && <Check size={14} color={BRAND.blue} />}
+    </button>
+  );
+}
+
+function Avatar({ user, fallback, size = 18 }) {
+  const name = user?.name || fallback || '?';
+  const initial = (name[0] || '?').toUpperCase();
+  return (
+    <div title={name} style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: Math.round(size * 0.5), flexShrink: 0 }}>
+      {user?.avatar
+        ? <img src={user.avatar} alt={name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        : initial}
+    </div>
+  );
+}
+
+function daysSince(iso) {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+
+function formatDate(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return String(d);
+  return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}

@@ -27,6 +27,8 @@ export const PERMISSIONS = [
   { slug: 'partner_credits.manage', group: 'CRM',      label: 'Manage partner credits' },
 
   { slug: 'revisions.access',     group: 'Revisions',  label: 'Access the video revisions section' },
+
+  { slug: 'production.access',    group: 'Projects',   label: 'Access the production board' },
 ];
 
 const VALID_SLUGS = new Set(PERMISSIONS.map(p => p.slug));
