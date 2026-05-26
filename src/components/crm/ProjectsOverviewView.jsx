@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, LayoutGrid, Film, ChevronRight } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { PHASE_BY_ID, STAGE_LABEL } from '../../lib/productionStages.js';
+import { SearchBox } from './ProductionView.jsx';
 
 // Projects overview: every project at a glance — how many videos it has and
 // which stages those videos are spread across. Derived from the same video
@@ -24,6 +25,16 @@ export function ProjectsOverviewView({ onBack, onOpenProject }) {
     return Array.from(map.values()).sort((a, b) => (a.projectTitle || '').localeCompare(b.projectTitle || ''));
   }, [videos]);
 
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const matched = useMemo(() => {
+    if (!q) return projects;
+    return projects.filter(p =>
+      (p.projectTitle || '').toLowerCase().includes(q)
+      || (p.companyName || '').toLowerCase().includes(q)
+    );
+  }, [projects, q]);
+
   return (
     <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
@@ -31,16 +42,17 @@ export function ProjectsOverviewView({ onBack, onOpenProject }) {
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           <LayoutGrid size={22} color={BRAND.blue} /> Projects
         </h1>
-        <span style={{ fontSize: 13, color: BRAND.muted }}>{projects.length} projects</span>
+        <SearchBox value={query} onChange={setQuery} placeholder="Search projects, customers…" />
+        <span style={{ fontSize: 13, color: BRAND.muted }}>{matched.length} {matched.length === 1 ? 'project' : 'projects'}{q ? ' match' : ''}</span>
       </header>
 
-      {projects.length === 0 ? (
+      {matched.length === 0 ? (
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
-          No projects in production yet.
+          {q ? 'No matches.' : 'No projects in production yet.'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {projects.map(p => <ProjectCard key={p.dealId} project={p} onOpen={() => onOpenProject(p.dealId)} />)}
+          {matched.map(p => <ProjectCard key={p.dealId} project={p} onOpen={() => onOpenProject(p.dealId)} />)}
         </div>
       )}
     </div>

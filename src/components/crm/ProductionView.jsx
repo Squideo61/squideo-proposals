@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronDown, Clapperboard, Film, Plus, LayoutGrid } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, Clapperboard, Film, Plus, LayoutGrid, Search, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -7,7 +7,7 @@ import { Modal } from '../ui.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
 import { api } from '../../api.js';
 import {
-  PRODUCTION_PHASES, PHASE_BY_ID, PAYMENT_TERMS_LABEL,
+  PRODUCTION_PHASES, PHASE_BY_ID, STAGE_LABEL, PAYMENT_TERMS_LABEL,
 } from '../../lib/productionStages.js';
 
 const PRODUCER_FILTER_STORAGE_KEY = 'squideo.production.producerFilter';
@@ -28,6 +28,7 @@ export function ProductionView({ onBack, onOpenVideo, onOpenProject, onOpenProje
   useEffect(() => { actions.loadProductionVideos(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState('');
   const [activePhase, setActivePhase] = useState(() => {
     try { return localStorage.getItem(PHASE_STORAGE_KEY) || PRODUCTION_PHASES[0].id; } catch { return PRODUCTION_PHASES[0].id; }
   });
@@ -44,23 +45,38 @@ export function ProductionView({ onBack, onOpenVideo, onOpenProject, onOpenProje
     [videos, producerFilter],
   );
 
+  // Live search across video title, project title, customer, and producer name.
+  // When the query is non-empty the board switches to a flat results list so
+  // matches from every phase show up at once (with each row's stage chipped).
+  const q = query.trim().toLowerCase();
+  const searched = useMemo(() => {
+    if (!q) return filtered;
+    return filtered.filter(v => {
+      const producerName = v.producerEmail ? (state.users?.[v.producerEmail]?.name || v.producerEmail) : '';
+      return (v.title || '').toLowerCase().includes(q)
+        || (v.projectTitle || '').toLowerCase().includes(q)
+        || (v.companyName || '').toLowerCase().includes(q)
+        || producerName.toLowerCase().includes(q);
+    });
+  }, [filtered, q, state.users]);
+
   const countByPhase = useMemo(() => {
     const out = Object.fromEntries(PRODUCTION_PHASES.map(p => [p.id, 0]));
-    for (const v of filtered) if (out[v.productionPhase] != null) out[v.productionPhase] += 1;
+    for (const v of searched) if (out[v.productionPhase] != null) out[v.productionPhase] += 1;
     return out;
-  }, [filtered]);
+  }, [searched]);
 
   const phase = PHASE_BY_ID[activePhase] || PRODUCTION_PHASES[0];
   const grouped = useMemo(() => {
     const out = Object.fromEntries(phase.stages.map(s => [s.id, []]));
     const fallback = phase.stages[0]?.id;
-    for (const v of filtered) {
+    for (const v of searched) {
       if (v.productionPhase !== phase.id) continue;
       const stage = out[v.productionStage] ? v.productionStage : fallback;
       (out[stage] || out[fallback]).push(v);
     }
     return out;
-  }, [filtered, phase]);
+  }, [searched, phase]);
 
   const memberOptions = useMemo(() => Object.entries(state.users || {})
     .map(([email, u]) => ({ email, name: u.name || email }))
@@ -98,7 +114,8 @@ export function ProductionView({ onBack, onOpenVideo, onOpenProject, onOpenProje
             memberOptions={memberOptions}
             sessionEmail={state.session?.email || ''}
           />
-          <span style={{ fontSize: 13, color: BRAND.muted }}>{filtered.length} videos</span>
+          <SearchBox value={query} onChange={setQuery} placeholder="Search videos, projects, customers…" />
+          <span style={{ fontSize: 13, color: BRAND.muted }}>{searched.length} {searched.length === 1 ? 'video' : 'videos'}{q ? ' match' : ''}</span>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           {onOpenProjects && <button onClick={onOpenProjects} className="btn-ghost"><LayoutGrid size={14} /> Projects</button>}
@@ -123,18 +140,31 @@ export function ProductionView({ onBack, onOpenVideo, onOpenProject, onOpenProje
       <div style={{ overflowX: 'auto' }}>
         <div style={{ minWidth: 900 }}>
           <ColumnsHeader />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {phase.stages.map(s => (
-              <StageGroup
-                key={s.id}
-                stage={s}
-                color={phase.color}
-                videos={grouped[s.id] || []}
-                onDrop={(video) => handleDropOnStage(video, s.id)}
-                onOpenVideo={onOpenVideo}
-              />
-            ))}
-          </div>
+          {q ? (
+            // Live search: flat list across every phase, each row chipped with
+            // its current stage so it's instantly obvious where it sits.
+            <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: searched.length ? 6 : 0 }}>
+                Search results · {searched.length}
+              </div>
+              {searched.length === 0
+                ? <div style={{ padding: '6px 2px', color: BRAND.muted, fontSize: 12, fontStyle: 'italic' }}>No matches</div>
+                : searched.map(v => <VideoRow key={v.id} video={v} onOpen={() => onOpenVideo(v.id)} showStage />)}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {phase.stages.map(s => (
+                <StageGroup
+                  key={s.id}
+                  stage={s}
+                  color={phase.color}
+                  videos={grouped[s.id] || []}
+                  onDrop={(video) => handleDropOnStage(video, s.id)}
+                  onOpenVideo={onOpenVideo}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -221,7 +251,7 @@ function StageGroup({ stage, color, videos, onDrop, onOpenVideo }) {
   );
 }
 
-function VideoRow({ video, onOpen }) {
+function VideoRow({ video, onOpen, showStage }) {
   const { state } = useStore();
   const producer = video.producerEmail ? state.users[video.producerEmail] : null;
   return (
@@ -237,11 +267,14 @@ function VideoRow({ video, onOpen }) {
         padding: '9px 0', borderTop: '1px solid ' + BRAND.border, cursor: 'grab', fontSize: 13,
       }}
     >
-      {/* Video (+ its project / customer) */}
+      {/* Video (+ its project / customer; stage chip when in search results) */}
       <div style={{ minWidth: 0 }}>
         <div style={{ fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{video.title}</div>
-        <div style={{ fontSize: 11, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {[video.projectTitle, video.companyName].filter(Boolean).join(' · ') || '—'}
+        <div style={{ fontSize: 11, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', whiteSpace: 'nowrap' }}>
+          {showStage && <StageChip phase={video.productionPhase} stage={video.productionStage} />}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {[video.projectTitle, video.companyName].filter(Boolean).join(' · ') || '—'}
+          </span>
         </div>
       </div>
       {/* Payment */}
@@ -341,6 +374,38 @@ function formatDate(d) {
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return String(d);
   return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+// Small pill showing a video's current phase + stage. Used in search-result
+// rows so the user sees where a match sits without leaving the search list.
+function StageChip({ phase, stage }) {
+  const ph = PHASE_BY_ID[phase];
+  const label = (phase && STAGE_LABEL[phase]?.[stage]) || stage || '—';
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: BRAND.ink, background: '#F1F5F9', borderRadius: 999, padding: '1px 7px', flexShrink: 0, whiteSpace: 'nowrap' }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: ph?.color || BRAND.muted }} />
+      {label}
+    </span>
+  );
+}
+
+// Live search input with an inline clear button. Reused by ProjectsOverviewView.
+export function SearchBox({ value, onChange, placeholder }) {
+  return (
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: BRAND.muted, pointerEvents: 'none' }} />
+      <input
+        type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        style={{ padding: '7px 28px 7px 30px', borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13, minWidth: 240, boxSizing: 'border-box' }}
+      />
+      {value && (
+        <button type="button" onClick={() => onChange('')} aria-label="Clear search"
+          style={{ position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: BRAND.muted, padding: 4, display: 'flex' }}>
+          <X size={14} />
+        </button>
+      )}
+    </div>
+  );
 }
 
 // Create a project and assign it to a customer. Mirrors the pipeline's "New
