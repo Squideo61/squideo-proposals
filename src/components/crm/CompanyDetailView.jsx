@@ -17,7 +17,6 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
   const [editing, setEditing] = useState(false);
   const [linking, setLinking] = useState(false);
   const [xeroContact, setXeroContact] = useState(null);
-  const [payments, setPayments] = useState(null);
   const [creatingXero, setCreatingXero] = useState(false);
   // Banner "Create invoice" → opens the invoices card's create modal, preselecting the deal.
   const [createSignal, setCreateSignal] = useState(0);
@@ -30,25 +29,14 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
     api.get('/api/crm/companies/' + encodeURIComponent(companyId) + '/detail')
       .then(setDetail)
       .catch((err) => showMsg?.(err.message || 'Failed to load company', 'error'));
-    api.get('/api/crm/payments?companyId=' + encodeURIComponent(companyId))
-      .then((rows) => setPayments(Array.isArray(rows) ? rows : []))
-      .catch(() => setPayments([]));
   }, [companyId, showMsg]);
 
-  // Lifetime value rollup from the company's payments (Stripe initial +
-  // Partner monthly + manual) — a single source of truth for the headline.
-  const lifetimeTotals = (() => {
-    if (!payments) return null;
-    const year = new Date().getFullYear();
-    let lifetime = 0;
-    let thisYear = 0;
-    for (const p of payments) {
-      const amt = Number(p.amount) || 0;
-      lifetime += amt;
-      if (p.paidAt && new Date(p.paidAt).getFullYear() === year) thisYear += amt;
-    }
-    return { lifetime, thisYear, year, count: payments.length };
-  })();
+  // Lifetime value rollup, computed server-side from every paid source (Stripe,
+  // Partner, manual payments, paid manual invoices, and paid Xero invoices) so
+  // it always agrees with the outstanding-balance figures.
+  const lifetimeTotals = detail?.lifetime
+    ? { ...detail.lifetime, year: new Date().getFullYear() }
+    : null;
 
   async function handleSaveLink() {
     if (!xeroContact) return;
@@ -202,8 +190,8 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
             <Stat
               label="First payment"
               value={lifetimeTotals
-                ? (lifetimeTotals.count
-                    ? new Date(Math.min(...payments.filter(p => p.paidAt).map(p => new Date(p.paidAt).getTime()))).toLocaleDateString('en-GB')
+                ? (lifetimeTotals.firstPaymentAt
+                    ? new Date(lifetimeTotals.firstPaymentAt).toLocaleDateString('en-GB')
                     : '—')
                 : '…'}
             />

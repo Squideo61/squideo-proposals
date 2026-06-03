@@ -205,11 +205,15 @@ export async function companiesRoute(req, res, id, action, user) {
     // computeCompanyBalance runs the proposal-billing reconcile, so the per-deal
     // figures below read the freshly-stamped paid amounts.
     const balance = await computeCompanyBalance(id);
-    const dealBalances = await computeCompanyDealBalances(id);
+    const [dealBalances, lifetime] = await Promise.all([
+      computeCompanyDealBalances(id),
+      computeCompanyLifetime(id),
+    ]);
 
     return res.status(200).json({
       ...serialiseCompany(companyRow),
       balance,
+      lifetime,
       contacts: contactRows.map(c => ({
         id: c.id,
         email: c.email || null,
@@ -493,6 +497,55 @@ async function computeCompanyBalance(companyId) {
     outstanding: Number((committed - paid).toFixed(2)),
     needsInvoice: !!needsRow,
     needsInvoiceDealId: needsRow?.deal_id || null,
+  };
+}
+
+// Lifetime value rollup for one company: total received, this calendar year,
+// and the first payment date. Sums the same sources as computeCompanyBalance's
+// `paid` (so the figures agree), across all dated payment events — Stripe,
+// Partner, standalone manual payments, paid manual invoices, and paid
+// proposal-billing (Xero) invoices. Dedup matches the balance: invoice-linked
+// manual payments are excluded (the paid invoice itself is counted instead).
+async function computeCompanyLifetime(companyId) {
+  const propRows = await sql`SELECT p.id FROM proposals p JOIN deals d ON d.id=p.deal_id WHERE d.company_id=${companyId}`;
+  const propIds = propRows.map(r => r.id);
+  const dealRows = await sql`SELECT id FROM deals WHERE company_id=${companyId}`;
+  const dealIds = dealRows.map(r => r.id);
+  const noneP = propIds.length ? propIds : ['__none__'];
+  const noneD = dealIds.length ? dealIds : ['__none__'];
+
+  const [stripeR, partnerR, manualR, invR, pbR] = await Promise.all([
+    sql`SELECT amount, paid_at FROM payments WHERE proposal_id = ANY(${noneP})`,
+    sql`SELECT amount, paid_at FROM partner_invoices WHERE proposal_id = ANY(${noneP})`,
+    sql`SELECT amount, paid_at FROM manual_payments WHERE proposal_id = ANY(${noneP}) AND manual_invoice_id IS NULL`,
+    sql`SELECT amount, paid_at FROM manual_invoices
+         WHERE status='paid' AND (company_id=${companyId} OR deal_id = ANY(${noneD}) OR proposal_id = ANY(${noneP}))`,
+    sql`SELECT pb.paid_amount AS amount, pb.paid_at FROM proposal_billing pb
+          JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE d.company_id=${companyId} AND pb.paid_amount IS NOT NULL`,
+  ]);
+
+  const year = new Date().getFullYear();
+  let lifetime = 0, thisYear = 0, firstTs = null, count = 0;
+  for (const rows of [stripeR, partnerR, manualR, invR, pbR]) {
+    for (const r of rows) {
+      const amt = Number(r.amount) || 0;
+      if (amt <= 0) continue;
+      count++;
+      lifetime += amt;
+      if (r.paid_at) {
+        const d = new Date(r.paid_at);
+        if (d.getFullYear() === year) thisYear += amt;
+        const ts = d.getTime();
+        if (firstTs == null || ts < firstTs) firstTs = ts;
+      }
+    }
+  }
+  return {
+    lifetime: Number(lifetime.toFixed(2)),
+    thisYear: Number(thisYear.toFixed(2)),
+    count,
+    firstPaymentAt: firstTs != null ? new Date(firstTs).toISOString() : null,
   };
 }
 
