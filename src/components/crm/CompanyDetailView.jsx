@@ -210,6 +210,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
                 </div>
                 <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>
                   {formatGBP(detail.balance.committed)} signed (inc VAT) · {formatGBP(detail.balance.paid)} paid
+                  {detail.balance.paidViaXeroInvoices > 0 && ` (incl. ${formatGBP(detail.balance.paidViaXeroInvoices)} via Xero invoices)`}
                 </div>
               </div>
             );

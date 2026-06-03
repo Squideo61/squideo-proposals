@@ -443,6 +443,7 @@ async function computeCompanyBalance(companyId) {
   // invoice" / PO flows). Reconcile from live Xero first so the headline is
   // correct on load (not only after the invoices list has been opened), then
   // read the stamped figures. Best-effort — a Xero hiccup just uses last-known.
+  let pbPaid = 0;
   if (propIds.length) {
     try {
       await reconcileProposalBillingPaid(propIds);
@@ -453,7 +454,8 @@ async function computeCompanyBalance(companyId) {
       SELECT COALESCE(SUM(paid_amount), 0) AS s FROM proposal_billing
        WHERE proposal_id = ANY(${propIds}) AND paid_amount IS NOT NULL
     `;
-    paid += Number(pbPaidRow.s);
+    pbPaid = Number(pbPaidRow.s);
+    paid += pbPaid;
   }
 
   // A deal whose proposal was signed >1h ago with no invoice raised and nothing
@@ -478,6 +480,9 @@ async function computeCompanyBalance(companyId) {
   return {
     committed: Number(committed.toFixed(2)),
     paid: Number(paid.toFixed(2)),
+    // How much of `paid` came from Xero-generated (proposal-billing) invoices —
+    // shown in the banner so it's clear these are reconciled from Xero.
+    paidViaXeroInvoices: Number(pbPaid.toFixed(2)),
     outstanding: Number((committed - paid).toFixed(2)),
     needsInvoice: !!needsRow,
     needsInvoiceDealId: needsRow?.deal_id || null,
