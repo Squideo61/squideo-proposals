@@ -16,7 +16,7 @@ import { ProductionPanel } from './ProductionPanel.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
-export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposal, onOpenVideo }) {
+export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposal, onOpenVideo, onOpenCompany }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
@@ -157,7 +157,13 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         <h1 style={{ margin: '0 0 12px', fontSize: 22, fontWeight: 700 }}>{deal.title}</h1>
         <StagePicker stage={deal.stage} onChange={handleStageChange} />
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 16, marginTop: 20 }}>
-          <Field icon={Building2} label="Company">{company?.name || <span style={{ color: BRAND.muted }}>—</span>}</Field>
+          <Field icon={Building2} label="Company">
+            {company
+              ? (onOpenCompany
+                  ? <button type="button" onClick={() => onOpenCompany(company.id)} className="link-btn" style={{ background: 'none', border: 0, padding: 0, font: 'inherit', color: BRAND.blue, cursor: 'pointer', textAlign: 'left' }}>{company.name}</button>
+                  : company.name)
+              : <span style={{ color: BRAND.muted }}>—</span>}
+          </Field>
           <Field icon={User} label="Primary contact">
             {contact ? <>{contact.name || contact.email}{contact.email && contact.name ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {contact.email}</span> : null}</> : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>

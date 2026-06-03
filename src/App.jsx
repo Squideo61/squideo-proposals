@@ -328,6 +328,7 @@ function AppShell() {
           onOpenProposal={(id) => navigate('builder', id)}
           onCreateProposal={createProposalForDeal}
           onOpenVideo={(id) => navigate('video', id)}
+          onOpenCompany={(id) => navigate('company', id)}
         />
       )}
       {view === 'contacts' && (
