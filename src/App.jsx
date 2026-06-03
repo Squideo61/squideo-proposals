@@ -41,6 +41,8 @@ const ProductionView = lazyNamed(() => import('./components/crm/ProductionView.j
 const ProjectDetailView = lazyNamed(() => import('./components/crm/ProjectDetailView.jsx'), 'ProjectDetailView');
 const VideoDetailView = lazyNamed(() => import('./components/crm/VideoDetailView.jsx'), 'VideoDetailView');
 const ProjectsOverviewView = lazyNamed(() => import('./components/crm/ProjectsOverviewView.jsx'), 'ProjectsOverviewView');
+const FinanceView = lazyNamed(() => import('./components/crm/FinanceView.jsx'), 'FinanceView');
+const PerformanceView = lazyNamed(() => import('./components/crm/PerformanceView.jsx'), 'PerformanceView');
 
 function ViewFallback() {
   return (
@@ -410,6 +412,12 @@ function AppShell() {
       )}
       {view === 'leaderboard' && (
         <LeaderboardView onBack={() => navigate('list')} />
+      )}
+      {view === 'finance' && (
+        <FinanceView onBack={() => navigate('list')} />
+      )}
+      {view === 'performance' && (
+        <PerformanceView onBack={() => navigate('list')} />
       )}
       {view === 'xero-duplicates' && (
         <XeroDuplicatesView onBack={() => navigate('list')} />

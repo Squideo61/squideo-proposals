@@ -23,6 +23,7 @@ import { cronHandler } from '../_lib/crm/cron.js';
 import { resolveClientRoute } from '../_lib/crm/clientResolver.js';
 import { trackingRoute } from '../_lib/crm/trackingApi.js';
 import { addressLookupRoute } from '../_lib/crm/addressLookup.js';
+import { statsRoute } from '../_lib/crm/stats.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -105,6 +106,7 @@ export default async function handler(req, res) {
       case 'resolve-client': return await resolveClientRoute(req, res, id, action, user);
       case 'address-lookup': return await addressLookupRoute(req, res, id, action, user);
       case 'tracking':  return await trackingRoute(req, res, id, action, user);
+      case 'stats':     return await statsRoute(req, res, id, action, user);
       default:           return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {

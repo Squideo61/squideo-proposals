@@ -38,16 +38,20 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
   const canAdmin = permissionsInclude(perms, 'users.manage')
     || permissionsInclude(perms, 'roles.manage')
     || permissionsInclude(perms, 'settings.manage');
+  // Whole-business finances — owner/admin only.
+  const canBusiness = permissionsInclude(perms, 'settings.manage');
 
   const sections = [
     {
       key: 'business',
       label: 'Business',
-      views: [],
+      views: ['finance', 'performance'],
       items: [
         { label: 'Overview', icon: LayoutDashboard, go: () => {}, soon: true },
-        { label: 'Performance', icon: TrendingUp, go: () => {}, soon: true },
-        { label: 'Finance', icon: PoundSterling, go: () => {}, soon: true },
+        ...(canBusiness ? [
+          { label: 'Performance', icon: TrendingUp, go: () => navigate('performance') },
+          { label: 'Finance', icon: PoundSterling, go: () => navigate('finance') },
+        ] : []),
       ],
     },
     {

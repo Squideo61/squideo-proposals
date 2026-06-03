@@ -14,6 +14,40 @@ export function useIsMobile() {
 
 export const formatGBP = (n) => '£' + (Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
+// England & Wales bank holidays (YYYY-MM-DD). Update annually — or swap for the
+// gov.uk bank-holidays.json feed. Used by the Performance graph to exclude
+// non-working days when pacing the monthly targets.
+export const ukBankHolidays = new Set([
+  // 2026
+  '2026-01-01', '2026-04-03', '2026-04-06', '2026-05-04', '2026-05-25', '2026-08-31', '2026-12-25', '2026-12-28',
+  // 2027
+  '2027-01-01', '2027-03-26', '2027-03-29', '2027-05-03', '2027-05-31', '2027-08-30', '2027-12-27', '2027-12-28',
+]);
+
+const ymd = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+// Ordered 'YYYY-MM-DD' strings for the working days (Mon–Fri minus E&W bank
+// holidays) of the given month. `month` is 1–12. Built from date components so
+// the keys are calendar dates with no timezone drift.
+export function workingDaysInMonth(year, month) {
+  const lastDay = new Date(year, month, 0).getDate();
+  const out = [];
+  for (let d = 1; d <= lastDay; d++) {
+    const dow = new Date(year, month - 1, d).getDay(); // 0 Sun … 6 Sat
+    if (dow === 0 || dow === 6) continue;
+    const key = ymd(year, month, d);
+    if (ukBankHolidays.has(key)) continue;
+    out.push(key);
+  }
+  return out;
+}
+
+// Local calendar date as 'YYYY-MM-DD' (no timezone drift, unlike toISOString).
+export const todayKey = () => {
+  const n = new Date();
+  return ymd(n.getFullYear(), n.getMonth() + 1, n.getDate());
+};
+
 // £ value of the simple manual discount on a base price; 0 when none.
 // Percentage clamps to 0–100; fixed amount clamps to the base price so the
 // project line can never go negative. Legacy proposals (no discount) → 0.

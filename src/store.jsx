@@ -73,6 +73,10 @@ function emptyStore() {
     extrasBank: [],
     inclusionsBank: [],
     leaderboard: null,
+    // Business → Finance / Performance pages.
+    financeStats: null,
+    performanceStats: null,
+    financeTargets: [],
     partnerCreditsList: null,
     partnerCreditDetail: {},
     // In-app notification feed (the bell). notifications: newest-first list,
@@ -313,6 +317,7 @@ export function StoreProvider({ children }) {
         inclusionsBank: settings?.inclusionsBank?.length ? settings.inclusionsBank : DEFAULT_PROPOSAL.baseInclusions.map((inc, i) => ({ id: 'incl_default_' + i, title: inc.title, description: inc.description || '' })),
         notificationRecipients: settings?.notificationRecipients || [],
         revisionCallUrl: settings?.revisionCallUrl || '',
+        financeTargets: settings?.financeTargets || [],
         loading: false,
       }));
     });
@@ -719,6 +724,27 @@ export function StoreProvider({ children }) {
         setState(s => ({ ...s, leaderboard: board }));
         return board;
       }).catch(() => ({ totals: [], createdTrend: [], signedTrend: [], range: r, grain: 'day', periodLabel: '' }));
+    },
+    // Business → Finance: all-customer monthly net / VAT-to-save / gross for a year.
+    loadFinanceStats(year) {
+      const path = '/api/crm/stats/finance' + (year ? '/' + year : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, financeStats: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    // Business → Performance: per-day cash (net) for a month, for the target graph.
+    loadPerformanceStats(month) {
+      const path = '/api/crm/stats/performance' + (month ? '/' + month : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, performanceStats: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    // Editable monthly targets (shared with the settings row). Optimistic.
+    saveFinanceTargets(list) {
+      setState(s => ({ ...s, financeTargets: list }));
+      api.put('/api/settings', { financeTargets: list }).catch(() => {});
     },
     saveSignature(id, sig) {
       setState(s => ({ ...s, signatures: { ...s.signatures, [id]: sig } }));

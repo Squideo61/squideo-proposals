@@ -656,7 +656,9 @@ async function computeCompanyDealBalances(companyId) {
 
 // Same maths as computeCompanyBalance but for every company at once, via grouped
 // aggregates — so the Organisations list can show "owed" without N round-trips.
-async function allCompanyBalances() {
+// Exported so the business finance endpoint (crm/stats.js) can total outstanding
+// across all customers from the same source of truth.
+export async function allCompanyBalances() {
   const [committedRows, stripeRows, partnerRows, manualPayRows, invPaidRows, pbPaidRows, extraRows] = await Promise.all([
     sql`
       SELECT d.company_id AS cid, COALESCE(SUM((s.data->>'total')::numeric), 0) AS v
