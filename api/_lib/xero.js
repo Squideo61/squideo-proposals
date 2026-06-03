@@ -150,14 +150,7 @@ export async function getOrCreateContact({ xeroContactId, name, email, address, 
     return search.Contacts[0].ContactID;
   }
 
-  const addresses = address ? [{
-    AddressType: 'STREET',
-    AddressLine1: address.line1 || '',
-    AddressLine2: address.line2 || '',
-    City: address.city || '',
-    PostalCode: address.postcode || '',
-    Country: address.country || 'United Kingdom',
-  }] : undefined;
+  const addresses = address ? buildAddresses(address) : undefined;
 
   const payload = {
     Name: trimmedName,
@@ -187,31 +180,38 @@ async function ensureActiveContact(contactId) {
   return true;
 }
 
-// Pushes a postal address onto an existing Xero contact's STREET address.
-// Reads the contact first so we merge into its existing Addresses array —
-// replacing the STREET entry (or adding one) while preserving any other types
-// (e.g. POBOX) so we don't wipe them. Xero updates contacts via POST to
-// /Contacts/{id} (same mechanism as ensureActiveContact).
-export async function updateContactAddress(contactId, address) {
-  const street = {
-    AddressType: 'STREET',
+// Builds the Xero Addresses array for a contact. Xero prints the contact's
+// POBOX (postal) address as the "to" address on invoices, so we set POBOX —
+// and mirror the same values to STREET — to make sure it shows.
+function buildAddresses(address) {
+  const fields = {
     AddressLine1: address.line1 || '',
     AddressLine2: address.line2 || '',
     City: address.city || '',
     PostalCode: address.postcode || '',
     Country: address.country || 'United Kingdom',
   };
+  return [
+    { AddressType: 'POBOX', ...fields },
+    { AddressType: 'STREET', ...fields },
+  ];
+}
 
+// Pushes a postal address onto an existing Xero contact. Reads the contact
+// first so we merge into its existing Addresses array — replacing the POBOX +
+// STREET entries while preserving any other types (e.g. DELIVERY). POBOX is the
+// one Xero prints on invoices. Xero updates contacts via POST to /Contacts/{id}.
+export async function updateContactAddress(contactId, address) {
   let existing = [];
   try {
     const res = await xeroFetch(`/api.xro/2.0/Contacts/${encodeURIComponent(contactId)}`);
     existing = res?.Contacts?.[0]?.Addresses || [];
   } catch (err) {
-    console.warn('[xero] could not read contact addresses, sending STREET only', err.message);
+    console.warn('[xero] could not read contact addresses, sending fresh set', err.message);
   }
 
-  const others = existing.filter(a => a.AddressType !== 'STREET');
-  const addresses = [street, ...others];
+  const others = existing.filter(a => a.AddressType !== 'STREET' && a.AddressType !== 'POBOX');
+  const addresses = [...buildAddresses(address), ...others];
 
   await xeroFetch(`/api.xro/2.0/Contacts/${encodeURIComponent(contactId)}`, {
     method: 'POST',

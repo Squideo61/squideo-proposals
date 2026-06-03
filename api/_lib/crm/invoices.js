@@ -15,7 +15,7 @@ import { advanceStage } from '../dealStage.js';
 import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { sendNotification } from '../notifications.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
-import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber, getInvoicesByIds } from '../xero.js';
+import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber, getInvoicesByIds, updateContactAddress } from '../xero.js';
 import {
   lineItemsForProject,
   depositLineItems,
@@ -336,6 +336,15 @@ export async function invoicesRoute(req, res, id, action, user) {
       name: xeroContactInfo.name,
       email: xeroContactInfo.email || undefined,
     });
+
+    // Push the company's current CRM address onto the contact so it prints on
+    // the invoice (Xero shows the contact's postal address). Non-fatal.
+    try {
+      const addr = await companyAddressForInvoice(resolvedDealId, companyId);
+      if (addr) await updateContactAddress(xeroContactId, addr);
+    } catch (err) {
+      console.warn('[invoices] address sync before invoice failed', err.message);
+    }
 
     const xeroLineItems = lineItems.map(li => {
       const vat = Number(li.vatRate) || 0;
@@ -780,6 +789,24 @@ function freeSubtitleLine(proposal, signed) {
     vatRate: Number(proposal?.vatRate) > 0 ? 20 : 0,
     discountRate: 100,
   };
+}
+
+// The company's stored CRM address (for the deal's company, or a direct
+// company-level invoice), shaped for updateContactAddress. Null when none set.
+async function companyAddressForInvoice(dealId, companyId) {
+  let cid = companyId || null;
+  if (!cid && dealId) {
+    const [d] = await sql`SELECT company_id FROM deals WHERE id = ${dealId}`;
+    cid = d?.company_id || null;
+  }
+  if (!cid) return null;
+  const [co] = await sql`
+    SELECT address_line1, address_line2, city, postcode, country
+      FROM companies WHERE id = ${cid}
+  `;
+  if (!co) return null;
+  if (!(co.address_line1 || co.address_line2 || co.city || co.postcode || co.country)) return null;
+  return { line1: co.address_line1, line2: co.address_line2, city: co.city, postcode: co.postcode, country: co.country };
 }
 
 // Same as resolveXeroContactInfo but starting from a company (for company-level
