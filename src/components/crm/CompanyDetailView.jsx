@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Award, Building2, CheckCircle2, Circle, FileText, Globe, MapPin, User, Edit2, Link2, X } from 'lucide-react';
+import { ArrowLeft, Award, Building2, CheckCircle2, Circle, FileText, Globe, MapPin, Percent, User, Edit2, Link2, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatGBP, formatRelativeTime, effectiveAddress, formatAddressLines } from '../../utils.js';
@@ -37,6 +37,15 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
   const lifetimeTotals = detail?.lifetime
     ? { ...detail.lifetime, year: new Date().getFullYear() }
     : null;
+
+  // The customer's VAT rate (fraction). All money figures on this page are
+  // stored inc-VAT, so divide by (1 + rate) and append "+VAT" to show them the
+  // way they're quoted/invoiced. fmtEx: inc-VAT input; fmtExNet: already-ex input.
+  const vatRate = Number(detail?.balance?.vatRate) || 0;
+  const vatPct = Math.round(vatRate * 1000) / 10;
+  const vatSuffix = vatRate > 0 ? ' +VAT' : '';
+  const fmtEx = (inc) => formatGBP((Number(inc) || 0) / (1 + vatRate)) + vatSuffix;
+  const fmtExNet = (net) => formatGBP(Number(net) || 0) + vatSuffix;
 
   async function handleSaveLink() {
     if (!xeroContact) return;
@@ -184,6 +193,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 16 }}>
           <Field icon={Globe} label="Domain">{detail.domain || <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field label="Contacts">{detail.contacts.length}</Field>
+          <Field icon={Percent} label="VAT rate">{vatRate > 0 ? `${vatPct}%` : <span style={{ color: BRAND.muted }}>No VAT</span>}</Field>
           <Field icon={MapPin} label="Address">
             {(() => {
               const lines = formatAddressLines(effectiveAddress(detail));
@@ -214,11 +224,11 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
             <div style={{ marginTop: 16, background: tone.bg, border: '1px solid ' + tone.border, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 11, color: tone.fg, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700, marginBottom: 4 }}>{label}</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: tone.fg }}>{formatGBP(owed)}{owed > 0 ? ' owed' : ''}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: tone.fg }}>{fmtEx(owed)}{owed > 0 ? ' owed' : ''}</div>
                 <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
-                  {formatGBP(detail.balance.committed)} signed (inc VAT) · {formatGBP(detail.balance.paid)} paid
-                  {detail.balance.paidViaXeroInvoices > 0 && ` (incl. ${formatGBP(detail.balance.paidViaXeroInvoices)} via Xero invoices)`}
-                  {extra > 0 && ` — ${formatGBP(signedRemaining)} on signed work + ${formatGBP(extra)} other unpaid invoices`}
+                  {fmtEx(detail.balance.committed)} signed · {fmtEx(detail.balance.paid)} paid
+                  {detail.balance.paidViaXeroInvoices > 0 && ` (incl. ${fmtEx(detail.balance.paidViaXeroInvoices)} via Xero invoices)`}
+                  {extra > 0 && ` — ${fmtEx(signedRemaining)} on signed work + ${fmtEx(extra)} other unpaid invoices`}
                 </div>
               </div>
               {needs && (
@@ -241,12 +251,12 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3, 1fr)', gap: 12 }}>
             <Stat
               label="Lifetime spend"
-              value={lifetimeTotals ? formatGBP(lifetimeTotals.lifetime) : '…'}
+              value={lifetimeTotals ? fmtEx(lifetimeTotals.lifetime) : '…'}
               hint={lifetimeTotals ? `${lifetimeTotals.count} payment${lifetimeTotals.count === 1 ? '' : 's'}` : null}
             />
             <Stat
               label={lifetimeTotals ? `This year (${lifetimeTotals.year})` : 'This year'}
-              value={lifetimeTotals ? formatGBP(lifetimeTotals.thisYear) : '…'}
+              value={lifetimeTotals ? fmtEx(lifetimeTotals.thisYear) : '…'}
             />
             <Stat
               label="First payment"
@@ -300,13 +310,13 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
                   <div style={{ fontWeight: 600, fontSize: 13 }}>{d.title}</div>
                   <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
                     {stage?.label || d.stage}
-                    {d.value != null && <> · {formatGBP(d.value)}</>}
+                    {d.value != null && <> · {fmtExNet(d.value)}</>}
                     {d.lastActivityAt && <> · {formatRelativeTime(d.lastActivityAt)}</>}
                   </div>
                 </div>
                 {d.balance && d.balance.committed > 0 && (
                   d.balance.outstanding > 0
-                    ? <span style={{ fontSize: 12, fontWeight: 700, color: '#92400E', whiteSpace: 'nowrap' }}>{formatGBP(d.balance.outstanding)} owed</span>
+                    ? <span style={{ fontSize: 12, fontWeight: 700, color: '#92400E', whiteSpace: 'nowrap' }}>{fmtEx(d.balance.outstanding)} owed</span>
                     : <span style={{ fontSize: 11, fontWeight: 700, color: '#15803D', whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: 0.4 }}>Paid</span>
                 )}
               </button>
@@ -315,7 +325,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
         </Card>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <InvoicesPaymentsCard companyId={companyId} contactName={detail.name} deals={detail.deals} onChanged={reload} openCreateSignal={createSignal} preselectDealId={preselectDealId} />
+          <InvoicesPaymentsCard companyId={companyId} contactName={detail.name} deals={detail.deals} vatRate={vatRate} onChanged={reload} openCreateSignal={createSignal} preselectDealId={preselectDealId} />
         </div>
       </div>
 

@@ -421,6 +421,16 @@ async function computeCompanyBalance(companyId) {
   const dealRows = await sql`SELECT id FROM deals WHERE company_id = ${companyId}`;
   const dealIds = dealRows.map(r => r.id);
 
+  // The customer's VAT rate (a fraction, e.g. 0.2), taken from their proposals.
+  // Lets the UI show every figure ex-VAT with "+VAT". Uses the highest rate seen
+  // when proposals differ; 0 when none charge VAT.
+  const vatRows = await sql`
+    SELECT DISTINCT COALESCE((p.data->>'vatRate')::numeric, 0) AS r
+      FROM proposals p JOIN deals d ON d.id = p.deal_id
+     WHERE d.company_id = ${companyId}
+  `;
+  const vatRate = vatRows.reduce((m, row) => Math.max(m, Number(row.r) || 0), 0);
+
   const [committedRow] = await sql`
     SELECT COALESCE(SUM((s.data->>'total')::numeric), 0) AS committed
       FROM signatures s
@@ -508,6 +518,8 @@ async function computeCompanyBalance(companyId) {
   return {
     committed: Number(committed.toFixed(2)),
     paid: Number(paid.toFixed(2)),
+    // Customer VAT rate (fraction) so the UI can present figures ex-VAT "+VAT".
+    vatRate,
     // The signed-work remainder and the extra-invoice component, so the banner
     // can break the headline down (£X on signed work + £Y other invoices).
     signedRemaining: Number(signedRemaining.toFixed(2)),

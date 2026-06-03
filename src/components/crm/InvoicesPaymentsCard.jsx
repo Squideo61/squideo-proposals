@@ -29,8 +29,12 @@ const STATUS_COLOR = {
   void: '#DC2626',
 };
 
-export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals, onChanged, openCreateSignal, preselectDealId }) {
+export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals, vatRate, onChanged, openCreateSignal, preselectDealId }) {
   const { showMsg } = useStore();
+  // Figures are stored inc-VAT; show them ex-VAT with "+VAT" to match invoices.
+  const vr = Number(vatRate) || 0;
+  const vatSuffix = vr > 0 ? ' +VAT' : '';
+  const fmtEx = (inc) => formatGBP((Number(inc) || 0) / (1 + vr)) + vatSuffix;
   const [invoices, setInvoices] = useState(null);
   const [payments, setPayments] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -127,12 +131,12 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
               <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6 }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>
-                    {d.title} <span style={{ color: '#92400E' }}>· {formatGBP(d.balance.notInvoiced)}</span>
+                    {d.title} <span style={{ color: '#92400E' }}>· {fmtEx(d.balance.notInvoiced)}</span>
                   </div>
                   <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
                     {d.balance.invoiced > 0
-                      ? `${formatGBP(d.balance.invoiced)} invoiced of ${formatGBP(d.balance.committed)} signed`
-                      : `${formatGBP(d.balance.committed)} signed · nothing invoiced yet`}
+                      ? `${fmtEx(d.balance.invoiced)} invoiced of ${fmtEx(d.balance.committed)} signed`
+                      : `${fmtEx(d.balance.committed)} signed · nothing invoiced yet`}
                   </div>
                 </div>
                 <button
@@ -180,7 +184,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
           {totalEntries.map(([ccy, total]) => (
             <div key={ccy} style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span>Total paid{totalEntries.length > 1 ? ` (${ccy})` : ''}</span>
-              <span style={{ fontWeight: 600, color: BRAND.ink }}>{formatCurrency(total, ccy)}</span>
+              <span style={{ fontWeight: 600, color: BRAND.ink }}>{formatCurrency(total / (1 + vr), ccy)}{vatSuffix}</span>
             </div>
           ))}
         </div>
