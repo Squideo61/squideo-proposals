@@ -38,8 +38,21 @@ function ensureInvoiceCompanyColumn() {
   return invoiceCompanyColEnsured;
 }
 
+// Self-heal for db/migrations/20260603_proposal_billing_paid.sql — lets us stamp
+// how much has been paid against a proposal-billing Xero invoice so the company
+// balance can subtract it.
+let proposalBillingPaidColEnsured = null;
+function ensureProposalBillingPaidColumns() {
+  if (proposalBillingPaidColEnsured) return proposalBillingPaidColEnsured;
+  proposalBillingPaidColEnsured = (async () => {
+    await sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS paid_amount NUMERIC`;
+    await sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`;
+  })().catch((err) => { proposalBillingPaidColEnsured = null; throw err; });
+  return proposalBillingPaidColEnsured;
+}
+
 export async function invoicesRoute(req, res, id, action, user) {
-  await ensureInvoiceCompanyColumn();
+  await Promise.all([ensureInvoiceCompanyColumn(), ensureProposalBillingPaidColumns()]);
   // --- GET /api/crm/invoices/:id/pdf — streams a private Blob PDF back through
   // the API. Blob store is configured private; raw blob URLs aren't directly
   // accessible without auth, so we proxy via @vercel/blob's get().
@@ -164,7 +177,7 @@ export async function invoicesRoute(req, res, id, action, user) {
               FROM partner_invoices
               WHERE proposal_id = ANY(${proposalIds}) AND xero_invoice_id IS NOT NULL
               ORDER BY paid_at ASC`,
-        sql`SELECT proposal_id, xero_invoice_id, updated_at
+        sql`SELECT proposal_id, xero_invoice_id, updated_at, paid_amount
               FROM proposal_billing
               WHERE proposal_id = ANY(${proposalIds}) AND xero_invoice_id IS NOT NULL`,
       ]);
@@ -215,6 +228,9 @@ export async function invoicesRoute(req, res, id, action, user) {
           amount: null,
           status: 'authorised',
           issuedAt: r.updated_at,
+          // What we've already recorded as paid against this billing invoice —
+          // used by the enrichment to avoid rewriting an unchanged value.
+          _pbPaidAmount: r.paid_amount != null ? Number(r.paid_amount) : null,
           pdfUrl: '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(r.xero_invoice_id),
         });
       }
@@ -304,6 +320,7 @@ export async function invoicesRoute(req, res, id, action, user) {
     if (xeroRowIds.length) {
       const live = await getInvoicesByIds(xeroRowIds);
       if (live.size) {
+        const pbWrites = [];
         for (const r of out) {
           if (!(r.source && r.source.startsWith('xero'))) continue;
           const x = live.get(r.xeroInvoiceId);
@@ -324,9 +341,37 @@ export async function invoicesRoute(req, res, id, action, user) {
           } else if (x.status === 'VOIDED' && r.status !== 'paid') {
             r.status = 'void';
           }
+
+          // Persist how much has been paid on a proposal-billing invoice so the
+          // company balance can subtract it (it never lands in `payments`).
+          // paidSoFar = total − amountDue handles part-payment; voided → null.
+          if (r.source === 'xero-issued') {
+            let paidSoFar = null;
+            if (x.status === 'VOIDED') {
+              paidSoFar = null;
+            } else if (x.total != null && x.amountDue != null) {
+              const v = Number((x.total - x.amountDue).toFixed(2));
+              paidSoFar = v > 0 ? v : null;
+            } else if (x.status === 'PAID' && x.total != null) {
+              paidSoFar = x.total;
+            }
+            if (paidSoFar !== r._pbPaidAmount) {
+              const paidAt = paidSoFar != null ? (x.fullyPaidOn || new Date().toISOString().slice(0, 10)) : null;
+              pbWrites.push(
+                sql`UPDATE proposal_billing
+                       SET paid_amount = ${paidSoFar}, paid_at = ${paidAt}, updated_at = NOW()
+                     WHERE xero_invoice_id = ${r.xeroInvoiceId}
+                       AND paid_amount IS DISTINCT FROM ${paidSoFar}`,
+              );
+            }
+          }
         }
+        if (pbWrites.length) await Promise.all(pbWrites);
       }
     }
+
+    // Drop internal-only fields before responding.
+    for (const r of out) delete r._pbPaidAmount;
 
     out.sort((a, b) => new Date(b.issuedAt || 0) - new Date(a.issuedAt || 0));
     return res.status(200).json(out);
@@ -694,18 +739,27 @@ export async function invoicesRoute(req, res, id, action, user) {
     if (!accountCode) {
       return res.status(503).json({ error: 'No Xero bank account code configured — cannot record the payment in Xero.' });
     }
+    const paidAtDate = (trimOrNull(body.paidAt) ? new Date(body.paidAt) : new Date()).toISOString().slice(0, 10);
     try {
       await createPayment({
         invoiceId: id,
         accountCode,
         amount: Number(amount.toFixed(2)),
-        date: (trimOrNull(body.paidAt) ? new Date(body.paidAt) : new Date()).toISOString().slice(0, 10),
+        date: paidAtDate,
         reference: method || undefined,
       });
     } catch (err) {
       console.error('[invoices] xero-pay failed', err);
       return res.status(502).json({ error: 'Could not record the payment in Xero: ' + (err.message || 'unknown') });
     }
+    // For a proposal-billing invoice, stamp the paid amount now so the company
+    // balance reflects it immediately (the GET enrichment would catch it on the
+    // next load anyway, but this avoids a lag).
+    await sql`
+      UPDATE proposal_billing
+         SET paid_amount = ${Number(amount.toFixed(2))}, paid_at = ${paidAtDate}, updated_at = NOW()
+       WHERE xero_invoice_id = ${id}
+    `;
     return res.status(200).json({ ok: true });
   }
 

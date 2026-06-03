@@ -26,8 +26,21 @@ function ensureCompanyAddressColumns() {
   return companyAddressColumnsEnsured;
 }
 
+// Self-heal for db/migrations/20260603_proposal_billing_paid.sql. The company
+// balance reads proposal_billing.paid_amount, so the columns must exist before
+// computeCompanyBalance / allCompanyBalances run.
+let proposalBillingPaidColumnsEnsured = null;
+function ensureProposalBillingPaidColumns() {
+  if (proposalBillingPaidColumnsEnsured) return proposalBillingPaidColumnsEnsured;
+  proposalBillingPaidColumnsEnsured = (async () => {
+    await sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS paid_amount NUMERIC`;
+    await sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`;
+  })().catch((err) => { proposalBillingPaidColumnsEnsured = null; throw err; });
+  return proposalBillingPaidColumnsEnsured;
+}
+
 export async function companiesRoute(req, res, id, action, user) {
-  await ensureCompanyAddressColumns();
+  await Promise.all([ensureCompanyAddressColumns(), ensureProposalBillingPaidColumns()]);
   // POST /companies/from-xero-contact — find or create a local company linked
   // to a given Xero contact ID. Used by the contact picker so deals/proposals
   // always resolve to a local company with a stable xero_contact_id link.
@@ -425,6 +438,17 @@ async function computeCompanyBalance(companyId) {
   `;
   paid += Number(invPaidRow.s);
 
+  // Money paid against a proposal-billing Xero invoice (the "email me an
+  // invoice" / PO flows), stamped onto proposal_billing.paid_amount by the
+  // invoices GET enrichment from live Xero data. These never hit `payments`.
+  if (propIds.length) {
+    const [pbPaidRow] = await sql`
+      SELECT COALESCE(SUM(paid_amount), 0) AS s FROM proposal_billing
+       WHERE proposal_id = ANY(${propIds}) AND paid_amount IS NOT NULL
+    `;
+    paid += Number(pbPaidRow.s);
+  }
+
   // A deal whose proposal was signed >1h ago with no invoice raised and nothing
   // paid → it needs an invoice generating. The 1h gate matches the reminder cron.
   const [needsRow] = await sql`
@@ -456,7 +480,7 @@ async function computeCompanyBalance(companyId) {
 // Same maths as computeCompanyBalance but for every company at once, via grouped
 // aggregates — so the Organisations list can show "owed" without N round-trips.
 async function allCompanyBalances() {
-  const [committedRows, stripeRows, partnerRows, manualPayRows, invPaidRows] = await Promise.all([
+  const [committedRows, stripeRows, partnerRows, manualPayRows, invPaidRows, pbPaidRows] = await Promise.all([
     sql`
       SELECT d.company_id AS cid, COALESCE(SUM((s.data->>'total')::numeric), 0) AS v
         FROM signatures s
@@ -481,11 +505,14 @@ async function allCompanyBalances() {
           LEFT JOIN deals dp ON dp.id = pr.deal_id
          WHERE mi.status = 'paid'
          GROUP BY COALESCE(mi.company_id, d.company_id, dp.company_id)`,
+    sql`SELECT d.company_id AS cid, COALESCE(SUM(pb.paid_amount), 0) AS v
+          FROM proposal_billing pb JOIN proposals p ON p.id = pb.proposal_id JOIN deals d ON d.id = p.deal_id
+         WHERE pb.paid_amount IS NOT NULL AND d.company_id IS NOT NULL GROUP BY d.company_id`,
   ]);
 
   const committed = new Map(committedRows.map(r => [r.cid, Number(r.v) || 0]));
   const paid = new Map();
-  for (const rows of [stripeRows, partnerRows, manualPayRows, invPaidRows]) {
+  for (const rows of [stripeRows, partnerRows, manualPayRows, invPaidRows, pbPaidRows]) {
     for (const r of rows) {
       if (!r.cid) continue;
       paid.set(r.cid, (paid.get(r.cid) || 0) + (Number(r.v) || 0));
