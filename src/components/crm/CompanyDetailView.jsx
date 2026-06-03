@@ -193,7 +193,6 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 16 }}>
           <Field icon={Globe} label="Domain">{detail.domain || <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field label="Contacts">{detail.contacts.length}</Field>
-          <Field icon={Percent} label="VAT rate">{vatRate > 0 ? `${vatPct}%` : <span style={{ color: BRAND.muted }}>No VAT</span>}</Field>
           <Field icon={MapPin} label="Address">
             {(() => {
               const lines = formatAddressLines(effectiveAddress(detail));
@@ -202,6 +201,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
                 : <span style={{ color: BRAND.muted }}>—</span>;
             })()}
           </Field>
+          <Field icon={Percent} label="VAT rate">{vatRate > 0 ? `${vatPct}%` : <span style={{ color: BRAND.muted }}>No VAT</span>}</Field>
         </div>
 
         {/* Billing status on signed work, as a card above lifetime value. Three
