@@ -441,11 +441,13 @@ async function computeCompanyBalance(companyId) {
     ]);
     paid += Number(stripeRow.s) + Number(partnerRow.s) + Number(manualPayRow.s);
   }
+  // Paid manual invoices that count toward the SIGNED work — i.e. ones tied to a
+  // deal or proposal. Company-level (ad-hoc) invoices are treated separately as
+  // "extra" so paying one doesn't wrongly reduce what's owed on signed work.
   const [invPaidRow] = await sql`
     SELECT COALESCE(SUM(amount), 0) AS s FROM manual_invoices
      WHERE status = 'paid'
-       AND (company_id = ${companyId}
-            OR deal_id = ANY(${dealIds.length ? dealIds : ['__none__']})
+       AND (deal_id = ANY(${dealIds.length ? dealIds : ['__none__']})
             OR proposal_id = ANY(${propIds.length ? propIds : ['__none__']}))
   `;
   paid += Number(invPaidRow.s);
@@ -469,23 +471,16 @@ async function computeCompanyBalance(companyId) {
     paid += pbPaid;
   }
 
-  // Total invoiced (raised, not void) for the company — manual invoices (deal,
-  // proposal, or company-level) + proposal-billing. Lets "owed" reflect actual
-  // billing once you've invoiced beyond the signed figure.
-  const [[miInvRow], [pbInvRow]] = await Promise.all([
-    sql`SELECT COALESCE(SUM(mi.amount), 0) AS s
-          FROM manual_invoices mi
-          LEFT JOIN deals dd ON dd.id = mi.deal_id
-          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
-          LEFT JOIN deals dp ON dp.id = pr.deal_id
-         WHERE mi.status != 'void'
-           AND (mi.company_id = ${companyId} OR dd.company_id = ${companyId} OR dp.company_id = ${companyId})`,
-    propIds.length
-      ? sql`SELECT COALESCE(SUM(invoice_amount), 0) AS s FROM proposal_billing
-             WHERE proposal_id = ANY(${propIds}) AND invoice_amount IS NOT NULL`
-      : Promise.resolve([{ s: 0 }]),
-  ]);
-  const invoiced = Number(miInvRow.s) + Number(pbInvRow.s);
+  // Unpaid "extra" invoices: company-level (ad-hoc) invoices not tied to any
+  // signed deal/proposal. These are owed on top of the signed-work balance.
+  const [extraRow] = await sql`
+    SELECT COALESCE(SUM(mi.amount), 0) AS s
+      FROM manual_invoices mi
+      LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+     WHERE mi.status = 'issued' AND mi.company_id = ${companyId}
+       AND mi.deal_id IS NULL AND pr.deal_id IS NULL
+  `;
+  const unpaidExtraInvoices = Number(extraRow.s);
 
   // A deal whose proposal was signed >1h ago with no invoice raised and nothing
   // paid → it needs an invoice generating. The 1h gate matches the reminder cron.
@@ -506,17 +501,21 @@ async function computeCompanyBalance(companyId) {
   `;
 
   const committed = Number(committedRow.committed) || 0;
-  // Owe the greater of signed work or what's actually been invoiced, less paid —
-  // so over-invoicing (billing beyond the signed figure) is reflected in "owed".
-  const owedBase = Math.max(committed, invoiced);
+  // Owed = what's still due on signed work (signed − paid) PLUS any unpaid
+  // ad-hoc/company-level invoices that sit on top of the signed total.
+  const signedRemaining = Math.max(0, committed - paid);
+  const outstanding = Number((signedRemaining + unpaidExtraInvoices).toFixed(2));
   return {
     committed: Number(committed.toFixed(2)),
-    invoiced: Number(invoiced.toFixed(2)),
     paid: Number(paid.toFixed(2)),
+    // The signed-work remainder and the extra-invoice component, so the banner
+    // can break the headline down (£X on signed work + £Y other invoices).
+    signedRemaining: Number(signedRemaining.toFixed(2)),
+    unpaidExtraInvoices: Number(unpaidExtraInvoices.toFixed(2)),
     // How much of `paid` came from Xero-generated (proposal-billing) invoices —
     // shown in the banner so it's clear these are reconciled from Xero.
     paidViaXeroInvoices: Number(pbPaid.toFixed(2)),
-    outstanding: Number((owedBase - paid).toFixed(2)),
+    outstanding,
     needsInvoice: !!needsRow,
     needsInvoiceDealId: needsRow?.deal_id || null,
   };
@@ -576,7 +575,7 @@ async function computeCompanyLifetime(companyId) {
 // grouped by deal. Assumes reconcileProposalBillingPaid has already run (the
 // detail route calls computeCompanyBalance first on the same load).
 async function computeCompanyDealBalances(companyId) {
-  const [committedRows, stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows, miInvoicedRows, pbInvoicedRows, unattributedInvoicedRows] = await Promise.all([
+  const [committedRows, stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows, miInvoicedRows, pbInvoicedRows] = await Promise.all([
     sql`SELECT d.id AS did, COALESCE(SUM((s.data->>'total')::numeric),0) AS v
           FROM signatures s JOIN proposals p ON p.id=s.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE d.company_id=${companyId} AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
@@ -611,13 +610,6 @@ async function computeCompanyDealBalances(companyId) {
     sql`SELECT d.id AS did, COALESCE(SUM(pb.invoice_amount),0) AS v
           FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE d.company_id=${companyId} AND pb.invoice_amount IS NOT NULL GROUP BY d.id`,
-    // Company-level invoices not tied to any deal (raised against the company
-    // directly). These still reduce what's "not invoiced" for the company.
-    sql`SELECT COALESCE(SUM(mi.amount),0) AS v
-          FROM manual_invoices mi
-          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
-         WHERE mi.status != 'void' AND mi.company_id = ${companyId}
-           AND mi.deal_id IS NULL AND pr.deal_id IS NULL`,
   ]);
   const committed = new Map(committedRows.map(r => [r.did, Number(r.v) || 0]));
   const paid = new Map();
@@ -644,30 +636,8 @@ async function computeCompanyDealBalances(companyId) {
       paid: Number(p.toFixed(2)),
       invoiced: Number(inv.toFixed(2)),
       notInvoiced: Number(Math.max(0, c - inv).toFixed(2)),
-      outstanding: Number((c - p).toFixed(2)),
+      outstanding: Number(Math.max(0, c - p).toFixed(2)),
     };
-  }
-
-  // Apply company-level (non-deal) invoices against the deals' not-invoiced
-  // balances, so raising an invoice for the company — even one not tied to a
-  // specific deal — reduces what's shown as still outstanding to invoice.
-  let pool = Number(unattributedInvoicedRows?.[0]?.v) || 0;
-  if (pool > 0) {
-    for (const did of Object.keys(out)) {
-      if (pool <= 0) break;
-      const cur = out[did];
-      if (cur.notInvoiced <= 0) continue;
-      const take = Math.min(cur.notInvoiced, pool);
-      cur.notInvoiced = Number((cur.notInvoiced - take).toFixed(2));
-      cur.invoiced = Number((cur.invoiced + take).toFixed(2));
-      pool -= take;
-    }
-  }
-  // Owe the greater of signed or invoiced, less paid (matches the company
-  // headline) — recomputed after allocation so over-invoicing is reflected.
-  for (const did of Object.keys(out)) {
-    const cur = out[did];
-    cur.outstanding = Number(Math.max(0, Math.max(cur.committed, cur.invoiced) - cur.paid).toFixed(2));
   }
   return out;
 }

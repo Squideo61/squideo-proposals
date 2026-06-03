@@ -138,13 +138,11 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
             states: red → signed >1h with no invoice raised; amber → invoiced but
             still owed; green → all signed work paid. */}
         {detail.balance && detail.balance.committed > 0 && (() => {
-          // Owe the greater of signed work or what's actually been invoiced,
-          // less paid — so raising an invoice beyond the signed total is
-          // reflected here (and it can't disagree with the figures below).
-          const committed = Number(detail.balance.committed) || 0;
-          const invoiced = Number(detail.balance.invoiced) || 0;
-          const paid = Number(detail.balance.paid) || 0;
-          const owed = Math.max(0, Number((Math.max(committed, invoiced) - paid).toFixed(2)));
+          // Owed = remaining on signed work + any unpaid ad-hoc invoices,
+          // computed server-side so the breakdown below always agrees.
+          const signedRemaining = Number(detail.balance.signedRemaining) || 0;
+          const extra = Number(detail.balance.unpaidExtraInvoices) || 0;
+          const owed = Number(detail.balance.outstanding) || 0;
           const needs = detail.balance.needsInvoice;
           const tone = needs
             ? { bg: '#FEE2E2', border: '#FCA5A5', fg: '#991B1B' }
@@ -160,6 +158,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
                 <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
                   {formatGBP(detail.balance.committed)} signed (inc VAT) · {formatGBP(detail.balance.paid)} paid
                   {detail.balance.paidViaXeroInvoices > 0 && ` (incl. ${formatGBP(detail.balance.paidViaXeroInvoices)} via Xero invoices)`}
+                  {extra > 0 && ` — ${formatGBP(signedRemaining)} on signed work + ${formatGBP(extra)} other unpaid invoices`}
                 </div>
               </div>
               {needs && (
