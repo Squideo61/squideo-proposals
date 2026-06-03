@@ -9,6 +9,18 @@ import { AddInvoiceModal } from './AddInvoiceModal.jsx';
 import { MarkInvoicePaidModal } from './MarkInvoicePaidModal.jsx';
 import { CreateXeroInvoiceModal } from './CreateXeroInvoiceModal.jsx';
 
+// Open the invoice PDF with a filename-friendly URL so "Save as" defaults to the
+// invoice number (e.g. INV-6082.pdf) — browsers use the URL's last path segment.
+// Only the Xero passthrough needs this; the blob route already names its file.
+function pdfHref(row) {
+  const url = row.pdfUrl;
+  if (url && url.startsWith('/api/xero/invoice-pdf?') && row.invoiceNumber) {
+    const qs = url.slice(url.indexOf('?'));
+    return `/api/xero/invoice-pdf/${encodeURIComponent(row.invoiceNumber)}.pdf${qs}`;
+  }
+  return url;
+}
+
 const STATUS_LABEL = { authorised: 'Issued', issued: 'Issued', paid: 'Paid', void: 'Void' };
 const STATUS_COLOR = {
   authorised: BRAND.muted,
@@ -293,7 +305,7 @@ function InvoiceRow({ row, dealId, onChanged }) {
           {/* Open PDF */}
           {row.pdfUrl && (
             <button
-              onClick={() => window.open(row.pdfUrl, '_blank', 'noopener')}
+              onClick={() => window.open(pdfHref(row), '_blank', 'noopener')}
               className="btn-icon"
               title="View PDF"
               style={{ padding: 6 }}

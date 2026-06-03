@@ -187,7 +187,7 @@ export default async function handler(req, res) {
         getInvoicePdf(invoiceId),
         getInvoiceNumber(invoiceId),
       ]);
-      const filename = `Invoice-${number || invoiceId}.pdf`;
+      const filename = `${number || 'Invoice-' + invoiceId}.pdf`;
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
       res.setHeader('Cache-Control', 'private, max-age=60');
