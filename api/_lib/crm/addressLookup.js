@@ -24,7 +24,9 @@ async function readBody(resp) {
 export async function addressLookupRoute(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
 
-  const apiKey = process.env.GETADDRESS_API_KEY;
+  // .trim() guards against a trailing space/newline in the Vercel env var, a
+  // common cause of a spurious 401 from getAddress.
+  const apiKey = (process.env.GETADDRESS_API_KEY || '').trim();
   if (!apiKey) return res.status(503).json({ error: 'Address lookup is not configured (GETADDRESS_API_KEY missing)' });
 
   const params = new URLSearchParams((req.url || '').split('?')[1] || '');
