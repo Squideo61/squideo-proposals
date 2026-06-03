@@ -128,10 +128,9 @@ export async function invoicesRoute(req, res, id, action, user) {
       };
     });
 
-    // Free subtitled version: the standard pay-in-full incentive. Itemise it so
-    // it's visible, but 100% discounted so it's free. On a 50/50 deposit it goes
-    // in at the 50% rate (then 100% off) so it mirrors on deposit + final.
-    const freeSub = freeSubtitleLine(proposal, signed, isDeposit);
+    // Free subtitled version: the pay-in-full incentive only. Itemise it at the
+    // proposal's own subtitle rate but 100% discounted, so it shows yet is free.
+    const freeSub = freeSubtitleLine(proposal, signed);
     if (freeSub) lineItems.push(freeSub);
 
     return res.status(200).json({ lineItems, paymentLabel, proposalId: row.id });
@@ -758,12 +757,15 @@ async function resolveXeroContactInfo(dealId, proposalId) {
 }
 
 // The "free subtitled version" perk: a 100%-discounted subtitle line so it shows
-// on the invoice but costs nothing. Granted on non-Partner proposals whose
-// pay-in-full incentive is the (default) free subtitled version, unless the
-// client already bought subtitles as a paid extra. On a 50/50 deposit the unit
-// goes in at half rate (then 100% off) so the same line mirrors on both invoices.
-function freeSubtitleLine(proposal, signed, isDeposit) {
+// on the invoice but costs nothing. Only granted when the client paid IN FULL
+// (it's the pay-in-full incentive) on a non-Partner proposal whose incentive is
+// the (default) free subtitled version, unless they already bought subtitles.
+// Priced at the proposal's own subtitle rate to match the "worth £X" on it.
+function freeSubtitleLine(proposal, signed) {
   if (signed?.partnerSelected) return null;
+  // Pay-in-full only — 50/50 and PO don't get it free.
+  const opt = signed?.paymentOption;
+  if (opt === '5050' || opt === 'po') return null;
   const extras = Array.isArray(signed?.selectedExtras) ? signed.selectedExtras : [];
   if (extras.some(e => e.id === 'subtitles')) return null; // already paid for it
   // Default full-payment incentive is the free subtitled version. If the
@@ -771,11 +773,10 @@ function freeSubtitleLine(proposal, signed, isDeposit) {
   const fullDesc = (proposal?.paymentOptionDescs?.full || '').trim();
   if (fullDesc && !/subtitle/i.test(fullDesc)) return null;
   const subPrice = Number(proposal?.optionalExtras?.find(e => e.id === 'subtitles')?.price ?? 125) || 125;
-  const unit = isDeposit ? Number((subPrice * 0.5).toFixed(2)) : Number(subPrice.toFixed(2));
   return {
     description: 'Hard-coded English subtitled version (free with pay in full)',
     quantity: 1,
-    unitAmount: unit,
+    unitAmount: Number(subPrice.toFixed(2)),
     vatRate: Number(proposal?.vatRate) > 0 ? 20 : 0,
     discountRate: 100,
   };
