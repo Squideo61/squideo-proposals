@@ -138,11 +138,13 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
             states: red → signed >1h with no invoice raised; amber → invoiced but
             still owed; green → all signed work paid. */}
         {detail.balance && detail.balance.committed > 0 && (() => {
-          // Derive owed straight from committed − paid so it can't disagree with
-          // the figures shown below, regardless of the outstanding field.
+          // Owe the greater of signed work or what's actually been invoiced,
+          // less paid — so raising an invoice beyond the signed total is
+          // reflected here (and it can't disagree with the figures below).
           const committed = Number(detail.balance.committed) || 0;
+          const invoiced = Number(detail.balance.invoiced) || 0;
           const paid = Number(detail.balance.paid) || 0;
-          const owed = Math.max(0, Number((committed - paid).toFixed(2)));
+          const owed = Math.max(0, Number((Math.max(committed, invoiced) - paid).toFixed(2)));
           const needs = detail.balance.needsInvoice;
           const tone = needs
             ? { bg: '#FEE2E2', border: '#FCA5A5', fg: '#991B1B' }

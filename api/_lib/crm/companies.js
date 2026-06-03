@@ -469,6 +469,24 @@ async function computeCompanyBalance(companyId) {
     paid += pbPaid;
   }
 
+  // Total invoiced (raised, not void) for the company — manual invoices (deal,
+  // proposal, or company-level) + proposal-billing. Lets "owed" reflect actual
+  // billing once you've invoiced beyond the signed figure.
+  const [[miInvRow], [pbInvRow]] = await Promise.all([
+    sql`SELECT COALESCE(SUM(mi.amount), 0) AS s
+          FROM manual_invoices mi
+          LEFT JOIN deals dd ON dd.id = mi.deal_id
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+          LEFT JOIN deals dp ON dp.id = pr.deal_id
+         WHERE mi.status != 'void'
+           AND (mi.company_id = ${companyId} OR dd.company_id = ${companyId} OR dp.company_id = ${companyId})`,
+    propIds.length
+      ? sql`SELECT COALESCE(SUM(invoice_amount), 0) AS s FROM proposal_billing
+             WHERE proposal_id = ANY(${propIds}) AND invoice_amount IS NOT NULL`
+      : Promise.resolve([{ s: 0 }]),
+  ]);
+  const invoiced = Number(miInvRow.s) + Number(pbInvRow.s);
+
   // A deal whose proposal was signed >1h ago with no invoice raised and nothing
   // paid → it needs an invoice generating. The 1h gate matches the reminder cron.
   const [needsRow] = await sql`
@@ -488,13 +506,17 @@ async function computeCompanyBalance(companyId) {
   `;
 
   const committed = Number(committedRow.committed) || 0;
+  // Owe the greater of signed work or what's actually been invoiced, less paid —
+  // so over-invoicing (billing beyond the signed figure) is reflected in "owed".
+  const owedBase = Math.max(committed, invoiced);
   return {
     committed: Number(committed.toFixed(2)),
+    invoiced: Number(invoiced.toFixed(2)),
     paid: Number(paid.toFixed(2)),
     // How much of `paid` came from Xero-generated (proposal-billing) invoices —
     // shown in the banner so it's clear these are reconciled from Xero.
     paidViaXeroInvoices: Number(pbPaid.toFixed(2)),
-    outstanding: Number((committed - paid).toFixed(2)),
+    outstanding: Number((owedBase - paid).toFixed(2)),
     needsInvoice: !!needsRow,
     needsInvoiceDealId: needsRow?.deal_id || null,
   };
@@ -640,6 +662,12 @@ async function computeCompanyDealBalances(companyId) {
       cur.invoiced = Number((cur.invoiced + take).toFixed(2));
       pool -= take;
     }
+  }
+  // Owe the greater of signed or invoiced, less paid (matches the company
+  // headline) — recomputed after allocation so over-invoicing is reflected.
+  for (const did of Object.keys(out)) {
+    const cur = out[did];
+    cur.outstanding = Number(Math.max(0, Math.max(cur.committed, cur.invoiced) - cur.paid).toFixed(2));
   }
   return out;
 }
