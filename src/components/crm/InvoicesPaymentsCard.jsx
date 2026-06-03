@@ -295,7 +295,7 @@ function InvoiceRow({ row, dealId, onChanged }) {
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: isPaid ? 'white' : '#FFFBEB', border: '1px solid ' + (isPaid ? BRAND.border : '#FDE68A'), borderRadius: 6 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, flexWrap: 'wrap' }}>
             {row.subtotalExVat != null ? (
