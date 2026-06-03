@@ -123,7 +123,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
             )}
           </h1>
           {/* Customer-status + Xero-link controls, top-right of the card. */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'flex-end' }}>
             <button
               onClick={toggleCustomer}
               className="btn-ghost"
@@ -135,20 +135,25 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
                 ? <><CheckCircle2 size={14} color="#16A34A" /> Verified customer</>
                 : <><Circle size={14} /> Mark as customer</>}
             </button>
-            {detail.xeroContactId ? (
-              <button
-                onClick={handleUnlink}
-                className="btn-ghost"
-                title={`Linked to ${detail.xeroContactName || detail.xeroContactId} — click to unlink`}
-                style={{ color: '#15803D' }}
-              >
-                <Link2 size={14} color="#16A34A" /> {detail.xeroContactName || 'Xero linked'} <X size={11} />
-              </button>
-            ) : (
-              <button onClick={() => setLinking(v => !v)} className="btn-ghost">
-                <Link2 size={14} /> Link Xero contact
-              </button>
-            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span style={{ fontSize: 10, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, paddingLeft: 2 }}>
+                Xero link
+              </span>
+              {detail.xeroContactId ? (
+                <button
+                  onClick={handleUnlink}
+                  className="btn-ghost"
+                  title={`Linked to ${detail.xeroContactName || detail.xeroContactId} — click to unlink`}
+                  style={{ color: '#15803D' }}
+                >
+                  <Link2 size={14} color="#16A34A" /> {detail.xeroContactName || 'Xero linked'} <X size={11} />
+                </button>
+              ) : (
+                <button onClick={() => setLinking(v => !v)} className="btn-ghost">
+                  <Link2 size={14} /> Link Xero contact
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
