@@ -4,7 +4,7 @@
 // xero_contact_id to a proposal).
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, RefreshCw, Check, AlertTriangle } from 'lucide-react';
+import { Search, RefreshCw, Check, AlertTriangle, Plus } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { useStore } from '../../store.jsx';
@@ -16,15 +16,26 @@ export function XeroContactPicker({
   autoFocus = false,
   size = 'md',      // 'sm' | 'md'
   allowClear = true,
+  initialQuery = '', // seed the search (e.g. company name) so matches show on open
+  onCreateNew,      // optional () => void — adds a "Create new" row when the search has no matches
+  createNewLabel = 'Create new contact',
+  creatingNew = false,
 }) {
   const { showMsg } = useStore();
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [activeIdx, setActiveIdx] = useState(-1);
   const containerRef = useRef(null);
+
+  // If seeded with a query (e.g. the company name), open and search on mount so
+  // similar contacts surface immediately and the "Create new" fallback can show.
+  useEffect(() => {
+    if (initialQuery) setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Close dropdown on outside click.
   useEffect(() => {
@@ -181,10 +192,28 @@ export function XeroContactPicker({
             </div>
           )}
 
-          {!loading && query.trim() && results.length === 0 && (
+          {!loading && query.trim() && results.length === 0 && !onCreateNew && (
             <div style={{ padding: 12, fontSize: 12, color: BRAND.muted, textAlign: 'center' }}>
               No matches. Try refreshing from Xero or use a different name.
             </div>
+          )}
+
+          {/* Create-new fallback — only when the search found nothing similar. */}
+          {onCreateNew && !loading && query.trim() && results.length === 0 && (
+            <button
+              type="button"
+              onClick={() => { onCreateNew(); }}
+              disabled={creatingNew}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                padding: '10px 12px', background: 'white', border: 'none',
+                borderBottom: '1px solid ' + BRAND.border, cursor: creatingNew ? 'wait' : 'pointer',
+                textAlign: 'left', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: BRAND.blue,
+              }}
+            >
+              <Plus size={14} />
+              {creatingNew ? 'Creating…' : createNewLabel}
+            </button>
           )}
 
           {!loading && !query.trim() && (
