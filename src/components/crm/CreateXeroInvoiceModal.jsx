@@ -66,12 +66,14 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
     setLineItems(prev => prev.length > 1 ? prev.filter(li => li._key !== key) : prev);
   }
 
-  // Compute per-line and total amounts (inc-VAT for display).
+  // Compute per-line and total amounts (inc-VAT for display). A line can carry a
+  // discountRate (e.g. the 100%-off free subtitled version) that zeroes it out.
   const lineCalcs = lineItems.map(li => {
     const qty = Number(li.quantity) || 0;
     const price = Number(li.unitAmount) || 0;
     const vat = Number(li.vatRate) || 0;
-    const exVat = qty * price;
+    const disc = Number(li.discountRate) || 0;
+    const exVat = qty * price * (1 - disc / 100);
     const vatAmt = exVat * vat / 100;
     return { exVat, vatAmt, total: exVat + vatAmt };
   });
@@ -126,6 +128,7 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
           quantity: Number(li.quantity) || 1,
           unitAmount: Number(li.unitAmount),
           vatRate: Number(li.vatRate) || 0,
+          discountRate: li.discountRate ? Number(li.discountRate) : undefined,
         })),
       });
       showMsg?.('Invoice created in Xero', 'success');
@@ -289,8 +292,10 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
                     <option value={20}>20%</option>
                     <option value={0}>0%</option>
                   </select>
-                  <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'right', color: calc.total > 0 ? BRAND.ink : BRAND.muted }}>
-                    {calc.total > 0 ? formatGBP(calc.total) : '—'}
+                  <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'right', color: Number(li.discountRate) >= 100 ? '#15803D' : (calc.total > 0 ? BRAND.ink : BRAND.muted) }}>
+                    {Number(li.discountRate) >= 100
+                      ? 'FREE'
+                      : (calc.total > 0 ? formatGBP(calc.total) : '—')}
                   </span>
                   <button
                     type="button"

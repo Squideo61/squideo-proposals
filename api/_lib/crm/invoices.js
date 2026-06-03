@@ -128,6 +128,12 @@ export async function invoicesRoute(req, res, id, action, user) {
       };
     });
 
+    // Free subtitled version: the standard pay-in-full incentive. Itemise it so
+    // it's visible, but 100% discounted so it's free. On a 50/50 deposit it goes
+    // in at the 50% rate (then 100% off) so it mirrors on deposit + final.
+    const freeSub = freeSubtitleLine(proposal, signed, isDeposit);
+    if (freeSub) lineItems.push(freeSub);
+
     return res.status(200).json({ lineItems, paymentLabel, proposalId: row.id });
   }
 
@@ -749,6 +755,30 @@ async function resolveXeroContactInfo(dealId, proposalId) {
   }
   if (!name) name = deal.title;
   return { name, email, xeroContactId };
+}
+
+// The "free subtitled version" perk: a 100%-discounted subtitle line so it shows
+// on the invoice but costs nothing. Granted on non-Partner proposals whose
+// pay-in-full incentive is the (default) free subtitled version, unless the
+// client already bought subtitles as a paid extra. On a 50/50 deposit the unit
+// goes in at half rate (then 100% off) so the same line mirrors on both invoices.
+function freeSubtitleLine(proposal, signed, isDeposit) {
+  if (signed?.partnerSelected) return null;
+  const extras = Array.isArray(signed?.selectedExtras) ? signed.selectedExtras : [];
+  if (extras.some(e => e.id === 'subtitles')) return null; // already paid for it
+  // Default full-payment incentive is the free subtitled version. If the
+  // proposal customised that copy and it no longer mentions subtitles, skip.
+  const fullDesc = (proposal?.paymentOptionDescs?.full || '').trim();
+  if (fullDesc && !/subtitle/i.test(fullDesc)) return null;
+  const subPrice = Number(proposal?.optionalExtras?.find(e => e.id === 'subtitles')?.price ?? 125) || 125;
+  const unit = isDeposit ? Number((subPrice * 0.5).toFixed(2)) : Number(subPrice.toFixed(2));
+  return {
+    description: 'Hard-coded English subtitled version (free with pay in full)',
+    quantity: 1,
+    unitAmount: unit,
+    vatRate: Number(proposal?.vatRate) > 0 ? 20 : 0,
+    discountRate: 100,
+  };
 }
 
 // Same as resolveXeroContactInfo but starting from a company (for company-level
