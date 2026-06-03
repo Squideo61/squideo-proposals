@@ -344,17 +344,8 @@ export async function invoicesRoute(req, res, id, action, user) {
 
           // Persist how much has been paid on a proposal-billing invoice so the
           // company balance can subtract it (it never lands in `payments`).
-          // paidSoFar = total − amountDue handles part-payment; voided → null.
           if (r.source === 'xero-issued') {
-            let paidSoFar = null;
-            if (x.status === 'VOIDED') {
-              paidSoFar = null;
-            } else if (x.total != null && x.amountDue != null) {
-              const v = Number((x.total - x.amountDue).toFixed(2));
-              paidSoFar = v > 0 ? v : null;
-            } else if (x.status === 'PAID' && x.total != null) {
-              paidSoFar = x.total;
-            }
+            const paidSoFar = pbPaidFromXero(x);
             if (paidSoFar !== r._pbPaidAmount) {
               const paidAt = paidSoFar != null ? (x.fullyPaidOn || new Date().toISOString().slice(0, 10)) : null;
               pbWrites.push(
@@ -1175,6 +1166,53 @@ function parseInvoiceMeta(req) {
 
 function stripManualPrefix(id) {
   return id.startsWith('manual:') ? id.slice('manual:'.length) : id;
+}
+
+// How much of a proposal-billing Xero invoice has been paid, from its live Xero
+// record: total − amountDue covers part-payment; a voided invoice counts as
+// nothing. Returns null when nothing's been paid (so the column reads NULL).
+function pbPaidFromXero(x) {
+  if (!x || x.status === 'VOIDED') return null;
+  if (x.total != null && x.amountDue != null) {
+    const v = Number((x.total - x.amountDue).toFixed(2));
+    return v > 0 ? v : null;
+  }
+  if (x.status === 'PAID' && x.total != null) return x.total;
+  return null;
+}
+
+// Refresh proposal_billing.paid_amount for the given proposals from live Xero
+// data. Called both by the invoices list (as a side-effect of display) and by
+// the company balance, so the "outstanding" headline is correct on load rather
+// than only after someone has opened the invoices list. Best-effort; only
+// writes rows whose paid figure actually changed.
+export async function reconcileProposalBillingPaid(proposalIds) {
+  if (!proposalIds || !proposalIds.length) return;
+  await ensureProposalBillingPaidColumns();
+  const rows = await sql`
+    SELECT xero_invoice_id, paid_amount FROM proposal_billing
+     WHERE proposal_id = ANY(${proposalIds}) AND xero_invoice_id IS NOT NULL
+  `;
+  if (!rows.length) return;
+  const live = await getInvoicesByIds(rows.map(r => r.xero_invoice_id));
+  if (!live.size) return;
+  const writes = [];
+  for (const r of rows) {
+    const x = live.get(r.xero_invoice_id);
+    if (!x) continue;
+    const paidSoFar = pbPaidFromXero(x);
+    const cur = r.paid_amount != null ? Number(r.paid_amount) : null;
+    if (paidSoFar !== cur) {
+      const paidAt = paidSoFar != null ? (x.fullyPaidOn || new Date().toISOString().slice(0, 10)) : null;
+      writes.push(
+        sql`UPDATE proposal_billing
+               SET paid_amount = ${paidSoFar}, paid_at = ${paidAt}, updated_at = NOW()
+             WHERE xero_invoice_id = ${r.xero_invoice_id}
+               AND paid_amount IS DISTINCT FROM ${paidSoFar}`,
+      );
+    }
+  }
+  if (writes.length) await Promise.all(writes);
 }
 
 // Proposal-billing invoices carry a Reference like "PROP-1234 — 50% deposit"

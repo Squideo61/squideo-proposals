@@ -3,6 +3,7 @@ import { makeId, trimOrNull, lowerOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { updateContactAddress, getOrCreateContact } from '../xero.js';
+import { reconcileProposalBillingPaid } from './invoices.js';
 
 // Self-heal for db/migrations/20260603_company_address.sql. Called at the top of
 // every companies code path so a workspace that skipped the manual Neon apply
@@ -439,9 +440,15 @@ async function computeCompanyBalance(companyId) {
   paid += Number(invPaidRow.s);
 
   // Money paid against a proposal-billing Xero invoice (the "email me an
-  // invoice" / PO flows), stamped onto proposal_billing.paid_amount by the
-  // invoices GET enrichment from live Xero data. These never hit `payments`.
+  // invoice" / PO flows). Reconcile from live Xero first so the headline is
+  // correct on load (not only after the invoices list has been opened), then
+  // read the stamped figures. Best-effort — a Xero hiccup just uses last-known.
   if (propIds.length) {
+    try {
+      await reconcileProposalBillingPaid(propIds);
+    } catch (err) {
+      console.warn('[companies] proposal-billing paid reconcile failed', err.message);
+    }
     const [pbPaidRow] = await sql`
       SELECT COALESCE(SUM(paid_amount), 0) AS s FROM proposal_billing
        WHERE proposal_id = ANY(${propIds}) AND paid_amount IS NOT NULL
