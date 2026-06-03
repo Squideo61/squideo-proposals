@@ -367,7 +367,7 @@ export function CompanyModal({ company, onClose }) {
       const data = await api.get('/api/crm/address-lookup?postcode=' + encodeURIComponent(pc));
       const list = data?.addresses || [];
       setLookupResults(list);
-      if (!list.length) setLookupError('No addresses found for that postcode');
+      if (!list.length) setLookupError(data?.detail || 'No addresses found for that postcode');
     } catch (err) {
       setLookupError(err.message || 'Lookup failed');
     } finally {

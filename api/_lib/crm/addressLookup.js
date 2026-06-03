@@ -3,17 +3,21 @@
 //
 // Requires the GETADDRESS_API_KEY env var (set in Vercel). Returns a normalised
 // { postcode, addresses: [{ line1, line2, city, county, postcode, country, label }] }
-// shape the company address form can drop straight into its fields.
+// shape the company address form can drop straight into its fields. On a
+// no-results / upstream error it returns 200 with an empty list plus a `detail`
+// string so the form can show exactly what getAddress.io said.
 
 export async function addressLookupRoute(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
 
   const apiKey = process.env.GETADDRESS_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: 'Address lookup is not configured' });
+  if (!apiKey) return res.status(503).json({ error: 'Address lookup is not configured (GETADDRESS_API_KEY missing)' });
 
   const qs = (req.url || '').split('?')[1] || '';
-  const postcode = (new URLSearchParams(qs).get('postcode') || '').trim();
-  if (!postcode) return res.status(400).json({ error: 'postcode is required' });
+  const raw = (new URLSearchParams(qs).get('postcode') || '').trim();
+  if (!raw) return res.status(400).json({ error: 'postcode is required' });
+  // getAddress.io's /find path wants the postcode with no spaces, upper-cased.
+  const postcode = raw.toUpperCase().replace(/\s+/g, '');
 
   const url = `https://api.getaddress.io/find/${encodeURIComponent(postcode)}`
     + `?api-key=${encodeURIComponent(apiKey)}&expand=true`;
@@ -26,22 +30,29 @@ export async function addressLookupRoute(req, res) {
     return res.status(502).json({ error: 'Address lookup service unavailable' });
   }
 
-  // Unknown postcode → empty list rather than an error, so the UI can just say
-  // "no addresses found" and let the user type it manually.
-  if (resp.status === 404) return res.status(200).json({ postcode, addresses: [] });
-  if (resp.status === 429) return res.status(429).json({ error: 'Address lookup limit reached — try again shortly' });
-  if (resp.status === 401) {
-    console.error('[address-lookup] getAddress rejected the API key');
-    return res.status(503).json({ error: 'Address lookup is not configured' });
-  }
+  // Read the body once so we can surface getAddress's own message on errors.
+  const bodyText = await resp.text().catch(() => '');
+  let body = null;
+  try { body = bodyText ? JSON.parse(bodyText) : null; } catch { /* non-JSON */ }
+  const upstreamMsg = body?.Message || body?.message || (bodyText || '').slice(0, 200);
+
   if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    console.error('[address-lookup] getAddress error', resp.status, text);
-    return res.status(502).json({ error: 'Address lookup failed' });
+    console.error('[address-lookup] getAddress', resp.status, upstreamMsg);
+    // 404 = postcode parsed but no addresses (or not a real postcode). Treat as
+    // an empty result the user can fill manually, but pass the message through.
+    if (resp.status === 404) {
+      return res.status(200).json({ postcode, addresses: [], detail: upstreamMsg || 'No addresses found' });
+    }
+    if (resp.status === 400) {
+      return res.status(200).json({ postcode, addresses: [], detail: upstreamMsg || 'That doesn’t look like a valid postcode' });
+    }
+    if (resp.status === 429) return res.status(429).json({ error: 'Address lookup limit reached — try again shortly' });
+    if (resp.status === 401) return res.status(503).json({ error: `Address lookup rejected the API key: ${upstreamMsg || 'unauthorised'}` });
+    return res.status(502).json({ error: `Address lookup failed (${resp.status})${upstreamMsg ? ': ' + upstreamMsg : ''}` });
   }
 
-  const data = await resp.json();
-  const outPostcode = (data.postcode || postcode).toUpperCase();
+  const data = body || {};
+  const outPostcode = (data.postcode || raw).toUpperCase();
   const addresses = (data.addresses || []).map((a) => {
     const line1 = a.line_1 || '';
     const line2 = [a.line_2, a.line_3, a.line_4].filter(Boolean).join(', ');
