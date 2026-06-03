@@ -423,7 +423,9 @@ async function computeCompanyBalance(companyId) {
 
   let paid = 0;
   if (propIds.length) {
-    const [stripeRow, partnerRow, manualPayRow] = await Promise.all([
+    // Each tagged query returns an array of rows, so destructure the first row
+    // out of each — `stripeRows.s` would be undefined → NaN → poisons `paid`.
+    const [[stripeRow], [partnerRow], [manualPayRow]] = await Promise.all([
       sql`SELECT COALESCE(SUM(amount), 0) AS s FROM payments WHERE proposal_id = ANY(${propIds})`,
       sql`SELECT COALESCE(SUM(amount), 0) AS s FROM partner_invoices WHERE proposal_id = ANY(${propIds})`,
       sql`SELECT COALESCE(SUM(amount), 0) AS s FROM manual_payments WHERE proposal_id = ANY(${propIds}) AND manual_invoice_id IS NULL`,
