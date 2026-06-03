@@ -554,7 +554,7 @@ async function computeCompanyLifetime(companyId) {
 // grouped by deal. Assumes reconcileProposalBillingPaid has already run (the
 // detail route calls computeCompanyBalance first on the same load).
 async function computeCompanyDealBalances(companyId) {
-  const [committedRows, stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows, miInvoicedRows, pbInvoicedRows] = await Promise.all([
+  const [committedRows, stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows, miInvoicedRows, pbInvoicedRows, unattributedInvoicedRows] = await Promise.all([
     sql`SELECT d.id AS did, COALESCE(SUM((s.data->>'total')::numeric),0) AS v
           FROM signatures s JOIN proposals p ON p.id=s.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE d.company_id=${companyId} AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
@@ -589,6 +589,13 @@ async function computeCompanyDealBalances(companyId) {
     sql`SELECT d.id AS did, COALESCE(SUM(pb.invoice_amount),0) AS v
           FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE d.company_id=${companyId} AND pb.invoice_amount IS NOT NULL GROUP BY d.id`,
+    // Company-level invoices not tied to any deal (raised against the company
+    // directly). These still reduce what's "not invoiced" for the company.
+    sql`SELECT COALESCE(SUM(mi.amount),0) AS v
+          FROM manual_invoices mi
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+         WHERE mi.status != 'void' AND mi.company_id = ${companyId}
+           AND mi.deal_id IS NULL AND pr.deal_id IS NULL`,
   ]);
   const committed = new Map(committedRows.map(r => [r.did, Number(r.v) || 0]));
   const paid = new Map();
@@ -617,6 +624,22 @@ async function computeCompanyDealBalances(companyId) {
       notInvoiced: Number(Math.max(0, c - inv).toFixed(2)),
       outstanding: Number((c - p).toFixed(2)),
     };
+  }
+
+  // Apply company-level (non-deal) invoices against the deals' not-invoiced
+  // balances, so raising an invoice for the company — even one not tied to a
+  // specific deal — reduces what's shown as still outstanding to invoice.
+  let pool = Number(unattributedInvoicedRows?.[0]?.v) || 0;
+  if (pool > 0) {
+    for (const did of Object.keys(out)) {
+      if (pool <= 0) break;
+      const cur = out[did];
+      if (cur.notInvoiced <= 0) continue;
+      const take = Math.min(cur.notInvoiced, pool);
+      cur.notInvoiced = Number((cur.notInvoiced - take).toFixed(2));
+      cur.invoiced = Number((cur.invoiced + take).toFixed(2));
+      pool -= take;
+    }
   }
   return out;
 }
