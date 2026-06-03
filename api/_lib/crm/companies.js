@@ -2,7 +2,7 @@ import sql from '../db.js';
 import { makeId, trimOrNull, lowerOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
-import { updateContactAddress } from '../xero.js';
+import { updateContactAddress, getOrCreateContact } from '../xero.js';
 
 // Self-heal for db/migrations/20260603_company_address.sql. Called at the top of
 // every companies code path so a workspace that skipped the manual Neon apply
@@ -209,6 +209,61 @@ export async function companiesRoute(req, res, id, action, user) {
         proposalCount: d.proposal_count || 0,
       })),
     });
+  }
+
+  // POST /companies/:id/create-xero-contact — create a brand-new Xero contact
+  // from this company's details and link it. The UI only offers this when no
+  // same/similar contact was found to link to; getOrCreateContact still does a
+  // live exact-name search as a server-side safety net against duplicates.
+  if (action === 'create-xero-contact' && req.method === 'POST') {
+    const [co] = await sql`
+      SELECT id, name, xero_contact_id,
+             address_line1, address_line2, city, postcode, country
+        FROM companies WHERE id = ${id}
+    `;
+    if (!co) return res.status(404).json({ error: 'Not found' });
+    if (co.xero_contact_id) return res.status(409).json({ error: 'Company is already linked to a Xero contact' });
+
+    // Best-effort email from one of the company's contacts.
+    const [contact] = await sql`
+      SELECT email FROM contacts
+       WHERE company_id = ${id} AND email IS NOT NULL
+       ORDER BY created_at ASC LIMIT 1
+    `;
+    const hasAddr = co.address_line1 || co.address_line2 || co.city || co.postcode || co.country;
+    const address = hasAddr ? {
+      line1: co.address_line1, line2: co.address_line2,
+      city: co.city, postcode: co.postcode, country: co.country,
+    } : null;
+
+    let contactId;
+    try {
+      contactId = await getOrCreateContact({ name: co.name, email: contact?.email || null, address });
+    } catch (err) {
+      console.error('[companies] create xero contact failed', err);
+      return res.status(502).json({ error: err.message || 'Could not create the Xero contact' });
+    }
+
+    await sql`UPDATE companies SET xero_contact_id = ${contactId}, updated_at = NOW() WHERE id = ${id}`;
+    // Mirror it so the link shows a name immediately, without a full re-sync.
+    await sql`
+      INSERT INTO xero_contacts (id, name, email, status, address_line1, address_line2, city, postcode, country, last_synced_at)
+      VALUES (${contactId}, ${co.name}, ${contact?.email || null}, 'ACTIVE',
+              ${co.address_line1 || null}, ${co.address_line2 || null}, ${co.city || null}, ${co.postcode || null}, ${co.country || null}, NOW())
+      ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, last_synced_at = NOW()
+    `;
+
+    const [row] = await sql`
+      SELECT c.id, c.name, c.domain, c.notes, c.xero_contact_id,
+             c.customer_verified_at, c.customer_verified_by,
+             c.address_line1, c.address_line2, c.city, c.postcode, c.country,
+             c.created_at, c.updated_at,
+             xc.name AS xero_contact_name
+        FROM companies c
+        LEFT JOIN xero_contacts xc ON xc.id = c.xero_contact_id
+       WHERE c.id = ${id}
+    `;
+    return res.status(201).json(serialiseCompany(row));
   }
 
   if (req.method === 'PATCH') {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Award, Building2, CheckCircle2, Circle, Globe, MapPin, User, Edit2, Link2, X } from 'lucide-react';
+import { ArrowLeft, Award, Building2, CheckCircle2, Circle, Globe, MapPin, Plus, User, Edit2, Link2, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatGBP, formatRelativeTime, effectiveAddress, formatAddressLines } from '../../utils.js';
@@ -18,8 +18,21 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
   const [linking, setLinking] = useState(false);
   const [xeroContact, setXeroContact] = useState(null);
   const [payments, setPayments] = useState(null);
+  // Similar Xero contacts found for this company's name. null = still checking.
+  const [similar, setSimilar] = useState(null);
+  const [creatingXero, setCreatingXero] = useState(false);
 
   const reload = () => api.get('/api/crm/companies/' + encodeURIComponent(companyId) + '/detail').then(setDetail);
+
+  // When the link panel opens, look for same/similar Xero contacts by name so we
+  // only offer "create new" when there's genuinely nothing to link to.
+  useEffect(() => {
+    if (!linking || !detail?.name) return;
+    setSimilar(null);
+    api.get('/api/crm/xero-contacts/search?q=' + encodeURIComponent(detail.name) + '&includeArchived=1')
+      .then((rows) => setSimilar(Array.isArray(rows) ? rows : []))
+      .catch(() => setSimilar([]));
+  }, [linking, detail?.name]);
 
   useEffect(() => {
     if (!companyId) return;
@@ -57,6 +70,34 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
       reload();
     } catch (err) {
       showMsg?.(err.message || 'Failed to link', 'error');
+    }
+  }
+
+  async function handleLinkExisting(c) {
+    try {
+      await api.patch('/api/crm/companies/' + encodeURIComponent(companyId), { xeroContactId: c.id });
+      showMsg?.(`Linked to Xero: ${c.name}`, 'success');
+      setLinking(false);
+      setXeroContact(null);
+      reload();
+    } catch (err) {
+      showMsg?.(err.message || 'Failed to link', 'error');
+    }
+  }
+
+  async function handleCreateXero() {
+    if (creatingXero) return;
+    setCreatingXero(true);
+    try {
+      const updated = await api.post('/api/crm/companies/' + encodeURIComponent(companyId) + '/create-xero-contact');
+      showMsg?.(`Created Xero contact: ${updated?.xeroContactName || detail.name}`, 'success');
+      setLinking(false);
+      setXeroContact(null);
+      reload();
+    } catch (err) {
+      showMsg?.(err.message || 'Failed to create Xero contact', 'error');
+    } finally {
+      setCreatingXero(false);
     }
   }
 
@@ -183,7 +224,43 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
             </div>
           ) : linking ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <XeroContactPicker value={xeroContact} onChange={setXeroContact} placeholder={`Search Xero for "${detail.name}"…`} autoFocus />
+              {/* Same/similar contacts found by name — link one directly. */}
+              {similar === null && (
+                <div style={{ fontSize: 12, color: BRAND.muted }}>Checking Xero for “{detail.name}”…</div>
+              )}
+              {similar && similar.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 12, color: BRAND.ink }}>Similar Xero contacts — link one:</div>
+                  {similar.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => handleLinkExisting(c)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+                    >
+                      <Link2 size={13} color={BRAND.blue} />
+                      <span style={{ minWidth: 0, flex: 1 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</span>
+                        {c.email && <span style={{ fontSize: 11, color: BRAND.muted }}> · {c.email}</span>}
+                        {c.status === 'ARCHIVED' && <span style={{ fontSize: 10, color: '#B45309', marginLeft: 6 }}>ARCHIVED</span>}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Manual search for a different name. */}
+              <XeroContactPicker value={xeroContact} onChange={setXeroContact} placeholder={`Search Xero for "${detail.name}"…`} autoFocus={similar !== null && similar.length === 0} />
+
+              {/* Create new — only when nothing same/similar was found. */}
+              {similar && similar.length === 0 && !xeroContact && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: BRAND.muted }}>
+                  <span>No similar contact in Xero.</span>
+                  <button onClick={handleCreateXero} className="btn" disabled={creatingXero} style={{ fontSize: 12 }}>
+                    <Plus size={12} /> {creatingXero ? 'Creating…' : `Create “${detail.name}” in Xero`}
+                  </button>
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                 <button onClick={() => { setLinking(false); setXeroContact(null); }} className="btn-ghost">Cancel</button>
                 <button onClick={handleSaveLink} className="btn" disabled={!xeroContact}>Link</button>
