@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -139,38 +139,18 @@ export function FinanceView({ onBack }) {
         ) : (
           <>
             <StatCard icon={PiggyBank} accent={VAT_COLOR} label={view.thisMonth ? `VAT to set aside — ${shortMonth(view.thisMonth.month)}` : `VAT to set aside — ${effectiveYear}`} value={formatGBP(view.thisMonth ? view.thisMonth.vat : view.totals.vat)} sub={view.thisMonth ? 'From cash banked this month' : 'Total for the year'} />
-            <StatCard icon={Landmark} accent={VAT_COLOR} label={isCurrentYear && view.thisQuarter ? `VAT — ${view.thisQuarter.label}` : `VAT — ${effectiveYear}`} value={formatGBP(isCurrentYear && view.thisQuarter ? view.thisQuarter.vat : view.totals.vat)} sub="UK VAT returns are quarterly" />
+            <QuarterMenuCard
+              quarters={view.quarters}
+              currentIdx={isCurrentYear ? Math.floor(monthIdx / 3) : -1}
+              label={isCurrentYear && view.thisQuarter ? `VAT — ${view.thisQuarter.label}` : `VAT — ${effectiveYear}`}
+              value={formatGBP(isCurrentYear && view.thisQuarter ? view.thisQuarter.vat : view.totals.vat)}
+              onPick={(i) => { setQuarterKey(`${effectiveYear}-Q${i + 1}`); setMode('quarter'); }}
+            />
             <StatCard icon={Wallet} accent={BRAND.blue} label={isCurrentYear ? 'Net revenue (ex-VAT) — YTD' : `Net revenue (ex-VAT) — ${effectiveYear}`} value={formatGBP(fin ? fin.ytd.net : 0)} sub={`${formatGBP(view.totals.gross)} gross banked`} />
             <StatCard icon={PoundSterling} accent={BRAND.ink} label="Outstanding — all customers" value={formatGBP(fin ? fin.outstanding : 0)} sub="Still to collect (inc VAT)" />
           </>
         )}
       </div>
-
-      {/* Quarters strip (year mode) — eyeball all four, click to drill in. */}
-      {mode === 'year' && (
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
-          {view.quarters.map((q, i) => {
-            const isThisQ = isCurrentYear && i === Math.floor(monthIdx / 3);
-            return (
-              <button
-                key={q.label}
-                onClick={() => { setQuarterKey(`${effectiveYear}-Q${i + 1}`); setMode('quarter'); }}
-                title={`View ${q.label}`}
-                style={{
-                  textAlign: 'left', cursor: 'pointer', background: 'white',
-                  border: '1px solid ' + (isThisQ ? BRAND.blue : BRAND.border), borderRadius: 10, padding: 14,
-                }}
-              >
-                <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-                  {q.label}{isThisQ ? ' · now' : ''}
-                </div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: VAT_COLOR }}>{formatGBP(q.vat)}</div>
-                <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>VAT · {formatGBP(q.net)} net</div>
-              </button>
-            );
-          })}
-        </div>
-      )}
 
       {/* VAT-to-save bar chart, with net for context. */}
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 20 }}>
@@ -258,6 +238,79 @@ function Segmented({ value, onChange, options }) {
           {o.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// The "VAT — Q{n}" headline card, but clickable: opens a dropdown of all four
+// quarters (VAT + net) to jump into a quarter view, replacing the old always-on
+// quarters strip.
+function QuarterMenuCard({ quarters, currentIdx, label, value, onPick }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+  const list = quarters || [];
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        style={{
+          width: '100%', height: '100%', textAlign: 'left', cursor: 'pointer', boxSizing: 'border-box',
+          background: 'white', border: '1px solid ' + (open ? BRAND.blue : BRAND.border),
+          borderLeft: `3px solid ${VAT_COLOR}`, borderRadius: 10, padding: 16,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+          <Landmark size={14} color={VAT_COLOR} />
+          <span style={{ flex: 1 }}>{label}</span>
+          <ChevronDown size={14} style={{ opacity: 0.6, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+        </div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: BRAND.ink }}>{value}</div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>Click to view any quarter</div>
+      </button>
+      {open && list.length > 0 && (
+        <div
+          role="menu"
+          style={{
+            position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
+            background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10,
+            boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)', padding: 6, zIndex: 50,
+            display: 'flex', flexDirection: 'column', gap: 2,
+          }}
+        >
+          {list.map((q, i) => (
+            <button
+              key={q.label}
+              type="button"
+              role="menuitem"
+              onClick={() => { onPick(i); setOpen(false); }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = i === currentIdx ? '#F4FBFE' : 'transparent'; }}
+              style={{
+                display: 'flex', alignItems: 'baseline', gap: 8, width: '100%',
+                padding: '8px 10px', border: 'none', borderRadius: 8, cursor: 'pointer',
+                background: i === currentIdx ? '#F4FBFE' : 'transparent', textAlign: 'left',
+              }}
+            >
+              <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: BRAND.ink }}>
+                {q.label}{i === currentIdx ? ' · now' : ''}
+              </span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: VAT_COLOR }}>{formatGBP(q.vat)}</span>
+              <span style={{ fontSize: 12, color: BRAND.muted }}>{formatGBP(q.net)} net</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
