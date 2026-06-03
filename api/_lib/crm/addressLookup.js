@@ -16,8 +16,13 @@ export async function addressLookupRoute(req, res) {
   const qs = (req.url || '').split('?')[1] || '';
   const raw = (new URLSearchParams(qs).get('postcode') || '').trim();
   if (!raw) return res.status(400).json({ error: 'postcode is required' });
-  // getAddress.io's /find path wants the postcode with no spaces, upper-cased.
-  const postcode = raw.toUpperCase().replace(/\s+/g, '');
+  // getAddress.io's /find path wants the postcode WITH its space (their docs use
+  // e.g. find/SW1A 2AA). A UK postcode's inward code is always the last 3 chars,
+  // so normalise to "OUTWARD INWARD" regardless of how the user typed it.
+  const compact = raw.toUpperCase().replace(/\s+/g, '');
+  const postcode = compact.length > 3
+    ? compact.slice(0, -3) + ' ' + compact.slice(-3)
+    : compact;
 
   const url = `https://api.getaddress.io/find/${encodeURIComponent(postcode)}`
     + `?api-key=${encodeURIComponent(apiKey)}&expand=true`;
@@ -41,10 +46,10 @@ export async function addressLookupRoute(req, res) {
     // 404 = postcode parsed but no addresses (or not a real postcode). Treat as
     // an empty result the user can fill manually, but pass the message through.
     if (resp.status === 404) {
-      return res.status(200).json({ postcode, addresses: [], detail: upstreamMsg || 'No addresses found' });
+      return res.status(200).json({ postcode, addresses: [], detail: `${upstreamMsg || 'No addresses found'} (getAddress ${resp.status})` });
     }
     if (resp.status === 400) {
-      return res.status(200).json({ postcode, addresses: [], detail: upstreamMsg || 'That doesn’t look like a valid postcode' });
+      return res.status(200).json({ postcode, addresses: [], detail: `${upstreamMsg || 'That doesn’t look like a valid postcode'} (getAddress ${resp.status})` });
     }
     if (resp.status === 429) return res.status(429).json({ error: 'Address lookup limit reached — try again shortly' });
     if (resp.status === 401) return res.status(503).json({ error: `Address lookup rejected the API key: ${upstreamMsg || 'unauthorised'}` });
