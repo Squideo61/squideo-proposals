@@ -27,19 +27,34 @@ function recentQuarters(n = 8) {
   return out;
 }
 
+function recentMonths(n = 12) {
+  const out = [];
+  const now = new Date();
+  for (let i = 0; i < n; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+const monthLongLabel = (key) => {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
+};
+
 export function FinanceView({ onBack }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const now = new Date();
-  const [mode, setMode] = useState('year'); // 'year' | 'quarter'
+  const [mode, setMode] = useState('year'); // 'month' | 'quarter' | 'year'
   const [year, setYear] = useState(() => now.getFullYear());
   const [quarterKey, setQuarterKey] = useState(() => recentQuarters(1)[0]); // 'YYYY-Qn'
+  const [monthKey, setMonthKey] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`); // 'YYYY-MM'
   const [loading, setLoading] = useState(true);
 
-  // Which year's data we need (a chosen quarter dictates its own year).
+  // Which year's data we need (a chosen quarter / month dictates its own year).
   const qYear = Number(quarterKey.split('-Q')[0]);
   const qIdx = Number(quarterKey.split('-Q')[1]) - 1;
-  const effectiveYear = mode === 'year' ? year : qYear;
+  const effectiveYear = mode === 'year' ? year : (mode === 'month' ? Number(monthKey.slice(0, 4)) : qYear);
 
   useEffect(() => {
     let active = true;
@@ -57,18 +72,23 @@ export function FinanceView({ onBack }) {
     const quarters = fin?.quarters || [];
     const yearTotals = months.reduce((a, m) => ({ net: a.net + m.net, vat: a.vat + m.vat, gross: a.gross + m.gross }), { net: 0, vat: 0, gross: 0 });
 
-    const displayMonths = mode === 'quarter' ? months.slice(qIdx * 3, qIdx * 3 + 3) : months;
-    const totals = mode === 'quarter'
-      ? (quarters[qIdx] || { net: 0, vat: 0, gross: 0 })
+    const zero = { net: 0, vat: 0, gross: 0 };
+    const displayMonths = mode === 'quarter' ? months.slice(qIdx * 3, qIdx * 3 + 3)
+      : mode === 'month' ? months.filter((m) => m.month === monthKey)
+      : months;
+    const totals = mode === 'quarter' ? (quarters[qIdx] || zero)
+      : mode === 'month' ? (months.find((m) => m.month === monthKey) || zero)
       : yearTotals;
     const chart = displayMonths.map((m) => ({ label: shortMonth(m.month), net: m.net, vat: m.vat }));
 
     const thisMonth = isCurrentYear ? months[monthIdx] : null;
     const thisQuarter = quarters[Math.floor(monthIdx / 3)] || null;
-    const periodLabel = mode === 'quarter' ? `Q${qIdx + 1} ${effectiveYear}` : String(effectiveYear);
+    const periodLabel = mode === 'quarter' ? `Q${qIdx + 1} ${effectiveYear}`
+      : mode === 'month' ? monthLongLabel(monthKey)
+      : String(effectiveYear);
 
     return { months, quarters, displayMonths, totals, chart, thisMonth, thisQuarter, periodLabel };
-  }, [fin, mode, qIdx, isCurrentYear, monthIdx, effectiveYear]);
+  }, [fin, mode, qIdx, monthKey, isCurrentYear, monthIdx, effectiveYear]);
 
   const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
 
@@ -91,25 +111,27 @@ export function FinanceView({ onBack }) {
           <Segmented
             value={mode}
             onChange={setMode}
-            options={[{ value: 'year', label: 'Year' }, { value: 'quarter', label: 'Quarter' }]}
+            options={[{ value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' }, { value: 'year', label: 'Year' }]}
           />
           <select
-            value={mode === 'year' ? year : quarterKey}
-            onChange={(e) => (mode === 'year' ? setYear(Number(e.target.value)) : setQuarterKey(e.target.value))}
+            value={mode === 'year' ? year : mode === 'quarter' ? quarterKey : monthKey}
+            onChange={(e) => (mode === 'year' ? setYear(Number(e.target.value)) : mode === 'quarter' ? setQuarterKey(e.target.value) : setMonthKey(e.target.value))}
             style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
           >
             {mode === 'year'
               ? yearOptions.map((y) => <option key={y} value={y}>{y}</option>)
-              : recentQuarters(8).map((k) => { const [y, q] = k.split('-Q'); return <option key={k} value={k}>{`Q${q} ${y}`}</option>; })}
+              : mode === 'quarter'
+                ? recentQuarters(8).map((k) => { const [y, q] = k.split('-Q'); return <option key={k} value={k}>{`Q${q} ${y}`}</option>; })
+                : recentMonths(12).map((k) => <option key={k} value={k}>{monthLongLabel(k)}</option>)}
           </select>
         </div>
       </header>
 
       {/* Headline cards. VAT-to-save is the headline ask. */}
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
-        {mode === 'quarter' ? (
+        {mode !== 'year' ? (
           <>
-            <StatCard icon={PiggyBank} accent={VAT_COLOR} label={`VAT to set aside — ${view.periodLabel}`} value={formatGBP(view.totals.vat)} sub="Set aside for this quarter" />
+            <StatCard icon={PiggyBank} accent={VAT_COLOR} label={`VAT to set aside — ${view.periodLabel}`} value={formatGBP(view.totals.vat)} sub={`Set aside for ${view.periodLabel}`} />
             <StatCard icon={Wallet} accent={BRAND.blue} label={`Net revenue (ex-VAT) — ${view.periodLabel}`} value={formatGBP(view.totals.net)} sub={`${formatGBP(view.totals.gross)} gross banked`} />
             <StatCard icon={Landmark} accent={BRAND.ink} label={`Gross banked — ${view.periodLabel}`} value={formatGBP(view.totals.gross)} sub="Net + VAT received" />
             <StatCard icon={PoundSterling} accent={BRAND.ink} label="Outstanding — all customers" value={formatGBP(fin ? fin.outstanding : 0)} sub="Still to collect (inc VAT)" />
@@ -202,14 +224,16 @@ export function FinanceView({ onBack }) {
                 );
               })}
             </tbody>
-            <tfoot>
-              <tr style={{ borderTop: '2px solid ' + BRAND.border, fontWeight: 700 }}>
-                <td style={{ textAlign: 'left', padding: '10px 8px' }}>Total {view.periodLabel}</td>
-                <td style={{ textAlign: 'right', padding: '10px 8px' }}>{formatGBP(view.totals.net)}</td>
-                <td style={{ textAlign: 'right', padding: '10px 8px', color: VAT_COLOR }}>{formatGBP(view.totals.vat)}</td>
-                <td style={{ textAlign: 'right', padding: '10px 8px' }}>{formatGBP(view.totals.gross)}</td>
-              </tr>
-            </tfoot>
+            {mode !== 'month' && (
+              <tfoot>
+                <tr style={{ borderTop: '2px solid ' + BRAND.border, fontWeight: 700 }}>
+                  <td style={{ textAlign: 'left', padding: '10px 8px' }}>Total {view.periodLabel}</td>
+                  <td style={{ textAlign: 'right', padding: '10px 8px' }}>{formatGBP(view.totals.net)}</td>
+                  <td style={{ textAlign: 'right', padding: '10px 8px', color: VAT_COLOR }}>{formatGBP(view.totals.vat)}</td>
+                  <td style={{ textAlign: 'right', padding: '10px 8px' }}>{formatGBP(view.totals.gross)}</td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>
