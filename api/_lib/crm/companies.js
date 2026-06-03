@@ -201,7 +201,10 @@ export async function companiesRoute(req, res, id, action, user) {
       `,
     ]);
 
+    // computeCompanyBalance runs the proposal-billing reconcile, so the per-deal
+    // figures below read the freshly-stamped paid amounts.
     const balance = await computeCompanyBalance(id);
+    const dealBalances = await computeCompanyDealBalances(id);
 
     return res.status(200).json({
       ...serialiseCompany(companyRow),
@@ -231,6 +234,7 @@ export async function companiesRoute(req, res, id, action, user) {
         createdAt: d.created_at,
         updatedAt: d.updated_at,
         proposalCount: d.proposal_count || 0,
+        balance: dealBalances[d.id] || null,
       })),
     });
   }
@@ -489,6 +493,53 @@ async function computeCompanyBalance(companyId) {
     needsInvoice: !!needsRow,
     needsInvoiceDealId: needsRow?.deal_id || null,
   };
+}
+
+// Per-deal committed / paid / outstanding for one company, so the Deals list can
+// show how much each deal still owes. Same sources as computeCompanyBalance but
+// grouped by deal. Assumes reconcileProposalBillingPaid has already run (the
+// detail route calls computeCompanyBalance first on the same load).
+async function computeCompanyDealBalances(companyId) {
+  const [committedRows, stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows] = await Promise.all([
+    sql`SELECT d.id AS did, COALESCE(SUM((s.data->>'total')::numeric),0) AS v
+          FROM signatures s JOIN proposals p ON p.id=s.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE d.company_id=${companyId} AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
+         GROUP BY d.id`,
+    sql`SELECT d.id AS did, COALESCE(SUM(pay.amount),0) AS v
+          FROM payments pay JOIN proposals p ON p.id=pay.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE d.company_id=${companyId} GROUP BY d.id`,
+    sql`SELECT d.id AS did, COALESCE(SUM(pi.amount),0) AS v
+          FROM partner_invoices pi JOIN proposals p ON p.id=pi.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE d.company_id=${companyId} GROUP BY d.id`,
+    sql`SELECT d.id AS did, COALESCE(SUM(mp.amount),0) AS v
+          FROM manual_payments mp JOIN proposals p ON p.id=mp.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE mp.manual_invoice_id IS NULL AND d.company_id=${companyId} GROUP BY d.id`,
+    sql`SELECT COALESCE(mi.deal_id, dp.id) AS did, COALESCE(SUM(mi.amount),0) AS v
+          FROM manual_invoices mi
+          LEFT JOIN deals dd ON dd.id = mi.deal_id
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+          LEFT JOIN deals dp ON dp.id = pr.deal_id
+         WHERE mi.status='paid' AND COALESCE(dd.company_id, dp.company_id) = ${companyId}
+         GROUP BY COALESCE(mi.deal_id, dp.id)`,
+    sql`SELECT d.id AS did, COALESCE(SUM(pb.paid_amount),0) AS v
+          FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE d.company_id=${companyId} AND pb.paid_amount IS NOT NULL GROUP BY d.id`,
+  ]);
+  const committed = new Map(committedRows.map(r => [r.did, Number(r.v) || 0]));
+  const paid = new Map();
+  for (const rows of [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows]) {
+    for (const r of rows) {
+      if (!r.did) continue;
+      paid.set(r.did, (paid.get(r.did) || 0) + (Number(r.v) || 0));
+    }
+  }
+  const out = {};
+  for (const did of new Set([...committed.keys(), ...paid.keys()])) {
+    const c = committed.get(did) || 0;
+    const p = paid.get(did) || 0;
+    out[did] = { committed: Number(c.toFixed(2)), paid: Number(p.toFixed(2)), outstanding: Number((c - p).toFixed(2)) };
+  }
+  return out;
 }
 
 // Same maths as computeCompanyBalance but for every company at once, via grouped

@@ -148,6 +148,45 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
           </Field>
         </div>
 
+        {/* Billing status on signed work, as a card above lifetime value. Three
+            states: red → signed >1h with no invoice raised; amber → invoiced but
+            still owed; green → all signed work paid. */}
+        {detail.balance && detail.balance.committed > 0 && (() => {
+          // Derive owed straight from committed − paid so it can't disagree with
+          // the figures shown below, regardless of the outstanding field.
+          const committed = Number(detail.balance.committed) || 0;
+          const paid = Number(detail.balance.paid) || 0;
+          const owed = Math.max(0, Number((committed - paid).toFixed(2)));
+          const needs = detail.balance.needsInvoice;
+          const tone = needs
+            ? { bg: '#FEE2E2', border: '#FCA5A5', fg: '#991B1B' }
+            : owed > 0
+            ? { bg: '#FEF3C7', border: '#FDE68A', fg: '#92400E' }
+            : { bg: '#F0FDF4', border: '#BBF7D0', fg: '#15803D' };
+          const label = needs ? 'Invoice needs generating' : owed > 0 ? 'Outstanding balance' : 'All signed work paid';
+          return (
+            <div style={{ marginTop: 16, background: tone.bg, border: '1px solid ' + tone.border, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 11, color: tone.fg, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700, marginBottom: 4 }}>{label}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: tone.fg }}>{formatGBP(owed)}{owed > 0 ? ' owed' : ''}</div>
+                <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
+                  {formatGBP(detail.balance.committed)} signed (inc VAT) · {formatGBP(detail.balance.paid)} paid
+                  {detail.balance.paidViaXeroInvoices > 0 && ` (incl. ${formatGBP(detail.balance.paidViaXeroInvoices)} via Xero invoices)`}
+                </div>
+              </div>
+              {needs && (
+                <button
+                  onClick={() => { setPreselectDealId(detail.balance.needsInvoiceDealId || null); setCreateSignal(n => n + 1); }}
+                  className="btn"
+                  style={{ fontSize: 12, background: '#DC2626' }}
+                >
+                  <FileText size={13} /> Create invoice
+                </button>
+              )}
+            </div>
+          );
+        })()}
+
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid ' + BRAND.border }}>
           <div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 }}>
             Lifetime value
@@ -171,50 +210,6 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
                 : '…'}
             />
           </div>
-
-          {/* Billing status on signed work. Three states:
-              red  → a proposal's been signed >1h with no invoice raised
-              amber→ invoiced but still owed
-              green→ all signed work paid */}
-          {detail.balance && detail.balance.committed > 0 && (() => {
-            // Derive owed straight from committed − paid so it can't disagree
-            // with the figures shown below, regardless of the outstanding field.
-            const committed = Number(detail.balance.committed) || 0;
-            const paid = Number(detail.balance.paid) || 0;
-            const owed = Math.max(0, Number((committed - paid).toFixed(2)));
-            const needs = detail.balance.needsInvoice;
-            const tone = needs
-              ? { bg: '#FEE2E2', border: '#FCA5A5', fg: '#991B1B' }
-              : owed > 0
-              ? { bg: '#FEF3C7', border: '#FDE68A', fg: '#92400E' }
-              : { bg: '#F0FDF4', border: '#BBF7D0', fg: '#15803D' };
-            return (
-              <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, background: tone.bg, border: '1px solid ' + tone.border }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: tone.fg }}>
-                    {needs ? 'Invoice needs generating' : owed > 0 ? 'Outstanding balance' : 'All signed work paid'}
-                  </span>
-                  {needs ? (
-                    <button
-                      onClick={() => { setPreselectDealId(detail.balance.needsInvoiceDealId || null); setCreateSignal(n => n + 1); }}
-                      className="btn"
-                      style={{ fontSize: 12, background: '#DC2626' }}
-                    >
-                      <FileText size={13} /> Create invoice
-                    </button>
-                  ) : (
-                    <span style={{ fontSize: 16, fontWeight: 700, color: tone.fg }}>
-                      {formatGBP(owed)}{owed > 0 ? ' owed' : ''}
-                    </span>
-                  )}
-                </div>
-                <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>
-                  {formatGBP(detail.balance.committed)} signed (inc VAT) · {formatGBP(detail.balance.paid)} paid
-                  {detail.balance.paidViaXeroInvoices > 0 && ` (incl. ${formatGBP(detail.balance.paidViaXeroInvoices)} via Xero invoices)`}
-                </div>
-              </div>
-            );
-          })()}
         </div>
 
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid ' + BRAND.border }}>
@@ -317,6 +312,11 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
                     {d.lastActivityAt && <> · {formatRelativeTime(d.lastActivityAt)}</>}
                   </div>
                 </div>
+                {d.balance && d.balance.committed > 0 && (
+                  d.balance.outstanding > 0
+                    ? <span style={{ fontSize: 12, fontWeight: 700, color: '#92400E', whiteSpace: 'nowrap' }}>{formatGBP(d.balance.outstanding)} owed</span>
+                    : <span style={{ fontSize: 11, fontWeight: 700, color: '#15803D', whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: 0.4 }}>Paid</span>
+                )}
               </button>
             );
           })}
