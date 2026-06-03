@@ -11,7 +11,7 @@ function makeLineItem() {
   return { _key: ++_lineItemKey, description: '', quantity: 1, unitAmount: '', vatRate: 20 };
 }
 
-export function CreateXeroInvoiceModal({ dealId, proposalId, contactName: contactNameProp, onClose, onCreated }) {
+export function CreateXeroInvoiceModal({ dealId, companyId, proposalId, contactName: contactNameProp, onClose, onCreated }) {
   const { showMsg } = useStore();
   const [contactName, setContactName] = useState(contactNameProp || '');
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -55,7 +55,8 @@ export function CreateXeroInvoiceModal({ dealId, proposalId, contactName: contac
     setSaving(true);
     try {
       const result = await api.post('/api/crm/invoices', {
-        dealId,
+        dealId: dealId || undefined,
+        companyId: companyId || undefined,
         proposalId: proposalId || undefined,
         contactName: contactName.trim(),
         invoiceNumber: invoiceNumber.trim() || undefined,

@@ -4,7 +4,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { Modal } from '../ui.jsx';
 
-export function AddInvoiceModal({ dealId, onClose, onCreated }) {
+export function AddInvoiceModal({ dealId, companyId, onClose, onCreated }) {
   const { showMsg } = useStore();
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -29,7 +29,7 @@ export function AddInvoiceModal({ dealId, onClose, onCreated }) {
 
     setUploading(true);
     try {
-      const metaHeader = base64UrlEncode(JSON.stringify({ dealId }));
+      const metaHeader = base64UrlEncode(JSON.stringify({ dealId, companyId }));
       const res = await fetch('/api/crm/invoices', {
         method: 'POST',
         credentials: 'include',

@@ -6,6 +6,7 @@ import { useIsMobile, formatGBP, formatRelativeTime, effectiveAddress, formatAdd
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
 import { PaymentsCard } from './PaymentsCard.jsx';
+import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
 import { CompanyModal } from './ContactsView.jsx';
@@ -273,6 +274,10 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
             );
           })}
         </Card>
+
+        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+          <InvoicesPaymentsCard companyId={companyId} contactName={detail.name} />
+        </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <PaymentsCard companyId={companyId} />

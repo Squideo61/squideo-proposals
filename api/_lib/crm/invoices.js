@@ -19,7 +19,20 @@ import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoi
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
+// Self-heal for db/migrations/20260603_invoice_company_id.sql — lets invoices be
+// scoped to a company (not just a deal) so the company page can list/create them.
+let invoiceCompanyColEnsured = null;
+function ensureInvoiceCompanyColumn() {
+  if (invoiceCompanyColEnsured) return invoiceCompanyColEnsured;
+  invoiceCompanyColEnsured = (async () => {
+    await sql`ALTER TABLE manual_invoices ADD COLUMN IF NOT EXISTS company_id TEXT`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_manual_invoices_company_id ON manual_invoices(company_id)`;
+  })().catch((err) => { invoiceCompanyColEnsured = null; throw err; });
+  return invoiceCompanyColEnsured;
+}
+
 export async function invoicesRoute(req, res, id, action, user) {
+  await ensureInvoiceCompanyColumn();
   // --- GET /api/crm/invoices/:id/pdf — streams a private Blob PDF back through
   // the API. Blob store is configured private; raw blob URLs aren't directly
   // accessible without auth, so we proxy via @vercel/blob's get().
@@ -52,14 +65,20 @@ export async function invoicesRoute(req, res, id, action, user) {
     }
   }
 
-  // --- GET /api/crm/invoices?dealId=...
+  // --- GET /api/crm/invoices?dealId=... | ?companyId=...
   if (!id && req.method === 'GET') {
     const dealId = trimOrNull(req.query.dealId);
-    if (!dealId) return res.status(400).json({ error: 'dealId required' });
+    const companyId = trimOrNull(req.query.companyId);
+    if (!dealId && !companyId) return res.status(400).json({ error: 'dealId or companyId required' });
 
-    const proposalRows = await sql`
-      SELECT id, data FROM proposals WHERE deal_id = ${dealId}
-    `;
+    // Scope is one deal, or every deal at a company.
+    const dealIds = dealId
+      ? [dealId]
+      : (await sql`SELECT id FROM deals WHERE company_id = ${companyId}`).map(r => r.id);
+
+    const proposalRows = dealIds.length
+      ? await sql`SELECT id, data FROM proposals WHERE deal_id = ANY(${dealIds})`
+      : [];
     const proposalIds = proposalRows.map(r => r.id);
     const proposalMap = new Map(proposalRows.map(r => [r.id, r.data || {}]));
 
@@ -131,12 +150,14 @@ export async function invoicesRoute(req, res, id, action, user) {
     }
 
     let manualRows = await sql`
-      SELECT id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
+      SELECT id, proposal_id, deal_id, company_id, invoice_number, amount, issued_at, due_at,
              status, blob_url, filename, notes, uploaded_by, created_at,
              stripe_payment_link_url, paid_at, payment_method, xero_invoice_id,
              currency, currency_rate, subtotal_ex_vat, tax_amount
         FROM manual_invoices
-        WHERE deal_id = ${dealId} OR proposal_id = ANY(${proposalIds.length ? proposalIds : ['__none__']})
+        WHERE deal_id = ANY(${dealIds.length ? dealIds : ['__none__']})
+           OR proposal_id = ANY(${proposalIds.length ? proposalIds : ['__none__']})
+           OR company_id = ${companyId || '__none__'}
         ORDER BY issued_at DESC NULLS LAST, created_at DESC
     `;
 
@@ -176,6 +197,7 @@ export async function invoicesRoute(req, res, id, action, user) {
         id: 'manual:' + r.id,
         source: 'manual',
         xeroInvoiceId,
+        dealId: r.deal_id || null,
         proposalId: r.proposal_id || null,
         proposalTitle: r.proposal_id ? (proposalMap.get(r.proposal_id)?.proposalTitle || proposalMap.get(r.proposal_id)?.clientName || r.proposal_id) : null,
         invoiceNumber: r.invoice_number || null,
@@ -208,13 +230,13 @@ export async function invoicesRoute(req, res, id, action, user) {
   // CRM body parser will have already parsed into req.body.
   if (!id && req.method === 'POST' && (req.headers['content-type'] || '').startsWith('application/json')) {
     const body = req.body || {};
-    const { dealId, proposalId, contactName, lineItems, invoiceNumber, issuedAt, dueAt } = body;
+    const { dealId, proposalId, companyId, contactName, lineItems, invoiceNumber, issuedAt, dueAt } = body;
 
     if (!Array.isArray(lineItems) || !lineItems.length) {
       return res.status(400).json({ error: 'At least one line item required' });
     }
-    if (!dealId && !proposalId) {
-      return res.status(400).json({ error: 'dealId or proposalId required' });
+    if (!dealId && !proposalId && !companyId) {
+      return res.status(400).json({ error: 'dealId, proposalId or companyId required' });
     }
 
     let resolvedDealId = dealId || null;
@@ -223,10 +245,13 @@ export async function invoicesRoute(req, res, id, action, user) {
       resolvedDealId = pr?.deal_id || null;
     }
 
-    // Always pull the linked xero_contact_id from the deal — even when the UI
-    // provided a free-text name. The link is what stops us creating duplicates
-    // in Xero. The free-text name is only used as a fallback for create-search.
-    const linked = await resolveXeroContactInfo(resolvedDealId, proposalId);
+    // Pull the linked xero_contact_id from the deal (or the company directly,
+    // for company-level invoices) — even when the UI provided a free-text name.
+    // The link is what stops us creating duplicates in Xero; the free-text name
+    // is only a fallback for the create-search.
+    const linked = (resolvedDealId || proposalId)
+      ? await resolveXeroContactInfo(resolvedDealId, proposalId)
+      : await resolveXeroContactInfoForCompany(companyId);
     const xeroContactInfo = {
       name: contactName?.trim() || linked?.name,
       email: linked?.email || null,
@@ -280,13 +305,14 @@ export async function invoicesRoute(req, res, id, action, user) {
     const newId = makeId('inv');
     await sql`
       INSERT INTO manual_invoices (
-        id, deal_id, proposal_id, invoice_number, amount,
+        id, deal_id, proposal_id, company_id, invoice_number, amount,
         issued_at, due_at, status, notes, uploaded_by, xero_invoice_id,
         subtotal_ex_vat, tax_amount
       ) VALUES (
         ${newId},
         ${resolvedDealId},
         ${trimOrNull(proposalId)},
+        ${trimOrNull(companyId)},
         ${storedInvoiceNumber},
         ${Number(totalAmount.toFixed(2))},
         ${trimOrNull(issuedAt) || new Date().toISOString().slice(0, 10)},
@@ -324,8 +350,9 @@ export async function invoicesRoute(req, res, id, action, user) {
     const meta = parseInvoiceMeta(req);
     const dealId = trimOrNull(meta.dealId);
     const proposalId = trimOrNull(meta.proposalId);
-    if (!dealId && !proposalId) {
-      return res.status(400).json({ error: 'dealId or proposalId required' });
+    const companyId = trimOrNull(meta.companyId);
+    if (!dealId && !proposalId && !companyId) {
+      return res.status(400).json({ error: 'dealId, proposalId or companyId required' });
     }
 
     // Read the body — may be empty for metadata-only invoices.
@@ -436,7 +463,7 @@ export async function invoicesRoute(req, res, id, action, user) {
 
     await sql`
       INSERT INTO manual_invoices (
-        id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at,
+        id, proposal_id, deal_id, company_id, invoice_number, amount, issued_at, due_at,
         status, blob_url, blob_pathname, filename, mime_type, size_bytes, notes,
         uploaded_by, xero_invoice_id, currency, currency_rate,
         subtotal_ex_vat, tax_amount
@@ -444,6 +471,7 @@ export async function invoicesRoute(req, res, id, action, user) {
         ${newId},
         ${proposalId},
         ${resolvedDealId},
+        ${trimOrNull(companyId)},
         ${storedInvoiceNumber},
         ${amount},
         ${issuedAt},
@@ -655,6 +683,21 @@ async function resolveXeroContactInfo(dealId, proposalId) {
   }
   if (!name) name = deal.title;
   return { name, email, xeroContactId };
+}
+
+// Same as resolveXeroContactInfo but starting from a company (for company-level
+// invoices that aren't tied to a deal). Uses the company's xero_contact_id link
+// and a contact email if one exists.
+async function resolveXeroContactInfoForCompany(companyId) {
+  if (!companyId) return null;
+  const [co] = await sql`SELECT name, xero_contact_id FROM companies WHERE id = ${companyId}`;
+  if (!co) return null;
+  const [ct] = await sql`
+    SELECT email FROM contacts
+     WHERE company_id = ${companyId} AND email IS NOT NULL
+     ORDER BY created_at ASC LIMIT 1
+  `;
+  return { name: co.name, email: ct?.email || null, xeroContactId: co.xero_contact_id || null };
 }
 
 // Creates a Xero AUTHORISED invoice for a manual_invoice row and persists the

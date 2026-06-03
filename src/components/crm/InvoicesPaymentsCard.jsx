@@ -17,28 +17,33 @@ const STATUS_COLOR = {
   void: '#DC2626',
 };
 
-export function InvoicesPaymentsCard({ dealId, proposals, contactName }) {
+export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName }) {
   const { showMsg } = useStore();
   const [invoices, setInvoices] = useState(null);
   const [payments, setPayments] = useState(null);
   const [adding, setAdding] = useState(false);
   const [creatingXero, setCreatingXero] = useState(false);
 
+  // Scope by deal or, on the company page, by company.
+  const scopeQs = dealId
+    ? 'dealId=' + encodeURIComponent(dealId)
+    : 'companyId=' + encodeURIComponent(companyId);
+
   const reloadInvoices = useCallback(() => {
-    api.get('/api/crm/invoices?dealId=' + encodeURIComponent(dealId))
+    api.get('/api/crm/invoices?' + scopeQs)
       .then(setInvoices)
       .catch((err) => { showMsg?.(err.message || 'Failed to load invoices', 'error'); setInvoices([]); });
-  }, [dealId, showMsg]);
+  }, [scopeQs, showMsg]);
 
   const reloadPayments = useCallback(() => {
-    api.get('/api/crm/payments?dealId=' + encodeURIComponent(dealId))
+    api.get('/api/crm/payments?' + scopeQs)
       .then(rows => {
         // Only keep manual payments that are not linked to a manual_invoice
         // (linked ones are represented by the invoice's paid status instead).
         setPayments(rows.filter(r => r.source === 'manual' && !r.manualInvoiceId));
       })
       .catch((err) => { showMsg?.(err.message || 'Failed to load payments', 'error'); setPayments([]); });
-  }, [dealId, showMsg]);
+  }, [scopeQs, showMsg]);
 
   const reload = useCallback(() => {
     reloadInvoices();
@@ -118,6 +123,7 @@ export function InvoicesPaymentsCard({ dealId, proposals, contactName }) {
       {creatingXero && (
         <CreateXeroInvoiceModal
           dealId={dealId}
+          companyId={companyId}
           contactName={contactName}
           onClose={() => setCreatingXero(false)}
           onCreated={() => { setCreatingXero(false); reloadInvoices(); }}
@@ -126,6 +132,7 @@ export function InvoicesPaymentsCard({ dealId, proposals, contactName }) {
       {adding && (
         <AddInvoiceModal
           dealId={dealId}
+          companyId={companyId}
           proposals={proposals}
           onClose={() => setAdding(false)}
           onCreated={() => { setAdding(false); reloadInvoices(); }}
@@ -167,7 +174,7 @@ function InvoiceRow({ row, dealId, onChanged }) {
       const rawId = row.id.replace('manual:', '');
       const result = await api.post('/api/stripe/invoice-link', {
         manualInvoiceId: rawId,
-        dealId,
+        dealId: row.dealId || dealId || undefined,
       });
       await navigator.clipboard.writeText(result.url).catch(() => {});
       setCopied(true);
