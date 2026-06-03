@@ -76,7 +76,9 @@ function emptyStore() {
     // Business → Finance / Performance pages.
     financeStats: null,
     performanceStats: null,
+    salesStats: null,
     financeTargets: [],
+    salesTargets: [],
     bankHolidays: null,
     partnerCreditsList: null,
     partnerCreditDetail: {},
@@ -319,6 +321,7 @@ export function StoreProvider({ children }) {
         notificationRecipients: settings?.notificationRecipients || [],
         revisionCallUrl: settings?.revisionCallUrl || '',
         financeTargets: settings?.financeTargets || [],
+        salesTargets: settings?.salesTargets || [],
         loading: false,
       }));
     });
@@ -734,18 +737,31 @@ export function StoreProvider({ children }) {
         return data;
       }).catch(() => null);
     },
-    // Business → Performance: per-day cash (net) for a month, for the target graph.
-    loadPerformanceStats(month) {
-      const path = '/api/crm/stats/performance' + (month ? '/' + month : '');
+    // Business → Performance (Income): per-day cash (net) for the target graph.
+    loadPerformanceStats(period) {
+      const path = '/api/crm/stats/performance' + (period ? '/' + period : '');
       return api.get(path).then((data) => {
         setState(s => ({ ...s, performanceStats: data || null }));
         return data;
       }).catch(() => null);
     },
+    // Business → Performance (Sales): per-day signed value (net) for the graph.
+    loadSalesStats(period) {
+      const path = '/api/crm/stats/sales' + (period ? '/' + period : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, salesStats: data || null }));
+        return data;
+      }).catch(() => null);
+    },
     // Editable monthly targets (shared with the settings row). Optimistic.
+    // finance = Income performance; sales = Sales performance.
     saveFinanceTargets(list) {
       setState(s => ({ ...s, financeTargets: list }));
       api.put('/api/settings', { financeTargets: list }).catch(() => {});
+    },
+    saveSalesTargets(list) {
+      setState(s => ({ ...s, salesTargets: list }));
+      api.put('/api/settings', { salesTargets: list }).catch(() => {});
     },
     // England & Wales bank holidays (gov.uk feed via our endpoint), for the
     // Performance working-day pacing. Cached in state — load once.

@@ -201,6 +201,35 @@ async function performanceReport(action) {
   return { period, spanMonths, since, until, days };
 }
 
+// Sales performance: new business SIGNED in the period, valued at the net
+// (ex-VAT) signed total — "the cash each sale generates" — bucketed by the
+// signature date. Same JS-aggregation shape as performanceReport so the client
+// treats days[].net identically; `count` is the number of signings that day.
+async function salesReport(action) {
+  const { period, spanMonths, since, until } = parsePerformancePeriod(action);
+  const rows = await sql`
+    SELECT s.signed_at, (s.data->>'total')::numeric AS total, pr.data->>'vatRate' AS rate
+      FROM signatures s
+      JOIN proposals pr ON pr.id = s.proposal_id
+     WHERE s.signed_at >= ${since} AND s.signed_at < ${until}
+       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
+  `;
+
+  const byDay = {};
+  for (const r of rows) {
+    if (!r.signed_at) continue;
+    const k = dayKey(new Date(r.signed_at));
+    if (!byDay[k]) byDay[k] = { net: 0, count: 0 };
+    byDay[k].net += splitVat(r.total, r.rate).net;
+    byDay[k].count += 1;
+  }
+  const days = Object.entries(byDay)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([date, v]) => ({ date, net: round2(v.net), count: v.count }));
+
+  return { period, spanMonths, since, until, days };
+}
+
 export async function statsRoute(req, res, id, action, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -221,6 +250,10 @@ export async function statsRoute(req, res, id, action, user) {
 
   if (id === 'performance') {
     return res.status(200).json(await performanceReport(action));
+  }
+
+  if (id === 'sales') {
+    return res.status(200).json(await salesReport(action));
   }
 
   return res.status(404).json({ error: 'Unknown stats report' });

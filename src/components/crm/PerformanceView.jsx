@@ -71,10 +71,12 @@ export function PerformanceView({ onBack }) {
   const [mode, setMode] = useState('month'); // 'month' | 'quarter'
   const [month, setMonth] = useState(() => todayKey().slice(0, 7));
   const [quarter, setQuarter] = useState(() => recentQuarters(1)[0]);
+  const [section, setSection] = useState('income'); // 'income' (cash received) | 'sales' (deals signed)
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
 
   const period = mode === 'month' ? month : quarter;
+  const isSales = section === 'sales';
 
   useEffect(() => {
     if (!state.bankHolidays) actions.loadBankHolidays();
@@ -83,16 +85,19 @@ export function PerformanceView({ onBack }) {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    actions.loadPerformanceStats(period).finally(() => { if (active) setLoading(false); });
+    const load = isSales ? actions.loadSalesStats(period) : actions.loadPerformanceStats(period);
+    load.finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [actions, period]);
+  }, [actions, period, isSales]);
 
-  const targets = (state.financeTargets && state.financeTargets.length) ? state.financeTargets : FALLBACK_TARGETS;
+  const targetSource = isSales ? state.salesTargets : state.financeTargets;
+  const targets = (targetSource && targetSource.length) ? targetSource : FALLBACK_TARGETS;
   const holidays = useMemo(
     () => (Array.isArray(state.bankHolidays) && state.bankHolidays.length ? new Set(state.bankHolidays) : ukBankHolidays),
     [state.bankHolidays],
   );
-  const perf = state.performanceStats && state.performanceStats.period === period ? state.performanceStats : null;
+  const activeStats = isSales ? state.salesStats : state.performanceStats;
+  const perf = activeStats && activeStats.period === period ? activeStats : null;
 
   const model = useMemo(() => {
     const { startKey, endKey, spanMonths, label } = periodRange(period);
@@ -134,7 +139,9 @@ export function PerformanceView({ onBack }) {
               <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Performance</h1>
             </div>
             <p style={{ fontSize: 13, color: BRAND.muted, margin: '2px 0 0' }}>
-              Cash received (ex-VAT) across all customers, paced against your targets by working day.
+              {isSales
+                ? 'New business signed (ex-VAT) across all customers, paced against your sales targets by working day.'
+                : 'Cash received (ex-VAT) across all customers, paced against your income targets by working day.'}
             </p>
           </div>
         </div>
@@ -159,7 +166,25 @@ export function PerformanceView({ onBack }) {
         </div>
       </header>
 
-      {editing && <TargetEditor targets={targets} onSave={(list) => { actions.saveFinanceTargets(list); setEditing(false); }} onCancel={() => setEditing(false)} />}
+      {/* The two clear sub-sections. */}
+      <div style={{ marginBottom: 16 }}>
+        <Segmented
+          big
+          value={section}
+          onChange={setSection}
+          options={[{ value: 'income', label: 'Income performance' }, { value: 'sales', label: 'Sales performance' }]}
+        />
+      </div>
+
+      {editing && (
+        <TargetEditor
+          key={section}
+          heading={isSales ? 'Monthly sales targets' : 'Monthly income targets'}
+          targets={targets}
+          onSave={(list) => { (isSales ? actions.saveSalesTargets(list) : actions.saveFinanceTargets(list)); setEditing(false); }}
+          onCancel={() => setEditing(false)}
+        />
+      )}
 
       {/* Pace strip: where you are today vs each target's expected pace. */}
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${targets.length + 1}, 1fr)`, gap: 12, marginBottom: 16 }}>
@@ -167,8 +192,8 @@ export function PerformanceView({ onBack }) {
           title={model.status === 'future' ? 'Upcoming period' : `Working day ${model.lastActualIdx} of ${model.N}`}
           big={formatGBP(model.netSoFar)}
           sub={model.status === 'in_progress'
-            ? `Net banked so far · projected ${formatGBP(model.projected)} by end`
-            : (model.status === 'complete' ? 'Net banked (final)' : 'No cash yet')}
+            ? `${isSales ? 'Signed' : 'Net banked'} so far · projected ${formatGBP(model.projected)} by end`
+            : (model.status === 'complete' ? `${isSales ? 'Signed' : 'Net banked'} (final)` : `No ${isSales ? 'sales' : 'cash'} yet`)}
           color={BRAND.blue}
         />
         {targets.map((t) => {
@@ -192,7 +217,7 @@ export function PerformanceView({ onBack }) {
       {/* The Day Performance chart. */}
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20 }}>
         <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          {mode === 'quarter' ? 'Quarter performance' : 'Day Performance'} — {model.label}
+          {isSales ? 'Sales performance' : (mode === 'quarter' ? 'Quarter performance' : 'Day Performance')} — {model.label}
         </h3>
         {loading ? (
           <div style={{ height: 360, display: 'flex', alignItems: 'center', justifyContent: 'center', color: BRAND.muted, fontSize: 14 }}>Loading…</div>
@@ -211,7 +236,7 @@ export function PerformanceView({ onBack }) {
               {targets.map((t) => (
                 <Line key={t.key} type="monotone" dataKey={t.key} name={t.label} stroke={t.color} strokeWidth={1.5} dot={false} />
               ))}
-              <Line type="monotone" dataKey="actual" name="Cash received (net)" stroke={BRAND.blue} strokeWidth={2.75} dot={false} connectNulls={false} />
+              <Line type="monotone" dataKey="actual" name={isSales ? 'Sales signed (net)' : 'Cash received (net)'} stroke={BRAND.blue} strokeWidth={2.75} dot={false} connectNulls={false} />
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -220,15 +245,15 @@ export function PerformanceView({ onBack }) {
   );
 }
 
-function Segmented({ value, onChange, options }) {
+function Segmented({ value, onChange, options, big }) {
   return (
-    <div style={{ display: 'inline-flex', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden', background: 'white' }}>
+    <div style={{ display: 'inline-flex', border: '1px solid ' + BRAND.border, borderRadius: big ? 10 : 8, overflow: 'hidden', background: 'white' }}>
       {options.map((o) => (
         <button
           key={o.value}
           onClick={() => onChange(o.value)}
           style={{
-            padding: '8px 14px', border: 'none', cursor: 'pointer', fontSize: 14,
+            padding: big ? '10px 22px' : '8px 14px', border: 'none', cursor: 'pointer', fontSize: big ? 15 : 14,
             fontWeight: value === o.value ? 600 : 500,
             background: value === o.value ? BRAND.blue : 'white',
             color: value === o.value ? 'white' : BRAND.ink,
@@ -251,12 +276,12 @@ function PaceCard({ title, big, sub, color, accent }) {
   );
 }
 
-function TargetEditor({ targets, onSave, onCancel }) {
+function TargetEditor({ targets, onSave, onCancel, heading = 'Monthly targets' }) {
   const [rows, setRows] = useState(() => targets.map((t) => ({ ...t })));
   const set = (i, patch) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, marginBottom: 12 }}>Monthly targets</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, marginBottom: 12 }}>{heading}</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {rows.map((r, i) => (
           <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
