@@ -107,20 +107,75 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
       </header>
 
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 16 : 24, marginBottom: 16 }}>
-        <h1 style={{ margin: '0 0 12px', fontSize: 22, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <Building2 size={22} color={BRAND.blue} />
-          <span>{detail.name}</span>
-          {detail.customerVerifiedAt && (
-            <span title={'Verified by ' + (detail.customerVerifiedBy || 'admin')} style={{ background: '#DCFCE7', color: '#15803D', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <Award size={11} /> Customer
-            </span>
-          )}
-          {!detail.customerVerifiedAt && detail.hasSignedProposal && (
-            <span title="Has at least one signed proposal" style={{ background: '#DBEAFE', color: '#1E40AF', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-              Signed customer
-            </span>
-          )}
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <Building2 size={22} color={BRAND.blue} />
+            <span>{detail.name}</span>
+            {detail.customerVerifiedAt && (
+              <span title={'Verified by ' + (detail.customerVerifiedBy || 'admin')} style={{ background: '#DCFCE7', color: '#15803D', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Award size={11} /> Customer
+              </span>
+            )}
+            {!detail.customerVerifiedAt && detail.hasSignedProposal && (
+              <span title="Has at least one signed proposal" style={{ background: '#DBEAFE', color: '#1E40AF', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                Signed customer
+              </span>
+            )}
+          </h1>
+          {/* Customer-status + Xero-link controls, top-right of the card. */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button
+              onClick={toggleCustomer}
+              className="btn-ghost"
+              title={detail.customerVerifiedAt
+                ? `Verified by ${detail.customerVerifiedBy || 'admin'} — click to unmark`
+                : detail.hasSignedProposal ? 'Auto-flagged via a signed proposal — click to verify' : 'Mark as customer'}
+            >
+              {detail.customerVerifiedAt
+                ? <><CheckCircle2 size={14} color="#16A34A" /> Verified customer</>
+                : <><Circle size={14} /> Mark as customer</>}
+            </button>
+            {detail.xeroContactId ? (
+              <button
+                onClick={handleUnlink}
+                className="btn-ghost"
+                title={`Linked to ${detail.xeroContactName || detail.xeroContactId} — click to unlink`}
+                style={{ color: '#15803D' }}
+              >
+                <Link2 size={14} color="#16A34A" /> {detail.xeroContactName || 'Xero linked'} <X size={11} />
+              </button>
+            ) : (
+              <button onClick={() => setLinking(v => !v)} className="btn-ghost">
+                <Link2 size={14} /> Link Xero contact
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Xero contact picker — appears while linking. */}
+        {linking && !detail.xeroContactId && (
+          <div style={{ marginBottom: 16, padding: 12, border: '1px solid ' + BRAND.border, borderRadius: 8, background: '#F8FAFC' }}>
+            <div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+              Link to a Xero contact
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <XeroContactPicker
+                value={xeroContact}
+                onChange={setXeroContact}
+                placeholder={`Search Xero for "${detail.name}"…`}
+                autoFocus
+                initialQuery={detail.name}
+                onCreateNew={handleCreateXero}
+                createNewLabel={`Create “${detail.name}” in Xero`}
+                creatingNew={creatingXero}
+              />
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button onClick={() => { setLinking(false); setXeroContact(null); }} className="btn-ghost">Cancel</button>
+                <button onClick={handleSaveLink} className="btn" disabled={!xeroContact}>Link</button>
+              </div>
+            </div>
+          </div>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 16 }}>
           <Field icon={Globe} label="Domain">{detail.domain || <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field label="Contacts">{detail.contacts.length}</Field>
@@ -197,61 +252,6 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
                 : '…'}
             />
           </div>
-        </div>
-
-        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid ' + BRAND.border }}>
-          <div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
-            Customer status
-          </div>
-          <button onClick={toggleCustomer} className="btn-ghost" style={{ fontSize: 13 }}>
-            {detail.customerVerifiedAt
-              ? <><CheckCircle2 size={14} color="#16A34A" /> Verified customer — unmark</>
-              : detail.hasSignedProposal
-              ? <><Circle size={14} /> Auto-flagged via a signed proposal — verify manually</>
-              : <><Circle size={14} /> Mark as customer</>}
-          </button>
-        </div>
-
-        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid ' + BRAND.border }}>
-          <div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
-            Xero contact link
-          </div>
-          {detail.xeroContactId ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6 }}>
-              <Link2 size={14} color="#16A34A" />
-              <span style={{ fontSize: 13, color: BRAND.ink, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={detail.xeroContactId}>
-                {detail.xeroContactName
-                  ? <strong>{detail.xeroContactName}</strong>
-                  : <code style={{ fontSize: 12, color: BRAND.muted }}>{detail.xeroContactId}</code>}
-              </span>
-              <button onClick={handleUnlink} className="btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }}>
-                <X size={11} /> Unlink
-              </button>
-            </div>
-          ) : linking ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {/* Seeded with the company name so similar contacts show on open;
-                  the "Create new" row appears in the dropdown when none match. */}
-              <XeroContactPicker
-                value={xeroContact}
-                onChange={setXeroContact}
-                placeholder={`Search Xero for "${detail.name}"…`}
-                autoFocus
-                initialQuery={detail.name}
-                onCreateNew={handleCreateXero}
-                createNewLabel={`Create “${detail.name}” in Xero`}
-                creatingNew={creatingXero}
-              />
-              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                <button onClick={() => { setLinking(false); setXeroContact(null); }} className="btn-ghost">Cancel</button>
-                <button onClick={handleSaveLink} className="btn" disabled={!xeroContact}>Link</button>
-              </div>
-            </div>
-          ) : (
-            <button onClick={() => setLinking(true)} className="btn-ghost" style={{ fontSize: 12 }}>
-              <Link2 size={12} /> Link to a Xero contact
-            </button>
-          )}
         </div>
 
         {detail.notes && (
