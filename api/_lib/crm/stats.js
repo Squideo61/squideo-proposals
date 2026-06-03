@@ -230,6 +230,84 @@ async function salesReport(action) {
   return { period, spanMonths, since, until, days };
 }
 
+// Outstanding balance per signed deal across all customers, split into PO-route
+// deals (paid regardless of project stage) and normal invoiced work (paid on
+// project milestones/completion). Amounts are inc-VAT — the cash still to
+// collect — matching the Finance "Outstanding" card. Mirrors the committed/paid
+// maths in companies.js (computeCompanyDealBalances) but global and deal-grouped.
+async function pendingPaymentsReport() {
+  const committedRows = await sql`
+    SELECT d.id AS did,
+           COALESCE(SUM((s.data->>'total')::numeric), 0) AS committed,
+           bool_or(s.data->>'paymentOption' = 'po') AS is_po
+      FROM signatures s
+      JOIN proposals p ON p.id = s.proposal_id
+      JOIN deals d ON d.id = p.deal_id
+     WHERE (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
+     GROUP BY d.id
+  `;
+  if (!committedRows.length) return { normal: [], po: [], totals: { normal: 0, po: 0 } };
+
+  const [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows] = await Promise.all([
+    sql`SELECT d.id AS did, COALESCE(SUM(pay.amount),0) AS v
+          FROM payments pay JOIN proposals p ON p.id=pay.proposal_id JOIN deals d ON d.id=p.deal_id GROUP BY d.id`,
+    sql`SELECT d.id AS did, COALESCE(SUM(pi.amount),0) AS v
+          FROM partner_invoices pi JOIN proposals p ON p.id=pi.proposal_id JOIN deals d ON d.id=p.deal_id GROUP BY d.id`,
+    sql`SELECT d.id AS did, COALESCE(SUM(mp.amount),0) AS v
+          FROM manual_payments mp JOIN proposals p ON p.id=mp.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE mp.manual_invoice_id IS NULL GROUP BY d.id`,
+    sql`SELECT COALESCE(mi.deal_id, dp.id) AS did, COALESCE(SUM(mi.amount),0) AS v
+          FROM manual_invoices mi
+          LEFT JOIN deals dd ON dd.id = mi.deal_id
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+          LEFT JOIN deals dp ON dp.id = pr.deal_id
+         WHERE mi.status='paid' GROUP BY COALESCE(mi.deal_id, dp.id)`,
+    sql`SELECT d.id AS did, COALESCE(SUM(pb.paid_amount),0) AS v
+          FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE pb.paid_amount IS NOT NULL GROUP BY d.id`,
+  ]);
+
+  const paid = new Map();
+  for (const rows of [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows]) {
+    for (const r of rows) { if (!r.did) continue; paid.set(r.did, (paid.get(r.did) || 0) + (Number(r.v) || 0)); }
+  }
+
+  const dealIds = committedRows.map((r) => r.did);
+  const infoRows = await sql`
+    SELECT d.id, d.title, d.stage, d.company_id, c.name AS company_name
+      FROM deals d LEFT JOIN companies c ON c.id = d.company_id
+     WHERE d.id = ANY(${dealIds})
+  `;
+  const info = new Map(infoRows.map((r) => [r.id, r]));
+
+  const normal = [];
+  const po = [];
+  for (const r of committedRows) {
+    const committed = Number(r.committed) || 0;
+    const p = paid.get(r.did) || 0;
+    const outstanding = round2(committed - p);
+    if (outstanding <= 0.005) continue;
+    const inf = info.get(r.did) || {};
+    const item = {
+      dealId: r.did,
+      title: inf.title || 'Untitled deal',
+      company: inf.company_name || null,
+      companyId: inf.company_id || null,
+      stage: inf.stage || null,
+      committed: round2(committed),
+      paid: round2(p),
+      outstanding,
+    };
+    (r.is_po ? po : normal).push(item);
+  }
+  const byOutstanding = (a, b) => b.outstanding - a.outstanding;
+  normal.sort(byOutstanding);
+  po.sort(byOutstanding);
+  const sum = (arr) => round2(arr.reduce((s, x) => s + x.outstanding, 0));
+
+  return { normal, po, totals: { normal: sum(normal), po: sum(po) } };
+}
+
 export async function statsRoute(req, res, id, action, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -254,6 +332,10 @@ export async function statsRoute(req, res, id, action, user) {
 
   if (id === 'sales') {
     return res.status(200).json(await salesReport(action));
+  }
+
+  if (id === 'pending') {
+    return res.status(200).json(await pendingPaymentsReport());
   }
 
   return res.status(404).json({ error: 'Unknown stats report' });

@@ -41,7 +41,7 @@ const monthLongLabel = (key) => {
   return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
 };
 
-export function FinanceView({ onBack }) {
+export function FinanceView({ onBack, onOpenDeal }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const now = new Date();
@@ -63,7 +63,11 @@ export function FinanceView({ onBack }) {
     return () => { active = false; };
   }, [actions, effectiveYear]);
 
+  // Outstanding deals aren't period-scoped — load once.
+  useEffect(() => { actions.loadPendingPayments(); }, [actions]);
+
   const fin = state.financeStats && state.financeStats.year === effectiveYear ? state.financeStats : null;
+  const pending = state.pendingPayments;
   const isCurrentYear = effectiveYear === now.getFullYear();
   const monthIdx = now.getMonth();
 
@@ -217,6 +221,91 @@ export function FinanceView({ onBack }) {
           </table>
         </div>
       </div>
+
+      {/* Pending Payments — outstanding signed deals, split PO vs normal. */}
+      <PendingPayments pending={pending} onOpenDeal={onOpenDeal} isMobile={isMobile} />
+    </div>
+  );
+}
+
+function PendingPayments({ pending, onOpenDeal, isMobile }) {
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 20 }}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+        Pending Payments
+      </h3>
+      <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
+        Outstanding balances on signed deals — amounts still to collect (inc VAT).
+      </p>
+      {!pending ? (
+        <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16 }}>
+          <PendingGroup
+            title="Invoiced work"
+            note="Paid on project milestones / completion"
+            rows={pending.normal}
+            total={pending.totals.normal}
+            accent={BRAND.blue}
+            onOpenDeal={onOpenDeal}
+          />
+          <PendingGroup
+            title="Purchase Orders"
+            note="Paid regardless of project stage"
+            rows={pending.po}
+            total={pending.totals.po}
+            accent="#8B5CF6"
+            onOpenDeal={onOpenDeal}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PendingGroup({ title, note, rows, total, accent, onOpenDeal }) {
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: `3px solid ${accent}` }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{title}</span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
+        </div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{note} · {rows.length} {rows.length === 1 ? 'deal' : 'deals'}</div>
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>Nothing outstanding.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {rows.map((d) => (
+            <button
+              key={d.dealId}
+              type="button"
+              onClick={() => onOpenDeal && onOpenDeal(d.dealId)}
+              onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+                padding: '10px 14px', border: 'none', borderTop: '1px solid ' + BRAND.border,
+                background: 'white', cursor: onOpenDeal ? 'pointer' : 'default',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {d.company || 'No company'}
+                </div>
+                <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {d.title}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(d.outstanding)}</div>
+                <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

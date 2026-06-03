@@ -77,6 +77,7 @@ function emptyStore() {
     financeStats: null,
     performanceStats: null,
     salesStats: null,
+    pendingPayments: null,
     financeTargets: [],
     salesTargets: [],
     bankHolidays: null,
@@ -750,6 +751,13 @@ export function StoreProvider({ children }) {
       const path = '/api/crm/stats/sales' + (period ? '/' + period : '');
       return api.get(path).then((data) => {
         setState(s => ({ ...s, salesStats: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    // Business → Finance: outstanding balance per signed deal (PO vs normal).
+    loadPendingPayments() {
+      return api.get('/api/crm/stats/pending').then((data) => {
+        setState(s => ({ ...s, pendingPayments: data || null }));
         return data;
       }).catch(() => null);
     },

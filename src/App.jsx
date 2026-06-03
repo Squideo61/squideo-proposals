@@ -414,7 +414,7 @@ function AppShell() {
         <LeaderboardView onBack={() => navigate('list')} />
       )}
       {view === 'finance' && (
-        <FinanceView onBack={() => navigate('list')} />
+        <FinanceView onBack={() => navigate('list')} onOpenDeal={(id) => navigate('deal', id)} />
       )}
       {view === 'performance' && (
         <PerformanceView onBack={() => navigate('list')} />
