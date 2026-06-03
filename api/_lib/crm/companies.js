@@ -119,9 +119,12 @@ export async function companiesRoute(req, res, id, action, user) {
       const name = trimOrNull(body.name);
       if (!name) return res.status(400).json({ error: 'name is required' });
       const newId = body.id || makeId('co');
+      const a = body.address || {};
       await sql`
-        INSERT INTO companies (id, name, domain, notes, xero_contact_id)
-        VALUES (${newId}, ${name}, ${lowerOrNull(body.domain)}, ${trimOrNull(body.notes)}, ${trimOrNull(body.xeroContactId)})
+        INSERT INTO companies (id, name, domain, notes, xero_contact_id,
+                               address_line1, address_line2, city, postcode, country)
+        VALUES (${newId}, ${name}, ${lowerOrNull(body.domain)}, ${trimOrNull(body.notes)}, ${trimOrNull(body.xeroContactId)},
+                ${trimOrNull(a.line1)}, ${trimOrNull(a.line2)}, ${trimOrNull(a.city)}, ${trimOrNull(a.postcode)}, ${trimOrNull(a.country)})
       `;
       const rows = await sql`
         SELECT id, name, domain, notes, xero_contact_id,

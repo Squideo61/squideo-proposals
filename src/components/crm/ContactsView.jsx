@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Building2, CheckCircle2, Circle, Edit2, Plus, Search, Trash2, User, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { useIsMobile } from '../../utils.js';
+import { useIsMobile, deriveAddress } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { Modal } from '../ui.jsx';
 
@@ -341,19 +341,29 @@ function ContactModal({ contact, onClose }) {
   );
 }
 
-function CompanyModal({ company, onClose }) {
+export function CompanyModal({ company, onClose }) {
   const { actions } = useStore();
   const editing = !!company;
   const [name, setName] = useState(company?.name || '');
   const [domain, setDomain] = useState(company?.domain || '');
   const [notes, setNotes] = useState(company?.notes || '');
+  // Address prefills from the company's own address, falling back to the linked
+  // Xero contact's address (two-way sync). Saving pushes it back to Xero.
+  const [address, setAddress] = useState(() => deriveAddress(company));
   const [submitting, setSubmitting] = useState(false);
+  const setAddr = (k, v) => setAddress(a => ({ ...a, [k]: v }));
 
   const submit = async (e) => {
     e.preventDefault();
     if (!name.trim() || submitting) return;
     setSubmitting(true);
-    const payload = { name: name.trim(), domain: domain.trim() || null, notes: notes.trim() || null };
+    const t = (s) => (s.trim() || null);
+    const payload = {
+      name: name.trim(),
+      domain: domain.trim() || null,
+      notes: notes.trim() || null,
+      address: { line1: t(address.line1), line2: t(address.line2), city: t(address.city), postcode: t(address.postcode), country: t(address.country) },
+    };
     if (editing) await actions.saveCompany(company.id, payload);
     else await actions.createCompany(payload);
     setSubmitting(false);
@@ -373,6 +383,11 @@ function CompanyModal({ company, onClose }) {
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Row label="Name"><input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus required /></Row>
         <Row label="Domain (e.g. example.com)"><input className="input" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="example.com" /></Row>
+        <Row label="Address line 1"><input className="input" value={address.line1} onChange={(e) => setAddr('line1', e.target.value)} /></Row>
+        <Row label="Address line 2"><input className="input" value={address.line2} onChange={(e) => setAddr('line2', e.target.value)} /></Row>
+        <Row label="City"><input className="input" value={address.city} onChange={(e) => setAddr('city', e.target.value)} /></Row>
+        <Row label="Postcode"><input className="input" value={address.postcode} onChange={(e) => setAddr('postcode', e.target.value)} /></Row>
+        <Row label="Country"><input className="input" value={address.country} onChange={(e) => setAddr('country', e.target.value)} /></Row>
         <Row label="Notes"><textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ fontFamily: 'inherit', resize: 'vertical' }} /></Row>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 8 }}>
           {editing

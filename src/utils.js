@@ -129,6 +129,38 @@ export function resizeImage(file, maxW, maxH, keepPng) {
   });
 }
 
+// The address shown/edited for a company: its own stored address, falling back
+// field-by-field to the linked Xero contact's address (two-way prefill).
+export function effectiveAddress(company) {
+  const a = company?.address || {};
+  const x = company?.xeroAddress || {};
+  return {
+    line1: a.line1 || x.line1 || '',
+    line2: a.line2 || x.line2 || '',
+    city: a.city || x.city || '',
+    postcode: a.postcode || x.postcode || '',
+    country: a.country || x.country || '',
+  };
+}
+
+// Prefill an address form from a company. Country defaults to United Kingdom
+// only when an address actually exists, so opening the form on an address-less
+// company doesn't silently write a country-only address on save.
+export function deriveAddress(company) {
+  const a = effectiveAddress(company);
+  const hasAny = a.line1 || a.line2 || a.city || a.postcode || a.country;
+  return { ...a, country: a.country || (hasAny ? 'United Kingdom' : '') };
+}
+
+export function formatAddressLines(addr) {
+  return [
+    addr.line1,
+    addr.line2,
+    [addr.city, addr.postcode].filter(Boolean).join(' '),
+    addr.country,
+  ].filter(Boolean);
+}
+
 export async function sendNotification(trigger, proposal, signature, payment, recipients) {
   if (!recipients || recipients.length === 0) return 0;
   const subject = trigger === 'signed'

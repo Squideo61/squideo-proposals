@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Mail, MapPin, MessageSquare, MoreVertical, Phone, Plus, Square, Trash2, User, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Mail, MessageSquare, MoreVertical, Phone, Plus, Square, Trash2, User, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -15,29 +15,6 @@ import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
-
-// The address shown/edited for a company: its own stored address, falling back
-// field-by-field to the linked Xero contact's address (two-way prefill).
-function effectiveAddress(company) {
-  const a = company?.address || {};
-  const x = company?.xeroAddress || {};
-  return {
-    line1: a.line1 || x.line1 || '',
-    line2: a.line2 || x.line2 || '',
-    city: a.city || x.city || '',
-    postcode: a.postcode || x.postcode || '',
-    country: a.country || x.country || '',
-  };
-}
-
-function formatAddressLines(addr) {
-  return [
-    addr.line1,
-    addr.line2,
-    [addr.city, addr.postcode].filter(Boolean).join(' '),
-    addr.country,
-  ].filter(Boolean);
-}
 
 export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposal, onOpenVideo }) {
   const { state, actions, showMsg } = useStore();
@@ -188,14 +165,6 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           <Field label="Value (ex VAT)">{deal.value != null ? <strong>{formatGBP(deal.value)}</strong> : <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field icon={Calendar} label="Expected close">{deal.expectedCloseAt || <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field label="Last activity">{formatRelativeTime(deal.lastActivityAt)}</Field>
-          <Field icon={MapPin} label="Address">
-            {(() => {
-              const lines = company ? formatAddressLines(effectiveAddress(company)) : [];
-              return lines.length
-                ? <span style={{ whiteSpace: 'pre-line' }}>{lines.join('\n')}</span>
-                : <span style={{ color: BRAND.muted }}>—</span>;
-            })()}
-          </Field>
         </div>
         <SecondaryContactsRow
           dealId={dealId}
@@ -1823,16 +1792,6 @@ export function StagePicker({ stage, onChange }) {
   );
 }
 
-// Prefill the address form from a company: its own stored address, falling back
-// to the linked Xero contact's address. Country defaults to United Kingdom only
-// when an address actually exists, so opening the modal on an address-less
-// company doesn't silently write a country-only address on save.
-function deriveAddress(company) {
-  const a = effectiveAddress(company);
-  const hasAny = a.line1 || a.line2 || a.city || a.postcode || a.country;
-  return { ...a, country: a.country || (hasAny ? 'United Kingdom' : '') };
-}
-
 function EditDealModal({ deal, onClose }) {
   const { state, actions } = useStore();
   const [title, setTitle] = useState(deal.title || '');
@@ -1842,14 +1801,11 @@ function EditDealModal({ deal, onClose }) {
   const [ownerEmail, setOwnerEmail] = useState(deal.ownerEmail || '');
   const [expectedCloseAt, setExpectedCloseAt] = useState(deal.expectedCloseAt || '');
   const [notes, setNotes] = useState(deal.notes || '');
-  const [address, setAddress] = useState(() => deriveAddress(deal.companyId ? state.companies[deal.companyId] : null));
   const [submitting, setSubmitting] = useState(false);
 
   const companies = Object.values(state.companies || {});
   const contacts = Object.values(state.contacts || {});
   const users = Object.values(state.users || {});
-
-  const setAddr = (k, v) => setAddress(a => ({ ...a, [k]: v }));
 
   const submit = async (e) => {
     e.preventDefault();
@@ -1863,16 +1819,6 @@ function EditDealModal({ deal, onClose }) {
       expectedCloseAt: expectedCloseAt || null,
       notes: notes || null,
     });
-    // Address lives on the company, not the deal. Only patch it when it actually
-    // differs from what the company already stores — saving the company also
-    // pushes the address to its linked Xero contact.
-    if (companyId) {
-      const t = (s) => (s.trim() || null);
-      const nextAddr = { line1: t(address.line1), line2: t(address.line2), city: t(address.city), postcode: t(address.postcode), country: t(address.country) };
-      const curAddr = state.companies[companyId]?.address || {};
-      const changed = ['line1', 'line2', 'city', 'postcode', 'country'].some(k => (curAddr[k] || null) !== nextAddr[k]);
-      if (changed) await actions.saveCompany(companyId, { address: nextAddr });
-    }
     setSubmitting(false);
     onClose();
   };
@@ -1884,24 +1830,11 @@ function EditDealModal({ deal, onClose }) {
         <FormRow label="Title"><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} required /></FormRow>
         <FormRow label="Value (£, ex VAT)"><input className="input" type="number" min="0" step="0.01" value={value} onChange={(e) => setValue(e.target.value)} /></FormRow>
         <FormRow label="Company">
-          <select
-            className="input"
-            value={companyId}
-            onChange={(e) => {
-              const id = e.target.value;
-              setCompanyId(id);
-              setAddress(deriveAddress(id ? state.companies[id] : null));
-            }}
-          >
+          <select className="input" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
             <option value="">—</option>
             {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </FormRow>
-        <FormRow label="Address line 1"><input className="input" value={address.line1} onChange={(e) => setAddr('line1', e.target.value)} disabled={!companyId} placeholder={companyId ? '' : 'Pick a company first'} /></FormRow>
-        <FormRow label="Address line 2"><input className="input" value={address.line2} onChange={(e) => setAddr('line2', e.target.value)} disabled={!companyId} /></FormRow>
-        <FormRow label="City"><input className="input" value={address.city} onChange={(e) => setAddr('city', e.target.value)} disabled={!companyId} /></FormRow>
-        <FormRow label="Postcode"><input className="input" value={address.postcode} onChange={(e) => setAddr('postcode', e.target.value)} disabled={!companyId} /></FormRow>
-        <FormRow label="Country"><input className="input" value={address.country} onChange={(e) => setAddr('country', e.target.value)} disabled={!companyId} /></FormRow>
         <FormRow label="Primary contact">
           <select className="input" value={primaryContactId} onChange={(e) => setPrimaryContactId(e.target.value)}>
             <option value="">—</option>

@@ -1,18 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Award, Building2, CheckCircle2, Circle, Globe, User, Edit2, Link2, X } from 'lucide-react';
+import { ArrowLeft, Award, Building2, CheckCircle2, Circle, Globe, MapPin, User, Edit2, Link2, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { useIsMobile, formatGBP, formatRelativeTime } from '../../utils.js';
+import { useIsMobile, formatGBP, formatRelativeTime, effectiveAddress, formatAddressLines } from '../../utils.js';
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
 import { PaymentsCard } from './PaymentsCard.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
+import { CompanyModal } from './ContactsView.jsx';
 
-export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact, onEdit }) {
+export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact }) {
   const { actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [detail, setDetail] = useState(null);
+  const [editing, setEditing] = useState(false);
   const [linking, setLinking] = useState(false);
   const [xeroContact, setXeroContact] = useState(null);
   const [payments, setPayments] = useState(null);
@@ -94,7 +96,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
     <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Contacts</button>
-        <button onClick={() => onEdit?.(detail)} className="btn-ghost"><Edit2 size={14} /> Edit company</button>
+        <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit company</button>
       </header>
 
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 16 : 24, marginBottom: 16 }}>
@@ -115,6 +117,14 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 16 }}>
           <Field icon={Globe} label="Domain">{detail.domain || <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field label="Contacts">{detail.contacts.length}</Field>
+          <Field icon={MapPin} label="Address">
+            {(() => {
+              const lines = formatAddressLines(effectiveAddress(detail));
+              return lines.length
+                ? <span style={{ whiteSpace: 'pre-line' }}>{lines.join('\n')}</span>
+                : <span style={{ color: BRAND.muted }}>—</span>;
+            })()}
+          </Field>
         </div>
 
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid ' + BRAND.border }}>
@@ -240,6 +250,13 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
           <PaymentsCard companyId={companyId} />
         </div>
       </div>
+
+      {editing && (
+        <CompanyModal
+          company={detail}
+          onClose={() => { setEditing(false); reload(); }}
+        />
+      )}
     </div>
   );
 }
