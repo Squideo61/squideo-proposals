@@ -4,6 +4,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, deriveAddress } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
+import { api } from '../../api.js';
 import { Modal } from '../ui.jsx';
 
 export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXeroDuplicates }) {
@@ -353,6 +354,40 @@ export function CompanyModal({ company, onClose }) {
   const [submitting, setSubmitting] = useState(false);
   const setAddr = (k, v) => setAddress(a => ({ ...a, [k]: v }));
 
+  // Postcode → address lookup (getAddress.io via /api/crm/address-lookup).
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupResults, setLookupResults] = useState(null); // null | array
+  const [lookupError, setLookupError] = useState('');
+
+  const findAddress = async () => {
+    const pc = address.postcode.trim();
+    if (!pc) { setLookupError('Enter a postcode first'); return; }
+    setLookupLoading(true); setLookupError(''); setLookupResults(null);
+    try {
+      const data = await api.get('/api/crm/address-lookup?postcode=' + encodeURIComponent(pc));
+      const list = data?.addresses || [];
+      setLookupResults(list);
+      if (!list.length) setLookupError('No addresses found for that postcode');
+    } catch (err) {
+      setLookupError(err.message || 'Lookup failed');
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const chooseAddress = (a) => {
+    if (!a) return;
+    setAddress({
+      line1: a.line1 || '',
+      line2: a.line2 || '',
+      city: a.city || '',
+      postcode: a.postcode || address.postcode,
+      country: a.country || 'United Kingdom',
+    });
+    setLookupResults(null);
+    setLookupError('');
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     if (!name.trim() || submitting) return;
@@ -383,10 +418,36 @@ export function CompanyModal({ company, onClose }) {
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Row label="Name"><input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus required /></Row>
         <Row label="Domain (e.g. example.com)"><input className="input" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="example.com" /></Row>
+        <Row label="Postcode">
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              className="input"
+              value={address.postcode}
+              onChange={(e) => setAddr('postcode', e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); findAddress(); } }}
+              style={{ flex: 1 }}
+            />
+            <button type="button" onClick={findAddress} className="btn-ghost" disabled={lookupLoading || !address.postcode.trim()} style={{ whiteSpace: 'nowrap' }}>
+              <Search size={14} /> {lookupLoading ? 'Finding…' : 'Find address'}
+            </button>
+          </div>
+        </Row>
+        {lookupError && <div style={{ fontSize: 12, color: '#DC2626', marginTop: -4 }}>{lookupError}</div>}
+        {lookupResults && lookupResults.length > 0 && (
+          <Row label={`Select an address (${lookupResults.length})`}>
+            <select
+              className="input"
+              defaultValue=""
+              onChange={(e) => { const i = e.target.value; if (i !== '') chooseAddress(lookupResults[Number(i)]); }}
+            >
+              <option value="" disabled>Choose an address…</option>
+              {lookupResults.map((a, i) => <option key={i} value={i}>{a.label || a.line1}</option>)}
+            </select>
+          </Row>
+        )}
         <Row label="Address line 1"><input className="input" value={address.line1} onChange={(e) => setAddr('line1', e.target.value)} /></Row>
         <Row label="Address line 2"><input className="input" value={address.line2} onChange={(e) => setAddr('line2', e.target.value)} /></Row>
         <Row label="City"><input className="input" value={address.city} onChange={(e) => setAddr('city', e.target.value)} /></Row>
-        <Row label="Postcode"><input className="input" value={address.postcode} onChange={(e) => setAddr('postcode', e.target.value)} /></Row>
         <Row label="Country"><input className="input" value={address.country} onChange={(e) => setAddr('country', e.target.value)} /></Row>
         <Row label="Notes"><textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ fontFamily: 'inherit', resize: 'vertical' }} /></Row>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 8 }}>
