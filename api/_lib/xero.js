@@ -187,6 +187,38 @@ async function ensureActiveContact(contactId) {
   return true;
 }
 
+// Pushes a postal address onto an existing Xero contact's STREET address.
+// Reads the contact first so we merge into its existing Addresses array —
+// replacing the STREET entry (or adding one) while preserving any other types
+// (e.g. POBOX) so we don't wipe them. Xero updates contacts via POST to
+// /Contacts/{id} (same mechanism as ensureActiveContact).
+export async function updateContactAddress(contactId, address) {
+  const street = {
+    AddressType: 'STREET',
+    AddressLine1: address.line1 || '',
+    AddressLine2: address.line2 || '',
+    City: address.city || '',
+    PostalCode: address.postcode || '',
+    Country: address.country || 'United Kingdom',
+  };
+
+  let existing = [];
+  try {
+    const res = await xeroFetch(`/api.xro/2.0/Contacts/${encodeURIComponent(contactId)}`);
+    existing = res?.Contacts?.[0]?.Addresses || [];
+  } catch (err) {
+    console.warn('[xero] could not read contact addresses, sending STREET only', err.message);
+  }
+
+  const others = existing.filter(a => a.AddressType !== 'STREET');
+  const addresses = [street, ...others];
+
+  await xeroFetch(`/api.xro/2.0/Contacts/${encodeURIComponent(contactId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ ContactID: contactId, Addresses: addresses }),
+  });
+}
+
 // Paginates through every Xero contact and returns them. Includes archived
 // contacts so the mirror reflects everything. Optionally pass an ISO date
 // string to `modifiedSince` for incremental pulls (uses Xero's
