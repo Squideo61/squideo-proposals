@@ -11,7 +11,7 @@ function makeLineItem() {
   return { _key: ++_lineItemKey, description: '', quantity: 1, unitAmount: '', vatRate: 20 };
 }
 
-export function CreateXeroInvoiceModal({ dealId, companyId, deals, proposalId, contactName: contactNameProp, onClose, onCreated }) {
+export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId, proposalId, contactName: contactNameProp, onClose, onCreated }) {
   const { showMsg } = useStore();
   const [contactName, setContactName] = useState(contactNameProp || '');
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -28,7 +28,7 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, proposalId, c
     const sb = b.stage === 'signed' ? 0 : 1;
     return sa - sb;
   });
-  const [dealChoice, setDealChoice] = useState(''); // '' = company-level, '__new__', or a deal id
+  const [dealChoice, setDealChoice] = useState(initialDealId || ''); // '' = company-level, '__new__', or a deal id
   const [newDealTitle, setNewDealTitle] = useState('');
   const [suggestedProposalId, setSuggestedProposalId] = useState(null);
   const [paymentLabel, setPaymentLabel] = useState(null);

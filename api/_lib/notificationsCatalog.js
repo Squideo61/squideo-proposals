@@ -53,6 +53,13 @@ export const NOTIFICATIONS = [
     group: 'Payments',
   },
   {
+    key: 'invoice.needs_generating',
+    label: 'Invoice needs generating',
+    description: 'A proposal you own has been signed for over an hour with no invoice raised.',
+    audience: 'owner',
+    group: 'Payments',
+  },
+  {
     key: 'task.reminder',
     label: 'Task reminders',
     description: 'Daily 9am summary of tasks assigned to you that are due.',

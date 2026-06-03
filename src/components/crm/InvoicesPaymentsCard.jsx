@@ -17,12 +17,18 @@ const STATUS_COLOR = {
   void: '#DC2626',
 };
 
-export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals, onChanged }) {
+export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals, onChanged, openCreateSignal, preselectDealId }) {
   const { showMsg } = useStore();
   const [invoices, setInvoices] = useState(null);
   const [payments, setPayments] = useState(null);
   const [adding, setAdding] = useState(false);
   const [creatingXero, setCreatingXero] = useState(false);
+
+  // Parent can ask us to open the create-invoice modal (e.g. the company page's
+  // "Invoice needs generating" banner button), optionally preselecting a deal.
+  useEffect(() => {
+    if (openCreateSignal) setCreatingXero(true);
+  }, [openCreateSignal]);
 
   // Scope by deal or, on the company page, by company.
   const scopeQs = dealId
@@ -125,6 +131,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
           dealId={dealId}
           companyId={companyId}
           deals={deals}
+          initialDealId={preselectDealId}
           contactName={contactName}
           onClose={() => setCreatingXero(false)}
           onCreated={() => { setCreatingXero(false); reloadInvoices(); onChanged?.(); }}

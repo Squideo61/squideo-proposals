@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Award, Building2, CheckCircle2, Circle, Globe, MapPin, User, Edit2, Link2, X } from 'lucide-react';
+import { ArrowLeft, Award, Building2, CheckCircle2, Circle, FileText, Globe, MapPin, User, Edit2, Link2, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatGBP, formatRelativeTime, effectiveAddress, formatAddressLines } from '../../utils.js';
@@ -20,6 +20,9 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
   const [xeroContact, setXeroContact] = useState(null);
   const [payments, setPayments] = useState(null);
   const [creatingXero, setCreatingXero] = useState(false);
+  // Banner "Create invoice" → opens the invoices card's create modal, preselecting the deal.
+  const [createSignal, setCreateSignal] = useState(0);
+  const [preselectDealId, setPreselectDealId] = useState(null);
 
   const reload = () => api.get('/api/crm/companies/' + encodeURIComponent(companyId) + '/detail').then(setDetail);
 
@@ -169,19 +172,37 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
             />
           </div>
 
-          {/* Outstanding on signed work (inc VAT): signed total − paid. */}
+          {/* Billing status on signed work. Three states:
+              red  → a proposal's been signed >1h with no invoice raised
+              amber→ invoiced but still owed
+              green→ all signed work paid */}
           {detail.balance && detail.balance.committed > 0 && (() => {
             const owed = Math.max(0, detail.balance.outstanding);
-            const warm = owed > 0;
+            const needs = detail.balance.needsInvoice;
+            const tone = needs
+              ? { bg: '#FEE2E2', border: '#FCA5A5', fg: '#991B1B' }
+              : owed > 0
+              ? { bg: '#FEF3C7', border: '#FDE68A', fg: '#92400E' }
+              : { bg: '#F0FDF4', border: '#BBF7D0', fg: '#15803D' };
             return (
-              <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, background: warm ? '#FEF3C7' : '#F0FDF4', border: '1px solid ' + (warm ? '#FDE68A' : '#BBF7D0') }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: warm ? '#92400E' : '#15803D' }}>
-                    {warm ? 'Outstanding balance' : 'All signed work paid'}
+              <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, background: tone.bg, border: '1px solid ' + tone.border }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: tone.fg }}>
+                    {needs ? 'Invoice needs generating' : owed > 0 ? 'Outstanding balance' : 'All signed work paid'}
                   </span>
-                  <span style={{ fontSize: 16, fontWeight: 700, color: warm ? '#92400E' : '#15803D' }}>
-                    {formatGBP(owed)}{warm ? ' owed' : ''}
-                  </span>
+                  {needs ? (
+                    <button
+                      onClick={() => { setPreselectDealId(detail.balance.needsInvoiceDealId || null); setCreateSignal(n => n + 1); }}
+                      className="btn"
+                      style={{ fontSize: 12, background: '#DC2626' }}
+                    >
+                      <FileText size={13} /> Create invoice
+                    </button>
+                  ) : (
+                    <span style={{ fontSize: 16, fontWeight: 700, color: tone.fg }}>
+                      {formatGBP(owed)}{owed > 0 ? ' owed' : ''}
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>
                   {formatGBP(detail.balance.committed)} signed (inc VAT) · {formatGBP(detail.balance.paid)} paid
@@ -297,7 +318,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
         </Card>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <InvoicesPaymentsCard companyId={companyId} contactName={detail.name} deals={detail.deals} onChanged={reload} />
+          <InvoicesPaymentsCard companyId={companyId} contactName={detail.name} deals={detail.deals} onChanged={reload} openCreateSignal={createSignal} preselectDealId={preselectDealId} />
         </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>

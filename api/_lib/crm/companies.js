@@ -425,11 +425,30 @@ async function computeCompanyBalance(companyId) {
   `;
   paid += Number(invPaidRow.s);
 
+  // A deal whose proposal was signed >1h ago with no invoice raised and nothing
+  // paid → it needs an invoice generating. The 1h gate matches the reminder cron.
+  const [needsRow] = await sql`
+    SELECT p.deal_id
+      FROM signatures s
+      JOIN proposals p ON p.id = s.proposal_id
+      JOIN deals d ON d.id = p.deal_id
+     WHERE d.company_id = ${companyId}
+       AND s.signed_at < NOW() - INTERVAL '1 hour'
+       AND NOT EXISTS (SELECT 1 FROM manual_invoices mi WHERE mi.proposal_id = s.proposal_id OR mi.deal_id = p.deal_id)
+       AND NOT EXISTS (SELECT 1 FROM payments pay WHERE pay.proposal_id = s.proposal_id)
+       AND NOT EXISTS (SELECT 1 FROM partner_invoices pi WHERE pi.proposal_id = s.proposal_id)
+       AND NOT EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.proposal_id = s.proposal_id)
+     ORDER BY s.signed_at ASC
+     LIMIT 1
+  `;
+
   const committed = Number(committedRow.committed) || 0;
   return {
     committed: Number(committed.toFixed(2)),
     paid: Number(paid.toFixed(2)),
     outstanding: Number((committed - paid).toFixed(2)),
+    needsInvoice: !!needsRow,
+    needsInvoiceDealId: needsRow?.deal_id || null,
   };
 }
 

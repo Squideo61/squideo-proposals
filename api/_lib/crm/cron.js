@@ -31,6 +31,7 @@ export async function cronHandler(req, res, action) {
     case 'quote-partials':    return cronQuotePartials(res);
     case 'quote-resume':      return cronQuoteResume(res);
     case 'scheduled-emails':  return cronScheduledEmails(res);
+    case 'invoice-reminders': return cronInvoiceReminders(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }
@@ -218,6 +219,63 @@ export async function cronPruneViews(res) {
   `;
   console.log('[cron prune-views] deleted', { count: result.count || result.rowCount || 0 });
   return res.status(200).json({ ok: true, deleted: result.count || result.rowCount || 0 });
+}
+
+// Hourly nudge: a proposal signed >1h ago with no invoice raised and nothing
+// paid → email + in-app the deal owner ("creator"), once. Self-heals the
+// tracking column and the role-default seed so it works pre-migration.
+export async function cronInvoiceReminders(res) {
+  await sql`ALTER TABLE signatures ADD COLUMN IF NOT EXISTS invoice_reminder_sent_at TIMESTAMPTZ`;
+  await sql`UPDATE roles SET notification_defaults = jsonb_set(notification_defaults, '{invoice.needs_generating}', 'true', true) WHERE NOT (notification_defaults ? 'invoice.needs_generating')`;
+
+  const due = await sql`
+    SELECT s.proposal_id, s.signed_at, p.deal_id, d.owner_email,
+           d.company_id, d.title AS deal_title, co.name AS company_name
+      FROM signatures s
+      JOIN proposals p ON p.id = s.proposal_id
+      JOIN deals d ON d.id = p.deal_id
+      LEFT JOIN companies co ON co.id = d.company_id
+     WHERE s.invoice_reminder_sent_at IS NULL
+       AND s.signed_at < NOW() - INTERVAL '1 hour'
+       AND NOT EXISTS (SELECT 1 FROM manual_invoices mi WHERE mi.proposal_id = s.proposal_id OR mi.deal_id = p.deal_id)
+       AND NOT EXISTS (SELECT 1 FROM payments pay WHERE pay.proposal_id = s.proposal_id)
+       AND NOT EXISTS (SELECT 1 FROM partner_invoices pi WHERE pi.proposal_id = s.proposal_id)
+       AND NOT EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.proposal_id = s.proposal_id)
+     ORDER BY s.signed_at ASC
+     LIMIT 100
+  `;
+
+  let sent = 0;
+  for (const r of due) {
+    if (!r.owner_email) continue; // no owner to nudge — leave it for next sweep
+    const name = r.company_name || r.deal_title || 'a client';
+    const root = APP_URL.replace(/\/$/, '');
+    const link = r.company_id ? `${root}/#/company/${r.company_id}` : root;
+    const subject = `Invoice needs generating — ${name}`;
+    const html = `
+      <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Invoice needs generating</h2>
+      <p style="margin:0 0 12px;"><strong>${escapeHtml(name)}</strong> signed a proposal over an hour ago and no invoice has been raised yet.</p>
+      ${r.deal_title ? `<p style="margin:0 0 16px;color:#6B7785;">Deal: ${escapeHtml(r.deal_title)}</p>` : ''}
+      <p style="margin:16px 0 0;"><a href="${link}" style="display:inline-block;background:#DC2626;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Create the invoice</a></p>
+    `;
+    const text = `Invoice needs generating: ${name} signed a proposal over an hour ago with no invoice raised. ${link}`;
+    try {
+      await sendNotification('invoice.needs_generating', {
+        ownerEmail: r.owner_email,
+        subject, html, text,
+        inApp: {
+          title: `Invoice needs generating — ${name}`,
+          body: 'Signed proposal with no invoice raised yet.',
+          link: r.company_id ? `#/company/${r.company_id}` : null,
+        },
+      });
+      await sql`UPDATE signatures SET invoice_reminder_sent_at = NOW() WHERE proposal_id = ${r.proposal_id}`;
+      sent++;
+    } catch (err) {
+      console.error('[cron invoice-reminders] failed', { proposalId: r.proposal_id, err: err.message });
+    }
+  }
+  return res.status(200).json({ ok: true, found: due.length, sent });
 }
 
 export async function cronTaskReminders(res) {
