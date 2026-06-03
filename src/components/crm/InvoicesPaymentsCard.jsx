@@ -174,7 +174,9 @@ function InvoiceRow({ row, dealId, onChanged }) {
 
   const isPaid = row.status === 'paid';
   const isIssued = row.status === 'issued' || row.status === 'authorised';
-  const canMarkPaid = isManual && isIssued;
+  // Manual invoices mark paid in our DB; Xero-sourced invoices (with a known
+  // amount) record the payment straight in Xero via the xero-pay endpoint.
+  const canMarkPaid = isIssued && (isManual || (!!row.xeroInvoiceId && row.amount > 0));
   const hasStripeLink = !!row.stripePaymentLinkUrl;
   const canGenerateLink = isManual && isIssued && !hasStripeLink && row.amount > 0;
 
@@ -246,6 +248,9 @@ function InvoiceRow({ row, dealId, onChanged }) {
               <span>{formatAmountWithGbp(row.amount, row.currency || 'GBP', row.gbpAmount)}</span>
             ) : null}
             {row.invoiceNumber && <span style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>{row.invoiceNumber}</span>}
+            {row.planLabel && (
+              <span style={{ fontSize: 10, color: '#15803D', fontWeight: 600, padding: '2px 6px', background: '#ECFDF3', borderRadius: 4 }}>{row.planLabel}</span>
+            )}
             <span style={{ fontSize: 10, color: statusColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>{statusLabel}</span>
             {isPaid && paidMethodLabel && (
               <span style={{ fontSize: 10, color: BRAND.muted, fontWeight: 500, padding: '2px 6px', background: BRAND.paper, borderRadius: 4 }}>
@@ -328,6 +333,7 @@ function InvoiceRow({ row, dealId, onChanged }) {
           invoiceId={row.id}
           invoiceNumber={row.invoiceNumber}
           amount={row.amount}
+          xeroInvoiceId={isManual ? undefined : row.xeroInvoiceId}
           onClose={() => setMarkingPaid(false)}
           onMarked={() => { setMarkingPaid(false); onChanged?.(); }}
         />

@@ -435,6 +435,7 @@ async function computeCompanyBalance(companyId) {
      WHERE d.company_id = ${companyId}
        AND s.signed_at < NOW() - INTERVAL '1 hour'
        AND NOT EXISTS (SELECT 1 FROM manual_invoices mi WHERE mi.proposal_id = s.proposal_id OR mi.deal_id = p.deal_id)
+       AND NOT EXISTS (SELECT 1 FROM proposal_billing pb WHERE pb.proposal_id = s.proposal_id AND pb.xero_invoice_id IS NOT NULL)
        AND NOT EXISTS (SELECT 1 FROM payments pay WHERE pay.proposal_id = s.proposal_id)
        AND NOT EXISTS (SELECT 1 FROM partner_invoices pi WHERE pi.proposal_id = s.proposal_id)
        AND NOT EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.proposal_id = s.proposal_id)

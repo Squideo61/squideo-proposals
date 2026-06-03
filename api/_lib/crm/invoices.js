@@ -291,6 +291,43 @@ export async function invoicesRoute(req, res, id, action, user) {
       });
     }
 
+    // Enrich Xero-sourced rows (stripe / partner / proposal-billing) with live
+    // Xero data so the card shows the real amount, the payment-plan label
+    // (e.g. "50% deposit", pulled from the invoice Reference) and the current
+    // paid status. These rows have no manual_invoices record, so Xero is the
+    // only source of truth — the proposal-billing "email me an invoice" flow in
+    // particular stores no amount of its own.
+    const xeroRowIds = [...new Set(
+      out.filter(r => r.source && r.source.startsWith('xero') && r.xeroInvoiceId)
+         .map(r => r.xeroInvoiceId),
+    )];
+    if (xeroRowIds.length) {
+      const live = await getInvoicesByIds(xeroRowIds);
+      if (live.size) {
+        for (const r of out) {
+          if (!(r.source && r.source.startsWith('xero'))) continue;
+          const x = live.get(r.xeroInvoiceId);
+          if (!x) continue;
+          if (r.amount == null && x.total != null) r.amount = x.total;
+          if (!r.invoiceNumber && x.invoiceNumber) r.invoiceNumber = x.invoiceNumber;
+          if (x.subTotal != null) r.subtotalExVat = x.subTotal;
+          if (x.totalTax != null) r.taxAmount = x.totalTax;
+          if (x.currency) r.currency = x.currency;
+          const plan = planLabelFromReference(x.reference);
+          if (plan) r.planLabel = plan;
+          // Only ever upgrade status from live data — never downgrade a row we
+          // already know is paid (e.g. a stripe payment with a xero_payment_id).
+          if (x.status === 'PAID') {
+            r.status = 'paid';
+            r.paidAt = x.fullyPaidOn || r.paidAt || null;
+            r.paymentMethod = r.paymentMethod || 'xero';
+          } else if (x.status === 'VOIDED' && r.status !== 'paid') {
+            r.status = 'void';
+          }
+        }
+      }
+    }
+
     out.sort((a, b) => new Date(b.issuedAt || 0) - new Date(a.issuedAt || 0));
     return res.status(200).json(out);
   }
@@ -622,6 +659,54 @@ export async function invoicesRoute(req, res, id, action, user) {
       paymentMethod: row.payment_method || null,
       autoLinked: !!linkedXeroInvoiceId,
     });
+  }
+
+  // --- PATCH /api/crm/invoices/:xeroInvoiceId/xero-pay — record a payment in
+  // Xero against a CRM-surfaced Xero invoice (proposal-billing / partner /
+  // stripe sourced) that has no manual_invoices row of its own. Xero stays the
+  // source of truth — the next list load reflects PAID via the live enrichment
+  // above. The id is allowlisted against our own tables so we never touch an
+  // arbitrary Xero invoice.
+  if (id && action === 'xero-pay' && req.method === 'PATCH') {
+    if (!hasPermission(await getRole(user.role), 'invoices.manage')) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const body = req.body || {};
+    const allowed = await sql`
+      SELECT 1 AS ok FROM proposal_billing WHERE xero_invoice_id = ${id}
+      UNION ALL
+      SELECT 1 AS ok FROM partner_invoices WHERE xero_invoice_id = ${id}
+      UNION ALL
+      SELECT 1 AS ok FROM payments WHERE xero_invoice_id = ${id}
+      LIMIT 1
+    `;
+    if (!allowed.length) return res.status(404).json({ error: 'Unknown invoice' });
+
+    const amount = numberOrNull(body.amount);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'A payment amount is required' });
+    }
+    const method = trimOrNull(body.paymentMethod);
+    const isStripe = method === 'stripe-link' || method === 'stripe-standalone';
+    const accountCode = isStripe
+      ? (process.env.XERO_STRIPE_CLEARING_CODE || process.env.XERO_BANK_ACCOUNT_CODE || null)
+      : (process.env.XERO_BANK_ACCOUNT_CODE || null);
+    if (!accountCode) {
+      return res.status(503).json({ error: 'No Xero bank account code configured — cannot record the payment in Xero.' });
+    }
+    try {
+      await createPayment({
+        invoiceId: id,
+        accountCode,
+        amount: Number(amount.toFixed(2)),
+        date: (trimOrNull(body.paidAt) ? new Date(body.paidAt) : new Date()).toISOString().slice(0, 10),
+        reference: method || undefined,
+      });
+    } catch (err) {
+      console.error('[invoices] xero-pay failed', err);
+      return res.status(502).json({ error: 'Could not record the payment in Xero: ' + (err.message || 'unknown') });
+    }
+    return res.status(200).json({ ok: true });
   }
 
   // --- PATCH /api/crm/invoices/:id — edit metadata (status, notes, etc.)
@@ -1036,6 +1121,17 @@ function parseInvoiceMeta(req) {
 
 function stripManualPrefix(id) {
   return id.startsWith('manual:') ? id.slice('manual:'.length) : id;
+}
+
+// Proposal-billing invoices carry a Reference like "PROP-1234 — 50% deposit"
+// (see api/xero/[action].js). Pull the trailing payment-plan label out so the
+// card can show "50% deposit" / "Full payment" / "Project + Partner first month".
+function planLabelFromReference(reference) {
+  if (!reference) return null;
+  const idx = String(reference).lastIndexOf('—');
+  if (idx < 0) return null;
+  const tail = reference.slice(idx + 1).trim();
+  return tail || null;
 }
 
 // Xero's default PDF filename is "Invoice INV-NNNN.pdf". Pull the invoice

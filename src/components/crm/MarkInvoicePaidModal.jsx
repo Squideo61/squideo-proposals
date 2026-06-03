@@ -12,7 +12,7 @@ const METHODS = [
   { value: 'cash',              label: 'Cash' },
 ];
 
-export function MarkInvoicePaidModal({ invoiceId, invoiceNumber, amount, onClose, onMarked }) {
+export function MarkInvoicePaidModal({ invoiceId, invoiceNumber, amount, xeroInvoiceId, onClose, onMarked }) {
   const { showMsg } = useStore();
   const [method, setMethod] = useState('bacs');
   const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 10));
@@ -23,13 +23,26 @@ export function MarkInvoicePaidModal({ invoiceId, invoiceNumber, amount, onClose
     e.preventDefault();
     setSaving(true);
     try {
-      const rawId = invoiceId.replace('manual:', '');
-      await api.patch('/api/crm/invoices/' + encodeURIComponent(rawId), {
-        status: 'paid',
-        paymentMethod: method,
-        paidAt: new Date(paidAt).toISOString(),
-        notes: notes.trim() || undefined,
-      });
+      if (xeroInvoiceId) {
+        // Xero-sourced invoice (no manual record) — record the payment straight
+        // in Xero; the card reflects PAID on its next refresh.
+        if (!(Number(amount) > 0)) {
+          throw new Error('This invoice has no amount yet — open it in Xero to record the payment.');
+        }
+        await api.patch('/api/crm/invoices/' + encodeURIComponent(xeroInvoiceId) + '/xero-pay', {
+          amount: Number(amount),
+          paymentMethod: method,
+          paidAt: new Date(paidAt).toISOString(),
+        });
+      } else {
+        const rawId = invoiceId.replace('manual:', '');
+        await api.patch('/api/crm/invoices/' + encodeURIComponent(rawId), {
+          status: 'paid',
+          paymentMethod: method,
+          paidAt: new Date(paidAt).toISOString(),
+          notes: notes.trim() || undefined,
+        });
+      }
       showMsg?.('Invoice marked as paid', 'success');
       onMarked?.();
     } catch (err) {
