@@ -645,7 +645,7 @@ async function computeCompanyDealBalances(companyId) {
 // Same maths as computeCompanyBalance but for every company at once, via grouped
 // aggregates — so the Organisations list can show "owed" without N round-trips.
 async function allCompanyBalances() {
-  const [committedRows, stripeRows, partnerRows, manualPayRows, invPaidRows, pbPaidRows] = await Promise.all([
+  const [committedRows, stripeRows, partnerRows, manualPayRows, invPaidRows, pbPaidRows, extraRows] = await Promise.all([
     sql`
       SELECT d.company_id AS cid, COALESCE(SUM((s.data->>'total')::numeric), 0) AS v
         FROM signatures s
@@ -663,16 +663,25 @@ async function allCompanyBalances() {
     sql`SELECT d.company_id AS cid, COALESCE(SUM(mp.amount), 0) AS v
           FROM manual_payments mp JOIN proposals p ON p.id = mp.proposal_id JOIN deals d ON d.id = p.deal_id
          WHERE mp.manual_invoice_id IS NULL AND d.company_id IS NOT NULL GROUP BY d.company_id`,
-    sql`SELECT COALESCE(mi.company_id, d.company_id, dp.company_id) AS cid, COALESCE(SUM(mi.amount), 0) AS v
+    // Paid invoices that count toward signed work — attributed to a deal/proposal
+    // (company-level ad-hoc invoices are handled as "extra" below, not here).
+    sql`SELECT COALESCE(d.company_id, dp.company_id) AS cid, COALESCE(SUM(mi.amount), 0) AS v
           FROM manual_invoices mi
           LEFT JOIN deals d ON d.id = mi.deal_id
           LEFT JOIN proposals pr ON pr.id = mi.proposal_id
           LEFT JOIN deals dp ON dp.id = pr.deal_id
-         WHERE mi.status = 'paid'
-         GROUP BY COALESCE(mi.company_id, d.company_id, dp.company_id)`,
+         WHERE mi.status = 'paid' AND COALESCE(d.company_id, dp.company_id) IS NOT NULL
+         GROUP BY COALESCE(d.company_id, dp.company_id)`,
     sql`SELECT d.company_id AS cid, COALESCE(SUM(pb.paid_amount), 0) AS v
           FROM proposal_billing pb JOIN proposals p ON p.id = pb.proposal_id JOIN deals d ON d.id = p.deal_id
          WHERE pb.paid_amount IS NOT NULL AND d.company_id IS NOT NULL GROUP BY d.company_id`,
+    // Unpaid ad-hoc (company-level, non-deal) invoices — added on top of owed.
+    sql`SELECT mi.company_id AS cid, COALESCE(SUM(mi.amount), 0) AS v
+          FROM manual_invoices mi
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+         WHERE mi.status = 'issued' AND mi.company_id IS NOT NULL
+           AND mi.deal_id IS NULL AND pr.deal_id IS NULL
+         GROUP BY mi.company_id`,
   ]);
 
   const committed = new Map(committedRows.map(r => [r.cid, Number(r.v) || 0]));
@@ -683,11 +692,20 @@ async function allCompanyBalances() {
       paid.set(r.cid, (paid.get(r.cid) || 0) + (Number(r.v) || 0));
     }
   }
+  const extra = new Map();
+  for (const r of extraRows) {
+    if (!r.cid) continue;
+    extra.set(r.cid, (extra.get(r.cid) || 0) + (Number(r.v) || 0));
+  }
 
   const out = {};
-  for (const [cid, c] of committed) {
+  for (const cid of new Set([...committed.keys(), ...extra.keys()])) {
+    const c = committed.get(cid) || 0;
     const p = paid.get(cid) || 0;
-    out[cid] = { committed: Number(c.toFixed(2)), paid: Number(p.toFixed(2)), outstanding: Number((c - p).toFixed(2)) };
+    const e = extra.get(cid) || 0;
+    // Matches computeCompanyBalance: signed remaining (clamped) + unpaid extras.
+    const outstanding = Number((Math.max(0, c - p) + e).toFixed(2));
+    out[cid] = { committed: Number(c.toFixed(2)), paid: Number(p.toFixed(2)), outstanding };
   }
   return out;
 }
