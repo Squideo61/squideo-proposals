@@ -17,7 +17,7 @@ const STATUS_COLOR = {
   void: '#DC2626',
 };
 
-export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName }) {
+export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals }) {
   const { showMsg } = useStore();
   const [invoices, setInvoices] = useState(null);
   const [payments, setPayments] = useState(null);
@@ -124,6 +124,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
         <CreateXeroInvoiceModal
           dealId={dealId}
           companyId={companyId}
+          deals={deals}
           contactName={contactName}
           onClose={() => setCreatingXero(false)}
           onCreated={() => { setCreatingXero(false); reloadInvoices(); }}

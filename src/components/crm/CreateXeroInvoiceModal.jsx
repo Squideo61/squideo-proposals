@@ -11,7 +11,7 @@ function makeLineItem() {
   return { _key: ++_lineItemKey, description: '', quantity: 1, unitAmount: '', vatRate: 20 };
 }
 
-export function CreateXeroInvoiceModal({ dealId, companyId, proposalId, contactName: contactNameProp, onClose, onCreated }) {
+export function CreateXeroInvoiceModal({ dealId, companyId, deals, proposalId, contactName: contactNameProp, onClose, onCreated }) {
   const { showMsg } = useStore();
   const [contactName, setContactName] = useState(contactNameProp || '');
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -19,6 +19,17 @@ export function CreateXeroInvoiceModal({ dealId, companyId, proposalId, contactN
   const [dueAt, setDueAt] = useState(new Date().toISOString().slice(0, 10));
   const [lineItems, setLineItems] = useState([makeLineItem()]);
   const [saving, setSaving] = useState(false);
+
+  // Company-page mode: let the user attach the invoice to a deal (existing or
+  // new) instead of leaving it company-level. Signed deals float to the top.
+  const companyMode = !dealId && !!companyId;
+  const sortedDeals = (deals || []).slice().sort((a, b) => {
+    const sa = a.stage === 'signed' ? 0 : 1;
+    const sb = b.stage === 'signed' ? 0 : 1;
+    return sa - sb;
+  });
+  const [dealChoice, setDealChoice] = useState(''); // '' = company-level, '__new__', or a deal id
+  const [newDealTitle, setNewDealTitle] = useState('');
 
   function updateLine(key, field, value) {
     setLineItems(prev => prev.map(li => li._key === key ? { ...li, [field]: value } : li));
@@ -52,11 +63,29 @@ export function CreateXeroInvoiceModal({ dealId, companyId, proposalId, contactN
       showMsg?.('Add at least one line item with a description and price', 'error');
       return;
     }
+    if (companyMode && dealChoice === '__new__' && !newDealTitle.trim()) {
+      showMsg?.('Enter a title for the new deal', 'error');
+      return;
+    }
     setSaving(true);
     try {
+      // Resolve the scope: a chosen/created deal, or company-level.
+      let scopeDealId = dealId || undefined;
+      let scopeCompanyId = companyId || undefined;
+      if (companyMode) {
+        if (dealChoice === '__new__') {
+          const deal = await api.post('/api/crm/deals', { title: newDealTitle.trim(), companyId });
+          scopeDealId = deal.id;
+          scopeCompanyId = undefined;
+        } else if (dealChoice) {
+          scopeDealId = dealChoice;
+          scopeCompanyId = undefined;
+        }
+        // else: leave company-level (scopeCompanyId stays set)
+      }
       const result = await api.post('/api/crm/invoices', {
-        dealId: dealId || undefined,
-        companyId: companyId || undefined,
+        dealId: scopeDealId,
+        companyId: scopeDealId ? undefined : scopeCompanyId,
         proposalId: proposalId || undefined,
         contactName: contactName.trim(),
         invoiceNumber: invoiceNumber.trim() || undefined,
@@ -108,6 +137,30 @@ export function CreateXeroInvoiceModal({ dealId, companyId, proposalId, contactN
             />
           </Field>
         </div>
+
+        {/* Deal association (company page only) */}
+        {companyMode && (
+          <Field label="Deal">
+            <select className="input" value={dealChoice} onChange={e => setDealChoice(e.target.value)}>
+              <option value="">No specific deal (bill the company)</option>
+              {sortedDeals.map(d => (
+                <option key={d.id} value={d.id}>
+                  {d.title}{d.stage ? ` — ${d.stage}` : ''}{d.value != null ? ` · ${formatGBP(d.value)}` : ''}
+                </option>
+              ))}
+              <option value="__new__">+ Create a new deal…</option>
+            </select>
+            {dealChoice === '__new__' && (
+              <input
+                className="input"
+                style={{ marginTop: 8 }}
+                value={newDealTitle}
+                onChange={e => setNewDealTitle(e.target.value)}
+                placeholder="New deal title (e.g. Brand video 2026)"
+              />
+            )}
+          </Field>
+        )}
 
         {/* Dates */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
