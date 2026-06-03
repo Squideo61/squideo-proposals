@@ -354,9 +354,11 @@ export function CompanyModal({ company, onClose }) {
   const [submitting, setSubmitting] = useState(false);
   const setAddr = (k, v) => setAddress(a => ({ ...a, [k]: v }));
 
-  // Postcode → address lookup (getAddress.io via /api/crm/address-lookup).
+  // Postcode → address lookup (getAddress.io Autocomplete + Get, proxied via
+  // /api/crm/address-lookup). Step 1 returns pickable suggestions; choosing one
+  // fetches its full structured address.
   const [lookupLoading, setLookupLoading] = useState(false);
-  const [lookupResults, setLookupResults] = useState(null); // null | array
+  const [lookupResults, setLookupResults] = useState(null); // null | array of {id,label}
   const [lookupError, setLookupError] = useState('');
 
   const findAddress = async () => {
@@ -365,7 +367,7 @@ export function CompanyModal({ company, onClose }) {
     setLookupLoading(true); setLookupError(''); setLookupResults(null);
     try {
       const data = await api.get('/api/crm/address-lookup?postcode=' + encodeURIComponent(pc));
-      const list = data?.addresses || [];
+      const list = data?.suggestions || [];
       setLookupResults(list);
       if (!list.length) setLookupError(data?.detail || 'No addresses found for that postcode');
     } catch (err) {
@@ -375,17 +377,26 @@ export function CompanyModal({ company, onClose }) {
     }
   };
 
-  const chooseAddress = (a) => {
-    if (!a) return;
-    setAddress({
-      line1: a.line1 || '',
-      line2: a.line2 || '',
-      city: a.city || '',
-      postcode: a.postcode || address.postcode,
-      country: a.country || 'United Kingdom',
-    });
-    setLookupResults(null);
-    setLookupError('');
+  const chooseAddress = async (sugg) => {
+    if (!sugg?.id) return;
+    setLookupLoading(true); setLookupError('');
+    try {
+      const data = await api.get('/api/crm/address-lookup?id=' + encodeURIComponent(sugg.id));
+      const a = data?.address;
+      if (!a) { setLookupError('Could not load that address'); return; }
+      setAddress({
+        line1: a.line1 || '',
+        line2: a.line2 || '',
+        city: a.city || '',
+        postcode: a.postcode || address.postcode,
+        country: a.country || 'United Kingdom',
+      });
+      setLookupResults(null);
+    } catch (err) {
+      setLookupError(err.message || 'Could not load that address');
+    } finally {
+      setLookupLoading(false);
+    }
   };
 
   const submit = async (e) => {

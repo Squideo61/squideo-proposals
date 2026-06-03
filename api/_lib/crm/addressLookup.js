@@ -1,11 +1,25 @@
 // Postcode → address lookup, proxied to getAddress.io so the API key stays
-// server-side. GET /api/crm/address-lookup?postcode=EC3R+8HL
+// server-side. getAddress.io retired the old /find endpoint; the current API is
+// Autocomplete + Get, so this works in two steps:
 //
-// Requires the GETADDRESS_API_KEY env var (set in Vercel). Returns a normalised
-// { postcode, addresses: [{ line1, line2, city, county, postcode, country, label }] }
-// shape the company address form can drop straight into its fields. On a
-// no-results / upstream error it returns 200 with an empty list plus a `detail`
-// string so the form can show exactly what getAddress.io said.
+//   1. GET /api/crm/address-lookup?postcode=HU5+4BD
+//        → { postcode, suggestions: [{ id, label }] }   (autocomplete)
+//   2. GET /api/crm/address-lookup?id=<suggestion id>
+//        → { address: { line1, line2, city, county, postcode, country } }  (get)
+//
+// Requires the GETADDRESS_API_KEY env var (set in Vercel). On a no-results /
+// upstream error it returns 200 with an empty list plus a `detail` string so the
+// form can show exactly what getAddress.io said.
+
+const BASE = 'https://api.getaddress.io';
+
+async function readBody(resp) {
+  const text = await resp.text().catch(() => '');
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
+  const msg = json?.Message || json?.message || (text || '').slice(0, 200);
+  return { json, msg };
+}
 
 export async function addressLookupRoute(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
@@ -13,65 +27,65 @@ export async function addressLookupRoute(req, res) {
   const apiKey = process.env.GETADDRESS_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'Address lookup is not configured (GETADDRESS_API_KEY missing)' });
 
-  const qs = (req.url || '').split('?')[1] || '';
-  const raw = (new URLSearchParams(qs).get('postcode') || '').trim();
-  if (!raw) return res.status(400).json({ error: 'postcode is required' });
-  // getAddress.io's /find path wants the postcode WITH its space (their docs use
-  // e.g. find/SW1A 2AA). A UK postcode's inward code is always the last 3 chars,
-  // so normalise to "OUTWARD INWARD" regardless of how the user typed it.
-  const compact = raw.toUpperCase().replace(/\s+/g, '');
-  const postcode = compact.length > 3
-    ? compact.slice(0, -3) + ' ' + compact.slice(-3)
-    : compact;
+  const params = new URLSearchParams((req.url || '').split('?')[1] || '');
+  const id = (params.get('id') || '').trim();
+  const postcode = (params.get('postcode') || '').trim();
 
-  const url = `https://api.getaddress.io/find/${encodeURIComponent(postcode)}`
-    + `?api-key=${encodeURIComponent(apiKey)}&expand=true`;
+  // ── Step 2: resolve a chosen suggestion id to a full structured address ──
+  if (id) {
+    const url = `${BASE}/get/${encodeURIComponent(id)}?api-key=${encodeURIComponent(apiKey)}`;
+    let resp;
+    try {
+      resp = await fetch(url);
+    } catch (err) {
+      console.error('[address-lookup] get fetch failed', err.message);
+      return res.status(502).json({ error: 'Address lookup service unavailable' });
+    }
+    const { json, msg } = await readBody(resp);
+    if (resp.status === 401) return res.status(503).json({ error: `Address lookup rejected the API key: ${msg || 'unauthorised'}` });
+    if (resp.status === 429) return res.status(429).json({ error: 'Address lookup limit reached — try again shortly' });
+    if (!resp.ok) {
+      console.error('[address-lookup] get', resp.status, msg);
+      return res.status(502).json({ error: `Address lookup failed (${resp.status})${msg ? ': ' + msg : ''}` });
+    }
+    const a = json || {};
+    const line2 = [a.line_2, a.line_3, a.line_4].filter(Boolean).join(', ');
+    return res.status(200).json({
+      address: {
+        line1: a.line_1 || '',
+        line2,
+        city: a.town_or_city || '',
+        county: a.county || '',
+        postcode: (a.postcode || '').toUpperCase(),
+        country: a.country || 'United Kingdom',
+      },
+    });
+  }
+
+  // ── Step 1: autocomplete a postcode into a list of pickable addresses ──
+  if (!postcode) return res.status(400).json({ error: 'postcode is required' });
+  const term = postcode.toUpperCase();
+  const url = `${BASE}/autocomplete/${encodeURIComponent(term)}?api-key=${encodeURIComponent(apiKey)}&all=true`;
 
   let resp;
   try {
     resp = await fetch(url);
   } catch (err) {
-    console.error('[address-lookup] fetch failed', err.message);
+    console.error('[address-lookup] autocomplete fetch failed', err.message);
     return res.status(502).json({ error: 'Address lookup service unavailable' });
   }
+  const { json, msg } = await readBody(resp);
 
-  // Read the body once so we can surface getAddress's own message on errors.
-  const bodyText = await resp.text().catch(() => '');
-  let body = null;
-  try { body = bodyText ? JSON.parse(bodyText) : null; } catch { /* non-JSON */ }
-  const upstreamMsg = body?.Message || body?.message || (bodyText || '').slice(0, 200);
-
+  if (resp.status === 401) return res.status(503).json({ error: `Address lookup rejected the API key: ${msg || 'unauthorised'}` });
+  if (resp.status === 429) return res.status(429).json({ error: 'Address lookup limit reached — try again shortly' });
+  if (resp.status === 400 || resp.status === 404) {
+    return res.status(200).json({ postcode: term, suggestions: [], detail: `${msg || 'No addresses found'} (getAddress ${resp.status})` });
+  }
   if (!resp.ok) {
-    console.error('[address-lookup] getAddress', resp.status, upstreamMsg);
-    // 404 = postcode parsed but no addresses (or not a real postcode). Treat as
-    // an empty result the user can fill manually, but pass the message through.
-    if (resp.status === 404) {
-      return res.status(200).json({ postcode, addresses: [], detail: `${upstreamMsg || 'No addresses found'} (getAddress ${resp.status})` });
-    }
-    if (resp.status === 400) {
-      return res.status(200).json({ postcode, addresses: [], detail: `${upstreamMsg || 'That doesn’t look like a valid postcode'} (getAddress ${resp.status})` });
-    }
-    if (resp.status === 429) return res.status(429).json({ error: 'Address lookup limit reached — try again shortly' });
-    if (resp.status === 401) return res.status(503).json({ error: `Address lookup rejected the API key: ${upstreamMsg || 'unauthorised'}` });
-    return res.status(502).json({ error: `Address lookup failed (${resp.status})${upstreamMsg ? ': ' + upstreamMsg : ''}` });
+    console.error('[address-lookup] autocomplete', resp.status, msg);
+    return res.status(502).json({ error: `Address lookup failed (${resp.status})${msg ? ': ' + msg : ''}` });
   }
 
-  const data = body || {};
-  const outPostcode = (data.postcode || raw).toUpperCase();
-  const addresses = (data.addresses || []).map((a) => {
-    const line1 = a.line_1 || '';
-    const line2 = [a.line_2, a.line_3, a.line_4].filter(Boolean).join(', ');
-    const city = a.town_or_city || '';
-    return {
-      line1,
-      line2,
-      city,
-      county: a.county || '',
-      postcode: outPostcode,
-      country: 'United Kingdom',
-      label: [a.line_1, a.line_2, a.line_3, a.line_4, a.town_or_city].filter(Boolean).join(', '),
-    };
-  });
-
-  return res.status(200).json({ postcode: outPostcode, addresses });
+  const suggestions = (json?.suggestions || []).map((s) => ({ id: s.id, label: s.address }));
+  return res.status(200).json({ postcode: term, suggestions });
 }
