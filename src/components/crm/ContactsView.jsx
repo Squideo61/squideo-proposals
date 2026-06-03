@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Building2, CheckCircle2, Circle, Edit2, Plus, Search, Trash2, User, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { useIsMobile, deriveAddress } from '../../utils.js';
+import { useIsMobile, deriveAddress, formatGBP } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { api } from '../../api.js';
 import { Modal } from '../ui.jsx';
@@ -17,6 +17,14 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXer
   const [customersOnly, setCustomersOnly] = useState(false);
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [balances, setBalances] = useState({});
+
+  // Outstanding-on-signed-work per company, fetched lazily when the
+  // Organisations tab is shown (kept off the main companies list for speed).
+  useEffect(() => {
+    if (view !== 'organisations') return;
+    api.get('/api/crm/companies/balances').then((b) => setBalances(b || {})).catch(() => {});
+  }, [view]);
 
   const contacts = useMemo(() => Object.values(state.contacts || {}), [state.contacts]);
   const companies = useMemo(() => Object.values(state.companies || {}), [state.companies]);
@@ -131,6 +139,7 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXer
             <CompanyRow
               key={c.id}
               company={c}
+              owed={Math.max(0, balances[c.id]?.outstanding || 0)}
               onOpen={() => onOpenCompany?.(c.id)}
               onEdit={() => setEditing(c)}
               onToggleCustomer={async () => {
@@ -205,7 +214,7 @@ function ContactRow({ contact, onOpen, onEdit }) {
   );
 }
 
-function CompanyRow({ company, onOpen, onEdit, onToggleCustomer }) {
+function CompanyRow({ company, owed = 0, onOpen, onEdit, onToggleCustomer }) {
   // Visual hierarchy:
   //   - Green check + "Customer" label when verified by an admin
   //   - Blue check + "Signed customer" when auto-derived from a signed proposal
@@ -231,6 +240,14 @@ function CompanyRow({ company, onOpen, onEdit, onToggleCustomer }) {
           {company.domain && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{company.domain}</div>}
         </div>
       </button>
+      {owed > 0 && (
+        <div
+          title="Outstanding on signed proposals"
+          style={{ display: 'flex', alignItems: 'center', padding: '0 12px', fontSize: 13, fontWeight: 700, color: '#92400E', whiteSpace: 'nowrap' }}
+        >
+          {formatGBP(owed)} owed
+        </div>
+      )}
       <button
         onClick={onToggleCustomer}
         title={isVerified ? 'Unmark as customer' : 'Mark as customer'}

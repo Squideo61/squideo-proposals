@@ -17,7 +17,7 @@ const STATUS_COLOR = {
   void: '#DC2626',
 };
 
-export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals }) {
+export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals, onChanged }) {
   const { showMsg } = useStore();
   const [invoices, setInvoices] = useState(null);
   const [payments, setPayments] = useState(null);
@@ -127,7 +127,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
           deals={deals}
           contactName={contactName}
           onClose={() => setCreatingXero(false)}
-          onCreated={() => { setCreatingXero(false); reloadInvoices(); }}
+          onCreated={() => { setCreatingXero(false); reloadInvoices(); onChanged?.(); }}
         />
       )}
       {adding && (
@@ -136,7 +136,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
           companyId={companyId}
           proposals={proposals}
           onClose={() => setAdding(false)}
-          onCreated={() => { setAdding(false); reloadInvoices(); }}
+          onCreated={() => { setAdding(false); reloadInvoices(); onChanged?.(); }}
         />
       )}
     </Card>

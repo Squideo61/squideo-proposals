@@ -297,7 +297,7 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
         </Card>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <InvoicesPaymentsCard companyId={companyId} contactName={detail.name} deals={detail.deals} />
+          <InvoicesPaymentsCard companyId={companyId} contactName={detail.name} deals={detail.deals} onChanged={reload} />
         </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>

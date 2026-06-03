@@ -86,6 +86,13 @@ export async function companiesRoute(req, res, id, action, user) {
     return res.status(201).json(serialiseCompany(rows[0]));
   }
 
+  // GET /companies/balances — { [companyId]: { committed, paid, outstanding } }
+  // for every company with signed work. Kept off the main list endpoint so the
+  // frequently-loaded companies list stays fast.
+  if (id === 'balances' && req.method === 'GET') {
+    return res.status(200).json(await allCompanyBalances());
+  }
+
   if (!id) {
     if (req.method === 'GET') {
       // EXISTS subquery joins signatures → proposals → deals → companies in
@@ -424,6 +431,53 @@ async function computeCompanyBalance(companyId) {
     paid: Number(paid.toFixed(2)),
     outstanding: Number((committed - paid).toFixed(2)),
   };
+}
+
+// Same maths as computeCompanyBalance but for every company at once, via grouped
+// aggregates — so the Organisations list can show "owed" without N round-trips.
+async function allCompanyBalances() {
+  const [committedRows, stripeRows, partnerRows, manualPayRows, invPaidRows] = await Promise.all([
+    sql`
+      SELECT d.company_id AS cid, COALESCE(SUM((s.data->>'total')::numeric), 0) AS v
+        FROM signatures s
+        JOIN proposals p ON p.id = s.proposal_id
+        JOIN deals d ON d.id = p.deal_id
+       WHERE d.company_id IS NOT NULL AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
+       GROUP BY d.company_id
+    `,
+    sql`SELECT d.company_id AS cid, COALESCE(SUM(pay.amount), 0) AS v
+          FROM payments pay JOIN proposals p ON p.id = pay.proposal_id JOIN deals d ON d.id = p.deal_id
+         WHERE d.company_id IS NOT NULL GROUP BY d.company_id`,
+    sql`SELECT d.company_id AS cid, COALESCE(SUM(pi.amount), 0) AS v
+          FROM partner_invoices pi JOIN proposals p ON p.id = pi.proposal_id JOIN deals d ON d.id = p.deal_id
+         WHERE d.company_id IS NOT NULL GROUP BY d.company_id`,
+    sql`SELECT d.company_id AS cid, COALESCE(SUM(mp.amount), 0) AS v
+          FROM manual_payments mp JOIN proposals p ON p.id = mp.proposal_id JOIN deals d ON d.id = p.deal_id
+         WHERE mp.manual_invoice_id IS NULL AND d.company_id IS NOT NULL GROUP BY d.company_id`,
+    sql`SELECT COALESCE(mi.company_id, d.company_id, dp.company_id) AS cid, COALESCE(SUM(mi.amount), 0) AS v
+          FROM manual_invoices mi
+          LEFT JOIN deals d ON d.id = mi.deal_id
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+          LEFT JOIN deals dp ON dp.id = pr.deal_id
+         WHERE mi.status = 'paid'
+         GROUP BY COALESCE(mi.company_id, d.company_id, dp.company_id)`,
+  ]);
+
+  const committed = new Map(committedRows.map(r => [r.cid, Number(r.v) || 0]));
+  const paid = new Map();
+  for (const rows of [stripeRows, partnerRows, manualPayRows, invPaidRows]) {
+    for (const r of rows) {
+      if (!r.cid) continue;
+      paid.set(r.cid, (paid.get(r.cid) || 0) + (Number(r.v) || 0));
+    }
+  }
+
+  const out = {};
+  for (const [cid, c] of committed) {
+    const p = paid.get(cid) || 0;
+    out[cid] = { committed: Number(c.toFixed(2)), paid: Number(p.toFixed(2)), outstanding: Number((c - p).toFixed(2)) };
+  }
+  return out;
 }
 
 export function serialiseCompany(r) {
