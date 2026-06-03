@@ -11,7 +11,7 @@ function makeLineItem() {
   return { _key: ++_lineItemKey, description: '', quantity: 1, unitAmount: '', vatRate: 20 };
 }
 
-export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId, proposalId, contactName: contactNameProp, onClose, onCreated }) {
+export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId, mode, proposalId, contactName: contactNameProp, onClose, onCreated }) {
   const { showMsg } = useStore();
   const [contactName, setContactName] = useState(contactNameProp || '');
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -43,7 +43,7 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
     if (!dealChoice || dealChoice === '__new__') return;
     let cancelled = false;
     setLoadingLines(true);
-    api.get('/api/crm/invoices/suggested-lines?dealId=' + encodeURIComponent(dealChoice))
+    api.get('/api/crm/invoices/suggested-lines?dealId=' + encodeURIComponent(dealChoice) + (mode === 'final' ? '&mode=final' : ''))
       .then((data) => {
         if (cancelled) return;
         const lines = data?.lineItems || [];
@@ -56,7 +56,7 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoadingLines(false); });
     return () => { cancelled = true; };
-  }, [dealChoice, companyMode]);
+  }, [dealChoice, companyMode, mode]);
 
   function updateLine(key, field, value) {
     setLineItems(prev => prev.map(li => li._key === key ? { ...li, [field]: value } : li));

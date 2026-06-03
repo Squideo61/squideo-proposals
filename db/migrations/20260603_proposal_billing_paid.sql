@@ -6,3 +6,6 @@
 -- here so the company balance can subtract it without a Xero round-trip.
 ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS paid_amount NUMERIC;
 ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+-- The invoice's inc-VAT total (whether paid or not), so the company page can
+-- compute how much of the signed work has been invoiced vs still un-invoiced.
+ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS invoice_amount NUMERIC;

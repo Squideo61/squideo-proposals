@@ -35,11 +35,22 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
   const [payments, setPayments] = useState(null);
   const [adding, setAdding] = useState(false);
   const [creatingXero, setCreatingXero] = useState(false);
+  // When creating from a "not invoiced" card we target a specific deal and pull
+  // the appropriate portion: the balance if a deposit's already been raised,
+  // else the first (deposit/full) invoice.
+  const [createDealId, setCreateDealId] = useState(null);
+  const [createMode, setCreateMode] = useState(null);
+
+  function openCreate({ dealId: dId = null, mode = null } = {}) {
+    setCreateDealId(dId);
+    setCreateMode(mode);
+    setCreatingXero(true);
+  }
 
   // Parent can ask us to open the create-invoice modal (e.g. the company page's
   // "Invoice needs generating" banner button), optionally preselecting a deal.
   useEffect(() => {
-    if (openCreateSignal) setCreatingXero(true);
+    if (openCreateSignal) openCreate({ dealId: preselectDealId || null });
   }, [openCreateSignal]);
 
   // Scope by deal or, on the company page, by company.
@@ -74,12 +85,14 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
   const allInvoices = invoices || [];
   const standAlonePayments = payments || [];
 
+  // Three buckets, plus the not-invoiced balances derived from each deal.
+  const notInvoicedDeals = (deals || []).filter(d => d.balance && d.balance.notInvoiced > 0);
+  const paidInvoices = allInvoices.filter(r => r.status === 'paid');
+  const outstandingInvoices = allInvoices.filter(r => r.status !== 'paid'); // issued/authorised (+ any void)
+
   // Totals are summed per-currency — we don't FX-convert non-GBP into a single
   // bucket, so each currency renders as its own subtotal.
-  const paidRows = [
-    ...allInvoices.filter(r => r.status === 'paid'),
-    ...standAlonePayments,
-  ];
+  const paidRows = [...paidInvoices, ...standAlonePayments];
   const totalsByCurrency = paidRows.reduce((acc, r) => {
     const ccy = r.currency || 'GBP';
     acc[ccy] = (acc[ccy] || 0) + (Number(r.amount) || 0);
@@ -88,6 +101,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
   const totalEntries = Object.entries(totalsByCurrency).filter(([, v]) => v > 0);
 
   const count = allInvoices.length + standAlonePayments.length;
+  const isEmpty = count === 0 && notInvoicedDeals.length === 0;
 
   return (
     <Card
@@ -95,31 +109,65 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
       count={count || undefined}
       action={(
         <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={() => setCreatingXero(true)} className="btn"><Plus size={12} /> Create invoice</button>
+          <button onClick={() => openCreate()} className="btn"><Plus size={12} /> Create invoice</button>
           <button onClick={() => setAdding(true)} className="btn-ghost"><Plus size={12} /> Upload invoice</button>
         </div>
       )}
     >
       {loading && <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>}
 
-      {!loading && count === 0 && <Empty text="No invoices or payments yet" />}
+      {!loading && isEmpty && <Empty text="No invoices or payments yet" />}
 
-      {!loading && allInvoices.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {allInvoices.map(r => (
-            <InvoiceRow key={r.id} row={r} dealId={dealId} onChanged={reload} />
-          ))}
-        </div>
+      {/* Outstanding balances — signed work not yet invoiced (e.g. the final 50%) */}
+      {!loading && notInvoicedDeals.length > 0 && (
+        <>
+          <SectionLabel>Outstanding balances — not invoiced</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {notInvoicedDeals.map(d => (
+              <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    {d.title} <span style={{ color: '#92400E' }}>· {formatGBP(d.balance.notInvoiced)}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
+                    {d.balance.invoiced > 0
+                      ? `${formatGBP(d.balance.invoiced)} invoiced of ${formatGBP(d.balance.committed)} signed`
+                      : `${formatGBP(d.balance.committed)} signed · nothing invoiced yet`}
+                  </div>
+                </div>
+                <button
+                  onClick={() => openCreate({ dealId: d.id, mode: d.balance.invoiced > 0 ? 'final' : null })}
+                  className="btn"
+                  style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                >
+                  <Plus size={12} /> Create invoice
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
-      {!loading && standAlonePayments.length > 0 && (
+      {/* Invoiced — outstanding (raised, not yet paid) */}
+      {!loading && outstandingInvoices.length > 0 && (
         <>
-          {allInvoices.length > 0 && (
-            <div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, margin: '14px 0 6px' }}>
-              Other payments
-            </div>
-          )}
+          <SectionLabel>Invoiced — outstanding</SectionLabel>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {outstandingInvoices.map(r => (
+              <InvoiceRow key={r.id} row={r} dealId={dealId} onChanged={reload} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Paid (paid invoices + standalone payments) */}
+      {!loading && (paidInvoices.length > 0 || standAlonePayments.length > 0) && (
+        <>
+          <SectionLabel>Paid</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {paidInvoices.map(r => (
+              <InvoiceRow key={r.id} row={r} dealId={dealId} onChanged={reload} />
+            ))}
             {standAlonePayments.map(r => (
               <StandalonePaymentRow key={r.id} row={r} onChanged={reloadPayments} />
             ))}
@@ -143,7 +191,8 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
           dealId={dealId}
           companyId={companyId}
           deals={deals}
-          initialDealId={preselectDealId}
+          initialDealId={createDealId || preselectDealId}
+          mode={createMode}
           contactName={contactName}
           onClose={() => setCreatingXero(false)}
           onCreated={() => { setCreatingXero(false); reloadInvoices(); onChanged?.(); }}
@@ -159,6 +208,14 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
         />
       )}
     </Card>
+  );
+}
+
+function SectionLabel({ children }) {
+  return (
+    <div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, margin: '14px 0 6px' }}>
+      {children}
+    </div>
   );
 }
 

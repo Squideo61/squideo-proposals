@@ -5,7 +5,6 @@ import { useStore } from '../../store.jsx';
 import { useIsMobile, formatGBP, formatRelativeTime, effectiveAddress, formatAddressLines } from '../../utils.js';
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
-import { PaymentsCard } from './PaymentsCard.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
@@ -36,9 +35,8 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
       .catch(() => setPayments([]));
   }, [companyId, showMsg]);
 
-  // Lifetime value rollup. We deliberately sum the rollup we already render
-  // in PaymentsCard so there's a single source of truth (Stripe initial +
-  // Partner monthly + manual).
+  // Lifetime value rollup from the company's payments (Stripe initial +
+  // Partner monthly + manual) — a single source of truth for the headline.
   const lifetimeTotals = (() => {
     if (!payments) return null;
     const year = new Date().getFullYear();
@@ -324,10 +322,6 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <InvoicesPaymentsCard companyId={companyId} contactName={detail.name} deals={detail.deals} onChanged={reload} openCreateSignal={createSignal} preselectDealId={preselectDealId} />
-        </div>
-
-        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <PaymentsCard companyId={companyId} />
         </div>
       </div>
 

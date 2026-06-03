@@ -36,6 +36,7 @@ function ensureProposalBillingPaidColumns() {
   proposalBillingPaidColumnsEnsured = (async () => {
     await sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS paid_amount NUMERIC`;
     await sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS invoice_amount NUMERIC`;
   })().catch((err) => { proposalBillingPaidColumnsEnsured = null; throw err; });
   return proposalBillingPaidColumnsEnsured;
 }
@@ -500,7 +501,7 @@ async function computeCompanyBalance(companyId) {
 // grouped by deal. Assumes reconcileProposalBillingPaid has already run (the
 // detail route calls computeCompanyBalance first on the same load).
 async function computeCompanyDealBalances(companyId) {
-  const [committedRows, stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows] = await Promise.all([
+  const [committedRows, stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows, miInvoicedRows, pbInvoicedRows] = await Promise.all([
     sql`SELECT d.id AS did, COALESCE(SUM((s.data->>'total')::numeric),0) AS v
           FROM signatures s JOIN proposals p ON p.id=s.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE d.company_id=${companyId} AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
@@ -524,6 +525,17 @@ async function computeCompanyDealBalances(companyId) {
     sql`SELECT d.id AS did, COALESCE(SUM(pb.paid_amount),0) AS v
           FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE d.company_id=${companyId} AND pb.paid_amount IS NOT NULL GROUP BY d.id`,
+    // Invoiced (raised, not void) per deal — manual invoices + proposal-billing.
+    sql`SELECT COALESCE(mi.deal_id, dp.id) AS did, COALESCE(SUM(mi.amount),0) AS v
+          FROM manual_invoices mi
+          LEFT JOIN deals dd ON dd.id = mi.deal_id
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+          LEFT JOIN deals dp ON dp.id = pr.deal_id
+         WHERE mi.status != 'void' AND COALESCE(dd.company_id, dp.company_id) = ${companyId}
+         GROUP BY COALESCE(mi.deal_id, dp.id)`,
+    sql`SELECT d.id AS did, COALESCE(SUM(pb.invoice_amount),0) AS v
+          FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE d.company_id=${companyId} AND pb.invoice_amount IS NOT NULL GROUP BY d.id`,
   ]);
   const committed = new Map(committedRows.map(r => [r.did, Number(r.v) || 0]));
   const paid = new Map();
@@ -533,11 +545,25 @@ async function computeCompanyDealBalances(companyId) {
       paid.set(r.did, (paid.get(r.did) || 0) + (Number(r.v) || 0));
     }
   }
+  const invoiced = new Map();
+  for (const rows of [miInvoicedRows, pbInvoicedRows]) {
+    for (const r of rows) {
+      if (!r.did) continue;
+      invoiced.set(r.did, (invoiced.get(r.did) || 0) + (Number(r.v) || 0));
+    }
+  }
   const out = {};
-  for (const did of new Set([...committed.keys(), ...paid.keys()])) {
+  for (const did of new Set([...committed.keys(), ...paid.keys(), ...invoiced.keys()])) {
     const c = committed.get(did) || 0;
     const p = paid.get(did) || 0;
-    out[did] = { committed: Number(c.toFixed(2)), paid: Number(p.toFixed(2)), outstanding: Number((c - p).toFixed(2)) };
+    const inv = invoiced.get(did) || 0;
+    out[did] = {
+      committed: Number(c.toFixed(2)),
+      paid: Number(p.toFixed(2)),
+      invoiced: Number(inv.toFixed(2)),
+      notInvoiced: Number(Math.max(0, c - inv).toFixed(2)),
+      outstanding: Number((c - p).toFixed(2)),
+    };
   }
   return out;
 }

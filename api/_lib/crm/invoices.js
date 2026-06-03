@@ -19,6 +19,7 @@ import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoi
 import {
   lineItemsForProject,
   depositLineItems,
+  balanceLineItems,
   lineItemsForDiscountedProject,
   lineItemsForPartnerFirstMonth,
   formatProposalNumber,
@@ -47,6 +48,7 @@ function ensureProposalBillingPaidColumns() {
   proposalBillingPaidColEnsured = (async () => {
     await sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS paid_amount NUMERIC`;
     await sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS invoice_amount NUMERIC`;
   })().catch((err) => { proposalBillingPaidColEnsured = null; throw err; });
   return proposalBillingPaidColEnsured;
 }
@@ -92,6 +94,8 @@ export async function invoicesRoute(req, res, id, action, user) {
   if (id === 'suggested-lines' && req.method === 'GET') {
     const dealId = trimOrNull(req.query.dealId);
     if (!dealId) return res.status(400).json({ error: 'dealId required' });
+    // mode=final → the remaining balance after the deposit (50/50 final invoice).
+    const isFinal = trimOrNull(req.query.mode) === 'final';
 
     const [row] = await sql`
       SELECT p.id, p.data, p.number_year, p.number_seq,
@@ -112,7 +116,13 @@ export async function invoicesRoute(req, res, id, action, user) {
 
     let xeroLines;
     let paymentLabel;
-    if (isPartner) {
+    if (isFinal) {
+      // The remaining balance. Only 50/50 deals have one; full/partner are
+      // invoiced in a single shot, so there's nothing left to itemise.
+      if (!isDeposit) return res.status(200).json({ lineItems: [], paymentLabel: null, proposalId: row.id });
+      xeroLines = balanceLineItems(proposal, signed, 0.5, proposalNumber);
+      paymentLabel = '50% balance (final)';
+    } else if (isPartner) {
       xeroLines = [
         ...lineItemsForDiscountedProject(proposal, signed, proposalNumber),
         ...lineItemsForPartnerFirstMonth(proposal, signed, proposalNumber),
@@ -1190,7 +1200,7 @@ export async function reconcileProposalBillingPaid(proposalIds) {
   if (!proposalIds || !proposalIds.length) return;
   await ensureProposalBillingPaidColumns();
   const rows = await sql`
-    SELECT xero_invoice_id, paid_amount FROM proposal_billing
+    SELECT xero_invoice_id, paid_amount, invoice_amount FROM proposal_billing
      WHERE proposal_id = ANY(${proposalIds}) AND xero_invoice_id IS NOT NULL
   `;
   if (!rows.length) return;
@@ -1201,14 +1211,17 @@ export async function reconcileProposalBillingPaid(proposalIds) {
     const x = live.get(r.xero_invoice_id);
     if (!x) continue;
     const paidSoFar = pbPaidFromXero(x);
-    const cur = r.paid_amount != null ? Number(r.paid_amount) : null;
-    if (paidSoFar !== cur) {
+    // The invoice's inc-VAT total (cleared to null only when voided).
+    const invAmt = x.status === 'VOIDED' ? null : (x.total != null ? Number(x.total) : null);
+    const curPaid = r.paid_amount != null ? Number(r.paid_amount) : null;
+    const curInv = r.invoice_amount != null ? Number(r.invoice_amount) : null;
+    if (paidSoFar !== curPaid || invAmt !== curInv) {
       const paidAt = paidSoFar != null ? (x.fullyPaidOn || new Date().toISOString().slice(0, 10)) : null;
       writes.push(
         sql`UPDATE proposal_billing
-               SET paid_amount = ${paidSoFar}, paid_at = ${paidAt}, updated_at = NOW()
+               SET paid_amount = ${paidSoFar}, paid_at = ${paidAt}, invoice_amount = ${invAmt}, updated_at = NOW()
              WHERE xero_invoice_id = ${r.xero_invoice_id}
-               AND paid_amount IS DISTINCT FROM ${paidSoFar}`,
+               AND (paid_amount IS DISTINCT FROM ${paidSoFar} OR invoice_amount IS DISTINCT FROM ${invAmt})`,
       );
     }
   }

@@ -87,6 +87,23 @@ export function depositLineItems(proposal, signed, fraction = 0.5, proposalNumbe
   });
 }
 
+// Balance (final) invoice — mirrors depositLineItems' breakdown for the
+// remaining fraction, labelled "balance" rather than "deposit" so the final
+// 50% invoice itemises just like the deposit did.
+export function balanceLineItems(proposal, signed, fraction = 0.5, proposalNumber) {
+  const projectLines = lineItemsForProject(proposal, signed, proposalNumber);
+  const pct = Math.round(fraction * 100);
+  return projectLines.map(l => {
+    const out = {
+      ...l,
+      description: `${l.description} (${pct}% balance)`,
+      unitAmount: Number((l.unitAmount * fraction).toFixed(2)),
+    };
+    if (l.discountAmount != null) out.discountAmount = Number((l.discountAmount * fraction).toFixed(2));
+    return out;
+  });
+}
+
 // Discounted project lines for the Partner Programme path: applies the
 // effectiveDiscount captured in signed.amountBreakdown.discountRate to every
 // project line so each one shows the discounted unit price.
