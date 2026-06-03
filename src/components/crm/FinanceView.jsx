@@ -235,7 +235,7 @@ function PendingPayments({ pending, onOpenDeal, isMobile }) {
         Pending Payments
       </h3>
       <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
-        Outstanding balances on signed deals — amounts still to collect (inc VAT).
+        Outstanding balances on signed deals — shown ex-VAT (net).
       </p>
       {!pending ? (
         <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>

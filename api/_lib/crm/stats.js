@@ -232,21 +232,29 @@ async function salesReport(action) {
 
 // Outstanding balance per signed deal across all customers, split into PO-route
 // deals (paid regardless of project stage) and normal invoiced work (paid on
-// project milestones/completion). Amounts are inc-VAT — the cash still to
-// collect — matching the Finance "Outstanding" card. Mirrors the committed/paid
-// maths in companies.js (computeCompanyDealBalances) but global and deal-grouped.
+// project milestones/completion). Amounts are ex-VAT (net) to match the rest of
+// the Finance page; each deal's net is derived from its proposals' vatRate.
+// Mirrors the committed/paid maths in companies.js but global and deal-grouped.
 async function pendingPaymentsReport() {
-  const committedRows = await sql`
-    SELECT d.id AS did,
-           COALESCE(SUM((s.data->>'total')::numeric), 0) AS committed,
-           bool_or(s.data->>'paymentOption' = 'po') AS is_po
+  // Per signature so we can aggregate committed + the deal's VAT rate + PO flag
+  // in JS (vatRate parsed as text → avoids a risky SQL numeric cast).
+  const sigRows = await sql`
+    SELECT d.id AS did, s.data->>'total' AS total, p.data->>'vatRate' AS rate, s.data->>'paymentOption' AS opt
       FROM signatures s
       JOIN proposals p ON p.id = s.proposal_id
       JOIN deals d ON d.id = p.deal_id
      WHERE (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
-     GROUP BY d.id
   `;
-  if (!committedRows.length) return { normal: [], po: [], totals: { normal: 0, po: 0 } };
+  if (!sigRows.length) return { normal: [], po: [], totals: { normal: 0, po: 0 } };
+
+  const committed = new Map(); // did -> inc-VAT signed total
+  const rateByDeal = new Map(); // did -> max vatRate across its proposals
+  const poByDeal = new Map(); // did -> on the PO route?
+  for (const r of sigRows) {
+    committed.set(r.did, (committed.get(r.did) || 0) + (Number(r.total) || 0));
+    rateByDeal.set(r.did, Math.max(rateByDeal.get(r.did) || 0, Number(r.rate) || 0));
+    if (r.opt === 'po') poByDeal.set(r.did, true);
+  }
 
   const [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows] = await Promise.all([
     sql`SELECT d.id AS did, COALESCE(SUM(pay.amount),0) AS v
@@ -272,7 +280,7 @@ async function pendingPaymentsReport() {
     for (const r of rows) { if (!r.did) continue; paid.set(r.did, (paid.get(r.did) || 0) + (Number(r.v) || 0)); }
   }
 
-  const dealIds = committedRows.map((r) => r.did);
+  const dealIds = [...committed.keys()];
   const infoRows = await sql`
     SELECT d.id, d.title, d.stage, d.company_id, c.name AS company_name
       FROM deals d LEFT JOIN companies c ON c.id = d.company_id
@@ -282,23 +290,24 @@ async function pendingPaymentsReport() {
 
   const normal = [];
   const po = [];
-  for (const r of committedRows) {
-    const committed = Number(r.committed) || 0;
-    const p = paid.get(r.did) || 0;
-    const outstanding = round2(committed - p);
-    if (outstanding <= 0.005) continue;
-    const inf = info.get(r.did) || {};
+  for (const did of dealIds) {
+    const inc = committed.get(did) || 0;
+    const outstandingInc = inc - (paid.get(did) || 0);
+    if (outstandingInc <= 0.005) continue;
+    const rate = rateByDeal.get(did) || 0;
+    const net = (v) => round2(rate > 0 ? v / (1 + rate) : v);
+    const inf = info.get(did) || {};
     const item = {
-      dealId: r.did,
+      dealId: did,
       title: inf.title || 'Untitled deal',
       company: inf.company_name || null,
       companyId: inf.company_id || null,
       stage: inf.stage || null,
-      committed: round2(committed),
-      paid: round2(p),
-      outstanding,
+      committed: net(inc),
+      paid: net(paid.get(did) || 0),
+      outstanding: net(outstandingInc),
     };
-    (r.is_po ? po : normal).push(item);
+    (poByDeal.get(did) ? po : normal).push(item);
   }
   const byOutstanding = (a, b) => b.outstanding - a.outstanding;
   normal.sort(byOutstanding);
