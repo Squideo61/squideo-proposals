@@ -77,6 +77,7 @@ function emptyStore() {
     financeStats: null,
     performanceStats: null,
     financeTargets: [],
+    bankHolidays: null,
     partnerCreditsList: null,
     partnerCreditDetail: {},
     // In-app notification feed (the bell). notifications: newest-first list,
@@ -745,6 +746,15 @@ export function StoreProvider({ children }) {
     saveFinanceTargets(list) {
       setState(s => ({ ...s, financeTargets: list }));
       api.put('/api/settings', { financeTargets: list }).catch(() => {});
+    },
+    // England & Wales bank holidays (gov.uk feed via our endpoint), for the
+    // Performance working-day pacing. Cached in state — load once.
+    loadBankHolidays() {
+      return api.get('/api/crm/stats/bank-holidays').then((data) => {
+        const dates = Array.isArray(data?.dates) ? data.dates : [];
+        setState(s => ({ ...s, bankHolidays: dates }));
+        return dates;
+      }).catch(() => []);
     },
     saveSignature(id, sig) {
       setState(s => ({ ...s, signatures: { ...s.signatures, [id]: sig } }));

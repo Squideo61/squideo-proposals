@@ -15,6 +15,33 @@ import { allCompanyBalances } from './companies.js';
 
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
 
+// England & Wales bank holidays from the gov.uk feed, cached per cold start (24h)
+// with a hardcoded fallback so working-day pacing keeps working if the feed is
+// unreachable. Returns an array of 'YYYY-MM-DD'. The SPA reads this via our own
+// endpoint (same-origin) rather than hitting gov.uk directly (CSP / caching).
+const BANK_HOLIDAY_FALLBACK = [
+  '2026-01-01', '2026-04-03', '2026-04-06', '2026-05-04', '2026-05-25', '2026-08-31', '2026-12-25', '2026-12-28',
+  '2027-01-01', '2027-03-26', '2027-03-29', '2027-05-03', '2027-05-31', '2027-08-30', '2027-12-27', '2027-12-28',
+];
+let bankHolidaysCache = null;
+let bankHolidaysCacheAt = 0;
+async function bankHolidaysEW() {
+  const TTL = 24 * 60 * 60 * 1000;
+  if (bankHolidaysCache && Date.now() - bankHolidaysCacheAt < TTL) return bankHolidaysCache;
+  try {
+    const r = await fetch('https://www.gov.uk/bank-holidays.json', { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) throw new Error('gov.uk ' + r.status);
+    const json = await r.json();
+    const dates = (json?.['england-and-wales']?.events || []).map((e) => e.date).filter(Boolean);
+    if (!dates.length) throw new Error('empty feed');
+    bankHolidaysCache = dates;
+    bankHolidaysCacheAt = Date.now();
+    return dates;
+  } catch {
+    return BANK_HOLIDAY_FALLBACK;
+  }
+}
+
 // Split an inc-VAT amount into net (ex-VAT) and VAT using a fractional rate
 // (0.2 = 20%). vatRate is stored on the proposal as a fraction.
 function splitVat(inc, rate) {
@@ -133,10 +160,32 @@ async function financeReport(year) {
   };
 }
 
-async function performanceReport(monthStr) {
-  const [y, m] = monthStr.split('-').map(Number);
-  const since = new Date(Date.UTC(y, m - 1, 1)).toISOString();
-  const until = new Date(Date.UTC(y, m, 1)).toISOString();
+// A performance period: 'YYYY-MM' (month) or 'YYYY-Qn' (calendar quarter).
+// Falls back to the current month. spanMonths lets the client scale targets.
+function parsePerformancePeriod(action) {
+  const now = new Date();
+  if (/^\d{4}-Q[1-4]$/.test(action || '')) {
+    const [y, q] = action.split('-Q').map(Number);
+    const startM = (q - 1) * 3;
+    return {
+      period: action, spanMonths: 3,
+      since: new Date(Date.UTC(y, startM, 1)).toISOString(),
+      until: new Date(Date.UTC(y, startM + 3, 1)).toISOString(),
+    };
+  }
+  const m = /^\d{4}-\d{2}$/.test(action || '')
+    ? action
+    : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  const [y, mo] = m.split('-').map(Number);
+  return {
+    period: m, spanMonths: 1,
+    since: new Date(Date.UTC(y, mo - 1, 1)).toISOString(),
+    until: new Date(Date.UTC(y, mo, 1)).toISOString(),
+  };
+}
+
+async function performanceReport(action) {
+  const { period, spanMonths, since, until } = parsePerformancePeriod(action);
   const rows = await fetchPaidRows(since, until);
 
   const byDay = {};
@@ -149,11 +198,16 @@ async function performanceReport(monthStr) {
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([date, v]) => ({ date, net: round2(v.net), vat: round2(v.vat), gross: round2(v.gross) }));
 
-  return { month: monthStr, days };
+  return { period, spanMonths, since, until, days };
 }
 
 export async function statsRoute(req, res, id, action, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Reference data — any authenticated user may read it (no business figures).
+  if (id === 'bank-holidays') {
+    return res.status(200).json({ dates: await bankHolidaysEW() });
+  }
 
   // Whole-business finances — owner/admin only.
   if (!hasPermission(await getRole(user.role), 'settings.manage')) {
@@ -166,11 +220,7 @@ export async function statsRoute(req, res, id, action, user) {
   }
 
   if (id === 'performance') {
-    const now = new Date();
-    const month = /^\d{4}-\d{2}$/.test(action || '')
-      ? action
-      : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-    return res.status(200).json(await performanceReport(month));
+    return res.status(200).json(await performanceReport(action));
   }
 
   return res.status(404).json({ error: 'Unknown stats report' });

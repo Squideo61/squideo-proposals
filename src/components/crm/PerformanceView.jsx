@@ -6,7 +6,7 @@ import {
 } from 'recharts';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP, useIsMobile, workingDaysInMonth, todayKey } from '../../utils.js';
+import { formatGBP, useIsMobile, workingDaysBetween, ukBankHolidays, todayKey } from '../../utils.js';
 
 // Fallback if settings hasn't loaded targets yet (matches api/settings.js seed).
 const FALLBACK_TARGETS = [
@@ -16,12 +16,8 @@ const FALLBACK_TARGETS = [
 ];
 
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
-const monthLabel = (key) => {
-  const [y, m] = key.split('-').map(Number);
-  return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
-};
 
-// Last 12 months as 'YYYY-MM' keys, newest first.
+// Recent month / quarter period keys, newest first, for the dropdown.
 function recentMonths(n = 12) {
   const out = [];
   const now = new Date();
@@ -31,27 +27,76 @@ function recentMonths(n = 12) {
   }
   return out;
 }
+function recentQuarters(n = 8) {
+  const out = [];
+  const now = new Date();
+  let y = now.getFullYear();
+  let q = Math.floor(now.getMonth() / 3) + 1;
+  for (let i = 0; i < n; i++) {
+    out.push(`${y}-Q${q}`);
+    q -= 1; if (q < 1) { q = 4; y -= 1; }
+  }
+  return out;
+}
+
+// Resolve a period key into a [startKey, endKey) range, span and label.
+function periodRange(period) {
+  if (/^\d{4}-Q[1-4]$/.test(period)) {
+    const [y, q] = period.split('-Q').map(Number);
+    const sM = (q - 1) * 3; // 0-based start month
+    const startKey = `${y}-${String(sM + 1).padStart(2, '0')}-01`;
+    const endY = sM + 3 >= 12 ? y + 1 : y;
+    const endKey = `${endY}-${String(((sM + 3) % 12) + 1).padStart(2, '0')}-01`;
+    return { startKey, endKey, spanMonths: 3, label: `Q${q} ${y}` };
+  }
+  const [y, m] = period.split('-').map(Number);
+  const endY = m === 12 ? y + 1 : y;
+  const endKey = `${endY}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}-01`;
+  return {
+    startKey: `${y}-${String(m).padStart(2, '0')}-01`,
+    endKey,
+    spanMonths: 1,
+    label: new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' }),
+  };
+}
+
+const monthOptionLabel = (k) => {
+  const [y, m] = k.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
+};
 
 export function PerformanceView({ onBack }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
+  const [mode, setMode] = useState('month'); // 'month' | 'quarter'
   const [month, setMonth] = useState(() => todayKey().slice(0, 7));
+  const [quarter, setQuarter] = useState(() => recentQuarters(1)[0]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+
+  const period = mode === 'month' ? month : quarter;
+
+  useEffect(() => {
+    if (!state.bankHolidays) actions.loadBankHolidays();
+  }, [actions, state.bankHolidays]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    actions.loadPerformanceStats(month).finally(() => { if (active) setLoading(false); });
+    actions.loadPerformanceStats(period).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [actions, month]);
+  }, [actions, period]);
 
   const targets = (state.financeTargets && state.financeTargets.length) ? state.financeTargets : FALLBACK_TARGETS;
-  const perf = state.performanceStats && state.performanceStats.month === month ? state.performanceStats : null;
+  const holidays = useMemo(
+    () => (Array.isArray(state.bankHolidays) && state.bankHolidays.length ? new Set(state.bankHolidays) : ukBankHolidays),
+    [state.bankHolidays],
+  );
+  const perf = state.performanceStats && state.performanceStats.period === period ? state.performanceStats : null;
 
   const model = useMemo(() => {
-    const [y, m] = month.split('-').map(Number);
-    const workingDays = workingDaysInMonth(y, m);
+    const { startKey, endKey, spanMonths, label } = periodRange(period);
+    const workingDays = workingDaysBetween(startKey, endKey, holidays);
     const N = workingDays.length || 1;
     const serverDays = (perf?.days || []).slice().sort((a, b) => (a.date < b.date ? -1 : 1));
     const cumTo = (dateStr) => {
@@ -61,24 +106,22 @@ export function PerformanceView({ onBack }) {
     };
 
     const tKey = todayKey();
-    const curMonthKey = tKey.slice(0, 7);
-    const isPast = month < curMonthKey;
-    const isCurrent = month === curMonthKey;
-    const lastActualIdx = isPast ? N : (isCurrent ? workingDays.filter((wd) => wd <= tKey).length : 0);
+    const lastActualIdx = workingDays.filter((wd) => wd <= tKey).length;
+    const status = lastActualIdx === 0 ? 'future' : (lastActualIdx >= N ? 'complete' : 'in_progress');
 
     const data = workingDays.map((wd, i) => {
       const dayNum = i + 1;
       const point = { day: dayNum };
       point.actual = dayNum <= lastActualIdx ? Number(cumTo(wd).toFixed(2)) : null;
-      for (const t of targets) point[t.key] = Number(((Number(t.amount) || 0) * dayNum / N).toFixed(2));
+      for (const t of targets) point[t.key] = Number(((Number(t.amount) || 0) * spanMonths * dayNum / N).toFixed(2));
       return point;
     });
 
     const netSoFar = lastActualIdx > 0 ? cumTo(workingDays[lastActualIdx - 1]) : 0;
     const projected = lastActualIdx > 0 ? (netSoFar / lastActualIdx) * N : 0;
 
-    return { N, lastActualIdx, data, netSoFar, projected, isCurrent, isPast };
-  }, [perf, month, targets]);
+    return { N, lastActualIdx, data, netSoFar, projected, status, spanMonths, label };
+  }, [perf, period, targets, holidays]);
 
   return (
     <div style={{ padding: isMobile ? '20px 16px' : '40px 24px', maxWidth: 1100, margin: '0 auto' }}>
@@ -91,20 +134,27 @@ export function PerformanceView({ onBack }) {
               <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Performance</h1>
             </div>
             <p style={{ fontSize: 13, color: BRAND.muted, margin: '2px 0 0' }}>
-              Cash received (ex-VAT) across all customers, paced against your monthly targets by working day.
+              Cash received (ex-VAT) across all customers, paced against your targets by working day.
             </p>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <button onClick={() => setEditing((v) => !v)} className="btn-ghost" title="Edit targets">
             <Pencil size={14} /> Targets
           </button>
+          <Segmented
+            value={mode}
+            onChange={setMode}
+            options={[{ value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' }]}
+          />
           <select
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
+            value={period}
+            onChange={(e) => (mode === 'month' ? setMonth(e.target.value) : setQuarter(e.target.value))}
             style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
           >
-            {recentMonths(12).map((k) => <option key={k} value={k}>{monthLabel(k)}</option>)}
+            {mode === 'month'
+              ? recentMonths(12).map((k) => <option key={k} value={k}>{monthOptionLabel(k)}</option>)
+              : recentQuarters(8).map((k) => { const [y, q] = k.split('-Q'); return <option key={k} value={k}>{`Q${q} ${y}`}</option>; })}
           </select>
         </div>
       </header>
@@ -114,19 +164,22 @@ export function PerformanceView({ onBack }) {
       {/* Pace strip: where you are today vs each target's expected pace. */}
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${targets.length + 1}, 1fr)`, gap: 12, marginBottom: 16 }}>
         <PaceCard
-          title={model.isCurrent ? `Working day ${model.lastActualIdx} of ${model.N}` : (model.isPast ? `${model.N} working days` : 'Upcoming month')}
+          title={model.status === 'future' ? 'Upcoming period' : `Working day ${model.lastActualIdx} of ${model.N}`}
           big={formatGBP(model.netSoFar)}
-          sub={model.isCurrent ? `Net banked so far · projected ${formatGBP(model.projected)} by month end` : (model.isPast ? 'Net banked (final)' : 'No cash yet')}
+          sub={model.status === 'in_progress'
+            ? `Net banked so far · projected ${formatGBP(model.projected)} by end`
+            : (model.status === 'complete' ? 'Net banked (final)' : 'No cash yet')}
           color={BRAND.blue}
         />
         {targets.map((t) => {
-          const expected = (Number(t.amount) || 0) * (model.lastActualIdx / model.N);
+          const target = (Number(t.amount) || 0) * model.spanMonths;
+          const expected = target * (model.lastActualIdx / model.N);
           const delta = model.netSoFar - expected;
           const ahead = delta >= 0;
           return (
             <PaceCard
               key={t.key}
-              title={`${t.label} · ${formatGBP(t.amount)}`}
+              title={`${t.label} · ${formatGBP(target)}`}
               big={(ahead ? '+' : '−') + formatGBP(Math.abs(delta))}
               sub={`${ahead ? 'ahead of' : 'behind'} pace · expected ${formatGBP(expected)}`}
               color={ahead ? '#10B981' : '#EF4444'}
@@ -139,7 +192,7 @@ export function PerformanceView({ onBack }) {
       {/* The Day Performance chart. */}
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20 }}>
         <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          Day Performance — {monthLabel(month)}
+          {mode === 'quarter' ? 'Quarter performance' : 'Day Performance'} — {model.label}
         </h3>
         {loading ? (
           <div style={{ height: 360, display: 'flex', alignItems: 'center', justifyContent: 'center', color: BRAND.muted, fontSize: 14 }}>Loading…</div>
@@ -163,6 +216,27 @@ export function PerformanceView({ onBack }) {
           </ResponsiveContainer>
         )}
       </div>
+    </div>
+  );
+}
+
+function Segmented({ value, onChange, options }) {
+  return (
+    <div style={{ display: 'inline-flex', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden', background: 'white' }}>
+      {options.map((o) => (
+        <button
+          key={o.value}
+          onClick={() => onChange(o.value)}
+          style={{
+            padding: '8px 14px', border: 'none', cursor: 'pointer', fontSize: 14,
+            fontWeight: value === o.value ? 600 : 500,
+            background: value === o.value ? BRAND.blue : 'white',
+            color: value === o.value ? 'white' : BRAND.ink,
+          }}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }

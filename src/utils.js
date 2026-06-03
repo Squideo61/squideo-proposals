@@ -14,9 +14,10 @@ export function useIsMobile() {
 
 export const formatGBP = (n) => '£' + (Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
-// England & Wales bank holidays (YYYY-MM-DD). Update annually — or swap for the
-// gov.uk bank-holidays.json feed. Used by the Performance graph to exclude
-// non-working days when pacing the monthly targets.
+// Fallback England & Wales bank holidays (YYYY-MM-DD), used only until the live
+// gov.uk feed loads (the SPA fetches /api/crm/stats/bank-holidays, which proxies
+// gov.uk server-side). Working-day functions accept a `holidays` Set so the
+// loaded feed can be passed in.
 export const ukBankHolidays = new Set([
   // 2026
   '2026-01-01', '2026-04-03', '2026-04-06', '2026-05-04', '2026-05-25', '2026-08-31', '2026-12-25', '2026-12-28',
@@ -26,20 +27,29 @@ export const ukBankHolidays = new Set([
 
 const ymd = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
-// Ordered 'YYYY-MM-DD' strings for the working days (Mon–Fri minus E&W bank
-// holidays) of the given month. `month` is 1–12. Built from date components so
-// the keys are calendar dates with no timezone drift.
-export function workingDaysInMonth(year, month) {
-  const lastDay = new Date(year, month, 0).getDate();
+// Ordered 'YYYY-MM-DD' working days (Mon–Fri minus bank holidays) in
+// [startKey, endKeyExclusive). `holidays` is a Set of 'YYYY-MM-DD'. Built from
+// date components so the keys are calendar dates with no timezone drift.
+export function workingDaysBetween(startKey, endKeyExclusive, holidays = ukBankHolidays) {
+  const [sy, sm, sd] = startKey.split('-').map(Number);
+  const [ey, em, ed] = endKeyExclusive.split('-').map(Number);
+  const cur = new Date(sy, sm - 1, sd);
+  const end = new Date(ey, em - 1, ed);
   const out = [];
-  for (let d = 1; d <= lastDay; d++) {
-    const dow = new Date(year, month - 1, d).getDay(); // 0 Sun … 6 Sat
-    if (dow === 0 || dow === 6) continue;
-    const key = ymd(year, month, d);
-    if (ukBankHolidays.has(key)) continue;
-    out.push(key);
+  while (cur < end) {
+    const dow = cur.getDay(); // 0 Sun … 6 Sat
+    const key = ymd(cur.getFullYear(), cur.getMonth() + 1, cur.getDate());
+    if (dow !== 0 && dow !== 6 && !holidays.has(key)) out.push(key);
+    cur.setDate(cur.getDate() + 1);
   }
   return out;
+}
+
+// Convenience: working days of a single month. `month` is 1–12.
+export function workingDaysInMonth(year, month, holidays = ukBankHolidays) {
+  const start = ymd(year, month, 1);
+  const end = month === 12 ? ymd(year + 1, 1, 1) : ymd(year, month + 1, 1);
+  return workingDaysBetween(start, end, holidays);
 }
 
 // Local calendar date as 'YYYY-MM-DD' (no timezone drift, unlike toISOString).
