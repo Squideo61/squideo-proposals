@@ -16,6 +16,13 @@ import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../ema
 import { sendNotification } from '../notifications.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber, getInvoicesByIds } from '../xero.js';
+import {
+  lineItemsForProject,
+  depositLineItems,
+  lineItemsForDiscountedProject,
+  lineItemsForPartnerFirstMonth,
+  formatProposalNumber,
+} from '../xeroMappers.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
@@ -63,6 +70,65 @@ export async function invoicesRoute(req, res, id, action, user) {
       console.error('[invoices] blob get failed', err);
       return res.status(500).json({ error: 'Failed to fetch PDF' });
     }
+  }
+
+  // --- GET /api/crm/invoices/suggested-lines?dealId=... — itemise an invoice
+  // from the deal's signed proposal, honouring the payment plan it was signed
+  // on (full vs 50/50 deposit vs Partner). Returns line items ready to drop into
+  // the create-invoice form, plus the proposal id so the invoice links back.
+  if (id === 'suggested-lines' && req.method === 'GET') {
+    const dealId = trimOrNull(req.query.dealId);
+    if (!dealId) return res.status(400).json({ error: 'dealId required' });
+
+    const [row] = await sql`
+      SELECT p.id, p.data, p.number_year, p.number_seq,
+             s.name AS sig_name, s.email AS sig_email, s.data AS sig_data
+        FROM proposals p
+        JOIN signatures s ON s.proposal_id = p.id
+       WHERE p.deal_id = ${dealId}
+       ORDER BY p.created_at DESC
+       LIMIT 1
+    `;
+    if (!row) return res.status(200).json({ lineItems: [], paymentLabel: null, proposalId: null });
+
+    const proposal = row.data || {};
+    const signed = { name: row.sig_name, email: row.sig_email, ...(row.sig_data || {}) };
+    const proposalNumber = formatProposalNumber(row.number_year, row.number_seq);
+    const isPartner = !!signed.partnerSelected;
+    const isDeposit = signed.paymentOption === '5050';
+
+    let xeroLines;
+    let paymentLabel;
+    if (isPartner) {
+      xeroLines = [
+        ...lineItemsForDiscountedProject(proposal, signed, proposalNumber),
+        ...lineItemsForPartnerFirstMonth(proposal, signed, proposalNumber),
+      ];
+      paymentLabel = 'Project + Partner first month';
+    } else if (isDeposit) {
+      xeroLines = depositLineItems(proposal, signed, 0.5, proposalNumber);
+      paymentLabel = '50% deposit';
+    } else {
+      xeroLines = lineItemsForProject(proposal, signed, proposalNumber);
+      paymentLabel = 'Full payment';
+    }
+
+    // Map Xero line shape → the create form's shape. Fold any discount into the
+    // unit price (the form has no discount column) so totals stay correct.
+    const lineItems = xeroLines.map((l) => {
+      const qty = Number(l.quantity) || 1;
+      let unit = Number(l.unitAmount) || 0;
+      if (l.discountRate) unit *= (1 - Number(l.discountRate) / 100);
+      if (l.discountAmount) unit -= Number(l.discountAmount) / qty;
+      return {
+        description: l.description,
+        quantity: qty,
+        unitAmount: Number(unit.toFixed(2)),
+        vatRate: l.taxType === 'OUTPUT2' ? 20 : 0,
+      };
+    });
+
+    return res.status(200).json({ lineItems, paymentLabel, proposalId: row.id });
   }
 
   // --- GET /api/crm/invoices?dealId=... | ?companyId=...

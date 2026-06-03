@@ -180,8 +180,11 @@ export async function companiesRoute(req, res, id, action, user) {
       `,
     ]);
 
+    const balance = await computeCompanyBalance(id);
+
     return res.status(200).json({
       ...serialiseCompany(companyRow),
+      balance,
       contacts: contactRows.map(c => ({
         id: c.id,
         email: c.email || null,
@@ -372,6 +375,55 @@ export async function companiesRoute(req, res, id, action, user) {
     return res.status(200).json({ ok: true });
   }
   return res.status(405).end();
+}
+
+// What a company owes on signed work: the gross (inc-VAT) total of every signed
+// proposal at the company, minus everything paid against those proposals
+// (Stripe, Partner, standalone manual payments, and paid manual invoices).
+// All figures are inc-VAT so they reconcile. `outstanding` can read negative
+// for Partner clients whose ongoing subscription has been paid beyond the
+// committed first month — the UI clamps the headline "owed" at zero.
+async function computeCompanyBalance(companyId) {
+  const propRows = await sql`
+    SELECT p.id FROM proposals p JOIN deals d ON d.id = p.deal_id WHERE d.company_id = ${companyId}
+  `;
+  const propIds = propRows.map(r => r.id);
+  const dealRows = await sql`SELECT id FROM deals WHERE company_id = ${companyId}`;
+  const dealIds = dealRows.map(r => r.id);
+
+  const [committedRow] = await sql`
+    SELECT COALESCE(SUM((s.data->>'total')::numeric), 0) AS committed
+      FROM signatures s
+      JOIN proposals p ON p.id = s.proposal_id
+      JOIN deals d ON d.id = p.deal_id
+     WHERE d.company_id = ${companyId}
+       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
+  `;
+
+  let paid = 0;
+  if (propIds.length) {
+    const [stripeRow, partnerRow, manualPayRow] = await Promise.all([
+      sql`SELECT COALESCE(SUM(amount), 0) AS s FROM payments WHERE proposal_id = ANY(${propIds})`,
+      sql`SELECT COALESCE(SUM(amount), 0) AS s FROM partner_invoices WHERE proposal_id = ANY(${propIds})`,
+      sql`SELECT COALESCE(SUM(amount), 0) AS s FROM manual_payments WHERE proposal_id = ANY(${propIds}) AND manual_invoice_id IS NULL`,
+    ]);
+    paid += Number(stripeRow.s) + Number(partnerRow.s) + Number(manualPayRow.s);
+  }
+  const [invPaidRow] = await sql`
+    SELECT COALESCE(SUM(amount), 0) AS s FROM manual_invoices
+     WHERE status = 'paid'
+       AND (company_id = ${companyId}
+            OR deal_id = ANY(${dealIds.length ? dealIds : ['__none__']})
+            OR proposal_id = ANY(${propIds.length ? propIds : ['__none__']}))
+  `;
+  paid += Number(invPaidRow.s);
+
+  const committed = Number(committedRow.committed) || 0;
+  return {
+    committed: Number(committed.toFixed(2)),
+    paid: Number(paid.toFixed(2)),
+    outstanding: Number((committed - paid).toFixed(2)),
+  };
 }
 
 export function serialiseCompany(r) {

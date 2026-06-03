@@ -168,6 +168,27 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
                 : '…'}
             />
           </div>
+
+          {/* Outstanding on signed work (inc VAT): signed total − paid. */}
+          {detail.balance && detail.balance.committed > 0 && (() => {
+            const owed = Math.max(0, detail.balance.outstanding);
+            const warm = owed > 0;
+            return (
+              <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, background: warm ? '#FEF3C7' : '#F0FDF4', border: '1px solid ' + (warm ? '#FDE68A' : '#BBF7D0') }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: warm ? '#92400E' : '#15803D' }}>
+                    {warm ? 'Outstanding balance' : 'All signed work paid'}
+                  </span>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: warm ? '#92400E' : '#15803D' }}>
+                    {formatGBP(owed)}{warm ? ' owed' : ''}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>
+                  {formatGBP(detail.balance.committed)} signed (inc VAT) · {formatGBP(detail.balance.paid)} paid
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid ' + BRAND.border }}>

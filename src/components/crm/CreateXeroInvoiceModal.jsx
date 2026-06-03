@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -30,6 +30,33 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, proposalId, c
   });
   const [dealChoice, setDealChoice] = useState(''); // '' = company-level, '__new__', or a deal id
   const [newDealTitle, setNewDealTitle] = useState('');
+  const [suggestedProposalId, setSuggestedProposalId] = useState(null);
+  const [paymentLabel, setPaymentLabel] = useState(null);
+  const [loadingLines, setLoadingLines] = useState(false);
+
+  // When a real deal is picked, pull its signed proposal's line items in,
+  // honouring the payment plan (full vs 50/50 deposit vs Partner).
+  useEffect(() => {
+    if (!companyMode) return;
+    setSuggestedProposalId(null);
+    setPaymentLabel(null);
+    if (!dealChoice || dealChoice === '__new__') return;
+    let cancelled = false;
+    setLoadingLines(true);
+    api.get('/api/crm/invoices/suggested-lines?dealId=' + encodeURIComponent(dealChoice))
+      .then((data) => {
+        if (cancelled) return;
+        const lines = data?.lineItems || [];
+        if (lines.length) {
+          setLineItems(lines.map(l => ({ _key: ++_lineItemKey, ...l })));
+          setSuggestedProposalId(data.proposalId || null);
+          setPaymentLabel(data.paymentLabel || null);
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoadingLines(false); });
+    return () => { cancelled = true; };
+  }, [dealChoice, companyMode]);
 
   function updateLine(key, field, value) {
     setLineItems(prev => prev.map(li => li._key === key ? { ...li, [field]: value } : li));
@@ -72,21 +99,24 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, proposalId, c
       // Resolve the scope: a chosen/created deal, or company-level.
       let scopeDealId = dealId || undefined;
       let scopeCompanyId = companyId || undefined;
+      let scopeProposalId = proposalId || undefined;
       if (companyMode) {
         if (dealChoice === '__new__') {
           const deal = await api.post('/api/crm/deals', { title: newDealTitle.trim(), companyId });
           scopeDealId = deal.id;
           scopeCompanyId = undefined;
+          scopeProposalId = undefined;
         } else if (dealChoice) {
           scopeDealId = dealChoice;
           scopeCompanyId = undefined;
+          scopeProposalId = suggestedProposalId || undefined; // link to the signed proposal we pulled from
         }
         // else: leave company-level (scopeCompanyId stays set)
       }
       const result = await api.post('/api/crm/invoices', {
         dealId: scopeDealId,
         companyId: scopeDealId ? undefined : scopeCompanyId,
-        proposalId: proposalId || undefined,
+        proposalId: scopeProposalId,
         contactName: contactName.trim(),
         invoiceNumber: invoiceNumber.trim() || undefined,
         issuedAt,
@@ -158,6 +188,14 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, proposalId, c
                 onChange={e => setNewDealTitle(e.target.value)}
                 placeholder="New deal title (e.g. Brand video 2026)"
               />
+            )}
+            {loadingLines && (
+              <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 6 }}>Pulling in the signed proposal…</div>
+            )}
+            {!loadingLines && paymentLabel && (
+              <div style={{ fontSize: 12, color: '#15803D', marginTop: 6 }}>
+                Itemised from the signed proposal — {paymentLabel}.
+              </div>
             )}
           </Field>
         )}
