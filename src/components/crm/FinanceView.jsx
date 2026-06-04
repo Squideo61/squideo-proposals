@@ -207,28 +207,6 @@ export function FinanceView({ onBack, onOpenDeal }) {
             )}
           </div>
 
-          {/* VAT-to-save bar chart, with net for context. */}
-          <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 20 }}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-              VAT to set aside — {view.periodLabel}
-            </h3>
-            {loading ? (
-              <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center', color: BRAND.muted, fontSize: 14 }}>Loading…</div>
-            ) : (
-              <ResponsiveContainer width="100%" height={320}>
-                <BarChart data={view.chart} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={BRAND.border} />
-                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: BRAND.muted }} />
-                  <YAxis tickFormatter={gbpK} tick={{ fontSize: 12, fill: BRAND.muted }} width={56} />
-                  <Tooltip formatter={(v, n) => [formatGBP(v), n]} cursor={{ fill: 'rgba(43,184,230,0.06)' }} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="net" name="Net revenue (ex-VAT)" fill={BRAND.blue} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="vat" name="VAT to set aside" fill={VAT_COLOR} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-
           {/* Monthly breakdown table. */}
           <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20 }}>
             <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
