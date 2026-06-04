@@ -66,6 +66,21 @@ export const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
 ];
 
+// Drive-backed deal files (a per-deal folder in a shared Team Drive) turn on
+// only when DEAL_DRIVE_ROOT_ID is set. Until then we don't request the Drive
+// scope, so existing Gmail-only consent is untouched.
+export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
+
+export function driveFilesEnabled() {
+  return !!process.env.DEAL_DRIVE_ROOT_ID;
+}
+
+// The Google scopes to request on connect — Gmail always, plus Drive when
+// Drive-backed files are enabled.
+export function googleScopes() {
+  return driveFilesEnabled() ? [...GMAIL_SCOPES, DRIVE_SCOPE] : [...GMAIL_SCOPES];
+}
+
 export function gmailRedirectUri(req) {
   const proto = req.headers['x-forwarded-proto'] || 'https';
   const host = req.headers['x-forwarded-host'] || req.headers.host;

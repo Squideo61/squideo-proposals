@@ -2,13 +2,39 @@ import crypto from 'node:crypto';
 import { put, del, getDownloadUrl } from '@vercel/blob';
 import sql from '../db.js';
 import { isValidStage } from '../dealStage.js';
-import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureMessageDealsTable, ensureDealContactsTable } from './shared.js';
+import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureMessageDealsTable, ensureDealContactsTable, driveFilesEnabled } from './shared.js';
 import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
+import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+
+// Self-heal for db/migrations/20260604_deal_files_drive.sql — Drive-backed
+// deal files. Idempotent and cached; also relaxes blob_url's NOT NULL so
+// Drive rows (no blob) can be stored.
+let dealFileDriveEnsured = null;
+function ensureDealFileDriveColumns() {
+  if (dealFileDriveEnsured) return dealFileDriveEnsured;
+  dealFileDriveEnsured = (async () => {
+    await sql`ALTER TABLE deal_files ADD COLUMN IF NOT EXISTS drive_file_id TEXT`;
+    await sql`ALTER TABLE deal_files ADD COLUMN IF NOT EXISTS web_view_link TEXT`;
+    await sql`ALTER TABLE deal_files ALTER COLUMN blob_url DROP NOT NULL`;
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS drive_folder_id TEXT`;
+  })().catch((err) => { dealFileDriveEnsured = null; throw err; });
+  return dealFileDriveEnsured;
+}
+
+// Find-or-create a deal's Shared Drive folder, caching its id on the deal so we
+// only hit Drive once per deal.
+async function dealDriveFolder(accessToken, dealId) {
+  const [d] = await sql`SELECT drive_folder_id, title FROM deals WHERE id = ${dealId}`;
+  if (d?.drive_folder_id) return d.drive_folder_id;
+  const folderId = await ensureDealFolder(accessToken, { dealId, name: d?.title || dealId });
+  await sql`UPDATE deals SET drive_folder_id = ${folderId} WHERE id = ${dealId}`;
+  return folderId;
+}
 
 export async function dealsRoute(req, res, id, action, user, subaction = null) {
   if (!id) {
@@ -256,8 +282,10 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 
   // /deals/:id/files — upload a new file (POST) or list (unused, GET falls through)
   if (action === 'files' && !subaction && req.method === 'POST') {
-    if (!process.env.BLOB_READ_WRITE_TOKEN)
+    const useDrive = driveFilesEnabled();
+    if (!useDrive && !process.env.BLOB_READ_WRITE_TOKEN)
       return res.status(503).json({ error: 'File storage not configured' });
+    await ensureDealFileDriveColumns();
 
     const filename = decodeURIComponent(req.headers['x-filename'] || 'upload');
     const mimeType = req.headers['content-type'] || 'application/octet-stream';
@@ -274,6 +302,30 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       return res.status(413).json({ error: 'File too large (max 20 MB)' });
 
     const fileId = crypto.randomUUID();
+
+    if (useDrive) {
+      let accessToken;
+      try { accessToken = await getFreshAccessToken(user.email); }
+      catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access) to upload files' }); }
+      let driveId, webViewLink;
+      try {
+        const folderId = await dealDriveFolder(accessToken, id);
+        ({ id: driveId, webViewLink } = await uploadToFolder(accessToken, { folderId, filename, mimeType, buffer: fileBuffer }));
+      } catch (err) {
+        console.error('[deal files] drive upload failed', err.message);
+        return res.status(502).json({ error: 'Google Drive upload failed' });
+      }
+      await sql`
+        INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
+        VALUES (${fileId}, ${id}, ${filename}, ${mimeType}, ${fileBuffer.length},
+                NULL, ${driveId}, ${webViewLink}, ${user.email}, 'upload')
+      `;
+      return res.status(201).json({
+        id: fileId, filename, mimeType, sizeBytes: fileBuffer.length,
+        uploadedBy: user.email, source: 'upload', createdAt: new Date().toISOString(),
+      });
+    }
+
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const blob = await put(`deal-files/${id}/${fileId}/${safeName}`, fileBuffer, {
       access: 'private', contentType: mimeType,
@@ -293,24 +345,42 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 
   // /deals/:id/files/:fileId — generate a signed download URL (GET) or delete (DELETE)
   if (action === 'files' && subaction && subaction !== 'from-email' && req.method === 'GET') {
+    await ensureDealFileDriveColumns();
     const rows = await sql`
-      SELECT blob_url, filename FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}
+      SELECT blob_url, drive_file_id, web_view_link, filename
+        FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}
     `;
     if (!rows.length) return res.status(404).json({ error: 'File not found' });
-    const downloadUrl = await getDownloadUrl(rows[0].blob_url);
-    return res.status(200).json({ downloadUrl, filename: rows[0].filename });
+    const f = rows[0];
+    if (f.drive_file_id) {
+      let link = f.web_view_link;
+      if (!link) {
+        try { link = await getDriveFileLink(await getFreshAccessToken(user.email), f.drive_file_id); }
+        catch (err) { console.error('[deal files] drive link failed', err.message); }
+      }
+      if (!link) return res.status(502).json({ error: 'Could not resolve Drive link' });
+      return res.status(200).json({ downloadUrl: link, filename: f.filename });
+    }
+    const downloadUrl = await getDownloadUrl(f.blob_url);
+    return res.status(200).json({ downloadUrl, filename: f.filename });
   }
 
   if (action === 'files' && subaction && subaction !== 'from-email' && req.method === 'DELETE') {
+    await ensureDealFileDriveColumns();
     const rows = await sql`
-      SELECT blob_url, uploaded_by FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}
+      SELECT blob_url, drive_file_id, uploaded_by FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}
     `;
     if (!rows.length) return res.status(404).json({ error: 'File not found' });
     if (rows[0].uploaded_by !== user.email && !hasPermission(await getRole(user.role), 'deals.manage_all')) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    try { await del(rows[0].blob_url); } catch (err) {
-      console.error('[deal files] blob delete failed', err.message);
+    if (rows[0].drive_file_id) {
+      try { await deleteDriveFile(await getFreshAccessToken(user.email), rows[0].drive_file_id); }
+      catch (err) { console.error('[deal files] drive delete failed', err.message); }
+    } else if (rows[0].blob_url) {
+      try { await del(rows[0].blob_url); } catch (err) {
+        console.error('[deal files] blob delete failed', err.message);
+      }
     }
     await sql`DELETE FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}`;
     return res.status(200).json({ ok: true });
@@ -318,8 +388,10 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 
   // /deals/:id/files/from-email — copy an email attachment into deal files
   if (action === 'files' && subaction === 'from-email' && req.method === 'POST') {
-    if (!process.env.BLOB_READ_WRITE_TOKEN)
+    const useDrive = driveFilesEnabled();
+    if (!useDrive && !process.env.BLOB_READ_WRITE_TOKEN)
       return res.status(503).json({ error: 'File storage not configured' });
+    await ensureDealFileDriveColumns();
 
     const { gmailMessageId, attachmentId, filename, mimeType, size } = req.body || {};
     if (!gmailMessageId || !attachmentId || !filename)
@@ -347,6 +419,30 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       return res.status(413).json({ error: 'Attachment too large (max 20 MB)' });
 
     const fileId = crypto.randomUUID();
+
+    if (useDrive) {
+      let accessToken;
+      try { accessToken = await getFreshAccessToken(user.email); }
+      catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access) to save files' }); }
+      let driveId, webViewLink;
+      try {
+        const folderId = await dealDriveFolder(accessToken, id);
+        ({ id: driveId, webViewLink } = await uploadToFolder(accessToken, { folderId, filename, mimeType: mimeType || 'application/octet-stream', buffer: attBuffer }));
+      } catch (err) {
+        console.error('[deal files] drive upload (from-email) failed', err.message);
+        return res.status(502).json({ error: 'Google Drive upload failed' });
+      }
+      await sql`
+        INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
+        VALUES (${fileId}, ${id}, ${filename}, ${mimeType || null}, ${attBuffer.length},
+                NULL, ${driveId}, ${webViewLink}, ${user.email}, 'email')
+      `;
+      return res.status(201).json({
+        id: fileId, filename, mimeType: mimeType || null, sizeBytes: attBuffer.length,
+        uploadedBy: user.email, source: 'email', createdAt: new Date().toISOString(),
+      });
+    }
+
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const blob = await put(`deal-files/${id}/${fileId}/${safeName}`, attBuffer, {
       access: 'private', contentType: mimeType || 'application/octet-stream',

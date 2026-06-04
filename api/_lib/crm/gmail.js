@@ -17,6 +17,7 @@ import {
 import { syncHistory } from '../gmailSync.js';
 import {
   GMAIL_SCOPES,
+  googleScopes,
   gmailRedirectUri,
   escapeHtml,
   trimOrNull,
@@ -132,7 +133,7 @@ export async function gmailRoute(req, res, id, action, user) {
     const url = buildAuthUrl({
       state,
       redirectUri: gmailRedirectUri(req),
-      scopes: GMAIL_SCOPES,
+      scopes: googleScopes(),
     });
     return res.status(200).json({ url });
   }
