@@ -193,8 +193,6 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         )}
       </div>
 
-      <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} isMobile={isMobile} onOpenVideo={onOpenVideo} />
-
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
         <Card
           title="Proposals"
@@ -301,6 +299,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             />
           </div>
         )}
+
+        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+          <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} isMobile={isMobile} onOpenVideo={onOpenVideo} />
+        </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <Card title="Emails" count={totalEmails} action={
