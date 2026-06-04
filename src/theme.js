@@ -6,6 +6,12 @@ export const BRAND = {
   muted: '#6B7785'
 };
 
+// Caps how wide the CRM content (and the top bar's inner row) can grow, so it
+// stays readable and centred instead of stretching edge-to-edge on wide /
+// ultrawide monitors. The document-style proposal builder & client preview opt
+// out and keep their own full-bleed layout.
+export const APP_MAX_WIDTH = 1600;
+
 export const CONFIG = {
   company: { name: 'Squideo', website: 'squideo.com', phone: '01482 738 656', termsUrl: '' },
   defaultTeam: [

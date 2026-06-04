@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { BRAND } from './theme.js';
+import { BRAND, APP_MAX_WIDTH } from './theme.js';
 import { DEFAULT_PROPOSAL } from './defaults.js';
 import { StoreProvider, useStore } from './store.jsx';
 import { makeId } from './utils.js';
@@ -271,6 +271,7 @@ function AppShell() {
   if (producerOnly) {
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
+        <div style={{ maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <Suspense fallback={<ViewFallback />}>
           {view === 'video' && activeId ? (
             <VideoDetailView videoId={activeId} onBack={() => navigate('production')} onOpenProject={(id) => navigate('project', id)} />
@@ -284,6 +285,7 @@ function AppShell() {
             <ProductionView onBack={null} onOpenVideo={(id) => navigate('video', id)} onOpenProject={(id) => navigate('project', id)} onOpenProjects={() => navigate('projects')} />
           )}
         </Suspense>
+        </div>
         {/* Email composer lives at the root so "Send email" from a production
             card's conversation panel works in the producer shell too. */}
         {state.composerContext && (
@@ -306,6 +308,7 @@ function AppShell() {
           onOpenLink={openLink}
         />
       )}
+      <div style={NO_TOPBAR_VIEWS.has(view) ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
       <Suspense fallback={<ViewFallback />}>
       {view === 'list' && (
         <ListView
@@ -473,6 +476,7 @@ function AppShell() {
         />
       )}
       </Suspense>
+      </div>
       {modal && modal.type === 'templates' && (
         <TemplatePicker templates={templates} onPick={(t) => createFrom(t || DEFAULT_PROPOSAL, { dealId: modal.dealId })} onClose={() => setModal(null)} />
       )}
