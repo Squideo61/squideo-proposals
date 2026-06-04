@@ -235,6 +235,7 @@ const PAYMENT_TYPE_META = {
   final: { label: '50% Final', color: '#1D4ED8', bg: '#EFF6FF' },
   full: { label: 'Full up front', color: '#15803D', bg: '#ECFDF3' },
   po: { label: 'Purchase order', color: '#6D28D9', bg: '#F5F3FF' },
+  extra: { label: 'Extra', color: '#C2410C', bg: '#FFF7ED' },
 };
 
 function PendingPayments({ pending, onOpenDeal, isMobile }) {
@@ -312,6 +313,7 @@ function PendingRow({ d, onOpenDeal }) {
   const number = d.number ? formatProposalNumber(d.number) : '';
   const lines = d.lines && d.lines.length ? d.lines : [{ type: 'full', amount: d.outstanding }];
   const single = lines.length === 1;
+  const single0 = single ? lines[0] : null;
   const showCommitted = Math.abs((d.committed || 0) - (d.outstanding || 0)) > 0.005;
   const open = () => onOpenDeal && onOpenDeal(d.dealId);
   return (
@@ -330,7 +332,12 @@ function PendingRow({ d, onOpenDeal }) {
             {name}
           </span>
           {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
-          {single && <PaymentBadge type={lines[0].type} />}
+          {single && <PaymentBadge type={single0.type} />}
+          {single && single0.label && (
+            <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+              {single0.label}
+            </span>
+          )}
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(d.outstanding)}</div>
@@ -346,8 +353,15 @@ function PendingRow({ d, onOpenDeal }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
           {lines.map((l, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <PaymentBadge type={l.type} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{formatGBP(l.amount)}</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                <PaymentBadge type={l.type} />
+                {l.label && (
+                  <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+                    {l.label}
+                  </span>
+                )}
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(l.amount)}</span>
             </div>
           ))}
         </div>

@@ -2,6 +2,7 @@ import sql from '../db.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { allCompanyBalances } from './companies.js';
+import { outstandingExtrasByDeal } from './extras.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
 // five paid-money sources as companies.js (allCompanyBalances /
@@ -288,7 +289,11 @@ async function pendingPaymentsReport() {
     for (const r of rows) { if (!r.did) continue; paid.set(r.did, (paid.get(r.did) || 0) + (Number(r.v) || 0)); }
   }
 
-  const dealIds = [...committed.keys()];
+  // Ad-hoc extras (already net £) added to a deal during production. They show
+  // as their own line and can sit on a deal whose signed work is fully paid.
+  const extrasByDeal = await outstandingExtrasByDeal();
+
+  const dealIds = [...new Set([...committed.keys(), ...extrasByDeal.keys()])];
   const infoRows = await sql`
     SELECT d.id, d.title, d.stage, d.company_id, c.name AS company_name
       FROM deals d LEFT JOIN companies c ON c.id = d.company_id
@@ -302,26 +307,35 @@ async function pendingPaymentsReport() {
     const inc = committed.get(did) || 0;
     const paidInc = paid.get(did) || 0;
     const outstandingInc = inc - paidInc;
-    if (outstandingInc <= 0.005) continue;
+    const signedOutstandingInc = Math.max(0, outstandingInc);
+    const extras = extrasByDeal.get(did) || [];
+    const extrasNet = round2(extras.reduce((s, e) => s + (Number(e.amount) || 0), 0));
+    if (signedOutstandingInc <= 0.005 && extrasNet <= 0.005) continue;
     const rate = rateByDeal.get(did) || 0;
     const net = (v) => round2(rate > 0 ? v / (1 + rate) : v);
-    const outstandingNet = net(outstandingInc);
+    const signedOutstandingNet = net(signedOutstandingInc);
     const isPo = !!poByDeal.get(did);
     const plan = planByDeal.get(did) || 'full';
 
-    // Each outstanding deal becomes one or more payment-type lines, matching the
-    // labels on the sales sheet. A 50/50 deal splits into its deposit (paid
-    // first) and the balance; "full" and PO deals are a single line. The line
-    // amounts always sum to the deal's outstanding balance.
+    // Each deal becomes one or more lines, matching the labels on the sales
+    // sheet. A 50/50 deal splits into its deposit (paid first) and the balance;
+    // "full" and PO deals are a single line. Extras are appended as their own
+    // lines. The line amounts always sum to the deal's outstanding balance.
     const lines = [];
-    if (!isPo && plan === '5050') {
-      const depositOutstandingInc = Math.max(0, Math.min(outstandingInc, inc / 2 - paidInc));
-      const depositNet = net(depositOutstandingInc);
-      const finalNet = round2(outstandingNet - depositNet);
-      if (depositNet > 0.005) lines.push({ type: 'deposit', amount: depositNet });
-      if (finalNet > 0.005) lines.push({ type: 'final', amount: finalNet });
+    if (signedOutstandingNet > 0.005) {
+      if (!isPo && plan === '5050') {
+        const depositOutstandingInc = Math.max(0, Math.min(signedOutstandingInc, inc / 2 - paidInc));
+        const depositNet = net(depositOutstandingInc);
+        const finalNet = round2(signedOutstandingNet - depositNet);
+        if (depositNet > 0.005) lines.push({ type: 'deposit', amount: depositNet });
+        if (finalNet > 0.005) lines.push({ type: 'final', amount: finalNet });
+      }
+      if (lines.length === 0) lines.push({ type: isPo ? 'po' : 'full', amount: signedOutstandingNet });
     }
-    if (lines.length === 0) lines.push({ type: isPo ? 'po' : 'full', amount: outstandingNet });
+    for (const e of extras) {
+      const amt = round2(Number(e.amount) || 0);
+      if (amt > 0.005) lines.push({ type: 'extra', label: e.description, amount: amt });
+    }
 
     const inf = info.get(did) || {};
     const item = {
@@ -331,9 +345,9 @@ async function pendingPaymentsReport() {
       company: inf.company_name || null,
       companyId: inf.company_id || null,
       stage: inf.stage || null,
-      committed: net(inc),
+      committed: round2(net(inc) + extrasNet),
       paid: net(paidInc),
-      outstanding: outstandingNet,
+      outstanding: round2(signedOutstandingNet + extrasNet),
       lines,
     };
     (isPo ? po : normal).push(item);

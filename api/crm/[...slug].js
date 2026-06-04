@@ -13,6 +13,7 @@ import { templatesRoute } from '../_lib/crm/templates.js';
 import { commentsRoute } from '../_lib/crm/comments.js';
 import { paymentsRoute } from '../_lib/crm/payments.js';
 import { invoicesRoute } from '../_lib/crm/invoices.js';
+import { extrasRoute } from '../_lib/crm/extras.js';
 import { retainersRoute } from '../_lib/crm/retainers.js';
 import { productionRoute } from '../_lib/crm/production.js';
 import { xeroContactsRoute } from '../_lib/crm/xeroContacts.js';
@@ -100,6 +101,7 @@ export default async function handler(req, res) {
       case 'comments':  return await commentsRoute(req, res, id, action, user);
       case 'payments':  return await paymentsRoute(req, res, id, action, user);
       case 'invoices':   return await invoicesRoute(req, res, id, action, user);
+      case 'extras':     return await extrasRoute(req, res, id, action, user);
       case 'retainers':  return await retainersRoute(req, res, id, action, user);
       case 'production': return await productionRoute(req, res, id, action, user, subaction);
       case 'xero-contacts': return await xeroContactsRoute(req, res, id, action, user);

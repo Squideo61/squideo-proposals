@@ -8,6 +8,7 @@ import { Card, Empty } from './Card.jsx';
 import { AddInvoiceModal } from './AddInvoiceModal.jsx';
 import { MarkInvoicePaidModal } from './MarkInvoicePaidModal.jsx';
 import { CreateXeroInvoiceModal } from './CreateXeroInvoiceModal.jsx';
+import { AddExtraModal } from './AddExtraModal.jsx';
 
 // Open the invoice PDF with a filename-friendly URL so "Save as" defaults to the
 // invoice number (e.g. INV-6082.pdf) — browsers use the URL's last path segment.
@@ -39,6 +40,8 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
   const [payments, setPayments] = useState(null);
   const [adding, setAdding] = useState(false);
   const [creatingXero, setCreatingXero] = useState(false);
+  const [addingExtra, setAddingExtra] = useState(false);
+  const [extras, setExtras] = useState(null);
   // When creating from a "not invoiced" card we target a specific deal and pull
   // the appropriate portion: the balance if a deposit's already been raised,
   // else the first (deposit/full) invoice.
@@ -78,10 +81,21 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
       .catch((err) => { showMsg?.(err.message || 'Failed to load payments', 'error'); setPayments([]); });
   }, [scopeQs, showMsg]);
 
+  // Extras are deal-scoped; only the deal page lists/manages them (they still
+  // surface globally in Pending Payments). The company page can add via the
+  // modal's deal picker but doesn't list them here.
+  const reloadExtras = useCallback(() => {
+    if (!dealId) { setExtras([]); return; }
+    api.get('/api/crm/extras?dealId=' + encodeURIComponent(dealId))
+      .then(setExtras)
+      .catch(() => setExtras([]));
+  }, [dealId]);
+
   const reload = useCallback(() => {
     reloadInvoices();
     reloadPayments();
-  }, [reloadInvoices, reloadPayments]);
+    reloadExtras();
+  }, [reloadInvoices, reloadPayments, reloadExtras]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -104,8 +118,20 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
   }, {});
   const totalEntries = Object.entries(totalsByCurrency).filter(([, v]) => v > 0);
 
+  const pendingExtras = (extras || []).filter((e) => e.status !== 'paid');
+
+  async function deleteExtra(id) {
+    try {
+      await api.delete('/api/crm/extras/' + encodeURIComponent(id));
+      reloadExtras();
+      onChanged?.();
+    } catch (err) {
+      showMsg?.(err.message || 'Failed to remove extra', 'error');
+    }
+  }
+
   const count = allInvoices.length + standAlonePayments.length;
-  const isEmpty = count === 0 && notInvoicedDeals.length === 0;
+  const isEmpty = count === 0 && notInvoicedDeals.length === 0 && pendingExtras.length === 0;
 
   return (
     <Card
@@ -115,6 +141,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
         <div style={{ display: 'flex', gap: 6 }}>
           <button onClick={() => openCreate()} className="btn"><Plus size={12} /> Create invoice</button>
           <button onClick={() => setAdding(true)} className="btn-ghost"><Plus size={12} /> Upload invoice</button>
+          <button onClick={() => setAddingExtra(true)} className="btn-ghost"><Plus size={12} /> Add extra</button>
         </div>
       )}
     >
@@ -145,6 +172,27 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
                   style={{ fontSize: 12, whiteSpace: 'nowrap' }}
                 >
                   <Plus size={12} /> Create invoice
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Extras — ad-hoc charges added during production, to invoice later */}
+      {!loading && pendingExtras.length > 0 && (
+        <>
+          <SectionLabel>Extras — to invoice</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {pendingExtras.map((e) => (
+              <div key={e.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#C2410C', background: '#FFEDD5', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, flexShrink: 0 }}>Extra</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.description}</span>
+                  <span style={{ fontSize: 13, color: '#9A3412', flexShrink: 0 }}>· {formatGBP(e.amount)}{vatSuffix}</span>
+                </div>
+                <button onClick={() => deleteExtra(e.id)} className="btn-icon" aria-label="Remove extra" title="Remove extra">
+                  <Trash2 size={14} />
                 </button>
               </div>
             ))}
@@ -209,6 +257,14 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
           proposals={proposals}
           onClose={() => setAdding(false)}
           onCreated={() => { setAdding(false); reloadInvoices(); onChanged?.(); }}
+        />
+      )}
+      {addingExtra && (
+        <AddExtraModal
+          dealId={dealId}
+          deals={deals}
+          onClose={() => setAddingExtra(false)}
+          onCreated={() => { setAddingExtra(false); reloadExtras(); onChanged?.(); }}
         />
       )}
     </Card>
