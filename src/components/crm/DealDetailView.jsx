@@ -1324,6 +1324,19 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
             ? "Drop files here — they'll save to this deal's Drive folder"
             : 'Drop files here or click Upload'}
       </div>
+      {driveEnabled && !uploading && (
+        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 6, marginBottom: files.length ? 10 : 0 }}>
+          Large files (20MB+) upload much faster if you upload {driveFolderId ? (
+            <a
+              href={`https://drive.google.com/drive/folders/${driveFolderId}`}
+              target="_blank" rel="noopener noreferrer"
+              style={{ color: BRAND.blue, fontWeight: 600, textDecoration: 'none' }}
+            >
+              directly to Google Drive
+            </a>
+          ) : 'directly to Google Drive'} and will still appear here.
+        </div>
+      )}
       {files.length === 0 && !uploading && <Empty text="No files attached yet" />}
       {files.map(f => (
         <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', borderTop: '1px solid ' + BRAND.border }}>
