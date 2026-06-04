@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Mail, MessageSquare, MoreVertical, Phone, Plus, Square, Trash2, User, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Mail, MessageSquare, MoreVertical, Phone, Plus, RefreshCw, Square, Trash2, User, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -1221,8 +1221,23 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = React.useRef(null);
   const abortRef = React.useRef(null);
+  const [syncing, setSyncing] = useState(false);
 
   const cancelUpload = () => { abortRef.current?.abort(); };
+
+  // Re-pull the deal so the server re-syncs its file list with the Drive folder
+  // (reflecting files deleted or added directly in Drive).
+  const syncFromDrive = async () => {
+    setSyncing(true);
+    try {
+      await actions.loadDealDetail(dealId);
+      showMsg('Synced with Drive');
+    } catch {
+      showMsg('Could not sync with Drive');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // Drive uploads are chunked, so they're not bound by the serverless body
   // limit — allow large video files. Blob (Drive off) stays capped at 20 MB.
@@ -1280,7 +1295,16 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
     <Card title="Files" count={files.length} action={
       uploading
         ? <button className="btn-ghost" onClick={cancelUpload}><X size={12} /> Cancel</button>
-        : <button className="btn-ghost" onClick={() => inputRef.current?.click()}><Plus size={12} /> Upload</button>
+        : (
+          <div style={{ display: 'flex', gap: 6 }}>
+            {driveEnabled && (
+              <button className="btn-ghost" onClick={syncFromDrive} disabled={syncing} title="Re-sync with the Drive folder">
+                <RefreshCw size={12} /> {syncing ? 'Syncing…' : 'Sync'}
+              </button>
+            )}
+            <button className="btn-ghost" onClick={() => inputRef.current?.click()}><Plus size={12} /> Upload</button>
+          </div>
+        )
     }>
       <input ref={inputRef} type="file" multiple style={{ display: 'none' }}
         onChange={(e) => handleFiles(e.target.files)} />
