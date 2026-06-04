@@ -26,6 +26,25 @@ export function ensureDealFileDriveColumns() {
   return dealFileDriveEnsured;
 }
 
+// Turn a Drive API error into an actionable message for the user.
+function driveErrorHint(err) {
+  const msg = err?.message || '';
+  const status = err?.status;
+  if (status === 401 || /scope|unauthorized|invalid credentials/i.test(msg)) {
+    return 'Google Drive access not granted — reconnect your Google account (Account → Settings → reconnect) and allow Drive.';
+  }
+  if (status === 404) {
+    return "Drive folder not found — check DEAL_DRIVE_ROOT_ID is the correct Shared Drive id and that your Google account is a member of it.";
+  }
+  if (status === 403) {
+    if (/has not been used|is disabled|accessNotConfigured|SERVICE_DISABLED/i.test(msg)) {
+      return 'The Google Drive API is disabled for this Google Cloud project — enable it, then try again.';
+    }
+    return "Google Drive permission denied — reconnect Google (granting Drive) and make sure you're a member of the Shared Drive.";
+  }
+  return 'Could not start Google Drive upload: ' + (msg || 'unknown error');
+}
+
 // Find-or-create a deal's Shared Drive folder, caching its id on the deal so we
 // only hit Drive once per deal.
 async function dealDriveFolder(accessToken, dealId) {
@@ -322,8 +341,8 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         const folderId = await dealDriveFolder(accessToken, id);
         ({ id: driveId, webViewLink } = await uploadToFolder(accessToken, { folderId, filename, mimeType, buffer: fileBuffer }));
       } catch (err) {
-        console.error('[deal files] drive upload failed', err.message);
-        return res.status(502).json({ error: 'Google Drive upload failed' });
+        console.error('[deal files] drive upload failed', err.status, err.message);
+        return res.status(502).json({ error: driveErrorHint(err) });
       }
       await sql`
         INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
@@ -439,8 +458,8 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         const folderId = await dealDriveFolder(accessToken, id);
         ({ id: driveId, webViewLink } = await uploadToFolder(accessToken, { folderId, filename, mimeType: mimeType || 'application/octet-stream', buffer: attBuffer }));
       } catch (err) {
-        console.error('[deal files] drive upload (from-email) failed', err.message);
-        return res.status(502).json({ error: 'Google Drive upload failed' });
+        console.error('[deal files] drive upload (from-email) failed', err.status, err.message);
+        return res.status(502).json({ error: driveErrorHint(err) });
       }
       await sql`
         INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
@@ -486,8 +505,8 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       const uploadUrl = await createResumableUploadSession(accessToken, { folderId, filename, mimeType, size });
       return res.status(200).json({ enabled: true, uploadUrl });
     } catch (err) {
-      console.error('[deal files] drive session failed', err.message);
-      return res.status(502).json({ error: 'Could not start Google Drive upload' });
+      console.error('[deal files] drive session failed', err.status, err.message);
+      return res.status(502).json({ error: driveErrorHint(err) });
     }
   }
 
