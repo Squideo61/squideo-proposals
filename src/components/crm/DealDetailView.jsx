@@ -1234,17 +1234,18 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
     if (!files.length) return;
     const tooBig = files.find(f => f.size > maxBytes);
     if (tooBig) { showMsg(`"${tooBig.name}" is too large (max ${maxLabel})`); return; }
-    const totalBytes = files.reduce((s, f) => s + (f.size || 0), 0);
-    const loadedByIdx = new Array(files.length).fill(0);
     const controller = new AbortController();
     abortRef.current = controller;
     setUploading(true);
-    setProgress({ loaded: 0, total: totalBytes });
+    // Upload one at a time so the count + progress are unambiguous.
     try {
-      await Promise.all(files.map((f, i) => actions.uploadDealFile(dealId, f, (loaded) => {
-        loadedByIdx[i] = loaded;
-        setProgress({ loaded: loadedByIdx.reduce((a, b) => a + b, 0), total: totalBytes });
-      }, controller.signal)));
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        setProgress({ fileIndex: i, fileCount: files.length, loaded: 0, total: f.size || 0 });
+        await actions.uploadDealFile(dealId, f, (loaded, total) => {
+          setProgress({ fileIndex: i, fileCount: files.length, loaded, total: total || f.size || 0 });
+        }, controller.signal);
+      }
       showMsg(files.length === 1 ? 'File uploaded' : `${files.length} files uploaded`);
     } catch (err) {
       showMsg(err?.name === 'AbortError' ? 'Upload cancelled' : (err.message || 'Upload failed'));
@@ -1319,7 +1320,12 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
           ? (
             <div onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-                <span>Uploading…{pct != null ? ` ${pct}%` : ''}</span>
+                <span>
+                  {progress && progress.fileCount > 1
+                    ? `Uploading file ${progress.fileIndex + 1} of ${progress.fileCount}…`
+                    : 'Uploading…'}
+                  {pct != null ? ` ${pct}%` : ''}
+                </span>
                 <button
                   onClick={cancelUpload}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 3, border: 'none', background: 'transparent', color: '#DC2626', fontWeight: 600, fontSize: 12, cursor: 'pointer', padding: 0 }}
