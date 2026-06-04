@@ -44,7 +44,6 @@ const StoryboardsView = lazyNamed(() => import('./components/crm/StoryboardsView
 // Lazy so pdf.js (~300 kB) only loads when a storyboard is actually opened.
 const StoryboardShell = lazyNamed(() => import('./components/storyboard/StoryboardShell.jsx'), 'StoryboardShell');
 const ProductionView = lazyNamed(() => import('./components/crm/ProductionView.jsx'), 'ProductionView');
-const ProjectDetailView = lazyNamed(() => import('./components/crm/ProjectDetailView.jsx'), 'ProjectDetailView');
 const VideoDetailView = lazyNamed(() => import('./components/crm/VideoDetailView.jsx'), 'VideoDetailView');
 const ProjectsOverviewView = lazyNamed(() => import('./components/crm/ProjectsOverviewView.jsx'), 'ProjectsOverviewView');
 const FinanceView = lazyNamed(() => import('./components/crm/FinanceView.jsx'), 'FinanceView');
@@ -271,23 +270,23 @@ function AppShell() {
   if (producerOnly) {
     // The production board (the fall-through case) stays full width; the detail
     // pages a producer opens are centred at the cap like the rest of the app.
-    const producerBoard = !((view === 'video' && activeId) || (view === 'project' && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards');
+    const producerBoard = !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards');
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <div style={producerBoard ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <Suspense fallback={<ViewFallback />}>
           {view === 'video' && activeId ? (
-            <VideoDetailView videoId={activeId} onBack={() => navigate('production')} onOpenProject={(id) => navigate('project', id)} />
-          ) : view === 'project' && activeId ? (
-            <ProjectDetailView dealId={activeId} onBack={() => navigate('production')} onOpenFullDeal={null} onOpenVideo={(id) => navigate('video', id)} />
+            <VideoDetailView videoId={activeId} onBack={() => navigate('production')} onOpenProject={(id) => navigate('deal', id)} />
+          ) : (view === 'project' || view === 'deal') && activeId ? (
+            <DealDetailView dealId={activeId} productionOnly onBack={() => navigate('production')} onOpenVideo={(id) => navigate('video', id)} />
           ) : view === 'projects' ? (
-            <ProjectsOverviewView onBack={() => navigate('production')} onOpenProject={(id) => navigate('project', id)} />
+            <ProjectsOverviewView onBack={() => navigate('production')} onOpenProject={(id) => navigate('deal', id)} />
           ) : view === 'revisions' ? (
             <RevisionsView onBack={() => navigate('production')} />
           ) : view === 'storyboards' ? (
             <StoryboardsView onBack={() => navigate('production')} />
           ) : (
-            <ProductionView onBack={null} onOpenVideo={(id) => navigate('video', id)} onOpenProject={(id) => navigate('project', id)} onOpenProjects={() => navigate('projects')} />
+            <ProductionView onBack={null} onOpenVideo={(id) => navigate('video', id)} onOpenProject={(id) => navigate('deal', id)} onOpenProjects={() => navigate('projects')} />
           )}
         </Suspense>
         </div>
@@ -340,10 +339,10 @@ function AppShell() {
           onOpenDeal={(id) => navigate('deal', id)}
         />
       )}
-      {view === 'deal' && activeId && (
+      {(view === 'deal' || view === 'project') && activeId && (
         <DealDetailView
           dealId={activeId}
-          onBack={() => navigate('pipeline')}
+          onBack={() => navigate(view === 'project' ? 'production' : 'pipeline')}
           onOpenProposal={(id) => navigate('builder', id)}
           onOpenVideo={(id) => navigate('video', id)}
           onOpenCompany={(id) => navigate('company', id)}
@@ -404,30 +403,21 @@ function AppShell() {
         <ProductionView
           onBack={() => navigate('list')}
           onOpenVideo={(id) => navigate('video', id)}
-          onOpenProject={(id) => navigate('project', id)}
+          onOpenProject={(id) => navigate('deal', id)}
           onOpenProjects={() => navigate('projects')}
         />
       )}
       {view === 'projects' && (
         <ProjectsOverviewView
           onBack={() => navigate('production')}
-          onOpenProject={(id) => navigate('project', id)}
-        />
-      )}
-      {view === 'project' && activeId && (
-        <ProjectDetailView
-          dealId={activeId}
-          onBack={() => navigate('production')}
-          onOpenFullDeal={(id) => navigate('deal', id)}
-          onOpenVideo={(id) => navigate('video', id)}
+          onOpenProject={(id) => navigate('deal', id)}
         />
       )}
       {view === 'video' && activeId && (
         <VideoDetailView
           videoId={activeId}
           onBack={() => navigate('production')}
-          onOpenProject={(id) => navigate('project', id)}
-          onOpenDeal={(id) => navigate('deal', id)}
+          onOpenProject={(id) => navigate('deal', id)}
         />
       )}
       {view === 'leaderboard' && (

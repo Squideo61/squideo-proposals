@@ -84,9 +84,6 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           {onOpenProject && video.dealId && (
             <button onClick={() => onOpenProject(video.dealId)} className="btn-ghost"><FolderOpen size={14} /> Open project</button>
           )}
-          {onOpenDeal && video.dealId && (
-            <button onClick={() => onOpenDeal(video.dealId)} className="btn-ghost"><ExternalLink size={14} /> Go to deal</button>
-          )}
           <button onClick={sendStoryboard} className="btn-ghost">
             {video.storyboardId ? <><ExternalLink size={14} /> Storyboard link</> : <><Send size={14} /> Storyboard review</>}
           </button>

@@ -17,7 +17,10 @@ import { ProductionPanel } from './ProductionPanel.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
-export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, onOpenCompany }) {
+// `productionOnly` strips the sales/financial chrome (pipeline, order summary,
+// proposals, invoices, edit/delete…) so producers/copywriters get a focused
+// project view — the deal page doubles as the project page once signed.
+export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, onOpenCompany, productionOnly = false }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
@@ -47,7 +50,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
   useEffect(() => {
     if (dealId) {
       actions.loadDealDetail(dealId);
-      actions.loadScheduledEmails(dealId);
+      if (!productionOnly) actions.loadScheduledEmails(dealId);
     }
   }, [dealId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -140,29 +143,31 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
   return (
     <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
-        <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Pipeline</button>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
-          <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
-          <button
-            onClick={() => {
-              if (window.confirm('Delete this deal? Linked proposals will be unlinked but not removed.')) {
-                actions.deleteDeal(dealId);
-                onBack();
-              }
-            }}
-            className="btn-ghost is-danger"
-          ><Trash2 size={14} /> Delete</button>
-        </div>
+        <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> {productionOnly ? 'Production' : 'Pipeline'}</button>
+        {!productionOnly && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
+            <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
+            <button
+              onClick={() => {
+                if (window.confirm('Delete this deal? Linked proposals will be unlinked but not removed.')) {
+                  actions.deleteDeal(dealId);
+                  onBack();
+                }
+              }}
+              className="btn-ghost is-danger"
+            ><Trash2 size={14} /> Delete</button>
+          </div>
+        )}
       </header>
 
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 16 : 24, marginBottom: 16 }}>
         <h1 style={{ margin: '0 0 12px', fontSize: 22, fontWeight: 700 }}>{deal.title}</h1>
-        <StagePicker stage={deal.stage} onChange={handleStageChange} />
+        {!productionOnly && <StagePicker stage={deal.stage} onChange={handleStageChange} />}
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 16, marginTop: 20 }}>
-          <Field icon={Building2} label="Company">
+          <Field icon={Building2} label="Customer">
             {company
-              ? (onOpenCompany
+              ? (onOpenCompany && !productionOnly
                   ? <button type="button" onClick={() => onOpenCompany(company.id)} className="link-btn" style={{ background: 'none', border: 0, padding: 0, font: 'inherit', color: BRAND.blue, cursor: 'pointer', textAlign: 'left' }}>{company.name}</button>
                   : company.name)
               : <span style={{ color: BRAND.muted }}>—</span>}
@@ -170,10 +175,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
           <Field icon={User} label="Primary contact">
             {contact ? <>{contact.name || contact.email}{contact.email && contact.name ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {contact.email}</span> : null}</> : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
-          <Field icon={User} label="Owner">{owner?.name || deal.ownerEmail || <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field label="Value (ex VAT)">{deal.value != null ? <strong>{formatGBP(deal.value)}</strong> : <span style={{ color: BRAND.muted }}>—</span>}</Field>
-          <Field icon={Calendar} label="Expected close">{deal.expectedCloseAt || <span style={{ color: BRAND.muted }}>—</span>}</Field>
-          <Field label="Last activity">{formatRelativeTime(deal.lastActivityAt)}</Field>
+          {!productionOnly && <Field icon={User} label="Owner">{owner?.name || deal.ownerEmail || <span style={{ color: BRAND.muted }}>—</span>}</Field>}
+          {!productionOnly && <Field icon={Calendar} label="Expected close">{deal.expectedCloseAt || <span style={{ color: BRAND.muted }}>—</span>}</Field>}
+          {!productionOnly && <Field label="Last activity">{formatRelativeTime(deal.lastActivityAt)}</Field>}
         </div>
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Producers</div>
@@ -188,12 +193,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
             emptyLabel="No producers assigned"
           />
         </div>
-        <SecondaryContactsRow
-          dealId={dealId}
-          primaryContact={contact}
-          secondaryContacts={detail?.secondaryContacts || []}
-          defaultCompanyId={deal.companyId || null}
-        />
+        {!productionOnly && (
+          <SecondaryContactsRow
+            dealId={dealId}
+            primaryContact={contact}
+            secondaryContacts={detail?.secondaryContacts || []}
+            defaultCompanyId={deal.companyId || null}
+          />
+        )}
         {deal.notes && (
           <div style={{ marginTop: 16, padding: 12, background: '#F8FAFC', borderRadius: 8, fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap' }}>
             {deal.notes}
@@ -207,6 +214,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
+        {!productionOnly && (<>
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <OrderSummaryCard dealId={dealId} refreshKey={orderRefresh} />
         </div>
@@ -307,6 +315,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
             />
           </div>
         )}
+        </>)}
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} isMobile={isMobile} onOpenVideo={onOpenVideo} />
