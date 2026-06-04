@@ -98,6 +98,37 @@ export async function applyFolderTemplate(accessToken, parentId, nodes = FOLDER_
   }
 }
 
+// Walk a named subfolder path under rootFolderId (e.g. ['2. Pre-Production',
+// '1. Script and Text Direction']), returning the leaf folder's id, or null if
+// any step is missing. Each hop lists the current folder's subfolders and
+// matches by exact name.
+export async function findSubfolderByPath(accessToken, rootFolderId, pathNames = []) {
+  let current = rootFolderId;
+  for (const name of pathNames) {
+    const query =
+      `'${q(current)}' in parents and mimeType='application/vnd.google-apps.folder' ` +
+      `and name='${q(name)}' and trashed=false`;
+    const url =
+      `${DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name)` +
+      `&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=1`;
+    const out = await driveFetch(accessToken, url).then((r) => r.json());
+    const hit = (out.files || [])[0];
+    if (!hit) return null;
+    current = hit.id;
+  }
+  return current;
+}
+
+// Resolve (creating the template if needed) the folder at a named path under a
+// deal's root folder. If the path is missing, lay down the standard template
+// once and re-find; returns null only if it still can't be found.
+export async function ensureSubfolderByPath(accessToken, rootFolderId, pathNames = []) {
+  let id = await findSubfolderByPath(accessToken, rootFolderId, pathNames);
+  if (id) return id;
+  try { await applyFolderTemplate(accessToken, rootFolderId); } catch (_) { /* partial tree is fine */ }
+  return findSubfolderByPath(accessToken, rootFolderId, pathNames);
+}
+
 // Find (by our dealId tag) or create the per-deal folder under the configured
 // root. Returns the folder id.
 export async function ensureDealFolder(accessToken, { dealId, name }) {

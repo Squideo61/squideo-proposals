@@ -13,14 +13,21 @@
 //   DELETE /api/crm/production/video/:videoId
 //   POST   /api/crm/production/video/:videoId/send-for-review — hand off to Revisions
 import crypto from 'node:crypto';
+import { put, del, getDownloadUrl } from '@vercel/blob';
 import sql from '../db.js';
-import { makeId, trimOrNull, numberOrNull } from './shared.js';
-import { serialiseDeal, ensureDealFileDriveColumns } from './deals.js';
+import { makeId, trimOrNull, numberOrNull, driveFilesEnabled } from './shared.js';
+import { serialiseDeal, ensureDealFileDriveColumns, dealDriveFolder, driveErrorHint } from './deals.js';
+import { getFreshAccessToken } from './gmail.js';
+import { uploadToFolder, ensureSubfolderByPath, deleteDriveFile } from '../googleDrive.js';
 import { enterProduction, ensureProductionSchema, backfillPaidDealsIntoProduction } from '../production.js';
 import { isValidStage } from '../dealStage.js';
-import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, FIRST_PRODUCTION } from '../productionStages.js';
+import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, isValidMilestone, VIDEO_MILESTONE_BY_ID, stageOrderIndex, FIRST_PRODUCTION } from '../productionStages.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+
+// Where scripts live inside a deal's Drive folder (from the FOLDER_TEMPLATE in
+// googleDrive.js).
+const SCRIPT_FOLDER_PATH = ['2. Pre-Production', '1. Script and Text Direction'];
 
 // Public base for client revision share links (matches RevisionsView.jsx).
 const REVISION_PUBLIC_BASE = 'https://app.squideo.com';
@@ -102,10 +109,19 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       if (req.method !== 'POST') return res.status(405).end();
       return moveVideo(req, res, videoId, user);
     }
+    if (subaction === 'milestone') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return setMilestone(req, res, videoId, user);
+    }
+    if (subaction === 'script') {
+      if (req.method === 'POST')   return uploadScript(req, res, videoId, user);
+      if (req.method === 'DELETE') return deleteScript(req, res, videoId, user);
+      return res.status(405).end();
+    }
     if (req.method === 'GET') {
       const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
       if (!row) return res.status(404).json({ error: 'Video not found' });
-      return res.status(200).json(serialiseVideo(row));
+      return res.status(200).json(await withVideoExtras(serialiseVideo(row)));
     }
     if (req.method === 'PATCH') return updateVideo(req, res, videoId);
     if (req.method === 'DELETE') {
@@ -195,6 +211,144 @@ async function moveVideo(req, res, videoId, user) {
   }
   const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
   return res.status(200).json(serialiseVideo(row));
+}
+
+// Attach milestone approvals + the current script to a serialised video. Only
+// used on the single-video paths (the board list stays lean).
+async function withVideoExtras(video) {
+  const [milestones, scripts] = await Promise.all([
+    sql`SELECT milestone, approved_at, approved_by FROM video_milestones WHERE video_id = ${video.id}`,
+    sql`SELECT id, filename, mime_type, size_bytes, web_view_link, blob_url, uploaded_by, created_at
+          FROM video_scripts WHERE video_id = ${video.id} ORDER BY created_at DESC LIMIT 1`,
+  ]);
+  video.milestones = milestones.map(m => ({ id: m.milestone, approvedAt: m.approved_at, approvedBy: m.approved_by }));
+  const s = scripts[0];
+  let url = s?.web_view_link || null;
+  if (s && !url && s.blob_url) { try { url = await getDownloadUrl(s.blob_url); } catch { url = null; } }
+  video.script = s ? {
+    id: s.id, filename: s.filename, mimeType: s.mime_type || null,
+    sizeBytes: s.size_bytes != null ? Number(s.size_bytes) : null,
+    url,
+    uploadedBy: s.uploaded_by || null, createdAt: s.created_at,
+  } : null;
+  return video;
+}
+
+// Advance a video forward to (phase, stage) — only if that's strictly ahead of
+// where it is now, so approving an earlier milestone late never regresses a
+// card. Logs a video_stage_change event (same shape as moveVideo).
+async function advanceVideoForward(videoId, phase, stage, user) {
+  const cur = (await sql`SELECT deal_id, production_phase, production_stage FROM project_videos WHERE id = ${videoId}`)[0];
+  if (!cur) return;
+  if (stageOrderIndex(phase, stage) <= stageOrderIndex(cur.production_phase, cur.production_stage)) return;
+  await sql`
+    UPDATE project_videos
+       SET production_phase = ${phase}, production_stage = ${stage}, production_stage_changed_at = NOW(), updated_at = NOW()
+     WHERE id = ${videoId}
+  `;
+  await sql`
+    INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+    VALUES (${cur.deal_id}, 'video_stage_change',
+            ${JSON.stringify({ videoId, fromPhase: cur.production_phase, fromStage: cur.production_stage, toPhase: phase, toStage: stage })},
+            ${user.email || null})
+  `;
+  await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${cur.deal_id}`;
+}
+
+// Approve / un-approve a milestone. Approving advances the card to the
+// milestone's mapped stage (forward only).
+async function setMilestone(req, res, videoId, user) {
+  const { milestone, approved } = req.body || {};
+  if (!isValidMilestone(milestone)) return res.status(400).json({ error: 'Invalid milestone' });
+  const exists = (await sql`SELECT id FROM project_videos WHERE id = ${videoId}`)[0];
+  if (!exists) return res.status(404).json({ error: 'Video not found' });
+
+  if (approved) {
+    await sql`
+      INSERT INTO video_milestones (id, video_id, milestone, approved_by)
+      VALUES (${makeId('vms')}, ${videoId}, ${milestone}, ${user.email || null})
+      ON CONFLICT (video_id, milestone)
+      DO UPDATE SET approved_at = NOW(), approved_by = EXCLUDED.approved_by
+    `;
+    const target = VIDEO_MILESTONE_BY_ID[milestone];
+    if (target) await advanceVideoForward(videoId, target.phase, target.stage, user);
+  } else {
+    await sql`DELETE FROM video_milestones WHERE video_id = ${videoId} AND milestone = ${milestone}`;
+  }
+  const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
+  return res.status(200).json(await withVideoExtras(serialiseVideo(row)));
+}
+
+// Upload a script for a video. Drive when configured (into the deal's "Script
+// and Text Direction" subfolder), else a private Blob. Re-uploading clears the
+// 'script' milestone so producers re-review.
+async function uploadScript(req, res, videoId, user) {
+  const video = (await sql`SELECT id, deal_id FROM project_videos WHERE id = ${videoId}`)[0];
+  if (!video) return res.status(404).json({ error: 'Video not found' });
+
+  const useDrive = driveFilesEnabled();
+  if (!useDrive && !process.env.BLOB_READ_WRITE_TOKEN)
+    return res.status(503).json({ error: 'File storage not configured' });
+
+  const filename = decodeURIComponent(req.headers['x-filename'] || 'script');
+  const mimeType = req.headers['content-type'] || 'application/octet-stream';
+  let fileBuffer = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : null;
+  if (!fileBuffer) {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    fileBuffer = Buffer.concat(chunks);
+  }
+  if (!fileBuffer || fileBuffer.length === 0) return res.status(400).json({ error: 'No file data received' });
+  if (fileBuffer.length > 20 * 1024 * 1024) return res.status(413).json({ error: 'File too large (max 20 MB)' });
+
+  const id = makeId('vscript');
+  let driveFileId = null, webViewLink = null, blobUrl = null, blobPathname = null;
+
+  if (useDrive) {
+    let accessToken;
+    try { accessToken = await getFreshAccessToken(user.email); }
+    catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access) to upload the script' }); }
+    try {
+      const root = await dealDriveFolder(accessToken, video.deal_id);
+      const folderId = (await ensureSubfolderByPath(accessToken, root, SCRIPT_FOLDER_PATH)) || root;
+      ({ id: driveFileId, webViewLink } = await uploadToFolder(accessToken, { folderId, filename, mimeType, buffer: fileBuffer }));
+    } catch (err) {
+      console.error('[script] drive upload failed', err.status, err.message);
+      return res.status(502).json({ error: driveErrorHint(err) });
+    }
+  } else {
+    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blob = await put(`video-scripts/${videoId}/${id}/${safeName}`, fileBuffer, { access: 'private', contentType: mimeType });
+    blobUrl = blob.url; blobPathname = blob.pathname;
+  }
+
+  await sql`
+    INSERT INTO video_scripts
+      (id, video_id, deal_id, filename, mime_type, size_bytes, drive_file_id, web_view_link, blob_url, blob_pathname, uploaded_by)
+    VALUES
+      (${id}, ${videoId}, ${video.deal_id}, ${filename}, ${mimeType}, ${fileBuffer.length},
+       ${driveFileId}, ${webViewLink}, ${blobUrl}, ${blobPathname}, ${user.email || null})
+  `;
+  // A fresh script re-opens the Script milestone for review.
+  await sql`DELETE FROM video_milestones WHERE video_id = ${videoId} AND milestone = 'script'`;
+
+  const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
+  return res.status(201).json(await withVideoExtras(serialiseVideo(row)));
+}
+
+async function deleteScript(req, res, videoId, user) {
+  const scriptId = req.query?.scriptId ? String(req.query.scriptId) : null;
+  if (!scriptId) return res.status(400).json({ error: 'scriptId required' });
+  const s = (await sql`SELECT id, drive_file_id, blob_url FROM video_scripts WHERE id = ${scriptId} AND video_id = ${videoId}`)[0];
+  if (!s) return res.status(404).json({ error: 'Script not found' });
+  if (s.drive_file_id && driveFilesEnabled()) {
+    try { const at = await getFreshAccessToken(user.email); await deleteDriveFile(at, s.drive_file_id); }
+    catch (err) { console.error('[script] drive delete failed', err.message); }
+  }
+  if (s.blob_url) { try { await del(s.blob_url); } catch (err) { console.error('[script] blob delete failed', err.message); } }
+  await sql`DELETE FROM video_scripts WHERE id = ${scriptId}`;
+  const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
+  return res.status(200).json(await withVideoExtras(serialiseVideo(row)));
 }
 
 async function updateVideo(req, res, videoId) {

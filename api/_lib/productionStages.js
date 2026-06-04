@@ -86,3 +86,24 @@ export const PAYMENT_TERMS_LABEL = Object.fromEntries(PAYMENT_TERMS.map(t => [t.
 export function isValidPaymentTerms(id) {
   return id == null || PAYMENT_TERMS.some(t => t.id === id);
 }
+
+// ── Per-video milestones (Script → Visual Direction → Storyboard → Video). Each
+// approval advances the video card to a mapped board stage (forward-only). ──
+export const VIDEO_MILESTONES = [
+  { id: 'script',           label: 'Script',           phase: 'pre_production', stage: 'scripts_completed' },
+  { id: 'visual_direction', label: 'Visual Direction', phase: 'pre_production', stage: 'storyboard' },
+  { id: 'storyboard',       label: 'Storyboard',       phase: 'pre_production', stage: 'project_started' },
+  { id: 'video',            label: 'Video',            phase: 'production',     stage: 'signed_off' },
+];
+export const VIDEO_MILESTONE_BY_ID = Object.fromEntries(VIDEO_MILESTONES.map(m => [m.id, m]));
+
+export function isValidMilestone(id) {
+  return VIDEO_MILESTONES.some(m => m.id === id);
+}
+
+// Global ordering of every (phase, stage) so a milestone approval only ever
+// moves a card forward. Returns -1 for an unknown pair.
+const STAGE_ORDER = PRODUCTION_PHASES.flatMap(p => p.stages.map(s => p.id + ':' + s.id));
+export function stageOrderIndex(phaseId, stageId) {
+  return STAGE_ORDER.indexOf(phaseId + ':' + stageId);
+}

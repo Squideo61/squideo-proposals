@@ -27,7 +27,7 @@ export function ensureDealFileDriveColumns() {
 }
 
 // Turn a Drive API error into an actionable message for the user.
-function driveErrorHint(err) {
+export function driveErrorHint(err) {
   const msg = err?.message || '';
   const status = err?.status;
   if (status === 401 || /scope|unauthorized|invalid credentials/i.test(msg)) {
@@ -47,7 +47,7 @@ function driveErrorHint(err) {
 
 // Find-or-create a deal's Shared Drive folder, caching its id on the deal so we
 // only hit Drive once per deal.
-async function dealDriveFolder(accessToken, dealId) {
+export async function dealDriveFolder(accessToken, dealId) {
   const [d] = await sql`SELECT drive_folder_id, title FROM deals WHERE id = ${dealId}`;
   if (d?.drive_folder_id) {
     // Self-heal: if the cached folder was deleted/trashed in Drive, clear it and

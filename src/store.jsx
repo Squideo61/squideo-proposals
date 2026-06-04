@@ -1075,6 +1075,37 @@ export function StoreProvider({ children }) {
       return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/send-for-review', {})
         .then((resp) => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadVideo(videoId)]).then(() => resp));
     },
+
+    // ---------- Video script + milestones ----------
+    // Approve / un-approve a milestone. Approving advances the card forward on
+    // the board (server-side); _mergeVideo reflects the new stage everywhere.
+    approveVideoMilestone(videoId, milestone, approved) {
+      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/milestone', { milestone, approved })
+        .then((video) => { actions._mergeVideo(video); return video; })
+        .catch((err) => { showMsg(err.message || 'Could not update milestone'); throw err; });
+    },
+    // Upload a script (raw binary body, like uploadDealFile). Returns the
+    // refreshed video (with its new `script`).
+    async uploadVideoScript(videoId, file) {
+      const res = await fetch('/api/crm/production/video/' + encodeURIComponent(videoId) + '/script', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          'X-Filename': encodeURIComponent(file.name),
+        },
+        body: file,
+      });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
+      const video = await res.json();
+      actions._mergeVideo(video);
+      return video;
+    },
+    deleteVideoScript(videoId, scriptId) {
+      return api.delete('/api/crm/production/video/' + encodeURIComponent(videoId) + '/script?scriptId=' + encodeURIComponent(scriptId))
+        .then((video) => { actions._mergeVideo(video); return video; })
+        .catch(() => actions.loadVideo(videoId));
+    },
     createContact(input) {
       return api.post('/api/crm/contacts', input).then((c) => {
         if (c && c.id) setState(s => ({ ...s, contacts: { ...s.contacts, [c.id]: c } }));

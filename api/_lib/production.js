@@ -53,6 +53,35 @@ export async function ensureProductionSchema() {
       await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS text_direction_deadline DATE`;
       await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS producer_email TEXT`;
       await sql`CREATE INDEX IF NOT EXISTS project_videos_stage_idx ON project_videos(production_phase, production_stage)`;
+      // Per-video script uploads + milestone approvals (Script section / board auto-advance).
+      await sql`
+        CREATE TABLE IF NOT EXISTS video_milestones (
+          id          TEXT        PRIMARY KEY,
+          video_id    TEXT        NOT NULL REFERENCES project_videos(id) ON DELETE CASCADE,
+          milestone   TEXT        NOT NULL,
+          approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          approved_by TEXT,
+          created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS video_milestones_unique ON video_milestones(video_id, milestone)`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS video_scripts (
+          id            TEXT        PRIMARY KEY,
+          video_id      TEXT        NOT NULL REFERENCES project_videos(id) ON DELETE CASCADE,
+          deal_id       TEXT        NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+          filename      TEXT        NOT NULL,
+          mime_type     TEXT,
+          size_bytes    BIGINT,
+          drive_file_id TEXT,
+          web_view_link TEXT,
+          blob_url      TEXT,
+          blob_pathname TEXT,
+          uploaded_by   TEXT,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS video_scripts_video_idx ON video_scripts(video_id, created_at DESC)`;
       // One-time backfill: existing videos onto the board, inheriting project-level values.
       await sql`
         UPDATE project_videos v
