@@ -7,7 +7,7 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
-import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, createResumableUploadSession, getDriveFile } from '../googleDrive.js';
+import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, getDriveFile } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
@@ -489,21 +489,20 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     });
   }
 
-  // /deals/:id/files/drive-session — start a resumable Drive upload so the
-  // browser can PUT the bytes straight to Drive (no serverless body limit).
-  // When Drive isn't enabled we say so and the client falls back to Blob.
+  // /deals/:id/files/drive-session — prepare a browser-direct Drive upload. We
+  // ensure the deal's folder server-side and hand the browser the folder id + a
+  // short-lived access token, so the browser itself initiates the resumable
+  // upload (which is what makes Google set CORS for our origin). When Drive
+  // isn't enabled we say so and the client falls back to Blob.
   if (action === 'files' && subaction === 'drive-session' && req.method === 'POST') {
     if (!driveFilesEnabled()) return res.status(200).json({ enabled: false });
     await ensureDealFileDriveColumns();
-    const { filename, mimeType, size } = req.body || {};
-    if (!filename) return res.status(400).json({ error: 'filename required' });
     let accessToken;
     try { accessToken = await getFreshAccessToken(user.email); }
     catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access) to upload files' }); }
     try {
       const folderId = await dealDriveFolder(accessToken, id);
-      const uploadUrl = await createResumableUploadSession(accessToken, { folderId, filename, mimeType, size });
-      return res.status(200).json({ enabled: true, uploadUrl });
+      return res.status(200).json({ enabled: true, accessToken, folderId });
     } catch (err) {
       console.error('[deal files] drive session failed', err.status, err.message);
       return res.status(502).json({ error: driveErrorHint(err) });

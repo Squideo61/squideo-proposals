@@ -1802,20 +1802,36 @@ export function StoreProvider({ children }) {
       // completes. If Drive isn't enabled the server says so and we fall back to
       // the raw Blob upload below.
       const base = '/api/crm/deals/' + encodeURIComponent(dealId) + '/files';
+      const mime = file.type || 'application/octet-stream';
       const session = await api.post(base + '/drive-session', {
-        filename: file.name, mimeType: file.type || 'application/octet-stream', size: file.size,
+        filename: file.name, mimeType: mime, size: file.size,
       });
-      if (session && session.enabled && session.uploadUrl) {
-        const putRes = await fetch(session.uploadUrl, {
-          method: 'PUT',
-          headers: { 'Content-Type': file.type || 'application/octet-stream' },
-          body: file,
-        });
+      if (session && session.enabled && session.accessToken && session.folderId) {
+        // Initiate the resumable session *from the browser* so Google sets CORS
+        // for our origin, then PUT the bytes straight to the returned URL.
+        const initRes = await fetch(
+          'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=id,webViewLink',
+          {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + session.accessToken,
+              'Content-Type': 'application/json; charset=UTF-8',
+              'X-Upload-Content-Type': mime,
+              'X-Upload-Content-Length': String(file.size),
+            },
+            body: JSON.stringify({ name: file.name, parents: [session.folderId] }),
+          },
+        );
+        if (!initRes.ok) throw new Error('Google Drive upload could not start (' + initRes.status + ')');
+        const uploadUrl = initRes.headers.get('location');
+        if (!uploadUrl) throw new Error('Google Drive did not return an upload URL');
+
+        const putRes = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mime }, body: file });
         if (!putRes.ok) throw new Error('Google Drive upload failed (' + putRes.status + ')');
         const driveFile = await putRes.json().catch(() => ({}));
         const newFile = await api.post(base + '/drive-complete', {
           driveFileId: driveFile.id, webViewLink: driveFile.webViewLink || null,
-          filename: file.name, mimeType: file.type || 'application/octet-stream', size: file.size,
+          filename: file.name, mimeType: mime, size: file.size,
         });
         addToState(newFile);
         return newFile;
