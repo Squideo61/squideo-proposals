@@ -36,6 +36,56 @@ function q(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+// The standard production subfolder tree laid down inside every new deal/project
+// folder, mirroring the "Template" layout. Order + numeric prefixes keep Drive
+// sorting sensible (Drive sorts by name, so "1. ", "2. " stay in stage order).
+const FOLDER_TEMPLATE = [
+  { name: '1. Resources', children: [
+    { name: 'Additional Assets' },
+    { name: 'Branding' },
+    { name: 'Documents' },
+    { name: 'Reference Imagery' },
+  ] },
+  { name: '2. Pre-Production', children: [
+    { name: '1. Script and Text Direction', children: [{ name: 'V1' }] },
+    { name: '2. Storyboards', children: [{ name: 'V1' }] },
+  ] },
+  { name: '3. Video', children: [
+    { name: 'V1', children: [
+      { name: 'Audio' },
+      { name: 'Video' },
+      { name: 'Video Assets' },
+    ] },
+  ] },
+  { name: '4. Signed Off' },
+];
+
+// Create a single subfolder under parentId, returning its id.
+async function createSubfolder(accessToken, name, parentId) {
+  const meta = {
+    name,
+    mimeType: 'application/vnd.google-apps.folder',
+    parents: [parentId],
+  };
+  const created = await driveFetch(
+    accessToken,
+    `${DRIVE_API}/files?supportsAllDrives=true&fields=id`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(meta) },
+  ).then((r) => r.json());
+  return created.id;
+}
+
+// Recursively create a folder tree under parentId. Sequential so each child has
+// its real parent id before its own children are created.
+async function scaffoldFolders(accessToken, parentId, nodes) {
+  for (const node of nodes) {
+    const id = await createSubfolder(accessToken, node.name, parentId);
+    if (node.children && node.children.length) {
+      await scaffoldFolders(accessToken, id, node.children);
+    }
+  }
+}
+
 // Find (by our dealId tag) or create the per-deal folder under the configured
 // root. Returns the folder id.
 export async function ensureDealFolder(accessToken, { dealId, name }) {
@@ -62,6 +112,12 @@ export async function ensureDealFolder(accessToken, { dealId, name }) {
     `${DRIVE_API}/files?supportsAllDrives=true&fields=id`,
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(meta) },
   ).then((r) => r.json());
+  // Newly created folder — lay down the standard production subfolder template.
+  // Best-effort: a mid-scaffold failure leaves a partial tree but the deal folder
+  // itself is still returned and usable.
+  try {
+    await scaffoldFolders(accessToken, created.id, FOLDER_TEMPLATE);
+  } catch (_) { /* partial tree is fine; don't block folder creation */ }
   return created.id;
 }
 
