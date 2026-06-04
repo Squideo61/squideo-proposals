@@ -1796,51 +1796,11 @@ export function StoreProvider({ children }) {
         return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, files: [newFile, ...(detail.files || [])] } } };
       });
 
-      // When Drive is enabled, upload the bytes straight to Google Drive via a
-      // resumable session — no serverless body limit, so large files work. The
-      // server creates the session and records the file once the browser's PUT
-      // completes. If Drive isn't enabled the server says so and we fall back to
-      // the raw Blob upload below.
+      // Upload the raw bytes to our server, which stores them in the deal's
+      // Drive folder (or Blob when Drive is off). Going through the server avoids
+      // the browser→Google CORS issues that direct-to-Drive uploads hit. Raw
+      // binary body (not JSON), so it skips the `api` wrapper.
       const base = '/api/crm/deals/' + encodeURIComponent(dealId) + '/files';
-      const mime = file.type || 'application/octet-stream';
-      const session = await api.post(base + '/drive-session', {
-        filename: file.name, mimeType: mime, size: file.size,
-      });
-      if (session && session.enabled && session.accessToken && session.folderId) {
-        // Upload straight to Drive in a single multipart request (the method
-        // Google's own browser SDK uses) — one cross-origin call, no Location
-        // header to read, so it's CORS-reliable. Bypasses the serverless body
-        // limit, so large files work. The server records the file afterwards.
-        const boundary = 'sq_' + Math.random().toString(36).slice(2);
-        const metadata = JSON.stringify({ name: file.name, parents: [session.folderId] });
-        const body = new Blob([
-          `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n`,
-          `--${boundary}\r\nContent-Type: ${mime}\r\n\r\n`,
-          file,
-          `\r\n--${boundary}--`,
-        ]);
-        const upRes = await fetch(
-          'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink',
-          {
-            method: 'POST',
-            headers: {
-              Authorization: 'Bearer ' + session.accessToken,
-              'Content-Type': `multipart/related; boundary=${boundary}`,
-            },
-            body,
-          },
-        );
-        if (!upRes.ok) throw new Error('Google Drive upload failed (' + upRes.status + ')');
-        const driveFile = await upRes.json().catch(() => ({}));
-        const newFile = await api.post(base + '/drive-complete', {
-          driveFileId: driveFile.id, webViewLink: driveFile.webViewLink || null,
-          filename: file.name, mimeType: mime, size: file.size,
-        });
-        addToState(newFile);
-        return newFile;
-      }
-
-      // Blob fallback — raw binary body (not JSON), so it skips the `api` wrapper.
       const res = await fetch(base, {
         method: 'POST',
         credentials: 'include',
