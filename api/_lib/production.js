@@ -28,6 +28,7 @@ export async function ensureProductionSchema() {
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS delivery_deadline DATE`;
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS text_direction_deadline DATE`;
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS revision_project_id TEXT`;
+      await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS storyboard_project_id TEXT`;
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS video_length TEXT`;
       await sql`
         CREATE TABLE IF NOT EXISTS project_videos (
@@ -52,6 +53,7 @@ export async function ensureProductionSchema() {
       await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS delivery_deadline DATE`;
       await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS text_direction_deadline DATE`;
       await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS producer_email TEXT`;
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS storyboard_id TEXT`;
       await sql`CREATE INDEX IF NOT EXISTS project_videos_stage_idx ON project_videos(production_phase, production_stage)`;
       // Per-video script uploads + milestone approvals (Script section / board auto-advance).
       await sql`

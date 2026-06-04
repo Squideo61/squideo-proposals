@@ -9,6 +9,7 @@ import {
 } from '../../lib/productionStages.js';
 import { DealConversation } from './DealConversation.jsx';
 import { AssigneePicker } from './TaskFormModal.jsx';
+import { PdfPage } from '../storyboard/PdfPage.jsx';
 
 const sectionCard = {
   background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20, marginTop: 18,
@@ -62,6 +63,14 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
       })
       .catch(e => showMsg(e.message || 'Could not send for review'));
   };
+  const sendStoryboard = () => {
+    actions.sendStoryboardForReview(video.dealId, videoId)
+      .then((resp) => {
+        if (resp?.reviewUrl) navigator.clipboard?.writeText(resp.reviewUrl).catch(() => {});
+        showMsg(video.storyboardId ? 'Storyboard link copied' : 'Storyboard review created — link copied');
+      })
+      .catch(e => showMsg(e.message || 'Could not create storyboard review'));
+  };
   const remove = () => {
     if (!window.confirm(`Delete "${video.title}"? This removes the video from its project.`)) return;
     actions.deleteProjectVideo(video.dealId, videoId).then(() => onBack());
@@ -78,6 +87,9 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           {onOpenDeal && video.dealId && (
             <button onClick={() => onOpenDeal(video.dealId)} className="btn-ghost"><ExternalLink size={14} /> Go to deal</button>
           )}
+          <button onClick={sendStoryboard} className="btn-ghost">
+            {video.storyboardId ? <><ExternalLink size={14} /> Storyboard link</> : <><Send size={14} /> Storyboard review</>}
+          </button>
           <button onClick={sendForReview} className="btn-ghost">
             {video.revisionVideoId ? <><ExternalLink size={14} /> Review link</> : <><Send size={14} /> Send for review</>}
           </button>
@@ -85,6 +97,9 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
         </div>
       </header>
 
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 16, alignItems: 'flex-start' }}>
+        {/* Left column: details + script + milestones */}
+        <div style={{ flex: 1, minWidth: 0, width: isMobile ? '100%' : undefined }}>
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 16 : 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
           <Film size={18} color={phase.color} />
@@ -157,10 +172,79 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
         </div>
       </div>
 
-      <ScriptCard video={video} videoId={videoId} />
-      <MilestonesCard video={video} videoId={videoId} />
+          <ScriptCard video={video} videoId={videoId} />
+          <MilestonesCard video={video} videoId={videoId} />
+        </div>
 
-      {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} />}
+        {/* Right column: stage-locked preview + the conversation, full height */}
+        <div style={{
+          width: isMobile ? '100%' : 440, flexShrink: 0, alignSelf: 'flex-start',
+          position: isMobile ? 'static' : 'sticky', top: isMobile ? undefined : 72,
+          height: isMobile ? 'auto' : 'calc(100vh - 96px)',
+          display: 'flex', flexDirection: 'column', gap: 16,
+        }}>
+          <PreviewPane preview={video.preview} isMobile={isMobile} />
+          <div style={{ flex: isMobile ? 'none' : 1, minHeight: 0, overflowY: isMobile ? 'visible' : 'auto' }}>
+            {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} />}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Stage-locked preview of the current deliverable: a script doc in the script
+// stages, a storyboard PDF while storyboarding, then the latest draft video.
+// `preview.current` (server-computed from the board stage) picks which asset.
+const PREVIEW_META = {
+  script:     { label: 'Script', icon: FileText, empty: 'No script uploaded yet.' },
+  storyboard: { label: 'Storyboard', icon: FileText, empty: 'No storyboard linked yet — use “Storyboard review”, then upload a draft PDF.' },
+  video:      { label: 'Draft video', icon: Film, empty: 'No draft video yet — use “Send for review”, then upload a draft.' },
+};
+
+function PreviewPane({ preview, isMobile }) {
+  const p = preview || {};
+  const kind = PREVIEW_META[p.current] ? p.current : 'script';
+  const asset = kind === 'script' ? p.script : kind === 'storyboard' ? p.storyboard : p.video;
+  const meta = PREVIEW_META[kind];
+  const Icon = meta.icon;
+  const url = asset?.url || null;
+  const isDriveScript = kind === 'script' && url && url.includes('drive.google.com');
+
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, overflow: 'hidden',
+      display: 'flex', flexDirection: 'column', height: isMobile ? 260 : 'clamp(220px, 30vh, 380px)', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+        borderBottom: '1px solid ' + BRAND.border, flexShrink: 0 }}>
+        <Icon size={15} color={BRAND.blue} />
+        <strong style={{ fontSize: 13, color: BRAND.ink }}>{meta.label} preview</strong>
+        {url && (
+          <a href={url} target="_blank" rel="noreferrer"
+            style={{ marginLeft: 'auto', fontSize: 12, color: BRAND.blue, textDecoration: 'none',
+              display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <ExternalLink size={12} /> Open
+          </a>
+        )}
+      </div>
+      <div style={{ flex: 1, minHeight: 0, position: 'relative', background: kind === 'storyboard' ? '#0B1B26' : '#fff',
+        overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {!url ? (
+          <div style={{ color: BRAND.muted, fontSize: 13, textAlign: 'center', padding: 18, lineHeight: 1.5 }}>{meta.empty}</div>
+        ) : kind === 'script' ? (
+          isDriveScript ? (
+            <iframe src={url.replace('/view', '/preview')} title="Script preview"
+              style={{ width: '100%', height: '100%', border: 0 }} />
+          ) : (
+            <a href={url} target="_blank" rel="noreferrer" className="btn"><ExternalLink size={14} /> View script</a>
+          )
+        ) : kind === 'storyboard' ? (
+          <div style={{ width: '100%', padding: 10 }}>
+            <PdfPage url={url} pageNumber={1} />
+          </div>
+        ) : (
+          <video src={url} controls style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }} />
+        )}
+      </div>
     </div>
   );
 }

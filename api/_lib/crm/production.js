@@ -21,7 +21,7 @@ import { getFreshAccessToken } from './gmail.js';
 import { uploadToFolder, ensureSubfolderByPath, deleteDriveFile } from '../googleDrive.js';
 import { enterProduction, ensureProductionSchema, backfillPaidDealsIntoProduction } from '../production.js';
 import { isValidStage } from '../dealStage.js';
-import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, isValidMilestone, VIDEO_MILESTONE_BY_ID, stageOrderIndex, FIRST_PRODUCTION } from '../productionStages.js';
+import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, isValidMilestone, VIDEO_MILESTONE_BY_ID, stageOrderIndex, previewKindForStage, FIRST_PRODUCTION } from '../productionStages.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
@@ -108,6 +108,10 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     if (subaction === 'send-for-review') {
       if (req.method !== 'POST') return res.status(405).end();
       return sendVideoForReview(res, videoId, user);
+    }
+    if (subaction === 'send-storyboard-for-review') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return sendStoryboardForReview(res, videoId, user);
     }
     if (subaction === 'move') {
       if (req.method !== 'POST') return res.status(405).end();
@@ -235,6 +239,29 @@ async function withVideoExtras(video) {
     url,
     uploadedBy: s.uploaded_by || null, createdAt: s.created_at,
   } : null;
+
+  // Stage-locked preview: the latest storyboard PDF (from the linked storyboard)
+  // and the latest draft video (from the Video Revisions hand-off). Both guarded
+  // so a missing/legacy table never breaks the video load.
+  let storyboard = null, draftVideo = null;
+  if (video.storyboardId) {
+    try {
+      const sv = (await sql`SELECT blob_url FROM storyboard_versions WHERE storyboard_id = ${video.storyboardId} ORDER BY version_number DESC LIMIT 1`)[0];
+      if (sv?.blob_url) storyboard = { url: sv.blob_url };
+    } catch { /* storyboard tables not present */ }
+  }
+  if (video.revisionVideoId) {
+    try {
+      const rv = (await sql`SELECT blob_url, mime_type FROM revision_versions WHERE video_id = ${video.revisionVideoId} ORDER BY version_number DESC LIMIT 1`)[0];
+      if (rv?.blob_url) draftVideo = { url: rv.blob_url, mimeType: rv.mime_type || null };
+    } catch { /* revision tables not present */ }
+  }
+  video.preview = {
+    current: previewKindForStage(video.productionPhase, video.productionStage),
+    script: video.script ? { url: video.script.url, filename: video.script.filename, mimeType: video.script.mimeType } : null,
+    storyboard,
+    video: draftVideo,
+  };
   return video;
 }
 
@@ -458,6 +485,58 @@ async function sendVideoForReview(res, videoId, user) {
   });
 }
 
+// Hand a video off to the Storyboard Revisions section: lazily create the deal's
+// storyboard project + a storyboard for this video, link them, and return the
+// public share link. Mirrors sendVideoForReview; row shapes match
+// api/storyboards/[action].js.
+async function sendStoryboardForReview(res, videoId, user) {
+  const video = (await sql`
+    SELECT pv.id, pv.deal_id, pv.title, pv.storyboard_id,
+           d.title AS deal_title, d.company_id, d.storyboard_project_id
+      FROM project_videos pv
+      JOIN deals d ON d.id = pv.deal_id
+     WHERE pv.id = ${videoId}
+  `)[0];
+  if (!video) return res.status(404).json({ error: 'Video not found' });
+
+  let projectId = video.storyboard_project_id;
+  let shareToken = projectId
+    ? (await sql`SELECT share_token FROM storyboard_projects WHERE id = ${projectId}`)[0]?.share_token || null
+    : null;
+  if (!projectId || !shareToken) {
+    projectId = crypto.randomUUID();
+    shareToken = crypto.randomUUID();
+    const companyName = video.company_id
+      ? (await sql`SELECT name FROM companies WHERE id = ${video.company_id}`)[0]?.name || null
+      : null;
+    await sql`
+      INSERT INTO storyboard_projects (id, title, client_name, share_token, created_by)
+      VALUES (${projectId}, ${video.deal_title}, ${companyName}, ${shareToken}, ${user.email || null})
+    `;
+    await sql`UPDATE deals SET storyboard_project_id = ${projectId} WHERE id = ${video.deal_id}`;
+  }
+
+  let storyboardId = video.storyboard_id;
+  if (!storyboardId) {
+    const [{ next }] = await sql`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM storyboards WHERE project_id = ${projectId}`;
+    storyboardId = crypto.randomUUID();
+    await sql`
+      INSERT INTO storyboards (id, project_id, title, sort_order)
+      VALUES (${storyboardId}, ${projectId}, ${video.title}, ${next})
+    `;
+    await sql`UPDATE project_videos SET storyboard_id = ${storyboardId}, updated_at = NOW() WHERE id = ${videoId}`;
+  }
+  await sql`UPDATE storyboard_projects SET updated_at = NOW() WHERE id = ${projectId}`;
+
+  return res.status(200).json({
+    ok: true,
+    storyboardProjectId: projectId,
+    storyboardId,
+    shareToken,
+    reviewUrl: `${REVISION_PUBLIC_BASE}/?storyboard=${shareToken}`,
+  });
+}
+
 export function serialiseVideo(r) {
   const out = {
     id: r.id,
@@ -477,6 +556,7 @@ export function serialiseVideo(r) {
       : (r.producer_email ? [r.producer_email] : []),
     sortOrder: r.sort_order,
     revisionVideoId: r.revision_video_id || null,
+    storyboardId: r.storyboard_id || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at || null,
   };

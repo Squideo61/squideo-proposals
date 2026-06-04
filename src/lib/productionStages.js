@@ -125,3 +125,15 @@ const STAGE_ORDER = PRODUCTION_PHASES.flatMap(p => p.stages.map(s => p.id + ':' 
 export function stageOrderIndex(phaseId, stageId) {
   return STAGE_ORDER.indexOf(phaseId + ':' + stageId);
 }
+
+// Which deliverable the video page should preview at a given board position:
+// 'script' early in pre-production, 'storyboard' during storyboarding, then
+// 'video' once it heads into production. Drives the stage-locked preview pane.
+export function previewKindForStage(phaseId, stageId) {
+  if (phaseId === 'pre_production') {
+    if (stageId === 'storyboard' || stageId === 'amends_1') return 'storyboard';
+    if (stageId === 'project_started') return 'video';
+    return 'script'; // new_project, script, scripts_completed
+  }
+  return 'video'; // production / completed / after_care
+}
