@@ -7,7 +7,7 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
-import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree } from '../googleDrive.js';
+import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree, isFolderWithin, listFolderContents, getDriveFile } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
@@ -370,19 +370,27 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       let accessToken;
       try { accessToken = await getFreshAccessToken(user.email); }
       catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access) to upload files' }); }
-      let driveId, webViewLink;
+      const reqFolder = req.headers['x-folder-id'] ? String(req.headers['x-folder-id']) : null;
+      let driveId, webViewLink, isRoot = true;
       try {
-        const folderId = await dealDriveFolder(accessToken, id);
+        const root = await dealDriveFolder(accessToken, id);
+        let folderId = root;
+        if (reqFolder && reqFolder !== root && await isFolderWithin(accessToken, reqFolder, root)) {
+          folderId = reqFolder; isRoot = false;
+        }
         ({ id: driveId, webViewLink } = await uploadToFolder(accessToken, { folderId, filename, mimeType, buffer: fileBuffer }));
       } catch (err) {
         console.error('[deal files] drive upload failed', err.status, err.message);
         return res.status(502).json({ error: driveErrorHint(err) });
       }
-      await sql`
-        INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
-        VALUES (${fileId}, ${id}, ${filename}, ${mimeType}, ${fileBuffer.length},
-                NULL, ${driveId}, ${webViewLink}, ${user.email}, 'upload')
-      `;
+      // Only track root-folder uploads in deal_files (see drive-chunk note).
+      if (isRoot) {
+        await sql`
+          INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
+          VALUES (${fileId}, ${id}, ${filename}, ${mimeType}, ${fileBuffer.length},
+                  NULL, ${driveId}, ${webViewLink}, ${user.email}, 'upload')
+        `;
+      }
       return res.status(201).json({
         id: fileId, filename, mimeType, sizeBytes: fileBuffer.length,
         uploadedBy: user.email, source: 'upload', createdAt: new Date().toISOString(),
@@ -440,6 +448,56 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     } catch (err) {
       console.warn('[deal files] folder tree failed', err.message);
       return res.status(200).json({ folders: [] });
+    }
+  }
+
+  // /deals/:id/files/contents?folderId= — list one folder's contents (subfolders
+  // + files) for the in-card Drive browser. Defaults to the deal's root folder;
+  // any folderId must live within the deal's own folder subtree.
+  if (action === 'files' && subaction === 'contents' && req.method === 'GET') {
+    if (!driveFilesEnabled()) return res.status(200).json({ rootId: null, folderId: null, folders: [], files: [] });
+    const [d] = await sql`SELECT drive_folder_id FROM deals WHERE id = ${id}`;
+    const root = d?.drive_folder_id || null;
+    if (!root) return res.status(200).json({ rootId: null, folderId: null, folders: [], files: [] });
+    let accessToken;
+    try { accessToken = await getFreshAccessToken(user.email); }
+    catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access) first' }); }
+    let target = req.query.folderId ? String(req.query.folderId) : root;
+    try {
+      if (target !== root && !(await isFolderWithin(accessToken, target, root))) target = root;
+      const { folders, files } = await listFolderContents(accessToken, target);
+      return res.status(200).json({ rootId: root, folderId: target, folders, files });
+    } catch (err) {
+      console.warn('[deal files] contents failed', err.message);
+      return res.status(502).json({ error: driveErrorHint(err) });
+    }
+  }
+
+  // /deals/:id/files/drive-delete?fileId= — delete a Drive file from the browser.
+  // The file must live within the deal's folder subtree. Also clears any
+  // deal_files row that referenced it (root-folder uploads keep such a row).
+  if (action === 'files' && subaction === 'drive-delete' && req.method === 'DELETE') {
+    if (!driveFilesEnabled()) return res.status(400).json({ error: 'Drive files not enabled' });
+    await ensureDealFileDriveColumns();
+    const driveFileId = req.query.fileId ? String(req.query.fileId) : null;
+    if (!driveFileId) return res.status(400).json({ error: 'fileId required' });
+    const [d] = await sql`SELECT drive_folder_id FROM deals WHERE id = ${id}`;
+    const root = d?.drive_folder_id || null;
+    if (!root) return res.status(404).json({ error: 'No Drive folder for this deal' });
+    let accessToken;
+    try { accessToken = await getFreshAccessToken(user.email); }
+    catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access) first' }); }
+    try {
+      const meta = await getDriveFile(accessToken, driveFileId, 'id,parents');
+      const parent = meta?.parents?.[0] || null;
+      const within = parent && (parent === root || await isFolderWithin(accessToken, parent, root));
+      if (!within) return res.status(403).json({ error: "File is not in this deal's folder" });
+      await deleteDriveFile(accessToken, driveFileId);
+      await sql`DELETE FROM deal_files WHERE deal_id = ${id} AND drive_file_id = ${driveFileId}`;
+      return res.status(200).json({ ok: true });
+    } catch (err) {
+      console.error('[deal files] drive-delete failed', err.status, err.message);
+      return res.status(502).json({ error: driveErrorHint(err) });
     }
   }
 
@@ -568,15 +626,21 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
   if (action === 'files' && subaction === 'drive-upload-start' && req.method === 'POST') {
     if (!driveFilesEnabled()) return res.status(200).json({ enabled: false });
     await ensureDealFileDriveColumns();
-    const { filename, mimeType } = req.body || {};
+    const { filename, mimeType, folderId: reqFolder } = req.body || {};
     if (!filename) return res.status(400).json({ error: 'filename required' });
     let accessToken;
     try { accessToken = await getFreshAccessToken(user.email); }
     catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access) to upload files' }); }
     try {
-      const folderId = await dealDriveFolder(accessToken, id);
+      const root = await dealDriveFolder(accessToken, id);
+      // Upload into the browser's current subfolder when given (and valid),
+      // otherwise the deal's root folder.
+      let folderId = root;
+      if (reqFolder && reqFolder !== root && await isFolderWithin(accessToken, String(reqFolder), root)) {
+        folderId = String(reqFolder);
+      }
       const uploadUrl = await createResumableUploadSession(accessToken, { folderId, filename, mimeType });
-      return res.status(200).json({ enabled: true, uploadUrl });
+      return res.status(200).json({ enabled: true, uploadUrl, folderId, rootId: root });
     } catch (err) {
       console.error('[deal files] drive upload start failed', err.status, err.message);
       return res.status(502).json({ error: driveErrorHint(err) });
@@ -594,6 +658,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     const contentRange = req.headers['x-content-range'];
     const filename = decodeURIComponent(req.headers['x-filename'] || 'upload');
     const mime = req.headers['x-mime'] || 'application/octet-stream';
+    const targetFolder = req.headers['x-folder-id'] ? String(req.headers['x-folder-id']) : null;
     if (!uploadUrl || !contentRange) return res.status(400).json({ error: 'Missing upload headers' });
 
     let chunk = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : null;
@@ -622,11 +687,19 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       const f = await driveRes.json().catch(() => ({}));
       const total = Number(String(contentRange).split('/')[1]) || null;
       const fileId = crypto.randomUUID();
-      await sql`
-        INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
-        VALUES (${fileId}, ${id}, ${filename}, ${mime}, ${total},
-                NULL, ${f.id || null}, ${f.webViewLink || null}, ${user.email}, 'upload')
-      `;
+      // Only record a deal_files row for root-folder uploads. Files dropped into a
+      // subfolder are browsed live from Drive; a row there would just be pruned by
+      // the root-only reconcile on the next deal load.
+      const [d] = await sql`SELECT drive_folder_id FROM deals WHERE id = ${id}`;
+      const root = d?.drive_folder_id || null;
+      const isRoot = !targetFolder || targetFolder === root;
+      if (isRoot) {
+        await sql`
+          INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
+          VALUES (${fileId}, ${id}, ${filename}, ${mime}, ${total},
+                  NULL, ${f.id || null}, ${f.webViewLink || null}, ${user.email}, 'upload')
+        `;
+      }
       return res.status(201).json({
         done: true,
         file: {

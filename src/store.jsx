@@ -1798,7 +1798,7 @@ export function StoreProvider({ children }) {
     },
 
     // ---------- Deal files ----------
-    async uploadDealFile(dealId, file, onProgress, signal) {
+    async uploadDealFile(dealId, file, onProgress, signal, folderId = null) {
       const addToState = (newFile) => setState(s => {
         const detail = s.dealDetail[dealId];
         if (!detail) return s;
@@ -1813,16 +1813,20 @@ export function StoreProvider({ children }) {
       // the serverless body limit (so large videos work) and avoids the
       // browser→Google CORS that direct uploads hit. Drive off → fall back below.
       const start = file.size > 0
-        ? await api.post(base + '/drive-upload-start', { filename: file.name, mimeType: mime })
+        ? await api.post(base + '/drive-upload-start', { filename: file.name, mimeType: mime, folderId })
         : null;
       if (start && start.enabled !== false && start.uploadUrl) {
         const CHUNK = 4 * 1024 * 1024; // 4 MB — multiple of 256 KB, under the body limit
         const MAX_RETRIES = 6;
         const total = file.size;
+        // Subfolder uploads are browsed live from Drive — keep them out of the
+        // deal's root file list (detail.files).
+        const intoRoot = !start.folderId || !start.rootId || start.folderId === start.rootId;
         const uploadHeaders = {
           'X-Upload-Url': start.uploadUrl,
           'X-Filename': encodeURIComponent(file.name),
           'X-Mime': mime,
+          ...(start.folderId ? { 'X-Folder-Id': start.folderId } : {}),
         };
         let offset = 0;
         let result = null;
@@ -1865,7 +1869,7 @@ export function StoreProvider({ children }) {
             } catch (e2) { if (signal?.aborted || e2.name === 'AbortError') throw e2; /* else keep offset; retry */ }
           }
         }
-        if (result) { addToState(result); return result; }
+        if (result) { if (intoRoot) addToState(result); return result; }
         throw new Error('Upload did not complete');
       }
 
@@ -1874,12 +1878,16 @@ export function StoreProvider({ children }) {
       const res = await fetch(base, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': mime, 'X-Filename': encodeURIComponent(file.name) },
+        headers: {
+          'Content-Type': mime,
+          'X-Filename': encodeURIComponent(file.name),
+          ...(folderId ? { 'X-Folder-Id': folderId } : {}),
+        },
         body: file,
       });
       if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
       const newFile = await res.json();
-      addToState(newFile);
+      if (!folderId) addToState(newFile); // root upload → reflect in the file list
       return newFile;
     },
 
@@ -1908,6 +1916,19 @@ export function StoreProvider({ children }) {
     // card). Returns { folders: [...] }.
     loadDealFolders(dealId) {
       return api.get('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/folders');
+    },
+
+    // List one folder's contents (subfolders + files) for the in-card browser.
+    // Omit folderId for the deal's root folder. Returns { rootId, folderId,
+    // folders, files }.
+    loadDealFolderContents(dealId, folderId = null) {
+      const qs = folderId ? '?folderId=' + encodeURIComponent(folderId) : '';
+      return api.get('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/contents' + qs);
+    },
+
+    // Delete a Drive file (by its Drive id) shown in the folder browser.
+    deleteDealDriveFile(dealId, driveFileId) {
+      return api.delete('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/drive-delete?fileId=' + encodeURIComponent(driveFileId));
     },
 
     addDealFileFromEmail(dealId, payload) {

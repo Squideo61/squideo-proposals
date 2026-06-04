@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Plus, RefreshCw, Square, Trash2, User, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Plus, RefreshCw, Square, Trash2, User, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -1210,37 +1210,6 @@ function FileTypeTag({ mimeType }) {
   return <FileText size={14} color={BRAND.muted} />;
 }
 
-// Renders the Drive subfolder tree as an indented list. Each folder name links
-// out to that folder in Drive. Recurses for nested folders.
-function FolderTree({ nodes, depth = 0 }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      {nodes.map((node) => (
-        <div key={node.id}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: depth * 16 }}>
-            <Folder size={13} color={BRAND.blue} style={{ flexShrink: 0 }} />
-            {node.webViewLink ? (
-              <a
-                href={node.webViewLink}
-                target="_blank" rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                style={{ fontSize: 12.5, color: BRAND.ink, textDecoration: 'none' }}
-              >
-                {node.name}
-              </a>
-            ) : (
-              <span style={{ fontSize: 12.5, color: BRAND.ink }}>{node.name}</span>
-            )}
-          </div>
-          {node.children && node.children.length > 0 && (
-            <FolderTree nodes={node.children} depth={depth + 1} />
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const { actions, showMsg } = useStore();
   const isMobile = useIsMobile();
@@ -1251,22 +1220,35 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const abortRef = React.useRef(null);
   const [syncing, setSyncing] = useState(false);
   const [settingUp, setSettingUp] = useState(false);
-  const [folders, setFolders] = useState(null); // null = not loaded yet
+
+  // Drive folder browser. path[0] is the deal root (id=null → the server uses
+  // the deal's root folder); the last entry is the folder currently open.
+  const [path, setPath] = useState([{ id: null, name: 'Files' }]);
+  const [contents, setContents] = useState(null); // { folders, files } | null
+  const [loadingContents, setLoadingContents] = useState(false);
+  const currentFolderId = path[path.length - 1].id;
+  const currentFolderName = path[path.length - 1].name;
 
   const cancelUpload = () => { abortRef.current?.abort(); };
 
-  // Pull the Drive subfolder tree so we can show the folder structure.
-  const loadFolders = React.useCallback(async () => {
-    if (!driveEnabled || !driveFolderId) { setFolders([]); return; }
+  // Load one folder's contents (subfolders + files) from Drive.
+  const loadContents = React.useCallback(async (folderId) => {
+    if (!driveEnabled || !driveFolderId) { setContents(null); return; }
+    setLoadingContents(true);
     try {
-      const resp = await actions.loadDealFolders(dealId);
-      setFolders(resp?.folders || []);
+      const resp = await actions.loadDealFolderContents(dealId, folderId);
+      setContents({ folders: resp?.folders || [], files: resp?.files || [] });
     } catch {
-      setFolders([]);
+      setContents({ folders: [], files: [] });
+    } finally {
+      setLoadingContents(false);
     }
   }, [actions, dealId, driveEnabled, driveFolderId]);
 
-  useEffect(() => { loadFolders(); }, [loadFolders]);
+  useEffect(() => { loadContents(currentFolderId); }, [loadContents, currentFolderId]);
+
+  const openFolder = (folder) => setPath((p) => [...p, { id: folder.id, name: folder.name }]);
+  const goToCrumb = (idx) => setPath((p) => p.slice(0, idx + 1));
 
   // Create the standard production subfolder template in the Drive folder.
   // Idempotent server-side, so it's safe to click more than once.
@@ -1274,7 +1256,7 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
     setSettingUp(true);
     try {
       await actions.setupDealFolders(dealId);
-      await loadFolders();
+      await loadContents(currentFolderId);
       showMsg('Folder structure set up');
     } catch (e) {
       showMsg(e?.message || 'Could not set up folders');
@@ -1283,12 +1265,12 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
     }
   };
 
-  // Re-pull the deal so the server re-syncs its file list with the Drive folder
-  // (reflecting files deleted or added directly in Drive).
+  // Re-pull the deal + current folder so the view reflects files added or
+  // deleted directly in Drive.
   const syncFromDrive = async () => {
     setSyncing(true);
     try {
-      await actions.loadDealDetail(dealId);
+      await Promise.all([actions.loadDealDetail(dealId), loadContents(currentFolderId)]);
       showMsg('Synced with Drive');
     } catch {
       showMsg('Could not sync with Drive');
@@ -1303,23 +1285,25 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const maxLabel = driveEnabled ? '5 GB' : '20 MB';
 
   const handleFiles = async (fileList) => {
-    const files = Array.from(fileList || []);
-    if (!files.length) return;
-    const tooBig = files.find(f => f.size > maxBytes);
+    const list = Array.from(fileList || []);
+    if (!list.length) return;
+    const tooBig = list.find(f => f.size > maxBytes);
     if (tooBig) { showMsg(`"${tooBig.name}" is too large (max ${maxLabel})`); return; }
     const controller = new AbortController();
     abortRef.current = controller;
     setUploading(true);
-    // Upload one at a time so the count + progress are unambiguous.
+    // Upload one at a time so the count + progress are unambiguous. Files land in
+    // whichever folder is currently open (currentFolderId; null = root).
     try {
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        setProgress({ fileIndex: i, fileCount: files.length, loaded: 0, total: f.size || 0 });
+      for (let i = 0; i < list.length; i++) {
+        const f = list[i];
+        setProgress({ fileIndex: i, fileCount: list.length, loaded: 0, total: f.size || 0 });
         await actions.uploadDealFile(dealId, f, (loaded, total) => {
-          setProgress({ fileIndex: i, fileCount: files.length, loaded, total: total || f.size || 0 });
-        }, controller.signal);
+          setProgress({ fileIndex: i, fileCount: list.length, loaded, total: total || f.size || 0 });
+        }, controller.signal, currentFolderId);
       }
-      showMsg(files.length === 1 ? 'File uploaded' : `${files.length} files uploaded`);
+      showMsg(list.length === 1 ? 'File uploaded' : `${list.length} files uploaded`);
+      await loadContents(currentFolderId);
     } catch (err) {
       showMsg(err?.name === 'AbortError' ? 'Upload cancelled' : (err.message || 'Upload failed'));
     } finally {
@@ -1334,7 +1318,28 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
     ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
     : null;
 
-  const handleDownload = async (fileId, filename) => {
+  // Drive browser: download a file straight from Drive (uses the user's Google
+  // session). Delete removes it from Drive (and any deal_files row).
+  const downloadDriveFile = (f) => {
+    const url = f.driveFileId
+      ? `https://drive.google.com/uc?export=download&id=${f.driveFileId}`
+      : f.webViewLink;
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    else showMsg('No download link for this file');
+  };
+  const deleteDriveFile = async (f) => {
+    if (!window.confirm(`Delete "${f.name}"?`)) return;
+    try {
+      await actions.deleteDealDriveFile(dealId, f.driveFileId);
+      await loadContents(currentFolderId);
+      showMsg('File deleted');
+    } catch (e) {
+      showMsg(e?.message || 'Could not delete file');
+    }
+  };
+
+  // Non-Drive (Blob) file rows still use the deal_files-keyed handlers.
+  const handleDownloadBlob = async (fileId) => {
     try {
       const { downloadUrl } = await actions.getFileDownloadUrl(dealId, fileId);
       window.open(downloadUrl, '_blank', 'noopener,noreferrer');
@@ -1342,15 +1347,23 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
       showMsg('Could not generate download link');
     }
   };
-
-  const handleDelete = async (fileId, filename) => {
+  const handleDeleteBlob = async (fileId, filename) => {
     if (!window.confirm(`Delete "${filename}"?`)) return;
     await actions.deleteDealFile(dealId, fileId);
     showMsg('File deleted');
   };
 
+  const itemCount = driveEnabled
+    ? (contents ? contents.folders.length + contents.files.length : 0)
+    : files.length;
+  const isEmptyHere = driveEnabled
+    ? (contents && contents.folders.length === 0 && contents.files.length === 0)
+    : files.length === 0;
+
+  const rowStyle = { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', borderTop: '1px solid ' + BRAND.border };
+
   return (
-    <Card title="Files" count={files.length} action={
+    <Card title="Files" count={itemCount} action={
       uploading
         ? <button className="btn-ghost" onClick={cancelUpload}><X size={12} /> Cancel</button>
         : (
@@ -1379,22 +1392,36 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
           </span>
           {driveFolderId && (
             <a
-              href={`https://drive.google.com/drive/folders/${driveFolderId}`}
+              href={`https://drive.google.com/drive/folders/${currentFolderId || driveFolderId}`}
               target="_blank" rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: BRAND.blue, fontWeight: 600, textDecoration: 'none' }}
             >
-              Open folder <ExternalLink size={11} />
+              Open in Drive <ExternalLink size={11} />
             </a>
           )}
         </div>
       )}
-      {driveEnabled && folders && folders.length > 0 && (
-        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '8px 10px', marginBottom: 10, background: '#FAFBFC' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
-            Folders
-          </div>
-          <FolderTree nodes={folders} />
+      {/* Breadcrumb — click a crumb to jump back up the folder path. */}
+      {driveEnabled && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginBottom: 8, fontSize: 12.5 }}>
+          {path.map((seg, i) => (
+            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              {i > 0 && <ChevronRight size={12} color={BRAND.muted} />}
+              {i < path.length - 1 ? (
+                <button
+                  onClick={() => goToCrumb(i)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 0, padding: 0, color: BRAND.blue, cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}
+                >
+                  {i === 0 && <Folder size={13} />}{seg.name}
+                </button>
+              ) : (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, color: BRAND.ink }}>
+                  {i === 0 && <Folder size={13} color={BRAND.muted} />}{seg.name}
+                </span>
+              )}
+            </span>
+          ))}
         </div>
       )}
       <div
@@ -1408,7 +1435,7 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
           color: dragOver ? BRAND.blue : BRAND.muted,
           background: dragOver ? BRAND.blue + '0A' : 'transparent',
           cursor: uploading ? 'not-allowed' : 'pointer',
-          textAlign: 'center', marginBottom: files.length ? 10 : 0,
+          textAlign: 'center', marginBottom: 10,
         }}
       >
         {uploading
@@ -1434,50 +1461,85 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
             </div>
           )
           : driveEnabled
-            ? "Drop files here — they'll save to this deal's Drive folder"
+            ? `Drop files here — they'll save to "${currentFolderName}"`
             : 'Drop files here or click Upload'}
       </div>
-      {driveEnabled && (
-        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 6, marginBottom: files.length ? 10 : 0 }}>
-          Large files (20MB+) upload much faster if you upload {driveFolderId ? (
-            <a
-              href={`https://drive.google.com/drive/folders/${driveFolderId}`}
-              target="_blank" rel="noopener noreferrer"
-              style={{ color: BRAND.blue, fontWeight: 600, textDecoration: 'none' }}
+
+      {/* Drive folder browser */}
+      {driveEnabled ? (
+        <>
+          {loadingContents && !contents && <div style={{ padding: '10px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>}
+          {isEmptyHere && !uploading && <Empty text="This folder is empty" />}
+          {contents && contents.folders.map((folder) => (
+            <button
+              key={folder.id}
+              onClick={() => openFolder(folder)}
+              style={{ ...rowStyle, width: '100%', textAlign: 'left', background: 'transparent', border: 'none', borderTop: '1px solid ' + BRAND.border, cursor: 'pointer', fontFamily: 'inherit' }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = BRAND.paper)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
             >
-              directly to Google Drive
-            </a>
-          ) : 'directly to Google Drive'} and will still appear here.
-        </div>
-      )}
-      {files.length === 0 && !uploading && <Empty text="No files attached yet" />}
-      {files.map(f => (
-        <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', borderTop: '1px solid ' + BRAND.border }}>
-          <div style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 6, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <FileTypeTag mimeType={f.mimeType} />
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.filename}</div>
-            <div style={{ fontSize: 11, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <span>{fileSizeLabel(f.sizeBytes)}{f.sizeBytes ? ' · ' : ''}{formatRelativeTime(f.createdAt)}{f.source === 'email' ? ' · from email' : ''}</span>
-              {f.storage === 'drive' && (
-                <span style={{ fontSize: 9, fontWeight: 700, color: '#1D4ED8', background: '#EFF6FF', padding: '1px 5px', borderRadius: 3, textTransform: 'uppercase', letterSpacing: 0.3 }}>Drive</span>
-              )}
+              <div style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 6, background: '#EFF4FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Folder size={16} color={BRAND.blue} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {folder.name}
+              </div>
+              <ChevronRight size={16} color={BRAND.muted} />
+            </button>
+          ))}
+          {contents && contents.files.map((f) => (
+            <div key={f.driveFileId} style={rowStyle}>
+              <div style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 6, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <FileTypeTag mimeType={f.mimeType} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</div>
+                <div style={{ fontSize: 11, color: BRAND.muted }}>
+                  {fileSizeLabel(f.size)}{f.size ? ' · ' : ''}{formatRelativeTime(f.createdTime)}
+                </div>
+              </div>
+              <button onClick={() => downloadDriveFile(f)}
+                style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
+                title="Download">
+                <Download size={14} />
+              </button>
+              <button onClick={() => deleteDriveFile(f)}
+                style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
+                title="Delete file">
+                <Trash2 size={13} />
+              </button>
             </div>
-          </div>
-          {f.uploadedBy && <Avatar email={f.uploadedBy} size={20} />}
-          <button onClick={() => handleDownload(f.id, f.filename)}
-            style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
-            title="Download">
-            <ExternalLink size={13} />
-          </button>
-          <button onClick={() => handleDelete(f.id, f.filename)}
-            style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
-            title="Delete file">
-            <Trash2 size={13} />
-          </button>
-        </div>
-      ))}
+          ))}
+        </>
+      ) : (
+        <>
+          {files.length === 0 && !uploading && <Empty text="No files attached yet" />}
+          {files.map(f => (
+            <div key={f.id} style={rowStyle}>
+              <div style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 6, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <FileTypeTag mimeType={f.mimeType} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.filename}</div>
+                <div style={{ fontSize: 11, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span>{fileSizeLabel(f.sizeBytes)}{f.sizeBytes ? ' · ' : ''}{formatRelativeTime(f.createdAt)}{f.source === 'email' ? ' · from email' : ''}</span>
+                </div>
+              </div>
+              {f.uploadedBy && <Avatar email={f.uploadedBy} size={20} />}
+              <button onClick={() => handleDownloadBlob(f.id)}
+                style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
+                title="Download">
+                <Download size={14} />
+              </button>
+              <button onClick={() => handleDeleteBlob(f.id, f.filename)}
+                style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
+                title="Delete file">
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+        </>
+      )}
     </Card>
   );
 }

@@ -225,6 +225,44 @@ export async function listSubfolderTree(accessToken, folderId, depth = 0) {
   })));
 }
 
+// True if folderId is the same as, or a descendant of, rootId (walking up the
+// parent chain). Bounded by maxHops so a cycle or very deep tree can't loop.
+// Used to keep the folder browser scoped to a deal's own folder subtree.
+export async function isFolderWithin(accessToken, folderId, rootId, maxHops = 10) {
+  let current = folderId;
+  for (let i = 0; i < maxHops && current; i++) {
+    if (current === rootId) return true;
+    const meta = await getDriveFile(accessToken, current, 'id,parents');
+    current = meta?.parents?.[0] || null;
+  }
+  return false;
+}
+
+// List a folder's immediate children, split into subfolders and files (each with
+// a Drive link). Backs the in-card folder browser.
+export async function listFolderContents(accessToken, folderId) {
+  const items = await listFolderFiles(accessToken, folderId);
+  const folders = [];
+  const files = [];
+  for (const it of items) {
+    if (it.mimeType === 'application/vnd.google-apps.folder') {
+      folders.push({ id: it.id, name: it.name, webViewLink: it.webViewLink || null });
+    } else {
+      files.push({
+        driveFileId: it.id,
+        name: it.name,
+        mimeType: it.mimeType || null,
+        size: it.size != null ? Number(it.size) : null,
+        webViewLink: it.webViewLink || null,
+        createdTime: it.createdTime || null,
+      });
+    }
+  }
+  folders.sort((a, b) => a.name.localeCompare(b.name));
+  files.sort((a, b) => a.name.localeCompare(b.name));
+  return { folders, files };
+}
+
 // True if the folder still exists, isn't trashed, and is actually a folder.
 // Returns false on 404 (deleted / inaccessible) so callers can recreate; other
 // errors (auth/permission) re-throw so we don't recreate on a transient blip.
