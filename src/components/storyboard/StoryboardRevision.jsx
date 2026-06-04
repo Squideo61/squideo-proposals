@@ -364,46 +364,53 @@ export function StoryboardRevision({ token, data }) {
           })}
         </div>
 
-        {/* Current slide */}
-        <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', background: '#0B1B26',
-          minWidth: 0, padding: 18, overflow: 'auto' }}>
-          <div style={{ position: 'relative', maxWidth: 900, width: '100%', margin: '0 auto' }}>
-            <PdfPage
-              url={version.pdfUrl}
-              pageNumber={pageNumber}
-              pins={pins}
-              draftPin={draftPin}
-              onPlacePin={approvedAt ? undefined : placePin}
-              onPinClick={(id) => setActiveCommentId(id)}
-            />
-            <div aria-hidden style={{
-              position: 'absolute', inset: 0, pointerEvents: 'none',
-              backgroundImage: `url("data:image/svg+xml,${DRAFT_SVG}")`,
-              backgroundRepeat: 'repeat',
-            }} />
-          </div>
-          {/* Slide navigator (Frame.io-style) */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginTop: 14 }}>
-            <button onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1}
-              title="Previous slide"
-              style={navBtn(pageNumber <= 1)}>
-              <ChevronUp size={18} />
-            </button>
-            <span style={{ color: '#fff', fontSize: 13, minWidth: 64, textAlign: 'center' }}>
-              <strong>{pageNumber}</strong>
-              <span style={{ opacity: 0.5 }}> / {pageCount}</span>
-            </span>
-            <button onClick={() => goToPage(pageNumber + 1)} disabled={pageNumber >= pageCount}
-              title="Next slide"
-              style={navBtn(pageNumber >= pageCount)}>
-              <ChevronDown size={18} />
-            </button>
-          </div>
-          {!approvedAt && (
-            <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 8 }}>
-              Click anywhere on the slide to pin a comment to that spot.
+        {/* Current slide + bottom navigator */}
+        <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', background: '#0B1B26', minWidth: 0 }}>
+          {/* Slide area: grows to fill the pane, slide centred; scrolls if a
+              slide is taller than the space. The navigator below stays put. */}
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', padding: 18 }}>
+            <div style={{ position: 'relative', maxWidth: 900, width: '100%', margin: 'auto' }}>
+              <PdfPage
+                url={version.pdfUrl}
+                pageNumber={pageNumber}
+                pins={pins}
+                draftPin={draftPin}
+                onPlacePin={approvedAt ? undefined : placePin}
+                onPinClick={(id) => setActiveCommentId(id)}
+              />
+              <div aria-hidden style={{
+                position: 'absolute', inset: 0, pointerEvents: 'none',
+                backgroundImage: `url("data:image/svg+xml,${DRAFT_SVG}")`,
+                backgroundRepeat: 'repeat',
+              }} />
             </div>
-          )}
+          </div>
+
+          {/* Navigator pinned to the bottom of the pane (Frame.io-style) so it
+              never moves when the slide's aspect ratio changes. */}
+          <div style={{ flexShrink: 0, padding: '12px 18px 14px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+              <button onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1}
+                title="Previous slide"
+                style={navBtn(pageNumber <= 1)}>
+                <ChevronUp size={18} />
+              </button>
+              <span style={{ color: '#fff', fontSize: 13, minWidth: 64, textAlign: 'center' }}>
+                <strong>{pageNumber}</strong>
+                <span style={{ opacity: 0.5 }}> / {pageCount}</span>
+              </span>
+              <button onClick={() => goToPage(pageNumber + 1)} disabled={pageNumber >= pageCount}
+                title="Next slide"
+                style={navBtn(pageNumber >= pageCount)}>
+                <ChevronDown size={18} />
+              </button>
+            </div>
+            {!approvedAt && (
+              <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 8 }}>
+                Click anywhere on the slide to pin a comment to that spot.
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Comment thread (current slide) */}
