@@ -12,7 +12,9 @@ import {
 // page so the production Video/Project cards can show the same conversation
 // without the sales chrome. Self-loads the deal detail; mirrors the deal page's
 // derivations + handlers exactly so behaviour stays consistent.
-export function DealConversation({ dealId, isMobile }) {
+// `sections` controls which cards render (Emails / Activity / Comments), so a
+// caller can split them across a layout. Defaults to all three.
+export function DealConversation({ dealId, isMobile, sections = ['emails', 'activity', 'comments'] }) {
   const { state, actions } = useStore();
 
   const [replyingTo, setReplyingTo] = useState(null);
@@ -72,6 +74,7 @@ export function DealConversation({ dealId, isMobile }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 16 }}>
+      {sections.includes('emails') && (
       <Card title="Emails" count={emails.length} action={
         <button onClick={openComposerForDeal} className="btn-ghost"><Mail size={12} /> Send email</button>
       }>
@@ -92,7 +95,9 @@ export function DealConversation({ dealId, isMobile }) {
           ))}
         </div>
       </Card>
+      )}
 
+      {sections.includes('activity') && (
       <Card title="Activity" count={timeline.length}>
         {timeline.length === 0 && <Empty text="No activity yet" />}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -101,7 +106,9 @@ export function DealConversation({ dealId, isMobile }) {
           ))}
         </div>
       </Card>
+      )}
 
+      {sections.includes('comments') && (
       <Card title="Comments" count={comments.length}>
         <CommentThread
           comments={comments}
@@ -136,6 +143,7 @@ export function DealConversation({ dealId, isMobile }) {
           />
         </div>
       </Card>
+      )}
 
       {openEmailId && (
         <EmailViewerModal gmailMessageId={openEmailId} dealId={dealId} onClose={() => setOpenEmailId(null)} />

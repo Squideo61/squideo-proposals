@@ -174,9 +174,10 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
 
           <ScriptCard video={video} videoId={videoId} />
           <MilestonesCard video={video} videoId={videoId} />
+          {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['emails']} />}
         </div>
 
-        {/* Right column: stage-locked preview + the conversation, full height */}
+        {/* Right column: stage-locked preview + activity/comments, full height */}
         <div style={{
           width: isMobile ? '100%' : 440, flexShrink: 0, alignSelf: 'flex-start',
           position: isMobile ? 'static' : 'sticky', top: isMobile ? undefined : 72,
@@ -185,7 +186,7 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
         }}>
           <PreviewPane preview={video.preview} isMobile={isMobile} />
           <div style={{ flex: isMobile ? 'none' : 1, minHeight: 0, overflowY: isMobile ? 'visible' : 'auto' }}>
-            {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} />}
+            {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['activity', 'comments']} />}
           </div>
         </div>
       </div>
