@@ -141,7 +141,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
         <div style={{ display: 'flex', gap: 6 }}>
           <button onClick={() => openCreate()} className="btn"><Plus size={12} /> Create invoice</button>
           <button onClick={() => setAdding(true)} className="btn-ghost"><Plus size={12} /> Upload invoice</button>
-          <button onClick={() => setAddingExtra(true)} className="btn-ghost"><Plus size={12} /> Add extra</button>
+          <button onClick={() => setAddingExtra(true)} className="btn-ghost"><Plus size={12} /> Add extra to final</button>
         </div>
       )}
     >
