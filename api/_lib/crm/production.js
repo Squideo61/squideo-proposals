@@ -14,6 +14,8 @@
 //   POST   /api/crm/production/video/:videoId/send-for-review — hand off to Revisions
 import crypto from 'node:crypto';
 import { put, del, getDownloadUrl } from '@vercel/blob';
+import { handleUpload } from '@vercel/blob/client';
+import { waitUntil } from '@vercel/functions';
 import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull, driveFilesEnabled } from './shared.js';
 import { serialiseDeal, ensureDealFileDriveColumns, dealDriveFolder, driveErrorHint } from './deals.js';
@@ -28,6 +30,17 @@ import { hasPermission } from '../permissions.js';
 // Where scripts live inside a deal's Drive folder (from the FOLDER_TEMPLATE in
 // googleDrive.js).
 const SCRIPT_FOLDER_PATH = ['2. Pre-Production', '1. Script and Text Direction'];
+
+// Milestone content uploads share the public Revisions Blob store (so they
+// preview inline) and best-effort sync into these Drive subfolders.
+const REVISION_BLOB_TOKEN =
+  process.env.REVISION_BLOB_READ_WRITE_TOKEN || process.env.REVIEW_BLOB_READ_WRITE_TOKEN;
+const MILESTONE_DRIVE_PATH = {
+  script:           ['2. Pre-Production', '1. Script and Text Direction'],
+  visual_direction: ['1. Resources', 'Reference Imagery'],
+  storyboard:       ['2. Pre-Production', '2. Storyboards'],
+  video:            ['3. Video'],
+};
 
 // Public base for client revision share links (matches RevisionsView.jsx).
 const REVISION_PUBLIC_BASE = 'https://app.squideo.com';
@@ -126,6 +139,14 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       if (req.method === 'DELETE') return deleteScript(req, res, videoId, user);
       return res.status(405).end();
     }
+    if (subaction === 'milestone-asset') {
+      if (req.method === 'POST') {
+        if (req.query?.register) return registerMilestoneAsset(req, res, videoId, user);
+        return milestoneAssetUploadToken(req, res); // @vercel/blob client-upload handshake
+      }
+      if (req.method === 'DELETE') return deleteMilestoneAsset(req, res, videoId, user);
+      return res.status(405).end();
+    }
     if (req.method === 'GET') {
       const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
       if (!row) return res.status(404).json({ error: 'Video not found' });
@@ -221,24 +242,30 @@ async function moveVideo(req, res, videoId, user) {
   return res.status(200).json(serialiseVideo(row));
 }
 
-// Attach milestone approvals + the current script to a serialised video. Only
-// used on the single-video paths (the board list stays lean).
+// Attach milestone approvals + per-milestone uploaded assets to a serialised
+// video. Only used on the single-video paths (the board list stays lean).
 async function withVideoExtras(video) {
-  const [milestones, scripts] = await Promise.all([
+  const [milestones, assets] = await Promise.all([
     sql`SELECT milestone, approved_at, approved_by FROM video_milestones WHERE video_id = ${video.id}`,
-    sql`SELECT id, filename, mime_type, size_bytes, web_view_link, blob_url, uploaded_by, created_at
-          FROM video_scripts WHERE video_id = ${video.id} ORDER BY created_at DESC LIMIT 1`,
+    sql`SELECT id, milestone, filename, mime_type, size_bytes, blob_url, web_view_link, uploaded_by, created_at
+          FROM video_milestone_assets WHERE video_id = ${video.id} ORDER BY created_at DESC`,
   ]);
   video.milestones = milestones.map(m => ({ id: m.milestone, approvedAt: m.approved_at, approvedBy: m.approved_by }));
-  const s = scripts[0];
-  let url = s?.web_view_link || null;
-  if (s && !url && s.blob_url) { try { url = await getDownloadUrl(s.blob_url); } catch { url = null; } }
-  video.script = s ? {
-    id: s.id, filename: s.filename, mimeType: s.mime_type || null,
-    sizeBytes: s.size_bytes != null ? Number(s.size_bytes) : null,
-    url,
-    uploadedBy: s.uploaded_by || null, createdAt: s.created_at,
-  } : null;
+
+  const grouped = { script: [], visual_direction: [], storyboard: [], video: [] };
+  for (const a of assets) {
+    const item = {
+      id: a.id, milestone: a.milestone, filename: a.filename, mimeType: a.mime_type || null,
+      sizeBytes: a.size_bytes != null ? Number(a.size_bytes) : null,
+      url: a.blob_url || a.web_view_link || null,
+      driveUrl: a.web_view_link || null,
+      uploadedBy: a.uploaded_by || null, createdAt: a.created_at,
+    };
+    if (grouped[a.milestone]) grouped[a.milestone].push(item); // already DESC → [0] is latest
+  }
+  video.milestoneAssets = grouped;
+  const latestScript = grouped.script[0] || null;
+  video.script = latestScript;
 
   // Stage-locked preview: the latest storyboard PDF (from the linked storyboard)
   // and the latest draft video (from the Video Revisions hand-off). Both guarded
@@ -378,6 +405,91 @@ async function deleteScript(req, res, videoId, user) {
   }
   if (s.blob_url) { try { await del(s.blob_url); } catch (err) { console.error('[script] blob delete failed', err.message); } }
   await sql`DELETE FROM video_scripts WHERE id = ${scriptId}`;
+  const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
+  return res.status(200).json(await withVideoExtras(serialiseVideo(row)));
+}
+
+// ── Per-milestone content uploads (Blob primary + best-effort Drive sync) ─────
+
+// Mints a client-upload token against the public Revisions Blob store. The
+// producer is already authenticated (productionRoute ran requireAuth +
+// production.access before dispatching here).
+async function milestoneAssetUploadToken(req, res) {
+  if (!REVISION_BLOB_TOKEN) return res.status(503).json({ error: 'File storage not configured' });
+  try {
+    const jsonResponse = await handleUpload({
+      body: req.body,
+      request: req,
+      token: REVISION_BLOB_TOKEN,
+      onBeforeGenerateToken: async () => ({ addRandomSuffix: true }),
+      // No onUploadCompleted — the row is created by registerMilestoneAsset once
+      // the browser upload resolves (matches the revisions uploader).
+    });
+    return res.status(200).json(jsonResponse);
+  } catch (err) {
+    if (res.headersSent) return;
+    return res.status(400).json({ error: err?.message || 'Upload authorisation failed' });
+  }
+}
+
+// Records a freshly-uploaded milestone asset, re-opens that milestone for
+// review, and kicks off a best-effort Drive sync (after the response, via
+// waitUntil, so the producer isn't kept waiting on the copy).
+async function registerMilestoneAsset(req, res, videoId, user) {
+  const milestone = req.query?.milestone ? String(req.query.milestone) : null;
+  if (!isValidMilestone(milestone)) return res.status(400).json({ error: 'Invalid milestone' });
+  const video = (await sql`SELECT id, deal_id FROM project_videos WHERE id = ${videoId}`)[0];
+  if (!video) return res.status(404).json({ error: 'Video not found' });
+
+  const body = req.body || {};
+  const blobUrl = trimOrNull(body.blobUrl);
+  if (!blobUrl) return res.status(400).json({ error: 'blobUrl required' });
+  const blobPathname = body.blobPathname ? String(body.blobPathname) : null;
+  const filename = trimOrNull(body.filename) || 'file';
+  const mimeType = body.mimeType ? String(body.mimeType) : null;
+  const sizeBytes = Number.isFinite(Number(body.sizeBytes)) ? Number(body.sizeBytes) : null;
+
+  const id = makeId('vma');
+  await sql`
+    INSERT INTO video_milestone_assets
+      (id, video_id, milestone, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by)
+    VALUES (${id}, ${videoId}, ${milestone}, ${filename}, ${mimeType}, ${sizeBytes}, ${blobUrl}, ${blobPathname}, ${user.email || null})
+  `;
+  // A fresh upload re-opens the milestone for review.
+  await sql`DELETE FROM video_milestones WHERE video_id = ${videoId} AND milestone = ${milestone}`;
+
+  // Best-effort Drive sync, buffered — skip very large files (stay Blob-only).
+  if (driveFilesEnabled() && (sizeBytes == null || sizeBytes <= 100 * 1024 * 1024)) {
+    waitUntil(syncMilestoneAssetToDrive(id, video.deal_id, milestone, filename, mimeType, blobUrl, user.email)
+      .catch((err) => console.error('[milestone] drive sync failed', err.message)));
+  }
+
+  const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
+  return res.status(201).json(await withVideoExtras(serialiseVideo(row)));
+}
+
+async function syncMilestoneAssetToDrive(assetId, dealId, milestone, filename, mimeType, blobUrl, userEmail) {
+  const accessToken = await getFreshAccessToken(userEmail);
+  const root = await dealDriveFolder(accessToken, dealId);
+  const folderId = (await ensureSubfolderByPath(accessToken, root, MILESTONE_DRIVE_PATH[milestone] || [])) || root;
+  const resp = await fetch(blobUrl);
+  if (!resp.ok) throw new Error('blob fetch ' + resp.status);
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  const { id: driveId, webViewLink } = await uploadToFolder(accessToken, { folderId, filename, mimeType, buffer });
+  await sql`UPDATE video_milestone_assets SET drive_file_id = ${driveId}, web_view_link = ${webViewLink} WHERE id = ${assetId}`;
+}
+
+async function deleteMilestoneAsset(req, res, videoId, user) {
+  const assetId = req.query?.assetId ? String(req.query.assetId) : null;
+  if (!assetId) return res.status(400).json({ error: 'assetId required' });
+  const a = (await sql`SELECT id, blob_url, drive_file_id FROM video_milestone_assets WHERE id = ${assetId} AND video_id = ${videoId}`)[0];
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  if (a.blob_url) { try { await del(a.blob_url, { token: REVISION_BLOB_TOKEN }); } catch (err) { console.error('[milestone] blob delete failed', err.message); } }
+  if (a.drive_file_id && driveFilesEnabled()) {
+    try { const at = await getFreshAccessToken(user.email); await deleteDriveFile(at, a.drive_file_id); }
+    catch (err) { console.error('[milestone] drive delete failed', err.message); }
+  }
+  await sql`DELETE FROM video_milestone_assets WHERE id = ${assetId}`;
   const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
   return res.status(200).json(await withVideoExtras(serialiseVideo(row)));
 }

@@ -1,16 +1,18 @@
 import React from 'react';
-import { ChevronLeft, Users, Shield, Bell } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Bell, HardDrive } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { UsersTab } from './UsersTab.jsx';
 import { RolesTab } from './RolesTab.jsx';
 import { NotificationsTab } from './NotificationsTab.jsx';
+import { StorageTab } from './StorageTab.jsx';
 
 const TABS = [
-  { id: 'users',         label: 'Users + invites',  icon: Users,  perm: 'users.manage' },
-  { id: 'roles',         label: 'Roles',            icon: Shield, perm: 'roles.manage' },
-  { id: 'notifications', label: 'Notifications',    icon: Bell,   perm: 'users.manage' },
+  { id: 'users',         label: 'Users + invites',  icon: Users,    perm: 'users.manage' },
+  { id: 'roles',         label: 'Roles',            icon: Shield,   perm: 'roles.manage' },
+  { id: 'notifications', label: 'Notifications',    icon: Bell,     perm: 'users.manage' },
+  { id: 'storage',       label: 'Storage',          icon: HardDrive, perm: 'settings.manage' },
 ];
 
 export function AdminView({ tab = 'users', onBack, onChangeTab }) {
@@ -101,6 +103,7 @@ export function AdminView({ tab = 'users', onBack, onChangeTab }) {
         {active?.id === 'users' && <UsersTab />}
         {active?.id === 'roles' && <RolesTab />}
         {active?.id === 'notifications' && <NotificationsTab />}
+        {active?.id === 'storage' && <StorageTab />}
       </div>
     </div>
   );

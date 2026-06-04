@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Film, FolderOpen, Send, ExternalLink, Trash2, FileText, Upload, CheckCircle2, Circle, ListChecks } from 'lucide-react';
+import { ArrowLeft, Film, FolderOpen, Send, ExternalLink, Trash2, FileText, Upload, CheckCircle2, Circle, ListChecks, ChevronDown, ChevronRight, Image as ImageIcon } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -172,7 +172,6 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
         </div>
       </div>
 
-          <ScriptCard video={video} videoId={videoId} />
           <MilestonesCard video={video} videoId={videoId} />
           {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['emails']} />}
         </div>
@@ -262,139 +261,158 @@ function fmtDate(iso) {
   catch { return ''; }
 }
 
-// Script section: a copywriter uploads a script; producers view + approve it.
-// Approving is the "Script" milestone (advances the card to Scripts Completed).
-function ScriptCard({ video, videoId }) {
-  const { actions, showMsg } = useStore();
-  const userName = useUserName();
-  const fileRef = useRef(null);
-  const [uploading, setUploading] = useState(false);
-  const [busy, setBusy] = useState(false);
+// Per-milestone uploader config (typed accept + icon + dropzone hint).
+const MILESTONE_UI = {
+  script:           { icon: FileText,  accept: '.pdf,.doc,.docx,.txt,.rtf,application/pdf', hint: 'Drop the script here, or click to upload (PDF, DOC…)' },
+  visual_direction: { icon: ImageIcon, accept: 'image/*,application/pdf',                   hint: 'Drop visual direction here (images, references, PDF)' },
+  storyboard:       { icon: FileText,  accept: 'application/pdf',                           hint: 'Drop the storyboard PDF here, or click to upload' },
+  video:            { icon: Film,      accept: 'video/*',                                   hint: 'Drop the draft video here, or click to upload' },
+};
 
-  const script = video.script || null;
-  const approved = (video.milestones || []).find(m => m.id === 'script') || null;
+const isPdf   = (a) => (a?.mimeType || '').includes('pdf') || /\.pdf$/i.test(a?.filename || '');
+const isImage = (a) => (a?.mimeType || '').startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(a?.filename || '');
+const isVideo = (a) => (a?.mimeType || '').startsWith('video/') || /\.(mp4|mov|webm|m4v|avi)$/i.test(a?.filename || '');
 
-  async function handleFile(file) {
-    if (!file) return;
-    setUploading(true);
-    try { await actions.uploadVideoScript(videoId, file); showMsg(script ? 'Script replaced' : 'Script uploaded'); }
-    catch (e) { showMsg(e.message || 'Upload failed'); }
-    finally { setUploading(false); if (fileRef.current) fileRef.current.value = ''; }
-  }
-  async function approve() {
-    setBusy(true);
-    try { await actions.approveVideoMilestone(videoId, 'script', true); showMsg('Script approved — card moved to Scripts Completed'); }
-    catch { /* showMsg handled in action */ }
-    finally { setBusy(false); }
-  }
-
-  return (
-    <div style={sectionCard}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-        <FileText size={18} color={BRAND.blue} />
-        <strong style={{ fontSize: 16, color: BRAND.ink }}>Script</strong>
-        {approved && <span style={approvedChip}><CheckCircle2 size={11} /> Approved</span>}
-      </div>
-
-      <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={e => handleFile(e.target.files?.[0])} />
-
-      {!script ? (
-        <div
-          onClick={() => !uploading && fileRef.current?.click()}
-          onDragOver={e => e.preventDefault()}
-          onDrop={e => { e.preventDefault(); if (!uploading) handleFile(e.dataTransfer.files?.[0]); }}
-          style={{ border: `2px dashed ${BRAND.border}`, borderRadius: 10, padding: 22, textAlign: 'center',
-            color: BRAND.muted, cursor: uploading ? 'default' : 'pointer', fontSize: 13 }}>
-          <Upload size={16} /> <span style={{ marginLeft: 6 }}>
-            {uploading ? 'Uploading…' : 'Drop the script here, or click to upload (PDF, DOC, etc.)'}
-          </span>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <FileText size={20} color={BRAND.muted} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {script.filename}
-            </div>
-            <div style={{ fontSize: 12, color: BRAND.muted }}>
-              Uploaded by {userName(script.uploadedBy)} · {fmtDate(script.createdAt)}
-            </div>
-          </div>
-          {script.url && (
-            <a href={script.url} target="_blank" rel="noreferrer" className="btn-ghost"><ExternalLink size={14} /> View</a>
-          )}
-          <button onClick={() => fileRef.current?.click()} disabled={uploading} className="btn-ghost">
-            <Upload size={14} /> {uploading ? 'Uploading…' : 'Replace'}
-          </button>
-          {approved ? (
-            <span style={{ fontSize: 12, color: '#16A34A', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <CheckCircle2 size={14} /> Approved by {userName(approved.approvedBy)} · {fmtDate(approved.approvedAt)}
-            </span>
-          ) : (
-            <button onClick={approve} disabled={busy} className="btn">
-              <CheckCircle2 size={14} /> {busy ? 'Approving…' : 'Approve script'}
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
+// Inline preview of a milestone's latest uploaded asset, typed by file kind.
+function MilestonePreview({ asset }) {
+  if (!asset?.url) return null;
+  const box = { marginTop: 10, border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden', maxWidth: 520 };
+  if (isVideo(asset)) return <div style={box}><video src={asset.url} controls style={{ width: '100%', display: 'block', background: '#000' }} /></div>;
+  if (isImage(asset)) return <div style={box}><img src={asset.url} alt={asset.filename} style={{ width: '100%', display: 'block' }} /></div>;
+  if (isPdf(asset))   return <div style={{ ...box, background: '#0B1B26', padding: 8 }}><PdfPage url={asset.url} pageNumber={1} /></div>;
+  return null; // documents: the file list carries a View link
 }
 
-// Milestones: Script → Visual Direction → Storyboard → Video. Approving each
-// advances the card forward on the board.
+// Milestones: Script → Visual Direction → Storyboard → Video. Each is an
+// expandable panel where producers upload typed content, preview it, and
+// approve — approving advances the card forward on the board.
 function MilestonesCard({ video, videoId }) {
-  const { actions } = useStore();
-  const userName = useUserName();
-  const [busy, setBusy] = useState(null);
   const approvedMap = Object.fromEntries((video.milestones || []).map(m => [m.id, m]));
-
-  async function toggle(id, approved) {
-    setBusy(id);
-    try { await actions.approveVideoMilestone(videoId, id, approved); }
-    catch { /* showMsg handled in action */ }
-    finally { setBusy(null); }
-  }
+  const assetsByMilestone = video.milestoneAssets || {};
+  const current = video.preview?.current;
+  const [overrides, setOverrides] = useState({});
+  const isOpen = (id) => (id in overrides ? overrides[id] : id === current);
+  const toggleOpen = (id) => setOverrides(p => ({ ...p, [id]: !isOpen(id) }));
 
   return (
     <div style={sectionCard}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <ListChecks size={18} color={BRAND.blue} />
         <strong style={{ fontSize: 16, color: BRAND.ink }}>Milestones</strong>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {VIDEO_MILESTONES.map((m, i) => {
-          const a = approvedMap[m.id];
-          const stageLabel = STAGE_LABEL[m.phase]?.[m.stage] || m.stage;
-          // The Script milestone is driven by an uploaded + approved script.
-          const needsScript = m.id === 'script' && !video.script;
-          return (
-            <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0',
-              borderTop: i === 0 ? 'none' : '1px solid ' + BRAND.border, flexWrap: 'wrap' }}>
-              {a ? <CheckCircle2 size={18} color="#16A34A" /> : <Circle size={18} color={BRAND.muted} style={{ opacity: 0.5 }} />}
-              <div style={{ flex: 1, minWidth: 160 }}>
-                <div style={{ fontWeight: 600, color: BRAND.ink }}>{m.label}</div>
-                <div style={{ fontSize: 12, color: BRAND.muted }}>→ moves to {stageLabel}</div>
-              </div>
-              {a ? (
-                <>
-                  <span style={{ fontSize: 12, color: '#16A34A', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <CheckCircle2 size={13} /> Approved by {userName(a.approvedBy)} · {fmtDate(a.approvedAt)}
-                  </span>
-                  <button onClick={() => toggle(m.id, false)} disabled={busy === m.id} className="btn-ghost" title="Un-approve">
-                    Undo
-                  </button>
-                </>
-              ) : (
-                <button onClick={() => toggle(m.id, true)} disabled={busy === m.id || needsScript} className="btn"
-                  title={needsScript ? 'Upload a script first' : undefined}>
-                  {busy === m.id ? 'Approving…' : 'Approve'}
-                </button>
-              )}
-            </div>
-          );
-        })}
+        {VIDEO_MILESTONES.map((m, i) => (
+          <MilestoneRow
+            key={m.id} m={m} index={i} videoId={videoId}
+            approval={approvedMap[m.id] || null}
+            assets={assetsByMilestone[m.id] || []}
+            open={isOpen(m.id)} onToggle={() => toggleOpen(m.id)}
+          />
+        ))}
       </div>
+    </div>
+  );
+}
+
+function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
+  const { actions, showMsg } = useStore();
+  const userName = useUserName();
+  const ui = MILESTONE_UI[m.id] || MILESTONE_UI.script;
+  const fileRef = useRef(null);
+  const [progress, setProgress] = useState(null); // null = idle
+  const [busy, setBusy] = useState(false);
+  const stageLabel = STAGE_LABEL[m.phase]?.[m.stage] || m.stage;
+  const latest = assets[0] || null;
+
+  async function handleFile(file) {
+    if (!file) return;
+    setProgress(0);
+    try { await actions.uploadMilestoneAsset(videoId, m.id, file, { onProgress: setProgress }); showMsg('Uploaded'); }
+    catch (e) { showMsg(e.message || 'Upload failed'); }
+    finally { setProgress(null); if (fileRef.current) fileRef.current.value = ''; }
+  }
+  async function approve(val) {
+    setBusy(true);
+    try { await actions.approveVideoMilestone(videoId, m.id, val); }
+    catch { /* handled in action */ }
+    finally { setBusy(false); }
+  }
+  function removeAsset(id) {
+    if (window.confirm('Delete this file?')) actions.deleteMilestoneAsset(videoId, id).catch(() => {});
+  }
+
+  return (
+    <div style={{ borderTop: index === 0 ? 'none' : '1px solid ' + BRAND.border }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 0', flexWrap: 'wrap' }}>
+        <button onClick={onToggle}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none',
+            cursor: 'pointer', flex: 1, minWidth: 180, textAlign: 'left', padding: 0 }}>
+          {open ? <ChevronDown size={16} color={BRAND.muted} /> : <ChevronRight size={16} color={BRAND.muted} />}
+          {approval ? <CheckCircle2 size={18} color="#16A34A" /> : <Circle size={18} color={BRAND.muted} style={{ opacity: 0.5 }} />}
+          <div>
+            <div style={{ fontWeight: 600, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
+              {m.label}
+              {assets.length > 0 && <span style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>· {assets.length} file{assets.length === 1 ? '' : 's'}</span>}
+            </div>
+            <div style={{ fontSize: 12, color: BRAND.muted }}>→ moves to {stageLabel}</div>
+          </div>
+        </button>
+        {approval ? (
+          <>
+            <span style={{ fontSize: 12, color: '#16A34A', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <CheckCircle2 size={13} /> Approved by {userName(approval.approvedBy)} · {fmtDate(approval.approvedAt)}
+            </span>
+            <button onClick={() => approve(false)} disabled={busy} className="btn-ghost" title="Un-approve">Undo</button>
+          </>
+        ) : (
+          <button onClick={() => approve(true)} disabled={busy || assets.length === 0} className="btn"
+            title={assets.length === 0 ? 'Upload content first' : undefined}>
+            {busy ? 'Approving…' : 'Approve'}
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div style={{ padding: '0 0 16px 26px' }}>
+          <input ref={fileRef} type="file" accept={ui.accept} style={{ display: 'none' }}
+            onChange={e => handleFile(e.target.files?.[0])} />
+          <div
+            onClick={() => progress == null && fileRef.current?.click()}
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => { e.preventDefault(); if (progress == null) handleFile(e.dataTransfer.files?.[0]); }}
+            style={{ border: `2px dashed ${BRAND.border}`, borderRadius: 10, padding: 16, textAlign: 'center',
+              color: BRAND.muted, cursor: progress == null ? 'pointer' : 'default', fontSize: 13 }}>
+            {progress == null ? (
+              <><Upload size={15} /> <span style={{ marginLeft: 6 }}>{ui.hint}</span></>
+            ) : (
+              <div>
+                <div style={{ marginBottom: 8 }}>Uploading… {progress}%</div>
+                <div style={{ height: 6, background: BRAND.border, borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ width: progress + '%', height: '100%', background: BRAND.blue, transition: 'width .2s' }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {latest && <MilestonePreview asset={latest} />}
+
+          {assets.length > 0 && (
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {assets.map(a => (
+                <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                  <FileText size={14} color={BRAND.muted} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.filename}</div>
+                    <div style={{ fontSize: 11, color: BRAND.muted }}>{userName(a.uploadedBy)} · {fmtDate(a.createdAt)}{a.driveUrl ? ' · in Drive' : ''}</div>
+                  </div>
+                  {a.url && <a href={a.url} target="_blank" rel="noreferrer" className="btn-ghost" title="View"><ExternalLink size={13} /></a>}
+                  <button onClick={() => removeAsset(a.id)} className="btn-ghost" title="Delete"><Trash2 size={13} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

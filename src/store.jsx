@@ -53,6 +53,8 @@ function emptyStore() {
     // Storyboard revisions (Frame.io-style PDF review links)
     storyboards: [],
     storyboardDetail: {},
+    // Admin → Storage: Vercel Blob usage + cost estimate
+    blobUsage: null,
     gmailAccount: null,
     triage: [],
     quoteRequests: [],
@@ -1111,6 +1113,39 @@ export function StoreProvider({ children }) {
       return api.delete('/api/crm/production/video/' + encodeURIComponent(videoId) + '/script?scriptId=' + encodeURIComponent(scriptId))
         .then((video) => { actions._mergeVideo(video); return video; })
         .catch(() => actions.loadVideo(videoId));
+    },
+
+    // ---------- Per-milestone content uploads ----------
+    // Streams a file straight to the public Blob store, registers it under a
+    // milestone (server also best-effort syncs it to Drive), returns the video.
+    async uploadMilestoneAsset(videoId, milestone, file, { onProgress } = {}) {
+      const { upload } = await import('@vercel/blob/client');
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await upload('milestone-assets/' + videoId + '/' + milestone + '/' + Date.now() + '-' + safeName, file, {
+        access: 'public',
+        handleUploadUrl: '/api/crm/production/video/' + encodeURIComponent(videoId) + '/milestone-asset',
+        contentType: file.type || 'application/octet-stream',
+        multipart: true,
+        onUploadProgress: onProgress ? (e) => onProgress(Math.round(e.percentage)) : undefined,
+      });
+      const video = await api.post(
+        '/api/crm/production/video/' + encodeURIComponent(videoId) + '/milestone-asset?register=1&milestone=' + encodeURIComponent(milestone),
+        { blobUrl: blob.url, blobPathname: blob.pathname, filename: file.name, mimeType: file.type || null, sizeBytes: file.size }
+      );
+      actions._mergeVideo(video);
+      return video;
+    },
+    deleteMilestoneAsset(videoId, assetId) {
+      return api.delete('/api/crm/production/video/' + encodeURIComponent(videoId) + '/milestone-asset?assetId=' + encodeURIComponent(assetId))
+        .then((video) => { actions._mergeVideo(video); return video; })
+        .catch(() => actions.loadVideo(videoId));
+    },
+
+    // ---------- Admin: Blob storage usage / cost ----------
+    loadBlobUsage({ refresh = false } = {}) {
+      return api.get('/api/blob-usage' + (refresh ? '?refresh=1' : ''))
+        .then((data) => { if (data && !data.error) setState(s => ({ ...s, blobUsage: data })); return data; })
+        .catch(() => {});
     },
     createContact(input) {
       return api.post('/api/crm/contacts', input).then((c) => {

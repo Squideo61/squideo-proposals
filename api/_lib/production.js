@@ -84,6 +84,36 @@ export async function ensureProductionSchema() {
         )
       `;
       await sql`CREATE INDEX IF NOT EXISTS video_scripts_video_idx ON video_scripts(video_id, created_at DESC)`;
+      // Per-milestone content uploads (generalises video_scripts to all milestones).
+      await sql`
+        CREATE TABLE IF NOT EXISTS video_milestone_assets (
+          id            TEXT        PRIMARY KEY,
+          video_id      TEXT        NOT NULL REFERENCES project_videos(id) ON DELETE CASCADE,
+          milestone     TEXT        NOT NULL,
+          filename      TEXT        NOT NULL,
+          mime_type     TEXT,
+          size_bytes    BIGINT,
+          blob_url      TEXT,
+          blob_pathname TEXT,
+          drive_file_id TEXT,
+          web_view_link TEXT,
+          uploaded_by   TEXT,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS video_milestone_assets_idx ON video_milestone_assets(video_id, milestone, created_at DESC)`;
+      // Backfill existing scripts into the Script milestone (once).
+      await sql`
+        INSERT INTO video_milestone_assets
+          (id, video_id, milestone, filename, mime_type, size_bytes, blob_url, blob_pathname, drive_file_id, web_view_link, uploaded_by, created_at)
+        SELECT gen_random_uuid()::text, vs.video_id, 'script', vs.filename, vs.mime_type, vs.size_bytes,
+               vs.blob_url, vs.blob_pathname, vs.drive_file_id, vs.web_view_link, vs.uploaded_by, vs.created_at
+          FROM video_scripts vs
+         WHERE NOT EXISTS (
+           SELECT 1 FROM video_milestone_assets a
+            WHERE a.video_id = vs.video_id AND a.milestone = 'script' AND a.filename = vs.filename AND a.created_at = vs.created_at
+         )
+      `;
       // Multiple producers / team members per video and per project (deal).
       await sql`
         CREATE TABLE IF NOT EXISTS video_assignees (
