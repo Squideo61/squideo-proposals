@@ -52,6 +52,24 @@ function serialiseExtra(r) {
   };
 }
 
+// Pending (unpaid) extras for one deal, shaped for billing as invoice line
+// items on the final invoice ("Add extra to final"). vatRate is the stored
+// fraction (e.g. 0.2) or null to inherit the proposal's rate.
+export async function pendingExtrasForDeal(dealId) {
+  await ensureDealExtrasTable();
+  const rows = await sql`
+    SELECT id, description, amount, vat_rate
+      FROM deal_extras
+     WHERE deal_id = ${dealId} AND status <> 'paid'
+     ORDER BY created_at ASC`;
+  return rows.map((r) => ({
+    id: r.id,
+    description: r.description,
+    amount: Number(r.amount) || 0,
+    vatRate: r.vat_rate == null ? null : Number(r.vat_rate),
+  }));
+}
+
 // For the Pending Payments report: unpaid extras grouped by deal, as net £.
 export async function outstandingExtrasByDeal() {
   await ensureDealExtrasTable();

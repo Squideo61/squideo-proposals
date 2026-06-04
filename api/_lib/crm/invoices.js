@@ -27,6 +27,7 @@ import {
 } from '../xeroMappers.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { pendingExtrasForDeal } from './extras.js';
 
 // Self-heal for db/migrations/20260603_invoice_company_id.sql — lets invoices be
 // scoped to a company (not just a deal) so the company page can list/create them.
@@ -119,10 +120,11 @@ export async function invoicesRoute(req, res, id, action, user) {
     let paymentLabel;
     if (isFinal) {
       // The remaining balance. Only 50/50 deals have one; full/partner are
-      // invoiced in a single shot, so there's nothing left to itemise.
-      if (!isDeposit) return res.status(200).json({ lineItems: [], paymentLabel: null, proposalId: row.id });
-      xeroLines = balanceLineItems(proposal, signed, 0.5, proposalNumber);
-      paymentLabel = '50% balance (final)';
+      // invoiced in a single shot, so there's no proposal balance left — but
+      // ad-hoc extras still ride on the final invoice, so we keep going and
+      // append them below rather than bailing out early.
+      xeroLines = isDeposit ? balanceLineItems(proposal, signed, 0.5, proposalNumber) : [];
+      paymentLabel = isDeposit ? '50% balance (final)' : null;
     } else if (isPartner) {
       xeroLines = [
         ...lineItemsForDiscountedProject(proposal, signed, proposalNumber),
@@ -156,6 +158,27 @@ export async function invoicesRoute(req, res, id, action, user) {
     // proposal's own subtitle rate but 100% discounted, so it shows yet is free.
     const freeSub = freeSubtitleLine(proposal, signed);
     if (freeSub) lineItems.push(freeSub);
+
+    // Ad-hoc extras added during production ("Add extra to final") ride on the
+    // final invoice as their own lines — at the extra's own VAT rate, else the
+    // proposal's. Pulled live, so an extra that's since been deleted simply
+    // won't appear here.
+    if (isFinal) {
+      const extras = await pendingExtrasForDeal(dealId);
+      const proposalVatPct = Number(proposal.vatRate) > 0 ? 20 : 0;
+      for (const e of extras) {
+        lineItems.push({
+          description: e.description,
+          quantity: 1,
+          unitAmount: Number((e.amount || 0).toFixed(2)),
+          vatRate: e.vatRate != null ? (e.vatRate > 0 ? 20 : 0) : proposalVatPct,
+        });
+      }
+      if (extras.length) {
+        const extrasLabel = `${extras.length} extra${extras.length > 1 ? 's' : ''}`;
+        paymentLabel = paymentLabel ? `${paymentLabel} + ${extrasLabel}` : extrasLabel;
+      }
+    }
 
     return res.status(200).json({ lineItems, paymentLabel, proposalId: row.id });
   }
