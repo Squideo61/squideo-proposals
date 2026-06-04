@@ -1213,7 +1213,7 @@ function FileTypeTag({ mimeType }) {
   return <FileText size={14} color={BRAND.muted} />;
 }
 
-function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
+export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const { actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [uploading, setUploading] = useState(false);
