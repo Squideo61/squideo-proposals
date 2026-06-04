@@ -6,7 +6,7 @@ import {
 } from 'recharts';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP, useIsMobile } from '../../utils.js';
+import { formatGBP, formatProposalNumber, useIsMobile } from '../../utils.js';
 
 const VAT_COLOR = '#F59E0B';
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
@@ -228,11 +228,13 @@ export function FinanceView({ onBack, onOpenDeal }) {
   );
 }
 
-// The two slices an outstanding deal can split into. A deal shows up to two
-// line items: the invoiced deposit awaiting payment, and the part still to bill.
-const PORTION_META = {
-  awaiting: { label: 'Awaiting payment', color: '#B45309', bg: '#FFFBEB' },
-  toInvoice: { label: 'To invoice', color: '#1D4ED8', bg: '#EFF6FF' },
+// Payment-type labels mirroring the sales sheet's "Invoice Type" column. A
+// 50/50 deal shows a deposit + final line; "full" / PO deals show one line.
+const PAYMENT_TYPE_META = {
+  deposit: { label: '50% Deposit', color: '#B45309', bg: '#FFFBEB' },
+  final: { label: '50% Final', color: '#1D4ED8', bg: '#EFF6FF' },
+  full: { label: 'Full up front', color: '#15803D', bg: '#ECFDF3' },
+  po: { label: 'Purchase order', color: '#6D28D9', bg: '#F5F3FF' },
 };
 
 function PendingPayments({ pending, onOpenDeal, isMobile }) {
@@ -293,8 +295,8 @@ function PendingGroup({ title, note, rows, total, accent, onOpenDeal }) {
   );
 }
 
-function PortionBadge({ portionKey }) {
-  const m = PORTION_META[portionKey];
+function PaymentBadge({ type }) {
+  const m = PAYMENT_TYPE_META[type] || PAYMENT_TYPE_META.full;
   return (
     <span style={{ fontSize: 10, fontWeight: 700, color: m.color, background: m.bg, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
       {m.label}
@@ -303,11 +305,14 @@ function PortionBadge({ portionKey }) {
 }
 
 function PendingRow({ d, onOpenDeal }) {
-  const portions = [];
-  if (d.invoicedUnpaid > 0.005) portions.push({ key: 'awaiting', amount: d.invoicedUnpaid });
-  if (d.notInvoiced > 0.005) portions.push({ key: 'toInvoice', amount: d.notInvoiced });
-  if (portions.length === 0) portions.push({ key: 'awaiting', amount: d.outstanding });
-  const split = portions.length > 1;
+  const name = d.company || d.title || 'Untitled deal';
+  // Only keep the deal title as a second line when it adds something beyond the
+  // company name (avoids showing e.g. "Beyond PR" twice).
+  const subtitle = d.company && d.title && d.title !== d.company ? d.title : null;
+  const number = d.number ? formatProposalNumber(d.number) : '';
+  const lines = d.lines && d.lines.length ? d.lines : [{ type: 'full', amount: d.outstanding }];
+  const single = lines.length === 1;
+  const showCommitted = Math.abs((d.committed || 0) - (d.outstanding || 0)) > 0.005;
   const open = () => onOpenDeal && onOpenDeal(d.dealId);
   return (
     <div
@@ -322,24 +327,27 @@ function PendingRow({ d, onOpenDeal }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {d.company || 'No company'}
+            {name}
           </span>
-          {!split && <PortionBadge portionKey={portions[0].key} />}
+          {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
+          {single && <PaymentBadge type={lines[0].type} />}
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(d.outstanding)}</div>
-          <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>
+          {showCommitted && <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>}
         </div>
       </div>
-      <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {d.title}
-      </div>
-      {split && (
+      {subtitle && (
+        <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {subtitle}
+        </div>
+      )}
+      {!single && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
-          {portions.map((p) => (
-            <div key={p.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <PortionBadge portionKey={p.key} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{formatGBP(p.amount)}</span>
+          {lines.map((l, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <PaymentBadge type={l.type} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{formatGBP(l.amount)}</span>
             </div>
           ))}
         </div>
