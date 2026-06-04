@@ -11,6 +11,7 @@ import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 import { Card, Empty } from './Card.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
+import { OrderSummaryCard } from './OrderSummaryCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
 
@@ -20,6 +21,8 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
+  // Bumped when invoices/extras change so the Order Summary re-pulls.
+  const [orderRefresh, setOrderRefresh] = useState(0);
   const [creatingTask, setCreatingTask] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   // The composer itself is mounted at App level (see EmailComposerHost) so
@@ -264,10 +267,15 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         </Card>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+          <OrderSummaryCard dealId={dealId} refreshKey={orderRefresh} />
+        </div>
+
+        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <InvoicesPaymentsCard
             dealId={dealId}
             proposals={proposals}
             contactName={company?.name || contact?.name || deal.title}
+            onChanged={() => setOrderRefresh((n) => n + 1)}
           />
         </div>
 
@@ -543,7 +551,7 @@ function isTaskOverdue(task) {
   return new Date(task.dueAt).getTime() < Date.now();
 }
 
-function EventRow({ event, users }) {
+export function EventRow({ event, users }) {
   const actor = users[event.actorEmail || ''];
   const label = describeEvent(event);
   return (
@@ -786,7 +794,7 @@ function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal }) {
 // thread with a "(N messages)" chip when applicable. Expanded: stacks every
 // message oldest→newest with its body inlined (lazy-loaded). Single-message
 // threads keep the original click-to-modal behaviour.
-function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCompanyId, onOpenMessage, onLinkAnother, onCreateNewDeal }) {
+export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCompanyId, onOpenMessage, onLinkAnother, onCreateNewDeal }) {
   const [expanded, setExpanded] = useState(false);
   const isMulti = messages.length > 1;
   const latest = messages[messages.length - 1];
@@ -943,7 +951,7 @@ function ExpandedMessage({ email, onOpenFull }) {
 // message) to. The deal list is read from the store's cached `state.deals`
 // — same source the pipeline + task picker use — filtered to anything that
 // isn't lost and excluding the deal we're already on.
-function LinkEmailModal({ target, currentDealId, onClose, onLinked }) {
+export function LinkEmailModal({ target, currentDealId, onClose, onLinked }) {
   const { state, actions, showMsg } = useStore();
   const candidates = useMemo(() => {
     return Object.values(state.deals || {})
@@ -1026,7 +1034,7 @@ function LinkEmailModal({ target, currentDealId, onClose, onLinked }) {
 // with the email subject, then link the just-created deal to the chosen scope.
 // Reuses the existing NewDealModal from PipelineView so creation stays a
 // single code path.
-function NewDealFromEmailFlow({ target, onClose, onCreated }) {
+export function NewDealFromEmailFlow({ target, onClose, onCreated }) {
   const { actions, showMsg } = useStore();
   const [scope, setScope] = useState('thread');
   const [step, setStep] = useState('scope'); // 'scope' → 'deal'
@@ -1085,7 +1093,7 @@ function NewDealFromEmailFlow({ target, onClose, onCreated }) {
   );
 }
 
-function EmailViewerModal({ gmailMessageId, dealId, onClose }) {
+export function EmailViewerModal({ gmailMessageId, dealId, onClose }) {
   const { state, actions } = useStore();
   const cached = state.emailBodies?.[gmailMessageId] || null;
   const [data, setData] = useState(cached);
@@ -1533,7 +1541,7 @@ function CommentRow({ comment, session, isReply, replyingTo, editingCommentId, o
   );
 }
 
-function CommentThread({ comments, session, replyingTo, editingCommentId, onReply, onCancelReply, onEdit, onCancelEdit, onSubmitEdit, onDelete, onSubmitReply, onReact, dealId }) {
+export function CommentThread({ comments, session, replyingTo, editingCommentId, onReply, onCancelReply, onEdit, onCancelEdit, onSubmitEdit, onDelete, onSubmitReply, onReact, dealId }) {
   const { state } = useStore();
   const topLevel = comments.filter(c => !c.parentId);
   const replies = comments.filter(c => !!c.parentId);
@@ -1592,7 +1600,7 @@ function CommentThread({ comments, session, replyingTo, editingCommentId, onRepl
   );
 }
 
-function CommentInput({ users, placeholder = 'Add a comment…', initialBody = '', initialMentions = [], submitLabel = 'Comment', onSubmit, onCancel, autoFocus = false }) {
+export function CommentInput({ users, placeholder = 'Add a comment…', initialBody = '', initialMentions = [], submitLabel = 'Comment', onSubmit, onCancel, autoFocus = false }) {
   const [body, setBody] = useState(initialBody);
   const [mentions, setMentions] = useState(initialMentions);
   const [mentionQuery, setMentionQuery] = useState(null);

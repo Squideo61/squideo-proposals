@@ -6,6 +6,7 @@ import { useIsMobile } from '../../utils.js';
 import {
   PRODUCTION_PHASES, PHASE_BY_ID, VIDEO_STATUSES, VIDEO_STATUS_BY_ID, PAYMENT_TERMS,
 } from '../../lib/productionStages.js';
+import { DealConversation } from './DealConversation.jsx';
 
 const ctrl = {
   width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border,
@@ -16,7 +17,7 @@ const labelStyle = { fontSize: 12, color: BRAND.muted, marginBottom: 4, display:
 // A single video's page: its board position (phase + stage), its Monday-style
 // columns, status, and the client review hand-off. Opened from the production
 // board and from the project page.
-export function VideoDetailView({ videoId, onBack, onOpenProject }) {
+export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
 
@@ -63,6 +64,9 @@ export function VideoDetailView({ videoId, onBack, onOpenProject }) {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {onOpenProject && video.dealId && (
             <button onClick={() => onOpenProject(video.dealId)} className="btn-ghost"><FolderOpen size={14} /> Open project</button>
+          )}
+          {onOpenDeal && video.dealId && (
+            <button onClick={() => onOpenDeal(video.dealId)} className="btn-ghost"><ExternalLink size={14} /> Go to deal</button>
           )}
           <button onClick={sendForReview} className="btn-ghost">
             {video.revisionVideoId ? <><ExternalLink size={14} /> Review link</> : <><Send size={14} /> Send for review</>}
@@ -136,6 +140,8 @@ export function VideoDetailView({ videoId, onBack, onOpenProject }) {
           </div>
         </div>
       </div>
+
+      {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} />}
     </div>
   );
 }

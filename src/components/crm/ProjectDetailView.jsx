@@ -4,6 +4,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
 import { ProductionPanel } from './ProductionPanel.jsx';
+import { DealConversation } from './DealConversation.jsx';
 
 // Focused project page opened from the production board. Unlike the full deal
 // page (sales pipeline, proposals, emails…), this shows just the production
@@ -54,6 +55,8 @@ export function ProjectDetailView({ dealId, onBack, onOpenFullDeal, onOpenVideo 
       </div>
 
       <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} isMobile={isMobile} onOpenVideo={onOpenVideo} />
+
+      <DealConversation dealId={dealId} isMobile={isMobile} />
     </div>
   );
 }

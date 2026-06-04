@@ -284,6 +284,13 @@ function AppShell() {
             <ProductionView onBack={null} onOpenVideo={(id) => navigate('video', id)} onOpenProject={(id) => navigate('project', id)} onOpenProjects={() => navigate('projects')} />
           )}
         </Suspense>
+        {/* Email composer lives at the root so "Send email" from a production
+            card's conversation panel works in the producer shell too. */}
+        {state.composerContext && (
+          <Suspense fallback={null}>
+            <EmailComposerHost />
+          </Suspense>
+        )}
         <Toast msg={toast} />
       </div>
     );
@@ -408,6 +415,7 @@ function AppShell() {
           videoId={activeId}
           onBack={() => navigate('production')}
           onOpenProject={(id) => navigate('project', id)}
+          onOpenDeal={(id) => navigate('deal', id)}
         />
       )}
       {view === 'leaderboard' && (
