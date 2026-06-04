@@ -78,6 +78,7 @@ function emptyStore() {
     performanceStats: null,
     salesStats: null,
     pendingPayments: null,
+    income: null,
     financeTargets: [],
     salesTargets: [],
     bankHolidays: null,
@@ -751,6 +752,14 @@ export function StoreProvider({ children }) {
       const path = '/api/crm/stats/sales' + (period ? '/' + period : '');
       return api.get(path).then((data) => {
         setState(s => ({ ...s, salesStats: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    // Business → Finance (Income): flat ledger of payments received in a period.
+    loadIncome(period) {
+      const path = '/api/crm/stats/income' + (period ? '/' + period : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, income: data || null }));
         return data;
       }).catch(() => null);
     },

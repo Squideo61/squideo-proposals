@@ -360,6 +360,111 @@ async function pendingPaymentsReport() {
   return { normal, po, totals: { normal: sum(normal), po: sum(po) } };
 }
 
+// Income period: 'YYYY' (whole year), 'YYYY-MM' (month) or 'YYYY-Qn' (calendar
+// quarter). Same window shape as parsePerformancePeriod, plus a year branch so
+// the Finance page's Year mode works. Defaults to the current month.
+function parseIncomePeriod(action) {
+  const now = new Date();
+  if (/^\d{4}$/.test(action || '')) {
+    const y = Number(action);
+    return {
+      period: action,
+      since: new Date(Date.UTC(y, 0, 1)).toISOString(),
+      until: new Date(Date.UTC(y + 1, 0, 1)).toISOString(),
+    };
+  }
+  return parsePerformancePeriod(action);
+}
+
+// A flat, newest-first ledger of every payment received in the window, across the
+// same five paid-money sources as fetchPaidRows so the net total reconciles with
+// the headline net revenue. Each row also carries who paid (company) and a link
+// back to the deal + proposal number. Amounts split into net/VAT/gross per row.
+async function incomeReport(action) {
+  const { period, since, until } = parseIncomePeriod(action);
+
+  const [stripeR, partnerR, manualR, invR, pbR] = await Promise.all([
+    sql`SELECT pay.amount AS inc, pay.paid_at, pr.data->>'vatRate' AS rate,
+               d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
+          FROM payments pay
+          JOIN proposals pr ON pr.id = pay.proposal_id
+          LEFT JOIN deals d ON d.id = pr.deal_id
+          LEFT JOIN companies c ON c.id = d.company_id
+         WHERE pay.paid_at >= ${since} AND pay.paid_at < ${until}`,
+    sql`SELECT pi.amount AS inc, pi.paid_at, pr.data->>'vatRate' AS rate,
+               d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
+          FROM partner_invoices pi
+          JOIN proposals pr ON pr.id = pi.proposal_id
+          LEFT JOIN deals d ON d.id = pr.deal_id
+          LEFT JOIN companies c ON c.id = d.company_id
+         WHERE pi.paid_at >= ${since} AND pi.paid_at < ${until}`,
+    sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate,
+               d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
+          FROM manual_payments mp
+          JOIN proposals pr ON pr.id = mp.proposal_id
+          LEFT JOIN deals d ON d.id = pr.deal_id
+          LEFT JOIN companies c ON c.id = d.company_id
+         WHERE mp.manual_invoice_id IS NULL
+           AND mp.paid_at >= ${since} AND mp.paid_at < ${until}`,
+    sql`SELECT mi.amount AS inc, mi.paid_at, mi.subtotal_ex_vat, mi.tax_amount,
+               pr.data->>'vatRate' AS rate,
+               COALESCE(mi.deal_id, pr.deal_id) AS deal_id,
+               COALESCE(dd.company_id, dp.company_id) AS company_id,
+               COALESCE(cd.name, cp.name) AS company,
+               pr.number_year AS ny, pr.number_seq AS ns
+          FROM manual_invoices mi
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+          LEFT JOIN deals dd ON dd.id = mi.deal_id
+          LEFT JOIN deals dp ON dp.id = pr.deal_id
+          LEFT JOIN companies cd ON cd.id = dd.company_id
+          LEFT JOIN companies cp ON cp.id = dp.company_id
+         WHERE mi.status = 'paid'
+           AND mi.paid_at >= ${since} AND mi.paid_at < ${until}`,
+    sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate,
+               d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
+          FROM proposal_billing pb
+          JOIN proposals pr ON pr.id = pb.proposal_id
+          LEFT JOIN deals d ON d.id = pr.deal_id
+          LEFT JOIN companies c ON c.id = d.company_id
+         WHERE pb.paid_amount IS NOT NULL
+           AND pb.paid_at >= ${since} AND pb.paid_at < ${until}`,
+  ]);
+
+  const rows = [];
+  const push = (r, source, parts) => {
+    if (!r.paid_at) return;
+    rows.push({
+      paidAt: new Date(r.paid_at).toISOString(),
+      net: round2(parts.net), vat: round2(parts.vat), gross: round2(parts.gross),
+      source,
+      company: r.company || null,
+      dealId: r.deal_id || null,
+      number: r.ny && r.ns ? { year: Number(r.ny), seq: Number(r.ns) } : null,
+    });
+  };
+
+  for (const r of stripeR) push(r, 'stripe', splitVat(r.inc, r.rate));
+  for (const r of partnerR) push(r, 'partner', splitVat(r.inc, r.rate));
+  for (const r of manualR) push(r, 'manual', splitVat(r.inc, r.rate));
+  for (const r of invR) {
+    // Prefer the invoice's own stored VAT breakdown (matches fetchPaidRows).
+    const gross = Number(r.inc) || 0;
+    if (r.subtotal_ex_vat != null || r.tax_amount != null) {
+      const net = r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : gross - (Number(r.tax_amount) || 0);
+      const vat = r.tax_amount != null ? Number(r.tax_amount) : gross - net;
+      push(r, 'invoice', { gross, net, vat });
+    } else {
+      push(r, 'invoice', splitVat(gross, r.rate));
+    }
+  }
+  for (const r of pbR) push(r, 'billing', splitVat(r.inc, r.rate));
+
+  rows.sort((a, b) => (a.paidAt < b.paidAt ? 1 : a.paidAt > b.paidAt ? -1 : 0));
+  const total = round2(rows.reduce((s, r) => s + r.net, 0));
+
+  return { period, rows, total };
+}
+
 export async function statsRoute(req, res, id, action, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -392,6 +497,10 @@ export async function statsRoute(req, res, id, action, user) {
 
   if (id === 'pending') {
     return res.status(200).json(await pendingPaymentsReport());
+  }
+
+  if (id === 'income') {
+    return res.status(200).json(await incomeReport(action));
   }
 
   return res.status(404).json({ error: 'Unknown stats report' });
