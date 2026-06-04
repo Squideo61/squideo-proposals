@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Trash2, X, Plus } from 'lucide-react';
 import { Modal } from '../ui.jsx';
 import { Avatar } from '../Avatar.jsx';
@@ -107,64 +107,98 @@ export function TaskFormModal({ task, defaults, onClose, onSaved }) {
   );
 }
 
-// Chip-style multi-select. Selected users are pills with an × to remove;
-// unselected users live in a compact "Add…" row below. Stays simple — we
-// never have more than a handful of teammates so no typeahead is needed.
+// Chip-style multi-select. Selected users are pills with an × to remove; the
+// rest are tucked behind a compact "+ Add" button that opens a dropdown, so the
+// control stays clean no matter how many teammates there are.
 // Exported so the video/project "Producers" pickers reuse the exact same UI.
 export function AssigneePicker({ users, selected, onToggle, emptyLabel = 'No one assigned' }) {
   const selectedSet = new Set(selected);
   const selectedUsers = users.filter(u => selectedSet.has(u.email));
   const remaining = users.filter(u => !selectedSet.has(u.email));
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div ref={ref} style={{ position: 'relative' }}>
       <div style={{
-        display: 'flex', flexWrap: 'wrap', gap: 6,
-        padding: selectedUsers.length ? 6 : 10,
+        display: 'flex', flexWrap: 'wrap', gap: 6, padding: 6,
         border: '1px solid ' + BRAND.border, borderRadius: 8, minHeight: 38,
         alignItems: 'center', background: 'white',
       }}>
         {selectedUsers.length === 0 && (
-          <span style={{ fontSize: 12, color: BRAND.muted }}>{emptyLabel}</span>
+          <span style={{ fontSize: 12, color: BRAND.muted, padding: '2px 4px' }}>{emptyLabel}</span>
         )}
         {selectedUsers.map(u => (
-          <button
+          <span
             key={u.email}
-            type="button"
-            onClick={() => onToggle(u.email)}
-            title={`Remove ${u.name || u.email}`}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '3px 8px 3px 3px', borderRadius: 999,
+              padding: '3px 4px 3px 3px', borderRadius: 999,
               background: '#F0F9FF', border: '1px solid #BAE6FD',
               fontSize: 12, fontWeight: 500, color: BRAND.ink,
-              cursor: 'pointer',
             }}
           >
             <Avatar email={u.email} size={20} ring={false} />
             <span>{u.name || u.email}</span>
-            <X size={12} style={{ opacity: 0.6 }} />
-          </button>
+            <button type="button" onClick={() => onToggle(u.email)} title={`Remove ${u.name || u.email}`}
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none',
+                border: 'none', padding: 2, cursor: 'pointer', color: BRAND.muted, borderRadius: 999 }}>
+              <X size={12} />
+            </button>
+          </span>
         ))}
+        {remaining.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setOpen(o => !o)}
+            title="Add a person"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '4px 10px', borderRadius: 999,
+              background: 'white', border: '1px dashed ' + BRAND.border,
+              fontSize: 12, fontWeight: 500, color: BRAND.muted, cursor: 'pointer',
+            }}
+          >
+            <Plus size={13} /> Add
+          </button>
+        )}
       </div>
-      {remaining.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+
+      {open && remaining.length > 0 && (
+        <div
+          role="menu"
+          style={{
+            position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50,
+            minWidth: 220, maxHeight: 240, overflowY: 'auto', padding: 4,
+            background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10,
+            boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)',
+          }}
+        >
           {remaining.map(u => (
             <button
               key={u.email}
               type="button"
-              onClick={() => onToggle(u.email)}
-              title={`Assign ${u.name || u.email}`}
+              role="menuitem"
+              onClick={() => { onToggle(u.email); if (remaining.length === 1) setOpen(false); }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
               style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '3px 8px', borderRadius: 999,
-                background: 'white', border: '1px dashed ' + BRAND.border,
-                fontSize: 12, color: BRAND.muted, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                padding: '6px 8px', border: 'none', background: 'transparent', borderRadius: 8,
+                cursor: 'pointer', fontSize: 13, color: BRAND.ink, textAlign: 'left',
               }}
             >
-              <Plus size={12} />
-              <Avatar email={u.email} size={18} ring={false} />
-              <span>{u.name || u.email}</span>
+              <Avatar email={u.email} size={22} ring={false} />
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name || u.email}</span>
             </button>
           ))}
         </div>
