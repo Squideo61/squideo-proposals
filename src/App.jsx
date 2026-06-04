@@ -40,6 +40,9 @@ const EmailsView = lazyNamed(() => import('./components/crm/EmailsView.jsx'), 'E
 const QuoteRequestsView = lazyNamed(() => import('./components/crm/QuoteRequestsView.jsx'), 'QuoteRequestsView');
 const XeroDuplicatesView = lazyNamed(() => import('./components/crm/XeroDuplicatesView.jsx'), 'XeroDuplicatesView');
 const RevisionsView = lazyNamed(() => import('./components/crm/RevisionsView.jsx'), 'RevisionsView');
+const StoryboardsView = lazyNamed(() => import('./components/crm/StoryboardsView.jsx'), 'StoryboardsView');
+// Lazy so pdf.js (~300 kB) only loads when a storyboard is actually opened.
+const StoryboardShell = lazyNamed(() => import('./components/storyboard/StoryboardShell.jsx'), 'StoryboardShell');
 const ProductionView = lazyNamed(() => import('./components/crm/ProductionView.jsx'), 'ProductionView');
 const ProjectDetailView = lazyNamed(() => import('./components/crm/ProjectDetailView.jsx'), 'ProjectDetailView');
 const VideoDetailView = lazyNamed(() => import('./components/crm/VideoDetailView.jsx'), 'VideoDetailView');
@@ -267,7 +270,7 @@ function AppShell() {
   if (producerOnly) {
     // The production board (the fall-through case) stays full width; the detail
     // pages a producer opens are centred at the cap like the rest of the app.
-    const producerBoard = !((view === 'video' && activeId) || (view === 'project' && activeId) || view === 'projects' || view === 'revisions');
+    const producerBoard = !((view === 'video' && activeId) || (view === 'project' && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards');
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <div style={producerBoard ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
@@ -280,6 +283,8 @@ function AppShell() {
             <ProjectsOverviewView onBack={() => navigate('production')} onOpenProject={(id) => navigate('project', id)} />
           ) : view === 'revisions' ? (
             <RevisionsView onBack={() => navigate('production')} />
+          ) : view === 'storyboards' ? (
+            <StoryboardsView onBack={() => navigate('production')} />
           ) : (
             <ProductionView onBack={null} onOpenVideo={(id) => navigate('video', id)} onOpenProject={(id) => navigate('project', id)} onOpenProjects={() => navigate('projects')} />
           )}
@@ -390,6 +395,9 @@ function AppShell() {
       )}
       {view === 'revisions' && (
         <RevisionsView onBack={() => navigate('list')} />
+      )}
+      {view === 'storyboards' && (
+        <StoryboardsView onBack={() => navigate('list')} />
       )}
       {view === 'production' && (
         <ProductionView
@@ -521,6 +529,20 @@ export default function App() {
       <ErrorBoundary>
         <StoreProvider>
           <RevisionShell token={revisionToken} />
+        </StoreProvider>
+      </ErrorBoundary>
+    );
+  }
+
+  // ?storyboard= is the public link for a storyboard (PDF) review.
+  const storyboardToken = params.get('storyboard');
+  if (storyboardToken) {
+    return (
+      <ErrorBoundary>
+        <StoreProvider>
+          <Suspense fallback={<ViewFallback />}>
+            <StoryboardShell token={storyboardToken} />
+          </Suspense>
         </StoreProvider>
       </ErrorBoundary>
     );

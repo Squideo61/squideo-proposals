@@ -50,6 +50,9 @@ function emptyStore() {
     // Video revisions (Frame.io-style client revision links)
     revisions: [],
     revisionDetail: {},
+    // Storyboard revisions (Frame.io-style PDF review links)
+    storyboards: [],
+    storyboardDetail: {},
     gmailAccount: null,
     triage: [],
     quoteRequests: [],
@@ -2057,6 +2060,121 @@ export function StoreProvider({ children }) {
       const blob = await upload('revision-assets/' + token + '/' + Date.now() + '-' + safeName, file, {
         access: 'public',
         handleUploadUrl: '/api/revisions/asset-token?token=' + encodeURIComponent(token),
+        contentType: file.type || 'application/octet-stream',
+        multipart: true,
+        onUploadProgress: onProgress ? (e) => onProgress(Math.round(e.percentage)) : undefined,
+      });
+      return { url: blob.url, name: file.name, type: file.type || null };
+    },
+
+    // ---------- Storyboard revisions (PDF review links) ----------
+    loadStoryboards() {
+      return api.get('/api/storyboards/projects')
+        .then((list) => { setState(s => ({ ...s, storyboards: list || [] })); return list; })
+        .catch(() => {});
+    },
+
+    createStoryboardProject(payload) {
+      return api.post('/api/storyboards/projects', payload).then((project) => {
+        setState(s => ({ ...s, storyboards: [project, ...(s.storyboards || [])] }));
+        return project;
+      });
+    },
+
+    deleteStoryboardProject(id) {
+      setState(s => ({ ...s, storyboards: (s.storyboards || []).filter(p => p.id !== id) }));
+      return api.delete('/api/storyboards/projects?id=' + encodeURIComponent(id))
+        .catch(() => actions.loadStoryboards());
+    },
+
+    loadStoryboardDetail(id) {
+      return api.get('/api/storyboards/detail?id=' + encodeURIComponent(id))
+        .then((detail) => {
+          setState(s => ({ ...s, storyboardDetail: { ...s.storyboardDetail, [id]: detail } }));
+          return detail;
+        });
+    },
+
+    // Add / remove storyboards within a project. Both reload the project detail
+    // so the nested storyboards→drafts structure stays in sync.
+    createStoryboard(projectId, title) {
+      return api.post('/api/storyboards/storyboards?projectId=' + encodeURIComponent(projectId), { title })
+        .then((storyboard) => actions.loadStoryboardDetail(projectId).then(() => storyboard));
+    },
+
+    deleteStoryboard(projectId, storyboardId) {
+      return api.delete('/api/storyboards/storyboards?id=' + encodeURIComponent(storyboardId))
+        .then(() => actions.loadStoryboardDetail(projectId))
+        .catch(() => actions.loadStoryboardDetail(projectId));
+    },
+
+    // Streams a draft PDF straight to Vercel Blob, reads its page count via
+    // pdf.js, registers it under a storyboard, then reloads the project detail.
+    async uploadStoryboardVersion(projectId, storyboardId, file, { label = null, onProgress } = {}) {
+      const { upload } = await import('@vercel/blob/client');
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await upload('storyboard-pdfs/' + storyboardId + '/' + safeName, file, {
+        access: 'public',
+        handleUploadUrl: '/api/storyboards/upload-token',
+        contentType: file.type || 'application/pdf',
+        multipart: true,
+        onUploadProgress: onProgress ? (e) => onProgress(Math.round(e.percentage)) : undefined,
+      });
+      // Count slides so the version row stores page_count (best-effort: a parse
+      // failure just leaves it null).
+      let pageCount = null;
+      try {
+        const { pdfPageCount } = await import('./lib/pdf.js');
+        pageCount = await pdfPageCount(blob.url);
+      } catch { /* page_count stays null */ }
+      const version = await api.post(
+        '/api/storyboards/versions?storyboardId=' + encodeURIComponent(storyboardId),
+        { blobUrl: blob.url, blobPathname: blob.pathname, filename: file.name,
+          mimeType: file.type || null, sizeBytes: file.size, pageCount, label }
+      );
+      await actions.loadStoryboardDetail(projectId);
+      return version;
+    },
+
+    deleteStoryboardVersion(projectId, versionId) {
+      return api.delete('/api/storyboards/versions?id=' + encodeURIComponent(versionId))
+        .then(() => actions.loadStoryboardDetail(projectId))
+        .catch(() => actions.loadStoryboardDetail(projectId));
+    },
+
+    // ---------- Public storyboard viewer (no auth) ----------
+    loadPublicStoryboard(token) {
+      setState(s => ({ ...s, loading: true }));
+      return api.get('/api/storyboards/public?token=' + encodeURIComponent(token))
+        .then((data) => { setState(s => ({ ...s, loading: false })); return data; })
+        .catch((err) => { setState(s => ({ ...s, loading: false })); throw err; });
+    },
+
+    postStoryboardComment(token, payload) {
+      return api.post('/api/storyboards/comment?token=' + encodeURIComponent(token), payload);
+    },
+
+    recordStoryboardViewer(token, { name, email }) {
+      return api.post('/api/storyboards/viewer?token=' + encodeURIComponent(token), { name, email });
+    },
+
+    // Client finalises one storyboard (locks further comments on its drafts).
+    approveStoryboard(token, storyboardId, approvedBy) {
+      return api.post('/api/storyboards/approve?token=' + encodeURIComponent(token), { storyboardId, approvedBy });
+    },
+
+    recordStoryboardView(token, payload) {
+      return api.post('/api/storyboards/view?token=' + encodeURIComponent(token), payload).catch(() => {});
+    },
+
+    // Uploads a comment's supporting asset straight to the public storyboard
+    // Blob store (gated by the share token), returning { url, name, type }.
+    async uploadStoryboardAsset(token, file, { onProgress } = {}) {
+      const { upload } = await import('@vercel/blob/client');
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await upload('storyboard-assets/' + token + '/' + Date.now() + '-' + safeName, file, {
+        access: 'public',
+        handleUploadUrl: '/api/storyboards/asset-token?token=' + encodeURIComponent(token),
         contentType: file.type || 'application/octet-stream',
         multipart: true,
         onUploadProgress: onProgress ? (e) => onProgress(Math.round(e.percentage)) : undefined,
