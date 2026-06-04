@@ -160,6 +160,55 @@ export async function invoicesRoute(req, res, id, action, user) {
     return res.status(200).json({ lineItems, paymentLabel, proposalId: row.id });
   }
 
+  // --- GET /api/crm/invoices/order-summary?dealId=... — the deal's full order,
+  // itemised straight from the signed proposal the same way an invoice is (base
+  // + selected extras + any discount), independent of the payment plan. Used by
+  // the deal's Order Summary card; extras are merged in client-side.
+  if (id === 'order-summary' && req.method === 'GET') {
+    const dealId = trimOrNull(req.query.dealId);
+    if (!dealId) return res.status(400).json({ error: 'dealId required' });
+
+    const [row] = await sql`
+      SELECT p.id, p.data, p.number_year, p.number_seq,
+             s.name AS sig_name, s.email AS sig_email, s.data AS sig_data
+        FROM proposals p
+        JOIN signatures s ON s.proposal_id = p.id
+       WHERE p.deal_id = ${dealId}
+       ORDER BY p.created_at DESC
+       LIMIT 1
+    `;
+    if (!row) return res.status(200).json({ lineItems: [], proposalId: null, proposalNumber: null, vatRatePercent: 0 });
+
+    const proposal = row.data || {};
+    const signed = { name: row.sig_name, email: row.sig_email, ...(row.sig_data || {}) };
+    const proposalNumber = formatProposalNumber(row.number_year, row.number_seq);
+    const vatRatePercent = Number(proposal.vatRate) > 0 ? 20 : 0;
+
+    const xeroLines = signed.partnerSelected
+      ? [
+          ...lineItemsForDiscountedProject(proposal, signed, proposalNumber),
+          ...lineItemsForPartnerFirstMonth(proposal, signed, proposalNumber),
+        ]
+      : lineItemsForProject(proposal, signed, proposalNumber);
+
+    const lineItems = xeroLines.map((l) => {
+      const qty = Number(l.quantity) || 1;
+      let unit = Number(l.unitAmount) || 0;
+      if (l.discountRate) unit *= (1 - Number(l.discountRate) / 100);
+      if (l.discountAmount) unit -= Number(l.discountAmount) / qty;
+      return {
+        description: l.description,
+        quantity: qty,
+        unitAmount: Number(unit.toFixed(2)),
+        vatRate: l.taxType === 'OUTPUT2' ? 20 : 0,
+      };
+    });
+    const freeSub = freeSubtitleLine(proposal, signed);
+    if (freeSub) lineItems.push(freeSub);
+
+    return res.status(200).json({ lineItems, proposalId: row.id, proposalNumber, vatRatePercent });
+  }
+
   // --- GET /api/crm/invoices?dealId=... | ?companyId=...
   if (!id && req.method === 'GET') {
     const dealId = trimOrNull(req.query.dealId);
