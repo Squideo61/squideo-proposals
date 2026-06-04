@@ -15,7 +15,7 @@ import { hasPermission } from '../permissions.js';
 // deal files. Idempotent and cached; also relaxes blob_url's NOT NULL so
 // Drive rows (no blob) can be stored.
 let dealFileDriveEnsured = null;
-function ensureDealFileDriveColumns() {
+export function ensureDealFileDriveColumns() {
   if (dealFileDriveEnsured) return dealFileDriveEnsured;
   dealFileDriveEnsured = (async () => {
     await sql`ALTER TABLE deal_files ADD COLUMN IF NOT EXISTS drive_file_id TEXT`;
@@ -31,7 +31,17 @@ function ensureDealFileDriveColumns() {
 async function dealDriveFolder(accessToken, dealId) {
   const [d] = await sql`SELECT drive_folder_id, title FROM deals WHERE id = ${dealId}`;
   if (d?.drive_folder_id) return d.drive_folder_id;
-  const folderId = await ensureDealFolder(accessToken, { dealId, name: d?.title || dealId });
+  // Name the folder "<project number> — <title>" — the proposal number doubles
+  // as the project number, so folders read and sort sensibly in Drive.
+  const [p] = await sql`
+    SELECT number_year AS ny, number_seq AS ns
+      FROM proposals
+     WHERE deal_id = ${dealId} AND number_year IS NOT NULL AND number_seq IS NOT NULL
+     ORDER BY number_seq ASC LIMIT 1`;
+  const num = p?.ny && p?.ns ? `${p.ny}-${String(p.ns).padStart(3, '0')}` : null;
+  const title = d?.title || dealId;
+  const name = num ? `${num} — ${title}` : title;
+  const folderId = await ensureDealFolder(accessToken, { dealId, name });
   await sql`UPDATE deals SET drive_folder_id = ${folderId} WHERE id = ${dealId}`;
   return folderId;
 }

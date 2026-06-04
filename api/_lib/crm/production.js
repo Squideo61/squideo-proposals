@@ -15,7 +15,7 @@
 import crypto from 'node:crypto';
 import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
-import { serialiseDeal } from './deals.js';
+import { serialiseDeal, ensureDealFileDriveColumns } from './deals.js';
 import { enterProduction, ensureProductionSchema, backfillPaidDealsIntoProduction } from '../production.js';
 import { isValidStage } from '../dealStage.js';
 import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, FIRST_PRODUCTION } from '../productionStages.js';
@@ -27,7 +27,12 @@ const REVISION_PUBLIC_BASE = 'https://app.squideo.com';
 
 // Board / single-video query: a video joined to its project (deal) + customer.
 const VIDEO_SELECT = (whereSql) => sql`
-  SELECT pv.*, d.title AS project_title, c.name AS company_name
+  SELECT pv.*, d.title AS project_title, c.name AS company_name,
+         d.drive_folder_id AS drive_folder_id,
+         (SELECT p.number_year || '-' || lpad(p.number_seq::text, 3, '0')
+            FROM proposals p
+           WHERE p.deal_id = d.id AND p.number_seq IS NOT NULL
+           ORDER BY p.number_seq ASC LIMIT 1) AS project_number
     FROM project_videos pv
     JOIN deals d ON d.id = pv.deal_id
     LEFT JOIN companies c ON c.id = d.company_id
@@ -39,6 +44,8 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     return res.status(403).json({ error: 'You do not have permission to access production' });
   }
   await ensureProductionSchema();
+  // The board query selects deals.drive_folder_id — make sure the column exists.
+  await ensureDealFileDriveColumns();
 
   // ── Board list + project creation ─────────────────────────────────────────
   if (!id) {
@@ -289,5 +296,7 @@ export function serialiseVideo(r) {
   };
   if ('project_title' in r) out.projectTitle = r.project_title || null;
   if ('company_name' in r) out.companyName = r.company_name || null;
+  if ('drive_folder_id' in r) out.driveFolderId = r.drive_folder_id || null;
+  if ('project_number' in r) out.projectNumber = r.project_number || null;
   return out;
 }

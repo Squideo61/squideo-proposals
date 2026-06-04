@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, LayoutGrid, Film, ChevronRight } from 'lucide-react';
+import { ArrowLeft, LayoutGrid, Film, ChevronRight, ExternalLink } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -19,7 +19,7 @@ export function ProjectsOverviewView({ onBack, onOpenProject }) {
   const projects = useMemo(() => {
     const map = new Map();
     for (const v of videos) {
-      if (!map.has(v.dealId)) map.set(v.dealId, { dealId: v.dealId, projectTitle: v.projectTitle, companyName: v.companyName, videos: [] });
+      if (!map.has(v.dealId)) map.set(v.dealId, { dealId: v.dealId, projectTitle: v.projectTitle, companyName: v.companyName, projectNumber: v.projectNumber || null, driveFolderId: v.driveFolderId || null, videos: [] });
       map.get(v.dealId).videos.push(v);
     }
     return Array.from(map.values()).sort((a, b) => (a.projectTitle || '').localeCompare(b.projectTitle || ''));
@@ -78,15 +78,23 @@ function ProjectCard({ project, onOpen }) {
   }, [videos]);
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
       style={{
         display: 'flex', alignItems: 'center', gap: 14, width: '100%', textAlign: 'left',
         background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, cursor: 'pointer',
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, color: BRAND.ink }}>{project.projectTitle || 'Untitled project'}</div>
+        <div style={{ fontWeight: 600, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {project.projectNumber && (
+            <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted }}>{project.projectNumber}</span>
+          )}
+          <span>{project.projectTitle || 'Untitled project'}</span>
+        </div>
         <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
           {project.companyName ? <span>{project.companyName} · </span> : null}
           <Film size={12} /> {videos.length} video{videos.length === 1 ? '' : 's'}
@@ -100,7 +108,18 @@ function ProjectCard({ project, onOpen }) {
           ))}
         </div>
       </div>
+      {project.driveFolderId && (
+        <a
+          href={`https://drive.google.com/drive/folders/${project.driveFolderId}`}
+          target="_blank" rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title="Open the project's Drive folder"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, fontSize: 12, fontWeight: 600, color: BRAND.blue, textDecoration: 'none' }}
+        >
+          Open folder <ExternalLink size={12} />
+        </a>
+      )}
       <ChevronRight size={18} color={BRAND.muted} />
-    </button>
+    </div>
   );
 }
