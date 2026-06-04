@@ -12,6 +12,7 @@
 import { put, del, get as blobGet } from '@vercel/blob';
 import sql from '../db.js';
 import { advanceStage } from '../dealStage.js';
+import { enterProduction } from '../production.js';
 import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { sendNotification } from '../notifications.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
@@ -811,6 +812,13 @@ export async function invoicesRoute(req, res, id, action, user) {
           console.error('[invoices] advanceStage failed', err);
         }
 
+        // Paid work becomes a production project (no-op if already in production).
+        try {
+          await enterProduction(dealId, { source: 'manual-invoice-paid', actorEmail: user.email || null });
+        } catch (err) {
+          console.error('[invoices] enterProduction failed', err);
+        }
+
         try {
           const [dealRow] = await sql`SELECT title FROM deals WHERE id = ${dealId}`;
           const title = dealRow?.title || cur.invoice_number || manualId;
@@ -1128,6 +1136,12 @@ async function notifyInvoicePaid({ row, paidAt, amount, paymentMethod = 'xero', 
   } catch (err) {
     console.error('[invoices] advanceStage failed', err);
   }
+  // Paid work becomes a production project (no-op if already in production).
+  try {
+    await enterProduction(dealId, { source: 'invoice-paid', actorEmail: user?.email || null });
+  } catch (err) {
+    console.error('[invoices] enterProduction failed', err);
+  }
   try {
     const [dealRow] = await sql`SELECT title FROM deals WHERE id = ${dealId}`;
     const title = dealRow?.title || row.invoice_number || row.id;
@@ -1200,13 +1214,14 @@ export async function reconcileProposalBillingPaid(proposalIds) {
   if (!proposalIds || !proposalIds.length) return;
   await ensureProposalBillingPaidColumns();
   const rows = await sql`
-    SELECT xero_invoice_id, paid_amount, invoice_amount FROM proposal_billing
+    SELECT proposal_id, xero_invoice_id, paid_amount, invoice_amount FROM proposal_billing
      WHERE proposal_id = ANY(${proposalIds}) AND xero_invoice_id IS NOT NULL
   `;
   if (!rows.length) return;
   const live = await getInvoicesByIds(rows.map(r => r.xero_invoice_id));
   if (!live.size) return;
   const writes = [];
+  const paidProposalIds = new Set();
   for (const r of rows) {
     const x = live.get(r.xero_invoice_id);
     if (!x) continue;
@@ -1215,6 +1230,7 @@ export async function reconcileProposalBillingPaid(proposalIds) {
     const invAmt = x.status === 'VOIDED' ? null : (x.total != null ? Number(x.total) : null);
     const curPaid = r.paid_amount != null ? Number(r.paid_amount) : null;
     const curInv = r.invoice_amount != null ? Number(r.invoice_amount) : null;
+    if (paidSoFar != null && paidSoFar > 0) paidProposalIds.add(r.proposal_id);
     if (paidSoFar !== curPaid || invAmt !== curInv) {
       const paidAt = paidSoFar != null ? (x.fullyPaidOn || new Date().toISOString().slice(0, 10)) : null;
       writes.push(
@@ -1226,6 +1242,27 @@ export async function reconcileProposalBillingPaid(proposalIds) {
     }
   }
   if (writes.length) await Promise.all(writes);
+
+  // Paid via Xero (no Stripe webhook to us) → ensure the deal is on the board,
+  // matching the Stripe paid flow. Idempotent: only deals not yet in production
+  // are touched, so this also back-fills deposits paid before this hook existed.
+  if (paidProposalIds.size) {
+    try {
+      const dealsToEnter = await sql`
+        SELECT DISTINCT d.id AS id
+          FROM proposals p JOIN deals d ON d.id = p.deal_id
+         WHERE p.id = ANY(${[...paidProposalIds]})
+           AND d.production_phase IS NULL
+           AND d.stage <> 'lost'
+      `;
+      for (const { id: dealId } of dealsToEnter) {
+        await advanceStage(dealId, 'paid', { payload: { source: 'xero-reconcile' } });
+        await enterProduction(dealId, { source: 'xero-reconcile' });
+      }
+    } catch (err) {
+      console.error('[invoices] reconcile enter-production failed', err);
+    }
+  }
 }
 
 // Proposal-billing invoices carry a Reference like "PROP-1234 — 50% deposit"

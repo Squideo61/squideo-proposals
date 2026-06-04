@@ -11,6 +11,7 @@
 
 import sql from '../db.js';
 import { advanceStage, dealIdForProposal } from '../dealStage.js';
+import { enterProduction } from '../production.js';
 import { sendMail, paidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { sendNotification } from '../notifications.js';
 import { makeId, trimOrNull, lowerOrNull, numberOrNull } from './shared.js';
@@ -174,9 +175,11 @@ export async function paymentsRoute(req, res, id, action, user) {
           actorEmail: user.email || null,
           payload: { proposalId, amount, paymentType, paymentMethod, source: 'manual' },
         });
+        // Paid work becomes a production project (no-op if already in production).
+        await enterProduction(dealId, { source: 'manual-payment', actorEmail: user.email || null });
       }
     } catch (err) {
-      console.error('[payments] advanceStage failed', err);
+      console.error('[payments] advanceStage/enterProduction failed', err);
     }
 
     try {
