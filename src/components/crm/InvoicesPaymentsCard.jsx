@@ -196,9 +196,15 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
                     </span>
                   )}
                 </div>
-                <button onClick={() => deleteExtra(e.id)} className="btn-icon" aria-label="Remove extra" title="Remove extra">
-                  <Trash2 size={14} />
-                </button>
+                {e.status === 'pending' ? (
+                  <button onClick={() => deleteExtra(e.id)} className="btn-icon" aria-label="Remove extra" title="Remove extra">
+                    <Trash2 size={14} />
+                  </button>
+                ) : (
+                  <button className="btn-icon" disabled aria-label="On an invoice — void it to remove" title="On an invoice — void or delete that invoice to remove this extra" style={{ opacity: 0.45, cursor: 'not-allowed' }}>
+                    <Trash2 size={14} />
+                  </button>
+                )}
               </div>
             ))}
           </div>

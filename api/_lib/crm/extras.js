@@ -196,9 +196,17 @@ export async function extrasRoute(req, res, id, action, user) {
     return res.status(200).json(serialiseExtra(row));
   }
 
-  // DELETE /api/crm/extras/:id
+  // DELETE /api/crm/extras/:id — only a 'pending' extra can be deleted. Once it's
+  // on an invoice (invoiced/paid) it must be removed by voiding/deleting that
+  // invoice, which releases the extra back to pending — so we never orphan a
+  // Xero line or silently drop billed work.
   if (req.method === 'DELETE' && id) {
     if (!canManage) return res.status(403).json({ error: 'Forbidden' });
+    const [cur] = await sql`SELECT status FROM deal_extras WHERE id = ${id}`;
+    if (!cur) return res.status(200).json({ ok: true }); // already gone — idempotent
+    if (cur.status !== 'pending') {
+      return res.status(409).json({ error: 'This extra is on an invoice — void or delete that invoice first to remove it.' });
+    }
     await sql`DELETE FROM deal_extras WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }

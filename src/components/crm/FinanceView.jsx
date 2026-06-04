@@ -322,14 +322,18 @@ function PaymentBadge({ type }) {
   );
 }
 
-function ExtraDeleteButton({ onClick }) {
+function ExtraDeleteButton({ onClick, disabled }) {
+  const title = disabled
+    ? 'On an invoice — void or delete that invoice to remove this extra'
+    : 'Remove extra';
   return (
     <button
-      onClick={onClick}
+      onClick={disabled ? (e) => e.stopPropagation() : onClick}
       className="btn-icon"
-      title="Remove extra"
-      aria-label="Remove extra"
-      style={{ flexShrink: 0, color: '#9A3412' }}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      style={{ flexShrink: 0, color: disabled ? BRAND.muted : '#9A3412', opacity: disabled ? 0.45 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}
     >
       <Trash2 size={13} />
     </button>
@@ -375,7 +379,7 @@ function PendingRow({ d, onOpenDeal, onDeleteExtra }) {
           {showCommitted && <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>}
         </div>
         {single && single0.type === 'extra' && single0.id && onDeleteExtra && (
-          <ExtraDeleteButton onClick={(e) => { e.stopPropagation(); onDeleteExtra(single0.id); }} />
+          <ExtraDeleteButton disabled={single0.status !== 'pending'} onClick={(e) => { e.stopPropagation(); onDeleteExtra(single0.id); }} />
         )}
       </div>
       {subtitle && (
@@ -398,7 +402,7 @@ function PendingRow({ d, onOpenDeal, onDeleteExtra }) {
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{formatGBP(l.amount)}</span>
                 {l.type === 'extra' && l.id && onDeleteExtra && (
-                  <ExtraDeleteButton onClick={(e) => { e.stopPropagation(); onDeleteExtra(l.id); }} />
+                  <ExtraDeleteButton disabled={l.status !== 'pending'} onClick={(e) => { e.stopPropagation(); onDeleteExtra(l.id); }} />
                 )}
               </span>
             </div>
