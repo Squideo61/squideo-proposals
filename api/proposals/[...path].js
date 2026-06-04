@@ -211,7 +211,18 @@ export default async function handler(req, res) {
   res.status(405).end();
 }
 
+// Self-heal: proposal_billing.paid_amount (db/migrations/20260603_proposal_billing_paid.sql)
+// is referenced below to surface Xero-paid deposits on the list.
+let pbPaidColEnsured = null;
+function ensurePbPaidColumn() {
+  if (pbPaidColEnsured) return pbPaidColEnsured;
+  pbPaidColEnsured = sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS paid_amount NUMERIC`
+    .then(() => {}).catch((err) => { pbPaidColEnsured = null; throw err; });
+  return pbPaidColEnsured;
+}
+
 async function list(req, res) {
+  await ensurePbPaidColumn();
   const rows = await sql`
     SELECT p.id, p.data, p.created_at, p.updated_at,
            p.number_year, p.number_seq, p.deal_id,
@@ -230,7 +241,15 @@ async function list(req, res) {
            pay.stripe_session_id   AS pay_session_id,
            pay.customer_email      AS pay_customer_email,
            pay.receipt_url         AS pay_receipt_url,
-           pay.xero_invoice_id     AS pay_xero_invoice_id
+           pay.xero_invoice_id     AS pay_xero_invoice_id,
+           -- Total paid across every source, so a Xero/manual deposit shows up
+           -- on the card even when there is no Stripe payments row.
+           ( (SELECT COALESCE(SUM(amount),0) FROM payments WHERE proposal_id = p.id AND paid_at IS NOT NULL)
+           + COALESCE(pb.paid_amount, 0)
+           + (SELECT COALESCE(SUM(amount),0) FROM manual_payments WHERE proposal_id = p.id AND manual_invoice_id IS NULL)
+           + (SELECT COALESCE(SUM(amount),0) FROM manual_invoices WHERE proposal_id = p.id AND status = 'paid')
+           + (SELECT COALESCE(SUM(amount),0) FROM partner_invoices WHERE proposal_id = p.id)
+           ) AS paid_total
     FROM proposals p
     LEFT JOIN (
       SELECT proposal_id,
@@ -259,6 +278,7 @@ async function list(req, res) {
         duration: Number(row.view_duration) || 0,
         lastActiveAt: row.view_last_active || null,
       },
+      _paidAmount: Number(row.paid_total) || 0,
       _xeroInvoiceId: row.billing_invoice_id || row.pay_xero_invoice_id || null,
       _hasXeroInvoice: !!(row.billing_invoice_id || row.pay_xero_invoice_id),
       _hasXeroQuote: !!row.billing_quote_id,

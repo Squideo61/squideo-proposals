@@ -350,6 +350,13 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
   const { state, actions } = useStore();
   const signed = state.signatures[proposal.id];
   const payment = state.payments[proposal.id];
+  // Total paid across all sources (Stripe + Xero billing + manual + partner) so
+  // a paid deposit shows even without a Stripe payment row.
+  const paidAmount = Number(proposal._paidAmount) || 0;
+  const signedTotal = Number(signed?.total) || (Number(proposal.basePrice || 0) * (1 + Number(proposal.vatRate || 0)));
+  const fullyPaid = paidAmount > 0.5 && paidAmount >= signedTotal - 0.5;
+  const partlyPaid = paidAmount > 0.5 && !fullyPaid;
+  const isHalf = signed?.paymentOption === '5050';
   const views = proposal._views || { opens: 0, duration: 0 };
   const opened = views.opens > 0;
   const isMobile = useIsMobile();
@@ -453,8 +460,10 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
           {proposal.archived && <Badge color="grey">ARCHIVED</Badge>}
           {signed && <Badge color="green">ACCEPTED</Badge>}
           {!signed && opened && <Badge color="yellow">OPENED</Badge>}
-          {payment && <Badge color="blue">PAID {formatGBP(payment.amount)}</Badge>}
-          {signed && !payment && <Badge color="orange">AWAITING PAYMENT</Badge>}
+          {fullyPaid && <Badge color="blue">PAID {formatGBP(paidAmount)}</Badge>}
+          {partlyPaid && <Badge color="green">{isHalf ? 'DEPOSIT PAID' : 'PART PAID'}</Badge>}
+          {partlyPaid && <Badge color="orange">AWAITING FINAL</Badge>}
+          {signed && !fullyPaid && !partlyPaid && <Badge color="orange">AWAITING PAYMENT</Badge>}
           {signed?.partnerSelected && <Badge color="gold">PARTNER</Badge>}
         </div>
         <div style={{ fontSize: isMobile ? 11 : 13, color: BRAND.muted, display: 'flex', gap: isMobile ? 10 : 16, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -519,7 +528,7 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
             ...(signed && proposal._xeroInvoiceId
               ? [{ label: 'View invoice', icon: Receipt, onClick: () => window.open('/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(proposal._xeroInvoiceId), '_blank', 'noopener') }]
               : []),
-            ...(signed && !payment ? [{ label: 'Mark as paid', icon: Check, onClick: handleMarkPaid }] : []),
+            ...(signed && !fullyPaid ? [{ label: 'Mark as paid', icon: Check, onClick: handleMarkPaid }] : []),
             ...(signed && !payment ? [{ label: 'Unmark as accepted', icon: Undo2, onClick: handleUnmarkAccepted }] : []),
             {
               label: proposal.archived ? 'Unarchive' : 'Archive',
