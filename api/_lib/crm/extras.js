@@ -52,15 +52,17 @@ function serialiseExtra(r) {
   };
 }
 
-// Pending (unpaid) extras for one deal, shaped for billing as invoice line
-// items on the final invoice ("Add extra to final"). vatRate is the stored
-// fraction (e.g. 0.2) or null to inherit the proposal's rate.
+// Not-yet-invoiced extras for one deal, shaped for billing as invoice line
+// items on the final invoice ("Add extra to final"). Only 'pending' rows —
+// once an extra has ridden onto an invoice ('invoiced') we don't re-suggest it,
+// so it can't be billed twice. vatRate is the stored fraction (e.g. 0.2) or
+// null to inherit the proposal's rate.
 export async function pendingExtrasForDeal(dealId) {
   await ensureDealExtrasTable();
   const rows = await sql`
     SELECT id, description, amount, vat_rate
       FROM deal_extras
-     WHERE deal_id = ${dealId} AND status <> 'paid'
+     WHERE deal_id = ${dealId} AND status = 'pending'
      ORDER BY created_at ASC`;
   return rows.map((r) => ({
     id: r.id,
@@ -68,6 +70,51 @@ export async function pendingExtrasForDeal(dealId) {
     amount: Number(r.amount) || 0,
     vatRate: r.vat_rate == null ? null : Number(r.vat_rate),
   }));
+}
+
+// Link extras to the final invoice they were billed on. Flips 'pending' →
+// 'invoiced' and stores the Xero id/number so payment can later settle them.
+// Only touches still-pending rows, so re-running is a no-op. Returns count.
+export async function markExtrasInvoiced(extraIds, xeroInvoiceId, invoiceNumber) {
+  const ids = (extraIds || []).filter(Boolean);
+  if (!ids.length) return 0;
+  await ensureDealExtrasTable();
+  const rows = await sql`
+    UPDATE deal_extras
+       SET status = 'invoiced',
+           xero_invoice_id = ${xeroInvoiceId || null},
+           invoice_number = ${invoiceNumber || null},
+           updated_at = NOW()
+     WHERE id = ANY(${ids}) AND status = 'pending'
+    RETURNING id`;
+  return rows.length;
+}
+
+// When an invoice settles, the extras billed on it are paid too — drop them
+// from outstanding. Idempotent (only flips non-paid rows). Returns count.
+export async function markExtrasPaidForXeroInvoice(xeroInvoiceId) {
+  if (!xeroInvoiceId) return 0;
+  await ensureDealExtrasTable();
+  const rows = await sql`
+    UPDATE deal_extras
+       SET status = 'paid', updated_at = NOW()
+     WHERE xero_invoice_id = ${xeroInvoiceId} AND status <> 'paid'
+    RETURNING id`;
+  return rows.length;
+}
+
+// If the invoice an extra rode on is voided, release the extra back to
+// 'pending' (clearing the link) so it can be billed on a fresh invoice. Never
+// touches already-paid rows. Returns count.
+export async function releaseExtrasForVoidedInvoice(xeroInvoiceId) {
+  if (!xeroInvoiceId) return 0;
+  await ensureDealExtrasTable();
+  const rows = await sql`
+    UPDATE deal_extras
+       SET status = 'pending', xero_invoice_id = NULL, invoice_number = NULL, updated_at = NOW()
+     WHERE xero_invoice_id = ${xeroInvoiceId} AND status = 'invoiced'
+    RETURNING id`;
+  return rows.length;
 }
 
 // For the Pending Payments report: unpaid extras grouped by deal, as net £.

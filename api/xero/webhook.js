@@ -21,6 +21,7 @@ import { sendNotification } from '../_lib/notifications.js';
 import { APP_URL } from '../_lib/email.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 import { enterProduction } from '../_lib/production.js';
+import { markExtrasPaidForXeroInvoice } from '../_lib/crm/extras.js';
 
 // Raw body is required for signature verification — turn Vercel's parser off.
 export const config = { api: { bodyParser: false } };
@@ -82,6 +83,12 @@ async function processInvoiceEvents(events) {
   const invoices = await getInvoicesByIds(invoiceIds);
   for (const inv of invoices.values()) {
     if (String(inv.status).toUpperCase() !== 'PAID') continue;
+    // Extras billed on this invoice are now paid — drop them from outstanding.
+    try {
+      await markExtrasPaidForXeroInvoice(inv.invoiceId);
+    } catch (err) {
+      console.error('[xero webhook] mark extras paid failed', err);
+    }
     // A paid proposal-billing invoice (deposit / full / PO) → move its deal into
     // production, same as the Stripe paid flow. Done regardless of contactId.
     await enterProductionForPaidInvoice(inv);

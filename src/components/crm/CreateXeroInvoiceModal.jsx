@@ -130,6 +130,10 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
           vatRate: Number(li.vatRate) || 0,
           discountRate: li.discountRate ? Number(li.discountRate) : undefined,
         })),
+        // Pre-filled extra lines carry their id so the server can mark those
+        // deal_extras 'invoiced' (and settle them when the invoice is paid).
+        // Lines the user removed before submitting drop out here.
+        extraIds: validLines.map(li => li.extraId).filter(Boolean),
       });
       showMsg?.('Invoice created in Xero', 'success');
       onCreated?.(result);

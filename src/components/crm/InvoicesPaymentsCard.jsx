@@ -190,6 +190,11 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
                   <span style={{ fontSize: 10, fontWeight: 700, color: '#C2410C', background: '#FFEDD5', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, flexShrink: 0 }}>Extra</span>
                   <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.description}</span>
                   <span style={{ fontSize: 13, color: '#9A3412', flexShrink: 0 }}>· {formatGBP(e.amount)}{vatSuffix}</span>
+                  {e.status === 'invoiced' && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, flexShrink: 0 }} title={e.invoiceNumber ? 'On invoice ' + e.invoiceNumber : 'On the final invoice'}>
+                      Invoiced{e.invoiceNumber ? ' · ' + e.invoiceNumber : ''}
+                    </span>
+                  )}
                 </div>
                 <button onClick={() => deleteExtra(e.id)} className="btn-icon" aria-label="Remove extra" title="Remove extra">
                   <Trash2 size={14} />

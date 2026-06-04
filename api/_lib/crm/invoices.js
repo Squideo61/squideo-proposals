@@ -27,7 +27,7 @@ import {
 } from '../xeroMappers.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
-import { pendingExtrasForDeal } from './extras.js';
+import { pendingExtrasForDeal, markExtrasInvoiced, markExtrasPaidForXeroInvoice, releaseExtrasForVoidedInvoice } from './extras.js';
 
 // Self-heal for db/migrations/20260603_invoice_company_id.sql — lets invoices be
 // scoped to a company (not just a deal) so the company page can list/create them.
@@ -172,6 +172,7 @@ export async function invoicesRoute(req, res, id, action, user) {
           quantity: 1,
           unitAmount: Number((e.amount || 0).toFixed(2)),
           vatRate: e.vatRate != null ? (e.vatRate > 0 ? 20 : 0) : proposalVatPct,
+          extraId: e.id, // carried back on submit to mark the extra invoiced
         });
       }
       if (extras.length) {
@@ -457,7 +458,7 @@ export async function invoicesRoute(req, res, id, action, user) {
   // CRM body parser will have already parsed into req.body.
   if (!id && req.method === 'POST' && (req.headers['content-type'] || '').startsWith('application/json')) {
     const body = req.body || {};
-    const { dealId, proposalId, companyId, contactName, lineItems, invoiceNumber, issuedAt, dueAt } = body;
+    const { dealId, proposalId, companyId, contactName, lineItems, invoiceNumber, issuedAt, dueAt, extraIds } = body;
 
     if (!Array.isArray(lineItems) || !lineItems.length) {
       return res.status(400).json({ error: 'At least one line item required' });
@@ -561,6 +562,16 @@ export async function invoicesRoute(req, res, id, action, user) {
         ${Number(taxTotal.toFixed(2))}
       )
     `;
+
+    // Extras billed on this invoice: flip them to 'invoiced' and link the Xero
+    // id so they stop being re-suggested and settle when the invoice is paid.
+    if (Array.isArray(extraIds) && extraIds.length) {
+      try {
+        await markExtrasInvoiced(extraIds, xeroInvoiceId, storedInvoiceNumber);
+      } catch (err) {
+        console.error('[invoices] markExtrasInvoiced failed', err);
+      }
+    }
 
     const pdfUrl = '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(xeroInvoiceId);
     return res.status(201).json({
@@ -873,6 +884,12 @@ export async function invoicesRoute(req, res, id, action, user) {
 
     // First-time mark-paid: advance deal stage + send notification + record in Xero.
     if (next.status === 'paid' && cur.status !== 'paid') {
+      // Extras billed on this invoice settle with it.
+      try {
+        if (cur.xero_invoice_id) await markExtrasPaidForXeroInvoice(cur.xero_invoice_id);
+      } catch (err) {
+        console.error('[invoices] markExtrasPaid (manual) failed', err);
+      }
       const dealId = cur.deal_id;
       if (dealId) {
         try {
@@ -921,6 +938,13 @@ export async function invoicesRoute(req, res, id, action, user) {
           paidAt: next.paid_at,
         });
       }
+    } else if (next.status === 'void' && cur.status !== 'void') {
+      // Voiding releases this invoice's extras back to pending for re-billing.
+      try {
+        if (cur.xero_invoice_id) await releaseExtrasForVoidedInvoice(cur.xero_invoice_id);
+      } catch (err) {
+        console.error('[invoices] releaseExtras (void) failed', err);
+      }
     }
 
     return res.status(200).json({ ok: true });
@@ -942,6 +966,10 @@ export async function invoicesRoute(req, res, id, action, user) {
     if (cur.xero_invoice_id) {
       try { await voidInvoice(cur.xero_invoice_id); } catch (err) {
         console.error('[invoices] xero void failed', err.message);
+      }
+      // Free its extras back to pending so they can ride on a new invoice.
+      try { await releaseExtrasForVoidedInvoice(cur.xero_invoice_id); } catch (err) {
+        console.error('[invoices] releaseExtras (delete) failed', err.message);
       }
     }
     await sql`DELETE FROM manual_invoices WHERE id = ${manualId}`;
@@ -1190,6 +1218,12 @@ async function syncFromXero(rows, user) {
     } else if (xero.status === 'VOIDED' && row.status !== 'void') {
       await sql`UPDATE manual_invoices SET status = 'void', updated_at = NOW() WHERE id = ${row.id} AND status != 'void'`;
       updates.set(row.id, { status: 'void' });
+      // Release any extras billed on it back to pending so they can be re-billed.
+      try {
+        if (row.xero_invoice_id) await releaseExtrasForVoidedInvoice(row.xero_invoice_id);
+      } catch (err) {
+        console.error('[invoices] releaseExtras (void sync) failed', err);
+      }
     }
   }
   return updates;
@@ -1198,6 +1232,13 @@ async function syncFromXero(rows, user) {
 // Sends the "invoice paid" notification email and advances the deal stage.
 // Used by both the PATCH mark-paid path and the GET-time Xero sync.
 async function notifyInvoicePaid({ row, paidAt, amount, paymentMethod = 'xero', user = {} }) {
+  // Settle any extras billed on this invoice (keyed on the Xero id, so it runs
+  // even for a company-level invoice with no deal).
+  try {
+    if (row.xero_invoice_id) await markExtrasPaidForXeroInvoice(row.xero_invoice_id);
+  } catch (err) {
+    console.error('[invoices] markExtrasPaid (sync) failed', err);
+  }
   const dealId = row.deal_id;
   if (!dealId) return;
   try {
