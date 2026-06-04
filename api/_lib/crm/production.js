@@ -16,7 +16,7 @@ import crypto from 'node:crypto';
 import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { serialiseDeal } from './deals.js';
-import { enterProduction, ensureProductionSchema } from '../production.js';
+import { enterProduction, ensureProductionSchema, backfillPaidDealsIntoProduction } from '../production.js';
 import { isValidStage } from '../dealStage.js';
 import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, FIRST_PRODUCTION } from '../productionStages.js';
 import { getRole } from '../userRoles.js';
@@ -45,6 +45,9 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     // GET: every video on the board (the Projects overview is derived from this
     // same list client-side, grouping by project).
     if (req.method === 'GET') {
+      // Self-heal: pull any already-paid deal onto the board before listing, so a
+      // deal paid via a route that didn't auto-enter still shows up here.
+      await backfillPaidDealsIntoProduction();
       const rows = await sql`
         SELECT pv.*, d.title AS project_title, c.name AS company_name
           FROM project_videos pv
