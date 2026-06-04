@@ -377,7 +377,7 @@ export function StoryboardRevision({ token, data }) {
               onPinClick={(id) => setActiveCommentId(id)}
             />
             <div aria-hidden style={{
-              position: 'absolute', inset: 0, pointerEvents: 'none', borderRadius: 6,
+              position: 'absolute', inset: 0, pointerEvents: 'none',
               backgroundImage: `url("data:image/svg+xml,${DRAFT_SVG}")`,
               backgroundRepeat: 'repeat',
             }} />

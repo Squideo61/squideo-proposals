@@ -80,9 +80,8 @@ export function PdfPage({ url, pageNumber, pins = [], onPlacePin, onPinClick, dr
   const allPins = draftPin ? [...pins, { id: '__draft__', x: draftPin.x, y: draftPin.y, draft: true }] : pins;
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative', width: '100%', maxHeight, margin: '0 auto', lineHeight: 0,
-      borderRadius: 6, overflow: 'hidden', background: '#fff' }}>
-      <canvas ref={canvasRef} style={{ display: 'block', width: '100%' }} />
+    <div ref={wrapRef} style={{ position: 'relative', width: '100%', maxHeight, margin: '0 auto', lineHeight: 0 }}>
+      <canvas ref={canvasRef} style={{ display: 'block', width: '100%', background: '#fff' }} />
       {status === 'loading' && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
           justifyContent: 'center', color: BRAND.muted, fontSize: 13, lineHeight: 1.4 }}>
