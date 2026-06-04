@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, Images, Paperclip, X, FileDown, CheckCircle2, CalendarClock, MapPin } from 'lucide-react';
+import { MessageSquare, Send, Images, Paperclip, X, FileDown, CheckCircle2, CalendarClock, MapPin, ChevronUp, ChevronDown } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { loadPdf } from '../../lib/pdf.js';
@@ -19,6 +19,16 @@ const DRAFT_SVG = encodeURIComponent(
 );
 
 const isEmail = (e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
+
+// Round prev/next slide button (disabled state dims + blocks the click).
+function navBtn(disabled) {
+  return {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: 34, height: 34, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.25)',
+    background: 'rgba(255,255,255,0.08)', color: '#fff',
+    cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1,
+  };
+}
 
 // A draft's display name. Older drafts auto-labelled "Version N" fall back to
 // "Draft N" so the wording is consistent.
@@ -224,6 +234,21 @@ export function StoryboardRevision({ token, data }) {
     actions.recordStoryboardView(token, { versionId: version.id, name, email });
   }, [identified, version?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Arrow keys step through slides (unless typing in the composer).
+  useEffect(() => {
+    function onKey(e) {
+      const el = document.activeElement;
+      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable)) return;
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowRight') && pageNumber < pageCount) {
+        e.preventDefault(); goToPage(pageNumber + 1);
+      } else if ((e.key === 'ArrowUp' || e.key === 'ArrowLeft') && pageNumber > 1) {
+        e.preventDefault(); goToPage(pageNumber - 1);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pageNumber, pageCount]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Gate screen ─────────────────────────────────────────────────────────────
   if (!identified) {
     return (
@@ -357,8 +382,25 @@ export function StoryboardRevision({ token, data }) {
               backgroundRepeat: 'repeat',
             }} />
           </div>
+          {/* Slide navigator (Frame.io-style) */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginTop: 14 }}>
+            <button onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1}
+              title="Previous slide"
+              style={navBtn(pageNumber <= 1)}>
+              <ChevronUp size={18} />
+            </button>
+            <span style={{ color: '#fff', fontSize: 13, minWidth: 64, textAlign: 'center' }}>
+              <strong>{pageNumber}</strong>
+              <span style={{ opacity: 0.5 }}> / {pageCount}</span>
+            </span>
+            <button onClick={() => goToPage(pageNumber + 1)} disabled={pageNumber >= pageCount}
+              title="Next slide"
+              style={navBtn(pageNumber >= pageCount)}>
+              <ChevronDown size={18} />
+            </button>
+          </div>
           {!approvedAt && (
-            <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 10 }}>
+            <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 8 }}>
               Click anywhere on the slide to pin a comment to that spot.
             </div>
           )}
