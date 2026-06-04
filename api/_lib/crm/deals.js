@@ -7,7 +7,7 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
-import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, getDriveFile, folderUsable } from '../googleDrive.js';
+import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, getDriveFile, folderUsable, listFolderFiles } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
@@ -72,6 +72,31 @@ async function dealDriveFolder(accessToken, dealId) {
   const folderId = await ensureDealFolder(accessToken, { dealId, name });
   await sql`UPDATE deals SET drive_folder_id = ${folderId} WHERE id = ${dealId}`;
   return folderId;
+}
+
+// Make the deal's stored file list mirror its Drive folder: drop rows for files
+// deleted in Drive, and add rows for files dropped straight into the folder.
+// Best-effort — callers wrap in try/catch so a Drive blip never breaks loading.
+async function reconcileDealDriveFiles(dealId, folderId, accessToken) {
+  const driveFiles = (await listFolderFiles(accessToken, folderId))
+    .filter((f) => f.mimeType !== 'application/vnd.google-apps.folder');
+  const driveIds = new Set(driveFiles.map((f) => f.id));
+
+  const rows = await sql`SELECT id, drive_file_id FROM deal_files WHERE deal_id = ${dealId} AND drive_file_id IS NOT NULL`;
+  const known = new Set(rows.map((r) => r.drive_file_id));
+
+  const stale = rows.filter((r) => !driveIds.has(r.drive_file_id)).map((r) => r.id);
+  if (stale.length) await sql`DELETE FROM deal_files WHERE id = ANY(${stale})`;
+
+  for (const f of driveFiles) {
+    if (known.has(f.id)) continue;
+    await sql`
+      INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source, created_at)
+      VALUES (${crypto.randomUUID()}, ${dealId}, ${f.name}, ${f.mimeType || null},
+              ${f.size != null ? Number(f.size) : null}, NULL, ${f.id}, ${f.webViewLink || null},
+              NULL, 'upload', ${f.createdTime || new Date().toISOString()})
+    `;
+  }
 }
 
 export async function dealsRoute(req, res, id, action, user, subaction = null) {
@@ -560,6 +585,16 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     // deals without 'relation does not exist'. Likewise deal_contacts and the
     // deal-file Drive columns (so the files query can select drive_file_id).
     await Promise.all([ensureMessageDealsTable(), ensureDealContactsTable(), ensureDealFileDriveColumns()]);
+
+    // Mirror the deal's Drive folder into deal_files (handles files deleted or
+    // added directly in Drive) before we read the list below. Best-effort.
+    if (driveFilesEnabled() && rows[0].drive_folder_id) {
+      try {
+        await reconcileDealDriveFiles(id, rows[0].drive_folder_id, await getFreshAccessToken(user.email));
+      } catch (err) {
+        console.warn('[deal files] drive reconcile skipped', err.message);
+      }
+    }
     const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows] = await Promise.all([
       sql`
         SELECT p.id, p.data, p.number_year, p.number_seq, p.created_at,

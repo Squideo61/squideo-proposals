@@ -125,6 +125,18 @@ export async function getDriveFile(accessToken, fileId, fields = 'id,name,size,m
   ).then((r) => r.json());
 }
 
+// List the (non-trashed) files directly in a folder. Used to reconcile a deal's
+// stored file list against what's actually in its Drive folder.
+export async function listFolderFiles(accessToken, folderId) {
+  const query = `'${q(folderId)}' in parents and trashed=false`;
+  const url =
+    `${DRIVE_API}/files?q=${encodeURIComponent(query)}` +
+    `&fields=files(id,name,mimeType,size,webViewLink,createdTime)` +
+    `&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=1000`;
+  const out = await driveFetch(accessToken, url).then((r) => r.json());
+  return out.files || [];
+}
+
 // True if the folder still exists, isn't trashed, and is actually a folder.
 // Returns false on 404 (deleted / inaccessible) so callers can recreate; other
 // errors (auth/permission) re-throw so we don't recreate on a transient blip.
