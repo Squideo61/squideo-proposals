@@ -606,6 +606,59 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     return res.status(502).json({ error: 'Google Drive upload failed (' + driveRes.status + ')' });
   }
 
+  // /deals/:id/files/drive-status — ask Drive how many bytes a resumable session
+  // has received, so the client can resume after an interrupted chunk. Returns
+  // { done } (with the recorded file) or { received } = next byte offset.
+  if (action === 'files' && subaction === 'drive-status' && req.method === 'POST') {
+    if (!driveFilesEnabled()) return res.status(400).json({ error: 'Drive files not enabled' });
+    await ensureDealFileDriveColumns();
+    const uploadUrl = req.headers['x-upload-url'];
+    const total = req.headers['x-total'];
+    const filename = decodeURIComponent(req.headers['x-filename'] || 'upload');
+    const mime = req.headers['x-mime'] || 'application/octet-stream';
+    if (!uploadUrl || !total) return res.status(400).json({ error: 'Missing upload headers' });
+
+    let driveRes;
+    try {
+      driveRes = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Range': `bytes */${total}` },
+        redirect: 'manual',
+      });
+    } catch (err) {
+      console.error('[deal files] drive status query failed', err.message);
+      return res.status(502).json({ error: 'Google Drive status check failed' });
+    }
+
+    if (driveRes.status === 200 || driveRes.status === 201) {
+      // Already complete — record it if we haven't.
+      const f = await driveRes.json().catch(() => ({}));
+      const fileId = crypto.randomUUID();
+      await sql`
+        INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
+        VALUES (${fileId}, ${id}, ${filename}, ${mime}, ${Number(total) || null},
+                NULL, ${f.id || null}, ${f.webViewLink || null}, ${user.email}, 'upload')
+      `;
+      return res.status(200).json({
+        done: true,
+        file: {
+          id: fileId, filename, mimeType: mime, sizeBytes: Number(total) || null,
+          uploadedBy: user.email, source: 'upload', storage: 'drive',
+          driveFileId: f.id || null, webViewLink: f.webViewLink || null,
+          createdAt: new Date().toISOString(),
+        },
+      });
+    }
+    if (driveRes.status === 308) {
+      const range = driveRes.headers.get('range');
+      let received = 0;
+      const m = range && range.match(/bytes=0-(\d+)/);
+      if (m) received = Number(m[1]) + 1;
+      return res.status(200).json({ done: false, received });
+    }
+    return res.status(502).json({ error: 'Google Drive status check failed (' + driveRes.status + ')' });
+  }
+
   // /deals/:id (no action)
   if (req.method === 'GET') {
     const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;

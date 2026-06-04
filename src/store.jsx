@@ -1789,7 +1789,7 @@ export function StoreProvider({ children }) {
     },
 
     // ---------- Deal files ----------
-    async uploadDealFile(dealId, file) {
+    async uploadDealFile(dealId, file, onProgress) {
       const addToState = (newFile) => setState(s => {
         const detail = s.dealDetail[dealId];
         if (!detail) return s;
@@ -1808,27 +1808,48 @@ export function StoreProvider({ children }) {
         : null;
       if (start && start.enabled !== false && start.uploadUrl) {
         const CHUNK = 4 * 1024 * 1024; // 4 MB — multiple of 256 KB, under the body limit
+        const MAX_RETRIES = 6;
         const total = file.size;
+        const uploadHeaders = {
+          'X-Upload-Url': start.uploadUrl,
+          'X-Filename': encodeURIComponent(file.name),
+          'X-Mime': mime,
+        };
         let offset = 0;
         let result = null;
+        let attempt = 0;
+        onProgress?.(0, total);
         while (offset < total) {
           const end = Math.min(offset + CHUNK, total);
-          const res = await fetch(base + '/drive-chunk', {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-              'Content-Type': 'application/octet-stream',
-              'X-Upload-Url': start.uploadUrl,
-              'X-Content-Range': `bytes ${offset}-${end - 1}/${total}`,
-              'X-Filename': encodeURIComponent(file.name),
-              'X-Mime': mime,
-            },
-            body: file.slice(offset, end),
-          });
-          if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
-          const j = await res.json();
-          if (j.done) { result = j.file; break; }
-          offset = end;
+          try {
+            const res = await fetch(base + '/drive-chunk', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { ...uploadHeaders, 'Content-Type': 'application/octet-stream', 'X-Content-Range': `bytes ${offset}-${end - 1}/${total}` },
+              body: file.slice(offset, end),
+            });
+            if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
+            const j = await res.json();
+            attempt = 0;
+            if (j.done) { result = j.file; break; }
+            offset = end;
+            onProgress?.(offset, total);
+          } catch (err) {
+            // Resume: a chunk failed — ask Drive how much it has and continue
+            // from there, retrying with backoff before giving up.
+            attempt += 1;
+            if (attempt > MAX_RETRIES) throw err;
+            await new Promise((r) => setTimeout(r, 800 * attempt));
+            try {
+              const st = await fetch(base + '/drive-status', {
+                method: 'POST', credentials: 'include',
+                headers: { ...uploadHeaders, 'X-Total': String(total) },
+              }).then((r) => r.json());
+              if (st.done) { result = st.file; break; }
+              offset = Number(st.received) || offset;
+              onProgress?.(offset, total);
+            } catch { /* keep current offset; retry the chunk */ }
+          }
         }
         if (result) { addToState(result); return result; }
         throw new Error('Upload did not complete');

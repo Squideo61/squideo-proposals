@@ -1217,6 +1217,7 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const { actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(null); // { loaded, total } in bytes
   const [dragOver, setDragOver] = useState(false);
   const inputRef = React.useRef(null);
 
@@ -1230,17 +1231,28 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
     if (!files.length) return;
     const tooBig = files.find(f => f.size > maxBytes);
     if (tooBig) { showMsg(`"${tooBig.name}" is too large (max ${maxLabel})`); return; }
+    const totalBytes = files.reduce((s, f) => s + (f.size || 0), 0);
+    const loadedByIdx = new Array(files.length).fill(0);
     setUploading(true);
+    setProgress({ loaded: 0, total: totalBytes });
     try {
-      await Promise.all(files.map(f => actions.uploadDealFile(dealId, f)));
+      await Promise.all(files.map((f, i) => actions.uploadDealFile(dealId, f, (loaded) => {
+        loadedByIdx[i] = loaded;
+        setProgress({ loaded: loadedByIdx.reduce((a, b) => a + b, 0), total: totalBytes });
+      })));
       showMsg(files.length === 1 ? 'File uploaded' : `${files.length} files uploaded`);
     } catch (err) {
       showMsg(err.message || 'Upload failed');
     } finally {
       setUploading(false);
+      setProgress(null);
       if (inputRef.current) inputRef.current.value = '';
     }
   };
+
+  const pct = progress && progress.total > 0
+    ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
+    : null;
 
   const handleDownload = async (fileId, filename) => {
     try {
@@ -1298,7 +1310,16 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
         }}
       >
         {uploading
-          ? 'Uploading…'
+          ? (
+            <div onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }}>
+              <div style={{ marginBottom: 6 }}>
+                Uploading…{pct != null ? ` ${pct}%` : ''}
+              </div>
+              <div style={{ height: 6, borderRadius: 999, background: BRAND.border, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: (pct != null ? pct : 0) + '%', background: BRAND.blue, borderRadius: 999, transition: 'width 0.2s ease' }} />
+              </div>
+            </div>
+          )
           : driveEnabled
             ? "Drop files here — they'll save to this deal's Drive folder"
             : 'Drop files here or click Upload'}
