@@ -27,9 +27,32 @@ export async function getRole(id) {
   return row;
 }
 
+// Self-heal for system roles added after the initial roles seed (currently the
+// 'copywriter' role — same permissions as Producer for now). Idempotent and
+// module-level cached. Called by listRoles so the role always appears in the
+// admin UI / user role dropdown even if the migration wasn't applied manually.
+let systemRolesEnsured = null;
+export function ensureSystemRoles() {
+  if (systemRolesEnsured) return systemRolesEnsured;
+  systemRolesEnsured = (async () => {
+    try {
+      await sql`
+        INSERT INTO roles (id, name, permissions, notification_defaults, is_system)
+        VALUES ('copywriter', 'Copywriter', '["revisions.access", "production.access"]'::jsonb, '{}'::jsonb, true)
+        ON CONFLICT (id) DO NOTHING
+      `;
+    } catch (err) {
+      systemRolesEnsured = null;
+      console.warn('[roles] ensure system roles failed', err.message);
+    }
+  })();
+  return systemRolesEnsured;
+}
+
 // List every role. Not cached — the admin UI hits this rarely and freshness
 // matters more than the saved query.
 export async function listRoles() {
+  await ensureSystemRoles();
   const rows = await sql`
     SELECT id, name, permissions, notification_defaults, is_system, created_at, updated_at
       FROM roles

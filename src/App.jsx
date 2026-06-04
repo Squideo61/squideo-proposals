@@ -73,9 +73,10 @@ function buildHash(view, id) {
 function AppShell() {
   const { state, actions, showMsg, toast } = useStore();
   const user = state.session;
-  // "Producer" accounts are scoped to the production board, the project (deal)
-  // pages they work on, and the Revisions section — no sales/admin nav.
-  const producerOnly = user?.role === 'producer';
+  // "Producer" (and "Copywriter", same scope for now) accounts are limited to
+  // the production board, the project (deal) pages they work on, and the
+  // Revisions section — no sales/admin nav.
+  const producerOnly = user?.role === 'producer' || user?.role === 'copywriter';
   const [view, setView] = useState(() => parseHash().view);
   const [activeId, setActiveId] = useState(() => parseHash().activeId);
   const [modal, setModal] = useState(null);
