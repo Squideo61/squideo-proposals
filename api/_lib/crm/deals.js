@@ -636,8 +636,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 
     return res.status(200).json({
       ...deal,
-      // Whether deal files are Drive-backed (drives the client upload path/cap).
+      // Whether deal files are Drive-backed (drives the client upload path/cap),
+      // and the deal's Drive folder id once one's been created (for an "open
+      // folder" link). The folder is created lazily on first upload.
       driveFiles: driveFilesEnabled(),
+      driveFolderId: rows[0].drive_folder_id || null,
       videos,
       proposals: proposals.map(p => ({
         id: p.id,

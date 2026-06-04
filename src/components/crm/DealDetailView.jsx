@@ -326,7 +326,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <FilesCard dealId={dealId} files={detail?.files || []} driveEnabled={!!detail?.driveFiles} />
+          <FilesCard dealId={dealId} files={detail?.files || []} driveEnabled={!!detail?.driveFiles} driveFolderId={detail?.driveFolderId || null} />
         </div>
 
         <Card title="Activity" count={timeline.length}>
@@ -1213,7 +1213,7 @@ function FileTypeTag({ mimeType }) {
   return <FileText size={14} color={BRAND.muted} />;
 }
 
-function FilesCard({ dealId, files, driveEnabled }) {
+function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const { actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [uploading, setUploading] = useState(false);
@@ -1264,6 +1264,24 @@ function FilesCard({ dealId, files, driveEnabled }) {
     }>
       <input ref={inputRef} type="file" multiple style={{ display: 'none' }}
         onChange={(e) => handleFiles(e.target.files)} />
+      {driveEnabled && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 11, color: BRAND.muted }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#1D4ED8' }} />
+            Synced to your Team Drive
+          </span>
+          {driveFolderId && (
+            <a
+              href={`https://drive.google.com/drive/folders/${driveFolderId}`}
+              target="_blank" rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: BRAND.blue, fontWeight: 600, textDecoration: 'none' }}
+            >
+              Open folder <ExternalLink size={11} />
+            </a>
+          )}
+        </div>
+      )}
       <div
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
@@ -1278,7 +1296,11 @@ function FilesCard({ dealId, files, driveEnabled }) {
           textAlign: 'center', marginBottom: files.length ? 10 : 0,
         }}
       >
-        {uploading ? 'Uploading…' : 'Drop files here or click Upload'}
+        {uploading
+          ? 'Uploading…'
+          : driveEnabled
+            ? "Drop files here — they'll save to this deal's Drive folder"
+            : 'Drop files here or click Upload'}
       </div>
       {files.length === 0 && !uploading && <Empty text="No files attached yet" />}
       {files.map(f => (
