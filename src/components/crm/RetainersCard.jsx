@@ -66,7 +66,7 @@ export function RetainersCard({ dealId, contacts }) {
 
   return (
     <Card
-      title="Projects"
+      title="Credit Based Projects"
       count={totalProjects}
       action={
         <button onClick={() => setAddingRetainer(true)} className="btn-ghost">
