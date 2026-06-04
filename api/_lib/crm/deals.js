@@ -7,7 +7,7 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
-import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, getDriveFile, folderUsable, listFolderFiles } from '../googleDrive.js';
+import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
@@ -523,56 +523,87 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     });
   }
 
-  // /deals/:id/files/drive-session — prepare a browser-direct Drive upload. We
-  // ensure the deal's folder server-side and hand the browser the folder id + a
-  // short-lived access token, so the browser itself initiates the resumable
-  // upload (which is what makes Google set CORS for our origin). When Drive
-  // isn't enabled we say so and the client falls back to Blob.
-  if (action === 'files' && subaction === 'drive-session' && req.method === 'POST') {
+  // /deals/:id/files/drive-upload-start — begin a chunked Drive upload. We
+  // create a Drive resumable session server-side and hand the browser its URI.
+  // The browser then streams the file to us in small chunks (drive-chunk), which
+  // we forward to Drive — so large files bypass the serverless body limit
+  // without any browser→Google CORS. Drive off → client falls back to Blob.
+  if (action === 'files' && subaction === 'drive-upload-start' && req.method === 'POST') {
     if (!driveFilesEnabled()) return res.status(200).json({ enabled: false });
     await ensureDealFileDriveColumns();
+    const { filename, mimeType } = req.body || {};
+    if (!filename) return res.status(400).json({ error: 'filename required' });
     let accessToken;
     try { accessToken = await getFreshAccessToken(user.email); }
     catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access) to upload files' }); }
     try {
       const folderId = await dealDriveFolder(accessToken, id);
-      return res.status(200).json({ enabled: true, accessToken, folderId });
+      const uploadUrl = await createResumableUploadSession(accessToken, { folderId, filename, mimeType });
+      return res.status(200).json({ enabled: true, uploadUrl });
     } catch (err) {
-      console.error('[deal files] drive session failed', err.status, err.message);
+      console.error('[deal files] drive upload start failed', err.status, err.message);
       return res.status(502).json({ error: driveErrorHint(err) });
     }
   }
 
-  // /deals/:id/files/drive-complete — record a file the browser uploaded direct
-  // to Drive. We verify it exists and sits in this deal's folder before saving.
-  if (action === 'files' && subaction === 'drive-complete' && req.method === 'POST') {
+  // /deals/:id/files/drive-chunk — forward one chunk to a Drive resumable
+  // session. The browser passes the session URI (X-Upload-Url) and byte range
+  // (X-Content-Range); we PUT the bytes to Drive. Drive replies 308 until the
+  // final chunk, then 200/201 with the file — at which point we record it.
+  if (action === 'files' && subaction === 'drive-chunk' && req.method === 'POST') {
     if (!driveFilesEnabled()) return res.status(400).json({ error: 'Drive files not enabled' });
     await ensureDealFileDriveColumns();
-    const { driveFileId, filename } = req.body || {};
-    if (!driveFileId) return res.status(400).json({ error: 'driveFileId required' });
-    let accessToken;
-    try { accessToken = await getFreshAccessToken(user.email); }
-    catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access)' }); }
-    let f;
-    try { f = await getDriveFile(accessToken, driveFileId); }
-    catch { return res.status(404).json({ error: 'Uploaded file not found in Drive' }); }
-    const folderId = await dealDriveFolder(accessToken, id);
-    if (!Array.isArray(f.parents) || !f.parents.includes(folderId)) {
-      return res.status(400).json({ error: "File is not in this deal's folder" });
+    const uploadUrl = req.headers['x-upload-url'];
+    const contentRange = req.headers['x-content-range'];
+    const filename = decodeURIComponent(req.headers['x-filename'] || 'upload');
+    const mime = req.headers['x-mime'] || 'application/octet-stream';
+    if (!uploadUrl || !contentRange) return res.status(400).json({ error: 'Missing upload headers' });
+
+    let chunk = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : null;
+    if (!chunk) {
+      const chunks = [];
+      for await (const c of req) chunks.push(Buffer.from(c));
+      chunk = Buffer.concat(chunks);
     }
-    const fileId = crypto.randomUUID();
-    const name = f.name || filename || 'file';
-    const sizeBytes = f.size != null ? Number(f.size) : null;
-    await sql`
-      INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
-      VALUES (${fileId}, ${id}, ${name}, ${f.mimeType || null}, ${sizeBytes},
-              NULL, ${driveFileId}, ${f.webViewLink || null}, ${user.email}, 'upload')
-    `;
-    return res.status(201).json({
-      id: fileId, filename: name, mimeType: f.mimeType || null, sizeBytes,
-      uploadedBy: user.email, source: 'upload', driveFileId, webViewLink: f.webViewLink || null,
-      createdAt: new Date().toISOString(),
-    });
+
+    let driveRes;
+    try {
+      driveRes = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Range': contentRange, 'Content-Length': String(chunk.length) },
+        body: chunk,
+        redirect: 'manual',
+      });
+    } catch (err) {
+      console.error('[deal files] drive chunk PUT failed', err.message);
+      return res.status(502).json({ error: 'Google Drive upload failed' });
+    }
+
+    if (driveRes.status === 308) return res.status(200).json({ done: false });
+
+    if (driveRes.status === 200 || driveRes.status === 201) {
+      const f = await driveRes.json().catch(() => ({}));
+      const total = Number(String(contentRange).split('/')[1]) || null;
+      const fileId = crypto.randomUUID();
+      await sql`
+        INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
+        VALUES (${fileId}, ${id}, ${filename}, ${mime}, ${total},
+                NULL, ${f.id || null}, ${f.webViewLink || null}, ${user.email}, 'upload')
+      `;
+      return res.status(201).json({
+        done: true,
+        file: {
+          id: fileId, filename, mimeType: mime, sizeBytes: total,
+          uploadedBy: user.email, source: 'upload', storage: 'drive',
+          driveFileId: f.id || null, webViewLink: f.webViewLink || null,
+          createdAt: new Date().toISOString(),
+        },
+      });
+    }
+
+    const body = await driveRes.text().catch(() => '');
+    console.error('[deal files] drive chunk unexpected', driveRes.status, body.slice(0, 200));
+    return res.status(502).json({ error: 'Google Drive upload failed (' + driveRes.status + ')' });
   }
 
   // /deals/:id (no action)

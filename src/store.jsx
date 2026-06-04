@@ -1796,18 +1796,50 @@ export function StoreProvider({ children }) {
         return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, files: [newFile, ...(detail.files || [])] } } };
       });
 
-      // Upload the raw bytes to our server, which stores them in the deal's
-      // Drive folder (or Blob when Drive is off). Going through the server avoids
-      // the browser→Google CORS issues that direct-to-Drive uploads hit. Raw
-      // binary body (not JSON), so it skips the `api` wrapper.
       const base = '/api/crm/deals/' + encodeURIComponent(dealId) + '/files';
+      const mime = file.type || 'application/octet-stream';
+
+      // Chunked Drive upload: the browser streams the file to our server in 4 MB
+      // chunks, which we forward into a Drive resumable session. This bypasses
+      // the serverless body limit (so large videos work) and avoids the
+      // browser→Google CORS that direct uploads hit. Drive off → fall back below.
+      const start = file.size > 0
+        ? await api.post(base + '/drive-upload-start', { filename: file.name, mimeType: mime })
+        : null;
+      if (start && start.enabled !== false && start.uploadUrl) {
+        const CHUNK = 4 * 1024 * 1024; // 4 MB — multiple of 256 KB, under the body limit
+        const total = file.size;
+        let offset = 0;
+        let result = null;
+        while (offset < total) {
+          const end = Math.min(offset + CHUNK, total);
+          const res = await fetch(base + '/drive-chunk', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'X-Upload-Url': start.uploadUrl,
+              'X-Content-Range': `bytes ${offset}-${end - 1}/${total}`,
+              'X-Filename': encodeURIComponent(file.name),
+              'X-Mime': mime,
+            },
+            body: file.slice(offset, end),
+          });
+          if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
+          const j = await res.json();
+          if (j.done) { result = j.file; break; }
+          offset = end;
+        }
+        if (result) { addToState(result); return result; }
+        throw new Error('Upload did not complete');
+      }
+
+      // Fallback (Drive off, or empty file): raw POST to the server (Blob, or a
+      // single server-side Drive upload). Raw binary body skips the `api` wrapper.
       const res = await fetch(base, {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'Content-Type': file.type || 'application/octet-stream',
-          'X-Filename': encodeURIComponent(file.name),
-        },
+        headers: { 'Content-Type': mime, 'X-Filename': encodeURIComponent(file.name) },
         body: file,
       });
       if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }

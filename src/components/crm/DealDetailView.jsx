@@ -1220,10 +1220,10 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = React.useRef(null);
 
-  // Uploads stream through the server (Drive or Blob), so they're bounded by the
-  // serverless request size — keep a 20 MB cap with a friendly message.
-  const maxBytes = 20 * 1024 * 1024;
-  const maxLabel = '20 MB';
+  // Drive uploads are chunked, so they're not bound by the serverless body
+  // limit — allow large video files. Blob (Drive off) stays capped at 20 MB.
+  const maxBytes = driveEnabled ? 5 * 1024 * 1024 * 1024 : 20 * 1024 * 1024;
+  const maxLabel = driveEnabled ? '5 GB' : '20 MB';
 
   const handleFiles = async (fileList) => {
     const files = Array.from(fileList || []);
