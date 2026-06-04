@@ -12,10 +12,10 @@
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
     "@vercel/blob": "^2.4.0",
-    "@vercel/functions": "^3.6.0",
+    "@vercel/functions": "^3.6.2",
     "bcryptjs": "^3.0.3",
     "canvas-confetti": "^1.9.4",
-    "dompurify": "^3.4.6",
+    "dompurify": "^3.4.8",
     "jose": "^6.2.3",
     "lucide-react": "^0.577.0",
     "otpauth": "^9.5.1",
@@ -24,7 +24,7 @@
     "react-dom": "^18.3.1",
     "recharts": "^2.13.0",
     "resend": "^4.0.0",
-    "stripe": "^22.1.1"
+    "stripe": "^22.2.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
