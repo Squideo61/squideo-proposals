@@ -228,6 +228,13 @@ export function FinanceView({ onBack, onOpenDeal }) {
   );
 }
 
+// The two slices an outstanding deal can split into. A deal shows up to two
+// line items: the invoiced deposit awaiting payment, and the part still to bill.
+const PORTION_META = {
+  awaiting: { label: 'Awaiting payment', color: '#B45309', bg: '#FFFBEB' },
+  toInvoice: { label: 'To invoice', color: '#1D4ED8', bg: '#EFF6FF' },
+};
+
 function PendingPayments({ pending, onOpenDeal, isMobile }) {
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 20 }}>
@@ -235,12 +242,12 @@ function PendingPayments({ pending, onOpenDeal, isMobile }) {
         Pending Payments
       </h3>
       <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
-        Outstanding balances on signed deals — shown ex-VAT (net).
+        Outstanding balances on signed deals — shown ex-VAT (net). 50/50 deals split into the invoiced deposit (awaiting payment) and the final still to invoice.
       </p>
       {!pending ? (
         <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <PendingGroup
             title="Invoiced work"
             note="Paid on project milestones / completion"
@@ -266,7 +273,7 @@ function PendingPayments({ pending, onOpenDeal, isMobile }) {
 function PendingGroup({ title, note, rows, total, accent, onOpenDeal }) {
   return (
     <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
-      <div style={{ padding: '12px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: `3px solid ${accent}` }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: `3px solid ${accent}` }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{title}</span>
           <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
@@ -278,31 +285,62 @@ function PendingGroup({ title, note, rows, total, accent, onOpenDeal }) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {rows.map((d) => (
-            <button
-              key={d.dealId}
-              type="button"
-              onClick={() => onOpenDeal && onOpenDeal(d.dealId)}
-              onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
-                padding: '10px 14px', border: 'none', borderTop: '1px solid ' + BRAND.border,
-                background: 'white', cursor: onOpenDeal ? 'pointer' : 'default',
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {d.company || 'No company'}
-                </div>
-                <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {d.title}
-                </div>
-              </div>
-              <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(d.outstanding)}</div>
-                <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>
-              </div>
-            </button>
+            <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PortionBadge({ portionKey }) {
+  const m = PORTION_META[portionKey];
+  return (
+    <span style={{ fontSize: 10, fontWeight: 700, color: m.color, background: m.bg, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+      {m.label}
+    </span>
+  );
+}
+
+function PendingRow({ d, onOpenDeal }) {
+  const portions = [];
+  if (d.invoicedUnpaid > 0.005) portions.push({ key: 'awaiting', amount: d.invoicedUnpaid });
+  if (d.notInvoiced > 0.005) portions.push({ key: 'toInvoice', amount: d.notInvoiced });
+  if (portions.length === 0) portions.push({ key: 'awaiting', amount: d.outstanding });
+  const split = portions.length > 1;
+  const open = () => onOpenDeal && onOpenDeal(d.dealId);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={open}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
+      style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: onOpenDeal ? 'pointer' : 'default', padding: '8px 14px' }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {d.company || 'No company'}
+          </span>
+          {!split && <PortionBadge portionKey={portions[0].key} />}
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(d.outstanding)}</div>
+          <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {d.title}
+      </div>
+      {split && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
+          {portions.map((p) => (
+            <div key={p.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <PortionBadge portionKey={p.key} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{formatGBP(p.amount)}</span>
+            </div>
           ))}
         </div>
       )}

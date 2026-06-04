@@ -256,7 +256,7 @@ async function pendingPaymentsReport() {
     if (r.opt === 'po') poByDeal.set(r.did, true);
   }
 
-  const [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows] = await Promise.all([
+  const [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows, miInvoicedRows, pbInvoicedRows] = await Promise.all([
     sql`SELECT d.id AS did, COALESCE(SUM(pay.amount),0) AS v
           FROM payments pay JOIN proposals p ON p.id=pay.proposal_id JOIN deals d ON d.id=p.deal_id GROUP BY d.id`,
     sql`SELECT d.id AS did, COALESCE(SUM(pi.amount),0) AS v
@@ -273,11 +273,27 @@ async function pendingPaymentsReport() {
     sql`SELECT d.id AS did, COALESCE(SUM(pb.paid_amount),0) AS v
           FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE pb.paid_amount IS NOT NULL GROUP BY d.id`,
+    // Invoiced (raised, not void) per deal — manual invoices + proposal-billing.
+    // Used to split each deal's outstanding into "invoiced, awaiting payment"
+    // (the deposit) vs "not yet invoiced" (the 50% final, billed later).
+    sql`SELECT COALESCE(mi.deal_id, dp.id) AS did, COALESCE(SUM(mi.amount),0) AS v
+          FROM manual_invoices mi
+          LEFT JOIN deals dd ON dd.id = mi.deal_id
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+          LEFT JOIN deals dp ON dp.id = pr.deal_id
+         WHERE mi.status != 'void' GROUP BY COALESCE(mi.deal_id, dp.id)`,
+    sql`SELECT d.id AS did, COALESCE(SUM(pb.invoice_amount),0) AS v
+          FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE pb.invoice_amount IS NOT NULL GROUP BY d.id`,
   ]);
 
   const paid = new Map();
   for (const rows of [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows]) {
     for (const r of rows) { if (!r.did) continue; paid.set(r.did, (paid.get(r.did) || 0) + (Number(r.v) || 0)); }
+  }
+  const invoiced = new Map();
+  for (const rows of [miInvoicedRows, pbInvoicedRows]) {
+    for (const r of rows) { if (!r.did) continue; invoiced.set(r.did, (invoiced.get(r.did) || 0) + (Number(r.v) || 0)); }
   }
 
   const dealIds = [...committed.keys()];
@@ -292,8 +308,15 @@ async function pendingPaymentsReport() {
   const po = [];
   for (const did of dealIds) {
     const inc = committed.get(did) || 0;
-    const outstandingInc = inc - (paid.get(did) || 0);
+    const paidInc = paid.get(did) || 0;
+    const outstandingInc = inc - paidInc;
     if (outstandingInc <= 0.005) continue;
+    // Split the outstanding into the invoiced-but-unpaid slice (deposit raised,
+    // awaiting payment) and the rest still to be invoiced (the 50% final). The
+    // two always sum to the outstanding balance.
+    const invInc = invoiced.get(did) || 0;
+    const invoicedUnpaidInc = Math.min(outstandingInc, Math.max(0, invInc - paidInc));
+    const notInvoicedInc = Math.max(0, outstandingInc - invoicedUnpaidInc);
     const rate = rateByDeal.get(did) || 0;
     const net = (v) => round2(rate > 0 ? v / (1 + rate) : v);
     const inf = info.get(did) || {};
@@ -304,8 +327,10 @@ async function pendingPaymentsReport() {
       companyId: inf.company_id || null,
       stage: inf.stage || null,
       committed: net(inc),
-      paid: net(paid.get(did) || 0),
+      paid: net(paidInc),
       outstanding: net(outstandingInc),
+      invoicedUnpaid: net(invoicedUnpaidInc),
+      notInvoiced: net(notInvoicedInc),
     };
     (poByDeal.get(did) ? po : normal).push(item);
   }
