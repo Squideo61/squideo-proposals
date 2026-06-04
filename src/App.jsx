@@ -17,6 +17,9 @@ const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: 
 
 // Focused editor / public-facing views that should NOT show the CRM top bar.
 const NO_TOPBAR_VIEWS = new Set(['builder', 'template-builder', 'client']);
+// Board views that read better edge-to-edge — they opt out of the centred
+// max-width cap and stay full width (their columns/rows can use the room).
+const FULL_WIDTH_VIEWS = new Set(['pipeline', 'production']);
 
 const ListView = lazyNamed(() => import('./components/ListView.jsx'), 'ListView');
 const BuilderView = lazyNamed(() => import('./components/BuilderView.jsx'), 'BuilderView');
@@ -269,9 +272,12 @@ function AppShell() {
   // project (deal) pages they open from it, and the Revisions section — no
   // sales pipeline, dashboard, or admin nav.
   if (producerOnly) {
+    // The production board (the fall-through case) stays full width; the detail
+    // pages a producer opens are centred at the cap like the rest of the app.
+    const producerBoard = !((view === 'video' && activeId) || (view === 'project' && activeId) || view === 'projects' || view === 'revisions');
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
-        <div style={{ maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+        <div style={producerBoard ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <Suspense fallback={<ViewFallback />}>
           {view === 'video' && activeId ? (
             <VideoDetailView videoId={activeId} onBack={() => navigate('production')} onOpenProject={(id) => navigate('project', id)} />
@@ -303,12 +309,13 @@ function AppShell() {
       {!NO_TOPBAR_VIEWS.has(view) && (
         <CrmTopBar
           view={view}
+          fullWidth={FULL_WIDTH_VIEWS.has(view)}
           navigate={navigate}
           onManageAccount={() => setModal({ type: 'account' })}
           onOpenLink={openLink}
         />
       )}
-      <div style={NO_TOPBAR_VIEWS.has(view) ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+      <div style={(NO_TOPBAR_VIEWS.has(view) || FULL_WIDTH_VIEWS.has(view)) ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
       <Suspense fallback={<ViewFallback />}>
       {view === 'list' && (
         <ListView

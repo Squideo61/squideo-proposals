@@ -12,7 +12,7 @@ const BADGE = '#FB923C';
 // Persistent Xero-style top bar shown across every CRM view. Navigation is
 // grouped into three section dropdowns (Business / Sales / Projects); Admin,
 // Account and "New Proposal" sit as standalone utilities on the right.
-export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
+export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLink }) {
   const { state } = useStore();
   const isMobile = useIsMobile();
   const [openMenu, setOpenMenu] = useState(null);
@@ -99,7 +99,7 @@ export function CrmTopBar({ view, navigate, onManageAccount, onOpenLink }) {
 
   return (
     <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'white', borderBottom: '1px solid ' + BRAND.border }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: isMobile ? '0 12px' : '0 24px', height: 56, maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: isMobile ? '0 12px' : '0 24px', height: 56, maxWidth: fullWidth ? 'none' : APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <button
           onClick={() => navigate('list')}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginRight: 6, color: BRAND.ink }}
