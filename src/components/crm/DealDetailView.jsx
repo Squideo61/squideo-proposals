@@ -17,7 +17,7 @@ import { ProductionPanel } from './ProductionPanel.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
-export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposal, onOpenVideo, onOpenCompany }) {
+export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, onOpenCompany }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
@@ -194,14 +194,13 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
+        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+          <OrderSummaryCard dealId={dealId} refreshKey={orderRefresh} />
+        </div>
+
         <Card
-          title="Proposals"
+          title="Proposal"
           count={proposals.length}
-          action={onCreateProposal && (
-            <button onClick={() => onCreateProposal(dealId)} className="btn">
-              <Plus size={14} /> New proposal
-            </button>
-          )}
         >
           {proposals.length === 0 && <Empty text="No proposals attached yet" />}
           {proposals.map(p => (
@@ -263,10 +262,6 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             </>
           )}
         </Card>
-
-        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <OrderSummaryCard dealId={dealId} refreshKey={orderRefresh} />
-        </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <InvoicesPaymentsCard

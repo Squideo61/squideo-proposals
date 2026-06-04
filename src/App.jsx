@@ -130,12 +130,6 @@ function AppShell() {
 
   // Create a proposal pre-linked to an existing deal, pre-filling client and
   // company from the deal so the builder isn't blank.
-  const createProposalForDeal = (dealId) => {
-    const tpls = Object.values(state.templates);
-    if (tpls.length === 0) createFrom(DEFAULT_PROPOSAL, { dealId });
-    else setModal({ type: 'templates', dealId });
-  };
-
   const createFrom = (base, { dealId } = {}) => {
     const id = makeId();
     const copy = JSON.parse(JSON.stringify(base));
@@ -346,7 +340,6 @@ function AppShell() {
           dealId={activeId}
           onBack={() => navigate('pipeline')}
           onOpenProposal={(id) => navigate('builder', id)}
-          onCreateProposal={createProposalForDeal}
           onOpenVideo={(id) => navigate('video', id)}
           onOpenCompany={(id) => navigate('company', id)}
         />
