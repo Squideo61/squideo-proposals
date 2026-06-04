@@ -7,7 +7,7 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
-import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, getDriveFile } from '../googleDrive.js';
+import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, getDriveFile, folderUsable } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
@@ -49,7 +49,16 @@ function driveErrorHint(err) {
 // only hit Drive once per deal.
 async function dealDriveFolder(accessToken, dealId) {
   const [d] = await sql`SELECT drive_folder_id, title FROM deals WHERE id = ${dealId}`;
-  if (d?.drive_folder_id) return d.drive_folder_id;
+  if (d?.drive_folder_id) {
+    // Self-heal: if the cached folder was deleted/trashed in Drive, clear it and
+    // re-find (by the deal tag) or recreate below. Auth/transient errors bubble
+    // up rather than wrongly recreating.
+    let usable = true;
+    try { usable = await folderUsable(accessToken, d.drive_folder_id); }
+    catch { return d.drive_folder_id; }
+    if (usable) return d.drive_folder_id;
+    await sql`UPDATE deals SET drive_folder_id = NULL WHERE id = ${dealId}`;
+  }
   // Name the folder "<project number> — <title>" — the proposal number doubles
   // as the project number, so folders read and sort sensibly in Drive.
   const [p] = await sql`

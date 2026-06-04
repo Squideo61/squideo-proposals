@@ -125,6 +125,19 @@ export async function getDriveFile(accessToken, fileId, fields = 'id,name,size,m
   ).then((r) => r.json());
 }
 
+// True if the folder still exists, isn't trashed, and is actually a folder.
+// Returns false on 404 (deleted / inaccessible) so callers can recreate; other
+// errors (auth/permission) re-throw so we don't recreate on a transient blip.
+export async function folderUsable(accessToken, folderId) {
+  try {
+    const f = await getDriveFile(accessToken, folderId, 'id,trashed,mimeType');
+    return !!f && f.trashed !== true && f.mimeType === 'application/vnd.google-apps.folder';
+  } catch (err) {
+    if (err.status === 404) return false;
+    throw err;
+  }
+}
+
 export async function getDriveFileLink(accessToken, fileId) {
   const out = await driveFetch(
     accessToken,
