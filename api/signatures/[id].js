@@ -4,7 +4,7 @@ import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
 import { sendMail, signedHtml, clientSignedThanksHtml, APP_URL } from '../_lib/email.js';
 import { sendNotification } from '../_lib/notifications.js';
-import { advanceStage, regressStage, dealIdForProposal } from '../_lib/dealStage.js';
+import { advanceStage, regressStage, dealIdForProposal, ensureDealForProposal } from '../_lib/dealStage.js';
 import { computeProposalTotalExVat } from '../_lib/crm/deals.js';
 import { voidInvoice } from '../_lib/xero.js';
 
@@ -130,7 +130,9 @@ export default async function handler(req, res) {
     // the recurring partner-programme subscription — that's separate revenue.
     // Best-effort: don't break the sign flow on a deal-side failure.
     try {
-      const dealId = await dealIdForProposal(id);
+      // Guarantee a deal exists for the signed proposal — if the save-time
+      // auto-create never ran, this creates the deal card now.
+      const dealId = await ensureDealForProposal(id);
       if (dealId) {
         await advanceStage(dealId, 'signed', { payload: { proposalId: id, signerName: name, signerEmail: email } });
         const proposalRows = await sql`SELECT data FROM proposals WHERE id = ${id}`;

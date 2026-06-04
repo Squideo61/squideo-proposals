@@ -86,6 +86,40 @@ export async function dealIdForProposal(proposalId) {
   return rows[0]?.deal_id || null;
 }
 
+// Ensure a proposal has a deal, creating the auto-deal (`deal_<id>`) if it has
+// none. Mirrors the save-time auto-create in api/proposals, so a proposal that
+// was never saved through that path (or whose create silently failed) still
+// gets a deal card when it's signed. Idempotent; returns the deal id.
+export async function ensureDealForProposal(proposalId) {
+  if (!proposalId) return null;
+  const rows = await sql`SELECT deal_id, data FROM proposals WHERE id = ${proposalId}`;
+  if (!rows.length) return null;
+  if (rows[0].deal_id) return rows[0].deal_id;
+
+  const data = rows[0].data || {};
+  const dealId = 'deal_' + proposalId;
+  const title = (data.contactBusinessName || data.clientName || 'Untitled deal').toString().slice(0, 200);
+  const ownerEmail = data.preparedByEmail || null;
+  const value = Number.isFinite(Number(data.basePrice)) ? Number(data.basePrice) : null;
+  const contactId = typeof data._contactId === 'string' ? data._contactId : null;
+  const companyId = typeof data._companyId === 'string' ? data._companyId : null;
+
+  const inserted = await sql`
+    INSERT INTO deals (id, title, primary_contact_id, company_id, owner_email, stage, value, last_activity_at)
+    VALUES (${dealId}, ${title}, ${contactId}, ${companyId}, ${ownerEmail}, 'proposal_sent', ${value}, NOW())
+    ON CONFLICT (id) DO NOTHING
+    RETURNING id
+  `;
+  if (inserted.length) {
+    await sql`
+      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+      VALUES (${dealId}, 'deal_created', ${JSON.stringify({ source: 'signature', proposalId, title })}, ${ownerEmail})
+    `;
+  }
+  await sql`UPDATE proposals SET deal_id = ${dealId} WHERE id = ${proposalId} AND deal_id IS NULL`;
+  return dealId;
+}
+
 // Returns the linked Xero contact ID for a proposal via deal → company.
 // Used by the invoice push paths so the existing Xero contact is reused
 // instead of the billing-form name creating a duplicate.

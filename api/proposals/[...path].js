@@ -8,6 +8,7 @@ import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
+import { ensureDealForProposal, advanceStage } from '../_lib/dealStage.js';
 
 // Allowlist of fields the public client view (ClientView + ThankYouView +
 // SignedBlock + printProposal) actually consumes. The full `data` JSONB on
@@ -213,6 +214,17 @@ export default async function handler(req, res) {
 
 // Self-heal: proposal_billing.paid_amount (db/migrations/20260603_proposal_billing_paid.sql)
 // is referenced below to surface Xero-paid deposits on the list.
+// Signed project value ex-VAT (mirrors computeProposalTotalExVat without pulling
+// in the heavy crm/deals module). Used to set a backfilled deal's value.
+function signedValueExVat(data, sig) {
+  const projectExVat = sig?.amountBreakdown?.projectExVat;
+  if (projectExVat != null && Number.isFinite(Number(projectExVat))) return Number(projectExVat);
+  if (sig?.total != null && Number.isFinite(Number(sig.total))) {
+    return Number(sig.total) / (1 + (Number(data?.vatRate) || 0));
+  }
+  return Number.isFinite(Number(data?.basePrice)) ? Number(data.basePrice) : null;
+}
+
 let pbPaidColEnsured = null;
 function ensurePbPaidColumn() {
   if (pbPaidColEnsured) return pbPaidColEnsured;
@@ -264,6 +276,27 @@ async function list(req, res) {
     LEFT JOIN payments pay ON pay.proposal_id = p.id
     ORDER BY p.created_at DESC
   `;
+  // Backfill: a signed proposal must have a deal card. If the save-time auto-
+  // create never ran, create the deal now and move it to 'signed'. Idempotent
+  // and rare — only touches signed proposals that still have no deal.
+  const orphanRows = rows.filter((r) => r.sig_signed_at && !r.deal_id);
+  const backfilled = new Set();
+  for (const r of orphanRows) {
+    try {
+      const dealId = await ensureDealForProposal(r.id);
+      if (dealId) {
+        await advanceStage(dealId, 'signed', { payload: { proposalId: r.id, source: 'backfill' } });
+        const v = signedValueExVat(r.data, r.sig_data);
+        if (v != null && Number.isFinite(Number(v))) {
+          await sql`UPDATE deals SET value = ${Number(v)} WHERE id = ${dealId}`;
+        }
+        backfilled.add(r.id);
+      }
+    } catch (err) {
+      console.error('[proposals] backfill deal failed', r.id, err.message);
+    }
+  }
+
   const proposals = {};
   for (const row of rows) {
     proposals[row.id] = {
@@ -272,7 +305,7 @@ async function list(req, res) {
       _number: row.number_year && row.number_seq
         ? { year: row.number_year, seq: row.number_seq }
         : null,
-      _dealId: row.deal_id || null,
+      _dealId: row.deal_id || (backfilled.has(row.id) ? 'deal_' + row.id : null),
       _views: {
         opens: Number(row.view_opens) || 0,
         duration: Number(row.view_duration) || 0,
