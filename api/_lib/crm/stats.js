@@ -334,7 +334,7 @@ async function pendingPaymentsReport() {
     }
     for (const e of extras) {
       const amt = round2(Number(e.amount) || 0);
-      if (amt > 0.005) lines.push({ type: 'extra', label: e.description, amount: amt });
+      if (amt > 0.005) lines.push({ type: 'extra', id: e.id, label: e.description, amount: amt });
     }
 
     const inf = info.get(did) || {};
@@ -362,6 +362,10 @@ async function pendingPaymentsReport() {
 
 export async function statsRoute(req, res, id, action, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Live financial figures — never let a browser/edge serve a stale copy (e.g.
+  // showing an extra that's since been deleted, or yesterday's cash position).
+  res.setHeader('Cache-Control', 'no-store');
 
   // Reference data — any authenticated user may read it (no business figures).
   if (id === 'bank-holidays') {

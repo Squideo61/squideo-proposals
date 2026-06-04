@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown } from 'lucide-react';
+import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, Trash2 } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
+import { api } from '../../api.js';
 import { formatGBP, formatProposalNumber, useIsMobile } from '../../utils.js';
 
 const VAT_COLOR = '#F59E0B';
@@ -42,7 +43,7 @@ const monthLongLabel = (key) => {
 };
 
 export function FinanceView({ onBack, onOpenDeal }) {
-  const { state, actions } = useStore();
+  const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const now = new Date();
   const [mode, setMode] = useState('year'); // 'month' | 'quarter' | 'year'
@@ -68,6 +69,20 @@ export function FinanceView({ onBack, onOpenDeal }) {
 
   const fin = state.financeStats && state.financeStats.year === effectiveYear ? state.financeStats : null;
   const pending = state.pendingPayments;
+
+  // Remove an ad-hoc extra straight from the Pending Payments list (it's the
+  // only line type that's a standalone record). Deletes it from the deal too,
+  // then re-pulls so the list reflects reality.
+  const handleDeleteExtra = async (extraId) => {
+    if (!extraId) return;
+    if (!window.confirm('Remove this extra charge? It will be deleted from the deal as well.')) return;
+    try {
+      await api.delete('/api/crm/extras/' + encodeURIComponent(extraId));
+    } catch (err) {
+      showMsg?.(err.message || 'Failed to remove extra', 'error');
+    }
+    actions.loadPendingPayments();
+  };
   const isCurrentYear = effectiveYear === now.getFullYear();
   const monthIdx = now.getMonth();
 
@@ -223,7 +238,7 @@ export function FinanceView({ onBack, onOpenDeal }) {
       </div>
 
       {/* Pending Payments — outstanding signed deals, split PO vs normal. */}
-      <PendingPayments pending={pending} onOpenDeal={onOpenDeal} isMobile={isMobile} />
+      <PendingPayments pending={pending} onOpenDeal={onOpenDeal} onDeleteExtra={handleDeleteExtra} isMobile={isMobile} />
     </div>
   );
 }
@@ -238,7 +253,7 @@ const PAYMENT_TYPE_META = {
   extra: { label: 'Extra', color: '#C2410C', bg: '#FFF7ED' },
 };
 
-function PendingPayments({ pending, onOpenDeal, isMobile }) {
+function PendingPayments({ pending, onOpenDeal, onDeleteExtra, isMobile }) {
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 20 }}>
       <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -258,6 +273,7 @@ function PendingPayments({ pending, onOpenDeal, isMobile }) {
             total={pending.totals.normal}
             accent={BRAND.blue}
             onOpenDeal={onOpenDeal}
+            onDeleteExtra={onDeleteExtra}
           />
           <PendingGroup
             title="Purchase Orders"
@@ -266,6 +282,7 @@ function PendingPayments({ pending, onOpenDeal, isMobile }) {
             total={pending.totals.po}
             accent="#8B5CF6"
             onOpenDeal={onOpenDeal}
+            onDeleteExtra={onDeleteExtra}
           />
         </div>
       )}
@@ -273,7 +290,7 @@ function PendingPayments({ pending, onOpenDeal, isMobile }) {
   );
 }
 
-function PendingGroup({ title, note, rows, total, accent, onOpenDeal }) {
+function PendingGroup({ title, note, rows, total, accent, onOpenDeal, onDeleteExtra }) {
   return (
     <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
       <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: `3px solid ${accent}` }}>
@@ -288,7 +305,7 @@ function PendingGroup({ title, note, rows, total, accent, onOpenDeal }) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {rows.map((d) => (
-            <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} />
+            <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onDeleteExtra={onDeleteExtra} />
           ))}
         </div>
       )}
@@ -305,7 +322,21 @@ function PaymentBadge({ type }) {
   );
 }
 
-function PendingRow({ d, onOpenDeal }) {
+function ExtraDeleteButton({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="btn-icon"
+      title="Remove extra"
+      aria-label="Remove extra"
+      style={{ flexShrink: 0, color: '#9A3412' }}
+    >
+      <Trash2 size={13} />
+    </button>
+  );
+}
+
+function PendingRow({ d, onOpenDeal, onDeleteExtra }) {
   const name = d.company || d.title || 'Untitled deal';
   // Only keep the deal title as a second line when it adds something beyond the
   // company name (avoids showing e.g. "Beyond PR" twice).
@@ -343,6 +374,9 @@ function PendingRow({ d, onOpenDeal }) {
           <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(d.outstanding)}</div>
           {showCommitted && <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>}
         </div>
+        {single && single0.type === 'extra' && single0.id && onDeleteExtra && (
+          <ExtraDeleteButton onClick={(e) => { e.stopPropagation(); onDeleteExtra(single0.id); }} />
+        )}
       </div>
       {subtitle && (
         <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -361,7 +395,12 @@ function PendingRow({ d, onOpenDeal }) {
                   </span>
                 )}
               </span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(l.amount)}</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{formatGBP(l.amount)}</span>
+                {l.type === 'extra' && l.id && onDeleteExtra && (
+                  <ExtraDeleteButton onClick={(e) => { e.stopPropagation(); onDeleteExtra(l.id); }} />
+                )}
+              </span>
             </div>
           ))}
         </div>
