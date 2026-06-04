@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BRAND, APP_MAX_WIDTH } from './theme.js';
 import { DEFAULT_PROPOSAL } from './defaults.js';
 import { StoreProvider, useStore } from './store.jsx';
@@ -80,8 +80,14 @@ function AppShell() {
   const [activeId, setActiveId] = useState(() => parseHash().activeId);
   const [modal, setModal] = useState(null);
 
+  // Count of in-app pushState navigations this session, so "Back" can step
+  // through real history (returning wherever the user came from) and only fall
+  // back to an explicit target when there's no in-app history (e.g. a deep link).
+  const navDepthRef = useRef(0);
+
   useEffect(() => {
     const onPop = () => {
+      navDepthRef.current = Math.max(0, navDepthRef.current - 1);
       const { view: v, activeId: id } = parseHash();
       setView(v);
       setActiveId(id);
@@ -92,9 +98,17 @@ function AppShell() {
 
   const navigate = useCallback((newView, newId = null) => {
     window.history.pushState(null, '', buildHash(newView, newId));
+    navDepthRef.current += 1;
     setView(newView);
     setActiveId(newId);
   }, []);
+
+  // History-aware back: returns to the previous in-app view, or `fallbackView`
+  // if the current page was opened directly (no prior in-app history).
+  const goBack = useCallback((fallbackView = 'list') => {
+    if (navDepthRef.current > 0) window.history.back();
+    else navigate(fallbackView);
+  }, [navigate]);
 
   // Navigate from an in-app notification's hash link (e.g. '#/admin/users',
   // '#/deal/<id>'). Mirrors parseHash but works off the supplied string.
@@ -276,9 +290,9 @@ function AppShell() {
         <div style={producerBoard ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <Suspense fallback={<ViewFallback />}>
           {view === 'video' && activeId ? (
-            <VideoDetailView videoId={activeId} onBack={() => navigate('production')} onOpenProject={(id) => navigate('deal', id)} />
+            <VideoDetailView videoId={activeId} onBack={() => goBack('production')} onOpenProject={(id) => navigate('deal', id)} />
           ) : (view === 'project' || view === 'deal') && activeId ? (
-            <DealDetailView dealId={activeId} productionOnly onBack={() => navigate('production')} onOpenVideo={(id) => navigate('video', id)} />
+            <DealDetailView dealId={activeId} productionOnly onBack={() => goBack('production')} onOpenVideo={(id) => navigate('video', id)} />
           ) : view === 'projects' ? (
             <ProjectsOverviewView onBack={() => navigate('production')} onOpenProject={(id) => navigate('deal', id)} />
           ) : view === 'revisions' ? (
@@ -342,7 +356,7 @@ function AppShell() {
       {(view === 'deal' || view === 'project') && activeId && (
         <DealDetailView
           dealId={activeId}
-          onBack={() => navigate(view === 'project' ? 'production' : 'pipeline')}
+          onBack={() => goBack(view === 'project' ? 'production' : 'pipeline')}
           onOpenProposal={(id) => navigate('builder', id)}
           onOpenVideo={(id) => navigate('video', id)}
           onOpenCompany={(id) => navigate('company', id)}
@@ -416,7 +430,7 @@ function AppShell() {
       {view === 'video' && activeId && (
         <VideoDetailView
           videoId={activeId}
-          onBack={() => navigate('production')}
+          onBack={() => goBack('production')}
           onOpenProject={(id) => navigate('deal', id)}
         />
       )}
