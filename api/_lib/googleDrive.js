@@ -75,13 +75,25 @@ async function createSubfolder(accessToken, name, parentId) {
   return created.id;
 }
 
-// Recursively create a folder tree under parentId. Sequential so each child has
-// its real parent id before its own children are created.
-async function scaffoldFolders(accessToken, parentId, nodes) {
+// Apply the template tree under parentId, idempotently: existing subfolders
+// (matched by name) are reused, only missing ones are created. Sequential so
+// each child has its real parent id before its own children are created. Safe
+// to re-run and safe on a folder that already holds files — exported so older
+// deals can be backfilled with the template too.
+export async function applyFolderTemplate(accessToken, parentId, nodes = FOLDER_TEMPLATE) {
+  const query =
+    `'${q(parentId)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  const url =
+    `${DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name)` +
+    `&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=1000`;
+  const existing = await driveFetch(accessToken, url).then((r) => r.json());
+  const byName = new Map((existing.files || []).map((f) => [f.name, f.id]));
+
   for (const node of nodes) {
-    const id = await createSubfolder(accessToken, node.name, parentId);
+    let id = byName.get(node.name);
+    if (!id) id = await createSubfolder(accessToken, node.name, parentId);
     if (node.children && node.children.length) {
-      await scaffoldFolders(accessToken, id, node.children);
+      await applyFolderTemplate(accessToken, id, node.children);
     }
   }
 }
@@ -116,7 +128,7 @@ export async function ensureDealFolder(accessToken, { dealId, name }) {
   // Best-effort: a mid-scaffold failure leaves a partial tree but the deal folder
   // itself is still returned and usable.
   try {
-    await scaffoldFolders(accessToken, created.id, FOLDER_TEMPLATE);
+    await applyFolderTemplate(accessToken, created.id);
   } catch (_) { /* partial tree is fine; don't block folder creation */ }
   return created.id;
 }

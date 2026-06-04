@@ -7,7 +7,7 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
-import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession } from '../googleDrive.js';
+import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
@@ -404,6 +404,24 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       uploadedBy: user.email, source: 'upload',
       createdAt: new Date().toISOString(),
     });
+  }
+
+  // /deals/:id/files/setup-folders — create the standard production subfolder
+  // template inside the deal's Drive folder. Idempotent (existing subfolders are
+  // reused), so it both backfills older deals and tops up a partial tree.
+  if (action === 'files' && subaction === 'setup-folders' && req.method === 'POST') {
+    if (!driveFilesEnabled()) return res.status(503).json({ error: 'Google Drive is not configured' });
+    let accessToken;
+    try { accessToken = await getFreshAccessToken(user.email); }
+    catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access) first' }); }
+    try {
+      const folderId = await dealDriveFolder(accessToken, id);
+      await applyFolderTemplate(accessToken, folderId);
+      return res.status(200).json({ ok: true, folderId });
+    } catch (err) {
+      console.error('[deal files] setup-folders failed', err.status, err.message);
+      return res.status(502).json({ error: driveErrorHint(err) });
+    }
   }
 
   // /deals/:id/files/:fileId — generate a signed download URL (GET) or delete (DELETE)

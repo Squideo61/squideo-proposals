@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Clapperboard, CheckSquare, Coins, FileText, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, PoundSterling, Settings, TrendingUp, Trophy, UserCog } from 'lucide-react';
+import { ChevronDown, Clapperboard, CheckSquare, Coins, FileText, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, PoundSterling, Settings, Trophy, UserCog } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -49,7 +49,6 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       items: [
         { label: 'Overview', icon: LayoutDashboard, go: () => {}, soon: true },
         ...(canBusiness ? [
-          { label: 'Performance', icon: TrendingUp, go: () => navigate('performance') },
           { label: 'Finance', icon: PoundSterling, go: () => navigate('finance') },
         ] : []),
       ],

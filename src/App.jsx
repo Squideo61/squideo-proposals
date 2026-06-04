@@ -45,7 +45,6 @@ const ProjectDetailView = lazyNamed(() => import('./components/crm/ProjectDetail
 const VideoDetailView = lazyNamed(() => import('./components/crm/VideoDetailView.jsx'), 'VideoDetailView');
 const ProjectsOverviewView = lazyNamed(() => import('./components/crm/ProjectsOverviewView.jsx'), 'ProjectsOverviewView');
 const FinanceView = lazyNamed(() => import('./components/crm/FinanceView.jsx'), 'FinanceView');
-const PerformanceView = lazyNamed(() => import('./components/crm/PerformanceView.jsx'), 'PerformanceView');
 
 function ViewFallback() {
   return (
@@ -425,11 +424,9 @@ function AppShell() {
       {view === 'leaderboard' && (
         <LeaderboardView onBack={() => navigate('list')} />
       )}
-      {view === 'finance' && (
+      {/* Performance is now folded into Finance; keep the old route as an alias. */}
+      {(view === 'finance' || view === 'performance') && (
         <FinanceView onBack={() => navigate('list')} onOpenDeal={(id) => navigate('deal', id)} />
-      )}
-      {view === 'performance' && (
-        <PerformanceView onBack={() => navigate('list')} />
       )}
       {view === 'xero-duplicates' && (
         <XeroDuplicatesView onBack={() => navigate('list')} />

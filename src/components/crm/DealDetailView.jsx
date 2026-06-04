@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Mail, MessageSquare, MoreVertical, Phone, Plus, RefreshCw, Square, Trash2, User, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Plus, RefreshCw, Square, Trash2, User, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -1219,8 +1219,23 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const inputRef = React.useRef(null);
   const abortRef = React.useRef(null);
   const [syncing, setSyncing] = useState(false);
+  const [settingUp, setSettingUp] = useState(false);
 
   const cancelUpload = () => { abortRef.current?.abort(); };
+
+  // Create the standard production subfolder template in the Drive folder.
+  // Idempotent server-side, so it's safe to click more than once.
+  const setupFolders = async () => {
+    setSettingUp(true);
+    try {
+      await actions.setupDealFolders(dealId);
+      showMsg('Folder structure set up');
+    } catch (e) {
+      showMsg(e?.message || 'Could not set up folders');
+    } finally {
+      setSettingUp(false);
+    }
+  };
 
   // Re-pull the deal so the server re-syncs its file list with the Drive folder
   // (reflecting files deleted or added directly in Drive).
@@ -1294,6 +1309,11 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
         ? <button className="btn-ghost" onClick={cancelUpload}><X size={12} /> Cancel</button>
         : (
           <div style={{ display: 'flex', gap: 6 }}>
+            {driveEnabled && (
+              <button className="btn-ghost" onClick={setupFolders} disabled={settingUp} title="Create the standard production folder structure in Drive">
+                <FolderPlus size={12} /> {settingUp ? 'Setting up…' : 'Set up folders'}
+              </button>
+            )}
             {driveEnabled && (
               <button className="btn-ghost" onClick={syncFromDrive} disabled={syncing} title="Re-sync with the Drive folder">
                 <RefreshCw size={12} /> {syncing ? 'Syncing…' : 'Sync'}

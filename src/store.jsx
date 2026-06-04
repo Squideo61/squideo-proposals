@@ -1897,6 +1897,13 @@ export function StoreProvider({ children }) {
       return api.get('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/' + encodeURIComponent(fileId));
     },
 
+    // Lay down the standard production subfolder template in the deal's Drive
+    // folder (idempotent). Re-pulls the deal so any newly-created folders show.
+    setupDealFolders(dealId) {
+      return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/setup-folders', {})
+        .then((resp) => actions.loadDealDetail(dealId).then(() => resp));
+    },
+
     addDealFileFromEmail(dealId, payload) {
       return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/from-email', payload)
         .then((newFile) => {

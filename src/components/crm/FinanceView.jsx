@@ -7,6 +7,7 @@ import {
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatProposalNumber, useIsMobile } from '../../utils.js';
+import { PerformancePanel } from './PerformanceView.jsx';
 
 const VAT_COLOR = '#F59E0B';
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
@@ -46,7 +47,7 @@ export function FinanceView({ onBack, onOpenDeal }) {
   const isMobile = useIsMobile();
   const now = new Date();
   const [section, setSection] = useState('income'); // 'income' | 'pending' | 'vat'
-  const [mode, setMode] = useState('year'); // 'month' | 'quarter' | 'year'
+  const [mode, setMode] = useState('month'); // 'month' | 'quarter' | 'year'
   const [year, setYear] = useState(() => now.getFullYear());
   const [quarterKey, setQuarterKey] = useState(() => recentQuarters(1)[0]); // 'YYYY-Qn'
   const [monthKey, setMonthKey] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`); // 'YYYY-MM'
@@ -139,6 +140,9 @@ export function FinanceView({ onBack, onOpenDeal }) {
           </select>
         </div>
       </header>
+
+      {/* Performance — cash pacing vs targets — sits above the finance tabs. */}
+      <PerformancePanel />
 
       {/* Section tabs — Income / Pending Payments / VAT. */}
       <div style={{ marginBottom: 16 }}>

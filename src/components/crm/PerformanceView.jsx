@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, TrendingUp, Pencil, Check, X } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -65,7 +65,10 @@ const monthOptionLabel = (k) => {
   return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
 };
 
-export function PerformanceView({ onBack }) {
+// The Performance block, designed to sit at the top of the Finance page (self
+// contained: its own Month/Quarter + Income/Sales toggles, targets editor and
+// day-pace chart). No page chrome of its own — the host page provides that.
+export function PerformancePanel() {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const [mode, setMode] = useState('month'); // 'month' | 'quarter'
@@ -129,15 +132,12 @@ export function PerformanceView({ onBack }) {
   }, [perf, period, targets, holidays]);
 
   return (
-    <div style={{ padding: isMobile ? '20px 16px' : '40px 24px', maxWidth: 1100, margin: '0 auto' }}>
-      <header style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
+    <section style={{ marginBottom: 28 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <TrendingUp size={20} color={BRAND.blue} />
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <TrendingUp size={22} color={BRAND.blue} />
-              <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Performance</h1>
-            </div>
+            <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Performance</h2>
             <p style={{ fontSize: 13, color: BRAND.muted, margin: '2px 0 0' }}>
               {isSales
                 ? 'New business signed (ex-VAT) across all customers, paced against your sales targets by working day.'
@@ -164,7 +164,7 @@ export function PerformanceView({ onBack }) {
               : recentQuarters(8).map((k) => { const [y, q] = k.split('-Q'); return <option key={k} value={k}>{`Q${q} ${y}`}</option>; })}
           </select>
         </div>
-      </header>
+      </div>
 
       {/* The two clear sub-sections. */}
       <div style={{ marginBottom: 16 }}>
@@ -241,7 +241,7 @@ export function PerformanceView({ onBack }) {
           </ResponsiveContainer>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
