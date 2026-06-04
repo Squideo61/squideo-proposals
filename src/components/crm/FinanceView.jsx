@@ -45,6 +45,7 @@ export function FinanceView({ onBack, onOpenDeal }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const now = new Date();
+  const [section, setSection] = useState('income'); // 'income' | 'pending' | 'vat'
   const [mode, setMode] = useState('year'); // 'month' | 'quarter' | 'year'
   const [year, setYear] = useState(() => now.getFullYear());
   const [quarterKey, setQuarterKey] = useState(() => recentQuarters(1)[0]); // 'YYYY-Qn'
@@ -56,6 +57,9 @@ export function FinanceView({ onBack, onOpenDeal }) {
   const qIdx = Number(quarterKey.split('-Q')[1]) - 1;
   const effectiveYear = mode === 'year' ? year : (mode === 'month' ? Number(monthKey.slice(0, 4)) : qYear);
 
+  // The selected period as the income endpoint expects it: 'YYYY' / 'YYYY-Qn' / 'YYYY-MM'.
+  const periodParam = mode === 'year' ? String(year) : (mode === 'quarter' ? quarterKey : monthKey);
+
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -63,11 +67,15 @@ export function FinanceView({ onBack, onOpenDeal }) {
     return () => { active = false; };
   }, [actions, effectiveYear]);
 
+  // Income ledger is period-scoped — reload when the selected period changes.
+  useEffect(() => { actions.loadIncome(periodParam); }, [actions, periodParam]);
+
   // Outstanding deals aren't period-scoped — load once.
   useEffect(() => { actions.loadPendingPayments(); }, [actions]);
 
   const fin = state.financeStats && state.financeStats.year === effectiveYear ? state.financeStats : null;
   const pending = state.pendingPayments;
+  const income = state.income && state.income.period === periodParam ? state.income : null;
 
   const isCurrentYear = effectiveYear === now.getFullYear();
   const monthIdx = now.getMonth();
@@ -132,99 +140,146 @@ export function FinanceView({ onBack, onOpenDeal }) {
         </div>
       </header>
 
-      {/* Headline cards. VAT-to-save is the headline ask. */}
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
-        {mode !== 'year' ? (
-          <>
-            <StatCard icon={PiggyBank} accent={VAT_COLOR} label={`VAT to set aside — ${view.periodLabel}`} value={formatGBP(view.totals.vat)} sub={`Set aside for ${view.periodLabel}`} />
+      {/* Section tabs — Income / Pending Payments / VAT. */}
+      <div style={{ marginBottom: 16 }}>
+        <Segmented
+          value={section}
+          onChange={setSection}
+          options={[{ value: 'income', label: 'Income' }, { value: 'pending', label: 'Pending Payments' }, { value: 'vat', label: 'VAT' }]}
+        />
+      </div>
+
+      {section === 'income' && (
+        <>
+          {/* Money received this period — net is the headline. */}
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
             <StatCard icon={Wallet} accent={BRAND.blue} label={`Net revenue (ex-VAT) — ${view.periodLabel}`} value={formatGBP(view.totals.net)} sub={`${formatGBP(view.totals.gross)} gross banked`} />
             <StatCard icon={Landmark} accent={BRAND.ink} label={`Gross banked — ${view.periodLabel}`} value={formatGBP(view.totals.gross)} sub="Net + VAT received" />
-            <StatCard icon={PoundSterling} accent={BRAND.ink} label="Outstanding — all customers" value={formatGBP(fin ? fin.outstanding : 0)} sub="Still to collect (inc VAT)" />
-          </>
-        ) : (
-          <>
-            <StatCard icon={PiggyBank} accent={VAT_COLOR} label={view.thisMonth ? `VAT to set aside — ${shortMonth(view.thisMonth.month)}` : `VAT to set aside — ${effectiveYear}`} value={formatGBP(view.thisMonth ? view.thisMonth.vat : view.totals.vat)} sub={view.thisMonth ? 'From cash banked this month' : 'Total for the year'} />
-            <QuarterMenuCard
-              quarters={view.quarters}
-              currentIdx={isCurrentYear ? Math.floor(monthIdx / 3) : -1}
-              label={isCurrentYear && view.thisQuarter ? `VAT — ${view.thisQuarter.label}` : `VAT — ${effectiveYear}`}
-              value={formatGBP(isCurrentYear && view.thisQuarter ? view.thisQuarter.vat : view.totals.vat)}
-              onPick={(i) => { setQuarterKey(`${effectiveYear}-Q${i + 1}`); setMode('quarter'); }}
-            />
-            <StatCard icon={Wallet} accent={BRAND.blue} label={isCurrentYear ? 'Net revenue (ex-VAT) — YTD' : `Net revenue (ex-VAT) — ${effectiveYear}`} value={formatGBP(fin ? fin.ytd.net : 0)} sub={`${formatGBP(view.totals.gross)} gross banked`} />
-            <StatCard icon={PoundSterling} accent={BRAND.ink} label="Outstanding — all customers" value={formatGBP(fin ? fin.outstanding : 0)} sub="Still to collect (inc VAT)" />
-          </>
-        )}
-      </div>
+          </div>
 
-      {/* VAT-to-save bar chart, with net for context. */}
-      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 20 }}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          VAT to set aside — {view.periodLabel}
-        </h3>
-        {loading ? (
-          <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center', color: BRAND.muted, fontSize: 14 }}>Loading…</div>
-        ) : (
-          <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={view.chart} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={BRAND.border} />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: BRAND.muted }} />
-              <YAxis tickFormatter={gbpK} tick={{ fontSize: 12, fill: BRAND.muted }} width={56} />
-              <Tooltip formatter={(v, n) => [formatGBP(v), n]} cursor={{ fill: 'rgba(43,184,230,0.06)' }} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="net" name="Net revenue (ex-VAT)" fill={BRAND.blue} radius={[4, 4, 0, 0]} />
-              <Bar dataKey="vat" name="VAT to set aside" fill={VAT_COLOR} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* Monthly breakdown table. */}
-      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20 }}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          Monthly breakdown — {view.periodLabel}
-        </h3>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-            <thead>
-              <tr style={{ textAlign: 'right', color: BRAND.muted, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-                <th style={{ textAlign: 'left', padding: '8px 8px' }}>Month</th>
-                <th style={{ padding: '8px 8px' }}>Net (ex-VAT)</th>
-                <th style={{ padding: '8px 8px', color: VAT_COLOR }}>VAT to save</th>
-                <th style={{ padding: '8px 8px' }}>Gross</th>
-              </tr>
-            </thead>
-            <tbody>
-              {view.displayMonths.map((m) => {
-                const isThis = isCurrentYear && m.month === `${effectiveYear}-${String(monthIdx + 1).padStart(2, '0')}`;
-                return (
-                  <tr key={m.month} style={{ borderTop: '1px solid ' + BRAND.border, background: isThis ? '#F4FBFE' : 'transparent' }}>
-                    <td style={{ textAlign: 'left', padding: '8px 8px', fontWeight: isThis ? 700 : 500 }}>
-                      {shortMonth(m.month)}{isThis ? ' · this month' : ''}
-                    </td>
-                    <td style={{ textAlign: 'right', padding: '8px 8px' }}>{formatGBP(m.net)}</td>
-                    <td style={{ textAlign: 'right', padding: '8px 8px', fontWeight: 600, color: m.vat > 0 ? VAT_COLOR : BRAND.muted }}>{formatGBP(m.vat)}</td>
-                    <td style={{ textAlign: 'right', padding: '8px 8px', color: BRAND.muted }}>{formatGBP(m.gross)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            {mode !== 'month' && (
-              <tfoot>
-                <tr style={{ borderTop: '2px solid ' + BRAND.border, fontWeight: 700 }}>
-                  <td style={{ textAlign: 'left', padding: '10px 8px' }}>Total {view.periodLabel}</td>
-                  <td style={{ textAlign: 'right', padding: '10px 8px' }}>{formatGBP(view.totals.net)}</td>
-                  <td style={{ textAlign: 'right', padding: '10px 8px', color: VAT_COLOR }}>{formatGBP(view.totals.vat)}</td>
-                  <td style={{ textAlign: 'right', padding: '10px 8px' }}>{formatGBP(view.totals.gross)}</td>
-                </tr>
-              </tfoot>
+          {/* Net revenue bar chart. */}
+          <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 20 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+              Net revenue (ex-VAT) — {view.periodLabel}
+            </h3>
+            {loading ? (
+              <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center', color: BRAND.muted, fontSize: 14 }}>Loading…</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={320}>
+                <BarChart data={view.chart} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={BRAND.border} />
+                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: BRAND.muted }} />
+                  <YAxis tickFormatter={gbpK} tick={{ fontSize: 12, fill: BRAND.muted }} width={56} />
+                  <Tooltip formatter={(v, n) => [formatGBP(v), n]} cursor={{ fill: 'rgba(43,184,230,0.06)' }} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="net" name="Net revenue (ex-VAT)" fill={BRAND.blue} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             )}
-          </table>
-        </div>
-      </div>
+          </div>
 
-      {/* Pending Payments — outstanding signed deals, split PO vs normal. */}
-      <PendingPayments pending={pending} onOpenDeal={onOpenDeal} isMobile={isMobile} />
+          {/* Payments received — one row per payment, newest first. */}
+          <IncomePayments income={income} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={view.periodLabel} />
+        </>
+      )}
+
+      {section === 'vat' && (
+        <>
+          {/* VAT-to-save is the headline ask. */}
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : (mode === 'year' ? 'repeat(2, 1fr)' : '1fr'), gap: 12, marginBottom: 16 }}>
+            {mode !== 'year' ? (
+              <StatCard icon={PiggyBank} accent={VAT_COLOR} label={`VAT to set aside — ${view.periodLabel}`} value={formatGBP(view.totals.vat)} sub={`Set aside for ${view.periodLabel}`} />
+            ) : (
+              <>
+                <StatCard icon={PiggyBank} accent={VAT_COLOR} label={view.thisMonth ? `VAT to set aside — ${shortMonth(view.thisMonth.month)}` : `VAT to set aside — ${effectiveYear}`} value={formatGBP(view.thisMonth ? view.thisMonth.vat : view.totals.vat)} sub={view.thisMonth ? 'From cash banked this month' : 'Total for the year'} />
+                <QuarterMenuCard
+                  quarters={view.quarters}
+                  currentIdx={isCurrentYear ? Math.floor(monthIdx / 3) : -1}
+                  label={isCurrentYear && view.thisQuarter ? `VAT — ${view.thisQuarter.label}` : `VAT — ${effectiveYear}`}
+                  value={formatGBP(isCurrentYear && view.thisQuarter ? view.thisQuarter.vat : view.totals.vat)}
+                  onPick={(i) => { setQuarterKey(`${effectiveYear}-Q${i + 1}`); setMode('quarter'); }}
+                />
+              </>
+            )}
+          </div>
+
+          {/* VAT-to-save bar chart, with net for context. */}
+          <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 20 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+              VAT to set aside — {view.periodLabel}
+            </h3>
+            {loading ? (
+              <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center', color: BRAND.muted, fontSize: 14 }}>Loading…</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={320}>
+                <BarChart data={view.chart} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={BRAND.border} />
+                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: BRAND.muted }} />
+                  <YAxis tickFormatter={gbpK} tick={{ fontSize: 12, fill: BRAND.muted }} width={56} />
+                  <Tooltip formatter={(v, n) => [formatGBP(v), n]} cursor={{ fill: 'rgba(43,184,230,0.06)' }} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="net" name="Net revenue (ex-VAT)" fill={BRAND.blue} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="vat" name="VAT to set aside" fill={VAT_COLOR} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          {/* Monthly breakdown table. */}
+          <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+              Monthly breakdown — {view.periodLabel}
+            </h3>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                <thead>
+                  <tr style={{ textAlign: 'right', color: BRAND.muted, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                    <th style={{ textAlign: 'left', padding: '8px 8px' }}>Month</th>
+                    <th style={{ padding: '8px 8px' }}>Net (ex-VAT)</th>
+                    <th style={{ padding: '8px 8px', color: VAT_COLOR }}>VAT to save</th>
+                    <th style={{ padding: '8px 8px' }}>Gross</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {view.displayMonths.map((m) => {
+                    const isThis = isCurrentYear && m.month === `${effectiveYear}-${String(monthIdx + 1).padStart(2, '0')}`;
+                    return (
+                      <tr key={m.month} style={{ borderTop: '1px solid ' + BRAND.border, background: isThis ? '#F4FBFE' : 'transparent' }}>
+                        <td style={{ textAlign: 'left', padding: '8px 8px', fontWeight: isThis ? 700 : 500 }}>
+                          {shortMonth(m.month)}{isThis ? ' · this month' : ''}
+                        </td>
+                        <td style={{ textAlign: 'right', padding: '8px 8px' }}>{formatGBP(m.net)}</td>
+                        <td style={{ textAlign: 'right', padding: '8px 8px', fontWeight: 600, color: m.vat > 0 ? VAT_COLOR : BRAND.muted }}>{formatGBP(m.vat)}</td>
+                        <td style={{ textAlign: 'right', padding: '8px 8px', color: BRAND.muted }}>{formatGBP(m.gross)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {mode !== 'month' && (
+                  <tfoot>
+                    <tr style={{ borderTop: '2px solid ' + BRAND.border, fontWeight: 700 }}>
+                      <td style={{ textAlign: 'left', padding: '10px 8px' }}>Total {view.periodLabel}</td>
+                      <td style={{ textAlign: 'right', padding: '10px 8px' }}>{formatGBP(view.totals.net)}</td>
+                      <td style={{ textAlign: 'right', padding: '10px 8px', color: VAT_COLOR }}>{formatGBP(view.totals.vat)}</td>
+                      <td style={{ textAlign: 'right', padding: '10px 8px' }}>{formatGBP(view.totals.gross)}</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {section === 'pending' && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginBottom: 16 }}>
+            <StatCard icon={PoundSterling} accent={BRAND.ink} label="Outstanding — all customers" value={formatGBP(fin ? fin.outstanding : 0)} sub="Still to collect (inc VAT)" />
+          </div>
+          {/* Pending Payments — outstanding signed deals, split PO vs normal. */}
+          <PendingPayments pending={pending} onOpenDeal={onOpenDeal} isMobile={isMobile} />
+        </>
+      )}
     </div>
   );
 }
@@ -293,6 +348,90 @@ function PendingGroup({ title, note, rows, total, accent, onOpenDeal }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Where each payment came from, for the Income ledger's source badge.
+const SOURCE_META = {
+  stripe: { label: 'Card', color: '#1D4ED8', bg: '#EFF6FF' },
+  partner: { label: 'Partner', color: '#6D28D9', bg: '#F5F3FF' },
+  manual: { label: 'Manual', color: '#B45309', bg: '#FFFBEB' },
+  invoice: { label: 'Invoice', color: '#15803D', bg: '#ECFDF3' },
+  billing: { label: 'Billing', color: '#0E7490', bg: '#ECFEFF' },
+};
+
+function SourceBadge({ source }) {
+  const m = SOURCE_META[source] || SOURCE_META.manual;
+  return (
+    <span style={{ fontSize: 10, fontWeight: 700, color: m.color, background: m.bg, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+      {m.label}
+    </span>
+  );
+}
+
+// Income — a flat, newest-first ledger of payments received in the selected
+// period. Mirrors the Pending Payments panel visually but each row is one
+// payment (money in) rather than an outstanding deal balance.
+function IncomePayments({ income, onOpenDeal, isMobile, periodLabel }) {
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 4 }}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+        Income — {periodLabel}
+      </h3>
+      <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
+        Payments received in {periodLabel}, shown ex-VAT (net). Newest first.
+      </p>
+      {!income ? (
+        <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
+      ) : income.rows.length === 0 ? (
+        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>
+          No payments in this period.
+        </div>
+      ) : (
+        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: `3px solid ${BRAND.blue}`, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ fontSize: 12, color: BRAND.muted }}>{income.rows.length} {income.rows.length === 1 ? 'payment' : 'payments'}</span>
+            <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(income.total)}</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {income.rows.map((r, i) => (
+              <IncomeRow key={i} r={r} onOpenDeal={onOpenDeal} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IncomeRow({ r, onOpenDeal }) {
+  const name = r.company || 'Unattributed';
+  const number = r.number ? formatProposalNumber(r.number) : '';
+  const date = r.paidAt ? new Date(r.paidAt).toLocaleDateString('en-GB') : '';
+  const canOpen = !!(onOpenDeal && r.dealId);
+  const open = () => { if (canOpen) onOpenDeal(r.dealId); };
+  return (
+    <div
+      role={canOpen ? 'button' : undefined}
+      tabIndex={canOpen ? 0 : undefined}
+      onClick={open}
+      onKeyDown={(e) => { if (canOpen && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } }}
+      onMouseEnter={(e) => { if (canOpen) e.currentTarget.style.background = BRAND.paper; }}
+      onMouseLeave={(e) => { if (canOpen) e.currentTarget.style.background = 'white'; }}
+      style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: canOpen ? 'pointer' : 'default', padding: '8px 14px' }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {name}
+          </span>
+          {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
+          <SourceBadge source={r.source} />
+          {date && <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0 }}>{date}</span>}
+        </div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(r.net)}</div>
+      </div>
     </div>
   );
 }
