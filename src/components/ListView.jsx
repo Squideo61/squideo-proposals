@@ -9,7 +9,7 @@ import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
 
 const TEAM_FILTER_STORAGE_KEY = 'squideo.dashboard.teamMemberFilter';
 
-export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageTemplates }) {
+export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, onManageTemplates, onOpenDeal }) {
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   // Quick status filter: null = all (non-archived) | 'open' | 'signed' | 'archive'.
@@ -188,6 +188,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
               onDelete={onDelete}
               onDuplicate={onDuplicate}
               onAnalytics={() => setAnalyticsId(p.id)}
+              onOpenDeal={onOpenDeal}
               showMsg={showMsg}
             />
           ))}
@@ -346,7 +347,7 @@ function CreatorAvatar({ proposal, size = 24, showName = true }) {
   );
 }
 
-function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAnalytics, showMsg }) {
+function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAnalytics, onOpenDeal, showMsg }) {
   const { state, actions } = useStore();
   const signed = state.signatures[proposal.id];
   const payment = state.payments[proposal.id];
@@ -511,6 +512,16 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
           <CreatorAvatar proposal={proposal} size={isMobile ? 20 : 24} showName={!isMobile} />
         </div>
         {!isMobile && <div style={{ width: 1, height: 24, background: BRAND.border, flexShrink: 0 }} />}
+        {signed && proposal._dealId && onOpenDeal && (
+          <button
+            onClick={(e) => { stop(e); onOpenDeal(proposal._dealId); }}
+            className="btn"
+            title="Go to deal"
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            <ExternalLink size={14} /> Go to deal
+          </button>
+        )}
         <button onClick={(e) => { stop(e); copyLink(); }} className="btn-icon" title="Share link" aria-label="Copy share link"><Link2 size={16} /></button>
         <button onClick={(e) => { stop(e); onOpen(proposal.id); }} className="btn-icon" title="Edit" aria-label="Edit proposal">Edit</button>
         <ActionMenu

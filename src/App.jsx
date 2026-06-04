@@ -325,6 +325,7 @@ function AppShell() {
           onDelete={deleteProposal}
           onDuplicate={duplicateProposal}
           onManageTemplates={() => navigate('templates')}
+          onOpenDeal={(id) => navigate('deal', id)}
         />
       )}
       {view === 'admin' && (
