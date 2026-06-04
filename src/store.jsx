@@ -1789,7 +1789,7 @@ export function StoreProvider({ children }) {
     },
 
     // ---------- Deal files ----------
-    async uploadDealFile(dealId, file, onProgress) {
+    async uploadDealFile(dealId, file, onProgress, signal) {
       const addToState = (newFile) => setState(s => {
         const detail = s.dealDetail[dealId];
         if (!detail) return s;
@@ -1820,11 +1820,13 @@ export function StoreProvider({ children }) {
         let attempt = 0;
         onProgress?.(0, total);
         while (offset < total) {
+          if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError');
           const end = Math.min(offset + CHUNK, total);
           try {
             const res = await fetch(base + '/drive-chunk', {
               method: 'POST',
               credentials: 'include',
+              signal,
               headers: { ...uploadHeaders, 'Content-Type': 'application/octet-stream', 'X-Content-Range': `bytes ${offset}-${end - 1}/${total}` },
               body: file.slice(offset, end),
             });
@@ -1835,20 +1837,23 @@ export function StoreProvider({ children }) {
             offset = end;
             onProgress?.(offset, total);
           } catch (err) {
+            // Don't retry a user cancellation — surface it.
+            if (signal?.aborted || err.name === 'AbortError') throw err;
             // Resume: a chunk failed — ask Drive how much it has and continue
             // from there, retrying with backoff before giving up.
             attempt += 1;
             if (attempt > MAX_RETRIES) throw err;
             await new Promise((r) => setTimeout(r, 800 * attempt));
+            if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError');
             try {
               const st = await fetch(base + '/drive-status', {
-                method: 'POST', credentials: 'include',
+                method: 'POST', credentials: 'include', signal,
                 headers: { ...uploadHeaders, 'X-Total': String(total) },
               }).then((r) => r.json());
               if (st.done) { result = st.file; break; }
               offset = Number(st.received) || offset;
               onProgress?.(offset, total);
-            } catch { /* keep current offset; retry the chunk */ }
+            } catch (e2) { if (signal?.aborted || e2.name === 'AbortError') throw e2; /* else keep offset; retry */ }
           }
         }
         if (result) { addToState(result); return result; }

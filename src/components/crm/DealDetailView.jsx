@@ -1220,6 +1220,9 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const [progress, setProgress] = useState(null); // { loaded, total } in bytes
   const [dragOver, setDragOver] = useState(false);
   const inputRef = React.useRef(null);
+  const abortRef = React.useRef(null);
+
+  const cancelUpload = () => { abortRef.current?.abort(); };
 
   // Drive uploads are chunked, so they're not bound by the serverless body
   // limit — allow large video files. Blob (Drive off) stays capped at 20 MB.
@@ -1233,19 +1236,22 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
     if (tooBig) { showMsg(`"${tooBig.name}" is too large (max ${maxLabel})`); return; }
     const totalBytes = files.reduce((s, f) => s + (f.size || 0), 0);
     const loadedByIdx = new Array(files.length).fill(0);
+    const controller = new AbortController();
+    abortRef.current = controller;
     setUploading(true);
     setProgress({ loaded: 0, total: totalBytes });
     try {
       await Promise.all(files.map((f, i) => actions.uploadDealFile(dealId, f, (loaded) => {
         loadedByIdx[i] = loaded;
         setProgress({ loaded: loadedByIdx.reduce((a, b) => a + b, 0), total: totalBytes });
-      })));
+      }, controller.signal)));
       showMsg(files.length === 1 ? 'File uploaded' : `${files.length} files uploaded`);
     } catch (err) {
-      showMsg(err.message || 'Upload failed');
+      showMsg(err?.name === 'AbortError' ? 'Upload cancelled' : (err.message || 'Upload failed'));
     } finally {
       setUploading(false);
       setProgress(null);
+      abortRef.current = null;
       if (inputRef.current) inputRef.current.value = '';
     }
   };
@@ -1271,9 +1277,9 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
 
   return (
     <Card title="Files" count={files.length} action={
-      <button className="btn-ghost" onClick={() => inputRef.current?.click()} disabled={uploading}>
-        <Plus size={12} /> {uploading ? 'Uploading…' : 'Upload'}
-      </button>
+      uploading
+        ? <button className="btn-ghost" onClick={cancelUpload}><X size={12} /> Cancel</button>
+        : <button className="btn-ghost" onClick={() => inputRef.current?.click()}><Plus size={12} /> Upload</button>
     }>
       <input ref={inputRef} type="file" multiple style={{ display: 'none' }}
         onChange={(e) => handleFiles(e.target.files)} />
@@ -1312,8 +1318,14 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
         {uploading
           ? (
             <div onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }}>
-              <div style={{ marginBottom: 6 }}>
-                Uploading…{pct != null ? ` ${pct}%` : ''}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+                <span>Uploading…{pct != null ? ` ${pct}%` : ''}</span>
+                <button
+                  onClick={cancelUpload}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, border: 'none', background: 'transparent', color: '#DC2626', fontWeight: 600, fontSize: 12, cursor: 'pointer', padding: 0 }}
+                >
+                  <X size={12} /> Cancel
+                </button>
               </div>
               <div style={{ height: 6, borderRadius: 999, background: BRAND.border, overflow: 'hidden' }}>
                 <div style={{ height: '100%', width: (pct != null ? pct : 0) + '%', background: BRAND.blue, borderRadius: 999, transition: 'width 0.2s ease' }} />
@@ -1324,7 +1336,7 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
             ? "Drop files here — they'll save to this deal's Drive folder"
             : 'Drop files here or click Upload'}
       </div>
-      {driveEnabled && !uploading && (
+      {driveEnabled && (
         <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 6, marginBottom: files.length ? 10 : 0 }}>
           Large files (20MB+) upload much faster if you upload {driveFolderId ? (
             <a
