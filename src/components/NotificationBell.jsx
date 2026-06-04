@@ -42,7 +42,7 @@ export function NotificationBell({ onOpenLink, inline = false }) {
     }
   };
 
-  const badge = unread > 9 ? '9+' : String(unread);
+  const badge = String(unread);
 
   // Inline: flows inside the top bar's right-hand group. Floating: a fixed
   // pill in the corner, used on views that have no top bar (builder, client).

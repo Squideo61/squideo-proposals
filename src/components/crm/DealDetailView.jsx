@@ -3632,6 +3632,12 @@ function PickContactModal({ dealId, excludeIds, defaultCompanyId, onClose, onPic
   const alreadyExists = looksLikeEmail
     && contacts.some(c => (c.email || '').toLowerCase() === trimmed.toLowerCase());
 
+  // Prefill the create form from whatever was typed: an email goes in the email
+  // field, anything else seeds the name. Hidden only when the typed email is an
+  // exact match for an existing contact (already offered in the list above).
+  const createPrefill = looksLikeEmail ? { email: trimmed } : (trimmed ? { name: trimmed } : {});
+  const createLabel = trimmed ? `Create new contact "${trimmed}"` : 'Create a new contact';
+
   return (
     <Modal onClose={onClose} maxWidth={520}>
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Add a contact to this deal</h2>
@@ -3674,14 +3680,14 @@ function PickContactModal({ dealId, excludeIds, defaultCompanyId, onClose, onPic
           </button>
         ))}
       </div>
-      {looksLikeEmail && !alreadyExists && (
+      {!alreadyExists && (
         <button
           type="button"
-          onClick={() => onCreateNew({ email: trimmed })}
+          onClick={() => onCreateNew(createPrefill)}
           className="btn"
           style={{ marginTop: 12, width: '100%' }}
         >
-          <Plus size={14} /> Create new contact for {trimmed}
+          <Plus size={14} /> {createLabel}
         </button>
       )}
     </Modal>
