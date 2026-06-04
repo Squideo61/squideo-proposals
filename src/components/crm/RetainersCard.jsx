@@ -70,12 +70,12 @@ export function RetainersCard({ dealId, contacts }) {
       count={totalProjects}
       action={
         <button onClick={() => setAddingRetainer(true)} className="btn-ghost">
-          <Plus size={12} /> Add project
+          <Plus size={12} /> Add credit based project
         </button>
       }
     >
       {!rows && <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>}
-      {rows && rows.length === 0 && <Empty text="No projects yet — add one to start tracking work" />}
+      {rows && rows.length === 0 && <Empty text="No credit based projects yet — add one to start tracking work" />}
       {rows && rows.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {rows.map(r => (
