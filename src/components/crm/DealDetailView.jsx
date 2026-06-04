@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Plus, RefreshCw, Square, Trash2, User, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, Clock, Edit2, ExternalLink, FileText, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Plus, RefreshCw, Square, Trash2, User, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -1210,6 +1210,37 @@ function FileTypeTag({ mimeType }) {
   return <FileText size={14} color={BRAND.muted} />;
 }
 
+// Renders the Drive subfolder tree as an indented list. Each folder name links
+// out to that folder in Drive. Recurses for nested folders.
+function FolderTree({ nodes, depth = 0 }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {nodes.map((node) => (
+        <div key={node.id}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: depth * 16 }}>
+            <Folder size={13} color={BRAND.blue} style={{ flexShrink: 0 }} />
+            {node.webViewLink ? (
+              <a
+                href={node.webViewLink}
+                target="_blank" rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                style={{ fontSize: 12.5, color: BRAND.ink, textDecoration: 'none' }}
+              >
+                {node.name}
+              </a>
+            ) : (
+              <span style={{ fontSize: 12.5, color: BRAND.ink }}>{node.name}</span>
+            )}
+          </div>
+          {node.children && node.children.length > 0 && (
+            <FolderTree nodes={node.children} depth={depth + 1} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const { actions, showMsg } = useStore();
   const isMobile = useIsMobile();
@@ -1220,8 +1251,22 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
   const abortRef = React.useRef(null);
   const [syncing, setSyncing] = useState(false);
   const [settingUp, setSettingUp] = useState(false);
+  const [folders, setFolders] = useState(null); // null = not loaded yet
 
   const cancelUpload = () => { abortRef.current?.abort(); };
+
+  // Pull the Drive subfolder tree so we can show the folder structure.
+  const loadFolders = React.useCallback(async () => {
+    if (!driveEnabled || !driveFolderId) { setFolders([]); return; }
+    try {
+      const resp = await actions.loadDealFolders(dealId);
+      setFolders(resp?.folders || []);
+    } catch {
+      setFolders([]);
+    }
+  }, [actions, dealId, driveEnabled, driveFolderId]);
+
+  useEffect(() => { loadFolders(); }, [loadFolders]);
 
   // Create the standard production subfolder template in the Drive folder.
   // Idempotent server-side, so it's safe to click more than once.
@@ -1229,6 +1274,7 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
     setSettingUp(true);
     try {
       await actions.setupDealFolders(dealId);
+      await loadFolders();
       showMsg('Folder structure set up');
     } catch (e) {
       showMsg(e?.message || 'Could not set up folders');
@@ -1341,6 +1387,14 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
               Open folder <ExternalLink size={11} />
             </a>
           )}
+        </div>
+      )}
+      {driveEnabled && folders && folders.length > 0 && (
+        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '8px 10px', marginBottom: 10, background: '#FAFBFC' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+            Folders
+          </div>
+          <FolderTree nodes={folders} />
         </div>
       )}
       <div

@@ -1904,6 +1904,12 @@ export function StoreProvider({ children }) {
         .then((resp) => actions.loadDealDetail(dealId).then(() => resp));
     },
 
+    // Fetch the deal's Drive subfolder tree (for showing structure in the Files
+    // card). Returns { folders: [...] }.
+    loadDealFolders(dealId) {
+      return api.get('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/folders');
+    },
+
     addDealFileFromEmail(dealId, payload) {
       return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/from-email', payload)
         .then((newFile) => {

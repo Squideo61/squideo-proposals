@@ -7,7 +7,7 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
-import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate } from '../googleDrive.js';
+import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
@@ -421,6 +421,25 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     } catch (err) {
       console.error('[deal files] setup-folders failed', err.status, err.message);
       return res.status(502).json({ error: driveErrorHint(err) });
+    }
+  }
+
+  // /deals/:id/files/folders — the Drive subfolder tree, so the UI can show the
+  // folder structure. Best-effort: returns an empty tree on any Drive/auth issue
+  // so the Files card still renders.
+  if (action === 'files' && subaction === 'folders' && req.method === 'GET') {
+    if (!driveFilesEnabled()) return res.status(200).json({ folders: [] });
+    const [d] = await sql`SELECT drive_folder_id FROM deals WHERE id = ${id}`;
+    if (!d?.drive_folder_id) return res.status(200).json({ folders: [] });
+    let accessToken;
+    try { accessToken = await getFreshAccessToken(user.email); }
+    catch { return res.status(200).json({ folders: [] }); }
+    try {
+      const folders = await listSubfolderTree(accessToken, d.drive_folder_id);
+      return res.status(200).json({ folders });
+    } catch (err) {
+      console.warn('[deal files] folder tree failed', err.message);
+      return res.status(200).json({ folders: [] });
     }
   }
 

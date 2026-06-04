@@ -205,6 +205,26 @@ export async function listFolderFiles(accessToken, folderId) {
   return out.files || [];
 }
 
+// List the subfolder tree under a folder (folders only, recursive), each with a
+// Drive link so the UI can show the structure. Children at each level are fetched
+// in parallel and depth-capped to keep it cheap; names come back sorted.
+export async function listSubfolderTree(accessToken, folderId, depth = 0) {
+  if (depth > 4) return [];
+  const query =
+    `'${q(folderId)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  const url =
+    `${DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink)` +
+    `&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=1000`;
+  const out = await driveFetch(accessToken, url).then((r) => r.json());
+  const folders = out.files || [];
+  return Promise.all(folders.map(async (f) => ({
+    id: f.id,
+    name: f.name,
+    webViewLink: f.webViewLink || null,
+    children: await listSubfolderTree(accessToken, f.id, depth + 1),
+  })));
+}
+
 // True if the folder still exists, isn't trashed, and is actually a folder.
 // Returns false on 404 (deleted / inaccessible) so callers can recreate; other
 // errors (auth/permission) re-throw so we don't recreate on a transient blip.
