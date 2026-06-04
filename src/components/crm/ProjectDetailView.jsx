@@ -6,6 +6,7 @@ import { formatGBP, useIsMobile } from '../../utils.js';
 import { ProductionPanel } from './ProductionPanel.jsx';
 import { DealConversation } from './DealConversation.jsx';
 import { FilesCard } from './DealDetailView.jsx';
+import { AssigneePicker } from './TaskFormModal.jsx';
 
 // Focused project page opened from the production board. Unlike the full deal
 // page (sales pipeline, proposals, emails…), this shows just the production
@@ -53,6 +54,10 @@ export function ProjectDetailView({ dealId, onBack, onOpenFullDeal, onOpenVideo 
           </Field>
           <Field label="Value (ex VAT)">{deal.value != null ? <strong>{formatGBP(deal.value)}</strong> : muted}</Field>
         </div>
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Producers</div>
+          <ProducerPicker dealId={dealId} deal={deal} />
+        </div>
       </div>
 
       <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} isMobile={isMobile} onOpenVideo={onOpenVideo} />
@@ -65,6 +70,21 @@ export function ProjectDetailView({ dealId, onBack, onOpenFullDeal, onOpenVideo 
       <DealConversation dealId={dealId} isMobile={isMobile} />
     </div>
   );
+}
+
+// Multi-select producers (team) for a whole project/deal. Persists via saveDeal,
+// which optimistically updates dealDetail so the chips reflect immediately.
+// Exported so the full deal page reuses the identical control.
+export function ProducerPicker({ dealId, deal }) {
+  const { state, actions } = useStore();
+  const selected = deal.producerEmails || (deal.producerEmail ? [deal.producerEmail] : []);
+  const users = Object.entries(state.users || {}).map(([email, u]) => ({ email, ...u }));
+  const toggle = (email) => {
+    const set = new Set(selected);
+    set.has(email) ? set.delete(email) : set.add(email);
+    actions.saveDeal(dealId, { producerEmails: Array.from(set) });
+  };
+  return <AssigneePicker users={users} selected={selected} onToggle={toggle} emptyLabel="No producers assigned" />;
 }
 
 function Field({ icon: Icon, label, children }) {

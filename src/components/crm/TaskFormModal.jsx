@@ -110,7 +110,8 @@ export function TaskFormModal({ task, defaults, onClose, onSaved }) {
 // Chip-style multi-select. Selected users are pills with an × to remove;
 // unselected users live in a compact "Add…" row below. Stays simple — we
 // never have more than a handful of teammates so no typeahead is needed.
-function AssigneePicker({ users, selected, onToggle }) {
+// Exported so the video/project "Producers" pickers reuse the exact same UI.
+export function AssigneePicker({ users, selected, onToggle, emptyLabel = 'No one assigned' }) {
   const selectedSet = new Set(selected);
   const selectedUsers = users.filter(u => selectedSet.has(u.email));
   const remaining = users.filter(u => !selectedSet.has(u.email));
@@ -124,7 +125,7 @@ function AssigneePicker({ users, selected, onToggle }) {
         alignItems: 'center', background: 'white',
       }}>
         {selectedUsers.length === 0 && (
-          <span style={{ fontSize: 12, color: BRAND.muted }}>No one assigned</span>
+          <span style={{ fontSize: 12, color: BRAND.muted }}>{emptyLabel}</span>
         )}
         {selectedUsers.map(u => (
           <button

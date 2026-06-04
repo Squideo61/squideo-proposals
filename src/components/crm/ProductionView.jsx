@@ -40,8 +40,11 @@ export function ProductionView({ onBack, onOpenVideo, onOpenProject, onOpenProje
   useEffect(() => { try { localStorage.setItem(PRODUCER_FILTER_STORAGE_KEY, producerFilter); } catch {} }, [producerFilter]);
 
   const videos = useMemo(() => (state.productionVideos || []), [state.productionVideos]);
+  // A video matches the producer filter if that person is any of its producers.
+  const videoProducers = (v) => (v.producerEmails && v.producerEmails.length)
+    ? v.producerEmails : (v.producerEmail ? [v.producerEmail] : []);
   const filtered = useMemo(
-    () => (producerFilter ? videos.filter(v => v.producerEmail === producerFilter) : videos),
+    () => (producerFilter ? videos.filter(v => videoProducers(v).includes(producerFilter)) : videos),
     [videos, producerFilter],
   );
 
@@ -52,11 +55,11 @@ export function ProductionView({ onBack, onOpenVideo, onOpenProject, onOpenProje
   const searched = useMemo(() => {
     if (!q) return filtered;
     return filtered.filter(v => {
-      const producerName = v.producerEmail ? (state.users?.[v.producerEmail]?.name || v.producerEmail) : '';
+      const producerNames = videoProducers(v).map(e => state.users?.[e]?.name || e).join(' ').toLowerCase();
       return (v.title || '').toLowerCase().includes(q)
         || (v.projectTitle || '').toLowerCase().includes(q)
         || (v.companyName || '').toLowerCase().includes(q)
-        || producerName.toLowerCase().includes(q);
+        || producerNames.includes(q);
     });
   }, [filtered, q, state.users]);
 
@@ -253,7 +256,8 @@ function StageGroup({ stage, color, videos, onDrop, onOpenVideo }) {
 
 function VideoRow({ video, onOpen, showStage }) {
   const { state } = useStore();
-  const producer = video.producerEmail ? state.users[video.producerEmail] : null;
+  const producers = (video.producerEmails && video.producerEmails.length)
+    ? video.producerEmails : (video.producerEmail ? [video.producerEmail] : []);
   return (
     <div
       draggable
@@ -287,14 +291,31 @@ function VideoRow({ video, onOpen, showStage }) {
       <div style={{ color: video.textDirectionDeadline ? BRAND.ink : BRAND.muted }}>{video.textDirectionDeadline ? formatDate(video.textDirectionDeadline) : '—'}</div>
       {/* Delivery */}
       <div style={{ color: video.deliveryDeadline ? BRAND.ink : BRAND.muted }}>{video.deliveryDeadline ? formatDate(video.deliveryDeadline) : '—'}</div>
-      {/* Producer */}
+      {/* Producers */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-        {producer || video.producerEmail
-          ? <>
-              <Avatar user={producer} fallback={video.producerEmail} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{producer?.name || video.producerEmail}</span>
-            </>
-          : <span style={{ color: BRAND.muted }}>Unassigned</span>}
+        {producers.length === 0 ? (
+          <span style={{ color: BRAND.muted }}>Unassigned</span>
+        ) : producers.length === 1 ? (
+          <>
+            <Avatar user={state.users[producers[0]]} fallback={producers[0]} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {state.users[producers[0]]?.name || producers[0]}
+            </span>
+          </>
+        ) : (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              {producers.slice(0, 3).map((e, i) => (
+                <span key={e} style={{ marginLeft: i === 0 ? 0 : -8 }}>
+                  <Avatar user={state.users[e]} fallback={e} />
+                </span>
+              ))}
+            </div>
+            <span style={{ color: BRAND.muted, fontSize: 12, whiteSpace: 'nowrap' }}>
+              {producers.length} producers{producers.length > 3 ? ` (+${producers.length - 3})` : ''}
+            </span>
+          </>
+        )}
       </div>
     </div>
   );

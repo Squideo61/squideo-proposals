@@ -99,6 +99,26 @@ async function reconcileDealDriveFiles(dealId, folderId, accessToken) {
   }
 }
 
+// Normalise a producers payload to a deduped email array. Accepts the new
+// `producerEmails` array or the legacy single `producerEmail`.
+function readDealProducerEmails(body) {
+  if (Array.isArray(body.producerEmails)) {
+    return Array.from(new Set(body.producerEmails.map(trimOrNull).filter(Boolean)));
+  }
+  if ('producerEmail' in body) {
+    const v = trimOrNull(body.producerEmail);
+    return v ? [v] : [];
+  }
+  return [];
+}
+
+async function setDealAssignees(dealId, emails) {
+  await sql`DELETE FROM deal_assignees WHERE deal_id = ${dealId}`;
+  if (emails.length) {
+    await sql`INSERT INTO deal_assignees (deal_id, user_email) SELECT ${dealId}, unnest(${emails}::text[]) ON CONFLICT DO NOTHING`;
+  }
+}
+
 export async function dealsRoute(req, res, id, action, user, subaction = null) {
   if (!id) {
     if (req.method === 'GET') {
@@ -884,7 +904,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     // applied the production migration still loads the deal page.
     let videos = [];
     try {
-      const vrows = await sql`SELECT * FROM project_videos WHERE deal_id = ${id} ORDER BY sort_order, created_at`;
+      const vrows = await sql`
+        SELECT pv.*,
+               (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
+                  FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails
+          FROM project_videos pv WHERE pv.deal_id = ${id} ORDER BY pv.sort_order, pv.created_at`;
       videos = vrows.map(v => ({
         id: v.id, dealId: v.deal_id, title: v.title, status: v.status,
         productionPhase: v.production_phase || null,
@@ -895,10 +919,19 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         deliveryDeadline: v.delivery_deadline || null,
         textDirectionDeadline: v.text_direction_deadline || null,
         producerEmail: v.producer_email || null,
+        producerEmails: Array.isArray(v.producer_emails) && v.producer_emails.length
+          ? v.producer_emails : (v.producer_email ? [v.producer_email] : []),
         sortOrder: v.sort_order, revisionVideoId: v.revision_video_id || null,
         createdAt: v.created_at, updatedAt: v.updated_at || null,
       }));
     } catch (_) { /* project_videos not yet migrated */ }
+
+    // Deal-level producers (team).
+    let dealProducerEmails = deal.producerEmail ? [deal.producerEmail] : [];
+    try {
+      const prows = await sql`SELECT user_email FROM deal_assignees WHERE deal_id = ${id} ORDER BY assigned_at`;
+      if (prows.length) dealProducerEmails = prows.map(r => r.user_email);
+    } catch (_) { /* deal_assignees not yet migrated */ }
 
     return res.status(200).json({
       ...deal,
@@ -907,6 +940,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       // folder" link). The folder is created lazily on first upload.
       driveFiles: driveFilesEnabled(),
       driveFolderId: rows[0].drive_folder_id || null,
+      producerEmails: dealProducerEmails,
       videos,
       proposals: proposals.map(p => ({
         id: p.id,
@@ -995,12 +1029,23 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         updated_at = NOW()
       WHERE id = ${id}
     `;
+    // Producers (team): accept the array or legacy single; keep producer_email
+    // populated with the first for back-compat.
+    if ('producerEmails' in body || 'producerEmail' in body) {
+      const producers = readDealProducerEmails(body);
+      await setDealAssignees(id, producers);
+      await sql`UPDATE deals SET producer_email = ${producers[0] || null} WHERE id = ${id}`;
+    }
     const rows = await sql`
       SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-             value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+             value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at, producer_email
       FROM deals WHERE id = ${id}
     `;
-    return res.status(200).json(serialiseDeal(rows[0]));
+    const producerRows = await sql`SELECT user_email FROM deal_assignees WHERE deal_id = ${id} ORDER BY assigned_at`;
+    const producerEmails = producerRows.length
+      ? producerRows.map(r => r.user_email)
+      : (rows[0].producer_email ? [rows[0].producer_email] : []);
+    return res.status(200).json({ ...serialiseDeal(rows[0]), producerEmails });
   }
 
   if (req.method === 'DELETE') {

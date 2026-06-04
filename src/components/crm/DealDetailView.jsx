@@ -8,7 +8,7 @@ import { formatGBP, formatRelativeTime, useIsMobile, formatProposalNumber } from
 import { Badge, Modal } from '../ui.jsx';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
-import { TaskFormModal } from './TaskFormModal.jsx';
+import { TaskFormModal, AssigneePicker } from './TaskFormModal.jsx';
 import { Card, Empty } from './Card.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { OrderSummaryCard } from './OrderSummaryCard.jsx';
@@ -174,6 +174,19 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
           <Field label="Value (ex VAT)">{deal.value != null ? <strong>{formatGBP(deal.value)}</strong> : <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field icon={Calendar} label="Expected close">{deal.expectedCloseAt || <span style={{ color: BRAND.muted }}>—</span>}</Field>
           <Field label="Last activity">{formatRelativeTime(deal.lastActivityAt)}</Field>
+        </div>
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Producers</div>
+          <AssigneePicker
+            users={Object.entries(state.users || {}).map(([email, u]) => ({ email, ...u }))}
+            selected={deal.producerEmails || (deal.producerEmail ? [deal.producerEmail] : [])}
+            onToggle={(email) => {
+              const set = new Set(deal.producerEmails || (deal.producerEmail ? [deal.producerEmail] : []));
+              set.has(email) ? set.delete(email) : set.add(email);
+              actions.saveDeal(dealId, { producerEmails: Array.from(set) });
+            }}
+            emptyLabel="No producers assigned"
+          />
         </div>
         <SecondaryContactsRow
           dealId={dealId}

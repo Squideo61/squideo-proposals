@@ -8,6 +8,7 @@ import {
   VIDEO_MILESTONES, STAGE_LABEL,
 } from '../../lib/productionStages.js';
 import { DealConversation } from './DealConversation.jsx';
+import { AssigneePicker } from './TaskFormModal.jsx';
 
 const sectionCard = {
   background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20, marginTop: 18,
@@ -119,12 +120,18 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
               {VIDEO_STATUSES.map(s => <option key={s.id} value={s.id} style={{ color: BRAND.ink }}>{s.label}</option>)}
             </select>
           </div>
-          <div>
-            <label style={labelStyle}>Producer</label>
-            <select style={ctrl} value={video.producerEmail || ''} onChange={(e) => update({ producerEmail: e.target.value || null })}>
-              <option value="">— Unassigned —</option>
-              {Object.entries(state.users || {}).map(([email, u]) => <option key={email} value={email}>{u.name || email}</option>)}
-            </select>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={labelStyle}>Producers</label>
+            <AssigneePicker
+              users={Object.entries(state.users || {}).map(([email, u]) => ({ email, ...u }))}
+              selected={video.producerEmails || (video.producerEmail ? [video.producerEmail] : [])}
+              onToggle={(email) => {
+                const set = new Set(video.producerEmails || (video.producerEmail ? [video.producerEmail] : []));
+                set.has(email) ? set.delete(email) : set.add(email);
+                update({ producerEmails: Array.from(set) });
+              }}
+              emptyLabel="No producers assigned"
+            />
           </div>
           <div>
             <label style={labelStyle}>Payment</label>

@@ -82,6 +82,39 @@ export async function ensureProductionSchema() {
         )
       `;
       await sql`CREATE INDEX IF NOT EXISTS video_scripts_video_idx ON video_scripts(video_id, created_at DESC)`;
+      // Multiple producers / team members per video and per project (deal).
+      await sql`
+        CREATE TABLE IF NOT EXISTS video_assignees (
+          video_id    TEXT        NOT NULL REFERENCES project_videos(id) ON DELETE CASCADE,
+          user_email  TEXT        NOT NULL,
+          assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (video_id, user_email)
+        )
+      `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS deal_assignees (
+          deal_id     TEXT        NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+          user_email  TEXT        NOT NULL,
+          assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (deal_id, user_email)
+        )
+      `;
+      // Backfill from the single producer_email, only where no assignees exist
+      // yet (so a deliberately-cleared set is never re-populated on cold start).
+      await sql`
+        INSERT INTO video_assignees (video_id, user_email)
+          SELECT pv.id, pv.producer_email FROM project_videos pv
+           WHERE pv.producer_email IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM video_assignees va WHERE va.video_id = pv.id)
+          ON CONFLICT DO NOTHING
+      `;
+      await sql`
+        INSERT INTO deal_assignees (deal_id, user_email)
+          SELECT d.id, d.producer_email FROM deals d
+           WHERE d.producer_email IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM deal_assignees da WHERE da.deal_id = d.id)
+          ON CONFLICT DO NOTHING
+      `;
       // One-time backfill: existing videos onto the board, inheriting project-level values.
       await sql`
         UPDATE project_videos v

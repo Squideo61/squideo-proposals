@@ -36,6 +36,8 @@ const REVISION_PUBLIC_BASE = 'https://app.squideo.com';
 const VIDEO_SELECT = (whereSql) => sql`
   SELECT pv.*, d.title AS project_title, c.name AS company_name,
          d.drive_folder_id AS drive_folder_id,
+         (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
+            FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails,
          (SELECT p.number_year || '-' || lpad(p.number_seq::text, 3, '0')
             FROM proposals p
            WHERE p.deal_id = d.id AND p.number_seq IS NOT NULL
@@ -63,7 +65,9 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       // deal paid via a route that didn't auto-enter still shows up here.
       await backfillPaidDealsIntoProduction();
       const rows = await sql`
-        SELECT pv.*, d.title AS project_title, c.name AS company_name
+        SELECT pv.*, d.title AS project_title, c.name AS company_name,
+               (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
+                  FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails
           FROM project_videos pv
           JOIN deals d ON d.id = pv.deal_id
           LEFT JOIN companies c ON c.id = d.company_id
@@ -363,7 +367,11 @@ async function updateVideo(req, res, videoId) {
   const videoLength           = 'videoLength'           in body ? trimOrNull(body.videoLength)           : cur.video_length;
   const deliveryDeadline      = 'deliveryDeadline'      in body ? trimOrNull(body.deliveryDeadline)      : cur.delivery_deadline;
   const textDirectionDeadline = 'textDirectionDeadline' in body ? trimOrNull(body.textDirectionDeadline) : cur.text_direction_deadline;
-  const producerEmail         = 'producerEmail'         in body ? trimOrNull(body.producerEmail)         : cur.producer_email;
+  // Producers: accept the array (producerEmails) or legacy single (producerEmail).
+  // The producer_email column is kept as the first producer for back-compat.
+  const producerKeyPresent = 'producerEmails' in body || 'producerEmail' in body;
+  const nextProducers = producerKeyPresent ? readProducerEmails(body) : null;
+  const producerEmail = producerKeyPresent ? (nextProducers[0] || null) : cur.producer_email;
   const sortRaw = 'sortOrder' in body ? numberOrNull(body.sortOrder) : null;
   const sortOrder = sortRaw == null ? cur.sort_order : Math.trunc(sortRaw);
   await sql`
@@ -374,8 +382,29 @@ async function updateVideo(req, res, videoId) {
            sort_order = ${sortOrder}, updated_at = NOW()
      WHERE id = ${videoId}
   `;
+  if (producerKeyPresent) await setVideoAssignees(videoId, nextProducers);
   const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
   return res.status(200).json(serialiseVideo(row));
+}
+
+// Normalise a producers payload to a deduped email array. Accepts the new
+// `producerEmails` array or the legacy single `producerEmail`.
+function readProducerEmails(body) {
+  if (Array.isArray(body.producerEmails)) {
+    return Array.from(new Set(body.producerEmails.map(trimOrNull).filter(Boolean)));
+  }
+  if ('producerEmail' in body) {
+    const v = trimOrNull(body.producerEmail);
+    return v ? [v] : [];
+  }
+  return [];
+}
+
+async function setVideoAssignees(videoId, emails) {
+  await sql`DELETE FROM video_assignees WHERE video_id = ${videoId}`;
+  if (emails.length) {
+    await sql`INSERT INTO video_assignees (video_id, user_email) SELECT ${videoId}, unnest(${emails}::text[]) ON CONFLICT DO NOTHING`;
+  }
 }
 
 // Hand a video off to the Revisions (client-review) section: create the deal's
@@ -443,6 +472,9 @@ export function serialiseVideo(r) {
     deliveryDeadline: r.delivery_deadline || null,
     textDirectionDeadline: r.text_direction_deadline || null,
     producerEmail: r.producer_email || null,
+    producerEmails: Array.isArray(r.producer_emails) && r.producer_emails.length
+      ? r.producer_emails
+      : (r.producer_email ? [r.producer_email] : []),
     sortOrder: r.sort_order,
     revisionVideoId: r.revision_video_id || null,
     createdAt: r.created_at,
