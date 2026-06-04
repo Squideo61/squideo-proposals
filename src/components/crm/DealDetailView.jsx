@@ -326,7 +326,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <FilesCard dealId={dealId} files={detail?.files || []} />
+          <FilesCard dealId={dealId} files={detail?.files || []} driveEnabled={!!detail?.driveFiles} />
         </div>
 
         <Card title="Activity" count={timeline.length}>
@@ -1213,18 +1213,22 @@ function FileTypeTag({ mimeType }) {
   return <FileText size={14} color={BRAND.muted} />;
 }
 
-function FilesCard({ dealId, files }) {
+function FilesCard({ dealId, files, driveEnabled }) {
   const { actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = React.useRef(null);
 
+  // Drive direct-upload has no serverless body limit; Blob uploads cap at 20 MB.
+  const maxBytes = driveEnabled ? 5 * 1024 * 1024 * 1024 : 20 * 1024 * 1024;
+  const maxLabel = driveEnabled ? '5 GB' : '20 MB';
+
   const handleFiles = async (fileList) => {
     const files = Array.from(fileList || []);
     if (!files.length) return;
-    const tooBig = files.find(f => f.size > 20 * 1024 * 1024);
-    if (tooBig) { showMsg(`"${tooBig.name}" is too large (max 20 MB)`); return; }
+    const tooBig = files.find(f => f.size > maxBytes);
+    if (tooBig) { showMsg(`"${tooBig.name}" is too large (max ${maxLabel})`); return; }
     setUploading(true);
     try {
       await Promise.all(files.map(f => actions.uploadDealFile(dealId, f)));
@@ -1284,8 +1288,11 @@ function FilesCard({ dealId, files }) {
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.filename}</div>
-            <div style={{ fontSize: 11, color: BRAND.muted }}>
-              {fileSizeLabel(f.sizeBytes)}{f.sizeBytes ? ' · ' : ''}{formatRelativeTime(f.createdAt)}{f.source === 'email' ? ' · from email' : ''}
+            <div style={{ fontSize: 11, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span>{fileSizeLabel(f.sizeBytes)}{f.sizeBytes ? ' · ' : ''}{formatRelativeTime(f.createdAt)}{f.source === 'email' ? ' · from email' : ''}</span>
+              {f.storage === 'drive' && (
+                <span style={{ fontSize: 9, fontWeight: 700, color: '#1D4ED8', background: '#EFF6FF', padding: '1px 5px', borderRadius: 3, textTransform: 'uppercase', letterSpacing: 0.3 }}>Drive</span>
+              )}
             </div>
           </div>
           {f.uploadedBy && <Avatar email={f.uploadedBy} size={20} />}

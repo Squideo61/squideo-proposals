@@ -7,7 +7,7 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
-import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile } from '../googleDrive.js';
+import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, createResumableUploadSession, getDriveFile } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
@@ -460,6 +460,59 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     });
   }
 
+  // /deals/:id/files/drive-session — start a resumable Drive upload so the
+  // browser can PUT the bytes straight to Drive (no serverless body limit).
+  // When Drive isn't enabled we say so and the client falls back to Blob.
+  if (action === 'files' && subaction === 'drive-session' && req.method === 'POST') {
+    if (!driveFilesEnabled()) return res.status(200).json({ enabled: false });
+    await ensureDealFileDriveColumns();
+    const { filename, mimeType, size } = req.body || {};
+    if (!filename) return res.status(400).json({ error: 'filename required' });
+    let accessToken;
+    try { accessToken = await getFreshAccessToken(user.email); }
+    catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access) to upload files' }); }
+    try {
+      const folderId = await dealDriveFolder(accessToken, id);
+      const uploadUrl = await createResumableUploadSession(accessToken, { folderId, filename, mimeType, size });
+      return res.status(200).json({ enabled: true, uploadUrl });
+    } catch (err) {
+      console.error('[deal files] drive session failed', err.message);
+      return res.status(502).json({ error: 'Could not start Google Drive upload' });
+    }
+  }
+
+  // /deals/:id/files/drive-complete — record a file the browser uploaded direct
+  // to Drive. We verify it exists and sits in this deal's folder before saving.
+  if (action === 'files' && subaction === 'drive-complete' && req.method === 'POST') {
+    if (!driveFilesEnabled()) return res.status(400).json({ error: 'Drive files not enabled' });
+    await ensureDealFileDriveColumns();
+    const { driveFileId, filename } = req.body || {};
+    if (!driveFileId) return res.status(400).json({ error: 'driveFileId required' });
+    let accessToken;
+    try { accessToken = await getFreshAccessToken(user.email); }
+    catch { return res.status(400).json({ error: 'Connect your Google account (with Drive access)' }); }
+    let f;
+    try { f = await getDriveFile(accessToken, driveFileId); }
+    catch { return res.status(404).json({ error: 'Uploaded file not found in Drive' }); }
+    const folderId = await dealDriveFolder(accessToken, id);
+    if (!Array.isArray(f.parents) || !f.parents.includes(folderId)) {
+      return res.status(400).json({ error: "File is not in this deal's folder" });
+    }
+    const fileId = crypto.randomUUID();
+    const name = f.name || filename || 'file';
+    const sizeBytes = f.size != null ? Number(f.size) : null;
+    await sql`
+      INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, drive_file_id, web_view_link, uploaded_by, source)
+      VALUES (${fileId}, ${id}, ${name}, ${f.mimeType || null}, ${sizeBytes},
+              NULL, ${driveFileId}, ${f.webViewLink || null}, ${user.email}, 'upload')
+    `;
+    return res.status(201).json({
+      id: fileId, filename: name, mimeType: f.mimeType || null, sizeBytes,
+      uploadedBy: user.email, source: 'upload', driveFileId, webViewLink: f.webViewLink || null,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
   // /deals/:id (no action)
   if (req.method === 'GET') {
     const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
@@ -467,8 +520,9 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     const deal = serialiseDeal(rows[0]);
     // The emails query below joins on email_message_deals which is created by
     // a manual migration — self-heal so workspaces that skipped it still load
-    // deals without 'relation does not exist'. Likewise deal_contacts.
-    await Promise.all([ensureMessageDealsTable(), ensureDealContactsTable()]);
+    // deals without 'relation does not exist'. Likewise deal_contacts and the
+    // deal-file Drive columns (so the files query can select drive_file_id).
+    await Promise.all([ensureMessageDealsTable(), ensureDealContactsTable(), ensureDealFileDriveColumns()]);
     const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows] = await Promise.all([
       sql`
         SELECT p.id, p.data, p.number_year, p.number_seq, p.created_at,
@@ -516,7 +570,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         ORDER BY em.sent_at DESC
         LIMIT 200
       `,
-      sql`SELECT id, filename, mime_type, size_bytes, blob_url,
+      sql`SELECT id, filename, mime_type, size_bytes, blob_url, drive_file_id,
                uploaded_by, source, created_at
           FROM deal_files WHERE deal_id = ${id} ORDER BY created_at DESC LIMIT 100`,
       sql`
@@ -582,6 +636,8 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 
     return res.status(200).json({
       ...deal,
+      // Whether deal files are Drive-backed (drives the client upload path/cap).
+      driveFiles: driveFilesEnabled(),
       videos,
       proposals: proposals.map(p => ({
         id: p.id,
@@ -626,6 +682,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       files: files.map(f => ({
         id: f.id, filename: f.filename, mimeType: f.mime_type || null,
         sizeBytes: f.size_bytes || null, blobUrl: f.blob_url,
+        storage: f.drive_file_id ? 'drive' : 'blob',
         uploadedBy: f.uploaded_by || null, source: f.source,
         createdAt: f.created_at,
       })),

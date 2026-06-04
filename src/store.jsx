@@ -1789,11 +1789,40 @@ export function StoreProvider({ children }) {
     },
 
     // ---------- Deal files ----------
-    uploadDealFile(dealId, file) {
-      // Sends the binary body raw (not JSON), so it can't go through the
-      // shared `api` wrapper. credentials: 'include' attaches the session
-      // cookie the same way the wrapper does.
-      return fetch('/api/crm/deals/' + encodeURIComponent(dealId) + '/files', {
+    async uploadDealFile(dealId, file) {
+      const addToState = (newFile) => setState(s => {
+        const detail = s.dealDetail[dealId];
+        if (!detail) return s;
+        return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, files: [newFile, ...(detail.files || [])] } } };
+      });
+
+      // When Drive is enabled, upload the bytes straight to Google Drive via a
+      // resumable session — no serverless body limit, so large files work. The
+      // server creates the session and records the file once the browser's PUT
+      // completes. If Drive isn't enabled the server says so and we fall back to
+      // the raw Blob upload below.
+      const base = '/api/crm/deals/' + encodeURIComponent(dealId) + '/files';
+      const session = await api.post(base + '/drive-session', {
+        filename: file.name, mimeType: file.type || 'application/octet-stream', size: file.size,
+      });
+      if (session && session.enabled && session.uploadUrl) {
+        const putRes = await fetch(session.uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: file,
+        });
+        if (!putRes.ok) throw new Error('Google Drive upload failed (' + putRes.status + ')');
+        const driveFile = await putRes.json().catch(() => ({}));
+        const newFile = await api.post(base + '/drive-complete', {
+          driveFileId: driveFile.id, webViewLink: driveFile.webViewLink || null,
+          filename: file.name, mimeType: file.type || 'application/octet-stream', size: file.size,
+        });
+        addToState(newFile);
+        return newFile;
+      }
+
+      // Blob fallback — raw binary body (not JSON), so it skips the `api` wrapper.
+      const res = await fetch(base, {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -1801,16 +1830,11 @@ export function StoreProvider({ children }) {
           'X-Filename': encodeURIComponent(file.name),
         },
         body: file,
-      }).then(async (res) => {
-        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
-        const newFile = await res.json();
-        setState(s => {
-          const detail = s.dealDetail[dealId];
-          if (!detail) return s;
-          return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, files: [newFile, ...(detail.files || [])] } } };
-        });
-        return newFile;
       });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
+      const newFile = await res.json();
+      addToState(newFile);
+      return newFile;
     },
 
     deleteDealFile(dealId, fileId) {

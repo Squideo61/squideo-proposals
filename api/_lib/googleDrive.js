@@ -90,6 +90,41 @@ export async function uploadToFolder(accessToken, { folderId, filename, mimeType
   return { id: out.id, webViewLink: out.webViewLink || null };
 }
 
+// Start a resumable upload session so the browser can PUT the bytes straight to
+// Drive (bypassing our serverless body limit for large files). Returns the
+// session URI; the browser uploads to it directly, no token needed on the PUT.
+export async function createResumableUploadSession(accessToken, { folderId, filename, mimeType, size }) {
+  const meta = { name: filename, parents: [folderId] };
+  const url = `${DRIVE_UPLOAD}?uploadType=resumable&supportsAllDrives=true&fields=id,webViewLink`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + accessToken,
+      'Content-Type': 'application/json; charset=UTF-8',
+      'X-Upload-Content-Type': mimeType || 'application/octet-stream',
+      ...(size != null ? { 'X-Upload-Content-Length': String(size) } : {}),
+    },
+    body: JSON.stringify(meta),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    const err = new Error(`Drive resumable init ${res.status}: ${body.slice(0, 300)}`);
+    err.status = res.status;
+    throw err;
+  }
+  const location = res.headers.get('location');
+  if (!location) throw new Error('Drive did not return a resumable session URL');
+  return location;
+}
+
+// Fetch a Drive file's metadata (used to verify a browser-completed upload).
+export async function getDriveFile(accessToken, fileId, fields = 'id,name,size,mimeType,parents,webViewLink') {
+  return driveFetch(
+    accessToken,
+    `${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=${encodeURIComponent(fields)}&supportsAllDrives=true`,
+  ).then((r) => r.json());
+}
+
 export async function getDriveFileLink(accessToken, fileId) {
   const out = await driveFetch(
     accessToken,
