@@ -22,6 +22,7 @@ export function ensureDealFileDriveColumns() {
     await sql`ALTER TABLE deal_files ADD COLUMN IF NOT EXISTS web_view_link TEXT`;
     await sql`ALTER TABLE deal_files ALTER COLUMN blob_url DROP NOT NULL`;
     await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS drive_folder_id TEXT`;
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS overview_video_url TEXT`;
   })().catch((err) => { dealFileDriveEnsured = null; throw err; });
   return dealFileDriveEnsured;
 }
@@ -1003,7 +1004,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     const body = req.body || {};
     const cur = (await sql`
       SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-             value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+             value, expected_close_at, lost_reason, notes, overview_video_url, last_activity_at, created_at, updated_at
       FROM deals WHERE id = ${id}
     `)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
@@ -1015,6 +1016,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       value:               'value'             in body ? numberOrNull(body.value) : cur.value,
       expected_close_at:   'expectedCloseAt'   in body ? (trimOrNull(body.expectedCloseAt)) : cur.expected_close_at,
       notes:               'notes'             in body ? trimOrNull(body.notes) : cur.notes,
+      overview_video_url:  'overviewVideoUrl'  in body ? trimOrNull(body.overviewVideoUrl) : cur.overview_video_url,
     };
     await sql`
       UPDATE deals SET
@@ -1025,6 +1027,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         value = ${next.value},
         expected_close_at = ${next.expected_close_at},
         notes = ${next.notes},
+        overview_video_url = ${next.overview_video_url},
         last_activity_at = NOW(),
         updated_at = NOW()
       WHERE id = ${id}
@@ -1038,7 +1041,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     }
     const rows = await sql`
       SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-             value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at, producer_email
+             value, expected_close_at, lost_reason, notes, overview_video_url, last_activity_at, created_at, updated_at, producer_email
       FROM deals WHERE id = ${id}
     `;
     const producerRows = await sql`SELECT user_email FROM deal_assignees WHERE deal_id = ${id} ORDER BY assigned_at`;
@@ -1094,6 +1097,9 @@ export function serialiseDeal(r) {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
+  // Only carried on rows that select it (detail SELECT *, the PATCH returning
+  // list); omitted on partial selects so the optimistic merge never blanks it.
+  if ('overview_video_url' in r) out.overviewVideoUrl = r.overview_video_url || null;
   // Production fields are only carried on rows selected with them (the deals
   // list and detail use SELECT *). Partial selects — a sales-stage move, a
   // deal edit — omit these keys so they're never blanked out in the cached

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Plus, RefreshCw, Square, Trash2, User, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Square, Trash2, User, Video, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -140,25 +140,58 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
     showMsg(`Stage: ${PIPELINE_STAGES.find(s => s.id === next)?.label || next}`);
   };
 
+  // Project overview video (e.g. Loom): owner records a quick walkthrough for
+  // producers to watch first. Captured via a simple prompt; cleared with a blank.
+  const overviewUrl = deal.overviewVideoUrl || null;
+  const editOverview = async () => {
+    const input = window.prompt(
+      'Paste a project overview video link (e.g. Loom) for producers to watch first.\nLeave blank to remove.',
+      overviewUrl || '',
+    );
+    if (input === null) return; // cancelled
+    const url = input.trim();
+    if (url && !/^https?:\/\//i.test(url)) { showMsg('Enter a full URL starting with http:// or https://'); return; }
+    try {
+      await actions.saveDeal(dealId, { overviewVideoUrl: url || null });
+      showMsg(url ? 'Overview video saved' : 'Overview video removed');
+    } catch (e) {
+      showMsg(e?.message || 'Could not save overview video');
+    }
+  };
+
   return (
     <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> {productionOnly ? 'Production' : 'Pipeline'}</button>
-        {!productionOnly && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
-            <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
-            <button
-              onClick={() => {
-                if (window.confirm('Delete this deal? Linked proposals will be unlinked but not removed.')) {
-                  actions.deleteDeal(dealId);
-                  onBack();
-                }
-              }}
-              className="btn-ghost is-danger"
-            ><Trash2 size={14} /> Delete</button>
-          </div>
-        )}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* Project overview video — visible to everyone (incl. producers) when set. */}
+          {overviewUrl && (
+            <a href={overviewUrl} target="_blank" rel="noopener noreferrer" className="btn"
+              style={{ textDecoration: 'none', background: '#6D28D9', borderColor: '#6D28D9' }}
+              title="Watch the project overview video">
+              <Play size={14} /> Watch overview
+            </a>
+          )}
+          {!productionOnly && (
+            <>
+              <button onClick={editOverview} className="btn-ghost"
+                title={overviewUrl ? 'Replace or remove the overview video link' : 'Add a project overview video link (e.g. Loom)'}>
+                <Video size={14} /> {overviewUrl ? 'Edit overview' : 'Add overview video'}
+              </button>
+              <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
+              <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
+              <button
+                onClick={() => {
+                  if (window.confirm('Delete this deal? Linked proposals will be unlinked but not removed.')) {
+                    actions.deleteDeal(dealId);
+                    onBack();
+                  }
+                }}
+                className="btn-ghost is-danger"
+              ><Trash2 size={14} /> Delete</button>
+            </>
+          )}
+        </div>
       </header>
 
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 16 : 24, marginBottom: 16 }}>
