@@ -17,6 +17,34 @@ import { ProductionPanel } from './ProductionPanel.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
+// Turn a share link into an inline-embeddable player URL. Loom is the primary
+// case (loom.com/share/ID → loom.com/embed/ID); YouTube/Vimeo handled too.
+// Returns null when the provider isn't recognised — caller falls back to a link.
+function toEmbedSrc(raw) {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host === 'loom.com') {
+      const m = u.pathname.match(/\/(?:share|embed)\/([0-9a-zA-Z]+)/);
+      if (m) return 'https://www.loom.com/embed/' + m[1];
+    }
+    if (host === 'youtube.com' || host === 'm.youtube.com') {
+      const id = u.searchParams.get('v');
+      if (id) return 'https://www.youtube.com/embed/' + id;
+    }
+    if (host === 'youtu.be') {
+      const id = u.pathname.slice(1);
+      if (id) return 'https://www.youtube.com/embed/' + id;
+    }
+    if (host === 'vimeo.com') {
+      const id = u.pathname.split('/').filter(Boolean)[0];
+      if (id && /^\d+$/.test(id)) return 'https://player.vimeo.com/video/' + id;
+    }
+  } catch { /* not a valid URL — fall through to link */ }
+  return null;
+}
+
 // `productionOnly` strips the sales/financial chrome (pipeline, order summary,
 // proposals, invoices, edit/delete…) so producers/copywriters get a focused
 // project view — the deal page doubles as the project page once signed.
@@ -143,6 +171,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
   // Project overview video (e.g. Loom): owner records a quick walkthrough for
   // producers to watch first. Captured via a simple prompt; cleared with a blank.
   const overviewUrl = deal.overviewVideoUrl || null;
+  const overviewEmbedSrc = useMemo(() => toEmbedSrc(overviewUrl), [overviewUrl]);
   const editOverview = async () => {
     const input = window.prompt(
       'Paste a project overview video link (e.g. Loom) for producers to watch first.\nLeave blank to remove.',
@@ -164,20 +193,8 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> {productionOnly ? 'Production' : 'Pipeline'}</button>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          {/* Project overview video — visible to everyone (incl. producers) when set. */}
-          {overviewUrl && (
-            <a href={overviewUrl} target="_blank" rel="noopener noreferrer" className="btn"
-              style={{ textDecoration: 'none', background: '#6D28D9', borderColor: '#6D28D9' }}
-              title="Watch the project overview video">
-              <Play size={14} /> Watch overview
-            </a>
-          )}
           {!productionOnly && (
             <>
-              <button onClick={editOverview} className="btn-ghost"
-                title={overviewUrl ? 'Replace or remove the overview video link' : 'Add a project overview video link (e.g. Loom)'}>
-                <Video size={14} /> {overviewUrl ? 'Edit overview' : 'Add overview video'}
-              </button>
               <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
               <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
               <button
@@ -247,11 +264,53 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
-        {!productionOnly && (<>
-        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <OrderSummaryCard dealId={dealId} refreshKey={orderRefresh} />
-        </div>
+        {!productionOnly && (
+          <div>
+            <OrderSummaryCard dealId={dealId} refreshKey={orderRefresh} />
+          </div>
+        )}
 
+        {/* Project overview video (e.g. Loom) — embedded beside the order
+            summary; visible to producers when set, editable by the owner. */}
+        {(overviewUrl || !productionOnly) && (
+          <div>
+            <Card
+              title="Project overview"
+              action={!productionOnly ? (
+                <button onClick={editOverview} className="btn-ghost"
+                  title={overviewUrl ? 'Replace or remove the overview video link' : 'Add a project overview video link (e.g. Loom)'}>
+                  <Video size={12} /> {overviewUrl ? 'Edit' : 'Add'}
+                </button>
+              ) : undefined}
+            >
+              {overviewEmbedSrc ? (
+                <div style={{ position: 'relative', paddingTop: '56.25%', borderRadius: 8, overflow: 'hidden', background: '#000' }}>
+                  <iframe
+                    src={overviewEmbedSrc}
+                    title="Project overview video"
+                    allow="autoplay; fullscreen; picture-in-picture"
+                    allowFullScreen
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
+                  />
+                </div>
+              ) : overviewUrl ? (
+                <a href={overviewUrl} target="_blank" rel="noopener noreferrer" className="btn"
+                  style={{ textDecoration: 'none', background: '#6D28D9', borderColor: '#6D28D9' }}>
+                  <Play size={14} /> Watch overview
+                </a>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '4px' }}>
+                  <Empty text="No overview video yet — add a quick walkthrough for producers" />
+                  <button onClick={editOverview} className="btn" style={{ marginTop: 8 }}>
+                    <Video size={14} /> Add overview video
+                  </button>
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
+
+        {!productionOnly && (<>
         <Card
           title="Proposal"
           count={proposals.length}
