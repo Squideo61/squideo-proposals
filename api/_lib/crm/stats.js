@@ -4,6 +4,7 @@ import { hasPermission } from '../permissions.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { allCompanyBalances } from './companies.js';
 import { outstandingExtrasByDeal, ensureDealExtrasTable } from './extras.js';
+import { reconcileProposalBillingPaid } from './invoices.js';
 import { archiveRecord } from './recycleBin.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
@@ -811,6 +812,14 @@ async function trendReport(action) {
 async function pendingPaymentsReport() {
   // Auto-link imported rows that match a signed CRM deal (so they show as linked).
   await autoLinkManualToCrm();
+  // Freshly-issued proposal-billing invoices (e.g. a client-requested deposit)
+  // store no amount until reconciled from Xero — stamp them now so the invoiced
+  // tag/totals are accurate without waiting for a company page load. Bounded to
+  // the few rows that actually need it.
+  try {
+    const need = await sql`SELECT proposal_id FROM proposal_billing WHERE xero_invoice_id IS NOT NULL AND invoice_amount IS NULL`;
+    if (need.length) await reconcileProposalBillingPaid(need.map((r) => r.proposal_id));
+  } catch (err) { console.error('[stats] proposal-billing reconcile failed', err?.message || err); }
   // Per signature so we can aggregate committed + the deal's VAT rate + PO flag
   // in JS (vatRate parsed as text → avoids a risky SQL numeric cast).
   const sigRows = await sql`
@@ -829,7 +838,7 @@ async function pendingPaymentsReport() {
     );
     // No signed CRM deals, so "not invoiced" is just the un-invoiced imports.
     const notInvoiced = round2(manualTotal - manualInvoiced);
-    return { normal: [], po: [], manual, totals: { normal: 0, po: 0, manual: manualTotal, manualInvoiced, notInvoiced } };
+    return { normal: [], po: [], manual, totals: { normal: 0, po: 0, manual: manualTotal, manualInvoiced, invoiced: manualInvoiced, notInvoiced } };
   }
 
   const committed = new Map(); // did -> inc-VAT signed total
@@ -893,24 +902,34 @@ async function pendingPaymentsReport() {
     for (const r of rows) { if (!r.did) continue; invoicedDue.set(r.did, (invoicedDue.get(r.did) || 0) + (Number(r.v) || 0)); }
   }
 
-  // Signed work not yet invoiced, net of VAT, across all deals. A deal's signed
-  // total is "covered" by whatever's been paid (payment implies an invoice — incl.
-  // Stripe/partner invoices we don't track in manual_invoices) PLUS anything
-  // raised-but-unpaid (invoicedDue). Whatever's left is still to invoice.
+  // Per deal, split the outstanding (signed − paid) into the portion that's been
+  // invoiced-but-unpaid (invoicedDue, clamped to outstanding) and the rest, which
+  // is still to invoice. Both show on the list; these power the headline split.
+  let crmInvoicedNet = 0;
   let crmNotInvoicedNet = 0;
   for (const did of committed.keys()) {
-    const incTotal = committed.get(did) || 0;
-    const covered = (paid.get(did) || 0) + (invoicedDue.get(did) || 0);
-    const notInvInc = Math.max(0, incTotal - covered);
-    if (notInvInc <= 0.005) continue;
+    const outstandingInc = Math.max(0, (committed.get(did) || 0) - (paid.get(did) || 0));
+    if (outstandingInc <= 0.005) continue;
+    const invUnpaidInc = Math.max(0, Math.min(invoicedDue.get(did) || 0, outstandingInc));
     const rate = rateByDeal.get(did) || 0;
-    crmNotInvoicedNet += rate > 0 ? notInvInc / (1 + rate) : notInvInc;
+    const toNet = (v) => (rate > 0 ? v / (1 + rate) : v);
+    crmInvoicedNet += toNet(invUnpaidInc);
+    crmNotInvoicedNet += toNet(Math.max(0, outstandingInc - invUnpaidInc));
   }
+  crmInvoicedNet = round2(crmInvoicedNet);
   crmNotInvoicedNet = round2(crmNotInvoicedNet);
 
   // Ad-hoc extras (already net £) added to a deal during production. They show
   // as their own line and can sit on a deal whose signed work is fully paid.
   const extrasByDeal = await outstandingExtrasByDeal();
+  let extrasInvoicedNet = 0;
+  let extrasPendingNet = 0;
+  for (const list of extrasByDeal.values()) {
+    for (const e of list) {
+      const amt = Number(e.amount) || 0;
+      if (e.status === 'invoiced') extrasInvoicedNet += amt; else extrasPendingNet += amt;
+    }
+  }
 
   const dealIds = [...new Set([...committed.keys(), ...extrasByDeal.keys()])];
   const infoRows = await sql`
@@ -925,39 +944,46 @@ async function pendingPaymentsReport() {
   for (const did of dealIds) {
     const inc = committed.get(did) || 0;
     const paidInc = paid.get(did) || 0;
-    // Only what's actually been invoiced (raised) and not yet paid is "pending".
-    // Work that's signed but not invoiced is intentionally excluded.
-    const dueInc = Math.max(0, invoicedDue.get(did) || 0);
-    // Only extras that have been invoiced (not the still-to-bill 'pending' ones).
-    const extras = (extrasByDeal.get(did) || []).filter((e) => e.status === 'invoiced');
+    // The full outstanding on signed work (signed − paid) — both invoiced and
+    // not-yet-invoiced portions are shown; each line is tagged below.
+    const outstandingInc = Math.max(0, inc - paidInc);
+    const invUnpaidInc = Math.max(0, Math.min(invoicedDue.get(did) || 0, outstandingInc));
+    // All unpaid extras (pending + invoiced) show; tagged by their own status.
+    const extras = extrasByDeal.get(did) || [];
     const extrasNet = round2(extras.reduce((s, e) => s + (Number(e.amount) || 0), 0));
-    if (dueInc <= 0.005 && extrasNet <= 0.005) continue;
+    if (outstandingInc <= 0.005 && extrasNet <= 0.005) continue;
     const rate = rateByDeal.get(did) || 0;
     const net = (v) => round2(rate > 0 ? v / (1 + rate) : v);
-    const dueNet = net(dueInc);
+    const outstandingNet = net(outstandingInc);
+    const invUnpaidNet = net(invUnpaidInc);
     const isPo = !!poByDeal.get(did);
     const plan = planByDeal.get(did) || 'full';
 
     // Each deal becomes one or more lines, matching the labels on the sales
-    // sheet. A 50/50 deal splits into its deposit (invoiced first) and the
-    // balance; "full" and PO deals are a single line. Extras are appended as
-    // their own lines. The line amounts always sum to the deal's invoiced-due
-    // balance. The deposit cap (inc/2 − paid) means a final invoice still shows
-    // even after the deposit has been paid elsewhere (e.g. via Stripe).
+    // sheet. A 50/50 deal splits into its deposit (billed first) and the balance;
+    // "full" and PO deals are a single line. Extras are appended as their own
+    // lines. The line amounts always sum to the deal's outstanding balance.
     const lines = [];
-    if (dueNet > 0.005) {
+    if (outstandingNet > 0.005) {
       if (!isPo && plan === '5050') {
-        const depositDueInc = Math.max(0, Math.min(dueInc, inc / 2 - paidInc));
-        const depositNet = net(depositDueInc);
-        const finalNet = round2(dueNet - depositNet);
+        const depositOutstandingInc = Math.max(0, Math.min(outstandingInc, inc / 2 - paidInc));
+        const depositNet = net(depositOutstandingInc);
+        const finalNet = round2(outstandingNet - depositNet);
         if (depositNet > 0.005) lines.push({ type: 'deposit', amount: depositNet });
         if (finalNet > 0.005) lines.push({ type: 'final', amount: finalNet });
       }
-      if (lines.length === 0) lines.push({ type: isPo ? 'po' : 'full', amount: dueNet });
+      if (lines.length === 0) lines.push({ type: isPo ? 'po' : 'full', amount: outstandingNet });
+    }
+    // Tag each line invoiced vs not: the invoiced-but-unpaid amount covers the
+    // earliest lines first (deposit before final). The rest is "not invoiced".
+    let invRemain = invUnpaidNet;
+    for (const l of lines) {
+      if (invRemain >= l.amount - 0.005) { l.invoiced = true; invRemain = round2(invRemain - l.amount); }
+      else l.invoiced = false;
     }
     for (const e of extras) {
       const amt = round2(Number(e.amount) || 0);
-      if (amt > 0.005) lines.push({ type: 'extra', id: e.id, label: e.description, amount: amt, status: e.status });
+      if (amt > 0.005) lines.push({ type: 'extra', id: e.id, label: e.description, amount: amt, status: e.status, invoiced: e.status === 'invoiced' });
     }
 
     const inf = info.get(did) || {};
@@ -970,7 +996,7 @@ async function pendingPaymentsReport() {
       stage: inf.stage || null,
       committed: round2(net(inc) + extrasNet),
       paid: net(paidInc),
-      outstanding: round2(dueNet + extrasNet),
+      outstanding: round2(outstandingNet + extrasNet),
       lines,
     };
     (isPo ? po : normal).push(item);
@@ -990,13 +1016,16 @@ async function pendingPaymentsReport() {
     manual.filter((x) => x.status === 'invoiced').reduce((s, x) => s + (Number(x.amountExVat) || 0), 0),
   );
 
-  // Everything not yet invoiced, anywhere: signed CRM work still to bill PLUS
-  // imported items (PP or PO) not marked invoiced.
-  const notInvoiced = round2(crmNotInvoicedNet + (manualTotal - manualInvoiced));
+  // Invoiced & awaiting, anywhere: CRM invoiced-but-unpaid (signed work + extras)
+  // PLUS imported items marked invoiced.
+  const invoiced = round2(crmInvoicedNet + extrasInvoicedNet + manualInvoiced);
+  // Everything not yet invoiced, anywhere: signed CRM work still to bill + pending
+  // extras PLUS imported items (PP or PO) not marked invoiced.
+  const notInvoiced = round2(crmNotInvoicedNet + extrasPendingNet + (manualTotal - manualInvoiced));
 
   return {
     normal, po, manual,
-    totals: { normal: sum(normal), po: sum(po), manual: manualTotal, manualInvoiced, notInvoiced },
+    totals: { normal: sum(normal), po: sum(po), manual: manualTotal, manualInvoiced, invoiced, notInvoiced },
   };
 }
 

@@ -364,7 +364,7 @@ export function FinanceView({ onBack, onOpenDeal }) {
       {section === 'pending' && (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
-            <StatCard icon={PoundSterling} accent={BRAND.ink} label="Total Invoiced" value={formatGBP((pending?.totals?.normal || 0) + (pending?.totals?.po || 0) + (pending?.totals?.manualInvoiced || 0))} sub="Invoiced & awaiting — CRM + imports · ex-VAT (net)" />
+            <StatCard icon={PoundSterling} accent={BRAND.ink} label="Total Invoiced" value={formatGBP(pending?.totals?.invoiced || 0)} sub="Invoiced & awaiting — CRM + imports · ex-VAT (net)" />
             <StatCard icon={PoundSterling} accent="#0E7490" label="Not yet invoiced" value={formatGBP(pending?.totals?.notInvoiced || 0)} sub="Everything still to bill — signed work + imports · ex-VAT (net)" />
           </div>
           {/* Pending Payments — outstanding signed deals, split PO vs normal, plus
@@ -393,7 +393,7 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
         Pending Payments
       </h3>
       <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
-        Invoiced amounts awaiting payment — shown ex-VAT (net). Work that's signed but not yet invoiced isn't shown here. 50/50 deals show the invoiced deposit and/or final.
+        Outstanding on signed deals — shown ex-VAT (net). Each line is tagged "Not invoiced" until an invoice is raised; 50/50 deals show the deposit and final separately.
       </p>
       {!pending ? (
         <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
@@ -409,8 +409,8 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
         return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <PendingGroup
-            title="Invoiced work"
-            note="Paid on project milestones / completion"
+            title="Project work"
+            note="Billed on project milestones / completion"
             rows={pending.normal}
             total={pending.totals.normal}
             accent={BRAND.blue}
@@ -1160,6 +1160,15 @@ function PaymentBadge({ type }) {
   );
 }
 
+// Amber tag for an outstanding line that hasn't been invoiced yet.
+function NotInvoicedTag() {
+  return (
+    <span style={{ fontSize: 9, fontWeight: 700, color: '#B45309', background: '#FFFBEB', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+      Not invoiced
+    </span>
+  );
+}
+
 function PendingRow({ d, onOpenDeal }) {
   const name = d.company || d.title || 'Untitled deal';
   // Only keep the deal title as a second line when it adds something beyond the
@@ -1188,6 +1197,7 @@ function PendingRow({ d, onOpenDeal }) {
           </span>
           {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
           {single && <PaymentBadge type={single0.type} />}
+          {single && single0.invoiced === false && <NotInvoicedTag />}
           {single && single0.label && (
             <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
               {single0.label}
@@ -1210,6 +1220,7 @@ function PendingRow({ d, onOpenDeal }) {
             <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                 <PaymentBadge type={l.type} />
+                {l.invoiced === false && <NotInvoicedTag />}
                 {l.label && (
                   <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
                     {l.label}
