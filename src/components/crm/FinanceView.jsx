@@ -42,6 +42,15 @@ const monthLongLabel = (key) => {
   return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
 };
 
+// Remembers the Finance page's view state across navigation (e.g. drilling into
+// a deal and clicking Back) so it returns to the same tab / Performance toggle /
+// period and scroll position instead of resetting to the top. Module-level —
+// survives unmount within the SPA session; cleared on a full page reload.
+const financeViewMemory = {
+  section: 'income', perfSection: 'income', mode: 'month',
+  year: null, quarterKey: null, monthKey: null, scrollY: 0,
+};
+
 // Reduce a year's monthly stats (financeStats- or salesFinanceStats-shaped) into
 // the cards/chart model for the currently selected period. Shared by the Income
 // and Sales breakdowns so they render identically.
@@ -72,13 +81,37 @@ export function FinanceView({ onBack, onOpenDeal }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const now = new Date();
-  const [section, setSection] = useState('income'); // 'income' | 'pending' | 'vat'
-  const [perfSection, setPerfSection] = useState('income'); // Performance toggle: 'income' | 'sales'
-  const [mode, setMode] = useState('month'); // 'month' | 'quarter' | 'year'
-  const [year, setYear] = useState(() => now.getFullYear());
-  const [quarterKey, setQuarterKey] = useState(() => recentQuarters(1)[0]); // 'YYYY-Qn'
-  const [monthKey, setMonthKey] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`); // 'YYYY-MM'
+  const [section, setSection] = useState(financeViewMemory.section); // 'income' | 'pending' | 'vat'
+  const [perfSection, setPerfSection] = useState(financeViewMemory.perfSection); // Performance toggle: 'income' | 'sales' | 'salesvspp'
+  const [mode, setMode] = useState(financeViewMemory.mode); // 'month' | 'quarter' | 'year'
+  const [year, setYear] = useState(() => financeViewMemory.year ?? now.getFullYear());
+  const [quarterKey, setQuarterKey] = useState(() => financeViewMemory.quarterKey ?? recentQuarters(1)[0]); // 'YYYY-Qn'
+  const [monthKey, setMonthKey] = useState(() => financeViewMemory.monthKey ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`); // 'YYYY-MM'
   const [loading, setLoading] = useState(true);
+
+  // Persist the view state so a round-trip into a deal (and Back) lands here again.
+  useEffect(() => {
+    Object.assign(financeViewMemory, { section, perfSection, mode, year, quarterKey, monthKey });
+  }, [section, perfSection, mode, year, quarterKey, monthKey]);
+
+  // Restore scroll on mount (re-asserting a few times as async content settles),
+  // and save it on unmount — the moment just before navigating into a deal. Any
+  // real user input cancels the restore so we never fight their scrolling.
+  useEffect(() => {
+    const target = financeViewMemory.scrollY;
+    let timers = target > 0 ? [0, 60, 160, 320, 600].map((d) => setTimeout(() => window.scrollTo(0, target), d)) : [];
+    const cancel = () => { timers.forEach(clearTimeout); timers = []; };
+    window.addEventListener('wheel', cancel, { passive: true, once: true });
+    window.addEventListener('touchstart', cancel, { passive: true, once: true });
+    window.addEventListener('keydown', cancel, { once: true });
+    return () => {
+      cancel();
+      window.removeEventListener('wheel', cancel);
+      window.removeEventListener('touchstart', cancel);
+      window.removeEventListener('keydown', cancel);
+      financeViewMemory.scrollY = window.scrollY;
+    };
+  }, []);
 
   // Which year's data we need (a chosen quarter / month dictates its own year).
   const qYear = Number(quarterKey.split('-Q')[0]);
