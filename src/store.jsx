@@ -915,9 +915,9 @@ export function StoreProvider({ children }) {
         return data;
       }).catch(() => null);
     },
-    // Import manual pending payments (Live Sales Sheet "PP's"); refresh after.
-    importPendingPayments(rows, mode = 'replace') {
-      return api.post('/api/crm/stats/pending-manual', { rows, mode }).then((data) => {
+    // Import manual pending payments / POs (Live Sales Sheet); refresh after.
+    importPendingPayments(rows, mode = 'replace', kind = 'pp') {
+      return api.post('/api/crm/stats/pending-manual', { rows, mode, kind }).then((data) => {
         api.get('/api/crm/stats/pending').then((p) => setState(s => ({ ...s, pendingPayments: p || null }))).catch(() => {});
         return data;
       });

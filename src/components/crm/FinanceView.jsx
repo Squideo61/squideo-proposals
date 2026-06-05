@@ -396,7 +396,12 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
       </p>
       {!pending ? (
         <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
-      ) : (
+      ) : (() => {
+        const manual = pending.manual || [];
+        const pps = manual.filter((r) => r.kind !== 'po');
+        const pos = manual.filter((r) => r.kind === 'po');
+        const sumNet = (arr) => arr.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
+        return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <PendingGroup
             title="Invoiced work"
@@ -415,15 +420,29 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
             onOpenDeal={onOpenDeal}
           />
           <ManualPendingGroup
-            rows={pending.manual || []}
-            total={pending.totals?.manual || 0}
+            title="Imported (Live Sales Sheet)"
+            note="Outstanding PP's from your sheet"
+            kind="pp"
+            rows={pps}
+            total={sumNet(pps)}
+            actions={actions}
+            onChanged={onChanged}
+            isMobile={isMobile}
+          />
+          <ManualPendingGroup
+            title="Imported POs (Live Sales Sheet)"
+            note="Outstanding purchase orders from your sheet"
+            kind="po"
+            accent="#8B5CF6"
+            rows={pos}
+            total={sumNet(pos)}
             actions={actions}
             onChanged={onChanged}
             isMobile={isMobile}
           />
         </div>
-      )}
-      <PendingImportPanel actions={actions} count={(pending?.manual || []).length} isMobile={isMobile} />
+        );
+      })()}
     </div>
   );
 }
@@ -435,17 +454,18 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
 const MANUAL_PP_COLS = '1fr 92px 80px 92px 58px';
 const MANUAL_PP_COLS_M = '1fr 64px 72px 52px';
 
-function ManualPendingGroup({ rows, total, actions, onChanged, isMobile }) {
+function ManualPendingGroup({ title, note, kind = 'pp', accent = '#0E7490', rows, total, actions, onChanged, isMobile }) {
   const cols = isMobile ? MANUAL_PP_COLS_M : MANUAL_PP_COLS;
   const vatTotal = rows.reduce((s, r) => s + (Number(r.vat) || 0), 0);
   const grossTotal = total + vatTotal;
+  const noun = kind === 'po' ? 'PO' : 'PP';
 
   const markPaid = (r, method) => {
     if (!actions) return;
     actions.markPendingPaymentPaid(r.id, true, method).then(() => {
       if (onChanged) onChanged();
       actions.recordUndo && actions.recordUndo({
-        label: `Mark ${r.company || 'PP'} paid (${methodLabel(method) || 'paid'})`,
+        label: `Mark ${r.company || noun} paid (${methodLabel(method) || 'paid'})`,
         undo: () => actions.markPendingPaymentPaid(r.id, false).then(() => onChanged && onChanged()),
         redo: () => actions.markPendingPaymentPaid(r.id, true, method).then(() => onChanged && onChanged()),
       });
@@ -456,7 +476,7 @@ function ManualPendingGroup({ rows, total, actions, onChanged, isMobile }) {
     if (window.confirm(`Remove "${r.company || r.description || 'this item'}" from the list? (Use this only for mistakes — it is not added to income.)`)) {
       actions.deletePendingPayment(r.id).then(() => {
         actions.recordUndo && actions.recordUndo({
-          label: `Remove ${r.company || 'PP'}`,
+          label: `Remove ${r.company || noun}`,
           undo: () => actions.restoreRecord(r.id).then(() => onChanged && onChanged()),
           redo: () => actions.deletePendingPayment(r.id).then(() => onChanged && onChanged()),
         });
@@ -466,12 +486,12 @@ function ManualPendingGroup({ rows, total, actions, onChanged, isMobile }) {
 
   return (
     <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '3px solid #0E7490' }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '3px solid ' + accent }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Imported (Live Sales Sheet)</span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{title}</span>
           <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
         </div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Outstanding from your sheet · {rows.length} {rows.length === 1 ? 'item' : 'items'} · ✓ marks paid (→ income), ✕ removes</div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{note} · {rows.length} {rows.length === 1 ? 'item' : 'items'} · ✓ marks paid (→ income), ✕ removes</div>
       </div>
       {rows.length === 0 ? (
         <div style={{ padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>Nothing outstanding — all collected.</div>
@@ -479,7 +499,7 @@ function ManualPendingGroup({ rows, total, actions, onChanged, isMobile }) {
         <>
           {/* Column header — keeps the VAT column visible at all times. */}
           <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '6px 14px', background: BRAND.paper, borderBottom: '1px solid ' + BRAND.border, fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-            <span>Customer / item</span>
+            <span>{kind === 'po' ? 'Customer / PO' : 'Customer / item'}</span>
             <span style={{ textAlign: 'right' }}>Net</span>
             <span style={{ textAlign: 'right' }}>VAT</span>
             {!isMobile && <span style={{ textAlign: 'right' }}>Total</span>}
@@ -500,6 +520,7 @@ function ManualPendingGroup({ rows, total, actions, onChanged, isMobile }) {
           </div>
         </>
       )}
+      <PendingImportPanel actions={actions} kind={kind} count={rows.length} isMobile={isMobile} />
     </div>
   );
 }
@@ -508,7 +529,7 @@ function ManualPendingRow({ r, cols, isMobile, onPaid, onRemove }) {
   const [picking, setPicking] = useState(false);
   const net = Number(r.amountExVat) || 0;
   const vat = Number(r.vat) || 0;
-  const subtitle = [r.invoiceType, r.description, r.note].filter(Boolean).join(' · ');
+  const subtitle = [r.invoiceType, r.poNumber, r.description, r.note].filter(Boolean).join(' · ');
   const pay = (method) => { setPicking(false); onPaid(method); };
   return (
     <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '5px 14px' }}>
@@ -590,25 +611,52 @@ function parsePendingPaste(text) {
       note: c[6] || '',
     };
     if (!row.company && !row.description && !row.amountExVat) continue;
+    out.push({ ...row, kind: 'pp' });
+  }
+  return out;
+}
+
+// Parse pasted rows from the sheet's "PO's" tab (TAB-separated). Column order:
+// Type, Description, Project, Quote, PO Number, VAT, Confirmed Date, PO Received,
+// Invoice Sent, Invoice, Expected pay date.
+function parsePoPaste(text) {
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const c = line.split('\t').map((x) => x.trim());
+    if ((c[0] || '').toLowerCase() === 'type') continue; // header
+    const note = [c[6] && ('Confirmed ' + c[6]), c[10] && ('Expected ' + c[10])].filter(Boolean).join(' · ');
+    const row = {
+      kind: 'po',
+      invoiceType: c[0] || '',
+      description: c[1] || '',
+      company: c[2] || '',
+      amountExVat: parsePpMoney(c[3]),
+      poNumber: c[4] || '',
+      vat: parsePpMoney(c[5]),
+      note,
+    };
+    if (!row.company && !row.description && !row.amountExVat) continue;
     out.push(row);
   }
   return out;
 }
 
-function PendingImportPanel({ actions, count, isMobile }) {
+function PendingImportPanel({ actions, count, isMobile, kind = 'pp' }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [mode, setMode] = useState('replace');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  const isPo = kind === 'po';
 
-  const parsed = useMemo(() => parsePendingPaste(text), [text]);
+  const parsed = useMemo(() => (isPo ? parsePoPaste(text) : parsePendingPaste(text)), [text, isPo]);
 
   const submit = async () => {
     if (!parsed.length || busy || !actions) return;
     setBusy(true); setResult(null);
     try {
-      const data = await actions.importPendingPayments(parsed, mode);
+      const data = await actions.importPendingPayments(parsed, mode, kind);
       setResult({ ok: true, saved: data?.saved ?? parsed.length });
       setText('');
     } catch {
@@ -619,7 +667,7 @@ function PendingImportPanel({ actions, count, isMobile }) {
   };
 
   return (
-    <div style={{ marginTop: 16, borderTop: '1px solid ' + BRAND.border, paddingTop: 14 }}>
+    <div style={{ margin: '0 14px 0', borderTop: '1px solid ' + BRAND.border, padding: '12px 0' }}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -627,22 +675,28 @@ function PendingImportPanel({ actions, count, isMobile }) {
       >
         <ChevronDown size={16} color={BRAND.muted} style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s' }} />
         <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          Import pending payments from the sheet
+          {isPo ? 'Import POs from the sheet' : 'Import pending payments from the sheet'}
         </span>
-        {count > 0 && <span style={{ fontSize: 12, color: BRAND.muted, fontWeight: 500 }}>· {count} imported</span>}
       </button>
 
       {open && (
         <div style={{ marginTop: 14 }}>
           <p style={{ margin: '0 0 10px', fontSize: 12, color: BRAND.muted }}>
-            Paste the rows from the sheet's <strong>PP's</strong> tab (tab separated, in sheet order):
-            <strong> Invoice Type, Description, Company, Price Exc VAT, Payment Method, VAT, Order Date</strong>. A header row is ignored.
-            <strong> Replace all</strong> swaps the whole imported list for what you paste.
+            {isPo ? (
+              <>Paste the rows from the sheet's <strong>PO's</strong> tab (tab separated, in sheet order):
+              <strong> Type, Description, Project, Quote, PO Number, VAT, Confirmed Date, PO Received, Invoice Sent, Invoice, Expected pay date</strong>. A header row is ignored.</>
+            ) : (
+              <>Paste the rows from the sheet's <strong>PP's</strong> tab (tab separated, in sheet order):
+              <strong> Invoice Type, Description, Company, Price Exc VAT, Payment Method, VAT, Order Date</strong>. A header row is ignored.</>
+            )}
+            <strong> Replace all</strong> swaps the whole imported {isPo ? 'PO' : 'PP'} list for what you paste.
           </p>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder={'Final\t50% Final\tHilary Maxwell - GO Girls\t410.00\tPP\t82.00\t…'}
+            placeholder={isPo
+              ? 'PO Full\tLLR Video #9\t#9 Somerset Safeguarding\t255.00\t40051210\t51.00\t…'
+              : 'Final\t50% Final\tHilary Maxwell - GO Girls\t410.00\tPP\t82.00\t…'}
             rows={8}
             style={{ width: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13, fontFamily: 'monospace', resize: 'vertical' }}
           />

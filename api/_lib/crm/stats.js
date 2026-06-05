@@ -190,6 +190,18 @@ const MANUAL_PP_SEED = [
   ['Xantaro - XT3Lab', 'Full up front', '90s vid + VO + thumb + subs', 2015.00, 403.00, 'Invoiced', ''],
 ];
 
+// Purchase orders from the Live Sales Sheet "PO's" tab. [company(project), type,
+// description, amountExVat, vat, poNumber, note]. Quotes sum to £30,133.32 — the
+// sheet's "Total Owed". Stored in the same table with kind='po'.
+const MANUAL_PO_SEED = [
+  ['#9 Somerset Safeguarding LLR Variant', 'PO Full', 'LLR Video #9', 255.00, 51.00, '40051210', 'Confirmed 06/01/2026 · PO received 23/01/26'],
+  ['Ministry of Justice - (Invoice to Practice Plus Group - NHS)', 'PO Full', '16mins', 18333.33, 3666.00, 'Pending PO', 'Confirmed 17/02/26'],
+  ['#12 Torbay and Devon Safeguarding Adults LLR Variant', 'PO Full', 'LLR #12', 255.00, 51.00, 'Pending PO doc for invoice', 'Confirmed 18/03/2026'],
+  ['Sandip REVIVAL', 'Payment 1/3', '8 mins of content', 3763.33, 752.67, 'Pending PO', 'Confirmed 13/04/26'],
+  ['Sandip REVIVAL', 'Payment 2/3', '8 mins of content', 3763.33, 752.67, 'Pending PO', 'Confirmed 13/04/26'],
+  ['Sandip REVIVAL', 'Payment 3/3', '8 mins of content', 3763.33, 752.67, 'Pending PO', 'Confirmed 13/04/26'],
+];
+
 let manualPpEnsured = null;
 function ensureManualPendingPayments() {
   if (manualPpEnsured) return manualPpEnsured;
@@ -209,17 +221,30 @@ function ensureManualPendingPayments() {
         sort_order     INT,
         created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
-    // Older tables (seeded before mark-as-paid) need the status/paid columns.
+    // Older tables (seeded before mark-as-paid / PO support) need extra columns.
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'`;
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`;
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS paid_method TEXT`;
+    await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'pp'`;
+    await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS po_number TEXT`;
     const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM manual_pending_payments`;
     if (count === 0) {
       let i = 0;
       for (const [company, invoiceType, description, amount, vat, method, note] of MANUAL_PP_SEED) {
         await sql`
-          INSERT INTO manual_pending_payments (id, company, invoice_type, description, amount_ex_vat, vat, payment_method, note, sort_order)
-          VALUES (${makeId('mpp')}, ${company}, ${invoiceType}, ${description}, ${amount}, ${vat}, ${method}, ${note || null}, ${i})`;
+          INSERT INTO manual_pending_payments (id, company, invoice_type, description, amount_ex_vat, vat, payment_method, note, sort_order, kind)
+          VALUES (${makeId('mpp')}, ${company}, ${invoiceType}, ${description}, ${amount}, ${vat}, ${method}, ${note || null}, ${i}, 'pp')`;
+        i += 1;
+      }
+    }
+    // POs seed independently (the PP seed above already ran on a prior deploy).
+    const [{ poCount }] = await sql`SELECT COUNT(*)::int AS "poCount" FROM manual_pending_payments WHERE kind = 'po'`;
+    if (poCount === 0) {
+      let i = 0;
+      for (const [company, invoiceType, description, amount, vat, poNumber, note] of MANUAL_PO_SEED) {
+        await sql`
+          INSERT INTO manual_pending_payments (id, company, invoice_type, description, amount_ex_vat, vat, note, po_number, sort_order, kind)
+          VALUES (${makeId('mpo')}, ${company}, ${invoiceType}, ${description}, ${amount}, ${vat}, ${note || null}, ${poNumber || null}, ${i}, 'po')`;
         i += 1;
       }
     }
@@ -239,6 +264,8 @@ function serialiseManualPP(r) {
     note: r.note || null,
     status: r.status || 'pending',
     paidAt: r.paid_at || null,
+    kind: r.kind || 'pp',
+    poNumber: r.po_number || null,
   };
 }
 
@@ -842,20 +869,24 @@ async function pendingManualRoute(req, res, action) {
   if (req.method === 'POST' || req.method === 'PUT') {
     const body = req.body || {};
     const incoming = Array.isArray(body.rows) ? body.rows : [];
-    if (body.mode === 'replace') await sql`DELETE FROM manual_pending_payments`;
+    // Imports are single-kind; replace only wipes that kind so POs and PPs don't
+    // clobber each other.
+    const importKind = body.kind === 'po' ? 'po' : 'pp';
+    if (body.mode === 'replace') await sql`DELETE FROM manual_pending_payments WHERE kind = ${importKind}`;
     const startOrder = body.mode === 'replace'
       ? 0
-      : ((await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM manual_pending_payments`)[0].m + 1);
+      : ((await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM manual_pending_payments WHERE kind = ${importKind}`)[0].m + 1);
     let i = 0;
     for (const r of incoming) {
       const company = trimOrNull(r?.company);
       const description = trimOrNull(r?.description);
       const amount = numberOrNull(r?.amountExVat) || 0;
       if (!company && !description && !amount) continue; // skip blank rows
+      const kind = importKind;
       await sql`
-        INSERT INTO manual_pending_payments (id, company, invoice_type, description, amount_ex_vat, vat, payment_method, note, sort_order)
-        VALUES (${makeId('mpp')}, ${company}, ${trimOrNull(r?.invoiceType)}, ${description},
-                ${amount}, ${numberOrNull(r?.vat) || 0}, ${trimOrNull(r?.paymentMethod)}, ${trimOrNull(r?.note)}, ${startOrder + i})`;
+        INSERT INTO manual_pending_payments (id, company, invoice_type, description, amount_ex_vat, vat, payment_method, note, sort_order, kind, po_number)
+        VALUES (${makeId(kind === 'po' ? 'mpo' : 'mpp')}, ${company}, ${trimOrNull(r?.invoiceType)}, ${description},
+                ${amount}, ${numberOrNull(r?.vat) || 0}, ${trimOrNull(r?.paymentMethod)}, ${trimOrNull(r?.note)}, ${startOrder + i}, ${kind}, ${trimOrNull(r?.poNumber)})`;
       i += 1;
     }
     return res.status(200).json({ saved: i, rows: await fetchManualPending() });
