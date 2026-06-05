@@ -549,7 +549,7 @@ function ImportFromXeroModal({ onClose, onImported }) {
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} overflow="visible">
       <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Import from Xero</h2>
       <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted }}>
         Find a Xero contact to create the organisation here (linked to Xero) and, optionally, a contact person.
