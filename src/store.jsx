@@ -942,6 +942,11 @@ export function StoreProvider({ children }) {
     markPendingPaymentPaid(id, paid = true, method = null) {
       return api.patch('/api/crm/stats/pending-manual/' + id, { paid, method });
     },
+    // Mark an imported pending payment invoiced (→ the invoiced/awaiting list) or
+    // back to pending. The caller refreshes the pending list.
+    markPendingPaymentInvoiced(id, invoiced = true) {
+      return api.patch('/api/crm/stats/pending-manual/' + id, { invoiced });
+    },
     // Editable monthly targets (shared with the settings row). Optimistic.
     // finance = Income performance; sales = Sales performance.
     saveFinanceTargets(list) {

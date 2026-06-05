@@ -399,8 +399,12 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
         <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
       ) : (() => {
         const manual = pending.manual || [];
-        const pps = manual.filter((r) => r.kind !== 'po');
-        const pos = manual.filter((r) => r.kind === 'po');
+        // Imported rows you've marked invoiced sit on the invoiced/awaiting list;
+        // the rest stay in the not-yet-invoiced "Imported" groups.
+        const invoicedManual = manual.filter((r) => r.status === 'invoiced');
+        const pendingManual = manual.filter((r) => r.status !== 'invoiced');
+        const pps = pendingManual.filter((r) => r.kind !== 'po');
+        const pos = pendingManual.filter((r) => r.kind === 'po');
         const sumNet = (arr) => arr.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
         return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -412,6 +416,20 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
             accent={BRAND.blue}
             onOpenDeal={onOpenDeal}
           />
+          {invoicedManual.length > 0 && (
+            <ManualPendingGroup
+              title="Invoiced (Live Sales Sheet)"
+              note="Imported items you've invoiced — awaiting payment"
+              kind="pp"
+              variant="invoiced"
+              accent={BRAND.blue}
+              rows={invoicedManual}
+              total={sumNet(invoicedManual)}
+              actions={actions}
+              onChanged={onChanged}
+              isMobile={isMobile}
+            />
+          )}
           <PendingGroup
             title="Purchase Orders"
             note="Paid regardless of project stage"
@@ -452,14 +470,28 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
 // CRM's own signed deals. Dense, spreadsheet-style rows with an always-on VAT
 // column. Each can be marked paid (→ flows into Income) or removed.
 // Grid: item | Net | VAT | Total | actions.
-const MANUAL_PP_COLS = '1fr 92px 80px 92px 58px';
-const MANUAL_PP_COLS_M = '1fr 64px 72px 52px';
+const MANUAL_PP_COLS = '1fr 92px 80px 92px 92px';
+const MANUAL_PP_COLS_M = '1fr 64px 72px 76px';
 
-function ManualPendingGroup({ title, note, kind = 'pp', accent = '#0E7490', rows, total, actions, onChanged, isMobile }) {
+function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', accent = '#0E7490', rows, total, actions, onChanged, isMobile }) {
   const cols = isMobile ? MANUAL_PP_COLS_M : MANUAL_PP_COLS;
   const vatTotal = rows.reduce((s, r) => s + (Number(r.vat) || 0), 0);
   const grossTotal = total + vatTotal;
   const noun = kind === 'po' ? 'PO' : 'PP';
+  const isInvoicedGroup = variant === 'invoiced';
+
+  // Move a row between the not-yet-invoiced and invoiced lists. Undoable.
+  const setInvoiced = (r, invoiced) => {
+    if (!actions) return;
+    actions.markPendingPaymentInvoiced(r.id, invoiced).then(() => {
+      if (onChanged) onChanged();
+      actions.recordUndo && actions.recordUndo({
+        label: invoiced ? `Mark ${r.company || noun} invoiced` : `Move ${r.company || noun} back to pending`,
+        undo: () => actions.markPendingPaymentInvoiced(r.id, !invoiced).then(() => onChanged && onChanged()),
+        redo: () => actions.markPendingPaymentInvoiced(r.id, invoiced).then(() => onChanged && onChanged()),
+      });
+    });
+  };
 
   const markPaid = (r, method) => {
     if (!actions) return;
@@ -467,7 +499,10 @@ function ManualPendingGroup({ title, note, kind = 'pp', accent = '#0E7490', rows
       if (onChanged) onChanged();
       actions.recordUndo && actions.recordUndo({
         label: `Mark ${r.company || noun} paid (${methodLabel(method) || 'paid'})`,
-        undo: () => actions.markPendingPaymentPaid(r.id, false).then(() => onChanged && onChanged()),
+        // Restore to wherever it came from — the invoiced list or pending.
+        undo: () => (isInvoicedGroup
+          ? actions.markPendingPaymentInvoiced(r.id, true)
+          : actions.markPendingPaymentPaid(r.id, false)).then(() => onChanged && onChanged()),
         redo: () => actions.markPendingPaymentPaid(r.id, true, method).then(() => onChanged && onChanged()),
       });
     });
@@ -492,10 +527,10 @@ function ManualPendingGroup({ title, note, kind = 'pp', accent = '#0E7490', rows
           <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{title}</span>
           <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
         </div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{note} · {rows.length} {rows.length === 1 ? 'item' : 'items'} · ✓ marks paid (→ income), ✕ removes</div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{note} · {rows.length} {rows.length === 1 ? 'item' : 'items'} · {isInvoicedGroup ? '✓ marks paid (→ income), ↩ back to pending, ✕ removes' : 'Inv marks invoiced, ✓ marks paid (→ income), ✕ removes'}</div>
       </div>
       {rows.length === 0 ? (
-        <div style={{ padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>Nothing outstanding — all collected.</div>
+        <div style={{ padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>{isInvoicedGroup ? 'Nothing invoiced yet.' : 'Nothing outstanding — all collected.'}</div>
       ) : (
         <>
           {/* Column header — keeps the VAT column visible at all times. */}
@@ -508,7 +543,17 @@ function ManualPendingGroup({ title, note, kind = 'pp', accent = '#0E7490', rows
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {rows.map((r) => (
-              <ManualPendingRow key={r.id} r={r} cols={cols} isMobile={isMobile} onPaid={(method) => markPaid(r, method)} onRemove={() => remove(r)} />
+              <ManualPendingRow
+                key={r.id}
+                r={r}
+                cols={cols}
+                isMobile={isMobile}
+                variant={variant}
+                onPaid={(method) => markPaid(r, method)}
+                onInvoice={() => setInvoiced(r, true)}
+                onUninvoice={() => setInvoiced(r, false)}
+                onRemove={() => remove(r)}
+              />
             ))}
           </div>
           {/* Net / VAT / Total footer mirroring the sheet. */}
@@ -521,13 +566,14 @@ function ManualPendingGroup({ title, note, kind = 'pp', accent = '#0E7490', rows
           </div>
         </>
       )}
-      <PendingImportPanel actions={actions} kind={kind} count={rows.length} isMobile={isMobile} />
+      {!isInvoicedGroup && <PendingImportPanel actions={actions} kind={kind} count={rows.length} isMobile={isMobile} />}
     </div>
   );
 }
 
-function ManualPendingRow({ r, cols, isMobile, onPaid, onRemove }) {
+function ManualPendingRow({ r, cols, isMobile, variant = 'pending', onPaid, onInvoice, onUninvoice, onRemove }) {
   const [picking, setPicking] = useState(false);
+  const isInvoicedGroup = variant === 'invoiced';
   const net = Number(r.amountExVat) || 0;
   const vat = Number(r.vat) || 0;
   const subtitle = [r.invoiceType, r.poNumber, r.description, r.note].filter(Boolean).join(' · ');
@@ -564,6 +610,29 @@ function ManualPendingRow({ r, cols, isMobile, onPaid, onRemove }) {
           </>
         ) : (
           <>
+            {isInvoicedGroup ? (
+              <button
+                type="button"
+                onClick={onUninvoice}
+                title="Move back to pending (not invoiced)"
+                style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 14, lineHeight: 1, padding: '2px 4px' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = BRAND.ink; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
+              >
+                ↩
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onInvoice}
+                title="Mark invoiced — moves to the invoiced list"
+                style={{ flexShrink: 0, border: '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer', color: BRAND.muted, fontSize: 10, fontWeight: 700, lineHeight: 1, padding: '3px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3 }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = BRAND.blue; e.currentTarget.style.borderColor = BRAND.blue; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; e.currentTarget.style.borderColor = BRAND.border; }}
+              >
+                Inv
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setPicking(true)}

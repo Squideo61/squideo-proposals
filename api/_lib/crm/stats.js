@@ -898,10 +898,24 @@ async function pendingManualRoute(req, res, action) {
   }
 
   // Mark a row paid (→ flows into Income) or back to pending. { paid, method }.
+  // Or mark it invoiced (raised an invoice — moves it to the invoiced/awaiting
+  // list) / back to pending: { invoiced }. Invoiced is distinct from paid.
   if (req.method === 'PATCH') {
     if (!action) return res.status(400).json({ error: 'id required' });
-    const paid = (req.body || {}).paid !== false; // default → paid
-    const method = trimOrNull((req.body || {}).method);
+    const body = req.body || {};
+    if ('invoiced' in body) {
+      const invoiced = body.invoiced !== false; // default → invoiced
+      // Never touch a row that's already paid; toggling only moves between
+      // pending and invoiced, clearing any stale paid stamp.
+      await sql`
+        UPDATE manual_pending_payments
+           SET status = ${invoiced ? 'invoiced' : 'pending'},
+               paid_at = NULL, paid_method = NULL
+         WHERE id = ${action} AND status <> 'paid'`;
+      return res.status(200).json({ ok: true, rows: await fetchManualPending() });
+    }
+    const paid = body.paid !== false; // default → paid
+    const method = trimOrNull(body.method);
     await sql`
       UPDATE manual_pending_payments
          SET status = ${paid ? 'paid' : 'pending'},
