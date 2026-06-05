@@ -172,6 +172,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
   // producers to watch first. Captured via a simple prompt; cleared with a blank.
   const overviewUrl = deal.overviewVideoUrl || null;
   const overviewEmbedSrc = useMemo(() => toEmbedSrc(overviewUrl), [overviewUrl]);
+  const [overviewOpen, setOverviewOpen] = useState(false);
   const editOverview = async () => {
     const input = window.prompt(
       'Paste a project overview video link (e.g. Loom) for producers to watch first.\nLeave blank to remove.',
@@ -284,15 +285,27 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
               ) : undefined}
             >
               {overviewEmbedSrc ? (
-                <div style={{ position: 'relative', paddingTop: '56.25%', borderRadius: 8, overflow: 'hidden', background: '#000' }}>
-                  <iframe
-                    src={overviewEmbedSrc}
-                    title="Project overview video"
-                    allow="autoplay; fullscreen; picture-in-picture"
-                    allowFullScreen
-                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
-                  />
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setOverviewOpen(true)}
+                  title="Play the project overview video"
+                  style={{ display: 'block', width: '50%', maxWidth: 340, margin: '4px auto', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' }}
+                >
+                  <div style={{ position: 'relative', paddingTop: '56.25%', borderRadius: 8, overflow: 'hidden', background: '#000' }}>
+                    {/* Non-interactive poster frame; the overlay below opens the modal player. */}
+                    <iframe
+                      src={overviewEmbedSrc}
+                      title="Project overview preview"
+                      tabIndex={-1}
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, pointerEvents: 'none' }}
+                    />
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.18)' }}>
+                      <span style={{ width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.25)' }}>
+                        <Play size={20} color="#0F2A3D" fill="#0F2A3D" style={{ marginLeft: 2 }} />
+                      </span>
+                    </div>
+                  </div>
+                </button>
               ) : overviewUrl ? (
                 <a href={overviewUrl} target="_blank" rel="noopener noreferrer" className="btn"
                   style={{ textDecoration: 'none', background: '#6D28D9', borderColor: '#6D28D9' }}>
@@ -308,6 +321,20 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
               )}
             </Card>
           </div>
+        )}
+
+        {overviewOpen && overviewEmbedSrc && (
+          <Modal onClose={() => setOverviewOpen(false)} maxWidth={960} overflow="hidden">
+            <div style={{ position: 'relative', paddingTop: '56.25%', borderRadius: 8, overflow: 'hidden', background: '#000' }}>
+              <iframe
+                src={overviewEmbedSrc + (overviewEmbedSrc.includes('?') ? '&' : '?') + 'autoplay=1'}
+                title="Project overview video"
+                allow="autoplay; fullscreen; picture-in-picture"
+                allowFullScreen
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
+              />
+            </div>
+          </Modal>
         )}
 
         {!productionOnly && (<>
