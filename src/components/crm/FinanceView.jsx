@@ -402,7 +402,9 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
         const manual = pending.manual || [];
         // Imported rows you've marked invoiced sit on the invoiced/awaiting list;
         // the rest stay in the not-yet-invoiced "Imported" groups.
-        const invoicedManual = manual.filter((r) => r.status === 'invoiced');
+        // The single Invoiced list = imported items you've invoiced + company
+        // invoices not tied to a deal (tagged "not linked to a deal").
+        const invoicedManual = [...manual.filter((r) => r.status === 'invoiced'), ...(pending.companyInvoices || [])];
         const pendingManual = manual.filter((r) => r.status !== 'invoiced');
         const pps = pendingManual.filter((r) => r.kind !== 'po');
         const pos = pendingManual.filter((r) => r.kind === 'po');
@@ -411,8 +413,8 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {invoicedManual.length > 0 && (
             <ManualPendingGroup
-              title="Invoiced (Live Sales Sheet)"
-              note="Imported items you've invoiced — awaiting payment"
+              title="Invoiced — awaiting payment"
+              note="Invoiced items awaiting payment"
               kind="pp"
               variant="invoiced"
               accent={BRAND.blue}
@@ -422,16 +424,6 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
               onChanged={onChanged}
               onOpenDeal={onOpenDeal}
               isMobile={isMobile}
-            />
-          )}
-          {(pending.companyInvoices || []).length > 0 && (
-            <PendingGroup
-              title="Other invoices"
-              note="Company invoices not tied to a deal — awaiting payment"
-              rows={pending.companyInvoices}
-              total={pending.totals.companyInvoices || 0}
-              accent={BRAND.blue}
-              onOpenDeal={onOpenCompany}
             />
           )}
           <PendingGroup
@@ -598,6 +590,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
   const [picking, setPicking] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const isInvoicedGroup = variant === 'invoiced';
+  const isCompanyInvoice = r.kind === 'company-invoice';
   const linked = !!r.dealId;
   const net = Number(r.amountExVat) || 0;
   const vat = Number(r.vat) || 0;
@@ -609,7 +602,11 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
     <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '5px 14px' }}>
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          {linked ? (
+          {isCompanyInvoice ? (
+            <span title="A company invoice — not linked to a deal" style={{ fontSize: 9, fontWeight: 700, color: '#B45309', background: '#FFFBEB', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              Not linked to a deal
+            </span>
+          ) : linked ? (
             <span onClick={openDeal} title={onOpenDeal ? 'Open linked deal' : 'Linked to a CRM deal'}
               style={{ cursor: onOpenDeal ? 'pointer' : 'default', fontSize: 9, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
               Linked
@@ -622,7 +619,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
           <span onClick={openDeal} style={{ fontSize: 13, fontWeight: 600, color: (linked && onOpenDeal) ? BRAND.blue : BRAND.ink, cursor: (linked && onOpenDeal) ? 'pointer' : 'default', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {r.company || 'Unattributed'}
           </span>
-          {onLink && (
+          {onLink && !isCompanyInvoice && (
             <button type="button" onClick={() => setLinkOpen((v) => !v)} title={linked ? 'Change or remove the deal link' : 'Link to a CRM deal'}
               style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 11, lineHeight: 1, padding: '1px 3px', textDecoration: 'underline' }}>
               {linked ? 'edit' : 'link'}
@@ -637,7 +634,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
       <div style={{ textAlign: 'right', fontSize: 13, color: vat > 0 ? VAT_COLOR : BRAND.muted }}>{formatGBP(vat)}</div>
       {!isMobile && <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{formatGBP(net + vat)}</div>}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-        {picking ? (
+        {isCompanyInvoice ? null : picking ? (
           <>
             {/* Choose how it was paid — both add it to income. */}
             <button type="button" onClick={() => pay('stripe')} title="Mark paid via Stripe"

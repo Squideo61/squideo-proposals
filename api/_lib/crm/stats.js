@@ -986,9 +986,11 @@ async function pendingPaymentsReport() {
 
   // Company-level invoices (raised against a company, not a signed deal — e.g. an
   // uploaded ad-hoc invoice). Issued-but-unpaid only; these are invoiced & awaiting.
+  // Shaped like an imported invoiced row so they sit in the same Invoiced list,
+  // tagged 'company-invoice' (shown as "not linked to a deal").
   const companyInvRows = await sql`
     SELECT mi.id, mi.company_id, c.name AS company, mi.invoice_number,
-           mi.amount, mi.subtotal_ex_vat
+           mi.amount, mi.subtotal_ex_vat, mi.tax_amount
       FROM manual_invoices mi
       LEFT JOIN companies c ON c.id = mi.company_id
       LEFT JOIN proposals pr ON pr.id = mi.proposal_id
@@ -1000,20 +1002,24 @@ async function pendingPaymentsReport() {
   for (const r of companyInvRows) {
     const net = r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : (Number(r.amount) || 0);
     if (net <= 0.005) continue;
+    const vat = r.tax_amount != null ? Number(r.tax_amount) : Math.max(0, (Number(r.amount) || 0) - net);
     companyInvoicedNet += net;
     companyInvoices.push({
-      dealId: null,
-      companyId: r.company_id,
+      id: r.id,
+      kind: 'company-invoice',
       company: r.company || 'Unattributed',
-      title: r.company || 'Company invoice',
-      number: null,
-      committed: round2(net),
-      paid: 0,
-      outstanding: round2(net),
-      lines: [{ type: 'invoice', amount: round2(net), invoiced: true, label: r.invoice_number || null }],
+      companyId: r.company_id,
+      invoiceType: 'Invoice',
+      description: r.invoice_number || null,
+      poNumber: null,
+      note: null,
+      amountExVat: round2(net),
+      vat: round2(vat),
+      status: 'invoiced',
+      dealId: null,
     });
   }
-  companyInvoices.sort(byOutstanding);
+  companyInvoices.sort((a, b) => (Number(b.amountExVat) || 0) - (Number(a.amountExVat) || 0));
   companyInvoicedNet = round2(companyInvoicedNet);
 
   // Manual items imported from the Live Sales Sheet (kept as their own group so
