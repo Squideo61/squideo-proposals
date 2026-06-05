@@ -363,7 +363,7 @@ export function FinanceView({ onBack, onOpenDeal }) {
       {section === 'pending' && (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
-            <StatCard icon={PoundSterling} accent={BRAND.ink} label="Outstanding — all customers" value={formatGBP(fin ? fin.outstanding : 0)} sub="CRM-computed · still to collect (inc VAT)" />
+            <StatCard icon={PoundSterling} accent={BRAND.ink} label="Outstanding — all customers" value={formatGBP((pending?.totals?.normal || 0) + (pending?.totals?.po || 0))} sub="CRM-computed · ex-VAT (net) · still to collect" />
             <StatCard icon={PoundSterling} accent="#0E7490" label="Imported pending (ex-VAT)" value={formatGBP(pending?.totals?.manual || 0)} sub="From the Live Sales Sheet — net" />
           </div>
           {/* Pending Payments — outstanding signed deals, split PO vs normal, plus
