@@ -227,13 +227,32 @@ function ensureManualPendingPayments() {
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS paid_method TEXT`;
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'pp'`;
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS po_number TEXT`;
+
+    // Remove accidental duplicate seed rows from a concurrent-cold-start race
+    // (two instances both saw an empty table and both inserted). Keep the
+    // earliest copy of each identical logical row; only ever touch UNPAID rows.
+    await sql`
+      DELETE FROM manual_pending_payments a
+       USING manual_pending_payments b
+       WHERE a.ctid > b.ctid
+         AND a.status = 'pending'
+         AND a.kind = b.kind
+         AND COALESCE(a.company,'')      = COALESCE(b.company,'')
+         AND COALESCE(a.invoice_type,'') = COALESCE(b.invoice_type,'')
+         AND COALESCE(a.description,'')  = COALESCE(b.description,'')
+         AND a.amount_ex_vat            = b.amount_ex_vat
+         AND COALESCE(a.po_number,'')    = COALESCE(b.po_number,'')`;
+
+    // Seeds use DETERMINISTIC ids + ON CONFLICT DO NOTHING so a concurrent
+    // re-seed can never duplicate (the second insert hits the same PK).
     const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM manual_pending_payments`;
     if (count === 0) {
       let i = 0;
       for (const [company, invoiceType, description, amount, vat, method, note] of MANUAL_PP_SEED) {
         await sql`
           INSERT INTO manual_pending_payments (id, company, invoice_type, description, amount_ex_vat, vat, payment_method, note, sort_order, kind)
-          VALUES (${makeId('mpp')}, ${company}, ${invoiceType}, ${description}, ${amount}, ${vat}, ${method}, ${note || null}, ${i}, 'pp')`;
+          VALUES (${'seedpp' + i}, ${company}, ${invoiceType}, ${description}, ${amount}, ${vat}, ${method}, ${note || null}, ${i}, 'pp')
+          ON CONFLICT (id) DO NOTHING`;
         i += 1;
       }
     }
@@ -244,7 +263,8 @@ function ensureManualPendingPayments() {
       for (const [company, invoiceType, description, amount, vat, poNumber, note] of MANUAL_PO_SEED) {
         await sql`
           INSERT INTO manual_pending_payments (id, company, invoice_type, description, amount_ex_vat, vat, note, po_number, sort_order, kind)
-          VALUES (${makeId('mpo')}, ${company}, ${invoiceType}, ${description}, ${amount}, ${vat}, ${note || null}, ${poNumber || null}, ${i}, 'po')`;
+          VALUES (${'seedpo' + i}, ${company}, ${invoiceType}, ${description}, ${amount}, ${vat}, ${note || null}, ${poNumber || null}, ${i}, 'po')
+          ON CONFLICT (id) DO NOTHING`;
         i += 1;
       }
     }
