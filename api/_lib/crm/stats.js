@@ -259,7 +259,7 @@ async function fetchPaidManualPps(sinceISO, untilISO) {
   try {
     await ensureManualPendingPayments();
     return await sql`
-      SELECT paid_at, amount_ex_vat, vat, company
+      SELECT id AS edit_key, paid_at, amount_ex_vat, vat, company
         FROM manual_pending_payments
        WHERE status = 'paid' AND paid_at >= ${sinceISO} AND paid_at < ${untilISO}`;
   } catch {
@@ -899,7 +899,7 @@ async function incomeReport(action) {
           LEFT JOIN deals d ON d.id = pr.deal_id
           LEFT JOIN companies c ON c.id = d.company_id
          WHERE pi.paid_at >= ${since} AND pi.paid_at < ${until}`,
-    sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate,
+    sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate, mp.id AS edit_key,
                d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
           FROM manual_payments mp
           JOIN proposals pr ON pr.id = mp.proposal_id
@@ -908,7 +908,7 @@ async function incomeReport(action) {
          WHERE mp.manual_invoice_id IS NULL
            AND mp.paid_at >= ${since} AND mp.paid_at < ${until}`,
     sql`SELECT mi.amount AS inc, mi.paid_at, mi.subtotal_ex_vat, mi.tax_amount,
-               pr.data->>'vatRate' AS rate,
+               pr.data->>'vatRate' AS rate, mi.id AS edit_key,
                COALESCE(mi.deal_id, pr.deal_id) AS deal_id,
                COALESCE(dd.company_id, dp.company_id) AS company_id,
                COALESCE(cd.name, cp.name) AS company,
@@ -921,7 +921,7 @@ async function incomeReport(action) {
           LEFT JOIN companies cp ON cp.id = dp.company_id
          WHERE mi.status = 'paid'
            AND mi.paid_at >= ${since} AND mi.paid_at < ${until}`,
-    sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate,
+    sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate, pb.xero_invoice_id AS edit_key,
                d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
           FROM proposal_billing pb
           JOIN proposals pr ON pr.id = pb.proposal_id
@@ -941,6 +941,8 @@ async function incomeReport(action) {
       company: r.company || null,
       dealId: r.deal_id || null,
       number: r.ny && r.ns ? { year: Number(r.ny), seq: Number(r.ns) } : null,
+      // Targets the underlying row for a date back-date (null = not editable).
+      editKey: r.edit_key || null,
     });
   };
 
@@ -1007,6 +1009,31 @@ async function historyRoute(req, res) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
+// Back-date (or forward-date) an income-ledger payment. Each source maps to a
+// table + key column; only these internal sources are editable (Stripe/partner
+// rows are Stripe-authoritative). Body: { source, key, paidAt: 'YYYY-MM-DD' }.
+async function incomeDateRoute(req, res) {
+  if (req.method !== 'POST' && req.method !== 'PATCH') return res.status(405).json({ error: 'Method not allowed' });
+  const { source, key, paidAt } = req.body || {};
+  if (!key || !paidAt) return res.status(400).json({ error: 'key and paidAt required' });
+  const d = new Date(paidAt);
+  if (isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid date' });
+  const iso = d.toISOString().slice(0, 10);
+  // Templated per source so the table/column are never interpolated.
+  if (source === 'billing') {
+    await sql`UPDATE proposal_billing SET paid_at = ${iso}, updated_at = NOW() WHERE xero_invoice_id = ${key}`;
+  } else if (source === 'invoice') {
+    await sql`UPDATE manual_invoices SET paid_at = ${iso}, updated_at = NOW() WHERE id = ${key}`;
+  } else if (source === 'manual') {
+    await sql`UPDATE manual_payments SET paid_at = ${iso} WHERE id = ${key}`;
+  } else if (source === 'sheet') {
+    await sql`UPDATE manual_pending_payments SET paid_at = ${iso} WHERE id = ${key}`;
+  } else {
+    return res.status(400).json({ error: 'This payment type cannot be re-dated here' });
+  }
+  return res.status(200).json({ ok: true, paidAt: iso });
+}
+
 export async function statsRoute(req, res, id, action, user) {
   // Live financial figures — never let a browser/edge serve a stale copy (e.g.
   // showing an extra that's since been deleted, or yesterday's cash position).
@@ -1029,6 +1056,9 @@ export async function statsRoute(req, res, id, action, user) {
   }
   if (id === 'pending-manual') {
     return pendingManualRoute(req, res, action);
+  }
+  if (id === 'income-date') {
+    return incomeDateRoute(req, res);
   }
 
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

@@ -895,6 +895,10 @@ export function StoreProvider({ children }) {
         return data;
       });
     },
+    // Business → Finance (Income): back-date a ledger payment (caller refreshes).
+    setIncomeDate({ source, key, paidAt }) {
+      return api.post('/api/crm/stats/income-date', { source, key, paidAt });
+    },
     // Business → Finance (Income): flat ledger of payments received in a period.
     loadIncome(period) {
       const path = '/api/crm/stats/income' + (period ? '/' + period : '');

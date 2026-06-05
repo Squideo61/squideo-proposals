@@ -154,6 +154,21 @@ export function FinanceView({ onBack, onOpenDeal }) {
     actions.loadTrend(36);
   };
 
+  // Back-date (or re-date) an income-ledger payment, then refresh + make undoable.
+  const setIncomeDate = (r, newDate) => {
+    if (!r.editKey || !newDate) return;
+    const oldDate = r.paidAt ? r.paidAt.slice(0, 10) : null;
+    const apply = (date) => actions.setIncomeDate({ source: r.source, key: r.editKey, paidAt: date }).then(refreshFinance);
+    apply(newDate).then(() => {
+      if (!oldDate) return;
+      actions.recordUndo && actions.recordUndo({
+        label: `Re-date ${r.company || 'payment'}`,
+        undo: () => apply(oldDate),
+        redo: () => apply(newDate),
+      });
+    });
+  };
+
   const fin = state.financeStats && state.financeStats.year === effectiveYear ? state.financeStats : null;
   const salesFin = state.salesFinanceStats && state.salesFinanceStats.year === effectiveYear ? state.salesFinanceStats : null;
   const salesLedger = state.salesLedger && state.salesLedger.period === periodParam ? state.salesLedger : null;
@@ -274,7 +289,7 @@ export function FinanceView({ onBack, onOpenDeal }) {
           {isSales ? (
             <SalesLedgerPanel ledger={salesLedger} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={firstTab.view.periodLabel} />
           ) : (
-            <IncomePayments income={income} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={firstTab.view.periodLabel} />
+            <IncomePayments income={income} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={firstTab.view.periodLabel} onSetDate={setIncomeDate} />
           )}
         </>
       )}
@@ -680,7 +695,7 @@ function SourceBadge({ source }) {
 // Income — a flat, newest-first ledger of payments received in the selected
 // period. Mirrors the Pending Payments panel visually but each row is one
 // payment (money in) rather than an outstanding deal balance.
-function IncomePayments({ income, onOpenDeal, isMobile, periodLabel }) {
+function IncomePayments({ income, onOpenDeal, isMobile, periodLabel, onSetDate }) {
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 4 }}>
       <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -703,7 +718,7 @@ function IncomePayments({ income, onOpenDeal, isMobile, periodLabel }) {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {income.rows.map((r, i) => (
-              <IncomeRow key={i} r={r} onOpenDeal={onOpenDeal} />
+              <IncomeRow key={i} r={r} onOpenDeal={onOpenDeal} onSetDate={onSetDate} />
             ))}
           </div>
         </div>
@@ -712,12 +727,20 @@ function IncomePayments({ income, onOpenDeal, isMobile, periodLabel }) {
   );
 }
 
-function IncomeRow({ r, onOpenDeal }) {
+function IncomeRow({ r, onOpenDeal, onSetDate }) {
+  const [editing, setEditing] = useState(false);
   const name = r.company || 'Unattributed';
   const number = r.number ? formatProposalNumber(r.number) : '';
   const date = r.paidAt ? new Date(r.paidAt).toLocaleDateString('en-GB') : '';
+  const isoDate = r.paidAt ? r.paidAt.slice(0, 10) : '';
+  const canEditDate = !!(onSetDate && r.editKey);
   const canOpen = !!(onOpenDeal && r.dealId);
   const open = () => { if (canOpen) onOpenDeal(r.dealId); };
+  const commit = (e) => {
+    const v = e.target.value;
+    setEditing(false);
+    if (v && v !== isoDate) onSetDate(r, v);
+  };
   return (
     <div
       role={canOpen ? 'button' : undefined}
@@ -735,7 +758,30 @@ function IncomeRow({ r, onOpenDeal }) {
           </span>
           {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
           <SourceBadge source={r.source} />
-          {date && <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0 }}>{date}</span>}
+          {editing ? (
+            <input
+              type="date"
+              defaultValue={isoDate}
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+              onChange={commit}
+              onBlur={() => setEditing(false)}
+              style={{ fontSize: 12, padding: '1px 4px', border: '1px solid ' + BRAND.blue, borderRadius: 4, flexShrink: 0 }}
+            />
+          ) : date && (
+            canEditDate ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+                title="Click to change the payment date"
+                style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0, background: 'none', border: 'none', borderBottom: '1px dashed ' + BRAND.border, cursor: 'pointer', padding: 0 }}
+              >
+                {date}
+              </button>
+            ) : (
+              <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0 }}>{date}</span>
+            )
+          )}
         </div>
         <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(r.net)}</div>
       </div>
