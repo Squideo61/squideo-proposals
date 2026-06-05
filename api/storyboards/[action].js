@@ -27,6 +27,8 @@ import { del } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
+import { sendNotification, resolveDealTeamEmails } from '../_lib/notifications.js';
+import { revisionFeedbackHtml, APP_URL } from '../_lib/email.js';
 
 // Storyboard PDFs share the PUBLIC revision Blob store (so clients can fetch the
 // bytes directly via the share link), reading REVISION_BLOB_READ_WRITE_TOKEN
@@ -131,6 +133,9 @@ function ensureStoryboardTables() {
         )`;
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS storyboard_version_views_unique ON storyboard_version_views(version_id, lower(viewer_email))`;
       await sql`CREATE INDEX IF NOT EXISTS storyboard_version_views_project_idx ON storyboard_version_views(project_id)`;
+      // 20260605_revision_feedback.sql columns (deal link + client feedback submit).
+      await sql`ALTER TABLE storyboard_projects ADD COLUMN IF NOT EXISTS deal_id TEXT`;
+      await sql`ALTER TABLE storyboards ADD COLUMN IF NOT EXISTS feedback_submitted_at TIMESTAMPTZ`;
     } catch (err) {
       tablesEnsured = null;
       console.warn('[storyboards] ensure tables failed', err.message);
@@ -164,6 +169,11 @@ export default async function handler(req, res) {
     if (action === 'approve') {
       if (req.method !== 'POST') return res.status(405).end();
       return await approveStoryboard(req, res);
+    }
+    // Client has finished reviewing a storyboard and submits their comments.
+    if (action === 'submit-feedback') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return await submitFeedback(req, res);
     }
     if (action === 'viewer') {
       if (req.method !== 'POST') return res.status(405).end();
@@ -200,6 +210,20 @@ export default async function handler(req, res) {
       const id = req.query.id ? String(req.query.id) : null;
       if (!id) return res.status(400).json({ error: 'id required' });
       return await projectDetail(res, id);
+    }
+
+    if (action === 'link-deal') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const projectId = req.query.projectId ? String(req.query.projectId) : null;
+      if (!projectId) return res.status(400).json({ error: 'projectId required' });
+      return await linkDeal(req, res, projectId);
+    }
+
+    if (action === 'analytics') {
+      if (req.method !== 'GET') return res.status(405).end();
+      const id = req.query.id ? String(req.query.id) : null;
+      if (!id) return res.status(400).json({ error: 'id required' });
+      return await projectAnalytics(res, id);
     }
 
     if (action === 'storyboards') {
@@ -243,14 +267,20 @@ async function listProjects(res) {
   const rows = await sql`
     SELECT
       sp.id, sp.title, sp.client_name, sp.share_token, sp.created_by,
-      sp.created_at, sp.updated_at, sp.approved_at,
+      sp.created_at, sp.updated_at, sp.approved_at, sp.deal_id,
+      d.title AS deal_title,
       COALESCE(sb.storyboard_count, 0)::INT AS storyboard_count,
       COALESCE(sb.approved_storyboard_count, 0)::INT AS approved_storyboard_count,
+      COALESCE(sb.feedback_submitted_count, 0)::INT AS feedback_submitted_count,
       COALESCE(v.version_count, 0)::INT AS version_count,
-      COALESCE(c.comment_count, 0)::INT AS comment_count
+      COALESCE(c.comment_count, 0)::INT AS comment_count,
+      COALESCE(vc.viewer_count, 0)::INT AS viewer_count,
+      COALESCE(vv.view_count, 0)::INT AS view_count
     FROM storyboard_projects sp
+    LEFT JOIN deals d ON d.id = sp.deal_id
     LEFT JOIN (
-      SELECT project_id, COUNT(*) AS storyboard_count, COUNT(approved_at) AS approved_storyboard_count
+      SELECT project_id, COUNT(*) AS storyboard_count, COUNT(approved_at) AS approved_storyboard_count,
+             COUNT(feedback_submitted_at) AS feedback_submitted_count
       FROM storyboards GROUP BY project_id
     ) sb ON sb.project_id = sp.id
     LEFT JOIN (
@@ -261,6 +291,12 @@ async function listProjects(res) {
       FROM storyboard_comments sc JOIN storyboard_versions sv ON sv.id = sc.version_id
       GROUP BY sv.project_id
     ) c ON c.project_id = sp.id
+    LEFT JOIN (
+      SELECT project_id, COUNT(*) AS viewer_count FROM storyboard_viewers GROUP BY project_id
+    ) vc ON vc.project_id = sp.id
+    LEFT JOIN (
+      SELECT project_id, COALESCE(SUM(view_count), 0) AS view_count FROM storyboard_version_views GROUP BY project_id
+    ) vv ON vv.project_id = sp.id
     ORDER BY sp.updated_at DESC
   `;
   return res.status(200).json(rows.map(projectRow));
@@ -334,13 +370,16 @@ async function deleteProject(res, id) {
 
 async function projectDetail(res, id) {
   const [project] = await sql`
-    SELECT id, title, client_name, share_token, created_by, created_at, updated_at, approved_at, approved_by
-    FROM storyboard_projects WHERE id = ${id}
+    SELECT sp.id, sp.title, sp.client_name, sp.share_token, sp.created_by, sp.created_at,
+           sp.updated_at, sp.approved_at, sp.approved_by, sp.deal_id, d.title AS deal_title
+    FROM storyboard_projects sp
+    LEFT JOIN deals d ON d.id = sp.deal_id
+    WHERE sp.id = ${id}
   `;
   if (!project) return res.status(404).json({ error: 'not found' });
 
   const storyboards = await sql`
-    SELECT id, title, sort_order, created_at, approved_at, approved_by FROM storyboards
+    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at FROM storyboards
     WHERE project_id = ${id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -379,6 +418,7 @@ async function projectDetail(res, id) {
     storyboards: storyboards.map(sb => ({
       id: sb.id, title: sb.title, sortOrder: sb.sort_order, createdAt: sb.created_at,
       approvedAt: sb.approved_at || null, approvedBy: sb.approved_by || null,
+      feedbackSubmittedAt: sb.feedback_submitted_at || null,
       versions: versions.filter(v => v.storyboard_id === sb.id).map(ver => ({
         ...versionRow(ver), views: viewsByVersion[ver.id] || [],
       })),
@@ -502,7 +542,7 @@ async function publicView(req, res) {
   const [cfg] = await sql`SELECT revision_call_url FROM settings WHERE id = 1`;
 
   const storyboards = await sql`
-    SELECT id, title, sort_order, created_at, approved_at, approved_by FROM storyboards
+    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at FROM storyboards
     WHERE project_id = ${project.id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -532,6 +572,7 @@ async function publicView(req, res) {
     storyboards: storyboards.map(sb => ({
       id: sb.id, title: sb.title,
       approvedAt: sb.approved_at || null, approvedBy: sb.approved_by || null,
+      feedbackSubmittedAt: sb.feedback_submitted_at || null,
       versions: versions.filter(v => v.storyboard_id === sb.id).map(mapVersion),
     })),
     comments: comments.map(commentRow),
@@ -584,6 +625,115 @@ async function approveStoryboard(req, res) {
   `;
   await sql`UPDATE storyboard_projects SET updated_at = NOW() WHERE id = ${storyboard.project_id}`;
   return res.status(200).json({ storyboardId, approvedAt: row.approved_at, approvedBy: row.approved_by });
+}
+
+// Client submits their feedback for one storyboard: stamps feedback_submitted_at
+// and fires ONE notification to the linked deal's team (never one-per-comment).
+async function submitFeedback(req, res) {
+  const token = req.query.token ? String(req.query.token) : null;
+  if (!token) return res.status(400).json({ error: 'token required' });
+  const body = parseBody(req);
+  const storyboardId = (body.storyboardId || '').trim();
+  const name = (body.name || '').trim().slice(0, 120) || 'The client';
+  if (!storyboardId) return res.status(400).json({ error: 'storyboardId required' });
+
+  const [sb] = await sql`
+    SELECT s.id, s.title, s.project_id, sp.title AS project_title,
+           sp.client_name, sp.deal_id, sp.created_by
+      FROM storyboards s
+      JOIN storyboard_projects sp ON sp.id = s.project_id
+     WHERE s.id = ${storyboardId} AND sp.share_token = ${token}
+  `;
+  if (!sb) return res.status(404).json({ error: 'Not found' });
+
+  const [row] = await sql`
+    UPDATE storyboards SET feedback_submitted_at = NOW() WHERE id = ${storyboardId}
+    RETURNING feedback_submitted_at
+  `;
+  await sql`UPDATE storyboard_projects SET updated_at = NOW() WHERE id = ${sb.project_id}`;
+
+  const [{ n }] = await sql`
+    SELECT COUNT(*)::int AS n FROM storyboard_comments sc
+      JOIN storyboard_versions sv ON sv.id = sc.version_id
+     WHERE sv.storyboard_id = ${storyboardId}
+  `;
+
+  try {
+    const assigneeEmails = await resolveDealTeamEmails(sb.deal_id, sb.created_by);
+    if (assigneeEmails.length) {
+      const link = `${APP_URL}/#/storyboards`;
+      const clientLabel = sb.client_name || name;
+      const itemTitle = sb.title || sb.project_title;
+      await sendNotification('storyboard.feedback_submitted', {
+        assigneeEmails,
+        subject: `${clientLabel} sent feedback on "${itemTitle}"`,
+        html: revisionFeedbackHtml({ kind: 'storyboard', projectTitle: sb.project_title, itemTitle: sb.title, clientName: clientLabel, commentCount: n, link }),
+        text: `${clientLabel} submitted ${n} comment${n === 1 ? '' : 's'} on ${itemTitle}. ${link}`,
+        inApp: { title: `${clientLabel} sent storyboard feedback`, body: `${n} comment${n === 1 ? '' : 's'} on ${itemTitle}`, link: '#/storyboards' },
+      });
+    }
+  } catch (err) {
+    console.error('[storyboards] feedback notify failed', err.message);
+  }
+
+  return res.status(200).json({ storyboardId, feedbackSubmittedAt: row.feedback_submitted_at, commentCount: n });
+}
+
+// Producer links/unlinks a project to a CRM deal. Pass dealId=null to unlink.
+async function linkDeal(req, res, projectId) {
+  const body = parseBody(req);
+  const dealId = body.dealId ? String(body.dealId) : null;
+  const [row] = await sql`
+    UPDATE storyboard_projects SET deal_id = ${dealId}, updated_at = NOW()
+     WHERE id = ${projectId} RETURNING id, deal_id
+  `;
+  if (!row) return res.status(404).json({ error: 'not found' });
+  return res.status(200).json({ id: row.id, dealId: row.deal_id || null });
+}
+
+// Engagement analytics for one project: per-viewer rollup + headline totals.
+async function projectAnalytics(res, id) {
+  const [project] = await sql`SELECT id, title, client_name FROM storyboard_projects WHERE id = ${id}`;
+  if (!project) return res.status(404).json({ error: 'not found' });
+
+  const views = await sql`
+    SELECT lower(viewer_email) AS email, MAX(viewer_name) AS name,
+           SUM(view_count)::int AS view_count, MAX(last_viewed_at) AS last_viewed_at
+      FROM storyboard_version_views WHERE project_id = ${id} AND viewer_email IS NOT NULL
+     GROUP BY lower(viewer_email)
+  `;
+  const commentsByEmail = await sql`
+    SELECT lower(sc.author_email) AS email, COUNT(*)::int AS n
+      FROM storyboard_comments sc JOIN storyboard_versions sv ON sv.id = sc.version_id
+     WHERE sv.project_id = ${id} AND sc.author_email IS NOT NULL
+     GROUP BY lower(sc.author_email)
+  `;
+  const cMap = new Map(commentsByEmail.map(r => [r.email, r.n]));
+  const [{ total_comments }] = await sql`
+    SELECT COUNT(*)::int AS total_comments FROM storyboard_comments sc
+      JOIN storyboard_versions sv ON sv.id = sc.version_id WHERE sv.project_id = ${id}
+  `;
+  const [{ total_views }] = await sql`
+    SELECT COALESCE(SUM(view_count),0)::int AS total_views FROM storyboard_version_views WHERE project_id = ${id}
+  `;
+  const [{ submitted, approved, sb_count }] = await sql`
+    SELECT COUNT(feedback_submitted_at)::int AS submitted, COUNT(approved_at)::int AS approved,
+           COUNT(*)::int AS sb_count
+      FROM storyboards WHERE project_id = ${id}
+  `;
+  const viewers = views.map(v => ({
+    email: v.email, name: v.name, viewCount: v.view_count,
+    lastViewedAt: v.last_viewed_at, commentCount: cMap.get(v.email) || 0,
+  })).sort((a, b) => new Date(b.lastViewedAt || 0) - new Date(a.lastViewedAt || 0));
+
+  return res.status(200).json({
+    id: project.id, title: project.title, clientName: project.client_name,
+    totals: {
+      views: total_views, uniqueViewers: viewers.length, comments: total_comments,
+      videoCount: sb_count, feedbackSubmitted: submitted, approved,
+    },
+    viewers,
+  });
 }
 
 // Upserts a per-draft view record for a reviewer.
@@ -691,10 +841,15 @@ function projectRow(r) {
     updatedAt: r.updated_at,
     approvedAt: r.approved_at || null,
     approvedBy: r.approved_by || null,
+    dealId: r.deal_id !== undefined ? (r.deal_id || null) : undefined,
+    dealTitle: r.deal_title !== undefined ? (r.deal_title || null) : undefined,
     storyboardCount: r.storyboard_count !== undefined ? r.storyboard_count : undefined,
     approvedStoryboardCount: r.approved_storyboard_count !== undefined ? r.approved_storyboard_count : undefined,
+    feedbackSubmittedCount: r.feedback_submitted_count !== undefined ? r.feedback_submitted_count : undefined,
     versionCount: r.version_count !== undefined ? r.version_count : undefined,
     commentCount: r.comment_count !== undefined ? r.comment_count : undefined,
+    viewerCount: r.viewer_count !== undefined ? r.viewer_count : undefined,
+    viewCount: r.view_count !== undefined ? r.view_count : undefined,
   };
 }
 

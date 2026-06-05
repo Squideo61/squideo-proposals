@@ -1,10 +1,43 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight, BarChart3, Eye, Send, Link2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { Modal } from '../ui.jsx';
+import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
+
+// Compact <select> linking a project to a CRM deal (its team gets the client
+// feedback notifications). Mirrors the deal picker in TaskFormModal.
+export function DealLinkSelect({ projectId, value, kind = 'revision', onLinked }) {
+  const { state, actions, showMsg } = useStore();
+  const deals = Object.values(state.deals || {}).sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  const link = kind === 'storyboard' ? actions.linkStoryboardDeal : actions.linkRevisionDeal;
+  const change = async (e) => {
+    const id = e.target.value || null;
+    try {
+      await link(projectId, id);
+      onLinked && onLinked(id);
+      showMsg(id ? 'Linked to deal' : 'Unlinked from deal');
+    } catch (err) {
+      showMsg(err.message || 'Could not update deal link');
+    }
+  };
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <Link2 size={14} color={BRAND.muted} />
+      <select
+        value={value || ''}
+        onChange={change}
+        title="Link this project to a CRM deal so its team gets feedback alerts"
+        style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13, background: 'white', maxWidth: 260 }}
+      >
+        <option value="">Not linked to a deal</option>
+        {deals.map(d => <option key={d.id} value={d.id}>{d.title}</option>)}
+      </select>
+    </span>
+  );
+}
 
 const APPROVED_CHIP = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
   borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: 11, fontWeight: 700 };
@@ -50,8 +83,10 @@ export function RevisionsView({ onBack }) {
   const isMobile = useIsMobile();
   const [selectedId, setSelectedId] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [analyticsProject, setAnalyticsProject] = useState(null);
 
-  useEffect(() => { actions.loadRevisions(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Deals power the link picker on each project.
+  useEffect(() => { actions.loadRevisions(); actions.refreshDeals?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (selectedId) {
     return <ProjectDetail projectId={selectedId} onBack={() => { setSelectedId(null); actions.loadRevisions(); }} />;
@@ -88,15 +123,23 @@ export function RevisionsView({ onBack }) {
                   {p.title}
                   {(p.videoCount || 0) > 0 && (p.approvedVideoCount || 0) === (p.videoCount || 0) &&
                     <span style={APPROVED_CHIP}><CheckCircle2 size={11} /> All approved</span>}
+                  {p.dealTitle && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: BRAND.blue, background: '#EFF6FF', borderRadius: 999, padding: '1px 8px' }}>
+                      <Link2 size={11} /> {p.dealTitle}
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>
                   {p.clientName ? p.clientName + ' · ' : ''}
                   {p.videoCount || 0} video{p.videoCount === 1 ? '' : 's'}
                   {' · '}{p.approvedVideoCount || 0} approved
-                  {' · '}{Math.max(0, (p.videoCount || 0) - (p.approvedVideoCount || 0))} pending review
+                  {' · '}{p.feedbackSubmittedCount || 0} feedback sent
                   {' · '}{p.commentCount || 0} comment{p.commentCount === 1 ? '' : 's'}
+                  {' · '}{p.viewerCount || 0} viewer{p.viewerCount === 1 ? '' : 's'}
+                  {' · '}{p.viewCount || 0} view{p.viewCount === 1 ? '' : 's'}
                 </div>
               </div>
+              <button onClick={() => setAnalyticsProject(p)} className="btn-ghost" title="Engagement analytics"><BarChart3 size={14} /> Analytics</button>
               <CopyLinkButton token={p.shareToken} showMsg={showMsg} />
               <button onClick={() => setSelectedId(p.id)} className="btn-ghost">Open</button>
               <button
@@ -112,6 +155,10 @@ export function RevisionsView({ onBack }) {
           onClose={() => setCreating(false)}
           onCreated={(proj) => { setCreating(false); setSelectedId(proj.id); }}
         />
+      )}
+
+      {analyticsProject && (
+        <RevisionAnalyticsModal project={analyticsProject} kind="revision" onClose={() => setAnalyticsProject(null)} />
       )}
     </div>
   );
@@ -227,7 +274,9 @@ function ProjectDetail({ projectId, onBack }) {
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
           <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>{detail.title}</h1>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <DealLinkSelect projectId={projectId} value={detail.dealId} kind="revision"
+            onLinked={() => actions.loadRevisionDetail(projectId)} />
           <button onClick={addVideo} className="btn-ghost"><Plus size={14} /> Add video</button>
           <CopyLinkButton token={detail.shareToken} showMsg={showMsg} />
         </div>

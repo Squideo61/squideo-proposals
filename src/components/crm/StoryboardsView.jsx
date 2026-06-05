@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Images, Copy, MessageSquare, Plus, Trash2, Upload, FileText, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight, MapPin } from 'lucide-react';
+import { ArrowLeft, Images, Copy, MessageSquare, Plus, Trash2, Upload, FileText, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight, MapPin, BarChart3, Link2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
@@ -7,6 +7,8 @@ import { permissionsInclude } from '../../lib/permissions.js';
 import { Modal } from '../ui.jsx';
 import { PdfThumb } from '../storyboard/PdfThumb.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
+import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
+import { DealLinkSelect } from './RevisionsView.jsx';
 
 const APPROVED_CHIP = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
   borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: 11, fontWeight: 700 };
@@ -44,8 +46,9 @@ export function StoryboardsView({ onBack }) {
   const isMobile = useIsMobile();
   const [selectedId, setSelectedId] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [analyticsProject, setAnalyticsProject] = useState(null);
 
-  useEffect(() => { actions.loadStoryboards(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { actions.loadStoryboards(); actions.refreshDeals?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (selectedId) {
     return <ProjectDetail projectId={selectedId} onBack={() => { setSelectedId(null); actions.loadStoryboards(); }} />;
@@ -82,15 +85,23 @@ export function StoryboardsView({ onBack }) {
                   {p.title}
                   {(p.storyboardCount || 0) > 0 && (p.approvedStoryboardCount || 0) === (p.storyboardCount || 0) &&
                     <span style={APPROVED_CHIP}><CheckCircle2 size={11} /> All approved</span>}
+                  {p.dealTitle && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: BRAND.blue, background: '#EFF6FF', borderRadius: 999, padding: '1px 8px' }}>
+                      <Link2 size={11} /> {p.dealTitle}
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>
                   {p.clientName ? p.clientName + ' · ' : ''}
                   {p.storyboardCount || 0} storyboard{p.storyboardCount === 1 ? '' : 's'}
                   {' · '}{p.approvedStoryboardCount || 0} approved
-                  {' · '}{Math.max(0, (p.storyboardCount || 0) - (p.approvedStoryboardCount || 0))} pending review
+                  {' · '}{p.feedbackSubmittedCount || 0} feedback sent
                   {' · '}{p.commentCount || 0} comment{p.commentCount === 1 ? '' : 's'}
+                  {' · '}{p.viewerCount || 0} viewer{p.viewerCount === 1 ? '' : 's'}
+                  {' · '}{p.viewCount || 0} view{p.viewCount === 1 ? '' : 's'}
                 </div>
               </div>
+              <button onClick={() => setAnalyticsProject(p)} className="btn-ghost" title="Engagement analytics"><BarChart3 size={14} /> Analytics</button>
               <CopyLinkButton token={p.shareToken} showMsg={showMsg} />
               <button onClick={() => setSelectedId(p.id)} className="btn-ghost">Open</button>
               <button
@@ -106,6 +117,10 @@ export function StoryboardsView({ onBack }) {
           onClose={() => setCreating(false)}
           onCreated={(proj) => { setCreating(false); setSelectedId(proj.id); }}
         />
+      )}
+
+      {analyticsProject && (
+        <RevisionAnalyticsModal project={analyticsProject} kind="storyboard" onClose={() => setAnalyticsProject(null)} />
       )}
     </div>
   );
@@ -221,7 +236,9 @@ function ProjectDetail({ projectId, onBack }) {
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
           <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>{detail.title}</h1>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <DealLinkSelect projectId={projectId} value={detail.dealId} kind="storyboard"
+            onLinked={() => actions.loadStoryboardDetail(projectId)} />
           <button onClick={addStoryboard} className="btn-ghost"><Plus size={14} /> Add storyboard</button>
           <CopyLinkButton token={detail.shareToken} showMsg={showMsg} />
         </div>

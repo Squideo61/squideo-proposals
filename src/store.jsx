@@ -2297,6 +2297,20 @@ export function StoreProvider({ children }) {
         });
     },
 
+    // Link/unlink a project to a CRM deal (its team gets the feedback alerts).
+    linkRevisionDeal(projectId, dealId) {
+      return api.post('/api/revisions/link-deal?projectId=' + encodeURIComponent(projectId), { dealId: dealId || null })
+        .then((resp) => {
+          setState(s => ({ ...s, revisions: (s.revisions || []).map(p => p.id === projectId ? { ...p, dealId: resp.dealId } : p) }));
+          return resp;
+        });
+    },
+
+    // Engagement analytics for one project (per-viewer rollup + totals).
+    loadRevisionAnalytics(id) {
+      return api.get('/api/revisions/analytics?id=' + encodeURIComponent(id));
+    },
+
     // Add / remove videos within a project. Both reload the project detail so
     // the nested videos→drafts structure stays in sync.
     createRevisionVideo(projectId, title) {
@@ -2364,6 +2378,11 @@ export function StoreProvider({ children }) {
       return api.post('/api/revisions/approve?token=' + encodeURIComponent(token), { videoId, approvedBy });
     },
 
+    // Client submits their feedback for one video — fires one team notification.
+    submitRevisionFeedback(token, videoId, name) {
+      return api.post('/api/revisions/submit-feedback?token=' + encodeURIComponent(token), { videoId, name });
+    },
+
     // Records that the viewer opened a specific draft (per-draft view tracking).
     recordRevisionView(token, payload) {
       return api.post('/api/revisions/view?token=' + encodeURIComponent(token), payload).catch(() => {});
@@ -2416,6 +2435,20 @@ export function StoreProvider({ children }) {
           setState(s => ({ ...s, storyboardDetail: { ...s.storyboardDetail, [id]: detail } }));
           return detail;
         });
+    },
+
+    // Link/unlink a project to a CRM deal (its team gets the feedback alerts).
+    linkStoryboardDeal(projectId, dealId) {
+      return api.post('/api/storyboards/link-deal?projectId=' + encodeURIComponent(projectId), { dealId: dealId || null })
+        .then((resp) => {
+          setState(s => ({ ...s, storyboards: (s.storyboards || []).map(p => p.id === projectId ? { ...p, dealId: resp.dealId } : p) }));
+          return resp;
+        });
+    },
+
+    // Engagement analytics for one project (per-viewer rollup + totals).
+    loadStoryboardAnalytics(id) {
+      return api.get('/api/storyboards/analytics?id=' + encodeURIComponent(id));
     },
 
     // Add / remove storyboards within a project. Both reload the project detail
@@ -2484,6 +2517,11 @@ export function StoreProvider({ children }) {
     // Client finalises one storyboard (locks further comments on its drafts).
     approveStoryboard(token, storyboardId, approvedBy) {
       return api.post('/api/storyboards/approve?token=' + encodeURIComponent(token), { storyboardId, approvedBy });
+    },
+
+    // Client submits their feedback for one storyboard — one team notification.
+    submitStoryboardFeedback(token, storyboardId, name) {
+      return api.post('/api/storyboards/submit-feedback?token=' + encodeURIComponent(token), { storyboardId, name });
     },
 
     recordStoryboardView(token, payload) {

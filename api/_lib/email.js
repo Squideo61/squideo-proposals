@@ -175,6 +175,21 @@ export function firstViewHtml({ title, clientName, country, city, link }) {
   return shell(inner);
 }
 
+// Client has finished a video/storyboard review and sent their comments to the
+// team. `kind` is 'video' or 'storyboard'; `itemTitle` is the specific
+// video/storyboard within the project.
+export function revisionFeedbackHtml({ kind = 'video', projectTitle, itemTitle, clientName, commentCount, link }) {
+  const label = kind === 'storyboard' ? 'storyboard' : 'video';
+  const count = Number(commentCount) || 0;
+  const countText = count === 1 ? '1 comment' : `${count} comments`;
+  const inner = `
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">${escapeHtml(clientName || 'A client')} sent ${label} feedback</h2>
+    <p style="margin:0 0 12px;">They've finished reviewing <strong>${escapeHtml(itemTitle || projectTitle || 'the ' + label)}</strong>${projectTitle && itemTitle && projectTitle !== itemTitle ? ` in <strong>${escapeHtml(projectTitle)}</strong>` : ''} and left <strong>${escapeHtml(countText)}</strong>.</p>
+    <p style="margin:0;"><a href="${escapeHtml(link)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Review feedback</a></p>
+  `;
+  return shell(inner);
+}
+
 // How the client chose to pay, as stored on the signature (ClientView).
 const PAYMENT_OPTION_LABELS = {
   '5050': '50/50 split — 50% deposit, balance on approval',

@@ -80,6 +80,25 @@ export async function resolveRecipients(key, opts = {}) {
   return Array.from(new Set(out));
 }
 
+// Resolve the staff "team" for a deal: its assignees plus the deal owner.
+// Used to target revision/storyboard notifications at everyone working a deal.
+// Falls back to `fallbackEmail` (e.g. the project creator) when the project
+// isn't linked to a deal, so an alert is never silently dropped. Returns
+// deduplicated, lowercased emails.
+export async function resolveDealTeamEmails(dealId, fallbackEmail = null) {
+  const out = new Set();
+  if (dealId) {
+    const rows = await sql`
+      SELECT user_email AS email FROM deal_assignees WHERE deal_id = ${dealId}
+      UNION
+      SELECT owner_email AS email FROM deals WHERE id = ${dealId} AND owner_email IS NOT NULL
+    `;
+    for (const r of rows) if (r.email) out.add(String(r.email).toLowerCase());
+  }
+  if (out.size === 0 && fallbackEmail) out.add(String(fallbackEmail).toLowerCase());
+  return Array.from(out);
+}
+
 // Read the effective state of a single (user, key) — role default merged with
 // per-user override. Returns boolean. Unknown users → false.
 export async function isEnabledForUser(email, key) {

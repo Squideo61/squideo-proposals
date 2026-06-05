@@ -113,6 +113,11 @@ export function StoryboardRevision({ token, data }) {
     Object.fromEntries((data.storyboards || []).map(s => [s.id, s.approvedAt || null])));
   const approvedAt = activeStoryboard ? approvals[activeStoryboard.id] : null;
   const [approving, setApproving] = useState(false);
+  // Per-storyboard "feedback submitted" state (seeded from the server).
+  const [submitted, setSubmitted] = useState(() =>
+    Object.fromEntries((data.storyboards || []).map(s => [s.id, s.feedbackSubmittedAt || null])));
+  const feedbackSubmittedAt = activeStoryboard ? submitted[activeStoryboard.id] : null;
+  const [sending, setSending] = useState(false);
 
   const [draft, setDraft] = useState('');
   const [posting, setPosting] = useState(false);
@@ -205,6 +210,24 @@ export function StoryboardRevision({ token, data }) {
       showMsg(err.message || 'Could not post comment');
     } finally {
       setPosting(false);
+    }
+  }
+
+  async function sendFeedback() {
+    if (!activeStoryboard || sending) return;
+    const msg = feedbackSubmittedAt
+      ? 'Re-send your feedback for this storyboard to the team?'
+      : "Send your feedback for this storyboard to the team? They'll be notified you've finished commenting.";
+    if (!window.confirm(msg)) return;
+    setSending(true);
+    try {
+      const res = await actions.submitStoryboardFeedback(token, activeStoryboard.id, name);
+      setSubmitted(prev => ({ ...prev, [activeStoryboard.id]: res?.feedbackSubmittedAt || new Date().toISOString() }));
+      showMsg('Feedback sent to the team — thank you!');
+    } catch (err) {
+      showMsg(err.message || 'Could not send feedback');
+    } finally {
+      setSending(false);
     }
   }
 
@@ -320,6 +343,17 @@ export function StoryboardRevision({ token, data }) {
                 fontWeight: 600, textDecoration: 'none' }}>
               <CalendarClock size={15} color={BRAND.blue} /> Schedule Review Call
             </a>
+          )}
+          {!approvedAt && (
+            <button onClick={sendFeedback} disabled={sending}
+              title={feedbackSubmittedAt ? 'Re-send your feedback to the team' : 'Send your comments to the team'}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
+                border: `1px solid ${feedbackSubmittedAt ? BRAND.border : BRAND.blue}`,
+                background: feedbackSubmittedAt ? '#fff' : BRAND.blue,
+                color: feedbackSubmittedAt ? BRAND.ink : '#fff', fontSize: 13, fontWeight: 600,
+                cursor: sending ? 'default' : 'pointer' }}>
+              <Send size={15} /> {sending ? 'Sending…' : (feedbackSubmittedAt ? 'Feedback sent · re-send' : 'Send feedback')}
+            </button>
           )}
           {approvedAt ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,

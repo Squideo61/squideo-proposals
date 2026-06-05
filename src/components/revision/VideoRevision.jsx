@@ -100,6 +100,11 @@ export function VideoRevision({ token, data }) {
     Object.fromEntries((data.videos || []).map(v => [v.id, v.approvedAt || null])));
   const approvedAt = activeVideo ? approvals[activeVideo.id] : null;
   const [approving, setApproving] = useState(false);
+  // Per-video "feedback submitted" state (seeded from the server).
+  const [submitted, setSubmitted] = useState(() =>
+    Object.fromEntries((data.videos || []).map(v => [v.id, v.feedbackSubmittedAt || null])));
+  const feedbackSubmittedAt = activeVideo ? submitted[activeVideo.id] : null;
+  const [sending, setSending] = useState(false);
 
   const [draft, setDraft] = useState('');
   const [pinTime, setPinTime] = useState(null);
@@ -179,6 +184,24 @@ export function VideoRevision({ token, data }) {
       showMsg(err.message || 'Could not post comment');
     } finally {
       setPosting(false);
+    }
+  }
+
+  async function sendFeedback() {
+    if (!activeVideo || sending) return;
+    const msg = feedbackSubmittedAt
+      ? 'Re-send your feedback for this video to the team?'
+      : "Send your feedback for this video to the team? They'll be notified you've finished commenting.";
+    if (!window.confirm(msg)) return;
+    setSending(true);
+    try {
+      const res = await actions.submitRevisionFeedback(token, activeVideo.id, name);
+      setSubmitted(prev => ({ ...prev, [activeVideo.id]: res?.feedbackSubmittedAt || new Date().toISOString() }));
+      showMsg('Feedback sent to the team — thank you!');
+    } catch (err) {
+      showMsg(err.message || 'Could not send feedback');
+    } finally {
+      setSending(false);
     }
   }
 
@@ -277,6 +300,17 @@ export function VideoRevision({ token, data }) {
                 fontWeight: 600, textDecoration: 'none' }}>
               <CalendarClock size={15} color={BRAND.blue} /> Schedule Review Call
             </a>
+          )}
+          {!approvedAt && (
+            <button onClick={sendFeedback} disabled={sending}
+              title={feedbackSubmittedAt ? 'Re-send your feedback to the team' : 'Send your comments to the team'}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
+                border: `1px solid ${feedbackSubmittedAt ? BRAND.border : BRAND.blue}`,
+                background: feedbackSubmittedAt ? '#fff' : BRAND.blue,
+                color: feedbackSubmittedAt ? BRAND.ink : '#fff', fontSize: 13, fontWeight: 600,
+                cursor: sending ? 'default' : 'pointer' }}>
+              <Send size={15} /> {sending ? 'Sending…' : (feedbackSubmittedAt ? 'Feedback sent · re-send' : 'Send feedback')}
+            </button>
           )}
           {approvedAt ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
