@@ -51,11 +51,6 @@ const VIDEO_SELECT = (whereSql) => sql`
          d.drive_folder_id AS drive_folder_id,
          (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
             FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails,
-         (SELECT (p.signature_data::jsonb)->>'paymentOption'
-            FROM proposals p
-           WHERE p.deal_id = d.id AND p.signature_data IS NOT NULL
-             AND left(btrim(p.signature_data::text), 1) = '{'
-           ORDER BY p.created_at DESC LIMIT 1) AS payment_option,
          (SELECT p.number_year || '-' || lpad(p.number_seq::text, 3, '0')
             FROM proposals p
            WHERE p.deal_id = d.id AND p.number_seq IS NOT NULL
@@ -65,6 +60,39 @@ const VIDEO_SELECT = (whereSql) => sql`
     LEFT JOIN companies c ON c.id = d.company_id
    ${whereSql}
 `;
+
+// The payment plan comes from the deal's signed proposal (signature_data.
+// paymentOption → '5050' | 'full' | 'po'). Read-only on the video/board. Parsed
+// in JS (never in SQL) so a malformed signature_data row can never break the
+// board query. signature_data may arrive parsed (jsonb) or as a JSON string.
+function parseSignature(sd) {
+  if (!sd) return null;
+  if (typeof sd === 'object') return sd;
+  try { return JSON.parse(sd); } catch { return null; }
+}
+async function paymentOptionForDeal(dealId) {
+  if (!dealId) return null;
+  try {
+    const [row] = await sql`
+      SELECT signature_data FROM proposals
+       WHERE deal_id = ${dealId} AND signature_data IS NOT NULL
+       ORDER BY created_at DESC LIMIT 1`;
+    return parseSignature(row?.signature_data)?.paymentOption || null;
+  } catch { return null; }
+}
+async function paymentOptionMap(dealIds) {
+  const map = new Map();
+  if (!dealIds.length) return map;
+  try {
+    const rows = await sql`
+      SELECT DISTINCT ON (deal_id) deal_id, signature_data
+        FROM proposals
+       WHERE deal_id = ANY(${dealIds}) AND signature_data IS NOT NULL
+       ORDER BY deal_id, created_at DESC`;
+    for (const r of rows) map.set(r.deal_id, parseSignature(r.signature_data)?.paymentOption || null);
+  } catch { /* leave map empty */ }
+  return map;
+}
 
 export async function productionRoute(req, res, id, action, user, subaction = null) {
   if (!hasPermission(await getRole(user.role), 'production.access')) {
@@ -85,19 +113,17 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       const rows = await sql`
         SELECT pv.*, d.title AS project_title, c.name AS company_name,
                (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
-                  FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails,
-               (SELECT (p.signature_data::jsonb)->>'paymentOption'
-                  FROM proposals p
-                 WHERE p.deal_id = d.id AND p.signature_data IS NOT NULL
-                   AND left(btrim(p.signature_data::text), 1) = '{'
-                 ORDER BY p.created_at DESC LIMIT 1) AS payment_option
+                  FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails
           FROM project_videos pv
           JOIN deals d ON d.id = pv.deal_id
           LEFT JOIN companies c ON c.id = d.company_id
          WHERE pv.production_phase IS NOT NULL
          ORDER BY pv.sort_order, pv.created_at
       `;
-      return res.status(200).json(rows.map(serialiseVideo));
+      const videos = rows.map(serialiseVideo);
+      const pmap = await paymentOptionMap([...new Set(videos.map(v => v.dealId).filter(Boolean))]);
+      for (const v of videos) v.paymentOption = pmap.get(v.dealId) || null;
+      return res.status(200).json(videos);
     }
 
     // POST: create a project (deal) from scratch + its first video. Manually-
@@ -299,6 +325,7 @@ async function withVideoExtras(video) {
     storyboard,
     video: draftVideo,
   };
+  video.paymentOption = await paymentOptionForDeal(video.dealId);
   return video;
 }
 
@@ -669,7 +696,6 @@ export function serialiseVideo(r) {
     productionStage: r.production_stage || null,
     productionStageChangedAt: r.production_stage_changed_at || null,
     paymentTerms: r.payment_terms || null,
-    paymentOption: r.payment_option || null, // pulled from the signed proposal (read-only)
     videoLength: r.video_length || null,
     deliveryDeadline: r.delivery_deadline || null,
     textDirectionDeadline: r.text_direction_deadline || null,
