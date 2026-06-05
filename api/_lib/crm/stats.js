@@ -733,7 +733,10 @@ async function pendingPaymentsReport() {
   if (!sigRows.length) {
     const manual = await fetchManualPending();
     const manualTotal = round2(manual.reduce((s, x) => s + (Number(x.amountExVat) || 0), 0));
-    return { normal: [], po: [], manual, totals: { normal: 0, po: 0, manual: manualTotal } };
+    const manualInvoiced = round2(
+      manual.filter((x) => x.status === 'invoiced').reduce((s, x) => s + (Number(x.amountExVat) || 0), 0),
+    );
+    return { normal: [], po: [], manual, totals: { normal: 0, po: 0, manual: manualTotal, manualInvoiced } };
   }
 
   const committed = new Map(); // did -> inc-VAT signed total
@@ -873,8 +876,16 @@ async function pendingPaymentsReport() {
   // they never double-count the CRM-computed figures above).
   const manual = await fetchManualPending();
   const manualTotal = round2(manual.reduce((s, x) => s + (Number(x.amountExVat) || 0), 0));
+  // Split the imported total: invoiced (awaiting payment, counts toward the
+  // Outstanding headline) vs not-yet-invoiced (still to bill).
+  const manualInvoiced = round2(
+    manual.filter((x) => x.status === 'invoiced').reduce((s, x) => s + (Number(x.amountExVat) || 0), 0),
+  );
 
-  return { normal, po, manual, totals: { normal: sum(normal), po: sum(po), manual: manualTotal } };
+  return {
+    normal, po, manual,
+    totals: { normal: sum(normal), po: sum(po), manual: manualTotal, manualInvoiced },
+  };
 }
 
 // GET list / POST import / DELETE one — the imported manual pending payments.
