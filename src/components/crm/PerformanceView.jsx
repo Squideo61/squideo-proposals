@@ -97,6 +97,8 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
     if (!state.bankHolidays) actions.loadBankHolidays();
   }, [actions, state.bankHolidays]);
 
+  // Reload when the period/section changes OR when finance data changes elsewhere
+  // (e.g. a PP marked paid bumps state.financeRefresh) so the pace chart stays live.
   useEffect(() => {
     if (isComparison) { setLoading(false); return; } // pacing stats not needed here
     let active = true;
@@ -104,12 +106,13 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
     const load = isSales ? actions.loadSalesStats(period) : actions.loadPerformanceStats(period);
     load.finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [actions, period, isSales, isComparison]);
+  }, [actions, period, isSales, isComparison, state.financeRefresh]);
 
   // Sales vs PP's needs the rolling 36-month trend + (for the importer) history.
+  // Refetch the trend too when finance data changes.
   useEffect(() => {
-    if (isComparison && !state.trend) actions.loadTrend(36);
-  }, [actions, isComparison, state.trend]);
+    if (isComparison) actions.loadTrend(36);
+  }, [actions, isComparison, state.financeRefresh]);
 
   const targetSource = isSales ? state.salesTargets : state.financeTargets;
   const targets = (targetSource && targetSource.length) ? targetSource : FALLBACK_TARGETS;

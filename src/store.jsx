@@ -92,6 +92,9 @@ function emptyStore() {
     salesLedger: null,
     trend: null,
     salesHistory: null,
+    // Bumped whenever finance data changes (e.g. a PP marked paid) so the
+    // Performance panel — which loads its own period — refetches in step.
+    financeRefresh: 0,
     pendingPayments: null,
     income: null,
     financeTargets: [],
@@ -873,6 +876,11 @@ export function StoreProvider({ children }) {
         setState(s => ({ ...s, salesLedger: data || null }));
         return data;
       }).catch(() => null);
+    },
+    // Signal that finance data changed so period-scoped panels (Performance)
+    // refetch even though their own selector hasn't moved.
+    bumpFinanceRefresh() {
+      setState(s => ({ ...s, financeRefresh: (s.financeRefresh || 0) + 1 }));
     },
     // Business → Finance: rolling last-N-months trend (cash in / generated / PP's).
     loadTrend(months = 12) {

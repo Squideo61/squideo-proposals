@@ -152,6 +152,7 @@ export function FinanceView({ onBack, onOpenDeal }) {
     actions.loadIncome(periodParam);
     actions.loadFinanceStats(effectiveYear);
     actions.loadTrend(36);
+    actions.bumpFinanceRefresh(); // nudges the Performance panel (its own period)
   };
 
   // Back-date (or re-date) an income-ledger payment, then refresh + make undoable.
