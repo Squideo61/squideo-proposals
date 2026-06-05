@@ -68,13 +68,17 @@ const monthOptionLabel = (k) => {
 // The Performance block, designed to sit at the top of the Finance page (self
 // contained: its own Month/Quarter + Income/Sales toggles, targets editor and
 // day-pace chart). No page chrome of its own — the host page provides that.
-export function PerformancePanel() {
+// `section`/`onSection` let the host (Finance page) lift the Income/Sales toggle
+// so it can also drive the breakdown below. Uncontrolled (own state) if omitted.
+export function PerformancePanel({ section: sectionProp, onSection } = {}) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const [mode, setMode] = useState('month'); // 'month' | 'quarter'
   const [month, setMonth] = useState(() => todayKey().slice(0, 7));
   const [quarter, setQuarter] = useState(() => recentQuarters(1)[0]);
-  const [section, setSection] = useState('income'); // 'income' (cash received) | 'sales' (deals signed)
+  const [sectionState, setSectionState] = useState('income'); // 'income' (cash received) | 'sales' (deals signed)
+  const section = sectionProp != null ? sectionProp : sectionState;
+  const setSection = onSection || setSectionState;
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
 

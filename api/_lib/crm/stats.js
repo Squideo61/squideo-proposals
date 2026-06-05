@@ -2,7 +2,7 @@ import sql from '../db.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { allCompanyBalances } from './companies.js';
-import { outstandingExtrasByDeal } from './extras.js';
+import { outstandingExtrasByDeal, ensureDealExtrasTable } from './extras.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
 // five paid-money sources as companies.js (allCompanyBalances /
@@ -229,6 +229,150 @@ async function salesReport(action) {
     .map(([date, v]) => ({ date, net: round2(v.net), count: v.count }));
 
   return { period, spanMonths, since, until, days };
+}
+
+// Net (ex-VAT) VAT split for an extra: amount is stored net; vat_rate is the
+// stored fraction (0.2) or null/zero for no VAT.
+function extraSplit(amount, rate) {
+  const net = Number(amount) || 0;
+  const r = Number(rate) || 0;
+  const vat = round2(net * r);
+  return { net: round2(net), vat, gross: round2(net + vat) };
+}
+
+// Extras created in [since, until). Robust to the table not existing yet (returns
+// []) so the sales reports always render their signings even on a fresh DB.
+async function fetchExtraRows(since, until, withMeta) {
+  try {
+    await ensureDealExtrasTable();
+    if (withMeta) {
+      return await sql`
+        SELECT x.id, x.created_at, x.amount, x.vat_rate, x.description,
+               d.id AS deal_id, c.name AS company
+          FROM deal_extras x
+          LEFT JOIN deals d ON d.id = x.deal_id
+          LEFT JOIN companies c ON c.id = d.company_id
+         WHERE x.created_at >= ${since} AND x.created_at < ${until}`;
+    }
+    return await sql`
+      SELECT created_at, amount, vat_rate FROM deal_extras
+       WHERE created_at >= ${since} AND created_at < ${until}`;
+  } catch {
+    return [];
+  }
+}
+
+// Monthly "cash generated" by NEW BUSINESS for a year: every deal signed valued
+// at its net (ex-VAT) signed total, bucketed by signature date, PLUS ad-hoc
+// extras (net) bucketed by their created date. Same monthly/quarter/YTD shape as
+// financeReport so the Finance page's cards + bar chart treat it identically.
+async function salesFinanceReport(year) {
+  const since = `${year}-01-01T00:00:00.000Z`;
+  const until = `${year + 1}-01-01T00:00:00.000Z`;
+
+  const sigRows = await sql`
+    SELECT s.signed_at, s.data->>'total' AS total, pr.data->>'vatRate' AS rate
+      FROM signatures s
+      JOIN proposals pr ON pr.id = s.proposal_id
+     WHERE s.signed_at >= ${since} AND s.signed_at < ${until}
+       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'`;
+  const extraRows = await fetchExtraRows(since, until, false);
+
+  const monthsMap = {};
+  for (let m = 1; m <= 12; m++) monthsMap[`${year}-${String(m).padStart(2, '0')}`] = { net: 0, vat: 0, gross: 0 };
+  for (const r of sigRows) {
+    if (!r.signed_at) continue;
+    const b = monthsMap[monthKey(new Date(r.signed_at))];
+    if (!b) continue;
+    const { net, vat, gross } = splitVat(r.total, r.rate);
+    b.net += net; b.vat += vat; b.gross += gross;
+  }
+  for (const r of extraRows) {
+    if (!r.created_at) continue;
+    const b = monthsMap[monthKey(new Date(r.created_at))];
+    if (!b) continue;
+    const { net, vat, gross } = extraSplit(r.amount, r.vat_rate);
+    b.net += net; b.vat += vat; b.gross += gross;
+  }
+  const months = Object.entries(monthsMap).map(([month, v]) => ({
+    month, net: round2(v.net), vat: round2(v.vat), gross: round2(v.gross),
+  }));
+
+  const now = new Date();
+  const curYear = now.getUTCFullYear();
+  const ytd = { net: 0, vat: 0, gross: 0 };
+  for (const m of months) {
+    const mi = Number(m.month.slice(5)) - 1;
+    if (year < curYear || (year === curYear && mi <= now.getUTCMonth())) {
+      ytd.net += m.net; ytd.vat += m.vat; ytd.gross += m.gross;
+    }
+  }
+
+  const quarters = [0, 1, 2, 3].map((q) => {
+    const qm = months.slice(q * 3, q * 3 + 3);
+    return {
+      label: `Q${q + 1} ${year}`,
+      net: round2(qm.reduce((s, x) => s + x.net, 0)),
+      vat: round2(qm.reduce((s, x) => s + x.vat, 0)),
+      gross: round2(qm.reduce((s, x) => s + x.gross, 0)),
+    };
+  });
+
+  return {
+    year,
+    months,
+    ytd: { net: round2(ytd.net), vat: round2(ytd.vat), gross: round2(ytd.gross) },
+    quarters,
+  };
+}
+
+// A flat, newest-first ledger of cash generated in a period: one row per signing
+// (the deal's net signed value) and one row per extra (net). Mirrors incomeReport
+// so the Finance ledger renders both with the same component. `source` is
+// 'signed' or 'extra'; `at` is the signature/created date.
+async function salesLedgerReport(action) {
+  const { period, since, until } = parseIncomePeriod(action);
+
+  const sigRows = await sql`
+    SELECT s.signed_at, s.data->>'total' AS total, pr.data->>'vatRate' AS rate,
+           d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
+      FROM signatures s
+      JOIN proposals pr ON pr.id = s.proposal_id
+      LEFT JOIN deals d ON d.id = pr.deal_id
+      LEFT JOIN companies c ON c.id = d.company_id
+     WHERE s.signed_at >= ${since} AND s.signed_at < ${until}
+       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'`;
+  const extraRows = await fetchExtraRows(since, until, true);
+
+  const rows = [];
+  for (const r of sigRows) {
+    if (!r.signed_at) continue;
+    const { net, vat, gross } = splitVat(r.total, r.rate);
+    rows.push({
+      at: new Date(r.signed_at).toISOString(),
+      net: round2(net), vat: round2(vat), gross: round2(gross),
+      source: 'signed', label: null,
+      company: r.company || null,
+      dealId: r.deal_id || null,
+      number: r.ny && r.ns ? { year: Number(r.ny), seq: Number(r.ns) } : null,
+    });
+  }
+  for (const r of extraRows) {
+    if (!r.created_at) continue;
+    const { net, vat, gross } = extraSplit(r.amount, r.vat_rate);
+    rows.push({
+      at: new Date(r.created_at).toISOString(),
+      net, vat, gross,
+      source: 'extra', label: r.description || 'Extra',
+      company: r.company || null,
+      dealId: r.deal_id || null,
+      number: null,
+    });
+  }
+
+  rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+  const total = round2(rows.reduce((s, r) => s + r.net, 0));
+  return { period, rows, total };
 }
 
 // Outstanding balance per signed deal across all customers, split into PO-route
@@ -493,6 +637,15 @@ export async function statsRoute(req, res, id, action, user) {
 
   if (id === 'sales') {
     return res.status(200).json(await salesReport(action));
+  }
+
+  if (id === 'sales-finance') {
+    const year = parseInt(action, 10) || new Date().getUTCFullYear();
+    return res.status(200).json(await salesFinanceReport(year));
+  }
+
+  if (id === 'sales-ledger') {
+    return res.status(200).json(await salesLedgerReport(action));
   }
 
   if (id === 'pending') {

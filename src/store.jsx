@@ -82,6 +82,8 @@ function emptyStore() {
     financeStats: null,
     performanceStats: null,
     salesStats: null,
+    salesFinanceStats: null,
+    salesLedger: null,
     pendingPayments: null,
     income: null,
     financeTargets: [],
@@ -757,6 +759,23 @@ export function StoreProvider({ children }) {
       const path = '/api/crm/stats/sales' + (period ? '/' + period : '');
       return api.get(path).then((data) => {
         setState(s => ({ ...s, salesStats: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    // Business → Finance (Sales): all-customer monthly cash generated (signed
+    // deals + extras, net/VAT/gross) for a year — mirrors loadFinanceStats.
+    loadSalesFinanceStats(year) {
+      const path = '/api/crm/stats/sales-finance' + (year ? '/' + year : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, salesFinanceStats: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    // Business → Finance (Sales): flat ledger of signings + extras in a period.
+    loadSalesLedger(period) {
+      const path = '/api/crm/stats/sales-ledger' + (period ? '/' + period : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, salesLedger: data || null }));
         return data;
       }).catch(() => null);
     },
