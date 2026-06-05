@@ -300,6 +300,61 @@ async function fetchManualPending() {
   }
 }
 
+// Normalise a company name for loose matching: lowercase, drop punctuation and
+// common entity suffixes (Ltd/Limited/PLC/…), collapse whitespace.
+function normCompany(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[.,&]/g, ' ')
+    .replace(/\b(ltd|limited|plc|llp|llc|inc|co|company|the)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Delete imported pending payments that duplicate a signed CRM deal — matched on
+// normalised company name AND net amount (the full signed value or a 50/50 half,
+// within a small tolerance). Keeps the imported list from double-counting work
+// the CRM already tracks. Returns how many rows were removed. Best-effort.
+async function dedupeManualAgainstCrm() {
+  try {
+    await ensureManualPendingPayments();
+    const [manualRows, sigRows] = await Promise.all([
+      sql`SELECT id, company, amount_ex_vat FROM manual_pending_payments WHERE status <> 'paid'`,
+      sql`SELECT c.name AS company, s.data->>'total' AS total, p.data->>'vatRate' AS rate
+            FROM signatures s
+            JOIN proposals p ON p.id = s.proposal_id
+            JOIN deals d ON d.id = p.deal_id
+            JOIN companies c ON c.id = d.company_id
+           WHERE (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$' AND c.name IS NOT NULL`,
+    ]);
+    if (!manualRows.length || !sigRows.length) return 0;
+
+    // normalised company → set of acceptable net amounts (full + 50/50 half).
+    const amountsByCompany = new Map();
+    for (const r of sigRows) {
+      const key = normCompany(r.company);
+      if (!key) continue;
+      const net = (Number(r.total) || 0) / (1 + (Number(r.rate) || 0));
+      const arr = amountsByCompany.get(key) || [];
+      arr.push(net, net / 2);
+      amountsByCompany.set(key, arr);
+    }
+    const isDup = (company, amt) => {
+      const arr = amountsByCompany.get(normCompany(company));
+      if (!arr) return false;
+      return arr.some((a) => Math.abs(a - amt) <= Math.max(0.5, a * 0.002));
+    };
+    const dupIds = manualRows
+      .filter((r) => isDup(r.company, Number(r.amount_ex_vat) || 0))
+      .map((r) => r.id);
+    if (!dupIds.length) return 0;
+    await sql`DELETE FROM manual_pending_payments WHERE id = ANY(${dupIds})`;
+    return dupIds.length;
+  } catch {
+    return 0;
+  }
+}
+
 // Manual pending payments MARKED PAID in [since, until) — a paid-money source so
 // they flow into Income / Net revenue / cash-in alongside the five real sources.
 // [{ paid_at, amount_ex_vat, vat, company }]. Robust to a missing table → [].
@@ -720,6 +775,9 @@ async function trendReport(action) {
 // the Finance page; each deal's net is derived from its proposals' vatRate.
 // Mirrors the committed/paid maths in companies.js but global and deal-grouped.
 async function pendingPaymentsReport() {
+  // Strip any imported rows that duplicate a signed CRM deal so the lists and
+  // totals below never double-count them.
+  await dedupeManualAgainstCrm();
   // Per signature so we can aggregate committed + the deal's VAT rate + PO flag
   // in JS (vatRate parsed as text → avoids a risky SQL numeric cast).
   const sigRows = await sql`
@@ -980,7 +1038,9 @@ async function pendingManualRoute(req, res, action) {
                 ${amount}, ${numberOrNull(r?.vat) || 0}, ${trimOrNull(r?.paymentMethod)}, ${trimOrNull(r?.note)}, ${startOrder + i}, ${kind}, ${trimOrNull(r?.poNumber)})`;
       i += 1;
     }
-    return res.status(200).json({ saved: i, rows: await fetchManualPending() });
+    // Drop any rows (new or pre-existing) that duplicate a signed CRM deal.
+    const removed = await dedupeManualAgainstCrm();
+    return res.status(200).json({ saved: i, removed, rows: await fetchManualPending() });
   }
 
   return res.status(405).json({ error: 'Method not allowed' });
