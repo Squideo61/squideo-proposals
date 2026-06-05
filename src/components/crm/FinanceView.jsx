@@ -427,6 +427,7 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
               total={sumNet(invoicedManual)}
               actions={actions}
               onChanged={onChanged}
+              onOpenDeal={onOpenDeal}
               isMobile={isMobile}
             />
           )}
@@ -446,6 +447,7 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
             total={sumNet(pps)}
             actions={actions}
             onChanged={onChanged}
+            onOpenDeal={onOpenDeal}
             isMobile={isMobile}
           />
           <ManualPendingGroup
@@ -457,6 +459,7 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
             total={sumNet(pos)}
             actions={actions}
             onChanged={onChanged}
+            onOpenDeal={onOpenDeal}
             isMobile={isMobile}
           />
         </div>
@@ -473,12 +476,26 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
 const MANUAL_PP_COLS = '1fr 92px 80px 92px 92px';
 const MANUAL_PP_COLS_M = '1fr 64px 72px 76px';
 
-function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', accent = '#0E7490', rows, total, actions, onChanged, isMobile }) {
+function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', accent = '#0E7490', rows, total, actions, onChanged, onOpenDeal, isMobile }) {
   const cols = isMobile ? MANUAL_PP_COLS_M : MANUAL_PP_COLS;
   const vatTotal = rows.reduce((s, r) => s + (Number(r.vat) || 0), 0);
   const grossTotal = total + vatTotal;
   const noun = kind === 'po' ? 'PO' : 'PP';
   const isInvoicedGroup = variant === 'invoiced';
+
+  // Link (or unlink) a row to a CRM deal. Undoable.
+  const setLink = (r, dealId) => {
+    if (!actions) return;
+    const prev = r.dealId || null;
+    actions.linkPendingPayment(r.id, dealId).then(() => {
+      if (onChanged) onChanged();
+      actions.recordUndo && actions.recordUndo({
+        label: dealId ? `Link ${r.company || noun} to deal` : `Unlink ${r.company || noun}`,
+        undo: () => actions.linkPendingPayment(r.id, prev).then(() => onChanged && onChanged()),
+        redo: () => actions.linkPendingPayment(r.id, dealId).then(() => onChanged && onChanged()),
+      });
+    });
+  };
 
   // Move a row between the not-yet-invoiced and invoiced lists. Undoable.
   const setInvoiced = (r, invoiced) => {
@@ -549,9 +566,12 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
                 cols={cols}
                 isMobile={isMobile}
                 variant={variant}
+                actions={actions}
                 onPaid={(method) => markPaid(r, method)}
                 onInvoice={() => setInvoiced(r, true)}
                 onUninvoice={() => setInvoiced(r, false)}
+                onLink={(dealId) => setLink(r, dealId)}
+                onOpenDeal={onOpenDeal}
                 onRemove={() => remove(r)}
               />
             ))}
@@ -571,23 +591,40 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
   );
 }
 
-function ManualPendingRow({ r, cols, isMobile, variant = 'pending', onPaid, onInvoice, onUninvoice, onRemove }) {
+function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onPaid, onInvoice, onUninvoice, onLink, onOpenDeal, onRemove }) {
   const [picking, setPicking] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
   const isInvoicedGroup = variant === 'invoiced';
+  const linked = !!r.dealId;
   const net = Number(r.amountExVat) || 0;
   const vat = Number(r.vat) || 0;
   const subtitle = [r.invoiceType, r.poNumber, r.description, r.note].filter(Boolean).join(' · ');
   const pay = (method) => { setPicking(false); onPaid(method); };
+  const openDeal = () => { if (linked && onOpenDeal) onOpenDeal(r.dealId); };
   return (
+    <>
     <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '5px 14px' }}>
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          <span style={{ fontSize: 9, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
-            Imported
-          </span>
-          <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {linked ? (
+            <span onClick={openDeal} title={onOpenDeal ? 'Open linked deal' : 'Linked to a CRM deal'}
+              style={{ cursor: onOpenDeal ? 'pointer' : 'default', fontSize: 9, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              Linked
+            </span>
+          ) : (
+            <span style={{ fontSize: 9, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              Imported
+            </span>
+          )}
+          <span onClick={openDeal} style={{ fontSize: 13, fontWeight: 600, color: (linked && onOpenDeal) ? BRAND.blue : BRAND.ink, cursor: (linked && onOpenDeal) ? 'pointer' : 'default', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {r.company || 'Unattributed'}
           </span>
+          {onLink && (
+            <button type="button" onClick={() => setLinkOpen((v) => !v)} title={linked ? 'Change or remove the deal link' : 'Link to a CRM deal'}
+              style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 11, lineHeight: 1, padding: '1px 3px', textDecoration: 'underline' }}>
+              {linked ? 'edit' : 'link'}
+            </button>
+          )}
         </div>
         {subtitle && (
           <div title={subtitle} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{subtitle}</div>
@@ -660,6 +697,72 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', onPaid, onIn
             </button>
           </>
         )}
+      </div>
+    </div>
+    {linkOpen && (
+      <DealLinkPicker
+        actions={actions}
+        linked={linked}
+        onPick={(dealId) => { setLinkOpen(false); onLink(dealId); }}
+        onClose={() => setLinkOpen(false)}
+      />
+    )}
+    </>
+  );
+}
+
+// Searchable list of signed CRM deals to link an imported PP to. Renders as a
+// full-width panel beneath the row; loads the deal list on open.
+function DealLinkPicker({ actions, linked, onPick, onClose }) {
+  const [deals, setDeals] = useState(null);
+  const [q, setQ] = useState('');
+  useEffect(() => {
+    let active = true;
+    actions.loadLinkableDeals().then((list) => { if (active) setDeals(list); });
+    return () => { active = false; };
+  }, [actions]);
+  const needle = q.trim().toLowerCase();
+  const filtered = (deals || []).filter((d) => {
+    if (!needle) return true;
+    const hay = `${d.company || ''} ${d.title || ''} ${d.number ? formatProposalNumber(d.number) : ''}`.toLowerCase();
+    return hay.includes(needle);
+  }).slice(0, 40);
+  return (
+    <div style={{ borderTop: '1px solid ' + BRAND.border, background: BRAND.paper, padding: '10px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search deals by company, title or number…"
+          style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13 }}
+        />
+        {linked && (
+          <button type="button" onClick={() => onPick(null)} className="btn-ghost" style={{ fontSize: 12 }}>Unlink</button>
+        )}
+        <button type="button" onClick={onClose} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+      </div>
+      <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {deals === null ? (
+          <div style={{ fontSize: 12, color: BRAND.muted, padding: '6px 4px' }}>Loading deals…</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ fontSize: 12, color: BRAND.muted, padding: '6px 4px' }}>No matching deals.</div>
+        ) : filtered.map((d) => (
+          <button
+            key={d.dealId}
+            type="button"
+            onClick={() => onPick(d.dealId)}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'white'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            style={{ display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', textAlign: 'left', border: 'none', background: 'transparent', cursor: 'pointer', padding: '6px 8px', borderRadius: 6 }}
+          >
+            <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {d.company || d.title || 'Untitled deal'}
+            </span>
+            {d.number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{formatProposalNumber(d.number)}</span>}
+            <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(d.net)} net</span>
+          </button>
+        ))}
       </div>
     </div>
   );

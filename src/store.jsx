@@ -947,6 +947,16 @@ export function StoreProvider({ children }) {
     markPendingPaymentInvoiced(id, invoiced = true) {
       return api.patch('/api/crm/stats/pending-manual/' + id, { invoiced });
     },
+    // Link an imported pending payment to a CRM deal (or unlink with null).
+    linkPendingPayment(id, dealId) {
+      return api.patch('/api/crm/stats/pending-manual/' + id, { dealId: dealId || null });
+    },
+    // Signed CRM deals for the "link to deal" picker. [{ dealId, company, title, number, net }].
+    loadLinkableDeals() {
+      return api.get('/api/crm/stats/linkable-deals')
+        .then((d) => (Array.isArray(d?.deals) ? d.deals : []))
+        .catch(() => []);
+    },
     // Editable monthly targets (shared with the settings row). Optimistic.
     // finance = Income performance; sales = Sales performance.
     saveFinanceTargets(list) {

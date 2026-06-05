@@ -227,6 +227,7 @@ function ensureManualPendingPayments() {
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS paid_method TEXT`;
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'pp'`;
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS po_number TEXT`;
+    await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS deal_id TEXT`;
 
     // Remove accidental duplicate seed rows from a concurrent-cold-start race
     // (two instances both saw an empty table and both inserted). Keep the
@@ -286,6 +287,7 @@ function serialiseManualPP(r) {
     paidAt: r.paid_at || null,
     kind: r.kind || 'pp',
     poNumber: r.po_number || null,
+    dealId: r.deal_id || null,
   };
 }
 
@@ -311,45 +313,77 @@ function normCompany(name) {
     .trim();
 }
 
-// Delete imported pending payments that duplicate a signed CRM deal — matched on
+// Signed CRM deals, aggregated per deal: net signed total, company, title and the
+// earliest proposal number. Shared by the auto-linker and the link picker.
+async function signedDealsAgg() {
+  const rows = await sql`
+    SELECT d.id AS did, d.title AS title, c.name AS company,
+           s.data->>'total' AS total, p.data->>'vatRate' AS rate,
+           p.number_year AS ny, p.number_seq AS ns
+      FROM signatures s
+      JOIN proposals p ON p.id = s.proposal_id
+      JOIN deals d ON d.id = p.deal_id
+      LEFT JOIN companies c ON c.id = d.company_id
+     WHERE (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'`;
+  const byDeal = new Map();
+  for (const r of rows) {
+    const cur = byDeal.get(r.did) || { did: r.did, title: r.title || null, company: r.company || null, incTotal: 0, rate: 0, number: null };
+    cur.incTotal += Number(r.total) || 0;
+    cur.rate = Math.max(cur.rate, Number(r.rate) || 0);
+    if (r.ny && r.ns && (!cur.number || Number(r.ns) < cur.number.seq)) cur.number = { year: Number(r.ny), seq: Number(r.ns) };
+    byDeal.set(r.did, cur);
+  }
+  for (const v of byDeal.values()) v.net = v.rate > 0 ? v.incTotal / (1 + v.rate) : v.incTotal;
+  return byDeal;
+}
+
+// Signed deals shaped for the "link to deal" picker.
+async function linkableDeals() {
+  const byDeal = await signedDealsAgg();
+  return [...byDeal.values()]
+    .map((d) => ({ dealId: d.did, title: d.title, company: d.company, number: d.number, net: round2(d.net) }))
+    .sort((a, b) => (a.company || a.title || '').localeCompare(b.company || b.title || ''));
+}
+
+// Auto-link imported pending payments to a signed CRM deal — matched on
 // normalised company name AND net amount (the full signed value or a 50/50 half,
-// within a small tolerance). Keeps the imported list from double-counting work
-// the CRM already tracks. Returns how many rows were removed. Best-effort.
-async function dedupeManualAgainstCrm() {
+// within a small tolerance). Only fills in a deal_id where none is set yet (never
+// overrides a manual link). Returns how many rows were newly linked. Best-effort.
+async function autoLinkManualToCrm() {
   try {
     await ensureManualPendingPayments();
-    const [manualRows, sigRows] = await Promise.all([
-      sql`SELECT id, company, amount_ex_vat FROM manual_pending_payments WHERE status <> 'paid'`,
-      sql`SELECT c.name AS company, s.data->>'total' AS total, p.data->>'vatRate' AS rate
-            FROM signatures s
-            JOIN proposals p ON p.id = s.proposal_id
-            JOIN deals d ON d.id = p.deal_id
-            JOIN companies c ON c.id = d.company_id
-           WHERE (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$' AND c.name IS NOT NULL`,
+    const [manualRows, byDeal] = await Promise.all([
+      sql`SELECT id, company, amount_ex_vat FROM manual_pending_payments WHERE status <> 'paid' AND deal_id IS NULL`,
+      signedDealsAgg(),
     ]);
-    if (!manualRows.length || !sigRows.length) return 0;
+    if (!manualRows.length || !byDeal.size) return 0;
 
-    // normalised company → set of acceptable net amounts (full + 50/50 half).
-    const amountsByCompany = new Map();
-    for (const r of sigRows) {
-      const key = normCompany(r.company);
-      if (!key) continue;
-      const net = (Number(r.total) || 0) / (1 + (Number(r.rate) || 0));
-      const arr = amountsByCompany.get(key) || [];
-      arr.push(net, net / 2);
-      amountsByCompany.set(key, arr);
+    // normalised company → candidate deals with their acceptable net amounts.
+    const byCompany = new Map();
+    for (const d of byDeal.values()) {
+      const key = normCompany(d.company);
+      if (!key || !d.company) continue;
+      const arr = byCompany.get(key) || [];
+      arr.push({ did: d.did, amounts: [d.net, d.net / 2] });
+      byCompany.set(key, arr);
     }
-    const isDup = (company, amt) => {
-      const arr = amountsByCompany.get(normCompany(company));
-      if (!arr) return false;
-      return arr.some((a) => Math.abs(a - amt) <= Math.max(0.5, a * 0.002));
+    const matchDeal = (company, amt) => {
+      const cands = byCompany.get(normCompany(company));
+      if (!cands) return null;
+      for (const c of cands) {
+        if (c.amounts.some((a) => Math.abs(a - amt) <= Math.max(0.5, a * 0.002))) return c.did;
+      }
+      return null;
     };
-    const dupIds = manualRows
-      .filter((r) => isDup(r.company, Number(r.amount_ex_vat) || 0))
-      .map((r) => r.id);
-    if (!dupIds.length) return 0;
-    await sql`DELETE FROM manual_pending_payments WHERE id = ANY(${dupIds})`;
-    return dupIds.length;
+
+    let linked = 0;
+    for (const r of manualRows) {
+      const did = matchDeal(r.company, Number(r.amount_ex_vat) || 0);
+      if (!did) continue;
+      await sql`UPDATE manual_pending_payments SET deal_id = ${did} WHERE id = ${r.id}`;
+      linked += 1;
+    }
+    return linked;
   } catch {
     return 0;
   }
@@ -775,9 +809,8 @@ async function trendReport(action) {
 // the Finance page; each deal's net is derived from its proposals' vatRate.
 // Mirrors the committed/paid maths in companies.js but global and deal-grouped.
 async function pendingPaymentsReport() {
-  // Strip any imported rows that duplicate a signed CRM deal so the lists and
-  // totals below never double-count them.
-  await dedupeManualAgainstCrm();
+  // Auto-link imported rows that match a signed CRM deal (so they show as linked).
+  await autoLinkManualToCrm();
   // Per signature so we can aggregate committed + the deal's VAT rate + PO flag
   // in JS (vatRate parsed as text → avoids a risky SQL numeric cast).
   const sigRows = await sql`
@@ -993,6 +1026,12 @@ async function pendingManualRoute(req, res, action) {
   if (req.method === 'PATCH') {
     if (!action) return res.status(400).json({ error: 'id required' });
     const body = req.body || {};
+    // Link (or unlink) the row to a CRM deal. { dealId: '<id>' | null }.
+    if ('dealId' in body) {
+      const dealId = trimOrNull(body.dealId);
+      await sql`UPDATE manual_pending_payments SET deal_id = ${dealId} WHERE id = ${action}`;
+      return res.status(200).json({ ok: true, rows: await fetchManualPending() });
+    }
     if ('invoiced' in body) {
       const invoiced = body.invoiced !== false; // default → invoiced
       // Never touch a row that's already paid; toggling only moves between
@@ -1038,9 +1077,9 @@ async function pendingManualRoute(req, res, action) {
                 ${amount}, ${numberOrNull(r?.vat) || 0}, ${trimOrNull(r?.paymentMethod)}, ${trimOrNull(r?.note)}, ${startOrder + i}, ${kind}, ${trimOrNull(r?.poNumber)})`;
       i += 1;
     }
-    // Drop any rows (new or pre-existing) that duplicate a signed CRM deal.
-    const removed = await dedupeManualAgainstCrm();
-    return res.status(200).json({ saved: i, removed, rows: await fetchManualPending() });
+    // Auto-link any rows (new or pre-existing) that match a signed CRM deal.
+    const linked = await autoLinkManualToCrm();
+    return res.status(200).json({ saved: i, linked, rows: await fetchManualPending() });
   }
 
   return res.status(405).json({ error: 'Method not allowed' });
@@ -1258,6 +1297,10 @@ export async function statsRoute(req, res, id, action, user) {
   }
   if (id === 'pending-manual') {
     return pendingManualRoute(req, res, action);
+  }
+  if (id === 'linkable-deals') {
+    if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(200).json({ deals: await linkableDeals() });
   }
   if (id === 'income-date') {
     return incomeDateRoute(req, res);
