@@ -1398,6 +1398,13 @@ export function StoreProvider({ children }) {
         return c;
       });
     },
+    // Find-or-create a local organisation from a Xero contact (links xeroContactId).
+    importCompanyFromXero(xeroContactId) {
+      return api.post('/api/crm/companies/from-xero-contact', { xeroContactId }).then((c) => {
+        if (c && c.id) setState(s => ({ ...s, companies: { ...s.companies, [c.id]: c } }));
+        return c;
+      });
+    },
     saveCompany(companyId, patch) {
       return mutate(
         { kind: 'company', id: companyId, patch, errorMsg: 'Failed to save company' },

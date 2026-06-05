@@ -6,6 +6,7 @@ import { useIsMobile, deriveAddress, formatGBP } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { api } from '../../api.js';
 import { Modal } from '../ui.jsx';
+import { XeroContactPicker } from './XeroContactPicker.jsx';
 
 export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXeroDuplicates }) {
   const { state, actions, showMsg } = useStore();
@@ -17,6 +18,7 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXer
   const [customersOnly, setCustomersOnly] = useState(false);
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [balances, setBalances] = useState({});
 
   // Outstanding-on-signed-work per company, fetched lazily when the
@@ -81,6 +83,9 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXer
               <AlertTriangle size={14} /> Xero Duplicates
             </button>
           )}
+          <button onClick={() => setImporting(true)} className="btn-ghost">
+            <Building2 size={14} /> Import from Xero
+          </button>
           <button onClick={() => setCreating(true)} className="btn">
             <Plus size={16} /> New {isOrgsView ? 'organisation' : 'contact'}
           </button>
@@ -153,6 +158,12 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXer
         )}
       </div>
 
+      {importing && (
+        <ImportFromXeroModal
+          onClose={() => setImporting(false)}
+          onImported={(companyId) => { setImporting(false); if (companyId) onOpenCompany?.(companyId); }}
+        />
+      )}
       {creating && view === 'contacts' && <ContactModal onClose={() => setCreating(false)} />}
       {creating && isOrgsView && <CompanyModal onClose={() => setCreating(false)} />}
       {editing && view === 'contacts' && <ContactModal contact={editing} onClose={() => setEditing(null)} />}
@@ -486,6 +497,91 @@ export function CompanyModal({ company, onClose }) {
             <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
             <button type="submit" className="btn" disabled={!name.trim() || submitting}>{submitting ? 'Saving…' : 'Save'}</button>
           </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// Import a Xero contact as a CRM organisation (+ optional contact person).
+// Reuses the Xero contacts mirror via XeroContactPicker; the organisation is
+// found-or-created and linked by xero_contact_id, and a person can be added with
+// the contact's email/phone pre-filled from Xero.
+function ImportFromXeroModal({ onClose, onImported }) {
+  const { actions, showMsg } = useStore();
+  const [picked, setPicked] = useState(null);
+  const [contactName, setContactName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [addPerson, setAddPerson] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  const choose = (c) => {
+    setPicked(c);
+    if (c) {
+      setEmail(c.email || '');
+      setPhone(c.phone || '');
+      setContactName('');
+    }
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!picked || submitting) return;
+    setSubmitting(true);
+    try {
+      const company = await actions.importCompanyFromXero(picked.id);
+      const hasPerson = addPerson && (contactName.trim() || email.trim());
+      if (hasPerson && company?.id) {
+        await actions.createContact({
+          name: contactName.trim() || null,
+          email: email.trim() || null,
+          phone: phone.trim() || null,
+          companyId: company.id,
+        });
+      }
+      showMsg?.(`Imported ${company?.name || picked.name}${hasPerson ? ' + contact' : ''} from Xero`, 'success');
+      onImported?.(company?.id || null);
+    } catch (err) {
+      showMsg?.(err?.message || 'Could not import from Xero', 'error');
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Import from Xero</h2>
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted }}>
+        Find a Xero contact to create the organisation here (linked to Xero) and, optionally, a contact person.
+      </p>
+      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <Row label="Xero contact">
+          <XeroContactPicker value={picked} onChange={choose} autoFocus placeholder="Search Xero contacts…" />
+        </Row>
+        {picked && (
+          <>
+            <div style={{ fontSize: 12, color: BRAND.muted, background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '8px 10px' }}>
+              Organisation: <strong style={{ color: BRAND.ink }}>{picked.name}</strong>
+              {[picked.addressLine1, picked.city, picked.postcode].filter(Boolean).length > 0 && (
+                <span> · {[picked.addressLine1, picked.city, picked.postcode].filter(Boolean).join(', ')}</span>
+              )}
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: BRAND.ink, cursor: 'pointer' }}>
+              <input type="checkbox" checked={addPerson} onChange={(e) => setAddPerson(e.target.checked)} />
+              Also add a contact person
+            </label>
+            {addPerson && (
+              <>
+                <Row label="Contact name"><input className="input" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="e.g. Jane Smith" /></Row>
+                <Row label="Email"><input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Row>
+                <Row label="Phone"><input className="input" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} /></Row>
+              </>
+            )}
+          </>
+        )}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+          <button type="submit" className="btn" disabled={!picked || submitting}>{submitting ? 'Importing…' : 'Import'}</button>
         </div>
       </form>
     </Modal>
