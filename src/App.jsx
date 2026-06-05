@@ -377,7 +377,7 @@ function AppShell() {
         <DealDetailView
           dealId={activeId}
           onBack={() => goBack(view === 'project' ? 'production' : 'pipeline')}
-          onOpenProposal={(id) => navigate('builder', id)}
+          onOpenProposal={(id, signed) => navigate(signed ? 'client' : 'builder', id)}
           onOpenVideo={(id) => navigate('video', id)}
           onOpenCompany={(id) => navigate('company', id)}
         />

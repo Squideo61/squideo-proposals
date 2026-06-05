@@ -346,7 +346,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
           {proposals.map(p => (
             <button
               key={p.id}
-              onClick={() => onOpenProposal?.(p.id)}
+              onClick={() => onOpenProposal?.(p.id, p.signed)}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%', padding: '8px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', marginBottom: 6 }}
             >
               <div style={{ minWidth: 0, flex: 1 }}>
