@@ -30,6 +30,12 @@ function saveLocal(key, value) {
 
 function emptyStore() {
   return {
+    // CRM-wide undo/redo history. Each entry is { label, undo, redo } where
+    // undo/redo re-invoke the real store actions (so server side-effects are
+    // correct). Only safely-reversible actions are recorded.
+    undoStack: [],
+    redoStack: [],
+    undoBusy: false,
     users: {},
     roles: {},
     proposals: {},
@@ -176,6 +182,32 @@ function withTaskUpdate(state, taskId, transform) {
       : detail;
   }
   return { ...state, tasks: updateList(state.tasks), dealDetail: newDealDetail };
+}
+
+// Find a task by id in either state.tasks or any cached dealDetail.tasks — used
+// to capture its pre-change values when building an undo entry.
+function findTaskInState(state, taskId) {
+  const t = (state.tasks || []).find((x) => x.id === taskId);
+  if (t) return t;
+  for (const k of Object.keys(state.dealDetail || {})) {
+    const hit = (state.dealDetail[k]?.tasks || []).find((x) => x.id === taskId);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// Build an "edit" undo entry: capture the patch keys' old values from `before`
+// and return { label, undo, redo } that re-apply old/new via `apply`. Returns
+// null when nothing actually changed (so we don't record a no-op).
+function buildEditUndo(before, patch, label, apply) {
+  const old = {};
+  let changed = false;
+  for (const k of Object.keys(patch)) {
+    old[k] = before ? (before[k] ?? null) : null;
+    if (old[k] !== patch[k]) changed = true;
+  }
+  if (!changed) return null;
+  return { label, undo: () => apply(old), redo: () => apply(patch) };
 }
 
 // Apply one tagged optimistic patch and return the updated state.
@@ -529,7 +561,30 @@ export function StoreProvider({ children }) {
   // - If `onSuccess` is omitted, the response (assumed to be the server-canonical
   //   record with `id`) is applied as a patch of the same kind. saveDeal etc.
   //   then need no explicit success handler.
-  const mutate = useCallback((patches, apiCall, onSuccess) => {
+  // True while an undo()/redo() is replaying actions, so the replayed mutations
+  // don't push fresh history entries of their own.
+  const suppressUndoRef = useRef(false);
+  // The canonical undo/redo stacks live in a ref for synchronous reads (useState
+  // updaters don't run synchronously); state mirrors it so the buttons re-render.
+  const undoRef = useRef({ undo: [], redo: [], busy: false });
+  const syncUndoState = useCallback(() => {
+    const r = undoRef.current;
+    setState(s => ({ ...s, undoStack: r.undo.slice(), redoStack: r.redo.slice(), undoBusy: r.busy }));
+  }, []);
+
+  // Push a reversible action onto the undo history (clearing the redo branch).
+  // Capped so the stack can't grow without bound. No-op while replaying.
+  const recordUndo = useCallback((entry) => {
+    if (!entry || suppressUndoRef.current) return;
+    undoRef.current.undo = [...undoRef.current.undo, entry].slice(-50);
+    undoRef.current.redo = [];
+    syncUndoState();
+  }, [syncUndoState]);
+
+  // mutate: the one place CRM-style optimistic actions live. Optional 4th arg
+  // `buildUndo(snapshot, resp)` returns an undo entry { label, undo, redo } built
+  // from the PRE-mutation snapshot — recorded on success (unless we're replaying).
+  const mutate = useCallback((patches, apiCall, onSuccess, buildUndo) => {
     const first = Array.isArray(patches) ? patches[0] : patches;
     const errorMsg = first?.errorMsg || 'Action failed';
     let snapshot = null;
@@ -545,14 +600,47 @@ export function StoreProvider({ children }) {
           setState(s => applyOne(s, { kind: first.kind, id: resp.id, patch: resp }));
         }
       }
+      if (buildUndo && !suppressUndoRef.current) {
+        const entry = buildUndo(snapshot, resp);
+        if (entry) recordUndo(entry);
+      }
       return resp;
     }).catch(() => {
       if (snapshot) setState(snapshot);
       showMsg(errorMsg);
     });
-  }, [showMsg]);
+  }, [showMsg, recordUndo]);
 
   const actions = useMemo(() => ({
+    // ---------- Undo / redo (CRM-wide) ----------
+    // recordUndo lets non-`mutate` actions (videos, finance) register history.
+    recordUndo(entry) { recordUndo(entry); },
+    async undo() {
+      const r = undoRef.current;
+      if (r.busy || !r.undo.length) return;
+      const entry = r.undo[r.undo.length - 1];
+      r.busy = true; syncUndoState();
+      suppressUndoRef.current = true;
+      try { await entry.undo(); } catch { /* surfaced via the action's own toast */ }
+      suppressUndoRef.current = false;
+      r.undo = r.undo.slice(0, -1);
+      r.redo = [...r.redo, entry];
+      r.busy = false; syncUndoState();
+      showMsg('Undone: ' + (entry.label || 'action'));
+    },
+    async redo() {
+      const r = undoRef.current;
+      if (r.busy || !r.redo.length) return;
+      const entry = r.redo[r.redo.length - 1];
+      r.busy = true; syncUndoState();
+      suppressUndoRef.current = true;
+      try { await entry.redo(); } catch { /* surfaced via the action's own toast */ }
+      suppressUndoRef.current = false;
+      r.redo = r.redo.slice(0, -1);
+      r.undo = [...r.undo, entry];
+      r.busy = false; syncUndoState();
+      showMsg('Redone: ' + (entry.label || 'action'));
+    },
     login(user) {
       // The session cookie was set on the API response that produced this user.
       setState(s => ({ ...s, session: {
@@ -1030,6 +1118,13 @@ export function StoreProvider({ children }) {
       return mutate(
         { kind: 'deal', id: dealId, patch, errorMsg: 'Failed to save deal' },
         () => api.patch('/api/crm/deals/' + encodeURIComponent(dealId), patch),
+        undefined,
+        (snap) => buildEditUndo(
+          snap.deals[dealId] || snap.dealDetail[dealId],
+          patch,
+          `Edit ${snap.deals[dealId]?.title || 'deal'}`,
+          (vals) => actions.saveDeal(dealId, vals),
+        ),
       );
     },
     moveDealStage(dealId, stage, lostReason) {
@@ -1040,6 +1135,17 @@ export function StoreProvider({ children }) {
         (s, resp) => resp?.deal
           ? applyOne(s, { kind: 'deal', id: resp.deal.id, patch: resp.deal })
           : s,
+        (snap) => {
+          const before = snap.deals[dealId] || {};
+          if (!before.stage || before.stage === stage) return null;
+          const oldStage = before.stage;
+          const oldLost = before.lostReason || null;
+          return {
+            label: `Move ${before.title || 'deal'} stage`,
+            undo: () => actions.moveDealStage(dealId, oldStage, oldLost),
+            redo: () => actions.moveDealStage(dealId, stage, lostReason),
+          };
+        },
       );
     },
     deleteDeal(dealId) {
@@ -1085,19 +1191,39 @@ export function StoreProvider({ children }) {
     },
     moveVideoStage(videoId, phase, stage) {
       let snapshot = null;
+      let before = null;
       setState(s => {
         snapshot = s.productionVideos;
+        before = (s.productionVideos || []).find(v => v.id === videoId) || null;
         const productionVideos = (s.productionVideos || []).map(v =>
           v.id === videoId ? { ...v, productionPhase: phase, productionStage: stage, productionStageChangedAt: new Date().toISOString() } : v);
         return { ...s, productionVideos };
       });
       return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/move', { phase, stage })
-        .then((video) => { actions._mergeVideo(video); return video; })
+        .then((video) => {
+          actions._mergeVideo(video);
+          if (before && (before.productionPhase !== phase || before.productionStage !== stage)) {
+            const oldPhase = before.productionPhase, oldStage = before.productionStage;
+            actions.recordUndo({
+              label: 'Move video stage',
+              undo: () => actions.moveVideoStage(videoId, oldPhase, oldStage),
+              redo: () => actions.moveVideoStage(videoId, phase, stage),
+            });
+          }
+          return video;
+        })
         .catch(() => { setState(s => ({ ...s, productionVideos: snapshot ?? s.productionVideos })); showMsg('Failed to move video'); });
     },
     updateVideo(videoId, fields) {
+      let before = null;
+      setState(s => { before = s.videoDetail?.[videoId] || (s.productionVideos || []).find(v => v.id === videoId) || null; return s; });
       return api.patch('/api/crm/production/video/' + encodeURIComponent(videoId), fields)
-        .then((video) => { actions._mergeVideo(video); return video; })
+        .then((video) => {
+          actions._mergeVideo(video);
+          const entry = buildEditUndo(before, fields, 'Edit video', (vals) => actions.updateVideo(videoId, vals));
+          if (entry) actions.recordUndo(entry);
+          return video;
+        })
         .catch((err) => { showMsg('Failed to update video'); throw err; });
     },
     // Create a project (deal) from scratch + its first video.
@@ -1219,6 +1345,13 @@ export function StoreProvider({ children }) {
       return mutate(
         { kind: 'contact', id: contactId, patch, errorMsg: 'Failed to save contact' },
         () => api.patch('/api/crm/contacts/' + encodeURIComponent(contactId), patch),
+        undefined,
+        (snap) => buildEditUndo(
+          snap.contacts[contactId],
+          patch,
+          `Edit ${snap.contacts[contactId]?.name || 'contact'}`,
+          (vals) => actions.saveContact(contactId, vals),
+        ),
       );
     },
     deleteContact(contactId) {
@@ -1237,6 +1370,13 @@ export function StoreProvider({ children }) {
       return mutate(
         { kind: 'company', id: companyId, patch, errorMsg: 'Failed to save company' },
         () => api.patch('/api/crm/companies/' + encodeURIComponent(companyId), patch),
+        undefined,
+        (snap) => buildEditUndo(
+          snap.companies[companyId],
+          patch,
+          `Edit ${snap.companies[companyId]?.name || 'company'}`,
+          (vals) => actions.saveCompany(companyId, vals),
+        ),
       );
     },
     deleteCompany(companyId) {
@@ -1263,6 +1403,17 @@ export function StoreProvider({ children }) {
           '/api/crm/companies/' + encodeURIComponent(companyId),
           { customerVerified: !!verified },
         ),
+        undefined,
+        (snap) => {
+          const before = snap.companies[companyId] || {};
+          const wasVerified = !!before.customerVerifiedAt;
+          if (wasVerified === !!verified) return null;
+          return {
+            label: verified ? 'Mark as customer' : 'Unmark customer',
+            undo: () => actions.setCompanyCustomerVerified(companyId, wasVerified),
+            redo: () => actions.setCompanyCustomerVerified(companyId, verified),
+          };
+        },
       );
     },
     refreshTasks(scope = 'open') {
@@ -1286,6 +1437,13 @@ export function StoreProvider({ children }) {
       return mutate(
         { kind: 'task', id: taskId, patch, errorMsg: 'Failed to save task' },
         () => api.patch('/api/crm/tasks/' + encodeURIComponent(taskId), patch),
+        undefined,
+        (snap) => buildEditUndo(
+          findTaskInState(snap, taskId),
+          patch,
+          'Edit task',
+          (vals) => actions.saveTask(taskId, vals),
+        ),
       );
     },
     toggleTask(taskId) {
@@ -1316,6 +1474,16 @@ export function StoreProvider({ children }) {
             }).catch(() => {});
           }
           return withTaskUpdate(s, t.id, () => t);
+        },
+        (snap) => {
+          const before = findTaskInState(snap, taskId);
+          const wasDone = !!(before && before.doneAt);
+          // toggleTask is its own inverse — flipping again restores the prior state.
+          return {
+            label: wasDone ? 'Reopen task' : 'Complete task',
+            undo: () => actions.toggleTask(taskId),
+            redo: () => actions.toggleTask(taskId),
+          };
         },
       );
     },

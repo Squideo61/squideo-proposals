@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, PoundSterling, Settings, Trophy, UserCog } from 'lucide-react';
+import { ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, PoundSterling, Settings, Trophy, Undo2, Redo2, UserCog } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -13,8 +13,12 @@ const BADGE = '#FB923C';
 // grouped into three section dropdowns (Business / Sales / Projects); Admin,
 // Account and "New Proposal" sit as standalone utilities on the right.
 export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLink }) {
-  const { state } = useStore();
+  const { state, actions } = useStore();
   const isMobile = useIsMobile();
+  const undoStack = state.undoStack || [];
+  const redoStack = state.redoStack || [];
+  const nextUndo = undoStack[undoStack.length - 1];
+  const nextRedo = redoStack[redoStack.length - 1];
   const [openMenu, setOpenMenu] = useState(null);
   const navRef = useRef(null);
   const accountRef = useRef(null);
@@ -192,6 +196,30 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         </nav>
 
         <div style={{ flex: 1 }} />
+
+        {/* CRM-wide undo / redo. Tooltips name the next reversible action. */}
+        <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={() => actions.undo()}
+            disabled={!nextUndo || state.undoBusy}
+            className="btn-ghost"
+            title={nextUndo ? `Undo: ${nextUndo.label} (Ctrl+Z)` : 'Nothing to undo'}
+            style={{ padding: '6px 8px', opacity: nextUndo ? 1 : 0.4, cursor: nextUndo ? 'pointer' : 'default' }}
+          >
+            <Undo2 size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => actions.redo()}
+            disabled={!nextRedo || state.undoBusy}
+            className="btn-ghost"
+            title={nextRedo ? `Redo: ${nextRedo.label} (Ctrl+Shift+Z)` : 'Nothing to redo'}
+            style={{ padding: '6px 8px', opacity: nextRedo ? 1 : 0.4, cursor: nextRedo ? 'pointer' : 'default' }}
+          >
+            <Redo2 size={16} />
+          </button>
+        </div>
 
         {[
           { label: 'Tasks', icon: CheckSquare, views: ['tasks'], go: () => navigate('tasks'), count: openTasksDue },

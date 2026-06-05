@@ -96,6 +96,26 @@ function AppShell() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
+  // CRM-wide undo/redo keyboard shortcuts. Skip while typing in a field or a
+  // contentEditable so the browser's own text undo keeps working there.
+  useEffect(() => {
+    const isEditable = (el) => {
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+    };
+    const onKey = (e) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod || e.key.toLowerCase() !== 'z' && e.key.toLowerCase() !== 'y') return;
+      if (isEditable(e.target)) return;
+      const redo = (e.key.toLowerCase() === 'z' && e.shiftKey) || e.key.toLowerCase() === 'y';
+      e.preventDefault();
+      if (redo) actions.redo(); else actions.undo();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [actions]);
+
   const navigate = useCallback((newView, newId = null) => {
     window.history.pushState(null, '', buildHash(newView, newId));
     navDepthRef.current += 1;

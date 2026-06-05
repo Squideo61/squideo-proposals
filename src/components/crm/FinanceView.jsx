@@ -429,7 +429,14 @@ function ManualPendingGroup({ rows, total, actions, onChanged, isMobile }) {
     if (!actions) return;
     const gross = (Number(r.amountExVat) || 0) + (Number(r.vat) || 0);
     if (window.confirm(`Mark "${r.company || r.description || 'this item'}" as paid?\n\nNet ${formatGBP(r.amountExVat)} + VAT ${formatGBP(r.vat)} = ${formatGBP(gross)} will be added to income.`)) {
-      actions.markPendingPaymentPaid(r.id, true).then(() => onChanged && onChanged());
+      actions.markPendingPaymentPaid(r.id, true).then(() => {
+        if (onChanged) onChanged();
+        actions.recordUndo && actions.recordUndo({
+          label: `Mark ${r.company || 'PP'} paid`,
+          undo: () => actions.markPendingPaymentPaid(r.id, false).then(() => onChanged && onChanged()),
+          redo: () => actions.markPendingPaymentPaid(r.id, true).then(() => onChanged && onChanged()),
+        });
+      });
     }
   };
   const remove = (r) => {
