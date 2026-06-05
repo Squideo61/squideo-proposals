@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, Pencil, Check, X } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -7,6 +7,13 @@ import {
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile, workingDaysBetween, ukBankHolidays, todayKey } from '../../utils.js';
+
+const PPS_COLOR = '#F59E0B';
+// 'YYYY-MM' → "Jun '24" (the trailing window spans up to 3 years).
+const monthShortYear = (key) => {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'short' }) + " '" + String(y).slice(2);
+};
 
 // Fallback if settings hasn't loaded targets yet (matches api/settings.js seed).
 const FALLBACK_TARGETS = [
@@ -84,18 +91,25 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
 
   const period = mode === 'month' ? month : quarter;
   const isSales = section === 'sales';
+  const isComparison = section === 'salesvspp';
 
   useEffect(() => {
     if (!state.bankHolidays) actions.loadBankHolidays();
   }, [actions, state.bankHolidays]);
 
   useEffect(() => {
+    if (isComparison) { setLoading(false); return; } // pacing stats not needed here
     let active = true;
     setLoading(true);
     const load = isSales ? actions.loadSalesStats(period) : actions.loadPerformanceStats(period);
     load.finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [actions, period, isSales]);
+  }, [actions, period, isSales, isComparison]);
+
+  // Sales vs PP's needs the rolling 36-month trend + (for the importer) history.
+  useEffect(() => {
+    if (isComparison && !state.trend) actions.loadTrend(36);
+  }, [actions, isComparison, state.trend]);
 
   const targetSource = isSales ? state.salesTargets : state.financeTargets;
   const targets = (targetSource && targetSource.length) ? targetSource : FALLBACK_TARGETS;
@@ -143,44 +157,52 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Performance</h2>
             <p style={{ fontSize: 13, color: BRAND.muted, margin: '2px 0 0' }}>
-              {isSales
-                ? 'New business signed (ex-VAT) across all customers, paced against your sales targets by working day.'
-                : 'Cash received (ex-VAT) across all customers, paced against your income targets by working day.'}
+              {isComparison
+                ? "Cash received each month vs new money owed created that month (ex-VAT), over the last 36 months. The owed line previews future income."
+                : isSales
+                  ? 'New business signed (ex-VAT) across all customers, paced against your sales targets by working day.'
+                  : 'Cash received (ex-VAT) across all customers, paced against your income targets by working day.'}
             </p>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={() => setEditing((v) => !v)} className="btn-ghost" title="Edit targets">
-            <Pencil size={14} /> Targets
-          </button>
-          <Segmented
-            value={mode}
-            onChange={setMode}
-            options={[{ value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' }]}
-          />
-          <select
-            value={period}
-            onChange={(e) => (mode === 'month' ? setMonth(e.target.value) : setQuarter(e.target.value))}
-            style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
-          >
-            {mode === 'month'
-              ? recentMonths(12).map((k) => <option key={k} value={k}>{monthOptionLabel(k)}</option>)
-              : recentQuarters(8).map((k) => { const [y, q] = k.split('-Q'); return <option key={k} value={k}>{`Q${q} ${y}`}</option>; })}
-          </select>
-        </div>
+        {!isComparison && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={() => setEditing((v) => !v)} className="btn-ghost" title="Edit targets">
+              <Pencil size={14} /> Targets
+            </button>
+            <Segmented
+              value={mode}
+              onChange={setMode}
+              options={[{ value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' }]}
+            />
+            <select
+              value={period}
+              onChange={(e) => (mode === 'month' ? setMonth(e.target.value) : setQuarter(e.target.value))}
+              style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
+            >
+              {mode === 'month'
+                ? recentMonths(12).map((k) => <option key={k} value={k}>{monthOptionLabel(k)}</option>)
+                : recentQuarters(8).map((k) => { const [y, q] = k.split('-Q'); return <option key={k} value={k}>{`Q${q} ${y}`}</option>; })}
+            </select>
+          </div>
+        )}
       </div>
 
-      {/* The two clear sub-sections. */}
+      {/* The three Performance views. */}
       <div style={{ marginBottom: 16 }}>
         <Segmented
           big
           value={section}
           onChange={setSection}
-          options={[{ value: 'income', label: 'Income performance' }, { value: 'sales', label: 'Sales performance' }]}
+          options={[{ value: 'income', label: 'Income performance' }, { value: 'sales', label: 'Sales performance' }, { value: 'salesvspp', label: "Sales vs PP's" }]}
         />
       </div>
 
-      {editing && (
+      {isComparison && (
+        <SalesVsPpView trend={state.trend} isMobile={isMobile} actions={actions} history={state.salesHistory} />
+      )}
+
+      {!isComparison && editing && (
         <TargetEditor
           key={section}
           heading={isSales ? 'Monthly sales targets' : 'Monthly income targets'}
@@ -191,6 +213,7 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
       )}
 
       {/* Pace strip: where you are today vs each target's expected pace. */}
+      {!isComparison && (<>
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${targets.length + 1}, 1fr)`, gap: 12, marginBottom: 16 }}>
         <PaceCard
           title={model.status === 'future' ? 'Upcoming period' : `Working day ${model.lastActualIdx} of ${model.N}`}
@@ -245,7 +268,179 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
           </ResponsiveContainer>
         )}
       </div>
+      </>)}
     </section>
+  );
+}
+
+// Sales vs PP's — cash received each month vs new money owed created that month
+// over the last 36 months. The owed line is tomorrow's income, so the gap reads
+// as the forward pipeline. Admins can backfill pre-CRM months from the sheet.
+function SalesVsPpView({ trend, isMobile, actions, history }) {
+  const months = trend?.months || [];
+  const chart = useMemo(() => months.map((m) => ({
+    label: monthShortYear(m.month), cashIn: m.cashIn, pps: m.pps,
+  })), [months]);
+  const totals = months.reduce(
+    (a, m) => ({ cashIn: a.cashIn + (m.cashIn || 0), pps: a.pps + (m.pps || 0) }),
+    { cashIn: 0, pps: 0 },
+  );
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
+        <StatCard icon={Wallet} accent={BRAND.blue} label="Cash in — last 36 months" value={formatGBP(totals.cashIn)} sub="Payments received (ex-VAT)" />
+        <StatCard icon={PoundSterling} accent={PPS_COLOR} label="New money owed — last 36 months" value={formatGBP(totals.pps)} sub="Created by signings + extras — future income" />
+      </div>
+
+      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 16 }}>
+        <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+          Sales vs PP's — last 36 months
+        </h3>
+        {!trend ? (
+          <div style={{ height: 360, display: 'flex', alignItems: 'center', justifyContent: 'center', color: BRAND.muted, fontSize: 14 }}>Loading…</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={360}>
+            <LineChart data={chart} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={BRAND.border} />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: BRAND.muted }} interval="preserveStartEnd" minTickGap={24} />
+              <YAxis tickFormatter={gbpK} tick={{ fontSize: 12, fill: BRAND.muted }} width={56} />
+              <Tooltip formatter={(v, n) => [formatGBP(v), n]} cursor={{ stroke: BRAND.border }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="cashIn" name="Sales (cash in)" stroke={BRAND.blue} strokeWidth={2.5} dot={false} />
+              <Line type="monotone" dataKey="pps" name="PP's (money owed)" stroke={PPS_COLOR} strokeWidth={2.5} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <ImportHistoryPanel actions={actions} history={history} isMobile={isMobile} />
+    </>
+  );
+}
+
+function StatCard({ icon: Icon, label, value, sub, accent }) {
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${accent || BRAND.blue}`, borderRadius: 10, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+        {Icon && <Icon size={14} color={accent || BRAND.muted} />}
+        <span>{label}</span>
+      </div>
+      <div style={{ fontSize: 24, fontWeight: 700, color: BRAND.ink }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>{sub}</div>}
+    </div>
+  );
+}
+
+const MONTH_ABBR = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+
+// Parse a sheet "Month" cell into 'YYYY-MM'. Accepts 'Sep-16', 'Sep 2016',
+// 'Mar23', 'September 2016', '2016-09'. Returns null if unrecognised.
+function parseMonthCell(raw) {
+  const s = String(raw || '').trim();
+  if (/^\d{4}-\d{2}/.test(s)) return s.slice(0, 7);
+  const m = s.match(/^([A-Za-z]{3,})[-\s/]*(\d{2,4})$/);
+  if (m) {
+    const mi = MONTH_ABBR[m[1].slice(0, 3).toLowerCase()];
+    if (mi) {
+      let y = Number(m[2]);
+      if (y < 100) y += 2000;
+      return `${y}-${String(mi).padStart(2, '0')}`;
+    }
+  }
+  return null;
+}
+
+const parseMoney = (raw) => Number(String(raw ?? '').replace(/[£,\s]/g, '')) || 0;
+
+// Parse pasted TSV/CSV (Month, Sales, PP's) into normalised history rows,
+// skipping a header row and anything without a recognisable month.
+function parseHistoryPaste(text) {
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const cells = line.split(/\t|,/).map((c) => c.trim());
+    const month = parseMonthCell(cells[0]);
+    if (!month) continue;
+    out.push({ month, sales: parseMoney(cells[1]), pps: parseMoney(cells[2]) });
+  }
+  return out;
+}
+
+function ImportHistoryPanel({ actions, history, isMobile }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [mode, setMode] = useState('merge');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  useEffect(() => { if (open && history == null) actions.loadSalesHistory(); }, [open, history, actions]);
+
+  const parsed = useMemo(() => parseHistoryPaste(text), [text]);
+
+  const submit = async () => {
+    if (!parsed.length || busy) return;
+    setBusy(true); setResult(null);
+    try {
+      const data = await actions.importSalesHistory(parsed, mode);
+      await actions.loadTrend(36);
+      setResult({ ok: true, saved: data?.saved ?? parsed.length });
+      setText('');
+    } catch {
+      setResult({ ok: false });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
+      >
+        <ChevronDown size={16} color={BRAND.muted} style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s' }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+          Import Live Sales Sheet history
+        </span>
+        {history && history.length > 0 && (
+          <span style={{ fontSize: 12, color: BRAND.muted, fontWeight: 500 }}>· {history.length} months stored</span>
+        )}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: BRAND.muted }}>
+            Paste three columns — <strong>Month, Sales (cash in), PP's (money owed)</strong> — straight from the sheet (tab or comma separated).
+            Months are read as <code>Sep-16</code> or <code>2016-09</code>; a header row is ignored. These override the computed figures for those months.
+          </p>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={'Sep-16\t6695\t1130\nOct-16\t5838\t1650\n…'}
+            rows={8}
+            style={{ width: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13, fontFamily: 'monospace', resize: 'vertical' }}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginTop: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer' }}>
+              <input type="radio" checked={mode === 'merge'} onChange={() => setMode('merge')} /> Merge (update/add)
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer' }}>
+              <input type="radio" checked={mode === 'replace'} onChange={() => setMode('replace')} /> Replace all
+            </label>
+            <span style={{ fontSize: 12, color: BRAND.muted }}>{parsed.length} {parsed.length === 1 ? 'month' : 'months'} detected</span>
+            <button onClick={submit} className="btn" disabled={!parsed.length || busy} style={{ marginLeft: 'auto' }}>
+              {busy ? 'Importing…' : 'Import history'}
+            </button>
+          </div>
+          {result && (
+            <div style={{ marginTop: 10, fontSize: 13, color: result.ok ? '#15803D' : '#EF4444' }}>
+              {result.ok ? `Imported ${result.saved} months — charts updated.` : 'Import failed — please try again.'}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

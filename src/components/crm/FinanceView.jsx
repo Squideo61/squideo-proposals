@@ -107,8 +107,9 @@ export function FinanceView({ onBack, onOpenDeal }) {
   // Outstanding deals aren't period-scoped — load once.
   useEffect(() => { actions.loadPendingPayments(); }, [actions]);
 
-  // Rolling 12-month trend (charts) + imported sheet history — period-independent.
-  useEffect(() => { if (!state.trend) actions.loadTrend(12); }, [actions, state.trend]);
+  // Rolling trend (charts) — load 36 months (the Performance comparison needs
+  // the full window; the bar charts below slice the last 12). Period-independent.
+  useEffect(() => { if (!state.trend) actions.loadTrend(36); }, [actions, state.trend]);
   const trend = state.trend;
 
   const fin = state.financeStats && state.financeStats.year === effectiveYear ? state.financeStats : null;
@@ -133,7 +134,7 @@ export function FinanceView({ onBack, onOpenDeal }) {
   // Rolling 12-month series for the trend charts (period-independent). The first
   // tab's bar shows cash-in (Income) or cash-generated (Sales); the Sales-vs-PP's
   // tab compares cash-in against new money owed.
-  const trendChart = useMemo(() => (trend?.months || []).map((m) => ({
+  const trendChart = useMemo(() => (trend?.months || []).slice(-12).map((m) => ({
     label: shortMonth(m.month),
     cashIn: m.cashIn,
     cashGenerated: m.cashGenerated,
@@ -187,7 +188,7 @@ export function FinanceView({ onBack, onOpenDeal }) {
         <Segmented
           value={section}
           onChange={setSection}
-          options={[{ value: 'income', label: firstTab.label }, { value: 'salesvspp', label: "Sales vs PP's" }, { value: 'pending', label: 'Pending Payments' }, { value: 'vat', label: 'VAT' }]}
+          options={[{ value: 'income', label: firstTab.label }, { value: 'pending', label: 'Pending Payments' }, { value: 'vat', label: 'VAT' }]}
         />
       </div>
 
@@ -234,10 +235,6 @@ export function FinanceView({ onBack, onOpenDeal }) {
             <IncomePayments income={income} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={firstTab.view.periodLabel} />
           )}
         </>
-      )}
-
-      {section === 'salesvspp' && (
-        <SalesVsPpTab trend={trend} trendChart={trendChart} isMobile={isMobile} actions={actions} history={state.salesHistory} />
       )}
 
       {section === 'vat' && (
@@ -627,165 +624,6 @@ function PendingRow({ d, onOpenDeal }) {
               </span>
             </div>
           ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const PPS_COLOR = '#F59E0B';
-const MONTH_ABBR = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
-
-// Parse a sheet "Month" cell into 'YYYY-MM'. Accepts 'Sep-16', 'Sep 2016',
-// 'September 2016', '2016-09', '2016-09-01'. Returns null if unrecognised.
-function parseMonthCell(raw) {
-  const s = String(raw || '').trim();
-  if (/^\d{4}-\d{2}/.test(s)) return s.slice(0, 7);
-  const m = s.match(/^([A-Za-z]{3,})[-\s/]*(\d{2,4})$/); // 'Sep-16', 'Mar 22', 'Mar23', 'November 2024'
-  if (m) {
-    const mi = MONTH_ABBR[m[1].slice(0, 3).toLowerCase()];
-    if (mi) {
-      let y = Number(m[2]);
-      if (y < 100) y += 2000;
-      return `${y}-${String(mi).padStart(2, '0')}`;
-    }
-  }
-  return null;
-}
-
-const parseMoney = (raw) => Number(String(raw ?? '').replace(/[£,\s]/g, '')) || 0;
-
-// Parse pasted TSV/CSV (Month, Sales, PP's) into normalised history rows,
-// skipping a header row and anything without a recognisable month.
-function parseHistoryPaste(text) {
-  const out = [];
-  for (const line of String(text || '').split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    const cells = line.split(/\t|,/).map((c) => c.trim());
-    const month = parseMonthCell(cells[0]);
-    if (!month) continue; // header or junk
-    out.push({ month, sales: parseMoney(cells[1]), pps: parseMoney(cells[2]) });
-  }
-  return out;
-}
-
-// Sales vs PP's — cash received each month against the new money owed created
-// that month, over the last 12 months. The owed line is tomorrow's income, so
-// the gap reads as the forward pipeline. Admins can backfill pre-CRM months from
-// the Live Sales Sheet.
-function SalesVsPpTab({ trend, trendChart, isMobile, actions, history }) {
-  const totals = (trend?.months || []).reduce(
-    (a, m) => ({ cashIn: a.cashIn + (m.cashIn || 0), pps: a.pps + (m.pps || 0) }),
-    { cashIn: 0, pps: 0 },
-  );
-  return (
-    <>
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
-        <StatCard icon={Wallet} accent={BRAND.blue} label="Cash in — last 12 months" value={formatGBP(totals.cashIn)} sub="Payments received (ex-VAT)" />
-        <StatCard icon={PoundSterling} accent={PPS_COLOR} label="New money owed — last 12 months" value={formatGBP(totals.pps)} sub="Created by signings + extras — future income" />
-      </div>
-
-      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 20 }}>
-        <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          Sales vs PP's — last 12 months
-        </h3>
-        <p style={{ margin: '0 0 12px', fontSize: 12, color: BRAND.muted }}>
-          Cash received each month vs new money owed created that month (ex-VAT). The owed line previews future income.
-        </p>
-        {!trend ? (
-          <div style={{ height: 340, display: 'flex', alignItems: 'center', justifyContent: 'center', color: BRAND.muted, fontSize: 14 }}>Loading…</div>
-        ) : (
-          <ResponsiveContainer width="100%" height={340}>
-            <LineChart data={trendChart} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={BRAND.border} />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: BRAND.muted }} />
-              <YAxis tickFormatter={gbpK} tick={{ fontSize: 12, fill: BRAND.muted }} width={56} />
-              <Tooltip formatter={(v, n) => [formatGBP(v), n]} cursor={{ stroke: BRAND.border }} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="cashIn" name="Sales (cash in)" stroke={BRAND.blue} strokeWidth={2.5} dot={false} />
-              <Line type="monotone" dataKey="pps" name="PP's (money owed)" stroke={PPS_COLOR} strokeWidth={2.5} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      <ImportHistoryPanel actions={actions} history={history} isMobile={isMobile} />
-    </>
-  );
-}
-
-function ImportHistoryPanel({ actions, history, isMobile }) {
-  const [open, setOpen] = useState(false);
-  const [text, setText] = useState('');
-  const [mode, setMode] = useState('merge');
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState(null);
-
-  useEffect(() => { if (open && history == null) actions.loadSalesHistory(); }, [open, history, actions]);
-
-  const parsed = useMemo(() => parseHistoryPaste(text), [text]);
-
-  const submit = async () => {
-    if (!parsed.length || busy) return;
-    setBusy(true); setResult(null);
-    try {
-      const data = await actions.importSalesHistory(parsed, mode);
-      await actions.loadTrend(12);
-      setResult({ ok: true, saved: data?.saved ?? parsed.length });
-      setText('');
-    } catch {
-      setResult({ ok: false });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20 }}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
-      >
-        <ChevronDown size={16} color={BRAND.muted} style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s' }} />
-        <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          Import Live Sales Sheet history
-        </span>
-        {history && history.length > 0 && (
-          <span style={{ fontSize: 12, color: BRAND.muted, fontWeight: 500 }}>· {history.length} months stored</span>
-        )}
-      </button>
-
-      {open && (
-        <div style={{ marginTop: 14 }}>
-          <p style={{ margin: '0 0 10px', fontSize: 12, color: BRAND.muted }}>
-            Paste three columns — <strong>Month, Sales (cash in), PP's (money owed)</strong> — straight from the sheet (tab or comma separated).
-            Months are read as <code>Sep-16</code> or <code>2016-09</code>; a header row is ignored. These override the computed figures for those months.
-          </p>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={'Sep-16\t6695\t1130\nOct-16\t5838\t1650\n…'}
-            rows={8}
-            style={{ width: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13, fontFamily: 'monospace', resize: 'vertical' }}
-          />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginTop: 12 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer' }}>
-              <input type="radio" checked={mode === 'merge'} onChange={() => setMode('merge')} /> Merge (update/add)
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer' }}>
-              <input type="radio" checked={mode === 'replace'} onChange={() => setMode('replace')} /> Replace all
-            </label>
-            <span style={{ fontSize: 12, color: BRAND.muted }}>{parsed.length} {parsed.length === 1 ? 'month' : 'months'} detected</span>
-            <button onClick={submit} className="btn" disabled={!parsed.length || busy} style={{ marginLeft: 'auto' }}>
-              {busy ? 'Importing…' : 'Import history'}
-            </button>
-          </div>
-          {result && (
-            <div style={{ marginTop: 10, fontSize: 13, color: result.ok ? '#15803D' : '#EF4444' }}>
-              {result.ok ? `Imported ${result.saved} months — charts updated.` : 'Import failed — please try again.'}
-            </div>
-          )}
         </div>
       )}
     </div>
