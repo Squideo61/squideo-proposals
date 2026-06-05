@@ -203,9 +203,14 @@ function ensureManualPendingPayments() {
         vat            NUMERIC NOT NULL DEFAULT 0,
         payment_method TEXT,
         note           TEXT,
+        status         TEXT NOT NULL DEFAULT 'pending',
+        paid_at        TIMESTAMPTZ,
         sort_order     INT,
         created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
+    // Older tables (seeded before mark-as-paid) need the status/paid columns.
+    await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'`;
+    await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`;
     const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM manual_pending_payments`;
     if (count === 0) {
       let i = 0;
@@ -230,15 +235,32 @@ function serialiseManualPP(r) {
     vat: Number(r.vat) || 0,
     paymentMethod: r.payment_method || null,
     note: r.note || null,
+    status: r.status || 'pending',
+    paidAt: r.paid_at || null,
   };
 }
 
-// Imported manual pending payments (robust to a missing table → []).
+// Outstanding (unpaid) manual pending payments (robust to a missing table → []).
 async function fetchManualPending() {
   try {
     await ensureManualPendingPayments();
-    const rows = await sql`SELECT * FROM manual_pending_payments ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
+    const rows = await sql`SELECT * FROM manual_pending_payments WHERE status <> 'paid' ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
     return rows.map(serialiseManualPP);
+  } catch {
+    return [];
+  }
+}
+
+// Manual pending payments MARKED PAID in [since, until) — a paid-money source so
+// they flow into Income / Net revenue / cash-in alongside the five real sources.
+// [{ paid_at, amount_ex_vat, vat, company }]. Robust to a missing table → [].
+async function fetchPaidManualPps(sinceISO, untilISO) {
+  try {
+    await ensureManualPendingPayments();
+    return await sql`
+      SELECT paid_at, amount_ex_vat, vat, company
+        FROM manual_pending_payments
+       WHERE status = 'paid' AND paid_at >= ${sinceISO} AND paid_at < ${untilISO}`;
   } catch {
     return [];
   }
@@ -291,6 +313,14 @@ async function fetchPaidRows(sinceISO, untilISO) {
     }
   }
   for (const r of pbR) push(r.paid_at, splitVat(r.inc, r.rate));
+
+  // Manual pending payments marked paid — net + stored VAT.
+  const ppPaid = await fetchPaidManualPps(sinceISO, untilISO);
+  for (const r of ppPaid) {
+    const net = Number(r.amount_ex_vat) || 0;
+    const vat = Number(r.vat) || 0;
+    push(r.paid_at, { net, vat, gross: net + vat });
+  }
 
   return rows;
 }
@@ -788,6 +818,18 @@ async function pendingManualRoute(req, res, action) {
     return res.status(200).json({ ok: true, rows: await fetchManualPending() });
   }
 
+  // Mark a row paid (→ flows into Income) or back to pending. { paid: bool }.
+  if (req.method === 'PATCH') {
+    if (!action) return res.status(400).json({ error: 'id required' });
+    const paid = (req.body || {}).paid !== false; // default → paid
+    await sql`
+      UPDATE manual_pending_payments
+         SET status = ${paid ? 'paid' : 'pending'},
+             paid_at = ${paid ? new Date().toISOString() : null}
+       WHERE id = ${action}`;
+    return res.status(200).json({ ok: true, rows: await fetchManualPending() });
+  }
+
   if (req.method === 'POST' || req.method === 'PUT') {
     const body = req.body || {};
     const incoming = Array.isArray(body.rows) ? body.rows : [];
@@ -911,6 +953,14 @@ async function incomeReport(action) {
     }
   }
   for (const r of pbR) push(r, 'billing', splitVat(r.inc, r.rate));
+
+  // Manual pending payments marked paid — show in the ledger with their stored VAT.
+  const ppPaid = await fetchPaidManualPps(since, until);
+  for (const r of ppPaid) {
+    const net = Number(r.amount_ex_vat) || 0;
+    const vat = Number(r.vat) || 0;
+    push(r, 'sheet', { net, vat, gross: net + vat });
+  }
 
   rows.sort((a, b) => (a.paidAt < b.paidAt ? 1 : a.paidAt > b.paidAt ? -1 : 0));
   const total = round2(rows.reduce((s, r) => s + r.net, 0));

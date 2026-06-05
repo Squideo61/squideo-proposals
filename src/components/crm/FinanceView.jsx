@@ -145,6 +145,15 @@ export function FinanceView({ onBack, onOpenDeal }) {
   useEffect(() => { if (!state.trend) actions.loadTrend(36); }, [actions, state.trend]);
   const trend = state.trend;
 
+  // Reload everything a paid PP touches (pending list + income ledger + net
+  // revenue + trend) using the period that's currently selected.
+  const refreshFinance = () => {
+    actions.loadPendingPayments();
+    actions.loadIncome(periodParam);
+    actions.loadFinanceStats(effectiveYear);
+    actions.loadTrend(36);
+  };
+
   const fin = state.financeStats && state.financeStats.year === effectiveYear ? state.financeStats : null;
   const salesFin = state.salesFinanceStats && state.salesFinanceStats.year === effectiveYear ? state.salesFinanceStats : null;
   const salesLedger = state.salesLedger && state.salesLedger.period === periodParam ? state.salesLedger : null;
@@ -344,7 +353,7 @@ export function FinanceView({ onBack, onOpenDeal }) {
           </div>
           {/* Pending Payments — outstanding signed deals, split PO vs normal, plus
               the imported Live Sales Sheet group. */}
-          <PendingPayments pending={pending} onOpenDeal={onOpenDeal} isMobile={isMobile} actions={actions} />
+          <PendingPayments pending={pending} onOpenDeal={onOpenDeal} isMobile={isMobile} actions={actions} onChanged={refreshFinance} />
         </>
       )}
     </div>
@@ -361,7 +370,7 @@ const PAYMENT_TYPE_META = {
   extra: { label: 'Extra', color: '#C2410C', bg: '#FFF7ED' },
 };
 
-function PendingPayments({ pending, onOpenDeal, isMobile, actions }) {
+function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) {
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 20 }}>
       <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -394,6 +403,8 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions }) {
             rows={pending.manual || []}
             total={pending.totals?.manual || 0}
             actions={actions}
+            onChanged={onChanged}
+            isMobile={isMobile}
           />
         </div>
       )}
@@ -403,14 +414,31 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions }) {
 }
 
 // Imported Live Sales Sheet "PP's" — outstanding work that lives outside the
-// CRM's own signed deals. Each row can be ticked off (deleted) once collected.
-function ManualPendingGroup({ rows, total, actions }) {
+// CRM's own signed deals. Dense, spreadsheet-style rows with an always-on VAT
+// column. Each can be marked paid (→ flows into Income) or removed.
+// Grid: item | Net | VAT | Total | actions.
+const MANUAL_PP_COLS = '1fr 92px 80px 92px 58px';
+const MANUAL_PP_COLS_M = '1fr 64px 72px 52px';
+
+function ManualPendingGroup({ rows, total, actions, onChanged, isMobile }) {
+  const cols = isMobile ? MANUAL_PP_COLS_M : MANUAL_PP_COLS;
+  const vatTotal = rows.reduce((s, r) => s + (Number(r.vat) || 0), 0);
+  const grossTotal = total + vatTotal;
+
+  const markPaid = (r) => {
+    if (!actions) return;
+    const gross = (Number(r.amountExVat) || 0) + (Number(r.vat) || 0);
+    if (window.confirm(`Mark "${r.company || r.description || 'this item'}" as paid?\n\nNet ${formatGBP(r.amountExVat)} + VAT ${formatGBP(r.vat)} = ${formatGBP(gross)} will be added to income.`)) {
+      actions.markPendingPaymentPaid(r.id, true).then(() => onChanged && onChanged());
+    }
+  };
   const remove = (r) => {
     if (!actions) return;
-    if (window.confirm(`Mark "${r.company || r.description || 'this item'}" as collected and remove it?`)) {
+    if (window.confirm(`Remove "${r.company || r.description || 'this item'}" from the list? (Use this only for mistakes — it is not added to income.)`)) {
       actions.deletePendingPayment(r.id);
     }
   };
+
   return (
     <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
       <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '3px solid #0E7490' }}>
@@ -418,49 +446,78 @@ function ManualPendingGroup({ rows, total, actions }) {
           <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Imported (Live Sales Sheet)</span>
           <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
         </div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Outstanding from your sheet, ex-VAT (net) · {rows.length} {rows.length === 1 ? 'item' : 'items'} · ✕ to mark collected</div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Outstanding from your sheet · {rows.length} {rows.length === 1 ? 'item' : 'items'} · ✓ marks paid (→ income), ✕ removes</div>
       </div>
       {rows.length === 0 ? (
-        <div style={{ padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>Nothing imported.</div>
+        <div style={{ padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>Nothing outstanding — all collected.</div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {rows.map((r) => (
-            <ManualPendingRow key={r.id} r={r} onRemove={() => remove(r)} />
-          ))}
-        </div>
+        <>
+          {/* Column header — keeps the VAT column visible at all times. */}
+          <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '6px 14px', background: BRAND.paper, borderBottom: '1px solid ' + BRAND.border, fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            <span>Customer / item</span>
+            <span style={{ textAlign: 'right' }}>Net</span>
+            <span style={{ textAlign: 'right' }}>VAT</span>
+            {!isMobile && <span style={{ textAlign: 'right' }}>Total</span>}
+            {!isMobile && <span />}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {rows.map((r) => (
+              <ManualPendingRow key={r.id} r={r} cols={cols} isMobile={isMobile} onPaid={() => markPaid(r)} onRemove={() => remove(r)} />
+            ))}
+          </div>
+          {/* Net / VAT / Total footer mirroring the sheet. */}
+          <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '8px 14px', borderTop: '2px solid ' + BRAND.border, fontSize: 13, fontWeight: 700, color: BRAND.ink }}>
+            <span>Total</span>
+            <span style={{ textAlign: 'right' }}>{formatGBP(total)}</span>
+            <span style={{ textAlign: 'right', color: VAT_COLOR }}>{formatGBP(vatTotal)}</span>
+            {!isMobile && <span style={{ textAlign: 'right' }}>{formatGBP(grossTotal)}</span>}
+            {!isMobile && <span />}
+          </div>
+        </>
       )}
     </div>
   );
 }
 
-function ManualPendingRow({ r, onRemove }) {
+function ManualPendingRow({ r, cols, isMobile, onPaid, onRemove }) {
+  const net = Number(r.amountExVat) || 0;
+  const vat = Number(r.vat) || 0;
+  const subtitle = [r.invoiceType, r.description, r.note].filter(Boolean).join(' · ');
   return (
-    <div style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '8px 14px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {r.company || 'Unattributed'}
-          </span>
-          {r.invoiceType && <span style={{ fontSize: 10, fontWeight: 700, color: '#1D4ED8', background: '#EFF6FF', padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', flexShrink: 0 }}>{r.invoiceType}</span>}
-          {r.paymentMethod && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{r.paymentMethod}</span>}
+    <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '5px 14px' }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {r.company || 'Unattributed'}
         </div>
-        <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(r.amountExVat)}</div>
+        {subtitle && (
+          <div title={subtitle} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{subtitle}</div>
+        )}
+      </div>
+      <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{formatGBP(net)}</div>
+      <div style={{ textAlign: 'right', fontSize: 13, color: vat > 0 ? VAT_COLOR : BRAND.muted }}>{formatGBP(vat)}</div>
+      {!isMobile && <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{formatGBP(net + vat)}</div>}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 2 }}>
+        <button
+          type="button"
+          onClick={onPaid}
+          title="Mark paid — add to income"
+          style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 15, lineHeight: 1, padding: '2px 4px' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = '#15803D'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
+        >
+          ✓
+        </button>
         <button
           type="button"
           onClick={onRemove}
-          title="Mark collected / remove"
-          style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 16, lineHeight: 1, padding: '2px 4px' }}
+          title="Remove (mistake — not income)"
+          style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 15, lineHeight: 1, padding: '2px 4px' }}
           onMouseEnter={(e) => { e.currentTarget.style.color = '#EF4444'; }}
           onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
         >
           ✕
         </button>
       </div>
-      {(r.description || r.note) && (
-        <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 2 }}>
-          {r.description}{r.description && r.note ? ' · ' : ''}{r.note}
-        </div>
-      )}
     </div>
   );
 }
@@ -595,6 +652,7 @@ const SOURCE_META = {
   manual: { label: 'Manual', color: '#B45309', bg: '#FFFBEB' },
   invoice: { label: 'Invoice', color: '#15803D', bg: '#ECFDF3' },
   billing: { label: 'Billing', color: '#0E7490', bg: '#ECFEFF' },
+  sheet: { label: 'PP', color: '#0E7490', bg: '#ECFEFF' },
 };
 
 function SourceBadge({ source }) {
