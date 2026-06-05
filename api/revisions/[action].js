@@ -19,20 +19,6 @@ import { del } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
-import { sendNotification, resolveDealTeamEmails } from '../_lib/notifications.js';
-import { revisionFeedbackHtml, APP_URL } from '../_lib/email.js';
-
-// Self-heal for db/migrations/20260605_revision_feedback.sql. Idempotent +
-// cached so we only run the ALTERs once per warm lambda.
-let revisionFeedbackEnsured = null;
-function ensureRevisionFeedbackColumns() {
-  if (revisionFeedbackEnsured) return revisionFeedbackEnsured;
-  revisionFeedbackEnsured = (async () => {
-    await sql`ALTER TABLE revision_projects ADD COLUMN IF NOT EXISTS deal_id TEXT`;
-    await sql`ALTER TABLE revision_videos ADD COLUMN IF NOT EXISTS feedback_submitted_at TIMESTAMPTZ`;
-  })().catch((err) => { revisionFeedbackEnsured = null; throw err; });
-  return revisionFeedbackEnsured;
-}
 
 // Revision videos live in their own PUBLIC Blob store (separate from the private
 // store used for deal files) so clients can stream them directly via the share
@@ -57,7 +43,6 @@ export default async function handler(req, res) {
   const action = String(req.query.action || '');
 
   try {
-    await ensureRevisionFeedbackColumns();
     // ─── Public, unauthenticated routes (gated by share_token) ───────────────
     if (action === 'public') {
       if (req.method !== 'GET') return res.status(405).end();
@@ -77,12 +62,6 @@ export default async function handler(req, res) {
     if (action === 'approve') {
       if (req.method !== 'POST') return res.status(405).end();
       return await approveRevision(req, res);
-    }
-    // Client has finished reviewing a video and submits their comments — fires
-    // a single team notification (distinct from leaving individual comments).
-    if (action === 'submit-feedback') {
-      if (req.method !== 'POST') return res.status(405).end();
-      return await submitFeedback(req, res);
     }
     // Name + email gate: records the viewer before they see the videos.
     if (action === 'viewer') {
@@ -121,20 +100,6 @@ export default async function handler(req, res) {
       const id = req.query.id ? String(req.query.id) : null;
       if (!id) return res.status(400).json({ error: 'id required' });
       return await projectDetail(res, id);
-    }
-
-    if (action === 'link-deal') {
-      if (req.method !== 'POST') return res.status(405).end();
-      const projectId = req.query.projectId ? String(req.query.projectId) : null;
-      if (!projectId) return res.status(400).json({ error: 'projectId required' });
-      return await linkDeal(req, res, projectId);
-    }
-
-    if (action === 'analytics') {
-      if (req.method !== 'GET') return res.status(405).end();
-      const id = req.query.id ? String(req.query.id) : null;
-      if (!id) return res.status(400).json({ error: 'id required' });
-      return await projectAnalytics(res, id);
     }
 
     if (action === 'videos') {
@@ -178,20 +143,14 @@ async function listProjects(res) {
   const rows = await sql`
     SELECT
       rp.id, rp.title, rp.client_name, rp.share_token, rp.created_by,
-      rp.created_at, rp.updated_at, rp.approved_at, rp.deal_id,
-      d.title AS deal_title,
+      rp.created_at, rp.updated_at, rp.approved_at,
       COALESCE(vid.video_count, 0)::INT AS video_count,
       COALESCE(vid.approved_video_count, 0)::INT AS approved_video_count,
-      COALESCE(vid.feedback_submitted_count, 0)::INT AS feedback_submitted_count,
       COALESCE(v.version_count, 0)::INT AS version_count,
-      COALESCE(c.comment_count, 0)::INT AS comment_count,
-      COALESCE(vc.viewer_count, 0)::INT AS viewer_count,
-      COALESCE(vv.view_count, 0)::INT AS view_count
+      COALESCE(c.comment_count, 0)::INT AS comment_count
     FROM revision_projects rp
-    LEFT JOIN deals d ON d.id = rp.deal_id
     LEFT JOIN (
-      SELECT project_id, COUNT(*) AS video_count, COUNT(approved_at) AS approved_video_count,
-             COUNT(feedback_submitted_at) AS feedback_submitted_count
+      SELECT project_id, COUNT(*) AS video_count, COUNT(approved_at) AS approved_video_count
       FROM revision_videos GROUP BY project_id
     ) vid ON vid.project_id = rp.id
     LEFT JOIN (
@@ -202,12 +161,6 @@ async function listProjects(res) {
       FROM revision_comments rc JOIN revision_versions rv ON rv.id = rc.version_id
       GROUP BY rv.project_id
     ) c ON c.project_id = rp.id
-    LEFT JOIN (
-      SELECT project_id, COUNT(*) AS viewer_count FROM revision_viewers GROUP BY project_id
-    ) vc ON vc.project_id = rp.id
-    LEFT JOIN (
-      SELECT project_id, COALESCE(SUM(view_count), 0) AS view_count FROM revision_version_views GROUP BY project_id
-    ) vv ON vv.project_id = rp.id
     ORDER BY rp.updated_at DESC
   `;
   return res.status(200).json(rows.map(projectRow));
@@ -282,16 +235,13 @@ async function deleteProject(res, id) {
 
 async function projectDetail(res, id) {
   const [project] = await sql`
-    SELECT rp.id, rp.title, rp.client_name, rp.share_token, rp.created_by, rp.created_at,
-           rp.updated_at, rp.approved_at, rp.approved_by, rp.deal_id, d.title AS deal_title
-    FROM revision_projects rp
-    LEFT JOIN deals d ON d.id = rp.deal_id
-    WHERE rp.id = ${id}
+    SELECT id, title, client_name, share_token, created_by, created_at, updated_at, approved_at, approved_by
+    FROM revision_projects WHERE id = ${id}
   `;
   if (!project) return res.status(404).json({ error: 'not found' });
 
   const videos = await sql`
-    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at FROM revision_videos
+    SELECT id, title, sort_order, created_at, approved_at, approved_by FROM revision_videos
     WHERE project_id = ${id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -330,7 +280,6 @@ async function projectDetail(res, id) {
     videos: videos.map(vid => ({
       id: vid.id, title: vid.title, sortOrder: vid.sort_order, createdAt: vid.created_at,
       approvedAt: vid.approved_at || null, approvedBy: vid.approved_by || null,
-      feedbackSubmittedAt: vid.feedback_submitted_at || null,
       versions: versions.filter(v => v.video_id === vid.id).map(ver => ({
         ...versionRow(ver), views: viewsByVersion[ver.id] || [],
       })),
@@ -466,7 +415,7 @@ async function publicView(req, res) {
   const [cfg] = await sql`SELECT revision_call_url FROM settings WHERE id = 1`;
 
   const videos = await sql`
-    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at FROM revision_videos
+    SELECT id, title, sort_order, created_at, approved_at, approved_by FROM revision_videos
     WHERE project_id = ${project.id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -495,7 +444,6 @@ async function publicView(req, res) {
     videos: videos.map(vid => ({
       id: vid.id, title: vid.title,
       approvedAt: vid.approved_at || null, approvedBy: vid.approved_by || null,
-      feedbackSubmittedAt: vid.feedback_submitted_at || null,
       versions: versions.filter(v => v.video_id === vid.id).map(mapVersion),
     })),
     comments: comments.map(commentRow),
@@ -549,119 +497,6 @@ async function approveRevision(req, res) {
   `;
   await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${video.project_id}`;
   return res.status(200).json({ videoId, approvedAt: row.approved_at, approvedBy: row.approved_by });
-}
-
-// Client submits their feedback for one video: stamps feedback_submitted_at and
-// fires ONE notification to the linked deal's team (never one-per-comment).
-async function submitFeedback(req, res) {
-  const token = req.query.token ? String(req.query.token) : null;
-  if (!token) return res.status(400).json({ error: 'token required' });
-  const body = parseBody(req);
-  const videoId = (body.videoId || '').trim();
-  const name = (body.name || '').trim().slice(0, 120) || 'The client';
-  if (!videoId) return res.status(400).json({ error: 'videoId required' });
-
-  const [video] = await sql`
-    SELECT vid.id, vid.title, vid.project_id, rp.title AS project_title,
-           rp.client_name, rp.deal_id, rp.created_by
-      FROM revision_videos vid
-      JOIN revision_projects rp ON rp.id = vid.project_id
-     WHERE vid.id = ${videoId} AND rp.share_token = ${token}
-  `;
-  if (!video) return res.status(404).json({ error: 'Not found' });
-
-  const [row] = await sql`
-    UPDATE revision_videos SET feedback_submitted_at = NOW() WHERE id = ${videoId}
-    RETURNING feedback_submitted_at
-  `;
-  await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${video.project_id}`;
-
-  const [{ n }] = await sql`
-    SELECT COUNT(*)::int AS n FROM revision_comments rc
-      JOIN revision_versions rv ON rv.id = rc.version_id
-     WHERE rv.video_id = ${videoId}
-  `;
-
-  // Best-effort: a notification failure must not break the client's submission.
-  try {
-    const assigneeEmails = await resolveDealTeamEmails(video.deal_id, video.created_by);
-    if (assigneeEmails.length) {
-      const link = `${APP_URL}/#/revisions`;
-      const clientLabel = video.client_name || name;
-      const itemTitle = video.title || video.project_title;
-      await sendNotification('revision.feedback_submitted', {
-        assigneeEmails,
-        subject: `${clientLabel} sent feedback on "${itemTitle}"`,
-        html: revisionFeedbackHtml({ kind: 'video', projectTitle: video.project_title, itemTitle: video.title, clientName: clientLabel, commentCount: n, link }),
-        text: `${clientLabel} submitted ${n} comment${n === 1 ? '' : 's'} on ${itemTitle}. ${link}`,
-        inApp: { title: `${clientLabel} sent video feedback`, body: `${n} comment${n === 1 ? '' : 's'} on ${itemTitle}`, link: '#/revisions' },
-      });
-    }
-  } catch (err) {
-    console.error('[revisions] feedback notify failed', err.message);
-  }
-
-  return res.status(200).json({ videoId, feedbackSubmittedAt: row.feedback_submitted_at, commentCount: n });
-}
-
-// Producer links/unlinks a project to a CRM deal (deal team gets the feedback
-// notifications). Pass dealId=null to unlink.
-async function linkDeal(req, res, projectId) {
-  const body = parseBody(req);
-  const dealId = body.dealId ? String(body.dealId) : null;
-  const [row] = await sql`
-    UPDATE revision_projects SET deal_id = ${dealId}, updated_at = NOW()
-     WHERE id = ${projectId} RETURNING id, deal_id
-  `;
-  if (!row) return res.status(404).json({ error: 'not found' });
-  return res.status(200).json({ id: row.id, dealId: row.deal_id || null });
-}
-
-// Engagement analytics for one project: per-viewer rollup (views + comments)
-// plus headline totals. Mirrors the proposal Viewing-analytics modal.
-async function projectAnalytics(res, id) {
-  const [project] = await sql`SELECT id, title, client_name FROM revision_projects WHERE id = ${id}`;
-  if (!project) return res.status(404).json({ error: 'not found' });
-
-  // Per-viewer: total views across drafts (by email) + comments authored.
-  const views = await sql`
-    SELECT lower(viewer_email) AS email, MAX(viewer_name) AS name,
-           SUM(view_count)::int AS view_count, MAX(last_viewed_at) AS last_viewed_at
-      FROM revision_version_views WHERE project_id = ${id} AND viewer_email IS NOT NULL
-     GROUP BY lower(viewer_email)
-  `;
-  const commentsByEmail = await sql`
-    SELECT lower(rc.author_email) AS email, COUNT(*)::int AS n
-      FROM revision_comments rc JOIN revision_versions rv ON rv.id = rc.version_id
-     WHERE rv.project_id = ${id} AND rc.author_email IS NOT NULL
-     GROUP BY lower(rc.author_email)
-  `;
-  const cMap = new Map(commentsByEmail.map(r => [r.email, r.n]));
-  const [{ total_comments }] = await sql`
-    SELECT COUNT(*)::int AS total_comments FROM revision_comments rc
-      JOIN revision_versions rv ON rv.id = rc.version_id WHERE rv.project_id = ${id}
-  `;
-  const [{ total_views }] = await sql`
-    SELECT COALESCE(SUM(view_count),0)::int AS total_views FROM revision_version_views WHERE project_id = ${id}
-  `;
-  const [{ submitted, approved, video_count }] = await sql`
-    SELECT COUNT(feedback_submitted_at)::int AS submitted, COUNT(approved_at)::int AS approved,
-           COUNT(*)::int AS video_count
-      FROM revision_videos WHERE project_id = ${id}
-  `;
-  const viewers = views.map(v => ({
-    email: v.email, name: v.name, viewCount: v.view_count,
-    lastViewedAt: v.last_viewed_at, commentCount: cMap.get(v.email) || 0,
-  })).sort((a, b) => new Date(b.lastViewedAt || 0) - new Date(a.lastViewedAt || 0));
-
-  return res.status(200).json({
-    id: project.id, title: project.title, clientName: project.client_name,
-    totals: {
-      views: total_views, uniqueViewers: viewers.length, comments: total_comments,
-      videoCount: video_count, feedbackSubmitted: submitted, approved,
-    },
-    viewers,
-  });
 }
 
 // Upserts a per-draft view record for a reviewer.
@@ -761,15 +596,10 @@ function projectRow(r) {
     updatedAt: r.updated_at,
     approvedAt: r.approved_at || null,
     approvedBy: r.approved_by || null,
-    dealId: r.deal_id !== undefined ? (r.deal_id || null) : undefined,
-    dealTitle: r.deal_title !== undefined ? (r.deal_title || null) : undefined,
     videoCount: r.video_count !== undefined ? r.video_count : undefined,
     approvedVideoCount: r.approved_video_count !== undefined ? r.approved_video_count : undefined,
-    feedbackSubmittedCount: r.feedback_submitted_count !== undefined ? r.feedback_submitted_count : undefined,
     versionCount: r.version_count !== undefined ? r.version_count : undefined,
     commentCount: r.comment_count !== undefined ? r.comment_count : undefined,
-    viewerCount: r.viewer_count !== undefined ? r.viewer_count : undefined,
-    viewCount: r.view_count !== undefined ? r.view_count : undefined,
   };
 }
 

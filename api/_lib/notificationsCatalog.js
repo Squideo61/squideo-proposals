@@ -80,20 +80,6 @@ export const NOTIFICATIONS = [
     audience: 'broadcast',
     group: 'Leads',
   },
-  {
-    key: 'revision.feedback_submitted',
-    label: 'Client submitted video feedback',
-    description: 'A client finishes reviewing a video revision and sends their comments to the team.',
-    audience: 'assignee',
-    group: 'Revisions',
-  },
-  {
-    key: 'storyboard.feedback_submitted',
-    label: 'Client submitted storyboard feedback',
-    description: 'A client finishes reviewing a storyboard and sends their comments to the team.',
-    audience: 'assignee',
-    group: 'Revisions',
-  },
 ];
 
 const KEYS = new Set(NOTIFICATIONS.map(n => n.key));
