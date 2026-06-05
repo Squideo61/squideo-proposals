@@ -69,8 +69,8 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       label: 'Projects',
       views: ['production', 'projects', 'project', 'video', 'storyboards', 'revisions', 'partner-credits', 'partner-credit-detail'],
       items: [
-        ...(canProduction ? [{ label: 'Production board', icon: KanbanSquare, go: () => navigate('production') }] : []),
         ...(canProduction ? [{ label: 'Projects', icon: LayoutGrid, go: () => navigate('projects') }] : []),
+        ...(canProduction ? [{ label: 'Production board', icon: KanbanSquare, go: () => navigate('production') }] : []),
         ...(canRevisions ? [{ label: 'Storyboard Revisions', icon: Images, go: () => navigate('storyboards') }] : []),
         ...(canRevisions ? [{ label: 'Video Revisions', icon: Clapperboard, go: () => navigate('revisions') }] : []),
         { label: 'Partner Credits', icon: Coins, go: () => navigate('partner-credits') },
