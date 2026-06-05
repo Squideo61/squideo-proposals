@@ -394,7 +394,7 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
         Pending Payments
       </h3>
       <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
-        Outstanding on signed deals — shown ex-VAT (net). Each line is tagged "Not invoiced" until an invoice is raised; 50/50 deals show the deposit and final separately.
+        Invoiced and outstanding amounts awaiting payment — shown ex-VAT (net). POs show their full signed total; each line is tagged "Not invoiced" until an invoice is raised.
       </p>
       {!pending ? (
         <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
@@ -409,14 +409,6 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
         const sumNet = (arr) => arr.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
         return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <PendingGroup
-            title="Project work"
-            note="Billed on project milestones / completion"
-            rows={pending.normal}
-            total={pending.totals.normal}
-            accent={BRAND.blue}
-            onOpenDeal={onOpenDeal}
-          />
           {invoicedManual.length > 0 && (
             <ManualPendingGroup
               title="Invoiced (Live Sales Sheet)"

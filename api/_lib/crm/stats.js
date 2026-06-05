@@ -902,34 +902,9 @@ async function pendingPaymentsReport() {
     for (const r of rows) { if (!r.did) continue; invoicedDue.set(r.did, (invoicedDue.get(r.did) || 0) + (Number(r.v) || 0)); }
   }
 
-  // Per deal, split the outstanding (signed − paid) into the portion that's been
-  // invoiced-but-unpaid (invoicedDue, clamped to outstanding) and the rest, which
-  // is still to invoice. Both show on the list; these power the headline split.
-  let crmInvoicedNet = 0;
-  let crmNotInvoicedNet = 0;
-  for (const did of committed.keys()) {
-    const outstandingInc = Math.max(0, (committed.get(did) || 0) - (paid.get(did) || 0));
-    if (outstandingInc <= 0.005) continue;
-    const invUnpaidInc = Math.max(0, Math.min(invoicedDue.get(did) || 0, outstandingInc));
-    const rate = rateByDeal.get(did) || 0;
-    const toNet = (v) => (rate > 0 ? v / (1 + rate) : v);
-    crmInvoicedNet += toNet(invUnpaidInc);
-    crmNotInvoicedNet += toNet(Math.max(0, outstandingInc - invUnpaidInc));
-  }
-  crmInvoicedNet = round2(crmInvoicedNet);
-  crmNotInvoicedNet = round2(crmNotInvoicedNet);
-
-  // Ad-hoc extras (already net £) added to a deal during production. They show
-  // as their own line and can sit on a deal whose signed work is fully paid.
+  // Ad-hoc extras (already net £) added to a deal during production. They ride on
+  // the deal's row as their own line.
   const extrasByDeal = await outstandingExtrasByDeal();
-  let extrasInvoicedNet = 0;
-  let extrasPendingNet = 0;
-  for (const list of extrasByDeal.values()) {
-    for (const e of list) {
-      const amt = Number(e.amount) || 0;
-      if (e.status === 'invoiced') extrasInvoicedNet += amt; else extrasPendingNet += amt;
-    }
-  }
 
   const dealIds = [...new Set([...committed.keys(), ...extrasByDeal.keys()])];
   const infoRows = await sql`
@@ -942,6 +917,10 @@ async function pendingPaymentsReport() {
   const normal = [];
   const po = [];
   for (const did of dealIds) {
+    // "Project work" (non-PO signed deals) is no longer listed or counted here —
+    // it's tracked via the imported lists / company invoices. Only POs remain.
+    const isPo = !!poByDeal.get(did);
+    if (!isPo) continue;
     const inc = committed.get(did) || 0;
     const paidInc = paid.get(did) || 0;
     // The full outstanding on signed work (signed − paid) — both invoiced and
@@ -956,7 +935,6 @@ async function pendingPaymentsReport() {
     const net = (v) => round2(rate > 0 ? v / (1 + rate) : v);
     const outstandingNet = net(outstandingInc);
     const invUnpaidNet = net(invUnpaidInc);
-    const isPo = !!poByDeal.get(did);
     const plan = planByDeal.get(did) || 'full';
 
     // Each deal becomes one or more lines, matching the labels on the sales
@@ -1048,12 +1026,14 @@ async function pendingPaymentsReport() {
     manual.filter((x) => x.status === 'invoiced').reduce((s, x) => s + (Number(x.amountExVat) || 0), 0),
   );
 
-  // Invoiced & awaiting, anywhere: CRM invoiced-but-unpaid (signed work + extras)
-  // + company-level invoices PLUS imported items marked invoiced.
-  const invoiced = round2(crmInvoicedNet + extrasInvoicedNet + companyInvoicedNet + manualInvoiced);
-  // Everything not yet invoiced, anywhere: signed CRM work still to bill + pending
-  // extras PLUS imported items (PP or PO) not marked invoiced.
-  const notInvoiced = round2(crmNotInvoicedNet + extrasPendingNet + (manualTotal - manualInvoiced));
+  // Headline split, summed from exactly what's listed: PO lines (by invoiced
+  // tag) + company invoices (all invoiced) + imported items (by status).
+  const sumLinesByStatus = (arr, wantInvoiced) => round2(
+    arr.reduce((s, item) => s + (item.lines || []).reduce(
+      (ls, l) => ls + ((!!l.invoiced === wantInvoiced) ? (Number(l.amount) || 0) : 0), 0), 0),
+  );
+  const invoiced = round2(sumLinesByStatus(po, true) + companyInvoicedNet + manualInvoiced);
+  const notInvoiced = round2(sumLinesByStatus(po, false) + (manualTotal - manualInvoiced));
 
   return {
     normal, po, manual, companyInvoices,
