@@ -54,7 +54,7 @@ const VIDEO_SELECT = (whereSql) => sql`
          (SELECT (p.signature_data::jsonb)->>'paymentOption'
             FROM proposals p
            WHERE p.deal_id = d.id AND p.signature_data IS NOT NULL
-             AND (p.signature_data::jsonb)->>'paymentOption' IS NOT NULL
+             AND left(btrim(p.signature_data::text), 1) = '{'
            ORDER BY p.created_at DESC LIMIT 1) AS payment_option,
          (SELECT p.number_year || '-' || lpad(p.number_seq::text, 3, '0')
             FROM proposals p
@@ -89,7 +89,7 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
                (SELECT (p.signature_data::jsonb)->>'paymentOption'
                   FROM proposals p
                  WHERE p.deal_id = d.id AND p.signature_data IS NOT NULL
-                   AND (p.signature_data::jsonb)->>'paymentOption' IS NOT NULL
+                   AND left(btrim(p.signature_data::text), 1) = '{'
                  ORDER BY p.created_at DESC LIMIT 1) AS payment_option
           FROM project_videos pv
           JOIN deals d ON d.id = pv.deal_id
