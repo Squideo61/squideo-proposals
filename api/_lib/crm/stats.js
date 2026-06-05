@@ -736,7 +736,9 @@ async function pendingPaymentsReport() {
     const manualInvoiced = round2(
       manual.filter((x) => x.status === 'invoiced').reduce((s, x) => s + (Number(x.amountExVat) || 0), 0),
     );
-    return { normal: [], po: [], manual, totals: { normal: 0, po: 0, manual: manualTotal, manualInvoiced } };
+    // No signed CRM deals, so "not invoiced" is just the un-invoiced imports.
+    const notInvoiced = round2(manualTotal - manualInvoiced);
+    return { normal: [], po: [], manual, totals: { normal: 0, po: 0, manual: manualTotal, manualInvoiced, notInvoiced } };
   }
 
   const committed = new Map(); // did -> inc-VAT signed total
@@ -755,7 +757,7 @@ async function pendingPaymentsReport() {
     }
   }
 
-  const [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows, miIssuedRows, pbInvoicedRows] = await Promise.all([
+  const [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows, miIssuedRows, pbInvoicedRows, pbRaisedRows] = await Promise.all([
     sql`SELECT d.id AS did, COALESCE(SUM(pay.amount),0) AS v
           FROM payments pay JOIN proposals p ON p.id=pay.proposal_id JOIN deals d ON d.id=p.deal_id GROUP BY d.id`,
     sql`SELECT d.id AS did, COALESCE(SUM(pi.amount),0) AS v
@@ -787,6 +789,11 @@ async function pendingPaymentsReport() {
                COALESCE(SUM(GREATEST(pb.invoice_amount - COALESCE(pb.paid_amount,0), 0)),0) AS v
           FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE pb.invoice_amount IS NOT NULL GROUP BY d.id`,
+    // Total invoice value raised via proposal-billing (regardless of paid) — used
+    // with the manual invoices to work out what's NOT been invoiced yet.
+    sql`SELECT d.id AS did, COALESCE(SUM(pb.invoice_amount),0) AS v
+          FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE pb.invoice_amount IS NOT NULL GROUP BY d.id`,
   ]);
 
   const paid = new Map();
@@ -799,6 +806,24 @@ async function pendingPaymentsReport() {
   for (const rows of [miIssuedRows, pbInvoicedRows]) {
     for (const r of rows) { if (!r.did) continue; invoicedDue.set(r.did, (invoicedDue.get(r.did) || 0) + (Number(r.v) || 0)); }
   }
+
+  // Inc-VAT total INVOICED (raised, paid or not) per deal — manual invoices not
+  // voided + proposal-billing invoice value. Subtracted from the signed total to
+  // get what's still to invoice.
+  const invoicedRaised = new Map();
+  for (const rows of [miPaidRows, miIssuedRows, pbRaisedRows]) {
+    for (const r of rows) { if (!r.did) continue; invoicedRaised.set(r.did, (invoicedRaised.get(r.did) || 0) + (Number(r.v) || 0)); }
+  }
+  // Signed work not yet invoiced (committed − raised), net of VAT, across all deals.
+  let crmNotInvoicedNet = 0;
+  for (const did of committed.keys()) {
+    const incTotal = committed.get(did) || 0;
+    const notInvInc = Math.max(0, incTotal - (invoicedRaised.get(did) || 0));
+    if (notInvInc <= 0.005) continue;
+    const rate = rateByDeal.get(did) || 0;
+    crmNotInvoicedNet += rate > 0 ? notInvInc / (1 + rate) : notInvInc;
+  }
+  crmNotInvoicedNet = round2(crmNotInvoicedNet);
 
   // Ad-hoc extras (already net £) added to a deal during production. They show
   // as their own line and can sit on a deal whose signed work is fully paid.
@@ -882,9 +907,13 @@ async function pendingPaymentsReport() {
     manual.filter((x) => x.status === 'invoiced').reduce((s, x) => s + (Number(x.amountExVat) || 0), 0),
   );
 
+  // Everything not yet invoiced, anywhere: signed CRM work still to bill PLUS
+  // imported items (PP or PO) not marked invoiced.
+  const notInvoiced = round2(crmNotInvoicedNet + (manualTotal - manualInvoiced));
+
   return {
     normal, po, manual,
-    totals: { normal: sum(normal), po: sum(po), manual: manualTotal, manualInvoiced },
+    totals: { normal: sum(normal), po: sum(po), manual: manualTotal, manualInvoiced, notInvoiced },
   };
 }
 
