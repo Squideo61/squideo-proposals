@@ -615,6 +615,11 @@ export function StoreProvider({ children }) {
     // ---------- Undo / redo (CRM-wide) ----------
     // recordUndo lets non-`mutate` actions (videos, finance) register history.
     recordUndo(entry) { recordUndo(entry); },
+    // Restore a recently hard-deleted record (recycle bin), re-inserting it with
+    // the same id server-side so a subsequent redo can delete it again.
+    restoreRecord(recordId) {
+      return api.post('/api/crm/restore/' + encodeURIComponent(recordId));
+    },
     async undo() {
       const r = undoRef.current;
       if (r.busy || !r.undo.length) return;
@@ -1491,6 +1496,18 @@ export function StoreProvider({ children }) {
       return mutate(
         { kind: 'task', id: taskId, delete: true, errorMsg: 'Failed to delete task' },
         () => api.delete('/api/crm/tasks/' + encodeURIComponent(taskId)),
+        undefined,
+        (snap) => {
+          const before = findTaskInState(snap, taskId);
+          if (!before) return null;
+          return {
+            label: 'Delete task',
+            // Restore re-inserts the task (same id) server-side; re-add it locally.
+            undo: () => api.post('/api/crm/restore/' + encodeURIComponent(taskId))
+              .then(() => { setState(s => applyOne(s, { kind: 'task', create: before })); }),
+            redo: () => actions.deleteTask(taskId),
+          };
+        },
       );
     },
 

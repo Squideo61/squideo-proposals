@@ -442,7 +442,13 @@ function ManualPendingGroup({ rows, total, actions, onChanged, isMobile }) {
   const remove = (r) => {
     if (!actions) return;
     if (window.confirm(`Remove "${r.company || r.description || 'this item'}" from the list? (Use this only for mistakes — it is not added to income.)`)) {
-      actions.deletePendingPayment(r.id);
+      actions.deletePendingPayment(r.id).then(() => {
+        actions.recordUndo && actions.recordUndo({
+          label: `Remove ${r.company || 'PP'}`,
+          undo: () => actions.restoreRecord(r.id).then(() => onChanged && onChanged()),
+          redo: () => actions.deletePendingPayment(r.id).then(() => onChanged && onChanged()),
+        });
+      });
     }
   };
 

@@ -4,6 +4,7 @@ import { verifyTaskActionToken } from '../auth.js';
 import { APP_URL } from '../email.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { archiveRecord } from './recycleBin.js';
 
 // Accept either the new array field (`assigneeEmails`) or the legacy single
 // (`assigneeEmail`) for one release so old clients don't break mid-deploy.
@@ -196,6 +197,15 @@ export async function tasksRoute(req, res, id, action, user) {
       || (Array.isArray(rows[0].assignees) && rows[0].assignees.includes(user.email))
       || hasPermission(await getRole(user.role), 'tasks.manage_all');
     if (!allowed) return res.status(403).json({ error: 'Forbidden' });
+    // Archive the task + its assignees so the delete is restorable (CRM undo).
+    const [taskRow] = await sql`SELECT * FROM tasks WHERE id = ${id}`;
+    const assigneeRows = await sql`SELECT * FROM task_assignees WHERE task_id = ${id}`;
+    if (taskRow) {
+      await archiveRecord('task', id, [
+        { table: 'tasks', row: taskRow },
+        ...assigneeRows.map((a) => ({ table: 'task_assignees', row: a })),
+      ], user.email);
+    }
     await sql`DELETE FROM tasks WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }

@@ -4,6 +4,7 @@ import { hasPermission } from '../permissions.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { allCompanyBalances } from './companies.js';
 import { outstandingExtrasByDeal, ensureDealExtrasTable } from './extras.js';
+import { archiveRecord } from './recycleBin.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
 // five paid-money sources as companies.js (allCompanyBalances /
@@ -814,7 +815,12 @@ async function pendingManualRoute(req, res, action) {
   }
 
   if (req.method === 'DELETE') {
-    if (action) await sql`DELETE FROM manual_pending_payments WHERE id = ${action}`;
+    if (action) {
+      // Archive the row first so the delete is restorable (CRM undo).
+      const [row] = await sql`SELECT * FROM manual_pending_payments WHERE id = ${action}`;
+      if (row) await archiveRecord('manual_pp', action, [{ table: 'manual_pending_payments', row }], null);
+      await sql`DELETE FROM manual_pending_payments WHERE id = ${action}`;
+    }
     return res.status(200).json({ ok: true, rows: await fetchManualPending() });
   }
 
