@@ -440,19 +440,16 @@ function ManualPendingGroup({ rows, total, actions, onChanged, isMobile }) {
   const vatTotal = rows.reduce((s, r) => s + (Number(r.vat) || 0), 0);
   const grossTotal = total + vatTotal;
 
-  const markPaid = (r) => {
+  const markPaid = (r, method) => {
     if (!actions) return;
-    const gross = (Number(r.amountExVat) || 0) + (Number(r.vat) || 0);
-    if (window.confirm(`Mark "${r.company || r.description || 'this item'}" as paid?\n\nNet ${formatGBP(r.amountExVat)} + VAT ${formatGBP(r.vat)} = ${formatGBP(gross)} will be added to income.`)) {
-      actions.markPendingPaymentPaid(r.id, true).then(() => {
-        if (onChanged) onChanged();
-        actions.recordUndo && actions.recordUndo({
-          label: `Mark ${r.company || 'PP'} paid`,
-          undo: () => actions.markPendingPaymentPaid(r.id, false).then(() => onChanged && onChanged()),
-          redo: () => actions.markPendingPaymentPaid(r.id, true).then(() => onChanged && onChanged()),
-        });
+    actions.markPendingPaymentPaid(r.id, true, method).then(() => {
+      if (onChanged) onChanged();
+      actions.recordUndo && actions.recordUndo({
+        label: `Mark ${r.company || 'PP'} paid (${methodLabel(method) || 'paid'})`,
+        undo: () => actions.markPendingPaymentPaid(r.id, false).then(() => onChanged && onChanged()),
+        redo: () => actions.markPendingPaymentPaid(r.id, true, method).then(() => onChanged && onChanged()),
       });
-    }
+    });
   };
   const remove = (r) => {
     if (!actions) return;
@@ -490,7 +487,7 @@ function ManualPendingGroup({ rows, total, actions, onChanged, isMobile }) {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {rows.map((r) => (
-              <ManualPendingRow key={r.id} r={r} cols={cols} isMobile={isMobile} onPaid={() => markPaid(r)} onRemove={() => remove(r)} />
+              <ManualPendingRow key={r.id} r={r} cols={cols} isMobile={isMobile} onPaid={(method) => markPaid(r, method)} onRemove={() => remove(r)} />
             ))}
           </div>
           {/* Net / VAT / Total footer mirroring the sheet. */}
@@ -508,9 +505,11 @@ function ManualPendingGroup({ rows, total, actions, onChanged, isMobile }) {
 }
 
 function ManualPendingRow({ r, cols, isMobile, onPaid, onRemove }) {
+  const [picking, setPicking] = useState(false);
   const net = Number(r.amountExVat) || 0;
   const vat = Number(r.vat) || 0;
   const subtitle = [r.invoiceType, r.description, r.note].filter(Boolean).join(' · ');
+  const pay = (method) => { setPicking(false); onPaid(method); };
   return (
     <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '5px 14px' }}>
       <div style={{ minWidth: 0 }}>
@@ -524,27 +523,47 @@ function ManualPendingRow({ r, cols, isMobile, onPaid, onRemove }) {
       <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{formatGBP(net)}</div>
       <div style={{ textAlign: 'right', fontSize: 13, color: vat > 0 ? VAT_COLOR : BRAND.muted }}>{formatGBP(vat)}</div>
       {!isMobile && <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{formatGBP(net + vat)}</div>}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 2 }}>
-        <button
-          type="button"
-          onClick={onPaid}
-          title="Mark paid — add to income"
-          style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 15, lineHeight: 1, padding: '2px 4px' }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = '#15803D'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
-        >
-          ✓
-        </button>
-        <button
-          type="button"
-          onClick={onRemove}
-          title="Remove (mistake — not income)"
-          style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 15, lineHeight: 1, padding: '2px 4px' }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = '#EF4444'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
-        >
-          ✕
-        </button>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+        {picking ? (
+          <>
+            {/* Choose how it was paid — both add it to income. */}
+            <button type="button" onClick={() => pay('stripe')} title="Mark paid via Stripe"
+              style={{ flexShrink: 0, border: '1px solid #1D4ED8', background: '#EFF6FF', color: '#1D4ED8', cursor: 'pointer', fontSize: 11, fontWeight: 700, lineHeight: 1, padding: '3px 6px', borderRadius: 4 }}>
+              Stripe
+            </button>
+            <button type="button" onClick={() => pay('bacs')} title="Mark paid via BACS"
+              style={{ flexShrink: 0, border: '1px solid #15803D', background: '#ECFDF3', color: '#15803D', cursor: 'pointer', fontSize: 11, fontWeight: 700, lineHeight: 1, padding: '3px 6px', borderRadius: 4 }}>
+              BACS
+            </button>
+            <button type="button" onClick={() => setPicking(false)} title="Cancel"
+              style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 14, lineHeight: 1, padding: '2px 2px' }}>
+              ✕
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => setPicking(true)}
+              title="Mark paid — add to income"
+              style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 15, lineHeight: 1, padding: '2px 4px' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#15803D'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
+            >
+              ✓
+            </button>
+            <button
+              type="button"
+              onClick={onRemove}
+              title="Remove (mistake — not income)"
+              style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 15, lineHeight: 1, padding: '2px 4px' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#EF4444'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
+            >
+              ✕
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -692,6 +711,30 @@ function SourceBadge({ source }) {
   );
 }
 
+// How a payment was made, normalised for display (Stripe / BACS / …).
+function methodLabel(m) {
+  if (!m) return null;
+  const s = String(m).toLowerCase();
+  if (s.includes('stripe') || s === 'card') return 'Stripe';
+  if (s === 'bacs' || s === 'bank' || s === 'transfer' || s === 'bank-transfer') return 'BACS';
+  if (s === 'xero') return 'Xero';
+  if (s === 'cash') return 'Cash';
+  return m.charAt(0).toUpperCase() + m.slice(1);
+}
+
+const METHOD_BG = { Stripe: { color: '#1D4ED8', bg: '#EFF6FF' }, BACS: { color: '#15803D', bg: '#ECFDF3' } };
+
+function MethodBadge({ method }) {
+  const label = methodLabel(method);
+  if (!label) return null;
+  const c = METHOD_BG[label] || { color: BRAND.muted, bg: BRAND.paper };
+  return (
+    <span style={{ fontSize: 10, fontWeight: 700, color: c.color, background: c.bg, padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', flexShrink: 0 }}>
+      {label}
+    </span>
+  );
+}
+
 // Income — a flat, newest-first ledger of payments received in the selected
 // period. Mirrors the Pending Payments panel visually but each row is one
 // payment (money in) rather than an outstanding deal balance.
@@ -758,6 +801,7 @@ function IncomeRow({ r, onOpenDeal, onSetDate }) {
           </span>
           {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
           <SourceBadge source={r.source} />
+          <MethodBadge method={r.method} />
           {editing ? (
             <input
               type="date"

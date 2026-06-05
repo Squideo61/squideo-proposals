@@ -212,6 +212,7 @@ function ensureManualPendingPayments() {
     // Older tables (seeded before mark-as-paid) need the status/paid columns.
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'`;
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS paid_method TEXT`;
     const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM manual_pending_payments`;
     if (count === 0) {
       let i = 0;
@@ -259,7 +260,7 @@ async function fetchPaidManualPps(sinceISO, untilISO) {
   try {
     await ensureManualPendingPayments();
     return await sql`
-      SELECT id AS edit_key, paid_at, amount_ex_vat, vat, company
+      SELECT id AS edit_key, paid_at, amount_ex_vat, vat, company, paid_method AS method
         FROM manual_pending_payments
        WHERE status = 'paid' AND paid_at >= ${sinceISO} AND paid_at < ${untilISO}`;
   } catch {
@@ -824,14 +825,16 @@ async function pendingManualRoute(req, res, action) {
     return res.status(200).json({ ok: true, rows: await fetchManualPending() });
   }
 
-  // Mark a row paid (→ flows into Income) or back to pending. { paid: bool }.
+  // Mark a row paid (→ flows into Income) or back to pending. { paid, method }.
   if (req.method === 'PATCH') {
     if (!action) return res.status(400).json({ error: 'id required' });
     const paid = (req.body || {}).paid !== false; // default → paid
+    const method = trimOrNull((req.body || {}).method);
     await sql`
       UPDATE manual_pending_payments
          SET status = ${paid ? 'paid' : 'pending'},
-             paid_at = ${paid ? new Date().toISOString() : null}
+             paid_at = ${paid ? new Date().toISOString() : null},
+             paid_method = ${paid ? (method || null) : null}
        WHERE id = ${action}`;
     return res.status(200).json({ ok: true, rows: await fetchManualPending() });
   }
@@ -899,7 +902,7 @@ async function incomeReport(action) {
           LEFT JOIN deals d ON d.id = pr.deal_id
           LEFT JOIN companies c ON c.id = d.company_id
          WHERE pi.paid_at >= ${since} AND pi.paid_at < ${until}`,
-    sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate, mp.id AS edit_key,
+    sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate, mp.id AS edit_key, mp.payment_method AS method,
                d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
           FROM manual_payments mp
           JOIN proposals pr ON pr.id = mp.proposal_id
@@ -908,7 +911,7 @@ async function incomeReport(action) {
          WHERE mp.manual_invoice_id IS NULL
            AND mp.paid_at >= ${since} AND mp.paid_at < ${until}`,
     sql`SELECT mi.amount AS inc, mi.paid_at, mi.subtotal_ex_vat, mi.tax_amount,
-               pr.data->>'vatRate' AS rate, mi.id AS edit_key,
+               pr.data->>'vatRate' AS rate, mi.id AS edit_key, mi.payment_method AS method,
                COALESCE(mi.deal_id, pr.deal_id) AS deal_id,
                COALESCE(dd.company_id, dp.company_id) AS company_id,
                COALESCE(cd.name, cp.name) AS company,
@@ -921,7 +924,7 @@ async function incomeReport(action) {
           LEFT JOIN companies cp ON cp.id = dp.company_id
          WHERE mi.status = 'paid'
            AND mi.paid_at >= ${since} AND mi.paid_at < ${until}`,
-    sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate, pb.xero_invoice_id AS edit_key,
+    sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate, pb.xero_invoice_id AS edit_key, pb.payment_method AS method,
                d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
           FROM proposal_billing pb
           JOIN proposals pr ON pr.id = pb.proposal_id
@@ -943,6 +946,8 @@ async function incomeReport(action) {
       number: r.ny && r.ns ? { year: Number(r.ny), seq: Number(r.ns) } : null,
       // Targets the underlying row for a date back-date (null = not editable).
       editKey: r.edit_key || null,
+      // How the payment was made (Stripe is implicit for stripe/partner sources).
+      method: r.method || (source === 'stripe' || source === 'partner' ? 'stripe' : null),
     });
   };
 

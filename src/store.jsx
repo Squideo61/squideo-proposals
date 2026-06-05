@@ -929,10 +929,10 @@ export function StoreProvider({ children }) {
         return data;
       });
     },
-    // Mark an imported pending payment paid (→ income) or back to pending. The
-    // caller refreshes pending + income/finance figures (it knows the period).
-    markPendingPaymentPaid(id, paid = true) {
-      return api.patch('/api/crm/stats/pending-manual/' + id, { paid });
+    // Mark an imported pending payment paid (→ income) or back to pending, with
+    // how it was paid (stripe/bacs). The caller refreshes pending + income.
+    markPendingPaymentPaid(id, paid = true, method = null) {
+      return api.patch('/api/crm/stats/pending-manual/' + id, { paid, method });
     },
     // Editable monthly targets (shared with the settings row). Optimistic.
     // finance = Income performance; sales = Sales performance.
