@@ -55,6 +55,57 @@ function splitVat(inc, rate) {
 const monthKey = (d) => d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
 const dayKey = (d) => monthKey(d) + '-' + String(d.getUTCDate()).padStart(2, '0');
 
+// The last `n` calendar months as 'YYYY-MM' keys, oldest first, ending at the
+// current month. Used by the rolling 12-month trend charts.
+function lastNMonthKeys(n) {
+  const out = [];
+  const now = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    out.push(monthKey(d));
+  }
+  return out;
+}
+
+// Fraction of a signed deal's value that is DEFERRED (owed, not taken at
+// signing) by its payment plan — the "new money owed" each sale creates:
+//   full up-front → 0 · 50/50 → half · PO (paid later regardless) → all.
+function deferredFraction(paymentOption) {
+  if (paymentOption === 'po') return 1;
+  if (paymentOption === '5050') return 0.5;
+  return 0; // 'full' or unknown → taken up-front
+}
+
+// Imported Live Sales Sheet history: a per-month override of cash-in (sales) and
+// new money owed (pps), used where the CRM predates go-live. Self-heals so the
+// table exists even if db/migrations/20260605_sales_pps_history.sql wasn't run.
+let salesPpsHistoryEnsured = null;
+function ensureSalesPpsHistory() {
+  if (salesPpsHistoryEnsured) return salesPpsHistoryEnsured;
+  salesPpsHistoryEnsured = (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS sales_pps_history (
+        month      TEXT PRIMARY KEY,
+        sales      NUMERIC NOT NULL DEFAULT 0,
+        pps        NUMERIC NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+  })().catch((err) => { salesPpsHistoryEnsured = null; throw err; });
+  return salesPpsHistoryEnsured;
+}
+
+// month -> { sales, pps } for the given month keys (robust to a missing table).
+async function fetchHistoryOverrides(monthKeys) {
+  const map = new Map();
+  if (!monthKeys.length) return map;
+  try {
+    await ensureSalesPpsHistory();
+    const rows = await sql`SELECT month, sales, pps FROM sales_pps_history WHERE month = ANY(${monthKeys})`;
+    for (const r of rows) map.set(r.month, { sales: Number(r.sales) || 0, pps: Number(r.pps) || 0 });
+  } catch { /* leave empty — fall back to computed CRM figures */ }
+  return map;
+}
+
 // Every paid-money row across all customers with paid_at in [sinceISO, untilISO).
 // Returns [{ paidAt: Date, net, vat, gross }]. Dates are bucketed in UTC, matching
 // the leaderboard's existing convention.
@@ -375,6 +426,77 @@ async function salesLedgerReport(action) {
   return { period, rows, total };
 }
 
+// Rolling last-N-months (default 12, ending at the current month) trend, with
+// three net (ex-VAT) measures per month for the Finance charts:
+//   cashIn        — cash received that month (Income / "Sales" cash-in line)
+//   cashGenerated — value of work signed that month + extras created (Sales bar)
+//   pps           — NEW money owed created that month (deferred portion of
+//                   signings by payment plan + extras) → tomorrow's income
+// Months covered by the imported Live Sales Sheet override cashIn (← sheet
+// "Sales") and pps (← sheet "PP's"); cashGenerated has no sheet equivalent so it
+// stays CRM-computed.
+async function trendReport(action) {
+  const n = Math.min(36, Math.max(1, parseInt(action, 10) || 12));
+  const keys = lastNMonthKeys(n);
+  const now = new Date();
+  const since = new Date(Date.UTC(Number(keys[0].slice(0, 4)), Number(keys[0].slice(5)) - 1, 1)).toISOString();
+  const until = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
+
+  const buckets = {};
+  for (const k of keys) buckets[k] = { cashIn: 0, cashGenerated: 0, pps: 0 };
+
+  // Cash received (Income).
+  const paidRows = await fetchPaidRows(since, until);
+  for (const r of paidRows) {
+    const b = buckets[monthKey(r.paidAt)];
+    if (b) b.cashIn += r.net;
+  }
+
+  // Signings — cash generated + the deferred (owed) portion they create.
+  const sigRows = await sql`
+    SELECT s.signed_at, s.data->>'total' AS total, s.data->>'paymentOption' AS opt, pr.data->>'vatRate' AS rate
+      FROM signatures s
+      JOIN proposals pr ON pr.id = s.proposal_id
+     WHERE s.signed_at >= ${since} AND s.signed_at < ${until}
+       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'`;
+  for (const r of sigRows) {
+    if (!r.signed_at) continue;
+    const b = buckets[monthKey(new Date(r.signed_at))];
+    if (!b) continue;
+    const net = splitVat(r.total, r.rate).net;
+    b.cashGenerated += net;
+    b.pps += net * deferredFraction(r.opt);
+  }
+
+  // Extras — generated value, and owed until collected.
+  const extraRows = await fetchExtraRows(since, until, false);
+  for (const r of extraRows) {
+    if (!r.created_at) continue;
+    const b = buckets[monthKey(new Date(r.created_at))];
+    if (!b) continue;
+    const net = Number(r.amount) || 0;
+    b.cashGenerated += net;
+    b.pps += net;
+  }
+
+  // Splice the imported sheet history over CRM figures where present.
+  const overrides = await fetchHistoryOverrides(keys);
+
+  const months = keys.map((month) => {
+    const b = buckets[month];
+    const ov = overrides.get(month);
+    return {
+      month,
+      cashIn: round2(ov ? ov.sales : b.cashIn),
+      cashGenerated: round2(b.cashGenerated),
+      pps: round2(ov ? ov.pps : b.pps),
+      source: ov ? 'history' : 'crm',
+    };
+  });
+
+  return { months };
+}
+
 // Outstanding balance per signed deal across all customers, split into PO-route
 // deals (paid regardless of project stage) and normal invoiced work (paid on
 // project milestones/completion). Amounts are ex-VAT (net) to match the rest of
@@ -609,21 +731,64 @@ async function incomeReport(action) {
   return { period, rows, total };
 }
 
-export async function statsRoute(req, res, id, action, user) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+// Bulk upsert / list of the imported Live Sales Sheet history. Gated (caller has
+// already checked settings.manage). Body: { rows: [{month,sales,pps}], mode }.
+async function historyRoute(req, res) {
+  await ensureSalesPpsHistory();
 
+  if (req.method === 'GET') {
+    const rows = await sql`SELECT month, sales, pps FROM sales_pps_history ORDER BY month ASC`;
+    return res.status(200).json({ rows: rows.map((r) => ({ month: r.month, sales: Number(r.sales) || 0, pps: Number(r.pps) || 0 })) });
+  }
+
+  if (req.method === 'POST' || req.method === 'PUT') {
+    const body = req.body || {};
+    const incoming = Array.isArray(body.rows) ? body.rows : [];
+    const clean = [];
+    for (const r of incoming) {
+      const month = typeof r?.month === 'string' ? r.month.trim() : '';
+      if (!/^\d{4}-\d{2}$/.test(month)) continue;
+      clean.push({ month, sales: Number(r.sales) || 0, pps: Number(r.pps) || 0 });
+    }
+    if (body.mode === 'replace') await sql`DELETE FROM sales_pps_history`;
+    for (const r of clean) {
+      await sql`
+        INSERT INTO sales_pps_history (month, sales, pps, updated_at)
+        VALUES (${r.month}, ${r.sales}, ${r.pps}, NOW())
+        ON CONFLICT (month) DO UPDATE SET sales = EXCLUDED.sales, pps = EXCLUDED.pps, updated_at = NOW()`;
+    }
+    const rows = await sql`SELECT month, sales, pps FROM sales_pps_history ORDER BY month ASC`;
+    return res.status(200).json({ saved: clean.length, rows: rows.map((r) => ({ month: r.month, sales: Number(r.sales) || 0, pps: Number(r.pps) || 0 })) });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+export async function statsRoute(req, res, id, action, user) {
   // Live financial figures — never let a browser/edge serve a stale copy (e.g.
   // showing an extra that's since been deleted, or yesterday's cash position).
   res.setHeader('Cache-Control', 'no-store');
 
   // Reference data — any authenticated user may read it (no business figures).
   if (id === 'bank-holidays') {
+    if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
     return res.status(200).json({ dates: await bankHolidaysEW() });
   }
 
   // Whole-business finances — owner/admin only.
   if (!hasPermission(await getRole(user.role), 'settings.manage')) {
     return res.status(403).json({ error: 'You do not have permission to view business finances' });
+  }
+
+  // Sales-sheet history import is the only writable stats resource.
+  if (id === 'history') {
+    return historyRoute(req, res);
+  }
+
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
+  if (id === 'trend') {
+    return res.status(200).json(await trendReport(action));
   }
 
   if (id === 'finance') {

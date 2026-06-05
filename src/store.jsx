@@ -84,6 +84,8 @@ function emptyStore() {
     salesStats: null,
     salesFinanceStats: null,
     salesLedger: null,
+    trend: null,
+    salesHistory: null,
     pendingPayments: null,
     income: null,
     financeTargets: [],
@@ -778,6 +780,27 @@ export function StoreProvider({ children }) {
         setState(s => ({ ...s, salesLedger: data || null }));
         return data;
       }).catch(() => null);
+    },
+    // Business → Finance: rolling last-N-months trend (cash in / generated / PP's).
+    loadTrend(months = 12) {
+      return api.get('/api/crm/stats/trend/' + months).then((data) => {
+        setState(s => ({ ...s, trend: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    // Business → Finance: imported Live Sales Sheet history (per-month overrides).
+    loadSalesHistory() {
+      return api.get('/api/crm/stats/history').then((data) => {
+        setState(s => ({ ...s, salesHistory: data?.rows || [] }));
+        return data;
+      }).catch(() => null);
+    },
+    // Bulk import/replace the sheet history; refreshes the trend afterwards.
+    importSalesHistory(rows, mode = 'merge') {
+      return api.post('/api/crm/stats/history', { rows, mode }).then((data) => {
+        setState(s => ({ ...s, salesHistory: data?.rows || [], trend: null }));
+        return data;
+      });
     },
     // Business → Finance (Income): flat ledger of payments received in a period.
     loadIncome(period) {
