@@ -641,7 +641,7 @@ const MONTH_ABBR = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug
 function parseMonthCell(raw) {
   const s = String(raw || '').trim();
   if (/^\d{4}-\d{2}/.test(s)) return s.slice(0, 7);
-  const m = s.match(/^([A-Za-z]{3,})[-\s/]+(\d{2,4})$/);
+  const m = s.match(/^([A-Za-z]{3,})[-\s/]*(\d{2,4})$/); // 'Sep-16', 'Mar 22', 'Mar23', 'November 2024'
   if (m) {
     const mi = MONTH_ABBR[m[1].slice(0, 3).toLowerCase()];
     if (mi) {
