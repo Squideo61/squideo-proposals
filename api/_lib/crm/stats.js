@@ -1006,6 +1006,38 @@ async function pendingPaymentsReport() {
   po.sort(byOutstanding);
   const sum = (arr) => round2(arr.reduce((s, x) => s + x.outstanding, 0));
 
+  // Company-level invoices (raised against a company, not a signed deal — e.g. an
+  // uploaded ad-hoc invoice). Issued-but-unpaid only; these are invoiced & awaiting.
+  const companyInvRows = await sql`
+    SELECT mi.id, mi.company_id, c.name AS company, mi.invoice_number,
+           mi.amount, mi.subtotal_ex_vat
+      FROM manual_invoices mi
+      LEFT JOIN companies c ON c.id = mi.company_id
+      LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+     WHERE mi.status = 'issued' AND mi.company_id IS NOT NULL
+       AND mi.deal_id IS NULL AND pr.deal_id IS NULL
+  `;
+  const companyInvoices = [];
+  let companyInvoicedNet = 0;
+  for (const r of companyInvRows) {
+    const net = r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : (Number(r.amount) || 0);
+    if (net <= 0.005) continue;
+    companyInvoicedNet += net;
+    companyInvoices.push({
+      dealId: null,
+      companyId: r.company_id,
+      company: r.company || 'Unattributed',
+      title: r.company || 'Company invoice',
+      number: null,
+      committed: round2(net),
+      paid: 0,
+      outstanding: round2(net),
+      lines: [{ type: 'invoice', amount: round2(net), invoiced: true, label: r.invoice_number || null }],
+    });
+  }
+  companyInvoices.sort(byOutstanding);
+  companyInvoicedNet = round2(companyInvoicedNet);
+
   // Manual items imported from the Live Sales Sheet (kept as their own group so
   // they never double-count the CRM-computed figures above).
   const manual = await fetchManualPending();
@@ -1017,15 +1049,15 @@ async function pendingPaymentsReport() {
   );
 
   // Invoiced & awaiting, anywhere: CRM invoiced-but-unpaid (signed work + extras)
-  // PLUS imported items marked invoiced.
-  const invoiced = round2(crmInvoicedNet + extrasInvoicedNet + manualInvoiced);
+  // + company-level invoices PLUS imported items marked invoiced.
+  const invoiced = round2(crmInvoicedNet + extrasInvoicedNet + companyInvoicedNet + manualInvoiced);
   // Everything not yet invoiced, anywhere: signed CRM work still to bill + pending
   // extras PLUS imported items (PP or PO) not marked invoiced.
   const notInvoiced = round2(crmNotInvoicedNet + extrasPendingNet + (manualTotal - manualInvoiced));
 
   return {
-    normal, po, manual,
-    totals: { normal: sum(normal), po: sum(po), manual: manualTotal, manualInvoiced, invoiced, notInvoiced },
+    normal, po, manual, companyInvoices,
+    totals: { normal: sum(normal), po: sum(po), manual: manualTotal, manualInvoiced, companyInvoices: companyInvoicedNet, invoiced, notInvoiced },
   };
 }
 

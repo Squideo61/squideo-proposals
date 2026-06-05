@@ -459,7 +459,7 @@ function AppShell() {
       )}
       {/* Performance is now folded into Finance; keep the old route as an alias. */}
       {(view === 'finance' || view === 'performance') && (
-        <FinanceView onBack={() => navigate('list')} onOpenDeal={(id) => navigate('deal', id)} />
+        <FinanceView onBack={() => navigate('list')} onOpenDeal={(id) => navigate('deal', id)} onOpenCompany={(id) => navigate('company', id)} />
       )}
       {view === 'xero-duplicates' && (
         <XeroDuplicatesView onBack={() => navigate('list')} />

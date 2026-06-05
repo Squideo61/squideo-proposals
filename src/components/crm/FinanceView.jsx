@@ -77,7 +77,7 @@ function buildFinanceView(fin, { mode, qIdx, monthKey, isCurrentYear, monthIdx, 
   return { months, quarters, displayMonths, totals, chart, thisMonth, thisQuarter, periodLabel };
 }
 
-export function FinanceView({ onBack, onOpenDeal }) {
+export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const now = new Date();
@@ -369,7 +369,7 @@ export function FinanceView({ onBack, onOpenDeal }) {
           </div>
           {/* Pending Payments — outstanding signed deals, split PO vs normal, plus
               the imported Live Sales Sheet group. */}
-          <PendingPayments pending={pending} onOpenDeal={onOpenDeal} isMobile={isMobile} actions={actions} onChanged={refreshFinance} />
+          <PendingPayments pending={pending} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} isMobile={isMobile} actions={actions} onChanged={refreshFinance} />
         </>
       )}
     </div>
@@ -384,9 +384,10 @@ const PAYMENT_TYPE_META = {
   full: { label: 'Full up front', color: '#15803D', bg: '#ECFDF3' },
   po: { label: 'Purchase order', color: '#6D28D9', bg: '#F5F3FF' },
   extra: { label: 'Extra', color: '#C2410C', bg: '#FFF7ED' },
+  invoice: { label: 'Invoice', color: '#0E7490', bg: '#ECFEFF' },
 };
 
-function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) {
+function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions, onChanged }) {
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 20 }}>
       <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -429,6 +430,16 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
               onChanged={onChanged}
               onOpenDeal={onOpenDeal}
               isMobile={isMobile}
+            />
+          )}
+          {(pending.companyInvoices || []).length > 0 && (
+            <PendingGroup
+              title="Other invoices"
+              note="Company invoices not tied to a deal — awaiting payment"
+              rows={pending.companyInvoices}
+              total={pending.totals.companyInvoices || 0}
+              accent={BRAND.blue}
+              onOpenDeal={onOpenCompany}
             />
           )}
           <PendingGroup
@@ -1179,7 +1190,8 @@ function PendingRow({ d, onOpenDeal }) {
   const single = lines.length === 1;
   const single0 = single ? lines[0] : null;
   const showCommitted = Math.abs((d.committed || 0) - (d.outstanding || 0)) > 0.005;
-  const open = () => onOpenDeal && onOpenDeal(d.dealId);
+  // Deal rows open the deal; company-level invoice rows (no dealId) open the company.
+  const open = () => onOpenDeal && onOpenDeal(d.dealId || d.companyId);
   return (
     <div
       role="button"
