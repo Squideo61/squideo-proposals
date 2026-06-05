@@ -1,6 +1,7 @@
 import sql from '../db.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { allCompanyBalances } from './companies.js';
 import { outstandingExtrasByDeal, ensureDealExtrasTable } from './extras.js';
 
@@ -152,6 +153,95 @@ async function fetchHistoryOverrides(monthKeys) {
     for (const r of rows) map.set(r.month, { sales: Number(r.sales) || 0, pps: Number(r.pps) || 0 });
   } catch { /* leave empty — fall back to computed CRM figures */ }
   return map;
+}
+
+// Manual pending payments from the Live Sales Sheet "PP's" tab — outstanding
+// work that sits outside the CRM's own signed deals. [company, invoiceType,
+// description, amountExVat, vat, paymentMethod, note]. Amounts sum to £34,511.55,
+// the sheet's stated ex-VAT total. Seeded once into an empty table; after that
+// the in-app importer / per-row delete is the source of truth.
+const MANUAL_PP_SEED = [
+  ['Hilary Maxwell - GO Girls - ~60s Video March 2022 (2 of 2 secured)', 'Final', '50% Final', 410.00, 82.00, 'PP', ''],
+  ['Spirit Release Academy x3', 'Final', '50% Final 90s 3 of 3', 794.45, 158.89, 'PP', '1 more chase then stale'],
+  ['Incentifi Ltd', '50% Final - pro rata 2/2', '2x 60s + portrait', 585.94, 117.19, 'PP', 'Cal chasing 01/04/26'],
+  ['Meliora', '50% Final', '1x90s +2x shorts', 712.50, 142.50, 'PP', 'picking up June'],
+  ['Membership Solutions (£416.67 + V each vid = 50% final)', '50% Final', '9x vids (originally) 10 mins of content - 6 mins remaining', 2500.00, 500.00, 'PP', 'Cal chasing for more scripts 01/04/26'],
+  ['PIB Employee Benefits', '50% Final P1 only', '2x 90s + subs', 875.00, 175.00, 'PP', 'est end of april'],
+  ['Orbit Solution / Orbit Distribution Limited', '50% Final', '2/3 60s vids + copy', 833.33, 166.67, 'PP', ''],
+  ['Orbit Solution / Orbit Distribution Limited', '50% Final', '3/3 60s vids + copy', 833.33, 166.67, 'PP', ''],
+  ['University of Leicester - RAF & RAVE Trials', '50% Final (RAF)', '10 mins of content + asset pack', 2700.00, 540.00, 'PP', ''],
+  ['University of Leicester - RAF & RAVE Trials', '50% Final (RAVE)', '10 mins of content + asset pack', 2700.00, 540.00, 'PP', ''],
+  ['Alation (USA - $1400)', '50% Final', '2 60s vids', 1022.00, 0, 'PP', 'No VAT'],
+  ['Generis', '50% Final', '2 90s vids - V1 - pro rata', 1125.00, 225.00, 'Invoiced', ''],
+  ['Generis', '50% Final', '2 90s vids - V2 - pro rata', 1125.00, 225.00, 'Invoiced', ''],
+  ['Drain Trader Ltd', '50% Final', '2x 60s vids', 1062.50, 212.50, 'PP', ''],
+  ['TB Projects - Design & Build', '50% Final', '90s vid + script', 925.00, 185.00, 'PP', ''],
+  ['TB Projects - Design & Build', 'Final', '48w Script Extension', 420.00, 84.00, 'PP', ''],
+  ['Easy List Plan - Luminous Games', '50% Final', '90s of content (2 vids)', 1020.00, 204.00, 'PP', ''],
+  ['Easy List Plan - Luminous Games', 'Extra', 'Human VO', 125.00, 25.00, 'PP', ''],
+  ['090426 - mylife Diabetescare (Ypsomed) 6x 30s videos', '50% Final', '6x 30s + portraits', 2937.50, 587.50, 'PP', ''],
+  ['Airport Coordination Ltd (UK)', '50% Final', '90s vid', 1037.50, 207.50, 'PP', ''],
+  ['2026-028 Beyond PR - sobi kidney biopsy', '50% Final', '4min video + 4x mini edits', 4325.00, 865.00, 'PP', ''],
+  ['ComplianceChain', '50% Final', '60s vid + VO + Priority Schedule', 1047.50, 209.50, 'PP', ''],
+  ['Global Baggage Solutions', 'Final', '4 hours Revisions', 380.00, 74.00, 'Invoiced', ''],
+  ['Find Your Room', '50% Deposit', '3mins Video Credit', 1500.00, 300.00, 'Invoiced', ''],
+  ['Find Your Room', '50% Final', '3mins Video Credit', 1500.00, 300.00, 'PP', ''],
+  ['Xantaro - XT3Lab', 'Full up front', '90s vid + VO + thumb + subs', 2015.00, 403.00, 'Invoiced', ''],
+];
+
+let manualPpEnsured = null;
+function ensureManualPendingPayments() {
+  if (manualPpEnsured) return manualPpEnsured;
+  manualPpEnsured = (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS manual_pending_payments (
+        id             TEXT PRIMARY KEY,
+        company        TEXT,
+        invoice_type   TEXT,
+        description    TEXT,
+        amount_ex_vat  NUMERIC NOT NULL DEFAULT 0,
+        vat            NUMERIC NOT NULL DEFAULT 0,
+        payment_method TEXT,
+        note           TEXT,
+        sort_order     INT,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM manual_pending_payments`;
+    if (count === 0) {
+      let i = 0;
+      for (const [company, invoiceType, description, amount, vat, method, note] of MANUAL_PP_SEED) {
+        await sql`
+          INSERT INTO manual_pending_payments (id, company, invoice_type, description, amount_ex_vat, vat, payment_method, note, sort_order)
+          VALUES (${makeId('mpp')}, ${company}, ${invoiceType}, ${description}, ${amount}, ${vat}, ${method}, ${note || null}, ${i})`;
+        i += 1;
+      }
+    }
+  })().catch((err) => { manualPpEnsured = null; throw err; });
+  return manualPpEnsured;
+}
+
+function serialiseManualPP(r) {
+  return {
+    id: r.id,
+    company: r.company || null,
+    invoiceType: r.invoice_type || null,
+    description: r.description || null,
+    amountExVat: Number(r.amount_ex_vat) || 0,
+    vat: Number(r.vat) || 0,
+    paymentMethod: r.payment_method || null,
+    note: r.note || null,
+  };
+}
+
+// Imported manual pending payments (robust to a missing table → []).
+async function fetchManualPending() {
+  try {
+    await ensureManualPendingPayments();
+    const rows = await sql`SELECT * FROM manual_pending_payments ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
+    return rows.map(serialiseManualPP);
+  } catch {
+    return [];
+  }
 }
 
 // Every paid-money row across all customers with paid_at in [sinceISO, untilISO).
@@ -561,7 +651,11 @@ async function pendingPaymentsReport() {
       JOIN deals d ON d.id = p.deal_id
      WHERE (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
   `;
-  if (!sigRows.length) return { normal: [], po: [], totals: { normal: 0, po: 0 } };
+  if (!sigRows.length) {
+    const manual = await fetchManualPending();
+    const manualTotal = round2(manual.reduce((s, x) => s + (Number(x.amountExVat) || 0), 0));
+    return { normal: [], po: [], manual, totals: { normal: 0, po: 0, manual: manualTotal } };
+  }
 
   const committed = new Map(); // did -> inc-VAT signed total
   const rateByDeal = new Map(); // did -> max vatRate across its proposals
@@ -671,7 +765,52 @@ async function pendingPaymentsReport() {
   po.sort(byOutstanding);
   const sum = (arr) => round2(arr.reduce((s, x) => s + x.outstanding, 0));
 
-  return { normal, po, totals: { normal: sum(normal), po: sum(po) } };
+  // Manual items imported from the Live Sales Sheet (kept as their own group so
+  // they never double-count the CRM-computed figures above).
+  const manual = await fetchManualPending();
+  const manualTotal = round2(manual.reduce((s, x) => s + (Number(x.amountExVat) || 0), 0));
+
+  return { normal, po, manual, totals: { normal: sum(normal), po: sum(po), manual: manualTotal } };
+}
+
+// GET list / POST import / DELETE one — the imported manual pending payments.
+// Caller has already checked settings.manage. `action` carries the row id on
+// DELETE. POST body: { rows: [{company,invoiceType,description,amountExVat,vat,paymentMethod,note}], mode }.
+async function pendingManualRoute(req, res, action) {
+  await ensureManualPendingPayments();
+
+  if (req.method === 'GET') {
+    return res.status(200).json({ rows: await fetchManualPending() });
+  }
+
+  if (req.method === 'DELETE') {
+    if (action) await sql`DELETE FROM manual_pending_payments WHERE id = ${action}`;
+    return res.status(200).json({ ok: true, rows: await fetchManualPending() });
+  }
+
+  if (req.method === 'POST' || req.method === 'PUT') {
+    const body = req.body || {};
+    const incoming = Array.isArray(body.rows) ? body.rows : [];
+    if (body.mode === 'replace') await sql`DELETE FROM manual_pending_payments`;
+    const startOrder = body.mode === 'replace'
+      ? 0
+      : ((await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM manual_pending_payments`)[0].m + 1);
+    let i = 0;
+    for (const r of incoming) {
+      const company = trimOrNull(r?.company);
+      const description = trimOrNull(r?.description);
+      const amount = numberOrNull(r?.amountExVat) || 0;
+      if (!company && !description && !amount) continue; // skip blank rows
+      await sql`
+        INSERT INTO manual_pending_payments (id, company, invoice_type, description, amount_ex_vat, vat, payment_method, note, sort_order)
+        VALUES (${makeId('mpp')}, ${company}, ${trimOrNull(r?.invoiceType)}, ${description},
+                ${amount}, ${numberOrNull(r?.vat) || 0}, ${trimOrNull(r?.paymentMethod)}, ${trimOrNull(r?.note)}, ${startOrder + i})`;
+      i += 1;
+    }
+    return res.status(200).json({ saved: i, rows: await fetchManualPending() });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
 }
 
 // Income period: 'YYYY' (whole year), 'YYYY-MM' (month) or 'YYYY-Qn' (calendar
@@ -828,9 +967,12 @@ export async function statsRoute(req, res, id, action, user) {
     return res.status(403).json({ error: 'You do not have permission to view business finances' });
   }
 
-  // Sales-sheet history import is the only writable stats resource.
+  // Writable stats resources: the sales-sheet history + manual pending payments.
   if (id === 'history') {
     return historyRoute(req, res);
+  }
+  if (id === 'pending-manual') {
+    return pendingManualRoute(req, res, action);
   }
 
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

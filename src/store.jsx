@@ -810,12 +810,27 @@ export function StoreProvider({ children }) {
         return data;
       }).catch(() => null);
     },
-    // Business → Finance: outstanding balance per signed deal (PO vs normal).
+    // Business → Finance: outstanding balance per signed deal (PO vs normal) +
+    // the imported manual pending payments group.
     loadPendingPayments() {
       return api.get('/api/crm/stats/pending').then((data) => {
         setState(s => ({ ...s, pendingPayments: data || null }));
         return data;
       }).catch(() => null);
+    },
+    // Import manual pending payments (Live Sales Sheet "PP's"); refresh after.
+    importPendingPayments(rows, mode = 'replace') {
+      return api.post('/api/crm/stats/pending-manual', { rows, mode }).then((data) => {
+        api.get('/api/crm/stats/pending').then((p) => setState(s => ({ ...s, pendingPayments: p || null }))).catch(() => {});
+        return data;
+      });
+    },
+    // Remove one imported pending payment (collected/cleared); refresh after.
+    deletePendingPayment(id) {
+      return api.delete('/api/crm/stats/pending-manual/' + id).then((data) => {
+        api.get('/api/crm/stats/pending').then((p) => setState(s => ({ ...s, pendingPayments: p || null }))).catch(() => {});
+        return data;
+      });
     },
     // Editable monthly targets (shared with the settings row). Optimistic.
     // finance = Income performance; sales = Sales performance.

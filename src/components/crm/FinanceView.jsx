@@ -305,11 +305,13 @@ export function FinanceView({ onBack, onOpenDeal }) {
 
       {section === 'pending' && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginBottom: 16 }}>
-            <StatCard icon={PoundSterling} accent={BRAND.ink} label="Outstanding — all customers" value={formatGBP(fin ? fin.outstanding : 0)} sub="Still to collect (inc VAT)" />
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
+            <StatCard icon={PoundSterling} accent={BRAND.ink} label="Outstanding — all customers" value={formatGBP(fin ? fin.outstanding : 0)} sub="CRM-computed · still to collect (inc VAT)" />
+            <StatCard icon={PoundSterling} accent="#0E7490" label="Imported pending (ex-VAT)" value={formatGBP(pending?.totals?.manual || 0)} sub="From the Live Sales Sheet — net" />
           </div>
-          {/* Pending Payments — outstanding signed deals, split PO vs normal. */}
-          <PendingPayments pending={pending} onOpenDeal={onOpenDeal} isMobile={isMobile} />
+          {/* Pending Payments — outstanding signed deals, split PO vs normal, plus
+              the imported Live Sales Sheet group. */}
+          <PendingPayments pending={pending} onOpenDeal={onOpenDeal} isMobile={isMobile} actions={actions} />
         </>
       )}
     </div>
@@ -326,7 +328,7 @@ const PAYMENT_TYPE_META = {
   extra: { label: 'Extra', color: '#C2410C', bg: '#FFF7ED' },
 };
 
-function PendingPayments({ pending, onOpenDeal, isMobile }) {
+function PendingPayments({ pending, onOpenDeal, isMobile, actions }) {
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 20 }}>
       <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -355,6 +357,175 @@ function PendingPayments({ pending, onOpenDeal, isMobile }) {
             accent="#8B5CF6"
             onOpenDeal={onOpenDeal}
           />
+          <ManualPendingGroup
+            rows={pending.manual || []}
+            total={pending.totals?.manual || 0}
+            actions={actions}
+          />
+        </div>
+      )}
+      <PendingImportPanel actions={actions} count={(pending?.manual || []).length} isMobile={isMobile} />
+    </div>
+  );
+}
+
+// Imported Live Sales Sheet "PP's" — outstanding work that lives outside the
+// CRM's own signed deals. Each row can be ticked off (deleted) once collected.
+function ManualPendingGroup({ rows, total, actions }) {
+  const remove = (r) => {
+    if (!actions) return;
+    if (window.confirm(`Mark "${r.company || r.description || 'this item'}" as collected and remove it?`)) {
+      actions.deletePendingPayment(r.id);
+    }
+  };
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '3px solid #0E7490' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Imported (Live Sales Sheet)</span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
+        </div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Outstanding from your sheet, ex-VAT (net) · {rows.length} {rows.length === 1 ? 'item' : 'items'} · ✕ to mark collected</div>
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>Nothing imported.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {rows.map((r) => (
+            <ManualPendingRow key={r.id} r={r} onRemove={() => remove(r)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ManualPendingRow({ r, onRemove }) {
+  return (
+    <div style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '8px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {r.company || 'Unattributed'}
+          </span>
+          {r.invoiceType && <span style={{ fontSize: 10, fontWeight: 700, color: '#1D4ED8', background: '#EFF6FF', padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', flexShrink: 0 }}>{r.invoiceType}</span>}
+          {r.paymentMethod && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{r.paymentMethod}</span>}
+        </div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(r.amountExVat)}</div>
+        <button
+          type="button"
+          onClick={onRemove}
+          title="Mark collected / remove"
+          style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 16, lineHeight: 1, padding: '2px 4px' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = '#EF4444'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
+        >
+          ✕
+        </button>
+      </div>
+      {(r.description || r.note) && (
+        <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 2 }}>
+          {r.description}{r.description && r.note ? ' · ' : ''}{r.note}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const parsePpMoney = (raw) => Number(String(raw ?? '').replace(/[£$,\s]/g, '')) || 0;
+
+// Parse pasted rows from the sheet's "PP's" tab (TAB-separated; descriptions can
+// contain commas, so never split on commas). Column order matches the sheet:
+// Invoice Type, Description, Company, Price Exc VAT, Payment Method, VAT, Order Date.
+function parsePendingPaste(text) {
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const c = line.split('\t').map((x) => x.trim());
+    if ((c[0] || '').toLowerCase() === 'invoice type') continue; // header
+    const row = {
+      invoiceType: c[0] || '',
+      description: c[1] || '',
+      company: c[2] || '',
+      amountExVat: parsePpMoney(c[3]),
+      paymentMethod: c[4] || '',
+      vat: parsePpMoney(c[5]),
+      note: c[6] || '',
+    };
+    if (!row.company && !row.description && !row.amountExVat) continue;
+    out.push(row);
+  }
+  return out;
+}
+
+function PendingImportPanel({ actions, count, isMobile }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [mode, setMode] = useState('replace');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const parsed = useMemo(() => parsePendingPaste(text), [text]);
+
+  const submit = async () => {
+    if (!parsed.length || busy || !actions) return;
+    setBusy(true); setResult(null);
+    try {
+      const data = await actions.importPendingPayments(parsed, mode);
+      setResult({ ok: true, saved: data?.saved ?? parsed.length });
+      setText('');
+    } catch {
+      setResult({ ok: false });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 16, borderTop: '1px solid ' + BRAND.border, paddingTop: 14 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
+      >
+        <ChevronDown size={16} color={BRAND.muted} style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s' }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+          Import pending payments from the sheet
+        </span>
+        {count > 0 && <span style={{ fontSize: 12, color: BRAND.muted, fontWeight: 500 }}>· {count} imported</span>}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: BRAND.muted }}>
+            Paste the rows from the sheet's <strong>PP's</strong> tab (tab separated, in sheet order):
+            <strong> Invoice Type, Description, Company, Price Exc VAT, Payment Method, VAT, Order Date</strong>. A header row is ignored.
+            <strong> Replace all</strong> swaps the whole imported list for what you paste.
+          </p>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={'Final\t50% Final\tHilary Maxwell - GO Girls\t410.00\tPP\t82.00\t…'}
+            rows={8}
+            style={{ width: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13, fontFamily: 'monospace', resize: 'vertical' }}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginTop: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer' }}>
+              <input type="radio" checked={mode === 'replace'} onChange={() => setMode('replace')} /> Replace all
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer' }}>
+              <input type="radio" checked={mode === 'merge'} onChange={() => setMode('merge')} /> Add to list
+            </label>
+            <span style={{ fontSize: 12, color: BRAND.muted }}>{parsed.length} {parsed.length === 1 ? 'row' : 'rows'} detected</span>
+            <button onClick={submit} className="btn" disabled={!parsed.length || busy} style={{ marginLeft: 'auto' }}>
+              {busy ? 'Importing…' : 'Import'}
+            </button>
+          </div>
+          {result && (
+            <div style={{ marginTop: 10, fontSize: 13, color: result.ok ? '#15803D' : '#EF4444' }}>
+              {result.ok ? `Imported ${result.saved} rows.` : 'Import failed — please try again.'}
+            </div>
+          )}
         </div>
       )}
     </div>
