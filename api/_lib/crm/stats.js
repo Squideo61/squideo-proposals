@@ -884,8 +884,23 @@ function parseIncomePeriod(action) {
 // same five paid-money sources as fetchPaidRows so the net total reconciles with
 // the headline net revenue. Each row also carries who paid (company) and a link
 // back to the deal + proposal number. Amounts split into net/VAT/gross per row.
+// The income ledger reads `payment_method` from proposal_billing / manual_invoices
+// to show how each payment was made. Those columns aren't guaranteed on every DB
+// (proposal_billing only self-heals its paid_* columns), so ensure them once —
+// otherwise the whole ledger query throws and the panel hangs on "Loading…".
+let incomeColsEnsured = null;
+function ensureIncomeColumns() {
+  if (incomeColsEnsured) return incomeColsEnsured;
+  incomeColsEnsured = (async () => {
+    await sql`ALTER TABLE proposal_billing ADD COLUMN IF NOT EXISTS payment_method TEXT`;
+    await sql`ALTER TABLE manual_invoices ADD COLUMN IF NOT EXISTS payment_method TEXT`;
+  })().catch((err) => { incomeColsEnsured = null; throw err; });
+  return incomeColsEnsured;
+}
+
 async function incomeReport(action) {
   const { period, since, until } = parseIncomePeriod(action);
+  await ensureIncomeColumns();
 
   const [stripeR, partnerR, manualR, invR, pbR] = await Promise.all([
     sql`SELECT pay.amount AS inc, pay.paid_at, pr.data->>'vatRate' AS rate,
