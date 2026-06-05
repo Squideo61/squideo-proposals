@@ -7,7 +7,7 @@ import { Modal } from '../ui.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
 import { api } from '../../api.js';
 import {
-  PRODUCTION_PHASES, PHASE_BY_ID, STAGE_LABEL, PAYMENT_TERMS_LABEL,
+  PRODUCTION_PHASES, PHASE_BY_ID, STAGE_LABEL, PAYMENT_OPTION_LABEL,
 } from '../../lib/productionStages.js';
 
 const PRODUCER_FILTER_STORAGE_KEY = 'squideo.production.producerFilter';
@@ -281,9 +281,9 @@ function VideoRow({ video, onOpen, showStage }) {
           </span>
         </div>
       </div>
-      {/* Payment */}
-      <div>{video.paymentTerms
-        ? <span style={chip}>{PAYMENT_TERMS_LABEL[video.paymentTerms] || video.paymentTerms}</span>
+      {/* Payment (from the signed proposal) */}
+      <div>{video.paymentOption
+        ? <span style={chip}>{PAYMENT_OPTION_LABEL[video.paymentOption] || video.paymentOption}</span>
         : <span style={{ color: BRAND.muted }}>—</span>}</div>
       {/* Length */}
       <div style={{ color: video.videoLength ? BRAND.ink : BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{video.videoLength || '—'}</div>

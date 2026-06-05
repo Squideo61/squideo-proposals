@@ -4,7 +4,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import {
-  PRODUCTION_PHASES, PHASE_BY_ID, VIDEO_STATUSES, VIDEO_STATUS_BY_ID, PAYMENT_TERMS,
+  PRODUCTION_PHASES, PHASE_BY_ID, VIDEO_STATUSES, VIDEO_STATUS_BY_ID, PAYMENT_OPTION_LABEL,
   VIDEO_MILESTONES, STAGE_LABEL,
 } from '../../lib/productionStages.js';
 import { DealConversation } from './DealConversation.jsx';
@@ -147,10 +147,11 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           </div>
           <div>
             <label style={labelStyle}>Payment</label>
-            <select style={ctrl} value={video.paymentTerms || ''} onChange={(e) => update({ paymentTerms: e.target.value || null })}>
-              <option value="">—</option>
-              {PAYMENT_TERMS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-            </select>
+            <div style={{ ...ctrl, background: '#F8FAFC', display: 'flex', alignItems: 'center', minHeight: 36,
+              color: video.paymentOption ? BRAND.ink : BRAND.muted }}
+              title="Pulled from the signed proposal">
+              {PAYMENT_OPTION_LABEL[video.paymentOption] || (video.paymentOption || 'No signed proposal')}
+            </div>
           </div>
           <div>
             <label style={labelStyle}>Video length</label>

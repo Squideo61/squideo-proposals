@@ -104,6 +104,10 @@ export const PAYMENT_TERMS = [
 ];
 export const PAYMENT_TERMS_LABEL = Object.fromEntries(PAYMENT_TERMS.map(t => [t.id, t.label]));
 
+// Payment plan as chosen on the signed proposal (signature_data.paymentOption).
+// Read-only on the video/board — the proposal is the source of truth.
+export const PAYMENT_OPTION_LABEL = { '5050': '50/50', full: 'Full up-front', po: 'PO' };
+
 // ── Per-video milestones (Script → Visual Direction → Storyboard → Video). Each
 // approval advances the video card to a mapped board stage (forward-only).
 // Mirror of the copy in api/_lib/productionStages.js — keep in lockstep. ──

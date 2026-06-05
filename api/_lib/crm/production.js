@@ -51,6 +51,11 @@ const VIDEO_SELECT = (whereSql) => sql`
          d.drive_folder_id AS drive_folder_id,
          (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
             FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails,
+         (SELECT (p.signature_data::jsonb)->>'paymentOption'
+            FROM proposals p
+           WHERE p.deal_id = d.id AND p.signature_data IS NOT NULL
+             AND (p.signature_data::jsonb)->>'paymentOption' IS NOT NULL
+           ORDER BY p.created_at DESC LIMIT 1) AS payment_option,
          (SELECT p.number_year || '-' || lpad(p.number_seq::text, 3, '0')
             FROM proposals p
            WHERE p.deal_id = d.id AND p.number_seq IS NOT NULL
@@ -80,7 +85,12 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       const rows = await sql`
         SELECT pv.*, d.title AS project_title, c.name AS company_name,
                (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
-                  FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails
+                  FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails,
+               (SELECT (p.signature_data::jsonb)->>'paymentOption'
+                  FROM proposals p
+                 WHERE p.deal_id = d.id AND p.signature_data IS NOT NULL
+                   AND (p.signature_data::jsonb)->>'paymentOption' IS NOT NULL
+                 ORDER BY p.created_at DESC LIMIT 1) AS payment_option
           FROM project_videos pv
           JOIN deals d ON d.id = pv.deal_id
           LEFT JOIN companies c ON c.id = d.company_id
@@ -659,6 +669,7 @@ export function serialiseVideo(r) {
     productionStage: r.production_stage || null,
     productionStageChangedAt: r.production_stage_changed_at || null,
     paymentTerms: r.payment_terms || null,
+    paymentOption: r.payment_option || null, // pulled from the signed proposal (read-only)
     videoLength: r.video_length || null,
     deliveryDeadline: r.delivery_deadline || null,
     textDirectionDeadline: r.text_direction_deadline || null,
