@@ -393,7 +393,7 @@ function PendingPayments({ pending, onOpenDeal, isMobile, actions, onChanged }) 
         Pending Payments
       </h3>
       <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
-        Outstanding balances on signed deals — shown ex-VAT (net). 50/50 deals split into the invoiced deposit (awaiting payment) and the final still to invoice.
+        Invoiced amounts awaiting payment — shown ex-VAT (net). Work that's signed but not yet invoiced isn't shown here. 50/50 deals show the invoiced deposit and/or final.
       </p>
       {!pending ? (
         <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>

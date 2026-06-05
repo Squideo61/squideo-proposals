@@ -752,7 +752,7 @@ async function pendingPaymentsReport() {
     }
   }
 
-  const [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows] = await Promise.all([
+  const [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows, miIssuedRows, pbInvoicedRows] = await Promise.all([
     sql`SELECT d.id AS did, COALESCE(SUM(pay.amount),0) AS v
           FROM payments pay JOIN proposals p ON p.id=pay.proposal_id JOIN deals d ON d.id=p.deal_id GROUP BY d.id`,
     sql`SELECT d.id AS did, COALESCE(SUM(pi.amount),0) AS v
@@ -769,11 +769,32 @@ async function pendingPaymentsReport() {
     sql`SELECT d.id AS did, COALESCE(SUM(pb.paid_amount),0) AS v
           FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE pb.paid_amount IS NOT NULL GROUP BY d.id`,
+    // Invoiced but NOT yet paid, per deal — the only thing this report now shows
+    // as "pending". Two sources of a raised-and-unpaid invoice:
+    //   1) manual invoices still in 'issued' (not paid, not void) — full amount.
+    //   2) proposal-billing ("email me an invoice") — invoice_amount less anything
+    //      already paid against it.
+    sql`SELECT COALESCE(mi.deal_id, dp.id) AS did, COALESCE(SUM(mi.amount),0) AS v
+          FROM manual_invoices mi
+          LEFT JOIN deals dd ON dd.id = mi.deal_id
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+          LEFT JOIN deals dp ON dp.id = pr.deal_id
+         WHERE mi.status='issued' GROUP BY COALESCE(mi.deal_id, dp.id)`,
+    sql`SELECT d.id AS did,
+               COALESCE(SUM(GREATEST(pb.invoice_amount - COALESCE(pb.paid_amount,0), 0)),0) AS v
+          FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id JOIN deals d ON d.id=p.deal_id
+         WHERE pb.invoice_amount IS NOT NULL GROUP BY d.id`,
   ]);
 
   const paid = new Map();
   for (const rows of [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows]) {
     for (const r of rows) { if (!r.did) continue; paid.set(r.did, (paid.get(r.did) || 0) + (Number(r.v) || 0)); }
+  }
+
+  // Inc-VAT raised-and-unpaid total per deal (the new basis for "pending").
+  const invoicedDue = new Map();
+  for (const rows of [miIssuedRows, pbInvoicedRows]) {
+    for (const r of rows) { if (!r.did) continue; invoicedDue.set(r.did, (invoicedDue.get(r.did) || 0) + (Number(r.v) || 0)); }
   }
 
   // Ad-hoc extras (already net £) added to a deal during production. They show
@@ -793,31 +814,35 @@ async function pendingPaymentsReport() {
   for (const did of dealIds) {
     const inc = committed.get(did) || 0;
     const paidInc = paid.get(did) || 0;
-    const outstandingInc = inc - paidInc;
-    const signedOutstandingInc = Math.max(0, outstandingInc);
-    const extras = extrasByDeal.get(did) || [];
+    // Only what's actually been invoiced (raised) and not yet paid is "pending".
+    // Work that's signed but not invoiced is intentionally excluded.
+    const dueInc = Math.max(0, invoicedDue.get(did) || 0);
+    // Only extras that have been invoiced (not the still-to-bill 'pending' ones).
+    const extras = (extrasByDeal.get(did) || []).filter((e) => e.status === 'invoiced');
     const extrasNet = round2(extras.reduce((s, e) => s + (Number(e.amount) || 0), 0));
-    if (signedOutstandingInc <= 0.005 && extrasNet <= 0.005) continue;
+    if (dueInc <= 0.005 && extrasNet <= 0.005) continue;
     const rate = rateByDeal.get(did) || 0;
     const net = (v) => round2(rate > 0 ? v / (1 + rate) : v);
-    const signedOutstandingNet = net(signedOutstandingInc);
+    const dueNet = net(dueInc);
     const isPo = !!poByDeal.get(did);
     const plan = planByDeal.get(did) || 'full';
 
     // Each deal becomes one or more lines, matching the labels on the sales
-    // sheet. A 50/50 deal splits into its deposit (paid first) and the balance;
-    // "full" and PO deals are a single line. Extras are appended as their own
-    // lines. The line amounts always sum to the deal's outstanding balance.
+    // sheet. A 50/50 deal splits into its deposit (invoiced first) and the
+    // balance; "full" and PO deals are a single line. Extras are appended as
+    // their own lines. The line amounts always sum to the deal's invoiced-due
+    // balance. The deposit cap (inc/2 − paid) means a final invoice still shows
+    // even after the deposit has been paid elsewhere (e.g. via Stripe).
     const lines = [];
-    if (signedOutstandingNet > 0.005) {
+    if (dueNet > 0.005) {
       if (!isPo && plan === '5050') {
-        const depositOutstandingInc = Math.max(0, Math.min(signedOutstandingInc, inc / 2 - paidInc));
-        const depositNet = net(depositOutstandingInc);
-        const finalNet = round2(signedOutstandingNet - depositNet);
+        const depositDueInc = Math.max(0, Math.min(dueInc, inc / 2 - paidInc));
+        const depositNet = net(depositDueInc);
+        const finalNet = round2(dueNet - depositNet);
         if (depositNet > 0.005) lines.push({ type: 'deposit', amount: depositNet });
         if (finalNet > 0.005) lines.push({ type: 'final', amount: finalNet });
       }
-      if (lines.length === 0) lines.push({ type: isPo ? 'po' : 'full', amount: signedOutstandingNet });
+      if (lines.length === 0) lines.push({ type: isPo ? 'po' : 'full', amount: dueNet });
     }
     for (const e of extras) {
       const amt = round2(Number(e.amount) || 0);
@@ -834,7 +859,7 @@ async function pendingPaymentsReport() {
       stage: inf.stage || null,
       committed: round2(net(inc) + extrasNet),
       paid: net(paidInc),
-      outstanding: round2(signedOutstandingNet + extrasNet),
+      outstanding: round2(dueNet + extrasNet),
       lines,
     };
     (isPo ? po : normal).push(item);
