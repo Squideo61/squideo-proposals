@@ -74,9 +74,11 @@ async function paymentOptionForDeal(dealId) {
   if (!dealId) return null;
   try {
     const [row] = await sql`
-      SELECT signature_data FROM proposals
-       WHERE deal_id = ${dealId} AND signature_data IS NOT NULL
-       ORDER BY created_at DESC LIMIT 1`;
+      SELECT s.data AS signature_data
+        FROM proposals p
+        JOIN signatures s ON s.proposal_id = p.id
+       WHERE p.deal_id = ${dealId}
+       ORDER BY s.signed_at DESC NULLS LAST LIMIT 1`;
     return parseSignature(row?.signature_data)?.paymentOption || null;
   } catch { return null; }
 }
@@ -85,10 +87,11 @@ async function paymentOptionMap(dealIds) {
   if (!dealIds.length) return map;
   try {
     const rows = await sql`
-      SELECT DISTINCT ON (deal_id) deal_id, signature_data
-        FROM proposals
-       WHERE deal_id = ANY(${dealIds}) AND signature_data IS NOT NULL
-       ORDER BY deal_id, created_at DESC`;
+      SELECT DISTINCT ON (p.deal_id) p.deal_id, s.data AS signature_data
+        FROM proposals p
+        JOIN signatures s ON s.proposal_id = p.id
+       WHERE p.deal_id = ANY(${dealIds})
+       ORDER BY p.deal_id, s.signed_at DESC NULLS LAST`;
     for (const r of rows) map.set(r.deal_id, parseSignature(r.signature_data)?.paymentOption || null);
   } catch { /* leave map empty */ }
   return map;
