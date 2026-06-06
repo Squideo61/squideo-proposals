@@ -217,37 +217,41 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
             </p>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <Segmented
-            value={mode}
-            onChange={setMode}
-            options={[{ value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' }, { value: 'year', label: 'Year' }]}
-          />
-          <select
-            value={mode === 'year' ? year : mode === 'quarter' ? quarterKey : monthKey}
-            onChange={(e) => (mode === 'year' ? setYear(Number(e.target.value)) : mode === 'quarter' ? setQuarterKey(e.target.value) : setMonthKey(e.target.value))}
-            style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
-          >
-            {mode === 'year'
-              ? yearOptions.map((y) => <option key={y} value={y}>{y}</option>)
-              : mode === 'quarter'
-                ? recentQuarters(8).map((k) => { const [y, q] = k.split('-Q'); return <option key={k} value={k}>{`Q${q} ${y}`}</option>; })
-                : recentMonths(12).map((k) => <option key={k} value={k}>{monthLongLabel(k)}</option>)}
-          </select>
-        </div>
       </header>
 
       {/* Performance — cash pacing vs targets — sits above the finance tabs. Its
           Income/Sales toggle is lifted here so it also drives the first tab. */}
       <PerformancePanel section={perfSection} onSection={setPerfSection} />
 
-      {/* Section tabs — Income (or Sales) / Pending Payments / VAT. */}
-      <div style={{ marginBottom: 16 }}>
+      {/* Section tabs — Income (or Sales) / Pending Payments / VAT. The period
+          picker lives here, next to the figures it drives, so changing it shows
+          a visible change. Pending Payments is all-time, so it's hidden there. */}
+      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <Segmented
           value={section}
           onChange={setSection}
           options={[{ value: 'income', label: firstTab.label }, { value: 'pending', label: 'Pending Payments' }, { value: 'vat', label: 'VAT' }]}
         />
+        {section !== 'pending' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Segmented
+              value={mode}
+              onChange={setMode}
+              options={[{ value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' }, { value: 'year', label: 'Year' }]}
+            />
+            <select
+              value={mode === 'year' ? year : mode === 'quarter' ? quarterKey : monthKey}
+              onChange={(e) => (mode === 'year' ? setYear(Number(e.target.value)) : mode === 'quarter' ? setQuarterKey(e.target.value) : setMonthKey(e.target.value))}
+              style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
+            >
+              {mode === 'year'
+                ? yearOptions.map((y) => <option key={y} value={y}>{y}</option>)
+                : mode === 'quarter'
+                  ? recentQuarters(8).map((k) => { const [y, q] = k.split('-Q'); return <option key={k} value={k}>{`Q${q} ${y}`}</option>; })
+                  : recentMonths(12).map((k) => <option key={k} value={k}>{monthLongLabel(k)}</option>)}
+            </select>
+          </div>
+        )}
       </div>
 
       {section === 'income' && (
