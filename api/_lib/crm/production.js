@@ -20,7 +20,7 @@ import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull, driveFilesEnabled } from './shared.js';
 import { serialiseDeal, ensureDealFileDriveColumns, dealDriveFolder, driveErrorHint } from './deals.js';
 import { getFreshAccessToken } from './gmail.js';
-import { uploadToFolder, ensureSubfolderByPath, deleteDriveFile } from '../googleDrive.js';
+import { uploadToFolder, ensureSubfolderByPath, ensureNamedSubfolder, deleteDriveFile } from '../googleDrive.js';
 import { enterProduction, ensureProductionSchema, backfillPaidDealsIntoProduction } from '../production.js';
 import { isValidStage } from '../dealStage.js';
 import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, isValidMilestone, VIDEO_MILESTONE_BY_ID, stageOrderIndex, previewKindForStage, FIRST_PRODUCTION } from '../productionStages.js';
@@ -247,6 +247,22 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       VALUES
         (${vid}, ${dealId}, ${title}, 'not_started', ${next}, ${FIRST_PRODUCTION.phase}, ${FIRST_PRODUCTION.stage}, NOW(), ${user.email || null})
     `;
+    // Second and later videos get their own "V2", "V3", … folder in the deal's
+    // Drive (the first video uses the standard template). Best-effort and
+    // detached so a Drive blip never blocks adding the video.
+    const videoNumber = Number(next) + 1;
+    if (videoNumber >= 2 && driveFilesEnabled() && user.email) {
+      waitUntil((async () => {
+        try {
+          const accessToken = await getFreshAccessToken(user.email);
+          const root = await dealDriveFolder(accessToken, dealId);
+          await ensureNamedSubfolder(accessToken, root, 'V' + videoNumber);
+        } catch (err) {
+          console.error('[videos] could not create V' + videoNumber + ' Drive folder', err?.status, err?.message);
+        }
+      })());
+    }
+
     const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${vid}`);
     return res.status(201).json(serialiseVideo(row));
   }

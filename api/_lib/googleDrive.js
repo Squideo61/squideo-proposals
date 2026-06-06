@@ -98,6 +98,21 @@ export async function applyFolderTemplate(accessToken, parentId, nodes = FOLDER_
   }
 }
 
+// Find a folder by exact name directly under parentId, creating it if missing.
+// Idempotent: a re-run reuses the existing folder. Returns the folder id.
+export async function ensureNamedSubfolder(accessToken, parentId, name) {
+  const query =
+    `'${q(parentId)}' in parents and mimeType='application/vnd.google-apps.folder' ` +
+    `and name='${q(name)}' and trashed=false`;
+  const url =
+    `${DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name)` +
+    `&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=1`;
+  const out = await driveFetch(accessToken, url).then((r) => r.json());
+  const hit = (out.files || [])[0];
+  if (hit) return hit.id;
+  return createSubfolder(accessToken, name, parentId);
+}
+
 // Walk a named subfolder path under rootFolderId (e.g. ['2. Pre-Production',
 // '1. Script and Text Direction']), returning the leaf folder's id, or null if
 // any step is missing. Each hop lists the current folder's subfolders and
