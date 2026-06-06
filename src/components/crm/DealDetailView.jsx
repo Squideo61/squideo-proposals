@@ -351,10 +351,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
         )}
 
         {!productionOnly && (<>
-        <Card
-          title="Proposal"
-          count={proposals.length}
-        >
+        <Card title="Proposal">
           {proposals.length === 0 && <Empty text="No proposals attached yet" />}
           {proposals.map(p => (
             <button
