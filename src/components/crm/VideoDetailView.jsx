@@ -50,7 +50,6 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
   const stageLabel = STAGE_LABEL[phase.id]?.[video.productionStage] || video.productionStage || phase.stages[0]?.label;
   const update = (fields) => actions.updateVideo(videoId, fields).catch(() => {});
 
-  const onStageChange = (newStageId) => actions.moveVideoStage(videoId, phase.id, newStageId);
 
   const sendForReview = () => {
     actions.sendVideoForReview(video.dealId, videoId)
@@ -123,12 +122,6 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 14, marginTop: 12 }}>
-          <div>
-            <label style={labelStyle}>Stage</label>
-            <select style={ctrl} value={video.productionStage || phase.stages[0]?.id} onChange={(e) => onStageChange(e.target.value)}>
-              {phase.stages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
-          </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={labelStyle}>Producers</label>
             <AssigneePicker
