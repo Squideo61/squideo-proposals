@@ -7,7 +7,7 @@ import {
   PRODUCTION_PHASES, PHASE_BY_ID, PAYMENT_OPTION_LABEL,
   VIDEO_MILESTONES, STAGE_LABEL,
 } from '../../lib/productionStages.js';
-import { ProductionProgressBar } from './ProductionProgressBar.jsx';
+import { VideoProgressBar } from './ProductionProgressBar.jsx';
 import { DealConversation } from './DealConversation.jsx';
 import { AssigneePicker } from './TaskFormModal.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
@@ -50,10 +50,6 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
   const stageLabel = STAGE_LABEL[phase.id]?.[video.productionStage] || video.productionStage || phase.stages[0]?.label;
   const update = (fields) => actions.updateVideo(videoId, fields).catch(() => {});
 
-  const onPhaseChange = (newPhaseId) => {
-    const target = PHASE_BY_ID[newPhaseId];
-    if (target) actions.moveVideoStage(videoId, newPhaseId, target.stages[0]?.id);
-  };
   const onStageChange = (newStageId) => actions.moveVideoStage(videoId, phase.id, newStageId);
 
   const sendForReview = () => {
@@ -114,14 +110,16 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           </button>
         )}
 
-        {/* Production progress — phase bar (click to move) with the current
-            stage shown beneath. Replaces the old manual Status dropdown. */}
+        {/* Production progress — detailed stage bar (click a step to move the
+            video there, across phases too) with the exact board stage beneath.
+            Replaces the old manual Status dropdown. */}
         <div style={{ marginTop: 4, marginBottom: 16 }}>
-          <ProductionProgressBar
+          <VideoProgressBar
             phaseId={phase.id}
-            onPhaseChange={onPhaseChange}
-            subtitle={`Stage: ${stageLabel}`}
+            stageId={video.productionStage}
+            onMove={(p, s) => actions.moveVideoStage(videoId, p, s)}
           />
+          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 6 }}>Stage: {stageLabel}</div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 14, marginTop: 12 }}>
