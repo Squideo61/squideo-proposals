@@ -613,10 +613,37 @@ async function completeVersion(req, res, id, user) {
 async function completeComment(req, res, id, user) {
   const body = parseBody(req);
   const complete = body.complete !== false;
+  const [cur] = await sql`
+    SELECT sc.id, sc.version_id, sv.version_number, sb.title AS storyboard_title
+      FROM storyboard_comments sc
+      JOIN storyboard_versions sv ON sv.id = sc.version_id
+      JOIN storyboards sb ON sb.id = sv.storyboard_id
+     WHERE sc.id = ${id}
+  `;
+  if (!cur) return res.status(404).json({ error: 'not found' });
   const [row] = complete
     ? await sql`UPDATE storyboard_comments SET completed_at = NOW(), completed_by = ${user.email || null} WHERE id = ${id} RETURNING completed_at, completed_by`
     : await sql`UPDATE storyboard_comments SET completed_at = NULL, completed_by = NULL WHERE id = ${id} RETURNING completed_at, completed_by`;
-  if (!row) return res.status(404).json({ error: 'not found' });
+
+  if (complete) {
+    const [{ total, open }] = await sql`
+      SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE completed_at IS NULL)::int AS open
+        FROM storyboard_comments WHERE version_id = ${cur.version_id}
+    `;
+    if (total > 0 && open === 0) {
+      const title = cur.storyboard_title || 'Storyboard';
+      const link = `${APP_URL}/#/storyboards`;
+      try {
+        await sendNotification('storyboard.draft_completed', {
+          subject: `✅ Storyboard revisions complete: ${title} (draft ${cur.version_number})`,
+          html: `<p>All client revisions on <strong>${title}</strong> — draft ${cur.version_number} have been marked complete.</p><p><a href="${link}">Open Storyboard Revisions</a></p>`,
+          text: `All storyboard revisions on ${title} (draft ${cur.version_number}) are complete — ${link}`,
+          excludeEmails: user.email ? [user.email] : null,
+          inApp: { title: `Storyboard revisions complete: ${title}`, body: `Every comment on draft ${cur.version_number} is done`, link: '#/storyboards' },
+        });
+      } catch (err) { console.error('[storyboards] draft-complete notify failed', err.message); }
+    }
+  }
   return res.status(200).json({ id, completedAt: row.completed_at, completedBy: row.completed_by });
 }
 

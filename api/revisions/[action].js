@@ -538,14 +538,42 @@ async function completeVersion(req, res, id, user) {
   return res.status(200).json({ id, completedAt: row.completed_at, completedBy: row.completed_by });
 }
 
-// Mark a single client comment (revision request) complete or reopen it.
+// Mark a single client comment (revision request) complete or reopen it. When
+// the last open comment on a draft is completed, notify the team.
 async function completeComment(req, res, id, user) {
   const body = parseBody(req);
   const complete = body.complete !== false;
+  const [cur] = await sql`
+    SELECT rc.id, rc.version_id, rv.version_number, vid.title AS video_title
+      FROM revision_comments rc
+      JOIN revision_versions rv ON rv.id = rc.version_id
+      JOIN revision_videos vid ON vid.id = rv.video_id
+     WHERE rc.id = ${id}
+  `;
+  if (!cur) return res.status(404).json({ error: 'not found' });
   const [row] = complete
     ? await sql`UPDATE revision_comments SET completed_at = NOW(), completed_by = ${user.email || null} WHERE id = ${id} RETURNING completed_at, completed_by`
     : await sql`UPDATE revision_comments SET completed_at = NULL, completed_by = NULL WHERE id = ${id} RETURNING completed_at, completed_by`;
-  if (!row) return res.status(404).json({ error: 'not found' });
+
+  if (complete) {
+    const [{ total, open }] = await sql`
+      SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE completed_at IS NULL)::int AS open
+        FROM revision_comments WHERE version_id = ${cur.version_id}
+    `;
+    if (total > 0 && open === 0) {
+      const title = cur.video_title || 'Video';
+      const link = `${APP_URL}/#/revisions`;
+      try {
+        await sendNotification('revision.draft_completed', {
+          subject: `✅ Revisions complete: ${title} (draft ${cur.version_number})`,
+          html: `<p>All client revisions on <strong>${title}</strong> — draft ${cur.version_number} have been marked complete.</p><p><a href="${link}">Open Video Revisions</a></p>`,
+          text: `All revisions on ${title} (draft ${cur.version_number}) are complete — ${link}`,
+          excludeEmails: user.email ? [user.email] : null,
+          inApp: { title: `Revisions complete: ${title}`, body: `Every comment on draft ${cur.version_number} is done`, link: '#/revisions' },
+        });
+      } catch (err) { console.error('[revisions] draft-complete notify failed', err.message); }
+    }
+  }
   return res.status(200).json({ id, completedAt: row.completed_at, completedBy: row.completed_by });
 }
 

@@ -94,6 +94,20 @@ export const NOTIFICATIONS = [
     audience: 'assignee',
     group: 'Revisions',
   },
+  {
+    key: 'revision.draft_completed',
+    label: 'Video revision draft completed',
+    description: 'Every client comment on a video draft has been marked done by the team.',
+    audience: 'broadcast',
+    group: 'Revisions',
+  },
+  {
+    key: 'storyboard.draft_completed',
+    label: 'Storyboard revision draft completed',
+    description: 'Every client comment on a storyboard draft has been marked done by the team.',
+    audience: 'broadcast',
+    group: 'Revisions',
+  },
 ];
 
 const KEYS = new Set(NOTIFICATIONS.map(n => n.key));
