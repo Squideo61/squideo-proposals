@@ -426,13 +426,14 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
               isMobile={isMobile}
             />
           )}
-          <PendingGroup
-            title="Purchase Orders"
-            note="Paid regardless of project stage"
-            rows={pending.po}
-            total={pending.totals.po}
-            accent="#8B5CF6"
+          <PurchaseOrdersPanel
+            crmRows={pending.po || []}
+            crmTotal={pending.totals.po}
+            importedRows={pos}
+            actions={actions}
+            onChanged={onChanged}
             onOpenDeal={onOpenDeal}
+            isMobile={isMobile}
           />
           <ManualPendingGroup
             title="Imported (Live Sales Sheet)"
@@ -440,18 +441,6 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
             kind="pp"
             rows={pps}
             total={sumNet(pps)}
-            actions={actions}
-            onChanged={onChanged}
-            onOpenDeal={onOpenDeal}
-            isMobile={isMobile}
-          />
-          <ManualPendingGroup
-            title="Imported POs (Live Sales Sheet)"
-            note="Outstanding purchase orders from your sheet"
-            kind="po"
-            accent="#8B5CF6"
-            rows={pos}
-            total={sumNet(pos)}
             actions={actions}
             onChanged={onChanged}
             onOpenDeal={onOpenDeal}
@@ -471,7 +460,7 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
 const MANUAL_PP_COLS = '1fr 92px 80px 92px 92px';
 const MANUAL_PP_COLS_M = '1fr 64px 72px 76px';
 
-function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', accent = '#0E7490', rows, total, actions, onChanged, onOpenDeal, isMobile }) {
+function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', accent = '#0E7490', rows, total, actions, onChanged, onOpenDeal, isMobile, bare = false }) {
   const cols = isMobile ? MANUAL_PP_COLS_M : MANUAL_PP_COLS;
   const vatTotal = rows.reduce((s, r) => s + (Number(r.vat) || 0), 0);
   const grossTotal = total + vatTotal;
@@ -532,21 +521,23 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
     }
   };
 
-  return (
-    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '3px solid ' + accent }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{title}</span>
-          <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
+  const body = (
+    <>
+      {!bare && (
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '3px solid ' + accent }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{title}</span>
+            <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
+          </div>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{note} · {rows.length} {rows.length === 1 ? 'item' : 'items'} · {isInvoicedGroup ? '✓ marks paid (→ income), ↩ back to pending, ✕ removes' : 'Inv marks invoiced, ✓ marks paid (→ income), ✕ removes'}</div>
         </div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{note} · {rows.length} {rows.length === 1 ? 'item' : 'items'} · {isInvoicedGroup ? '✓ marks paid (→ income), ↩ back to pending, ✕ removes' : 'Inv marks invoiced, ✓ marks paid (→ income), ✕ removes'}</div>
-      </div>
+      )}
       {rows.length === 0 ? (
-        <div style={{ padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>{isInvoicedGroup ? 'Nothing invoiced yet.' : 'Nothing outstanding — all collected.'}</div>
+        bare ? null : <div style={{ padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>{isInvoicedGroup ? 'Nothing invoiced yet.' : 'Nothing outstanding — all collected.'}</div>
       ) : (
         <>
           {/* Column header — keeps the VAT column visible at all times. */}
-          <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '6px 14px', background: BRAND.paper, borderBottom: '1px solid ' + BRAND.border, fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '6px 14px', background: BRAND.paper, borderTop: bare ? '1px solid ' + BRAND.border : undefined, borderBottom: '1px solid ' + BRAND.border, fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
             <span>{kind === 'po' ? 'Customer / PO' : 'Customer / item'}</span>
             <span style={{ textAlign: 'right' }}>Net</span>
             <span style={{ textAlign: 'right' }}>VAT</span>
@@ -571,17 +562,26 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
               />
             ))}
           </div>
-          {/* Net / VAT / Total footer mirroring the sheet. */}
-          <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '8px 14px', borderTop: '2px solid ' + BRAND.border, fontSize: 13, fontWeight: 700, color: BRAND.ink }}>
-            <span>Total</span>
-            <span style={{ textAlign: 'right' }}>{formatGBP(total)}</span>
-            <span style={{ textAlign: 'right', color: VAT_COLOR }}>{formatGBP(vatTotal)}</span>
-            {!isMobile && <span style={{ textAlign: 'right' }}>{formatGBP(grossTotal)}</span>}
-            {!isMobile && <span />}
-          </div>
+          {/* Net / VAT / Total footer mirroring the sheet. Hidden in bare mode —
+              the combining panel shows the grand total instead. */}
+          {!bare && (
+            <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '8px 14px', borderTop: '2px solid ' + BRAND.border, fontSize: 13, fontWeight: 700, color: BRAND.ink }}>
+              <span>Total</span>
+              <span style={{ textAlign: 'right' }}>{formatGBP(total)}</span>
+              <span style={{ textAlign: 'right', color: VAT_COLOR }}>{formatGBP(vatTotal)}</span>
+              {!isMobile && <span style={{ textAlign: 'right' }}>{formatGBP(grossTotal)}</span>}
+              {!isMobile && <span />}
+            </div>
+          )}
         </>
       )}
       {!isInvoicedGroup && <PendingImportPanel actions={actions} kind={kind} count={rows.length} isMobile={isMobile} />}
+    </>
+  );
+  if (bare) return body;
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+      {body}
     </div>
   );
 }
@@ -901,25 +901,37 @@ function PendingImportPanel({ actions, count, isMobile, kind = 'pp' }) {
   );
 }
 
-function PendingGroup({ title, note, rows, total, accent, onOpenDeal }) {
+// Purchase Orders — one unified list combining CRM signed-deal POs (computed,
+// click-through to the deal) with imported Live Sales Sheet POs (manual rows with
+// invoice/paid/remove actions + the sheet import panel). A single header carries
+// the combined grand total; each row type keeps its own behaviour.
+function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChanged, onOpenDeal, isMobile }) {
+  const importedNet = importedRows.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
+  const grand = (Number(crmTotal) || 0) + importedNet;
+  const count = crmRows.length + importedRows.length;
   return (
     <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: `3px solid ${accent}` }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '3px solid #8B5CF6' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{title}</span>
-          <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Purchase Orders</span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(grand)}</span>
         </div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{note} · {rows.length} {rows.length === 1 ? 'deal' : 'deals'}</div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Paid regardless of project stage · signed deals + imported sheet · {count} {count === 1 ? 'item' : 'items'} · Inv marks invoiced, ✓ marks paid (→ income), ✕ removes</div>
       </div>
-      {rows.length === 0 ? (
-        <div style={{ padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>Nothing outstanding.</div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {rows.map((d) => (
-            <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} />
-          ))}
-        </div>
-      )}
+      {crmRows.map((d) => (
+        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} />
+      ))}
+      <ManualPendingGroup
+        bare
+        kind="po"
+        accent="#8B5CF6"
+        rows={importedRows}
+        total={importedNet}
+        actions={actions}
+        onChanged={onChanged}
+        onOpenDeal={onOpenDeal}
+        isMobile={isMobile}
+      />
     </div>
   );
 }
