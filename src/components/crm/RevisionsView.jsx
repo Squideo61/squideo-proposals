@@ -427,7 +427,7 @@ function VideoCard({ projectId, video, commentsByVersion }) {
                     ))}
                   </div>
                 )}
-                <video src={v.videoUrl} controls style={{ width: '100%', maxHeight: 320, borderRadius: 8, background: '#000' }} />
+                <video src={v.videoUrl} controls style={{ display: 'block', maxWidth: '100%', maxHeight: '70vh', margin: '0 auto', borderRadius: 8, background: '#000' }} />
                 {comments.length > 0 && (
                   <div style={{ marginTop: 10 }}>
                     {comments.map(c => (
