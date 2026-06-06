@@ -4,7 +4,7 @@ import { BRAND } from '../theme.js';
 import { formatGBP } from '../utils.js';
 import { BillingFields, emptyBilling, isBillingValid } from './BillingFields.jsx';
 
-export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onConfirmInvoice, onPoConfirm, onDownloadReceipt, onDownloadSignedProposal }) {
+export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onConfirmInvoice, onPoConfirm, onDownloadReceipt, onDownloadSignedProposal, previewMode = false }) {
   const isPO = signed.paymentOption === 'po';
   const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
   const isDeposit = signed.paymentOption === '5050';
@@ -118,6 +118,12 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
         </div>
       )}
 
+      {previewMode && !payment && (
+        <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 16, fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
+          Payment options ({isPO ? 'PO quote' : isDeposit ? '50% deposit' : 'full payment'}) appear here on the client's own link. No payment has been recorded against this proposal yet.
+        </div>
+      )}
+
       {!payment && isPO && invoiceConfirmed && (
         <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20 }}>
           <h4 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 600 }}>Quote sent — pending your PO</h4>
@@ -127,7 +133,7 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
         </div>
       )}
 
-      {!payment && isPO && !invoiceConfirmed && (
+      {!payment && !previewMode && isPO && !invoiceConfirmed && (
         <div style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24 }}>
           <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>Your billing details</h3>
           <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
@@ -158,7 +164,7 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
         </div>
       )}
 
-      {!payment && !isPO && paymentChoice === 'invoice' && !invoiceConfirmed && (
+      {!payment && !previewMode && !isPO && paymentChoice === 'invoice' && !invoiceConfirmed && (
         <div ref={invoicePanelRef} style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24, scrollMarginTop: 80 }}>
           <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>Where shall we send your invoice?</h3>
           <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
@@ -189,7 +195,7 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
         </div>
       )}
 
-      {!payment && !isPO && paymentChoice !== 'invoice' && (
+      {!payment && !previewMode && !isPO && paymentChoice !== 'invoice' && (
         <div style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24 }}>
           <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>
             Would you like to pay your {isDeposit ? 'deposit' : 'invoice'} now?

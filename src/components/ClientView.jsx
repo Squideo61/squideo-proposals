@@ -1096,6 +1096,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
           <SignedBlock
             signed={signed}
             payment={payment}
+            previewMode={isPreview}
             paymentChoice={paymentChoice}
             vatRate={data.vatRate}
             onPayNow={handlePayNow}
