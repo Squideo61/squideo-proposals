@@ -85,8 +85,13 @@ export function RevisionsView({ onBack }) {
   const [creating, setCreating] = useState(false);
   const [analyticsProject, setAnalyticsProject] = useState(null);
 
+  const [loaded, setLoaded] = useState(false);
+
   // Deals power the link picker on each project.
-  useEffect(() => { actions.loadRevisions(); actions.refreshDeals?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    actions.loadRevisions().finally(() => setLoaded(true));
+    actions.refreshDeals?.();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (selectedId) {
     return <ProjectDetail projectId={selectedId} onBack={() => { setSelectedId(null); actions.loadRevisions(); }} />;
@@ -110,7 +115,9 @@ export function RevisionsView({ onBack }) {
 
       {projects.length === 0 ? (
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
-          No revision projects yet. Create one, upload a draft video, and share the link with your client.
+          {loaded
+            ? 'No revision projects yet. Create one, upload a draft video, and share the link with your client.'
+            : 'Loading projects…'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
