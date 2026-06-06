@@ -310,17 +310,17 @@ function AppShell() {
         <div style={producerBoard ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <Suspense fallback={<ViewFallback />}>
           {view === 'video' && activeId ? (
-            <VideoDetailView videoId={activeId} onBack={() => goBack('production')} onOpenProject={(id) => navigate('deal', id)} />
+            <VideoDetailView videoId={activeId} onBack={() => goBack('production')} onOpenProject={(id) => navigate('project', id)} />
           ) : (view === 'project' || view === 'deal') && activeId ? (
             <DealDetailView dealId={activeId} productionOnly onBack={() => goBack('production')} onOpenVideo={(id) => navigate('video', id)} />
           ) : view === 'projects' ? (
-            <ProjectsOverviewView onBack={() => navigate('production')} onOpenProject={(id) => navigate('deal', id)} />
+            <ProjectsOverviewView onBack={() => navigate('production')} onOpenProject={(id) => navigate('project', id)} />
           ) : view === 'revisions' ? (
             <RevisionsView onBack={() => navigate('production')} />
           ) : view === 'storyboards' ? (
             <StoryboardsView onBack={() => navigate('production')} />
           ) : (
-            <ProductionView onBack={null} onOpenVideo={(id) => navigate('video', id)} onOpenProject={(id) => navigate('deal', id)} onOpenProjects={() => navigate('projects')} />
+            <ProductionView onBack={null} onOpenVideo={(id) => navigate('video', id)} onOpenProject={(id) => navigate('project', id)} onOpenProjects={() => navigate('projects')} />
           )}
         </Suspense>
         </div>
@@ -376,7 +376,7 @@ function AppShell() {
       {(view === 'deal' || view === 'project') && activeId && (
         <DealDetailView
           dealId={activeId}
-          onBack={() => goBack(view === 'project' ? 'production' : 'pipeline')}
+          onBack={() => goBack(view === 'project' ? 'projects' : 'pipeline')}
           onOpenProposal={(id, signed) => navigate(signed ? 'client' : 'builder', id)}
           onOpenVideo={(id) => navigate('video', id)}
           onOpenCompany={(id) => navigate('company', id)}
@@ -437,21 +437,21 @@ function AppShell() {
         <ProductionView
           onBack={() => navigate('list')}
           onOpenVideo={(id) => navigate('video', id)}
-          onOpenProject={(id) => navigate('deal', id)}
+          onOpenProject={(id) => navigate('project', id)}
           onOpenProjects={() => navigate('projects')}
         />
       )}
       {view === 'projects' && (
         <ProjectsOverviewView
           onBack={() => navigate('production')}
-          onOpenProject={(id) => navigate('deal', id)}
+          onOpenProject={(id) => navigate('project', id)}
         />
       )}
       {view === 'video' && activeId && (
         <VideoDetailView
           videoId={activeId}
           onBack={() => goBack('production')}
-          onOpenProject={(id) => navigate('deal', id)}
+          onOpenProject={(id) => navigate('project', id)}
         />
       )}
       {view === 'leaderboard' && (
