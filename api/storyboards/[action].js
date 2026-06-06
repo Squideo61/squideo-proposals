@@ -140,6 +140,9 @@ function ensureStoryboardTables() {
       await sql`ALTER TABLE storyboard_versions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
       await sql`ALTER TABLE storyboard_versions ADD COLUMN IF NOT EXISTS completed_by TEXT`;
       await sql`ALTER TABLE storyboard_projects ADD COLUMN IF NOT EXISTS assignee_email TEXT`;
+      // 20260606_revision_comment_completion.sql (per-comment completion).
+      await sql`ALTER TABLE storyboard_comments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
+      await sql`ALTER TABLE storyboard_comments ADD COLUMN IF NOT EXISTS completed_by TEXT`;
     } catch (err) {
       tablesEnsured = null;
       console.warn('[storyboards] ensure tables failed', err.message);
@@ -237,6 +240,14 @@ export default async function handler(req, res) {
       const id = req.query.id ? String(req.query.id) : null;
       if (!id) return res.status(400).json({ error: 'id required' });
       return await completeVersion(req, res, id, user);
+    }
+
+    // Producer ticks an individual client comment (revision request) complete.
+    if (action === 'complete-comment') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const id = req.query.id ? String(req.query.id) : null;
+      if (!id) return res.status(400).json({ error: 'id required' });
+      return await completeComment(req, res, id, user);
     }
 
     if (action === 'analytics') {
@@ -423,7 +434,8 @@ async function projectDetail(res, id) {
   const comments = await sql`
     SELECT sc.id, sc.version_id, sc.parent_id, sc.page_number, sc.anchor_x, sc.anchor_y, sc.body,
            sc.author_name, sc.author_email, sc.created_at,
-           sc.attachment_url, sc.attachment_name, sc.attachment_type
+           sc.attachment_url, sc.attachment_name, sc.attachment_type,
+           sc.completed_at, sc.completed_by
     FROM storyboard_comments sc
     JOIN storyboard_versions sv ON sv.id = sc.version_id
     WHERE sv.project_id = ${id}
@@ -595,6 +607,16 @@ async function completeVersion(req, res, id, user) {
     { storyboard: ver.storyboard_title, draft: ver.version_number, by: user.email },
     user.email,
   );
+  return res.status(200).json({ id, completedAt: row.completed_at, completedBy: row.completed_by });
+}
+
+async function completeComment(req, res, id, user) {
+  const body = parseBody(req);
+  const complete = body.complete !== false;
+  const [row] = complete
+    ? await sql`UPDATE storyboard_comments SET completed_at = NOW(), completed_by = ${user.email || null} WHERE id = ${id} RETURNING completed_at, completed_by`
+    : await sql`UPDATE storyboard_comments SET completed_at = NULL, completed_by = NULL WHERE id = ${id} RETURNING completed_at, completed_by`;
+  if (!row) return res.status(404).json({ error: 'not found' });
   return res.status(200).json({ id, completedAt: row.completed_at, completedBy: row.completed_by });
 }
 
@@ -957,5 +979,7 @@ function commentRow(r) {
     attachmentUrl: r.attachment_url || null,
     attachmentName: r.attachment_name || null,
     attachmentType: r.attachment_type || null,
+    completedAt: r.completed_at !== undefined ? (r.completed_at || null) : undefined,
+    completedBy: r.completed_by !== undefined ? (r.completed_by || null) : undefined,
   };
 }

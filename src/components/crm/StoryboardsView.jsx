@@ -8,7 +8,7 @@ import { Modal } from '../ui.jsx';
 import { PdfThumb } from '../storyboard/PdfThumb.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
 import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
-import { DealLinkSelect, AssigneeSelect } from './RevisionsView.jsx';
+import { DealLinkSelect, AssigneeSelect, CommentDone } from './RevisionsView.jsx';
 
 const APPROVED_CHIP = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
   borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: 11, fontWeight: 700 };
@@ -386,22 +386,6 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
                   <MessageSquare size={13} /> {comments.length}
                 </span>
               </button>
-              {v.completedAt ? (
-                <button
-                  onClick={() => actions.completeStoryboardVersion(projectId, v.id, false)}
-                  title={`Completed ${formatRelativeTime(v.completedAt)}${v.completedBy ? ' by ' + v.completedBy : ''} — click to reopen`}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700,
-                    color: '#16A34A', background: '#ECFDF3', border: '1px solid #ABEFC6', borderRadius: 999,
-                    padding: '3px 10px', cursor: 'pointer' }}>
-                  <Check size={12} /> Completed · {formatRelativeTime(v.completedAt)}
-                </button>
-              ) : (
-                <button
-                  onClick={() => actions.completeStoryboardVersion(projectId, v.id, true)}
-                  className="btn-ghost" title="Mark this revision complete">
-                  <Check size={13} /> Mark complete
-                </button>
-              )}
               <a href={v.pdfUrl} target="_blank" rel="noreferrer" className="btn-ghost" title="Open PDF"><FileDown size={14} /></a>
               <button
                 onClick={() => { if (window.confirm('Delete this draft?')) actions.deleteStoryboardVersion(projectId, v.id); }}
@@ -472,7 +456,7 @@ function DraftComments({ version, comments }) {
               {list.map(c => {
                 const no = pinNumberByComment[c.id];
                 return (
-                  <div key={c.id} style={{ marginBottom: 12 }}>
+                  <div key={c.id} style={{ marginBottom: 12, opacity: c.completedAt ? 0.55 : 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {no != null ? (
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -483,8 +467,15 @@ function DraftComments({ version, comments }) {
                       )}
                       <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
                       <span style={{ fontSize: 11, color: BRAND.muted }}>{formatRelativeTime(c.createdAt)}</span>
+                      <CommentDone
+                        done={!!c.completedAt}
+                        title={c.completedAt
+                          ? `Done ${formatRelativeTime(c.completedAt)}${c.completedBy ? ' by ' + c.completedBy : ''} — click to reopen`
+                          : 'Mark this revision done'}
+                        onClick={() => actions.completeStoryboardComment(projectId, c.id, !c.completedAt)}
+                      />
                     </div>
-                    {c.body && <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap', marginTop: 2 }}>{c.body}</div>}
+                    {c.body && <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap', marginTop: 2, textDecoration: c.completedAt ? 'line-through' : 'none' }}>{c.body}</div>}
                     {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
                   </div>
                 );

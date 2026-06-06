@@ -66,6 +66,25 @@ export function AssigneeSelect({ value, users, onChange }) {
   );
 }
 
+// Per-comment "revision done" toggle (producer side). Shared by Video &
+// Storyboard revision views so the look stays consistent.
+export function CommentDone({ done, title, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4,
+        fontSize: 11, fontWeight: 700, borderRadius: 999, padding: '2px 9px', cursor: 'pointer',
+        color: done ? '#16A34A' : BRAND.muted,
+        background: done ? '#ECFDF3' : 'transparent',
+        border: '1px solid ' + (done ? '#ABEFC6' : BRAND.border),
+      }}>
+      <Check size={12} /> {done ? 'Done' : 'Mark done'}
+    </button>
+  );
+}
+
 const APPROVED_CHIP = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
   borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: 11, fontWeight: 700 };
 
@@ -454,22 +473,6 @@ function VideoCard({ projectId, video, commentsByVersion }) {
                   <MessageSquare size={13} /> {comments.length}
                 </span>
               </button>
-              {v.completedAt ? (
-                <button
-                  onClick={() => actions.completeRevisionVersion(projectId, v.id, false)}
-                  title={`Completed ${formatRelativeTime(v.completedAt)}${v.completedBy ? ' by ' + v.completedBy : ''} — click to reopen`}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700,
-                    color: '#16A34A', background: '#ECFDF3', border: '1px solid #ABEFC6', borderRadius: 999,
-                    padding: '3px 10px', cursor: 'pointer' }}>
-                  <Check size={12} /> Completed · {formatRelativeTime(v.completedAt)}
-                </button>
-              ) : (
-                <button
-                  onClick={() => actions.completeRevisionVersion(projectId, v.id, true)}
-                  className="btn-ghost" title="Mark this revision complete">
-                  <Check size={13} /> Mark complete
-                </button>
-              )}
               <button
                 onClick={() => { if (window.confirm('Delete this draft?')) actions.deleteRevisionVersion(projectId, v.id); }}
                 className="btn-ghost" title="Delete draft"><Trash2 size={14} /></button>
@@ -498,14 +501,21 @@ function VideoCard({ projectId, video, commentsByVersion }) {
                     {comments.length === 0 ? (
                       <div style={{ fontSize: 13, color: BRAND.muted, padding: '4px 2px' }}>No comments yet.</div>
                     ) : comments.map(c => (
-                      <div key={c.id} style={{ marginBottom: 10 }}>
+                      <div key={c.id} style={{ marginBottom: 10, opacity: c.completedAt ? 0.55 : 1 }}>
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                           <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
                           {c.timecodeSeconds != null && (
                             <span style={{ color: BRAND.blue, fontSize: 12, fontWeight: 700 }}>{tc(c.timecodeSeconds)}</span>
                           )}
+                          <CommentDone
+                            done={!!c.completedAt}
+                            title={c.completedAt
+                              ? `Done ${formatRelativeTime(c.completedAt)}${c.completedBy ? ' by ' + c.completedBy : ''} — click to reopen`
+                              : 'Mark this revision done'}
+                            onClick={() => actions.completeRevisionComment(projectId, c.id, !c.completedAt)}
+                          />
                         </div>
-                        {c.body && <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap' }}>{c.body}</div>}
+                        {c.body && <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap', textDecoration: c.completedAt ? 'line-through' : 'none' }}>{c.body}</div>}
                         {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
                       </div>
                     ))}

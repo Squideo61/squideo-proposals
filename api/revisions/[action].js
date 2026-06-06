@@ -34,6 +34,9 @@ function ensureRevisionFeedbackColumns() {
     await sql`ALTER TABLE revision_versions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
     await sql`ALTER TABLE revision_versions ADD COLUMN IF NOT EXISTS completed_by TEXT`;
     await sql`ALTER TABLE revision_projects ADD COLUMN IF NOT EXISTS assignee_email TEXT`;
+    // Per-comment completion (db/migrations/20260606_revision_comment_completion.sql).
+    await sql`ALTER TABLE revision_comments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE revision_comments ADD COLUMN IF NOT EXISTS completed_by TEXT`;
   })().catch((err) => { revisionFeedbackEnsured = null; throw err; });
   return revisionFeedbackEnsured;
 }
@@ -149,6 +152,14 @@ export default async function handler(req, res) {
       const id = req.query.id ? String(req.query.id) : null;
       if (!id) return res.status(400).json({ error: 'id required' });
       return await completeVersion(req, res, id, user);
+    }
+
+    // Producer ticks an individual client comment (revision request) complete.
+    if (action === 'complete-comment') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const id = req.query.id ? String(req.query.id) : null;
+      if (!id) return res.status(400).json({ error: 'id required' });
+      return await completeComment(req, res, id, user);
     }
 
     if (action === 'analytics') {
@@ -336,7 +347,8 @@ async function projectDetail(res, id) {
   const comments = await sql`
     SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds, rc.body,
            rc.author_name, rc.author_email, rc.created_at,
-           rc.attachment_url, rc.attachment_name, rc.attachment_type
+           rc.attachment_url, rc.attachment_name, rc.attachment_type,
+           rc.completed_at, rc.completed_by
     FROM revision_comments rc
     JOIN revision_versions rv ON rv.id = rc.version_id
     WHERE rv.project_id = ${id}
@@ -523,6 +535,17 @@ async function completeVersion(req, res, id, user) {
     { video: ver.video_title, draft: ver.version_number, by: user.email },
     user.email,
   );
+  return res.status(200).json({ id, completedAt: row.completed_at, completedBy: row.completed_by });
+}
+
+// Mark a single client comment (revision request) complete or reopen it.
+async function completeComment(req, res, id, user) {
+  const body = parseBody(req);
+  const complete = body.complete !== false;
+  const [row] = complete
+    ? await sql`UPDATE revision_comments SET completed_at = NOW(), completed_by = ${user.email || null} WHERE id = ${id} RETURNING completed_at, completed_by`
+    : await sql`UPDATE revision_comments SET completed_at = NULL, completed_by = NULL WHERE id = ${id} RETURNING completed_at, completed_by`;
+  if (!row) return res.status(404).json({ error: 'not found' });
   return res.status(200).json({ id, completedAt: row.completed_at, completedBy: row.completed_by });
 }
 
@@ -878,5 +901,7 @@ function commentRow(r) {
     attachmentUrl: r.attachment_url || null,
     attachmentName: r.attachment_name || null,
     attachmentType: r.attachment_type || null,
+    completedAt: r.completed_at !== undefined ? (r.completed_at || null) : undefined,
+    completedBy: r.completed_by !== undefined ? (r.completed_by || null) : undefined,
   };
 }

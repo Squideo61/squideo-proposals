@@ -2354,6 +2354,11 @@ export function StoreProvider({ children }) {
       return api.post('/api/revisions/complete-version?id=' + encodeURIComponent(versionId), { complete })
         .then((resp) => { actions.loadRevisionDetail(projectId); return resp; });
     },
+    // Tick an individual client comment (revision request) complete / reopen it.
+    completeRevisionComment(projectId, commentId, complete = true) {
+      return api.post('/api/revisions/complete-comment?id=' + encodeURIComponent(commentId), { complete })
+        .then((resp) => { actions.loadRevisionDetail(projectId); return resp; });
+    },
 
     // Engagement analytics for one project (per-viewer rollup + totals).
     loadRevisionAnalytics(id) {
@@ -2501,6 +2506,10 @@ export function StoreProvider({ children }) {
     },
     completeStoryboardVersion(projectId, versionId, complete = true) {
       return api.post('/api/storyboards/complete-version?id=' + encodeURIComponent(versionId), { complete })
+        .then((resp) => { actions.loadStoryboardDetail(projectId); return resp; });
+    },
+    completeStoryboardComment(projectId, commentId, complete = true) {
+      return api.post('/api/storyboards/complete-comment?id=' + encodeURIComponent(commentId), { complete })
         .then((resp) => { actions.loadStoryboardDetail(projectId); return resp; });
     },
 
