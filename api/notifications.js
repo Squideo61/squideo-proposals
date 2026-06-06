@@ -3,6 +3,8 @@
 //   GET                      → { items: [...latest 30], unread: <int> }
 //   POST { all: true }       → mark all the caller's notifications read
 //   POST { ids: [id, ...] }  → mark those notifications read
+//   DELETE                   → clear (delete) all the caller's notifications
+//   DELETE ?id=<id>          → clear that one notification
 //
 // Every user reads/writes only their own rows (scoped by the session email),
 // so this needs auth but no special permission.
@@ -56,6 +58,16 @@ export default async function handler(req, res) {
       if (!numeric.length) return res.status(400).json({ error: 'Provide ids[] or all:true' });
       await sql`UPDATE in_app_notifications SET read_at = NOW()
                  WHERE user_email = ${email} AND id = ANY(${numeric}) AND read_at IS NULL`;
+      return res.status(200).json({ ok: true });
+    }
+
+    if (req.method === 'DELETE') {
+      const id = Number(req.query?.id);
+      if (Number.isFinite(id)) {
+        await sql`DELETE FROM in_app_notifications WHERE user_email = ${email} AND id = ${id}`;
+      } else {
+        await sql`DELETE FROM in_app_notifications WHERE user_email = ${email}`;
+      }
       return res.status(200).json({ ok: true });
     }
 

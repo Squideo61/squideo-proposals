@@ -2720,6 +2720,19 @@ export function StoreProvider({ children }) {
       setState(s => ({ ...s, notifications: s.notifications.map(n => ({ ...n, read: true })), notificationsUnread: 0 }));
       return api.post('/api/notifications', { all: true }).catch(() => {});
     },
+    // Remove a single notification from the feed. Optimistic; next poll reconciles.
+    dismissNotification(id) {
+      setState(s => {
+        const notifications = s.notifications.filter(n => n.id !== id);
+        return { ...s, notifications, notificationsUnread: notifications.filter(n => !n.read).length };
+      });
+      return api.delete('/api/notifications?id=' + encodeURIComponent(id)).catch(() => {});
+    },
+    // Clear the whole feed.
+    clearNotifications() {
+      setState(s => ({ ...s, notifications: [], notificationsUnread: 0 }));
+      return api.delete('/api/notifications').catch(() => {});
+    },
 
     // ---------- Proposal client resolver ----------
     // Used by ClientLinkPanel in the builder. POSTs the typed clientName /

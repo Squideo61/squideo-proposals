@@ -96,6 +96,15 @@ export function NotificationBell({ onOpenLink, inline = false }) {
                   <Check size={13} /> Mark all read
                 </button>
               )}
+              {items.length > 0 && (
+                <button
+                  onClick={() => actions.clearNotifications()}
+                  className="btn-ghost"
+                  style={{ fontSize: 12, padding: '4px 8px' }}
+                >
+                  Clear all
+                </button>
+              )}
               <button onClick={() => setOpen(false)} aria-label="Close" className="btn-icon"><X size={14} /></button>
             </div>
           </div>
@@ -107,28 +116,48 @@ export function NotificationBell({ onOpenLink, inline = false }) {
               </div>
             ) : (
               items.map((n) => (
-                <button
+                <div
                   key={n.id}
-                  onClick={() => onItemClick(n)}
                   style={{
-                    display: 'block', width: '100%', textAlign: 'left', cursor: n.link ? 'pointer' : 'default',
+                    display: 'flex', alignItems: 'stretch',
                     background: n.read ? 'white' : '#F0F9FF',
-                    border: 'none', borderBottom: '1px solid ' + BRAND.border,
-                    padding: '12px 14px', font: 'inherit',
+                    borderBottom: '1px solid ' + BRAND.border,
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                    <span style={{
-                      flexShrink: 0, marginTop: 6, width: 7, height: 7, borderRadius: '50%',
-                      background: n.read ? 'transparent' : BRAND.blue,
-                    }} />
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: n.read ? 500 : 700, color: BRAND.ink, lineHeight: 1.35 }}>{n.title}</div>
-                      {n.body && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, lineHeight: 1.4 }}>{n.body}</div>}
-                      <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>{formatRelativeTime(n.createdAt)}</div>
+                  <button
+                    onClick={() => onItemClick(n)}
+                    style={{
+                      display: 'block', flex: 1, minWidth: 0, textAlign: 'left', cursor: n.link ? 'pointer' : 'default',
+                      background: 'transparent', border: 'none', padding: '12px 14px', font: 'inherit',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                      <span style={{
+                        flexShrink: 0, marginTop: 6, width: 7, height: 7, borderRadius: '50%',
+                        background: n.read ? 'transparent' : BRAND.blue,
+                      }} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: n.read ? 500 : 700, color: BRAND.ink, lineHeight: 1.35 }}>{n.title}</div>
+                        {n.body && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, lineHeight: 1.4 }}>{n.body}</div>}
+                        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>{formatRelativeTime(n.createdAt)}</div>
+                      </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); actions.dismissNotification(n.id); }}
+                    aria-label="Dismiss notification"
+                    title="Dismiss"
+                    style={{
+                      flexShrink: 0, alignSelf: 'flex-start', margin: '8px 8px 0 0', padding: 4,
+                      background: 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer',
+                      color: BRAND.muted, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = BRAND.ink; e.currentTarget.style.background = BRAND.paper; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
               ))
             )}
           </div>
