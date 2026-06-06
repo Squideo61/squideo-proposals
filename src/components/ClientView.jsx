@@ -183,6 +183,18 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
   const signed = isPreview && previewSigned ? previewSigned : storeSigned;
   const payment = storePayment;
 
+  // Staff preview only: pull the linked deal's invoices so the signed block can
+  // reflect real payments taken outside the proposal's own Stripe flow (e.g. a
+  // deposit paid against a Xero invoice on the deal). Never runs on public links.
+  const dealId = data?._dealId || null;
+  const [dealInvoices, setDealInvoices] = useState(null);
+  useEffect(() => {
+    if (!isPreview || !signed || payment || !dealId) { setDealInvoices(null); return; }
+    let alive = true;
+    actions.loadDealInvoices(dealId).then((rows) => { if (alive) setDealInvoices(rows); });
+    return () => { alive = false; };
+  }, [isPreview, signed, payment, dealId]);
+
   // Track viewing session: open + heartbeat (active time only) + close beacon
   // Only fires for real client views (public URL). Internal previews from the
   // dashboard skip tracking so they don't pollute analytics or trigger the
@@ -1097,6 +1109,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
             signed={signed}
             payment={payment}
             previewMode={isPreview}
+            dealInvoices={dealInvoices}
             paymentChoice={paymentChoice}
             vatRate={data.vatRate}
             onPayNow={handlePayNow}

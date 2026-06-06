@@ -1293,6 +1293,14 @@ export function StoreProvider({ children }) {
     useProjectCredit(dealId, title) {
       return actions.addProjectVideo(dealId, title, { fromCredit: true });
     },
+    // Read-only fetch of a deal's invoices/payments (used by the signed-proposal
+    // preview to show what's actually been paid). Returns the array; never throws.
+    loadDealInvoices(dealId) {
+      if (!dealId) return Promise.resolve([]);
+      return api.get('/api/crm/invoices?dealId=' + encodeURIComponent(dealId))
+        .then((rows) => Array.isArray(rows) ? rows : [])
+        .catch(() => []);
+    },
     sendVideoForReview(dealId, videoId) {
       return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/send-for-review', {})
         .then((resp) => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadVideo(videoId)]).then(() => resp));

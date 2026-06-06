@@ -4,12 +4,20 @@ import { BRAND } from '../theme.js';
 import { formatGBP } from '../utils.js';
 import { BillingFields, emptyBilling, isBillingValid } from './BillingFields.jsx';
 
-export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onConfirmInvoice, onPoConfirm, onDownloadReceipt, onDownloadSignedProposal, previewMode = false }) {
+export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onConfirmInvoice, onPoConfirm, onDownloadReceipt, onDownloadSignedProposal, previewMode = false, dealInvoices = null }) {
   const isPO = signed.paymentOption === 'po';
   const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
   const isDeposit = signed.paymentOption === '5050';
   const totalExVat = vatRate ? signed.total / (1 + vatRate) : signed.total;
   const showVat = (Number(vatRate) || 0) > 0;
+
+  // Preview-only: summarise the linked deal's real invoices (payments taken
+  // outside this proposal's own Stripe flow, e.g. a Xero deposit invoice).
+  const invoiceList = Array.isArray(dealInvoices) ? dealInvoices : [];
+  const paidInvoices = invoiceList.filter((r) => r.status === 'paid');
+  const outstandingInvoices = invoiceList.filter((r) => r.status && r.status !== 'paid' && r.status !== 'void' && r.status !== 'voided');
+  const totalPaid = paidInvoices.reduce((s, r) => s + (Number(r.gbpAmount ?? r.amount) || 0), 0);
+  const totalOutstanding = outstandingInvoices.reduce((s, r) => s + (Number(r.gbpAmount ?? r.amount) || 0), 0);
 
   const [billing, setBilling] = useState(() => emptyBilling(signed.email));
   const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
@@ -118,9 +126,41 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
         </div>
       )}
 
-      {previewMode && !payment && (
+      {previewMode && !payment && paidInvoices.length > 0 && (
+        <div style={{ background: '#E8F5E9', border: '2px solid #66BB6A', borderRadius: 12, padding: 24 }}>
+          <h3 style={{ margin: '0 0 12px', fontSize: 17, fontWeight: 700, color: '#1B5E20' }}>
+            Payment{paidInvoices.length > 1 ? 's' : ''} received
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {paidInvoices.map((r) => (
+              <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, fontSize: 14 }}>
+                <span style={{ color: '#2E7D32' }}>
+                  {r.invoiceNumber ? <strong>{r.invoiceNumber}</strong> : 'Invoice'}
+                  {r.paymentMethod ? <span style={{ color: BRAND.muted }}> · via {r.paymentMethod}</span> : (r.source && r.source.startsWith('xero') ? <span style={{ color: BRAND.muted }}> · via Xero</span> : null)}
+                  {r.paidAt ? <span style={{ color: BRAND.muted }}> · {new Date(r.paidAt).toLocaleDateString('en-GB')}</span> : null}
+                </span>
+                <strong style={{ whiteSpace: 'nowrap' }}>{formatGBP(Number(r.gbpAmount ?? r.amount) || 0)}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12, paddingTop: 12, borderTop: '1px solid #A5D6A7', fontWeight: 700, color: '#1B5E20' }}>
+            <span>Total paid</span>
+            <span>{formatGBP(totalPaid)}</span>
+          </div>
+          {totalOutstanding > 0.005 && (
+            <div style={{ fontSize: 13, color: BRAND.muted, marginTop: 8 }}>
+              {formatGBP(totalOutstanding)} still outstanding across {outstandingInvoices.length} invoice{outstandingInvoices.length > 1 ? 's' : ''}.
+            </div>
+          )}
+        </div>
+      )}
+
+      {previewMode && !payment && paidInvoices.length === 0 && (
         <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 16, fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
-          Payment options ({isPO ? 'PO quote' : isDeposit ? '50% deposit' : 'full payment'}) appear here on the client's own link. No payment has been recorded against this proposal yet.
+          Payment options ({isPO ? 'PO quote' : isDeposit ? '50% deposit' : 'full payment'}) appear here on the client's own link.
+          {outstandingInvoices.length > 0
+            ? ' ' + formatGBP(totalOutstanding) + ' invoiced and awaiting payment.'
+            : ' No payment has been recorded against this deal yet.'}
         </div>
       )}
 
