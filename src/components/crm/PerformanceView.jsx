@@ -161,7 +161,7 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
             <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Performance</h2>
             <p style={{ fontSize: 13, color: BRAND.muted, margin: '2px 0 0' }}>
               {isComparison
-                ? "Cash received each month vs new money owed created that month (ex-VAT), over the last 36 months. The owed line previews future income."
+                ? "Cash received each month vs new money owed created that month (ex-VAT), over the last 36 months. The latest owed point previews all outstanding cash still to collect (invoiced or not)."
                 : isSales
                   ? 'New business signed (ex-VAT) across all customers, paced against your sales targets by working day.'
                   : 'Cash received (ex-VAT) across all customers, paced against your income targets by working day.'}
@@ -281,8 +281,12 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
 // as the forward pipeline. Admins can backfill pre-CRM months from the sheet.
 function SalesVsPpView({ trend, isMobile, actions, history }) {
   const months = trend?.months || [];
-  const chart = useMemo(() => months.map((m) => ({
-    label: monthShortYear(m.month), cashIn: m.cashIn, pps: m.pps,
+  const chart = useMemo(() => months.map((m, i) => ({
+    label: monthShortYear(m.month),
+    cashIn: m.cashIn,
+    // The latest point previews ALL outstanding cash still owed (invoiced or
+    // not), not just what was created that month.
+    pps: (i === months.length - 1 && m.ppsOutstanding != null) ? m.ppsOutstanding : m.pps,
   })), [months]);
   const totals = months.reduce(
     (a, m) => ({ cashIn: a.cashIn + (m.cashIn || 0), pps: a.pps + (m.pps || 0) }),

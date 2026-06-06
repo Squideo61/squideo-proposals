@@ -801,6 +801,19 @@ async function trendReport(action) {
     };
   });
 
+  // The latest month is a live preview: its owed point should reflect ALL
+  // outstanding cash still to collect (invoiced + not-yet-invoiced), not just
+  // what was newly created this month. Carried as a separate field so the
+  // 36-month "new money owed" total stays a sum of monthly-created amounts.
+  try {
+    const last = months[months.length - 1];
+    if (last) {
+      const pending = await pendingPaymentsReport();
+      const t = pending.totals || {};
+      last.ppsOutstanding = round2((Number(t.invoiced) || 0) + (Number(t.notInvoiced) || 0));
+    }
+  } catch { /* non-fatal — fall back to the monthly-created figure */ }
+
   return { months };
 }
 
