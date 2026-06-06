@@ -2359,6 +2359,11 @@ export function StoreProvider({ children }) {
       return api.post('/api/revisions/complete-comment?id=' + encodeURIComponent(commentId), { complete })
         .then((resp) => { actions.loadRevisionDetail(projectId); return resp; });
     },
+    // Set/clear the producer's internal note on a comment (team-only).
+    setRevisionCommentNote(projectId, commentId, note) {
+      return api.post('/api/revisions/comment-note?id=' + encodeURIComponent(commentId), { note: note || null })
+        .then((resp) => { actions.loadRevisionDetail(projectId); return resp; });
+    },
 
     // Engagement analytics for one project (per-viewer rollup + totals).
     loadRevisionAnalytics(id) {
@@ -2510,6 +2515,10 @@ export function StoreProvider({ children }) {
     },
     completeStoryboardComment(projectId, commentId, complete = true) {
       return api.post('/api/storyboards/complete-comment?id=' + encodeURIComponent(commentId), { complete })
+        .then((resp) => { actions.loadStoryboardDetail(projectId); return resp; });
+    },
+    setStoryboardCommentNote(projectId, commentId, note) {
+      return api.post('/api/storyboards/comment-note?id=' + encodeURIComponent(commentId), { note: note || null })
         .then((resp) => { actions.loadStoryboardDetail(projectId); return resp; });
     },
 

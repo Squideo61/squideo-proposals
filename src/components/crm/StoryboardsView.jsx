@@ -8,7 +8,7 @@ import { Modal } from '../ui.jsx';
 import { PdfThumb } from '../storyboard/PdfThumb.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
 import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
-import { DealLinkSelect, AssigneeSelect, CommentDone } from './RevisionsView.jsx';
+import { DealLinkSelect, AssigneeSelect, CommentDone, CommentFlag, InternalNote } from './RevisionsView.jsx';
 
 const APPROVED_CHIP = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
   borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: 11, fontWeight: 700 };
@@ -467,16 +467,21 @@ function DraftComments({ version, comments }) {
                       )}
                       <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
                       <span style={{ fontSize: 11, color: BRAND.muted }}>{formatRelativeTime(c.createdAt)}</span>
-                      <CommentDone
-                        done={!!c.completedAt}
-                        title={c.completedAt
-                          ? `Done ${formatRelativeTime(c.completedAt)}${c.completedBy ? ' by ' + c.completedBy : ''} — click to reopen`
-                          : 'Mark this revision done'}
-                        onClick={() => actions.completeStoryboardComment(projectId, c.id, !c.completedAt)}
-                      />
+                      <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                        <CommentFlag note={c.producerNote}
+                          onSave={(note) => actions.setStoryboardCommentNote(projectId, c.id, note)} />
+                        <CommentDone
+                          done={!!c.completedAt}
+                          title={c.completedAt
+                            ? `Done ${formatRelativeTime(c.completedAt)}${c.completedBy ? ' by ' + c.completedBy : ''} — click to reopen`
+                            : 'Mark this revision done'}
+                          onClick={() => actions.completeStoryboardComment(projectId, c.id, !c.completedAt)}
+                        />
+                      </span>
                     </div>
                     {c.body && <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap', marginTop: 2, textDecoration: c.completedAt ? 'line-through' : 'none' }}>{c.body}</div>}
                     {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
+                    <InternalNote note={c.producerNote} />
                   </div>
                 );
               })}

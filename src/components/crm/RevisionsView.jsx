@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight, BarChart3, Eye, Send, Link2, User, Check } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight, BarChart3, Eye, Send, Link2, User, Check, Flag } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
@@ -74,7 +74,7 @@ export function CommentDone({ done, title, onClick }) {
       onClick={onClick}
       title={title}
       style={{
-        marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4,
+        display: 'inline-flex', alignItems: 'center', gap: 4,
         fontSize: 11, fontWeight: 700, borderRadius: 999, padding: '2px 9px', cursor: 'pointer',
         color: done ? '#16A34A' : BRAND.muted,
         background: done ? '#ECFDF3' : 'transparent',
@@ -82,6 +82,38 @@ export function CommentDone({ done, title, onClick }) {
       }}>
       <Check size={12} /> {done ? 'Done' : 'Mark done'}
     </button>
+  );
+}
+
+// Flag a comment + attach an internal team-only note (never shown to the
+// client). Prompts inline; clears the note when left blank.
+export function CommentFlag({ note, onSave }) {
+  const flagged = !!note;
+  const edit = () => {
+    const v = window.prompt('Internal note (team only — not shown to the client):', note || '');
+    if (v === null) return;
+    onSave(v.trim() || null);
+  };
+  return (
+    <button onClick={edit} title={flagged ? 'Edit internal note' : 'Flag & add an internal note'}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600,
+        borderRadius: 999, padding: '2px 9px', cursor: 'pointer',
+        color: flagged ? '#B45309' : BRAND.muted,
+        background: flagged ? '#FEF3C7' : 'transparent',
+        border: '1px solid ' + (flagged ? '#FDE68A' : BRAND.border) }}>
+      <Flag size={12} /> {flagged ? 'Flagged' : 'Flag'}
+    </button>
+  );
+}
+
+// The amber internal-note box shown under a flagged comment (producer view).
+export function InternalNote({ note }) {
+  if (!note) return null;
+  return (
+    <div style={{ marginTop: 4, fontSize: 12, color: '#92400E', background: '#FFFBEB',
+      border: '1px solid #FDE68A', borderRadius: 6, padding: '6px 8px', whiteSpace: 'pre-wrap' }}>
+      <strong>Internal note:</strong> {note}
+    </div>
   );
 }
 
@@ -507,16 +539,21 @@ function VideoCard({ projectId, video, commentsByVersion }) {
                           {c.timecodeSeconds != null && (
                             <span style={{ color: BRAND.blue, fontSize: 12, fontWeight: 700 }}>{tc(c.timecodeSeconds)}</span>
                           )}
-                          <CommentDone
-                            done={!!c.completedAt}
-                            title={c.completedAt
-                              ? `Done ${formatRelativeTime(c.completedAt)}${c.completedBy ? ' by ' + c.completedBy : ''} — click to reopen`
-                              : 'Mark this revision done'}
-                            onClick={() => actions.completeRevisionComment(projectId, c.id, !c.completedAt)}
-                          />
+                          <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                            <CommentFlag note={c.producerNote}
+                              onSave={(note) => actions.setRevisionCommentNote(projectId, c.id, note)} />
+                            <CommentDone
+                              done={!!c.completedAt}
+                              title={c.completedAt
+                                ? `Done ${formatRelativeTime(c.completedAt)}${c.completedBy ? ' by ' + c.completedBy : ''} — click to reopen`
+                                : 'Mark this revision done'}
+                              onClick={() => actions.completeRevisionComment(projectId, c.id, !c.completedAt)}
+                            />
+                          </span>
                         </div>
                         {c.body && <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap', textDecoration: c.completedAt ? 'line-through' : 'none' }}>{c.body}</div>}
                         {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
+                        <InternalNote note={c.producerNote} />
                       </div>
                     ))}
                   </div>

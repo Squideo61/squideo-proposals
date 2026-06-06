@@ -143,6 +143,8 @@ function ensureStoryboardTables() {
       // 20260606_revision_comment_completion.sql (per-comment completion).
       await sql`ALTER TABLE storyboard_comments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
       await sql`ALTER TABLE storyboard_comments ADD COLUMN IF NOT EXISTS completed_by TEXT`;
+      // 20260606_revision_producer_notes.sql (internal producer note).
+      await sql`ALTER TABLE storyboard_comments ADD COLUMN IF NOT EXISTS producer_note TEXT`;
     } catch (err) {
       tablesEnsured = null;
       console.warn('[storyboards] ensure tables failed', err.message);
@@ -248,6 +250,14 @@ export default async function handler(req, res) {
       const id = req.query.id ? String(req.query.id) : null;
       if (!id) return res.status(400).json({ error: 'id required' });
       return await completeComment(req, res, id, user);
+    }
+
+    // Producer's internal note on a comment (team-only; summarised on completion).
+    if (action === 'comment-note') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const id = req.query.id ? String(req.query.id) : null;
+      if (!id) return res.status(400).json({ error: 'id required' });
+      return await setCommentNote(req, res, id);
     }
 
     if (action === 'analytics') {
@@ -435,7 +445,7 @@ async function projectDetail(res, id) {
     SELECT sc.id, sc.version_id, sc.parent_id, sc.page_number, sc.anchor_x, sc.anchor_y, sc.body,
            sc.author_name, sc.author_email, sc.created_at,
            sc.attachment_url, sc.attachment_name, sc.attachment_type,
-           sc.completed_at, sc.completed_by
+           sc.completed_at, sc.completed_by, sc.producer_note
     FROM storyboard_comments sc
     JOIN storyboard_versions sv ON sv.id = sc.version_id
     WHERE sv.project_id = ${id}
@@ -633,18 +643,41 @@ async function completeComment(req, res, id, user) {
     if (total > 0 && open === 0) {
       const title = cur.storyboard_title || 'Storyboard';
       const link = `${APP_URL}/#/storyboards`;
+      const notes = await sql`
+        SELECT producer_note FROM storyboard_comments
+         WHERE version_id = ${cur.version_id} AND producer_note IS NOT NULL AND btrim(producer_note) <> ''
+         ORDER BY created_at
+      `;
+      const noteList = notes.map(n => n.producer_note);
+      const notesHtml = noteList.length
+        ? `<p><strong>Producer notes:</strong></p><ul>${noteList.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>`
+        : '';
+      const notesText = noteList.length ? `\n\nProducer notes:\n${noteList.map(n => '• ' + n).join('\n')}` : '';
       try {
         await sendNotification('storyboard.draft_completed', {
           subject: `✅ Storyboard revisions complete: ${title} (draft ${cur.version_number})`,
-          html: `<p>All client revisions on <strong>${title}</strong> — draft ${cur.version_number} have been marked complete.</p><p><a href="${link}">Open Storyboard Revisions</a></p>`,
-          text: `All storyboard revisions on ${title} (draft ${cur.version_number}) are complete — ${link}`,
+          html: `<p>All client revisions on <strong>${escapeHtml(title)}</strong> — draft ${cur.version_number} have been marked complete.</p>${notesHtml}<p><a href="${link}">Open Storyboard Revisions</a></p>`,
+          text: `All storyboard revisions on ${title} (draft ${cur.version_number}) are complete — ${link}${notesText}`,
           excludeEmails: user.email ? [user.email] : null,
-          inApp: { title: `Storyboard revisions complete: ${title}`, body: `Every comment on draft ${cur.version_number} is done`, link: '#/storyboards' },
+          inApp: { title: `Storyboard revisions complete: ${title}`, body: `Every comment on draft ${cur.version_number} is done${noteList.length ? ` · ${noteList.length} producer note${noteList.length === 1 ? '' : 's'}` : ''}`, link: '#/storyboards' },
         });
       } catch (err) { console.error('[storyboards] draft-complete notify failed', err.message); }
     }
   }
   return res.status(200).json({ id, completedAt: row.completed_at, completedBy: row.completed_by });
+}
+
+// Set/clear the producer's internal note on a comment (team-only reference).
+async function setCommentNote(req, res, id) {
+  const body = parseBody(req);
+  const note = (typeof body.note === 'string' ? body.note.trim() : '').slice(0, 2000) || null;
+  const [row] = await sql`UPDATE storyboard_comments SET producer_note = ${note} WHERE id = ${id} RETURNING producer_note`;
+  if (!row) return res.status(404).json({ error: 'not found' });
+  return res.status(200).json({ id, producerNote: row.producer_note || null });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
 // ─── Public: viewer + comments ───────────────────────────────────────────────
@@ -1008,5 +1041,6 @@ function commentRow(r) {
     attachmentType: r.attachment_type || null,
     completedAt: r.completed_at !== undefined ? (r.completed_at || null) : undefined,
     completedBy: r.completed_by !== undefined ? (r.completed_by || null) : undefined,
+    producerNote: r.producer_note !== undefined ? (r.producer_note || null) : undefined,
   };
 }

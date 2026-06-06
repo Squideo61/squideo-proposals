@@ -37,6 +37,8 @@ function ensureRevisionFeedbackColumns() {
     // Per-comment completion (db/migrations/20260606_revision_comment_completion.sql).
     await sql`ALTER TABLE revision_comments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
     await sql`ALTER TABLE revision_comments ADD COLUMN IF NOT EXISTS completed_by TEXT`;
+    // Internal producer note (db/migrations/20260606_revision_producer_notes.sql).
+    await sql`ALTER TABLE revision_comments ADD COLUMN IF NOT EXISTS producer_note TEXT`;
   })().catch((err) => { revisionFeedbackEnsured = null; throw err; });
   return revisionFeedbackEnsured;
 }
@@ -160,6 +162,14 @@ export default async function handler(req, res) {
       const id = req.query.id ? String(req.query.id) : null;
       if (!id) return res.status(400).json({ error: 'id required' });
       return await completeComment(req, res, id, user);
+    }
+
+    // Producer's internal note on a comment (team-only; summarised on completion).
+    if (action === 'comment-note') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const id = req.query.id ? String(req.query.id) : null;
+      if (!id) return res.status(400).json({ error: 'id required' });
+      return await setCommentNote(req, res, id);
     }
 
     if (action === 'analytics') {
@@ -348,7 +358,7 @@ async function projectDetail(res, id) {
     SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds, rc.body,
            rc.author_name, rc.author_email, rc.created_at,
            rc.attachment_url, rc.attachment_name, rc.attachment_type,
-           rc.completed_at, rc.completed_by
+           rc.completed_at, rc.completed_by, rc.producer_note
     FROM revision_comments rc
     JOIN revision_versions rv ON rv.id = rc.version_id
     WHERE rv.project_id = ${id}
@@ -563,18 +573,41 @@ async function completeComment(req, res, id, user) {
     if (total > 0 && open === 0) {
       const title = cur.video_title || 'Video';
       const link = `${APP_URL}/#/revisions`;
+      const notes = await sql`
+        SELECT producer_note FROM revision_comments
+         WHERE version_id = ${cur.version_id} AND producer_note IS NOT NULL AND btrim(producer_note) <> ''
+         ORDER BY created_at
+      `;
+      const noteList = notes.map(n => n.producer_note);
+      const notesHtml = noteList.length
+        ? `<p><strong>Producer notes:</strong></p><ul>${noteList.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>`
+        : '';
+      const notesText = noteList.length ? `\n\nProducer notes:\n${noteList.map(n => '• ' + n).join('\n')}` : '';
       try {
         await sendNotification('revision.draft_completed', {
           subject: `✅ Revisions complete: ${title} (draft ${cur.version_number})`,
-          html: `<p>All client revisions on <strong>${title}</strong> — draft ${cur.version_number} have been marked complete.</p><p><a href="${link}">Open Video Revisions</a></p>`,
-          text: `All revisions on ${title} (draft ${cur.version_number}) are complete — ${link}`,
+          html: `<p>All client revisions on <strong>${escapeHtml(title)}</strong> — draft ${cur.version_number} have been marked complete.</p>${notesHtml}<p><a href="${link}">Open Video Revisions</a></p>`,
+          text: `All revisions on ${title} (draft ${cur.version_number}) are complete — ${link}${notesText}`,
           excludeEmails: user.email ? [user.email] : null,
-          inApp: { title: `Revisions complete: ${title}`, body: `Every comment on draft ${cur.version_number} is done`, link: '#/revisions' },
+          inApp: { title: `Revisions complete: ${title}`, body: `Every comment on draft ${cur.version_number} is done${noteList.length ? ` · ${noteList.length} producer note${noteList.length === 1 ? '' : 's'}` : ''}`, link: '#/revisions' },
         });
       } catch (err) { console.error('[revisions] draft-complete notify failed', err.message); }
     }
   }
   return res.status(200).json({ id, completedAt: row.completed_at, completedBy: row.completed_by });
+}
+
+// Set/clear the producer's internal note on a comment (team-only reference).
+async function setCommentNote(req, res, id) {
+  const body = parseBody(req);
+  const note = (typeof body.note === 'string' ? body.note.trim() : '').slice(0, 2000) || null;
+  const [row] = await sql`UPDATE revision_comments SET producer_note = ${note} WHERE id = ${id} RETURNING producer_note`;
+  if (!row) return res.status(404).json({ error: 'not found' });
+  return res.status(200).json({ id, producerNote: row.producer_note || null });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
 // ─── Public: viewer + comments ───────────────────────────────────────────────
@@ -931,5 +964,6 @@ function commentRow(r) {
     attachmentType: r.attachment_type || null,
     completedAt: r.completed_at !== undefined ? (r.completed_at || null) : undefined,
     completedBy: r.completed_by !== undefined ? (r.completed_by || null) : undefined,
+    producerNote: r.producer_note !== undefined ? (r.producer_note || null) : undefined,
   };
 }
