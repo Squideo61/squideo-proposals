@@ -908,7 +908,9 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       const vrows = await sql`
         SELECT pv.*,
                (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
-                  FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails
+                  FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails,
+               (SELECT MAX(rv.version_number)
+                  FROM revision_versions rv WHERE rv.video_id = pv.revision_video_id) AS revision_round
           FROM project_videos pv WHERE pv.deal_id = ${id} ORDER BY pv.sort_order, pv.created_at`;
       videos = vrows.map(v => ({
         id: v.id, dealId: v.deal_id, title: v.title, status: v.status,
@@ -923,6 +925,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         producerEmails: Array.isArray(v.producer_emails) && v.producer_emails.length
           ? v.producer_emails : (v.producer_email ? [v.producer_email] : []),
         sortOrder: v.sort_order, revisionVideoId: v.revision_video_id || null,
+        revisionRound: v.revision_round != null ? Number(v.revision_round) : null,
         createdAt: v.created_at, updatedAt: v.updated_at || null,
       }));
     } catch (_) { /* project_videos not yet migrated */ }

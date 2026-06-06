@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { Clapperboard, Film, Plus, Trash2, Send, Coins, ExternalLink, ChevronRight } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { PHASE_BY_ID, STAGE_LABEL } from '../../lib/productionStages.js';
+import { STAGE_LABEL } from '../../lib/productionStages.js';
+import { VideoProgressBar } from './ProductionProgressBar.jsx';
 
 // The project's videos + pre-paid credit balance. Each video moves through the
 // board independently and is edited on its own page (onOpenVideo); this panel
@@ -92,7 +93,6 @@ function PanelHeader() {
 function VideoRow({ dealId, video, onOpen }) {
   const { actions, showMsg } = useStore();
   const [busy, setBusy] = useState(false);
-  const phase = PHASE_BY_ID[video.productionPhase];
   const stageLabel = video.productionPhase ? (STAGE_LABEL[video.productionPhase]?.[video.productionStage] || video.productionStage) : null;
 
   const sendForReview = () => {
@@ -107,28 +107,35 @@ function VideoRow({ dealId, video, onOpen }) {
   };
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 8 }}>
-      <Film size={15} color={BRAND.muted} />
-      <button onClick={onOpen}
-        style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-          fontSize: 13, fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {video.title}
-      </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <Film size={15} color={BRAND.muted} />
+        <button onClick={onOpen}
+          style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            fontSize: 13, fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {video.title}
+        </button>
 
-      {stageLabel && (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: BRAND.ink, background: '#F1F5F9', borderRadius: 999, padding: '2px 9px', whiteSpace: 'nowrap' }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: phase?.color || BRAND.muted }} />
-          {stageLabel}
-        </span>
-      )}
-      <button onClick={sendForReview} disabled={busy} className="btn-ghost" title="Create / copy the client review link">
-        {video.revisionVideoId ? <ExternalLink size={13} /> : <Send size={13} />}
-      </button>
-      <button onClick={onOpen} className="btn-icon" title="Open video"><ChevronRight size={14} /></button>
-      <button
-        onClick={() => { if (window.confirm(`Delete "${video.title}"?`)) actions.deleteProjectVideo(dealId, video.id); }}
-        className="btn-icon" title="Delete video"
-      ><Trash2 size={13} /></button>
+        {stageLabel && (
+          <span style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap' }}>{stageLabel}</span>
+        )}
+        <button onClick={sendForReview} disabled={busy} className="btn-ghost" title="Create / copy the client review link">
+          {video.revisionVideoId ? <ExternalLink size={13} /> : <Send size={13} />}
+        </button>
+        <button onClick={onOpen} className="btn-icon" title="Open video"><ChevronRight size={14} /></button>
+        <button
+          onClick={() => { if (window.confirm(`Delete "${video.title}"?`)) actions.deleteProjectVideo(dealId, video.id); }}
+          className="btn-icon" title="Delete video"
+        ><Trash2 size={13} /></button>
+      </div>
+
+      {/* At-a-glance production progress for this video (read-only here; open the
+          video to move it through the stages). */}
+      <VideoProgressBar
+        phaseId={video.productionPhase}
+        stageId={video.productionStage}
+        revisionRound={video.revisionRound}
+      />
     </div>
   );
 }
