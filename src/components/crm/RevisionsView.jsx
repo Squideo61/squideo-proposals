@@ -335,6 +335,7 @@ function ProjectDetail({ projectId, onBack }) {
 // One video within a project: its own upload dropzone + list of drafts.
 function VideoCard({ projectId, video, commentsByVersion }) {
   const { actions, showMsg } = useStore();
+  const isMobile = useIsMobile();
   const fileInputRef = useRef(null);
   const [progress, setProgress] = useState(null);
   // Latest draft is open by default (recomputed each render, so a freshly
@@ -434,10 +435,16 @@ function VideoCard({ projectId, video, commentsByVersion }) {
                     ))}
                   </div>
                 )}
-                <video src={v.videoUrl} controls style={{ display: 'block', maxWidth: '100%', maxHeight: '70vh', margin: '0 auto', borderRadius: 8, background: '#000' }} />
-                {comments.length > 0 && (
-                  <div style={{ marginTop: 10 }}>
-                    {comments.map(c => (
+                {/* Video on the left, comments on the right (stacks on mobile).
+                    Fullscreen is available via the native player controls. */}
+                <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 14, alignItems: 'flex-start' }}>
+                  <div style={{ flex: isMobile ? '1 1 auto' : '1 1 62%', minWidth: 0, width: '100%' }}>
+                    <video src={v.videoUrl} controls style={{ display: 'block', width: '100%', maxHeight: '60vh', borderRadius: 8, background: '#000' }} />
+                  </div>
+                  <div style={{ flex: isMobile ? '1 1 auto' : '1 1 38%', minWidth: 0, width: '100%', maxHeight: isMobile ? undefined : '60vh', overflowY: 'auto' }}>
+                    {comments.length === 0 ? (
+                      <div style={{ fontSize: 13, color: BRAND.muted, padding: '4px 2px' }}>No comments yet.</div>
+                    ) : comments.map(c => (
                       <div key={c.id} style={{ marginBottom: 10 }}>
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                           <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
@@ -450,7 +457,7 @@ function VideoCard({ projectId, video, commentsByVersion }) {
                       </div>
                     ))}
                   </div>
-                )}
+                </div>
               </>
             )}
           </div>
