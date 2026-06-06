@@ -923,6 +923,9 @@ export async function invoicesRoute(req, res, id, action, user) {
               link,
             }),
             text: `Invoice ${cur.invoice_number || manualId} marked paid via ${next.payment_method || 'manual'} — ${link}`,
+            // The person who marked it paid doesn't need to be told they did it.
+            excludeEmails: user.email ? [user.email] : null,
+            inApp: { title: `Invoice paid: ${title}`, body: `${cur.invoice_number || manualId} marked paid via ${next.payment_method || 'manual'}`, link: `#/deal/${dealId}` },
           });
         } catch (err) {
           console.error('[invoices] notify failed', err);
