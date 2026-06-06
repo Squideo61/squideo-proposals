@@ -276,7 +276,15 @@ function ProjectDetail({ projectId, onBack }) {
   const isMobile = useIsMobile();
   const [activeVideoId, setActiveVideoId] = useState(null);
 
-  useEffect(() => { actions.loadRevisionDetail(projectId); }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Load now, then poll so client comments/views appear live while the producer
+  // has the project open. Pauses when the tab is hidden; also refreshes on focus.
+  useEffect(() => {
+    actions.loadRevisionDetail(projectId);
+    const tick = () => { if (document.visibilityState === 'visible') actions.loadRevisionDetail(projectId); };
+    const iv = setInterval(tick, 10000);
+    window.addEventListener('focus', tick);
+    return () => { clearInterval(iv); window.removeEventListener('focus', tick); };
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const detail = state.revisionDetail[projectId];
 

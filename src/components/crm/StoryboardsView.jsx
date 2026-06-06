@@ -211,7 +211,14 @@ function ProjectDetail({ projectId, onBack }) {
   const isMobile = useIsMobile();
   const [activeStoryboardId, setActiveStoryboardId] = useState(null);
 
-  useEffect(() => { actions.loadStoryboardDetail(projectId); }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Load now, then poll so client comments/views appear live while open.
+  useEffect(() => {
+    actions.loadStoryboardDetail(projectId);
+    const tick = () => { if (document.visibilityState === 'visible') actions.loadStoryboardDetail(projectId); };
+    const iv = setInterval(tick, 10000);
+    window.addEventListener('focus', tick);
+    return () => { clearInterval(iv); window.removeEventListener('focus', tick); };
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const detail = state.storyboardDetail[projectId];
 
