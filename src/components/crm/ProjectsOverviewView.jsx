@@ -15,6 +15,9 @@ export function ProjectsOverviewView({ onBack, onOpenProject }) {
 
   useEffect(() => { actions.loadProductionVideos(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Undefined until the first load resolves — distinguishes "still loading" from
+  // a genuinely empty board, so we don't flash "no projects" on entry.
+  const loading = state.productionVideos === undefined;
   const videos = state.productionVideos || [];
   const projects = useMemo(() => {
     const map = new Map();
@@ -43,10 +46,14 @@ export function ProjectsOverviewView({ onBack, onOpenProject }) {
           <LayoutGrid size={22} color={BRAND.blue} /> Projects
         </h1>
         <SearchBox value={query} onChange={setQuery} placeholder="Search projects, customers…" />
-        <span style={{ fontSize: 13, color: BRAND.muted }}>{matched.length} {matched.length === 1 ? 'project' : 'projects'}{q ? ' match' : ''}</span>
+        <span style={{ fontSize: 13, color: BRAND.muted }}>{loading ? 'Loading…' : `${matched.length} ${matched.length === 1 ? 'project' : 'projects'}${q ? ' match' : ''}`}</span>
       </header>
 
-      {matched.length === 0 ? (
+      {loading ? (
+        <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
+          Loading projects…
+        </div>
+      ) : matched.length === 0 ? (
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
           {q ? 'No matches.' : 'No projects in production yet.'}
         </div>
