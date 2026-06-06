@@ -1044,7 +1044,8 @@ function IncomeRow({ r, onOpenDeal, onSetDate }) {
             {name}
           </span>
           {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
-          <SourceBadge source={r.source} />
+          {/* Imported sheet payments are no longer "pending" once paid — drop the PP pill. */}
+          {r.source !== 'sheet' && <SourceBadge source={r.source} />}
           <MethodBadge method={r.method} />
           {editing ? (
             <input
