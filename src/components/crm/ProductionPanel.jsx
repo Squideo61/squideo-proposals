@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Clapperboard, Film, Plus, Trash2, Send, Coins, ExternalLink, ChevronRight } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { PHASE_BY_ID, STAGE_LABEL, VIDEO_STATUS_BY_ID } from '../../lib/productionStages.js';
+import { PHASE_BY_ID, STAGE_LABEL } from '../../lib/productionStages.js';
 
 // The project's videos + pre-paid credit balance. Each video moves through the
 // board independently and is edited on its own page (onOpenVideo); this panel
@@ -94,7 +94,6 @@ function VideoRow({ dealId, video, onOpen }) {
   const [busy, setBusy] = useState(false);
   const phase = PHASE_BY_ID[video.productionPhase];
   const stageLabel = video.productionPhase ? (STAGE_LABEL[video.productionPhase]?.[video.productionStage] || video.productionStage) : null;
-  const status = VIDEO_STATUS_BY_ID[video.status];
 
   const sendForReview = () => {
     setBusy(true);
@@ -122,10 +121,6 @@ function VideoRow({ dealId, video, onOpen }) {
           {stageLabel}
         </span>
       )}
-      {status && (
-        <span style={{ fontSize: 11, fontWeight: 700, color: status.color, whiteSpace: 'nowrap' }}>{status.label}</span>
-      )}
-
       <button onClick={sendForReview} disabled={busy} className="btn-ghost" title="Create / copy the client review link">
         {video.revisionVideoId ? <ExternalLink size={13} /> : <Send size={13} />}
       </button>

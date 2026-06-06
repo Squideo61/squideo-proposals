@@ -4,9 +4,10 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import {
-  PRODUCTION_PHASES, PHASE_BY_ID, VIDEO_STATUSES, VIDEO_STATUS_BY_ID, PAYMENT_OPTION_LABEL,
+  PRODUCTION_PHASES, PHASE_BY_ID, PAYMENT_OPTION_LABEL,
   VIDEO_MILESTONES, STAGE_LABEL,
 } from '../../lib/productionStages.js';
+import { ProductionProgressBar } from './ProductionProgressBar.jsx';
 import { DealConversation } from './DealConversation.jsx';
 import { AssigneePicker } from './TaskFormModal.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
@@ -46,7 +47,7 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
   }
 
   const phase = PHASE_BY_ID[video.productionPhase] || PRODUCTION_PHASES[0];
-  const status = VIDEO_STATUS_BY_ID[video.status] || VIDEO_STATUSES[0];
+  const stageLabel = STAGE_LABEL[phase.id]?.[video.productionStage] || video.productionStage || phase.stages[0]?.label;
   const update = (fields) => actions.updateVideo(videoId, fields).catch(() => {});
 
   const onPhaseChange = (newPhaseId) => {
@@ -113,23 +114,21 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           </button>
         )}
 
+        {/* Production progress — phase bar (click to move) with the current
+            stage shown beneath. Replaces the old manual Status dropdown. */}
+        <div style={{ marginTop: 4, marginBottom: 16 }}>
+          <ProductionProgressBar
+            phaseId={phase.id}
+            onPhaseChange={onPhaseChange}
+            subtitle={`Stage: ${stageLabel}`}
+          />
+        </div>
+
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 14, marginTop: 12 }}>
-          <div>
-            <label style={labelStyle}>Phase</label>
-            <select style={ctrl} value={phase.id} onChange={(e) => onPhaseChange(e.target.value)}>
-              {PRODUCTION_PHASES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-            </select>
-          </div>
           <div>
             <label style={labelStyle}>Stage</label>
             <select style={ctrl} value={video.productionStage || phase.stages[0]?.id} onChange={(e) => onStageChange(e.target.value)}>
               {phase.stages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={labelStyle}>Status</label>
-            <select style={{ ...ctrl, color: status.color, fontWeight: 600 }} value={video.status} onChange={(e) => update({ status: e.target.value })}>
-              {VIDEO_STATUSES.map(s => <option key={s.id} value={s.id} style={{ color: BRAND.ink }}>{s.label}</option>)}
             </select>
           </div>
           <div style={{ gridColumn: '1 / -1' }}>

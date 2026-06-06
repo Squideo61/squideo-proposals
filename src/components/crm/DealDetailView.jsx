@@ -14,6 +14,7 @@ import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { OrderSummaryCard } from './OrderSummaryCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
+import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
@@ -98,6 +99,8 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
   }
 
   const proposals = detail?.proposals || [];
+  const projectVideos = detail?.videos || [];
+  const projectPhase = useMemo(() => aggregateProjectPhase(projectVideos), [projectVideos]);
   const events = detail?.events || [];
   const tasks = detail?.tasks || [];
   const emails = detail?.emails || [];
@@ -214,7 +217,17 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
 
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 16 : 24, marginBottom: 16 }}>
         <h1 style={{ margin: '0 0 12px', fontSize: 22, fontWeight: 700 }}>{deal.title}</h1>
-        {!productionOnly && <StagePicker stage={deal.stage} onChange={handleStageChange} />}
+        {/* Once the deal is a project (it has production videos) the sales
+            pipeline bar gives way to a production progress bar for the whole
+            project — aggregated across its videos. */}
+        {projectVideos.length > 0 ? (
+          <ProductionProgressBar
+            phaseId={projectPhase.phaseId}
+            subtitle={projectPhase.total > 1
+              ? `${projectPhase.delivered} of ${projectPhase.total} videos delivered`
+              : (projectPhase.delivered ? 'Video delivered' : 'In production')}
+          />
+        ) : (!productionOnly && <StagePicker stage={deal.stage} onChange={handleStageChange} />)}
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 16, marginTop: 20 }}>
           <Field icon={Building2} label="Customer">
             {company
