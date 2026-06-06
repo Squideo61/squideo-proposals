@@ -65,11 +65,14 @@ const VIDEO_STEPS = [
   { label: 'Storyboard',      phase: 'pre_production', stage: 'storyboard' },
   { label: 'Project Started', phase: 'pre_production', stage: 'project_started' },
   { label: 'Production',      phase: 'production',     stage: 'in_production' },
+  { label: 'Revisions',       phase: 'production',     stage: 'amends_2', key: 'revisions' },
   { label: 'Signed Off',      phase: 'production',     stage: 'signed_off' },
   { label: 'Delivered',       phase: 'completed',      stage: 'delivered' },
 ];
 
-export function VideoProgressBar({ phaseId, stageId, onMove = null }) {
+// `revisionRound` (max client-review version number on the linked revision
+// video) is shown on the Revisions step as "Revisions · R2".
+export function VideoProgressBar({ phaseId, stageId, onMove = null, revisionRound = null }) {
   const curIdx = stageOrderIndex(phaseId, stageId);
   let activeStepI = 0;
   VIDEO_STEPS.forEach((s, i) => { if (stageOrderIndex(s.phase, s.stage) <= curIdx) activeStepI = i; });
@@ -81,12 +84,13 @@ export function VideoProgressBar({ phaseId, stageId, onMove = null }) {
         const color = PHASE_BY_ID[s.phase]?.color || BRAND.blue;
         const active = i === activeStepI;
         const done = i < activeStepI;
+        const label = s.key === 'revisions' && revisionRound > 0 ? `Revisions · R${revisionRound}` : s.label;
         const Tag = clickable ? 'button' : 'div';
         return (
           <Tag
             key={s.label}
             onClick={clickable ? () => onMove(s.phase, s.stage) : undefined}
-            title={clickable ? `Move to ${s.label}` : s.label}
+            title={clickable ? `Move to ${label}` : label}
             style={{
               flex: '1 1 auto',
               padding: '7px 8px',
@@ -102,7 +106,7 @@ export function VideoProgressBar({ phaseId, stageId, onMove = null }) {
               textAlign: 'center',
             }}
           >
-            {done ? '✓ ' : ''}{s.label}
+            {done ? '✓ ' : ''}{label}
           </Tag>
         );
       })}

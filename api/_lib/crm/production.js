@@ -54,7 +54,10 @@ const VIDEO_SELECT = (whereSql) => sql`
          (SELECT p.number_year || '-' || lpad(p.number_seq::text, 3, '0')
             FROM proposals p
            WHERE p.deal_id = d.id AND p.number_seq IS NOT NULL
-           ORDER BY p.number_seq ASC LIMIT 1) AS project_number
+           ORDER BY p.number_seq ASC LIMIT 1) AS project_number,
+         (SELECT MAX(rv.version_number)
+            FROM revision_versions rv
+           WHERE rv.video_id = pv.revision_video_id) AS revision_round
     FROM project_videos pv
     JOIN deals d ON d.id = pv.deal_id
     LEFT JOIN companies c ON c.id = d.company_id
@@ -732,5 +735,6 @@ export function serialiseVideo(r) {
   if ('company_name' in r) out.companyName = r.company_name || null;
   if ('drive_folder_id' in r) out.driveFolderId = r.drive_folder_id || null;
   if ('project_number' in r) out.projectNumber = r.project_number || null;
+  if ('revision_round' in r) out.revisionRound = r.revision_round != null ? Number(r.revision_round) : null;
   return out;
 }

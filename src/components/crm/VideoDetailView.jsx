@@ -116,6 +116,7 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           <VideoProgressBar
             phaseId={phase.id}
             stageId={video.productionStage}
+            revisionRound={video.revisionRound}
             onMove={(p, s) => actions.moveVideoStage(videoId, p, s)}
           />
           <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 6 }}>Stage: {stageLabel}</div>
