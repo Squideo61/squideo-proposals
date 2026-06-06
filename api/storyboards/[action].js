@@ -136,6 +136,10 @@ function ensureStoryboardTables() {
       // 20260605_revision_feedback.sql columns (deal link + client feedback submit).
       await sql`ALTER TABLE storyboard_projects ADD COLUMN IF NOT EXISTS deal_id TEXT`;
       await sql`ALTER TABLE storyboards ADD COLUMN IF NOT EXISTS feedback_submitted_at TIMESTAMPTZ`;
+      // 20260606_revision_completion_assignment.sql (per-draft completion + assignee).
+      await sql`ALTER TABLE storyboard_versions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
+      await sql`ALTER TABLE storyboard_versions ADD COLUMN IF NOT EXISTS completed_by TEXT`;
+      await sql`ALTER TABLE storyboard_projects ADD COLUMN IF NOT EXISTS assignee_email TEXT`;
     } catch (err) {
       tablesEnsured = null;
       console.warn('[storyboards] ensure tables failed', err.message);
@@ -219,6 +223,22 @@ export default async function handler(req, res) {
       return await linkDeal(req, res, projectId);
     }
 
+    // Assign the storyboard-revision project to a producer; logged to the deal.
+    if (action === 'assign') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const projectId = req.query.projectId ? String(req.query.projectId) : null;
+      if (!projectId) return res.status(400).json({ error: 'projectId required' });
+      return await assignProject(req, res, projectId, user);
+    }
+
+    // Producer marks a storyboard draft complete (or reopens it).
+    if (action === 'complete-version') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const id = req.query.id ? String(req.query.id) : null;
+      if (!id) return res.status(400).json({ error: 'id required' });
+      return await completeVersion(req, res, id, user);
+    }
+
     if (action === 'analytics') {
       if (req.method !== 'GET') return res.status(405).end();
       const id = req.query.id ? String(req.query.id) : null;
@@ -267,7 +287,7 @@ async function listProjects(res) {
   const rows = await sql`
     SELECT
       sp.id, sp.title, sp.client_name, sp.share_token, sp.created_by,
-      sp.created_at, sp.updated_at, sp.approved_at, sp.deal_id,
+      sp.created_at, sp.updated_at, sp.approved_at, sp.deal_id, sp.assignee_email,
       d.title AS deal_title,
       COALESCE(sb.storyboard_count, 0)::INT AS storyboard_count,
       COALESCE(sb.approved_storyboard_count, 0)::INT AS approved_storyboard_count,
@@ -371,7 +391,7 @@ async function deleteProject(res, id) {
 async function projectDetail(res, id) {
   const [project] = await sql`
     SELECT sp.id, sp.title, sp.client_name, sp.share_token, sp.created_by, sp.created_at,
-           sp.updated_at, sp.approved_at, sp.approved_by, sp.deal_id, d.title AS deal_title
+           sp.updated_at, sp.approved_at, sp.approved_by, sp.deal_id, sp.assignee_email, d.title AS deal_title
     FROM storyboard_projects sp
     LEFT JOIN deals d ON d.id = sp.deal_id
     WHERE sp.id = ${id}
@@ -384,7 +404,7 @@ async function projectDetail(res, id) {
   `;
   const versions = await sql`
     SELECT id, storyboard_id, version_number, label, filename, mime_type, size_bytes, page_count,
-           blob_url, uploaded_by, created_at
+           blob_url, uploaded_by, created_at, completed_at, completed_by
     FROM storyboard_versions WHERE project_id = ${id}
     ORDER BY version_number DESC
   `;
@@ -526,6 +546,56 @@ async function deleteVersion(res, id) {
   }
   await sql`DELETE FROM storyboard_versions WHERE id = ${id}`;
   return res.status(200).json({ ok: true });
+}
+
+// Logs an event to the linked deal's activity (surfaces in the project / video
+// section). No-op when the storyboard project isn't linked to a deal.
+async function logToDeal(projectId, eventType, payload, actorEmail) {
+  try {
+    const [p] = await sql`SELECT deal_id FROM storyboard_projects WHERE id = ${projectId}`;
+    if (!p?.deal_id) return;
+    await sql`
+      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+      VALUES (${p.deal_id}, ${eventType}, ${JSON.stringify(payload || {})}, ${actorEmail || null})
+    `;
+  } catch (err) {
+    console.error('[storyboards] activity log failed', err.message);
+  }
+}
+
+async function assignProject(req, res, projectId, user) {
+  const body = parseBody(req);
+  const email = (body.assigneeEmail || '').trim().toLowerCase() || null;
+  const [project] = await sql`SELECT id, title FROM storyboard_projects WHERE id = ${projectId}`;
+  if (!project) return res.status(404).json({ error: 'not found' });
+  await sql`UPDATE storyboard_projects SET assignee_email = ${email}, updated_at = NOW() WHERE id = ${projectId}`;
+  if (email) {
+    await logToDeal(projectId, 'storyboard_revision_assigned', { project: project.title, assignee: email }, user.email);
+  }
+  return res.status(200).json({ ok: true, assigneeEmail: email });
+}
+
+async function completeVersion(req, res, id, user) {
+  const body = parseBody(req);
+  const complete = body.complete !== false;
+  const [ver] = await sql`
+    SELECT sv.id, sv.project_id, sv.version_number, sb.title AS storyboard_title
+      FROM storyboard_versions sv
+      JOIN storyboards sb ON sb.id = sv.storyboard_id
+     WHERE sv.id = ${id}
+  `;
+  if (!ver) return res.status(404).json({ error: 'not found' });
+  const [row] = complete
+    ? await sql`UPDATE storyboard_versions SET completed_at = NOW(), completed_by = ${user.email || null} WHERE id = ${id} RETURNING completed_at, completed_by`
+    : await sql`UPDATE storyboard_versions SET completed_at = NULL, completed_by = NULL WHERE id = ${id} RETURNING completed_at, completed_by`;
+  await sql`UPDATE storyboard_projects SET updated_at = NOW() WHERE id = ${ver.project_id}`;
+  await logToDeal(
+    ver.project_id,
+    complete ? 'storyboard_revision_completed' : 'storyboard_revision_reopened',
+    { storyboard: ver.storyboard_title, draft: ver.version_number, by: user.email },
+    user.email,
+  );
+  return res.status(200).json({ id, completedAt: row.completed_at, completedBy: row.completed_by });
 }
 
 // ─── Public: viewer + comments ───────────────────────────────────────────────
@@ -841,6 +911,7 @@ function projectRow(r) {
     updatedAt: r.updated_at,
     approvedAt: r.approved_at || null,
     approvedBy: r.approved_by || null,
+    assigneeEmail: r.assignee_email !== undefined ? (r.assignee_email || null) : undefined,
     dealId: r.deal_id !== undefined ? (r.deal_id || null) : undefined,
     dealTitle: r.deal_title !== undefined ? (r.deal_title || null) : undefined,
     storyboardCount: r.storyboard_count !== undefined ? r.storyboard_count : undefined,
@@ -866,6 +937,8 @@ function versionRow(r) {
     pdfUrl: r.blob_url,
     uploadedBy: r.uploaded_by,
     createdAt: r.created_at,
+    completedAt: r.completed_at || null,
+    completedBy: r.completed_by || null,
   };
 }
 

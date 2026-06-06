@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Images, Copy, MessageSquare, Plus, Trash2, Upload, FileText, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight, MapPin, BarChart3, Link2 } from 'lucide-react';
+import { ArrowLeft, Images, Copy, MessageSquare, Plus, Trash2, Upload, FileText, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight, MapPin, BarChart3, Link2, Check } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
@@ -8,7 +8,7 @@ import { Modal } from '../ui.jsx';
 import { PdfThumb } from '../storyboard/PdfThumb.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
 import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
-import { DealLinkSelect } from './RevisionsView.jsx';
+import { DealLinkSelect, AssigneeSelect } from './RevisionsView.jsx';
 
 const APPROVED_CHIP = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
   borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: 11, fontWeight: 700 };
@@ -244,6 +244,8 @@ function ProjectDetail({ projectId, onBack }) {
           <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>{detail.title}</h1>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <AssigneeSelect value={detail.assigneeEmail} users={state.users}
+            onChange={(email) => actions.assignStoryboardProject(projectId, email)} />
           <DealLinkSelect projectId={projectId} value={detail.dealId} kind="storyboard"
             onLinked={() => actions.loadStoryboardDetail(projectId)} />
           <button onClick={addStoryboard} className="btn-ghost"><Plus size={14} /> Add storyboard</button>
@@ -377,6 +379,22 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
                   <MessageSquare size={13} /> {comments.length}
                 </span>
               </button>
+              {v.completedAt ? (
+                <button
+                  onClick={() => actions.completeStoryboardVersion(projectId, v.id, false)}
+                  title={`Completed ${formatRelativeTime(v.completedAt)}${v.completedBy ? ' by ' + v.completedBy : ''} — click to reopen`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700,
+                    color: '#16A34A', background: '#ECFDF3', border: '1px solid #ABEFC6', borderRadius: 999,
+                    padding: '3px 10px', cursor: 'pointer' }}>
+                  <Check size={12} /> Completed · {formatRelativeTime(v.completedAt)}
+                </button>
+              ) : (
+                <button
+                  onClick={() => actions.completeStoryboardVersion(projectId, v.id, true)}
+                  className="btn-ghost" title="Mark this revision complete">
+                  <Check size={13} /> Mark complete
+                </button>
+              )}
               <a href={v.pdfUrl} target="_blank" rel="noreferrer" className="btn-ghost" title="Open PDF"><FileDown size={14} /></a>
               <button
                 onClick={() => { if (window.confirm('Delete this draft?')) actions.deleteStoryboardVersion(projectId, v.id); }}

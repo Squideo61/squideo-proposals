@@ -30,6 +30,10 @@ function ensureRevisionFeedbackColumns() {
   revisionFeedbackEnsured = (async () => {
     await sql`ALTER TABLE revision_projects ADD COLUMN IF NOT EXISTS deal_id TEXT`;
     await sql`ALTER TABLE revision_videos ADD COLUMN IF NOT EXISTS feedback_submitted_at TIMESTAMPTZ`;
+    // Per-draft completion + project assignee (db/migrations/20260606_revision_completion_assignment.sql).
+    await sql`ALTER TABLE revision_versions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE revision_versions ADD COLUMN IF NOT EXISTS completed_by TEXT`;
+    await sql`ALTER TABLE revision_projects ADD COLUMN IF NOT EXISTS assignee_email TEXT`;
   })().catch((err) => { revisionFeedbackEnsured = null; throw err; });
   return revisionFeedbackEnsured;
 }
@@ -130,6 +134,23 @@ export default async function handler(req, res) {
       return await linkDeal(req, res, projectId);
     }
 
+    // Assign the revision project to a producer (who may not have made the
+    // original video). Logged to the linked deal's activity.
+    if (action === 'assign') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const projectId = req.query.projectId ? String(req.query.projectId) : null;
+      if (!projectId) return res.status(400).json({ error: 'projectId required' });
+      return await assignProject(req, res, projectId, user);
+    }
+
+    // Producer marks a draft complete (or reopens it). Stamped + logged.
+    if (action === 'complete-version') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const id = req.query.id ? String(req.query.id) : null;
+      if (!id) return res.status(400).json({ error: 'id required' });
+      return await completeVersion(req, res, id, user);
+    }
+
     if (action === 'analytics') {
       if (req.method !== 'GET') return res.status(405).end();
       const id = req.query.id ? String(req.query.id) : null;
@@ -178,7 +199,7 @@ async function listProjects(res) {
   const rows = await sql`
     SELECT
       rp.id, rp.title, rp.client_name, rp.share_token, rp.created_by,
-      rp.created_at, rp.updated_at, rp.approved_at, rp.deal_id,
+      rp.created_at, rp.updated_at, rp.approved_at, rp.deal_id, rp.assignee_email,
       d.title AS deal_title,
       COALESCE(vid.video_count, 0)::INT AS video_count,
       COALESCE(vid.approved_video_count, 0)::INT AS approved_video_count,
@@ -283,7 +304,7 @@ async function deleteProject(res, id) {
 async function projectDetail(res, id) {
   const [project] = await sql`
     SELECT rp.id, rp.title, rp.client_name, rp.share_token, rp.created_by, rp.created_at,
-           rp.updated_at, rp.approved_at, rp.approved_by, rp.deal_id, d.title AS deal_title
+           rp.updated_at, rp.approved_at, rp.approved_by, rp.deal_id, rp.assignee_email, d.title AS deal_title
     FROM revision_projects rp
     LEFT JOIN deals d ON d.id = rp.deal_id
     WHERE rp.id = ${id}
@@ -296,7 +317,7 @@ async function projectDetail(res, id) {
   `;
   const versions = await sql`
     SELECT id, video_id, version_number, label, filename, mime_type, size_bytes,
-           blob_url, uploaded_by, created_at
+           blob_url, uploaded_by, created_at, completed_at, completed_by
     FROM revision_versions WHERE project_id = ${id}
     ORDER BY version_number DESC
   `;
@@ -450,6 +471,59 @@ async function deleteVersion(res, id) {
   }
   await sql`DELETE FROM revision_versions WHERE id = ${id}`;
   return res.status(200).json({ ok: true });
+}
+
+// Logs an event to the linked deal's activity (so it surfaces in the project /
+// video section). No-op when the revision project isn't linked to a deal.
+async function logToDeal(projectId, eventType, payload, actorEmail) {
+  try {
+    const [p] = await sql`SELECT deal_id FROM revision_projects WHERE id = ${projectId}`;
+    if (!p?.deal_id) return;
+    await sql`
+      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+      VALUES (${p.deal_id}, ${eventType}, ${JSON.stringify(payload || {})}, ${actorEmail || null})
+    `;
+  } catch (err) {
+    console.error('[revisions] activity log failed', err.message);
+  }
+}
+
+// Assign (or clear) the producer responsible for this revision project.
+async function assignProject(req, res, projectId, user) {
+  const body = parseBody(req);
+  const email = (body.assigneeEmail || '').trim().toLowerCase() || null;
+  const [project] = await sql`SELECT id, title FROM revision_projects WHERE id = ${projectId}`;
+  if (!project) return res.status(404).json({ error: 'not found' });
+  await sql`UPDATE revision_projects SET assignee_email = ${email}, updated_at = NOW() WHERE id = ${projectId}`;
+  if (email) {
+    await logToDeal(projectId, 'revision_assigned', { project: project.title, assignee: email }, user.email);
+  }
+  return res.status(200).json({ ok: true, assigneeEmail: email });
+}
+
+// Mark a draft complete (body.complete !== false) or reopen it. Records who +
+// when, and logs to the linked deal's activity.
+async function completeVersion(req, res, id, user) {
+  const body = parseBody(req);
+  const complete = body.complete !== false;
+  const [ver] = await sql`
+    SELECT rv.id, rv.project_id, rv.version_number, vid.title AS video_title
+      FROM revision_versions rv
+      JOIN revision_videos vid ON vid.id = rv.video_id
+     WHERE rv.id = ${id}
+  `;
+  if (!ver) return res.status(404).json({ error: 'not found' });
+  const [row] = complete
+    ? await sql`UPDATE revision_versions SET completed_at = NOW(), completed_by = ${user.email || null} WHERE id = ${id} RETURNING completed_at, completed_by`
+    : await sql`UPDATE revision_versions SET completed_at = NULL, completed_by = NULL WHERE id = ${id} RETURNING completed_at, completed_by`;
+  await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${ver.project_id}`;
+  await logToDeal(
+    ver.project_id,
+    complete ? 'revision_completed' : 'revision_reopened',
+    { video: ver.video_title, draft: ver.version_number, by: user.email },
+    user.email,
+  );
+  return res.status(200).json({ id, completedAt: row.completed_at, completedBy: row.completed_by });
 }
 
 // ─── Public: viewer + comments ───────────────────────────────────────────────
@@ -761,6 +835,7 @@ function projectRow(r) {
     updatedAt: r.updated_at,
     approvedAt: r.approved_at || null,
     approvedBy: r.approved_by || null,
+    assigneeEmail: r.assignee_email !== undefined ? (r.assignee_email || null) : undefined,
     dealId: r.deal_id !== undefined ? (r.deal_id || null) : undefined,
     dealTitle: r.deal_title !== undefined ? (r.deal_title || null) : undefined,
     videoCount: r.video_count !== undefined ? r.video_count : undefined,
@@ -785,6 +860,8 @@ function versionRow(r) {
     videoUrl: r.blob_url,
     uploadedBy: r.uploaded_by,
     createdAt: r.created_at,
+    completedAt: r.completed_at || null,
+    completedBy: r.completed_by || null,
   };
 }
 

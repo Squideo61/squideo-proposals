@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight, BarChart3, Eye, Send, Link2 } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight, BarChart3, Eye, Send, Link2, User, Check } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
@@ -34,6 +34,33 @@ export function DealLinkSelect({ projectId, value, kind = 'revision', onLinked }
       >
         <option value="">Not linked to a deal</option>
         {deals.map(d => <option key={d.id} value={d.id}>{d.title}</option>)}
+      </select>
+    </span>
+  );
+}
+
+// Assign a producer to this revision project — independent of who produced the
+// original video. Shared by Video & Storyboard revision detail headers.
+export function AssigneeSelect({ value, users, onChange }) {
+  const { showMsg } = useStore();
+  const list = Object.entries(users || {}).map(([email, u]) => ({ email, name: u.name || email }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const change = async (e) => {
+    const email = e.target.value || null;
+    try { await onChange(email); showMsg(email ? 'Revision assigned' : 'Assignment cleared'); }
+    catch (err) { showMsg(err?.message || 'Could not assign'); }
+  };
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <User size={14} color={BRAND.muted} />
+      <select
+        value={value || ''}
+        onChange={change}
+        title="Assign a producer to these revisions (need not be the original video's producer)"
+        style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13, background: 'white', maxWidth: 220 }}
+      >
+        <option value="">Unassigned</option>
+        {list.map(u => <option key={u.email} value={u.email}>{u.name}</option>)}
       </select>
     </span>
   );
@@ -282,6 +309,8 @@ function ProjectDetail({ projectId, onBack }) {
           <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>{detail.title}</h1>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <AssigneeSelect value={detail.assigneeEmail} users={state.users}
+            onChange={(email) => actions.assignRevisionProject(projectId, email)} />
           <DealLinkSelect projectId={projectId} value={detail.dealId} kind="revision"
             onLinked={() => actions.loadRevisionDetail(projectId)} />
           <button onClick={addVideo} className="btn-ghost"><Plus size={14} /> Add video</button>
@@ -417,6 +446,22 @@ function VideoCard({ projectId, video, commentsByVersion }) {
                   <MessageSquare size={13} /> {comments.length}
                 </span>
               </button>
+              {v.completedAt ? (
+                <button
+                  onClick={() => actions.completeRevisionVersion(projectId, v.id, false)}
+                  title={`Completed ${formatRelativeTime(v.completedAt)}${v.completedBy ? ' by ' + v.completedBy : ''} — click to reopen`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700,
+                    color: '#16A34A', background: '#ECFDF3', border: '1px solid #ABEFC6', borderRadius: 999,
+                    padding: '3px 10px', cursor: 'pointer' }}>
+                  <Check size={12} /> Completed · {formatRelativeTime(v.completedAt)}
+                </button>
+              ) : (
+                <button
+                  onClick={() => actions.completeRevisionVersion(projectId, v.id, true)}
+                  className="btn-ghost" title="Mark this revision complete">
+                  <Check size={13} /> Mark complete
+                </button>
+              )}
               <button
                 onClick={() => { if (window.confirm('Delete this draft?')) actions.deleteRevisionVersion(projectId, v.id); }}
                 className="btn-ghost" title="Delete draft"><Trash2 size={14} /></button>

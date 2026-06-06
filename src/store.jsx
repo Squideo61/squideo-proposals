@@ -2344,6 +2344,17 @@ export function StoreProvider({ children }) {
         });
     },
 
+    // Assign the revision project to a producer (or clear with null).
+    assignRevisionProject(projectId, assigneeEmail) {
+      return api.post('/api/revisions/assign?projectId=' + encodeURIComponent(projectId), { assigneeEmail: assigneeEmail || null })
+        .then((resp) => { actions.loadRevisionDetail(projectId); return resp; });
+    },
+    // Mark a draft complete (or reopen it).
+    completeRevisionVersion(projectId, versionId, complete = true) {
+      return api.post('/api/revisions/complete-version?id=' + encodeURIComponent(versionId), { complete })
+        .then((resp) => { actions.loadRevisionDetail(projectId); return resp; });
+    },
+
     // Engagement analytics for one project (per-viewer rollup + totals).
     loadRevisionAnalytics(id) {
       return api.get('/api/revisions/analytics?id=' + encodeURIComponent(id));
@@ -2482,6 +2493,15 @@ export function StoreProvider({ children }) {
           setState(s => ({ ...s, storyboards: (s.storyboards || []).map(p => p.id === projectId ? { ...p, dealId: resp.dealId } : p) }));
           return resp;
         });
+    },
+
+    assignStoryboardProject(projectId, assigneeEmail) {
+      return api.post('/api/storyboards/assign?projectId=' + encodeURIComponent(projectId), { assigneeEmail: assigneeEmail || null })
+        .then((resp) => { actions.loadStoryboardDetail(projectId); return resp; });
+    },
+    completeStoryboardVersion(projectId, versionId, complete = true) {
+      return api.post('/api/storyboards/complete-version?id=' + encodeURIComponent(versionId), { complete })
+        .then((resp) => { actions.loadStoryboardDetail(projectId); return resp; });
     },
 
     // Engagement analytics for one project (per-viewer rollup + totals).

@@ -457,6 +457,12 @@ function describeEvent(e) {
     case 'email_sent':    return 'Email sent';
     case 'email_scheduled': return 'Email scheduled';
     case 'email_linked':  return 'Email linked';
+    case 'revision_completed':   return `Revision complete${p.draft ? ` (draft ${p.draft})` : ''}`;
+    case 'revision_reopened':    return `Revision reopened${p.draft ? ` (draft ${p.draft})` : ''}`;
+    case 'revision_assigned':    return `Revisions assigned${p.assignee ? ` to ${p.assignee}` : ''}`;
+    case 'storyboard_revision_completed': return `Storyboard revision complete${p.draft ? ` (draft ${p.draft})` : ''}`;
+    case 'storyboard_revision_reopened':  return `Storyboard revision reopened${p.draft ? ` (draft ${p.draft})` : ''}`;
+    case 'storyboard_revision_assigned':  return `Storyboard revisions assigned${p.assignee ? ` to ${p.assignee}` : ''}`;
     default:              return e.eventType;
   }
 }

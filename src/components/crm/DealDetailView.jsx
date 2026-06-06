@@ -2155,6 +2155,12 @@ function describeEvent(e) {
     case 'task_reopened': return `Task reopened: ${p.title || ''}`;
     case 'email_sent':    return p.subject ? `Email sent: ${p.subject}` : 'Email sent';
     case 'note':          return p.text || 'Note added';
+    case 'revision_completed':   return `Revision complete: ${p.video || 'video'}${p.draft ? ` (draft ${p.draft})` : ''}`;
+    case 'revision_reopened':    return `Revision reopened: ${p.video || 'video'}${p.draft ? ` (draft ${p.draft})` : ''}`;
+    case 'revision_assigned':    return `Revisions assigned${p.assignee ? ` to ${p.assignee}` : ''}`;
+    case 'storyboard_revision_completed': return `Storyboard revision complete: ${p.storyboard || 'storyboard'}${p.draft ? ` (draft ${p.draft})` : ''}`;
+    case 'storyboard_revision_reopened':  return `Storyboard revision reopened: ${p.storyboard || 'storyboard'}${p.draft ? ` (draft ${p.draft})` : ''}`;
+    case 'storyboard_revision_assigned':  return `Storyboard revisions assigned${p.assignee ? ` to ${p.assignee}` : ''}`;
     default:              return e.eventType;
   }
 }
