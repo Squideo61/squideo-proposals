@@ -671,8 +671,8 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
         )}
         <Segmented value={category} onChange={setCategory} options={[{ value: 'expense', label: 'Exp' }, { value: 'marketing', label: 'Mktg' }, { value: 'wages', label: 'Staff' }, { value: 'freelancer', label: 'Free' }, { value: 'director', label: 'Dir' }, { value: 'allowance', label: 'Allow' }]} />
         {category === 'director' && !isAuto && (
-          <label title="Tick if this row is dividends — it then feeds the auto director dividend-tax saving" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: BRAND.ink, cursor: 'pointer' }}>
-            <input type="checkbox" checked={taxBasis} onChange={(e) => setTaxBasis(e.target.checked)} /> div
+          <label title="Include this director's pay in the auto personal-tax saving" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: BRAND.ink, cursor: 'pointer' }}>
+            <input type="checkbox" checked={taxBasis} onChange={(e) => setTaxBasis(e.target.checked)} /> tax
           </label>
         )}
         {monthlyEst != null && <span style={{ fontSize: 11, color: BRAND.muted }}>≈{formatGBP(monthlyEst)}/mo</span>}
@@ -704,11 +704,11 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {row.label}
-          {row.taxBasis && row.totalIncomeBeforeTax != null && <span title="Total annual income (base salary + these dividends) the dividend-tax band is based on" style={{ fontSize: 11, color: BRAND.muted }}> · total income before tax {formatGBP(row.totalIncomeBeforeTax)}</span>}
+          {row.taxBasis && <span title="Counts toward the auto director personal-tax saving" style={{ fontSize: 11, color: BRAND.muted }}> · feeds director tax</span>}
           {!row.recurring && <span style={{ fontSize: 11, color: BRAND.muted }}> · one-off {row.month}</span>}
         </div>
         {isAuto
-          ? <div title="Dividend tax (2025/26 rates: £500 allowance, then 8.75% / 33.75% / 39.35%) on the dividends marked “feeds director tax”. Income tax + NI on the base salary run through PAYE and are excluded." style={{ fontSize: 11, color: '#CA8A04', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — dividend tax on the director dividends marked “feeds director tax” (base salary taxed via PAYE, current rates){row.note ? ` · ${row.note}` : ''}</div>
+          ? <div title="Income tax + employee NI on each director's drawings marked “feeds director tax” (2025/26 rates), treating the figure as gross salary" style={{ fontSize: 11, color: '#CA8A04', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — income tax + NI on the director pay marked “feeds director tax” (current rates){row.note ? ` · ${row.note}` : ''}</div>
           : (row.note && <div title={row.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.note}</div>)}
       </div>
       {isAuto
