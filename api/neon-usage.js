@@ -46,36 +46,45 @@ const METRICS = [
   'private_network_transfer_bytes',
 ];
 
-// Sum each metric across every project/period/datapoint the API returns for the
-// window. The v2 endpoint nests metrics as projects[].periods[].consumption[]
-// where each datapoint carries a `metrics: [{ metric_name, value }]` array
-// (older shapes put the metrics as flat keys on the datapoint — handle both).
+// Sum each metric for the CURRENT billing period. The v2 endpoint nests data as
+// projects[].periods[].consumption[], where each project may return more than one
+// billing period overlapping our query window — we only want the latest (current)
+// one so the figures match the Neon dashboard / invoice. Each consumption
+// datapoint carries a `metrics: [{ metric_name, value }]` array (older shapes put
+// the metrics as flat keys on the datapoint — handle both).
 function sumMetrics(payload) {
   const totals = {};
   for (const k of METRICS) totals[k] = 0;
-  const addFlat = (obj) => {
-    for (const k of METRICS) {
-      const v = Number(obj?.[k]);
-      if (Number.isFinite(v)) totals[k] += v;
-    }
-  };
-  for (const project of payload?.projects || []) {
-    for (const period of project?.periods || []) {
-      for (const point of period?.consumption || []) {
-        if (Array.isArray(point?.metrics)) {
-          for (const m of point.metrics) {
-            if (m && m.metric_name in totals) {
-              const v = Number(m.value);
-              if (Number.isFinite(v)) totals[m.metric_name] += v;
-            }
-          }
-        } else {
-          addFlat(point);
+  let periodStart = null;
+
+  const addPoint = (point) => {
+    if (Array.isArray(point?.metrics)) {
+      for (const m of point.metrics) {
+        if (m && m.metric_name in totals) {
+          const v = Number(m.value);
+          if (Number.isFinite(v)) totals[m.metric_name] += v;
         }
       }
+    } else {
+      for (const k of METRICS) {
+        const v = Number(point?.[k]);
+        if (Number.isFinite(v)) totals[k] += v;
+      }
     }
+  };
+
+  for (const project of payload?.projects || []) {
+    const periods = project?.periods || [];
+    if (!periods.length) continue;
+    // Latest billing period = most recent period_start.
+    const latest = periods.reduce((a, b) =>
+      new Date(b.period_start || 0) > new Date(a.period_start || 0) ? b : a);
+    if (latest.period_start && (!periodStart || new Date(latest.period_start) > new Date(periodStart))) {
+      periodStart = latest.period_start;
+    }
+    for (const point of latest.consumption || []) addPoint(point);
   }
-  return totals;
+  return { totals, periodStart };
 }
 
 async function compute(key, { orgIdEnv, projectIdEnv } = {}) {
@@ -100,17 +109,21 @@ async function compute(key, { orgIdEnv, projectIdEnv } = {}) {
     } catch { /* label only */ }
   }
 
-  // Current billing period to date: start of this UTC month → now.
+  // Query a ~5-week window with daily granularity, then keep only the current
+  // billing period (sumMetrics). Daily avoids the monthly-granularity quirk where
+  // Neon snaps both ends to the 1st of the month and rejects from == to; the
+  // billing period itself comes from Neon's `period_start`, not a calendar guess.
   const now = new Date();
-  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const fromDate = new Date(now.getTime() - 35 * 24 * 60 * 60 * 1000);
+  const from = new Date(Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth(), fromDate.getUTCDate())).toISOString();
   const to = now.toISOString();
   const qs = new URLSearchParams({
-    from, to, granularity: 'monthly', org_id: orgId,
+    from, to, granularity: 'daily', org_id: orgId,
     metrics: METRICS.join(','), limit: '100',
   });
   if (projectIdEnv) qs.append('project_ids', projectIdEnv);
   const usagePayload = await neonGet(`/consumption_history/v2/projects?${qs}`, key);
-  const m = sumMetrics(usagePayload);
+  const { totals: m, periodStart } = sumMetrics(usagePayload);
 
   const computeCuHours = m.compute_unit_seconds / 3600;
   const storageGbMonth = (m.root_branch_bytes_month + m.child_branch_bytes_month) / 1e9;
@@ -131,7 +144,7 @@ async function compute(key, { orgIdEnv, projectIdEnv } = {}) {
     orgId,
     projectId: projectIdEnv || null,
     projectName,
-    period: { from, to },
+    period: { start: periodStart || from, to },
     usage: { computeCuHours, storageGbMonth, pitrGbMonth, egressGb, privateEgressGb },
     costs,
     pricing: {
