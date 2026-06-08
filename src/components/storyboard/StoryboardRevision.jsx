@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, Images, Paperclip, X, FileDown, CheckCircle2, CalendarClock, MapPin, ChevronUp, ChevronDown } from 'lucide-react';
+import { MessageSquare, Send, Images, Paperclip, X, FileDown, CheckCircle2, CalendarClock, MapPin, ChevronUp, ChevronDown, Pencil, Trash2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { loadPdf } from '../../lib/pdf.js';
@@ -94,6 +94,9 @@ export function StoryboardRevision({ token, data }) {
 
   const [comments, setComments] = useState(data.comments || []);
   const [activeViewers, setActiveViewers] = useState(data.activeViewers || []);
+  const [editingId, setEditingId] = useState(null);
+  const [editingText, setEditingText] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
   const [pageNumber, setPageNumber] = useState(1);
   const [draftPin, setDraftPin] = useState(null); // { x, y } | null
   const [activeCommentId, setActiveCommentId] = useState(null);
@@ -238,6 +241,43 @@ export function StoryboardRevision({ token, data }) {
       showMsg(err.message || 'Could not finalise');
     } finally {
       setApproving(false);
+    }
+  }
+
+  function startEdit(c) {
+    if (approvedAt) return;
+    setEditingId(c.id);
+    setEditingText(c.body || '');
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setEditingText('');
+  }
+  async function saveEdit() {
+    const id = editingId;
+    const text = editingText.trim();
+    if (!id || !text || savingEdit) return;
+    setSavingEdit(true);
+    try {
+      const updated = await actions.editStoryboardComment(token, id, text, email);
+      setComments(prev => prev.map(c => (c.id === id ? { ...c, ...updated } : c)));
+      setEditingId(null);
+      setEditingText('');
+    } catch (err) {
+      showMsg(err.message || 'Could not save changes');
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+  async function deleteComment(c) {
+    if (approvedAt) return;
+    if (!window.confirm('Delete this comment? This cannot be undone.')) return;
+    try {
+      await actions.deleteStoryboardComment(token, c.id, email);
+      setComments(prev => prev.filter(x => x.id !== c.id));
+      if (editingId === c.id) cancelEdit();
+    } catch (err) {
+      showMsg(err.message || 'Could not delete comment');
     }
   }
 
@@ -465,10 +505,12 @@ export function StoryboardRevision({ token, data }) {
             {pageComments.map(c => {
               const pinNo = pinNumberByComment[c.id];
               const active = c.id === activeCommentId;
+              const isEditing = editingId === c.id;
+              const canManage = c.mine && !approvedAt;
               return (
                 <div key={c.id}
-                  onClick={() => setActiveCommentId(c.id)}
-                  style={{ marginBottom: 14, padding: 8, borderRadius: 8, cursor: 'pointer',
+                  onClick={() => !isEditing && setActiveCommentId(c.id)}
+                  style={{ marginBottom: 14, padding: 8, borderRadius: 8, cursor: isEditing ? 'default' : 'pointer',
                     background: active ? '#EEF7FB' : 'transparent', border: active ? `1px solid ${BRAND.blue}` : '1px solid transparent' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                     {pinNo != null ? (
@@ -481,9 +523,51 @@ export function StoryboardRevision({ token, data }) {
                       </span>
                     )}
                     <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
+                    {canManage && !isEditing && (
+                      <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4 }}>
+                        <button onClick={(e) => { e.stopPropagation(); startEdit(c); }} title="Edit"
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer',
+                            color: BRAND.muted, padding: 2, display: 'inline-flex' }}>
+                          <Pencil size={13} />
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); deleteComment(c); }} title="Delete"
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer',
+                            color: BRAND.muted, padding: 2, display: 'inline-flex' }}>
+                          <Trash2 size={13} />
+                        </button>
+                      </span>
+                    )}
                   </div>
-                  {c.body && <div style={{ fontSize: 13, color: BRAND.ink, marginTop: 2, whiteSpace: 'pre-wrap' }}>{c.body}</div>}
-                  {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
+                  {isEditing ? (
+                    <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
+                      <textarea
+                        value={editingText}
+                        onChange={e => setEditingText(e.target.value)}
+                        rows={3}
+                        autoFocus
+                        style={{ width: '100%', resize: 'vertical', padding: 8, borderRadius: 8,
+                          border: `1px solid ${BRAND.border}`, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
+                      />
+                      <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
+                        <button onClick={cancelEdit} disabled={savingEdit}
+                          style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`,
+                            background: '#fff', color: BRAND.ink, fontSize: 12, cursor: 'pointer' }}>
+                          Cancel
+                        </button>
+                        <button onClick={saveEdit} disabled={savingEdit || !editingText.trim()}
+                          style={{ padding: '6px 12px', borderRadius: 8, border: 'none',
+                            background: editingText.trim() ? BRAND.blue : BRAND.border, color: '#fff',
+                            fontWeight: 600, fontSize: 12, cursor: editingText.trim() ? 'pointer' : 'default' }}>
+                          {savingEdit ? 'Saving…' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {c.body && <div style={{ fontSize: 13, color: BRAND.ink, marginTop: 2, whiteSpace: 'pre-wrap' }}>{c.body}</div>}
+                      {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
+                    </>
+                  )}
                 </div>
               );
             })}

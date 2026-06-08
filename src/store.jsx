@@ -2731,6 +2731,23 @@ export function StoreProvider({ children }) {
       return api.post('/api/storyboards/comment?token=' + encodeURIComponent(token), payload);
     },
 
+    // Client edits the body of their own storyboard comment.
+    editStoryboardComment(token, id, body, viewerEmail) {
+      return api.patch(
+        '/api/storyboards/comment?token=' + encodeURIComponent(token) + '&id=' + encodeURIComponent(id),
+        { body, viewerEmail },
+      );
+    },
+
+    // Client deletes their own storyboard comment.
+    deleteStoryboardComment(token, id, viewerEmail) {
+      return api.delete(
+        '/api/storyboards/comment?token=' + encodeURIComponent(token)
+          + '&id=' + encodeURIComponent(id)
+          + '&viewerEmail=' + encodeURIComponent(viewerEmail),
+      );
+    },
+
     recordStoryboardViewer(token, { name, email }) {
       return api.post('/api/storyboards/viewer?token=' + encodeURIComponent(token), { name, email });
     },

@@ -170,8 +170,12 @@ export default async function handler(req, res) {
       return await publicView(req, res);
     }
     if (action === 'comment') {
-      if (req.method !== 'POST') return res.status(405).end();
-      return await postComment(req, res);
+      if (req.method === 'POST')   return await postComment(req, res);
+      // Client edits or deletes their own comment (gated by author email +
+      // share token; locked once the storyboard is finalised).
+      if (req.method === 'PATCH')  return await updateComment(req, res);
+      if (req.method === 'DELETE') return await deleteComment(req, res);
+      return res.status(405).end();
     }
     if (action === 'asset-token') {
       if (req.method !== 'POST') return res.status(405).end();
@@ -750,7 +754,7 @@ async function publicView(req, res) {
   `;
   const comments = await sql`
     SELECT sc.id, sc.version_id, sc.parent_id, sc.page_number, sc.anchor_x, sc.anchor_y, sc.body,
-           sc.author_name, sc.created_at,
+           sc.author_name, sc.author_email, sc.created_at,
            sc.attachment_url, sc.attachment_name, sc.attachment_type
     FROM storyboard_comments sc
     JOIN storyboard_versions sv ON sv.id = sc.version_id
@@ -782,7 +786,7 @@ async function publicView(req, res) {
       feedbackSubmittedAt: sb.feedback_submitted_at || null,
       versions: versions.filter(v => v.storyboard_id === sb.id).map(mapVersion),
     })),
-    comments: comments.map(commentRow),
+    comments: comments.map(r => publicCommentRow(r, viewerEmail)),
     activeViewers: viewers.map(v => ({
       name: v.name,
       lastSeen: v.last_seen,
@@ -1120,7 +1124,93 @@ async function postComment(req, res) {
     RETURNING id, version_id, parent_id, page_number, anchor_x, anchor_y, body,
               author_name, author_email, created_at, attachment_url, attachment_name, attachment_type
   `;
-  return res.status(201).json(commentRow(row));
+  // Return the public shape so the client sees mine:true on the fresh row
+  // (no need to wait for the next poll to surface the edit/delete buttons).
+  return res.status(201).json(publicCommentRow(row, (authorEmail || '').toLowerCase()));
+}
+
+// Client edits the body of their own comment. Authed by share_token + matching
+// author_email; refused once the storyboard is finalised.
+async function updateComment(req, res) {
+  const token = req.query.token ? String(req.query.token) : null;
+  const id = req.query.id ? String(req.query.id) : null;
+  if (!token || !id) return res.status(400).json({ error: 'token and id required' });
+  const body = parseBody(req);
+  const newText = (body.body || '').trim();
+  const viewerEmail = (body.viewerEmail || '').trim().toLowerCase();
+  if (!viewerEmail) return res.status(400).json({ error: 'viewerEmail required' });
+  if (!newText) return res.status(400).json({ error: 'comment body required' });
+  if (newText.length > 4000) return res.status(400).json({ error: 'comment too long' });
+
+  const [match] = await sql`
+    SELECT sc.id, lower(sc.author_email) AS owner_email, sb.approved_at
+      FROM storyboard_comments sc
+      JOIN storyboard_versions sv ON sv.id = sc.version_id
+      JOIN storyboards sb ON sb.id = sv.storyboard_id
+      JOIN storyboard_projects sp ON sp.id = sv.project_id
+     WHERE sc.id = ${id} AND sp.share_token = ${token}
+  `;
+  if (!match) return res.status(404).json({ error: 'not found' });
+  if (match.approved_at) return res.status(403).json({ error: 'This storyboard has been finalised and is now locked.' });
+  if (!match.owner_email || match.owner_email !== viewerEmail) {
+    return res.status(403).json({ error: 'You can only edit your own comments.' });
+  }
+
+  const [row] = await sql`
+    UPDATE storyboard_comments SET body = ${newText}
+     WHERE id = ${id}
+     RETURNING id, version_id, parent_id, page_number, anchor_x, anchor_y, body,
+               author_name, author_email, created_at, attachment_url, attachment_name, attachment_type
+  `;
+  return res.status(200).json(publicCommentRow(row, viewerEmail));
+}
+
+// Client deletes their own comment. Same authz as updateComment.
+async function deleteComment(req, res) {
+  const token = req.query.token ? String(req.query.token) : null;
+  const id = req.query.id ? String(req.query.id) : null;
+  if (!token || !id) return res.status(400).json({ error: 'token and id required' });
+  const viewerEmail = (req.query.viewerEmail || '').toString().trim().toLowerCase();
+  if (!viewerEmail) return res.status(400).json({ error: 'viewerEmail required' });
+
+  const [match] = await sql`
+    SELECT sc.id, lower(sc.author_email) AS owner_email, sb.approved_at
+      FROM storyboard_comments sc
+      JOIN storyboard_versions sv ON sv.id = sc.version_id
+      JOIN storyboards sb ON sb.id = sv.storyboard_id
+      JOIN storyboard_projects sp ON sp.id = sv.project_id
+     WHERE sc.id = ${id} AND sp.share_token = ${token}
+  `;
+  if (!match) return res.status(404).json({ error: 'not found' });
+  if (match.approved_at) return res.status(403).json({ error: 'This storyboard has been finalised and is now locked.' });
+  if (!match.owner_email || match.owner_email !== viewerEmail) {
+    return res.status(403).json({ error: 'You can only delete your own comments.' });
+  }
+  await sql`DELETE FROM storyboard_comments WHERE id = ${id}`;
+  return res.status(200).json({ ok: true });
+}
+
+// Public-facing comment shape: like commentRow() but adds `mine` and masks
+// other reviewers' emails. Used by publicView, postComment, updateComment.
+function publicCommentRow(r, viewerEmail) {
+  const ownerEmail = (r.author_email || '').toLowerCase();
+  const mine = !!(viewerEmail && ownerEmail && ownerEmail === viewerEmail);
+  return {
+    id: r.id,
+    versionId: r.version_id,
+    parentId: r.parent_id,
+    pageNumber: r.page_number != null ? Number(r.page_number) : null,
+    anchorX: r.anchor_x != null ? Number(r.anchor_x) : null,
+    anchorY: r.anchor_y != null ? Number(r.anchor_y) : null,
+    body: r.body,
+    authorName: r.author_name,
+    authorEmail: mine ? r.author_email : null,
+    createdAt: r.created_at,
+    attachmentUrl: r.attachment_url || null,
+    attachmentName: r.attachment_name || null,
+    attachmentType: r.attachment_type || null,
+    mine,
+  };
 }
 
 // ─── Row mappers ─────────────────────────────────────────────────────────────
