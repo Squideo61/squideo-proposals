@@ -1628,7 +1628,8 @@ async function cashflowReport(action) {
   );
   const resolvedAmount = (r) => (r.auto_type === 'director_tax' ? autoDirectorTaxMonthly : monthlyAmountOf(r));
 
-  const costsForMonth = (mk) => {
+  // Operating costs per month — everything EXCEPT the auto Corporation Tax line.
+  const opCostsForMonth = (mk) => {
     let wages = 0, expenses = 0, freelancers = 0, marketing = 0, director = 0, allowance = 0;
     for (const r of costRows) {
       if (!costAppliesToMonth(r, mk)) continue;
@@ -1644,20 +1645,35 @@ async function cashflowReport(action) {
     return { wages: round2(wages), expenses: round2(expenses), freelancers: round2(freelancers), marketing: round2(marketing), director: round2(director), allowance: round2(allowance), total: round2(wages + expenses + freelancers + marketing + director + allowance) };
   };
 
-  const history = keys.map((mk) => {
-    const c = costsForMonth(mk);
+  const opHistory = keys.map((mk) => {
+    const c = opCostsForMonth(mk);
     const cashIn = round2(cashByMonth[mk] || 0);
-    return { month: mk, cashIn, wages: c.wages, expenses: c.expenses, freelancers: c.freelancers, marketing: c.marketing, director: c.director, allowance: c.allowance, costs: c.total, profit: round2(cashIn - c.total) };
+    return { month: mk, c, cashIn, opProfit: round2(cashIn - c.total) };
   });
 
-  const profit12 = round2(history.reduce((s, h) => s + h.profit, 0));
-  const cashIn12 = round2(history.reduce((s, h) => s + h.cashIn, 0));
+  // Corporation Tax is computed on OPERATING profit (pre-CT) so it never feeds
+  // into its own basis (no circularity), then added on top as a cost line. The
+  // blended marginal rate comes from the trailing-12m operating profit.
+  const opProfit12 = round2(opHistory.reduce((s, h) => s + h.opProfit, 0));
+  const cashIn12 = round2(opHistory.reduce((s, h) => s + h.cashIn, 0));
+  const ctYear = round2(corpTaxOn(opProfit12));
+  const effectiveRate = opProfit12 > 0 ? ctYear / opProfit12 : 0;
+  const corpTaxOfMonth = (opProfit) => Math.max(0, round2(opProfit * effectiveRate));
+
+  // Fold the month's CT into the expenses bucket + total so profit, costs and the
+  // revenue targets are all CT-inclusive (a loss month sets aside nothing).
+  const history = opHistory.map((h) => {
+    const corpTax = corpTaxOfMonth(h.opProfit);
+    const expenses = round2(h.c.expenses + corpTax);
+    const costs = round2(h.c.total + corpTax);
+    return { month: h.month, cashIn: h.cashIn, wages: h.c.wages, expenses, freelancers: h.c.freelancers, marketing: h.c.marketing, director: h.c.director, allowance: h.c.allowance, corpTax, costs, profit: round2(h.cashIn - costs) };
+  });
   const costs12 = round2(history.reduce((s, h) => s + h.costs, 0));
-  const ctYear = round2(corpTaxOn(profit12));
-  const effectiveRate = profit12 > 0 ? ctYear / profit12 : 0;
 
   const sel = history[history.length - 1];
-  const monthReserve = round2(sel.profit * effectiveRate); // negative on a loss month = a CT saving
+  const selOp = opHistory[opHistory.length - 1];
+  const corpTaxMonthly = sel.corpTax;
+  const monthReserve = round2(selOp.opProfit * effectiveRate); // negative on a loss month = a CT saving
 
   // Wage-based targets. The "minimum" target is simply the full cost base (the
   // break-even). The £4k/£5k targets answer: what must we bill so both directors
@@ -1692,12 +1708,21 @@ async function cashflowReport(action) {
   for (const l of lines) {
     if (l.autoType === 'director_tax') { l.amount = autoDirectorTaxMonthly; l.monthlyAmount = autoDirectorTaxMonthly; l.frequency = 'monthly'; }
   }
+  // Auto Corporation Tax line — pinned to the top of the Expenses list and counted
+  // in the totals (so the targets cover the CT bill). Display-only; no DB row, so
+  // the frontend treats it as read-only (no edit / remove / drag).
+  lines.unshift({
+    id: 'cfcorptax', label: 'Corporation Tax (set aside)', category: 'expense',
+    amount: corpTaxMonthly, frequency: 'monthly', monthlyAmount: corpTaxMonthly,
+    note: null, autoType: 'corp_tax', taxBasis: false,
+    recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
+  });
   const activityRows = await sql`SELECT id, actor_email, action, summary, created_at FROM cashflow_activity ORDER BY created_at DESC LIMIT 40`;
 
   return {
     month,
     selected: sel,
-    corpTax: { effectiveRate, monthReserve, yearEstimate: ctYear, profit12, cashIn12, costs12, inProfit: sel.profit > 0 },
+    corpTax: { effectiveRate, monthReserve, monthly: corpTaxMonthly, yearEstimate: ctYear, profit12: opProfit12, cashIn12, costs12, inProfit: selOp.opProfit > 0 },
     targets: wageTargets,
     history,
     lines,

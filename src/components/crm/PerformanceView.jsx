@@ -361,13 +361,15 @@ const PROFIT_NEG = '#EF4444';
 // One-line cost split for the Costs card — only the buckets with a value, so it
 // stays tidy as categories come and go.
 function costBreakdownSub(sel) {
+  const corpTax = Number(sel.corpTax) || 0;
   return [
     ['Staff', sel.wages],
     ['Freelance', sel.freelancers],
     ['Marketing', sel.marketing],
     ['Directors', sel.director],
     ['Allowances', sel.allowance],
-    ['Expenses', sel.expenses],
+    ['Expenses', (Number(sel.expenses) || 0) - corpTax], // sel.expenses includes the CT line; show operating only
+    ['Corp Tax', corpTax],
   ].filter(([, v]) => (Number(v) || 0) > 0.005).map(([l, v]) => `${l} ${formatGBP(v)}`).join(' · ');
 }
 
@@ -640,7 +642,8 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
   const [note, setNote] = useState(row.note || '');
   const [taxBasis, setTaxBasis] = useState(!!row.taxBasis);
 
-  const isAuto = row.autoType === 'director_tax';
+  const isAuto = !!row.autoType;
+  const isCorpTax = row.autoType === 'corp_tax';
 
   const save = () => {
     const before = { label: row.label, amount: Number(row.amount) || 0, frequency: row.frequency || 'monthly', category: row.category || 'expense', note: row.note || '', taxBasis: !!row.taxBasis };
@@ -685,37 +688,47 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
 
   return (
     <div
-      draggable
-      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
-      onDragOver={(e) => { e.preventDefault(); onDragOver(); }}
-      onDrop={(e) => { e.preventDefault(); onDrop(); }}
-      onDragEnd={onDragEnd}
+      draggable={!isCorpTax}
+      onDragStart={isCorpTax ? undefined : (e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
+      onDragOver={isCorpTax ? undefined : (e) => { e.preventDefault(); onDragOver(); }}
+      onDrop={isCorpTax ? undefined : (e) => { e.preventDefault(); onDrop(); }}
+      onDragEnd={isCorpTax ? undefined : onDragEnd}
       style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
+        display: 'flex', alignItems: 'center', gap: 8, padding: isCorpTax ? '5px 8px' : '3px 0',
         borderTop: over ? '2px solid ' + BRAND.blue : '1px solid ' + BRAND.border,
-        background: over ? '#F4FBFE' : 'transparent', opacity: dragging ? 0.4 : 1,
+        background: isCorpTax ? '#FEF9C3' : (over ? '#F4FBFE' : 'transparent'),
+        borderLeft: isCorpTax ? '3px solid ' + VAT_COLOR_CF : undefined,
+        borderRadius: isCorpTax ? 6 : 0, opacity: dragging ? 0.4 : 1,
       }}
     >
-      <span title="Drag to reorder" style={{ flexShrink: 0, cursor: 'grab', color: BRAND.muted, display: 'flex', lineHeight: 0 }}>
-        <GripVertical size={14} />
-      </span>
+      {isCorpTax
+        ? <span style={{ flexShrink: 0, color: VAT_COLOR_CF, display: 'flex', lineHeight: 0 }}><PiggyBank size={14} /></span>
+        : <span title="Drag to reorder" style={{ flexShrink: 0, cursor: 'grab', color: BRAND.muted, display: 'flex', lineHeight: 0 }}><GripVertical size={14} /></span>}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <div style={{ fontSize: 13, fontWeight: isCorpTax ? 700 : 400, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {row.label}
           {row.taxBasis && <span title="Counts toward the auto director personal-tax saving" style={{ fontSize: 11, color: BRAND.muted }}> · feeds director tax</span>}
-          {!row.recurring && <span style={{ fontSize: 11, color: BRAND.muted }}> · one-off {row.month}</span>}
+          {!row.recurring && !isCorpTax && <span style={{ fontSize: 11, color: BRAND.muted }}> · one-off {row.month}</span>}
         </div>
-        {isAuto
-          ? <div title="Income tax + employee NI on each director's drawings marked “feeds director tax” (2025/26 rates), treating the figure as gross salary" style={{ fontSize: 11, color: '#CA8A04', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — income tax + NI on the director pay marked “feeds director tax” (current rates){row.note ? ` · ${row.note}` : ''}</div>
-          : (row.note && <div title={row.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.note}</div>)}
+        {isCorpTax
+          ? <div title="HMRC marginal-relief Corporation Tax on this month’s operating profit (19% up to £50k, 25% over £250k, tapered). Also shown as the headline card above; included here so the targets cover it. A loss month sets aside nothing." style={{ fontSize: 11, color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — to set aside on this month’s profit (HMRC marginal relief); counted in the targets</div>
+          : isAuto
+            ? <div title="Income tax + employee NI on each director's drawings marked “feeds director tax” (2025/26 rates), treating the figure as gross salary" style={{ fontSize: 11, color: '#CA8A04', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — income tax + NI on the director pay marked “feeds director tax” (current rates){row.note ? ` · ${row.note}` : ''}</div>
+            : (row.note && <div title={row.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.note}</div>)}
       </div>
       {isAuto
-        ? <span title="Auto-calculated — not editable directly" style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, padding: '1px 6px', borderRadius: 999, color: '#CA8A04', background: '#FEF9C3', border: '1px solid #FDE68A' }}>Auto</span>
+        ? <span title="Auto-calculated — not editable directly" style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, padding: '1px 6px', borderRadius: 999, color: '#CA8A04', background: isCorpTax ? '#FDE68A' : '#FEF9C3', border: '1px solid #FDE68A' }}>Auto</span>
         : <CfFreqTag row={row} />}
       {row.frequency === 'annual' && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(row.amount)}/yr</span>}
       <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 64, textAlign: 'right' }}>{formatGBP(row.monthlyAmount ?? row.amount)}</span>
-      <button className="btn-icon" title="Edit" onClick={() => setEditing(true)} style={{ padding: 3 }}><Pencil size={12} /></button>
-      <button className="btn-icon" title="Remove" onClick={remove} style={{ padding: 3 }}><Trash2 size={12} /></button>
+      {isCorpTax ? (
+        <span style={{ flexShrink: 0, width: 48 }} />
+      ) : (
+        <>
+          <button className="btn-icon" title="Edit" onClick={() => setEditing(true)} style={{ padding: 3 }}><Pencil size={12} /></button>
+          <button className="btn-icon" title="Remove" onClick={remove} style={{ padding: 3 }}><Trash2 size={12} /></button>
+        </>
+      )}
     </div>
   );
 }
