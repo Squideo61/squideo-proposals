@@ -87,7 +87,7 @@ function sumMetrics(payload) {
   return { totals, periodStart };
 }
 
-async function compute(key, { orgIdEnv, projectIdEnv, debug } = {}) {
+async function compute(key, { orgIdEnv, projectIdEnv } = {}) {
   // Neon scopes projects under organizations; the consumption API needs both
   // org_id AND explicit project_ids (an org_id alone returns no projects).
   // Resolve the candidate orgs, then find the one that actually has projects.
@@ -123,6 +123,12 @@ async function compute(key, { orgIdEnv, projectIdEnv, debug } = {}) {
     projectName = projects[0].name || null;
   }
 
+  // Current on-disk size (point-in-time), so the UI can show real storage even
+  // early in a billing period when the GB-month metric still rounds to ~0.
+  const storageBytesNow = projects
+    .filter(p => projectIds.includes(p.id))
+    .reduce((sum, p) => sum + (Number(p.synthetic_storage_size) || 0), 0);
+
   // Query a ~5-week window with daily granularity, then keep only the current
   // billing period (sumMetrics). Daily avoids the monthly-granularity quirk where
   // Neon snaps both ends to the 1st of the month and rejects from == to. The
@@ -141,18 +147,6 @@ async function compute(key, { orgIdEnv, projectIdEnv, debug } = {}) {
   for (const id of projectIds) qs.append('project_ids', id);
   const usagePayload = await neonGet(`/consumption_history/v2/projects?${qs}`, key);
   const { totals: m, periodStart } = sumMetrics(usagePayload);
-
-  if (debug) {
-    // Troubleshooting passthrough — shows exactly what Neon returned and how we
-    // parsed it, so the response shape can be confirmed. Open ?debug=1 in-browser.
-    return {
-      _debug: true, orgId, candidateOrgs,
-      projectsFound: projects.map(p => ({ id: p.id, name: p.name })),
-      projectSample: projects[0] || null, // full object — to see what usage fields it carries
-      queriedProjectIds: projectIds,
-      window: { from, to }, parsedTotals: m, periodStart, raw: usagePayload,
-    };
-  }
 
   const computeCuHours = m.compute_unit_seconds / 3600;
   const storageGbMonth = (m.root_branch_bytes_month + m.child_branch_bytes_month) / 1e9;
@@ -174,7 +168,7 @@ async function compute(key, { orgIdEnv, projectIdEnv, debug } = {}) {
     projectId: projectIdEnv || null,
     projectName,
     period: { start: periodStart || from, to },
-    usage: { computeCuHours, storageGbMonth, pitrGbMonth, egressGb, privateEgressGb },
+    usage: { computeCuHours, storageGbMonth, storageBytesNow, pitrGbMonth, egressGb, privateEgressGb },
     costs,
     pricing: {
       computeUsdPerCuHour: COMPUTE_USD_PER_CU_HOUR,
@@ -202,14 +196,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    if (req.query?.debug) {
-      const dbg = await compute(key, {
-        orgIdEnv: process.env.NEON_ORG_ID,
-        projectIdEnv: process.env.NEON_PROJECT_ID,
-        debug: true,
-      });
-      return res.status(200).json(dbg);
-    }
     const refresh = req.query?.refresh;
     if (!refresh && cache && (Date.now() - cache.at) < TTL_MS) {
       return res.status(200).json({ ...cache.data, cached: true });

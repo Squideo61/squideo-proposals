@@ -100,7 +100,7 @@ function NeonSection({ neon, loading }) {
             <Stat label="Compute" value={fmtUsd(neon.costs.compute)}
               sub={`${num(neon.usage.computeCuHours).toFixed(1)} CU-hours`} />
             <Stat label="Storage" value={fmtUsd(neon.costs.storage)}
-              sub={fmtGb(neon.usage.storageGbMonth) + '-month'} />
+              sub={`${fmtBytes(neon.usage.storageBytesNow)} stored · ${fmtGb(neon.usage.storageGbMonth)}-month`} />
             <Stat label="Egress (data transfer)" value={fmtUsd(neon.costs.egress)}
               sub={`${fmtGb(neon.usage.egressGb)} of ${neon.pricing.egressIncludedGb} GB included`} />
             <Stat label="Instant restore" value={fmtUsd(neon.costs.pitr)}
