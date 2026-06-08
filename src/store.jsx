@@ -100,6 +100,8 @@ function emptyStore() {
     cashflow: null,
     financeTargets: [],
     salesTargets: [],
+    costItems: [],
+    neonUsage: null,
     bankHolidays: null,
     partnerCreditsList: null,
     partnerCreditDetail: {},
@@ -369,6 +371,7 @@ export function StoreProvider({ children }) {
         revisionCallUrl: settings?.revisionCallUrl || '',
         financeTargets: settings?.financeTargets || [],
         salesTargets: settings?.salesTargets || [],
+        costItems: settings?.costItems || [],
         loading: false,
       }));
     });
@@ -1429,6 +1432,20 @@ export function StoreProvider({ children }) {
       return api.get('/api/blob-usage' + (refresh ? '?refresh=1' : ''))
         .then((data) => { if (data && !data.error) setState(s => ({ ...s, blobUsage: data })); return data; })
         .catch(() => {});
+    },
+
+    // ---------- Admin: Neon database usage / cost ----------
+    loadNeonUsage({ refresh = false } = {}) {
+      return api.get('/api/neon-usage' + (refresh ? '?refresh=1' : ''))
+        .then((data) => { if (data && !data.error) setState(s => ({ ...s, neonUsage: data })); return data; })
+        .catch(() => {});
+    },
+
+    // Editable fixed monthly CRM cost line items (shared with the settings row).
+    // Optimistic; each item: { id, label, amountUsd, note }.
+    saveCostItems(list) {
+      setState(s => ({ ...s, costItems: list }));
+      return api.put('/api/settings', { costItems: list }).catch(() => {});
     },
     createContact(input) {
       return api.post('/api/crm/contacts', input).then((c) => {

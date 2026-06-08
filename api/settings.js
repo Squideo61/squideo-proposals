@@ -13,15 +13,23 @@ const DEFAULT_FINANCE_TARGETS = [
   { key: 'dream', label: 'Dream 5k', amount: 33406.92, color: '#EAB308' },
 ];
 
+// Default fixed monthly CRM cost line items (Admin → Storage & CRM costs). Used
+// when the settings row has no cost_items yet; fully editable in-app. Each item:
+// { id, label, amountUsd, note }.
+const DEFAULT_COST_ITEMS = [
+  { id: 'vercel_pro', label: 'Vercel Pro', amountUsd: 20, note: 'Hosting + serverless functions' },
+];
+
 // Self-heal for db/migrations/20260603_finance_targets.sql + _sales_targets.sql
-// so the columns exist before any read/write below. Module-cached — runs once
-// per cold start.
+// (and the cost_items column for the costs tab) so the columns exist before any
+// read/write below. Module-cached — runs once per cold start.
 let financeTargetsColumnEnsured = null;
 function ensureFinanceTargetsColumn() {
   if (financeTargetsColumnEnsured) return financeTargetsColumnEnsured;
   financeTargetsColumnEnsured = (async () => {
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS finance_targets JSONB`;
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sales_targets JSONB`;
+    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cost_items JSONB`;
   })().catch((err) => { financeTargetsColumnEnsured = null; throw err; });
   return financeTargetsColumnEnsured;
 }
@@ -36,7 +44,7 @@ export default async function handler(req, res) {
   await ensureFinanceTargetsColumn();
 
   if (req.method === 'GET') {
-    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets FROM settings WHERE id = 1`;
+    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items FROM settings WHERE id = 1`;
     const row = rows[0];
     return res.status(200).json({
       extrasBank: row.extras_bank,
@@ -49,6 +57,9 @@ export default async function handler(req, res) {
       salesTargets: Array.isArray(row.sales_targets) && row.sales_targets.length
         ? row.sales_targets
         : DEFAULT_FINANCE_TARGETS,
+      costItems: Array.isArray(row.cost_items)
+        ? row.cost_items
+        : DEFAULT_COST_ITEMS,
     });
   }
 
@@ -59,7 +70,7 @@ export default async function handler(req, res) {
     if (!hasPermission(await getRole(user.role), 'settings.manage')) {
       return res.status(403).json({ error: 'You do not have permission to edit workspace settings' });
     }
-    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets } = req.body || {};
+    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems } = req.body || {};
     await sql`
       UPDATE settings SET
         extras_bank             = COALESCE(${extrasBank ? JSON.stringify(extrasBank) : null}::jsonb, extras_bank),
@@ -67,7 +78,8 @@ export default async function handler(req, res) {
         notification_recipients = COALESCE(${notificationRecipients ? JSON.stringify(notificationRecipients) : null}::jsonb, notification_recipients),
         revision_call_url       = COALESCE(${revisionCallUrl !== undefined ? String(revisionCallUrl) : null}, revision_call_url),
         finance_targets         = COALESCE(${financeTargets ? JSON.stringify(financeTargets) : null}::jsonb, finance_targets),
-        sales_targets           = COALESCE(${salesTargets ? JSON.stringify(salesTargets) : null}::jsonb, sales_targets)
+        sales_targets           = COALESCE(${salesTargets ? JSON.stringify(salesTargets) : null}::jsonb, sales_targets),
+        cost_items              = COALESCE(${Array.isArray(costItems) ? JSON.stringify(costItems) : null}::jsonb, cost_items)
       WHERE id = 1
     `;
     return res.status(200).json({ ok: true });
