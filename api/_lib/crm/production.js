@@ -335,6 +335,28 @@ async function withVideoExtras(video) {
       if (sv?.blob_url) storyboard = { url: sv.blob_url };
     } catch { /* storyboard tables not present */ }
   }
+  // Self-heal: if a producer created the revision project + video through the
+  // Revisions admin (instead of clicking "Send for review" on the video page),
+  // this row's revision_video_id is never set and the video page shows nothing.
+  // Look for a matching revision_video on a revision project linked to this deal
+  // (either link direction) and back-fill it.
+  if (!video.revisionVideoId && video.dealId && video.title) {
+    try {
+      const [match] = await sql`
+        SELECT rv.id
+          FROM revision_videos rv
+          JOIN revision_projects rp ON rp.id = rv.project_id
+          LEFT JOIN deals d ON d.id = ${video.dealId}
+         WHERE (rp.deal_id = ${video.dealId} OR d.revision_project_id = rp.id)
+           AND lower(btrim(rv.title)) = lower(btrim(${video.title}))
+         LIMIT 1
+      `;
+      if (match?.id) {
+        await sql`UPDATE project_videos SET revision_video_id = ${match.id}, updated_at = NOW() WHERE id = ${video.id}`;
+        video.revisionVideoId = match.id;
+      }
+    } catch { /* self-heal is best-effort */ }
+  }
   let revisionStatus = null;
   if (video.revisionVideoId) {
     try {

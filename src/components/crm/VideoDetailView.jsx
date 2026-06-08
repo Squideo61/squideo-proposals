@@ -173,6 +173,9 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           display: 'flex', flexDirection: 'column', gap: 16,
         }}>
           <PreviewPane preview={video.preview} revisionStatus={video.revisionStatus} sentForReview={!!video.revisionVideoId} isMobile={isMobile} />
+          {(video.revisionVideoId || video.revisionStatus) && (
+            <RevisionStatusCard revisionStatus={video.revisionStatus} sentForReview={!!video.revisionVideoId} />
+          )}
           <div style={{ flex: isMobile ? 'none' : 1, minHeight: 0, overflowY: isMobile ? 'visible' : 'auto' }}>
             {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['activity', 'comments']} />}
           </div>
@@ -250,6 +253,23 @@ function PreviewPane({ preview, revisionStatus, sentForReview, isMobile }) {
           <video src={url} controls style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }} />
         )}
       </div>
+    </div>
+  );
+}
+
+// Standalone card under the PreviewPane that surfaces the current revision
+// round even when the production stage hasn't reached Video yet (the
+// PreviewPane might be showing the script/storyboard, but the producer still
+// needs to know a revised cut has landed).
+function RevisionStatusCard({ revisionStatus, sentForReview }) {
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+        borderBottom: '1px solid ' + BRAND.border }}>
+        <Film size={15} color={BRAND.blue} />
+        <strong style={{ fontSize: 13, color: BRAND.ink }}>Client review</strong>
+      </div>
+      <RevisionStatusRow revisionStatus={revisionStatus} sentForReview={sentForReview} />
     </div>
   );
 }
