@@ -594,6 +594,26 @@ function CfCostPanel({ title, icon: Icon, accent, category, rows, month, monthLa
   );
 }
 
+// Per-row frequency label so it's clear at a glance whether the figure is the
+// raw monthly cost or an annual cost spread across 12 months.
+function CfFreqTag({ row }) {
+  const annual = row.frequency === 'annual';
+  return (
+    <span
+      title={annual ? `Annual cost of ${formatGBP(row.amount)}/yr — counted as ${formatGBP(row.monthlyAmount)}/month` : 'Monthly cost'}
+      style={{
+        flexShrink: 0, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4,
+        padding: '1px 6px', borderRadius: 999,
+        color: annual ? '#7C3AED' : BRAND.muted,
+        background: annual ? '#F3E8FF' : BRAND.paper,
+        border: '1px solid ' + (annual ? '#E9D5FF' : BRAND.border),
+      }}
+    >
+      {annual ? 'Annual ÷12' : 'Monthly'}
+    </span>
+  );
+}
+
 function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOver, onDrop, onDragEnd }) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(row.label);
@@ -643,10 +663,11 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
       </span>
       <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {row.label}
-        {row.frequency === 'annual' && <span style={{ fontSize: 11, color: BRAND.muted }}> · {formatGBP(row.amount)}/yr</span>}
         {!row.recurring && <span style={{ fontSize: 11, color: BRAND.muted }}> · one-off {row.month}</span>}
       </span>
-      <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(row.monthlyAmount ?? row.amount)}</span>
+      <CfFreqTag row={row} />
+      {row.frequency === 'annual' && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(row.amount)}/yr</span>}
+      <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 64, textAlign: 'right' }}>{formatGBP(row.monthlyAmount ?? row.amount)}</span>
       <button className="btn-icon" title="Edit" onClick={() => setEditing(true)} style={{ padding: 3 }}><Pencil size={12} /></button>
       <button className="btn-icon" title="Remove" onClick={remove} style={{ padding: 3 }}><Trash2 size={12} /></button>
     </div>
