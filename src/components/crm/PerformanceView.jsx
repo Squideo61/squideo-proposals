@@ -541,7 +541,7 @@ function CfCosts({ lines, month, monthLabel, actions, reload, isMobile }) {
         rows={expenses} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
       <CfCostPanel title="Wages" icon={Users} accent={BRAND.blue} category="wages"
         rows={wages} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
-      <CfCostPanel title="Freelancers" icon={Briefcase} accent="#8B5CF6" category="freelancer"
+      <CfCostPanel title="Freelancer Costs" icon={Briefcase} accent="#8B5CF6" category="freelancer"
         rows={freelancers} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
     </>
   );
