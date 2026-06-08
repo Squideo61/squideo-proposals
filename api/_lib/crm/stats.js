@@ -1382,8 +1382,8 @@ const CASHFLOW_COST_SEED = [
   ['Misc bank charges', 'expense', 50.00, true, null],
   ['Ben Car Lease', 'expense', 339.00, true, null],
   // Marketing.
-  ['PPC Budget UK', 'expense', 3000.00, true, null],
-  ['Sophie Risan - Marketing Fee', 'expense', 600.00, true, null],
+  ['PPC Budget UK', 'marketing', 3000.00, true, null],
+  ['Sophie Risan - Marketing Fee', 'marketing', 600.00, true, null],
   // Director pension (employer contribution).
   ['Director Pensions Base (£300 each PM)', 'expense', 600.00, true, null],
   // Wages — staff salaries & tax.
@@ -1455,6 +1455,11 @@ function ensureCashflow() {
     if (fcount === 0) {
       await sql`UPDATE cashflow_costs SET category = 'freelancer' WHERE id IN ('cfseed42', 'cfseed43') AND category = 'wages'`;
     }
+    // Likewise, move the seeded marketing lines (PPC + Sophie) out of expenses.
+    const [{ mcount }] = await sql`SELECT COUNT(*)::int AS mcount FROM cashflow_costs WHERE category = 'marketing'`;
+    if (mcount === 0) {
+      await sql`UPDATE cashflow_costs SET category = 'marketing' WHERE id IN ('cfseed30', 'cfseed31') AND category = 'expense'`;
+    }
   })().catch((err) => { cashflowEnsured = null; throw err; });
   return cashflowEnsured;
 }
@@ -1475,9 +1480,9 @@ function monthlyAmountOf(r) {
   return r.frequency === 'annual' ? amt / 12 : amt;
 }
 
-// Cost categories: staff wages, freelancers and operating expenses. Anything
-// unrecognised falls back to 'expense'.
-const normCategory = (c) => (c === 'wages' ? 'wages' : c === 'freelancer' ? 'freelancer' : 'expense');
+// Cost categories: staff wages, freelancers, marketing and operating expenses.
+// Anything unrecognised falls back to 'expense'.
+const normCategory = (c) => (c === 'wages' ? 'wages' : c === 'freelancer' ? 'freelancer' : c === 'marketing' ? 'marketing' : 'expense');
 
 function serialiseCost(r) {
   const frequency = r.frequency === 'annual' ? 'annual' : 'monthly';
@@ -1539,22 +1544,23 @@ async function cashflowReport(action) {
   // Costs (resolved per month from the recurring + one-off rows).
   const costRows = await sql`SELECT * FROM cashflow_costs ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
   const costsForMonth = (mk) => {
-    let wages = 0, expenses = 0, freelancers = 0;
+    let wages = 0, expenses = 0, freelancers = 0, marketing = 0;
     for (const r of costRows) {
       if (!costAppliesToMonth(r, mk)) continue;
       const amt = monthlyAmountOf(r);
       const cat = normCategory(r.category);
       if (cat === 'wages') wages += amt;
       else if (cat === 'freelancer') freelancers += amt;
+      else if (cat === 'marketing') marketing += amt;
       else expenses += amt;
     }
-    return { wages: round2(wages), expenses: round2(expenses), freelancers: round2(freelancers), total: round2(wages + expenses + freelancers) };
+    return { wages: round2(wages), expenses: round2(expenses), freelancers: round2(freelancers), marketing: round2(marketing), total: round2(wages + expenses + freelancers + marketing) };
   };
 
   const history = keys.map((mk) => {
     const c = costsForMonth(mk);
     const cashIn = round2(cashByMonth[mk] || 0);
-    return { month: mk, cashIn, wages: c.wages, expenses: c.expenses, freelancers: c.freelancers, costs: c.total, profit: round2(cashIn - c.total) };
+    return { month: mk, cashIn, wages: c.wages, expenses: c.expenses, freelancers: c.freelancers, marketing: c.marketing, costs: c.total, profit: round2(cashIn - c.total) };
   });
 
   const profit12 = round2(history.reduce((s, h) => s + h.profit, 0));
@@ -1623,7 +1629,7 @@ async function cashflowRoute(req, res, action, user) {
     await sql`
       INSERT INTO cashflow_costs (id, label, category, amount, frequency, recurring, month, effective_from, sort_order)
       VALUES (${id}, ${label}, ${category}, ${amount}, ${frequency}, ${recurring}, ${month}, ${effectiveFrom}, ${m + 1})`;
-    const kindWord = category === 'wages' ? 'wage' : category === 'freelancer' ? 'freelancer' : 'expense';
+    const kindWord = category === 'wages' ? 'wage' : category === 'freelancer' ? 'freelancer' : category === 'marketing' ? 'marketing cost' : 'expense';
     const amtWord = frequency === 'annual' ? `${gbp(amount)}/yr (≈${gbp(amount / 12)}/mo)` : `${gbp(amount)}/mo`;
     await logCashflow(actor, 'cost.add', recurring
       ? `Added recurring ${kindWord} “${label}” ${amtWord}`
