@@ -202,10 +202,11 @@ export function VideoRevision({ token, data }) {
     const commentCount = versionComments.length;
     const single = videos.length === 1;
     const what = single ? 'this video' : `"${activeVideo.title}"`;
-    const tail = commentCount > 0
-      ? `Your ${commentCount} comment${commentCount === 1 ? '' : 's'} will be sent to the production team.`
-      : 'No comments will be sent — only the approval.';
-    const msg = `Finalise ${what} and send your revisions? This locks ${what} so no further comments can be added. ${tail}`;
+    const msg = commentCount > 0
+      ? `Send your ${commentCount} comment${commentCount === 1 ? '' : 's'} to the production team and finalise ${what}? `
+        + `No further comments can be added after this.`
+      : `You haven't left any comments. Finalise ${what} as approved with no changes? `
+        + `No further comments can be added after this.`;
     if (!window.confirm(msg)) return;
     setApproving(true);
     try {
