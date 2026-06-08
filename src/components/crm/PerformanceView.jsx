@@ -412,7 +412,7 @@ function CashFlowView({ isMobile }) {
         <StatCard icon={Wallet} accent={BRAND.blue} label="Cash received"
           value={formatGBP(sel.cashIn)} sub="Net banked (ex-VAT)" />
         <StatCard icon={Receipt} accent="#0E7490" label="Costs"
-          value={formatGBP(sel.costs)} sub={costBreakdownSub(sel)} />
+          value={formatGBP(sel.costs)} sub={sel.costSource === 'xero' ? 'Actual operating costs — from Xero' : costBreakdownSub(sel)} />
         <StatCard icon={PiggyBank} accent={VAT_COLOR_CF}
           label={ct.inProfit ? 'Corp Tax to set aside' : 'Corp Tax saving'}
           value={formatGBP(Math.abs(ct.monthReserve))}
@@ -440,12 +440,21 @@ function CashFlowView({ isMobile }) {
       {/* Suggested revenue target — costs + your profit goal. */}
       <CfSuggested sug={sug} onSaveGoal={(g) => actions.setCashflowProfitGoal(g).then(reload)} onApply={applyTargets} isMobile={isMobile} />
 
+      {/* When a past month (Xero-sourced costs) is selected, the editor below is
+          still the going-forward cost base, not that month's actuals. */}
+      {sel.costSource === 'xero' && (
+        <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: '#92400E' }}>
+          {monthLabel}'s costs ({formatGBP(sel.costs)}) are actual operating costs pulled from Xero. The sections below are your current cost base (used for this month and going forward), not {monthLabel}'s actuals.
+        </div>
+      )}
+
       {/* Costs editor — recurring overheads + one-offs for the month. */}
       <CfCosts lines={cf.lines} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
 
       {/* 12-month history — click a month to jump to it. */}
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 16 }}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>Last 12 months</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>Last 12 months</h3>
+        <p style={{ margin: '0 0 12px', fontSize: 11, color: BRAND.muted }}>Cash in for past months comes from the Live Sales Sheet; costs tagged <strong>Xero</strong> are actual operating costs. The current month uses live CRM cash and your cost base.</p>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
@@ -465,7 +474,10 @@ function CashFlowView({ isMobile }) {
                     style={{ borderTop: '1px solid ' + BRAND.border, background: isThis ? '#F4FBFE' : 'transparent', cursor: 'pointer' }}>
                     <td style={{ textAlign: 'left', padding: '8px 8px', fontWeight: isThis ? 700 : 500 }}>{monthShortYear(h.month)}</td>
                     <td style={{ textAlign: 'right', padding: '8px 8px' }}>{formatGBP(h.cashIn)}</td>
-                    <td style={{ textAlign: 'right', padding: '8px 8px', color: BRAND.muted }}>{formatGBP(h.costs)}</td>
+                    <td style={{ textAlign: 'right', padding: '8px 8px', color: BRAND.muted }}>
+                      {h.costSource === 'xero' && <span title="Actual operating costs from Xero" style={{ fontSize: 9, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', border: '1px solid #A5F3FC', borderRadius: 999, padding: '1px 5px', marginRight: 6, verticalAlign: 'middle' }}>XERO</span>}
+                      {formatGBP(h.costs)}
+                    </td>
                     <td style={{ textAlign: 'right', padding: '8px 8px', fontWeight: 700, color: h.profit >= 0 ? PROFIT_POS : PROFIT_NEG }}>{formatGBP(h.profit)}</td>
                   </tr>
                 );

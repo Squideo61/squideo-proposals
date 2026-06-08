@@ -42,6 +42,9 @@ const SCOPES = [
   'accounting.contacts',
   'accounting.invoices',
   'accounting.payments',
+  // Read-only Profit & Loss report — powers the Cash Flow tab's actual monthly
+  // operating costs for past months. Requires a one-off reconnect to grant.
+  'accounting.reports.read',
 ].join(' ');
 
 function redirectUri() {

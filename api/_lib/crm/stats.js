@@ -6,6 +6,7 @@ import { allCompanyBalances } from './companies.js';
 import { outstandingExtrasByDeal, ensureDealExtrasTable } from './extras.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
 import { archiveRecord } from './recycleBin.js';
+import { getMonthlyOperatingCosts } from '../xero.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
 // five paid-money sources as companies.js (allCompanyBalances /
@@ -1560,6 +1561,16 @@ async function cashflowReport(action) {
     return (ov && mk !== nowKey) ? ov.sales : (cashByMonth[mk] || 0);
   };
 
+  // Actual monthly operating costs from Xero (Cost of Sales + Operating Expenses)
+  // for PAST months — the current month always keeps the hand-built cost base.
+  // Best-effort: if Xero isn't connected with the reports scope, fall back to base.
+  let xeroCosts = new Map();
+  try {
+    xeroCosts = await getMonthlyOperatingCosts({ endMonth: month });
+  } catch (err) {
+    console.error('[cashflow] Xero P&L unavailable', err?.message || err);
+  }
+
   // Costs (resolved per month from the recurring + one-off rows).
   const costRows = await sql`SELECT * FROM cashflow_costs ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
   const costsForMonth = (mk) => {
@@ -1580,7 +1591,15 @@ async function cashflowReport(action) {
   const history = keys.map((mk) => {
     const c = costsForMonth(mk);
     const cashIn = round2(cashInFor(mk));
-    return { month: mk, cashIn, wages: c.wages, expenses: c.expenses, freelancers: c.freelancers, marketing: c.marketing, director: c.director, costs: c.total, profit: round2(cashIn - c.total) };
+    const xc = xeroCosts.get(mk);
+    const useXero = mk !== nowKey && xc != null;
+    const costs = useXero ? round2(xc) : c.total;
+    return {
+      month: mk, cashIn,
+      wages: c.wages, expenses: c.expenses, freelancers: c.freelancers, marketing: c.marketing, director: c.director,
+      costs, costSource: useXero ? 'xero' : 'base',
+      profit: round2(cashIn - costs),
+    };
   });
 
   const profit12 = round2(history.reduce((s, h) => s + h.profit, 0));
