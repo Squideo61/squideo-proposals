@@ -937,6 +937,10 @@ export function StoreProvider({ children }) {
     deleteCashflowCost(id) {
       return api.delete('/api/crm/stats/cashflow-cost/' + id);
     },
+    // Move a cost up/down within its category (swaps sort order with its neighbour).
+    moveCashflowCost(id, direction) {
+      return api.patch('/api/crm/stats/cashflow-cost/' + id, { move: direction });
+    },
     // Set the monthly profit goal that drives the suggested revenue target.
     setCashflowProfitGoal(profitGoal) {
       return api.post('/api/crm/stats/cashflow-cost', { profitGoal });

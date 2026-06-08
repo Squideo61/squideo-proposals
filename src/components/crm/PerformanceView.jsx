@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, ChevronUp, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -528,85 +528,102 @@ function CfSuggested({ sug, onSaveGoal, onApply, isMobile }) {
   );
 }
 
+// Two visually separate panels — Expenses and Wages — each with its own add
+// form, totals and per-row reordering. Wages is deliberately split out from the
+// rest so payroll reads as its own block.
 function CfCosts({ lines, month, monthLabel, actions, reload, isMobile }) {
-  const [adding, setAdding] = useState(false);
   const wages = lines.filter((l) => l.category === 'wages');
   const expenses = lines.filter((l) => l.category !== 'wages');
   return (
-    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>Costs — {monthLabel}</h3>
-        <button className="btn-ghost" onClick={() => setAdding((v) => !v)}><Plus size={14} /> Add cost</button>
+    <>
+      <CfCostPanel title="Expenses" icon={Receipt} accent="#0E7490" category="expense"
+        rows={expenses} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
+      <CfCostPanel title="Wages" icon={Users} accent={BRAND.blue} category="wages"
+        rows={wages} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
+    </>
+  );
+}
+
+function CfCostPanel({ title, icon: Icon, accent, category, rows, month, monthLabel, actions, reload, isMobile }) {
+  const [adding, setAdding] = useState(false);
+  const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${accent}`, borderRadius: 12, padding: isMobile ? 12 : '12px 18px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6, display: 'flex', alignItems: 'center', gap: 6 }}>
+          {Icon && <Icon size={14} color={accent} />} {title} — {monthLabel}
+        </h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
+          <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={13} /> Add</button>
+        </div>
       </div>
 
-      {adding && <CfCostForm month={month} onDone={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} actions={actions} />}
+      {adding && <CfCostForm month={month} category={category} onDone={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} actions={actions} />}
 
-      {lines.length === 0 && !adding ? (
-        <div style={{ color: BRAND.muted, fontSize: 13, padding: '8px 0' }}>No costs for {monthLabel}. Add your wages and expenses to see your profit.</div>
+      {rows.length === 0 && !adding ? (
+        <div style={{ color: BRAND.muted, fontSize: 13, padding: '4px 0' }}>No {title.toLowerCase()} for {monthLabel}.</div>
       ) : (
-        <>
-          {wages.length > 0 && <CfCostGroup icon={Users} title="Wages" rows={wages} actions={actions} reload={reload} isMobile={isMobile} />}
-          {expenses.length > 0 && <CfCostGroup icon={Receipt} title="Expenses" rows={expenses} actions={actions} reload={reload} isMobile={isMobile} />}
-        </>
+        rows.map((r, i) => (
+          <CfCostRow key={r.id} row={r} first={i === 0} last={i === rows.length - 1} actions={actions} reload={reload} />
+        ))
       )}
     </div>
   );
 }
 
-function CfCostGroup({ icon: Icon, title, rows, actions, reload, isMobile }) {
-  const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
-  return (
-    <div style={{ marginTop: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid ' + BRAND.border }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-          {Icon && <Icon size={13} />} {title}
-        </span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
-      </div>
-      {rows.map((r) => <CfCostRow key={r.id} row={r} actions={actions} reload={reload} isMobile={isMobile} />)}
-    </div>
-  );
-}
-
-function CfCostRow({ row, actions, reload, isMobile }) {
+function CfCostRow({ row, first, last, actions, reload }) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(row.label);
   const [amount, setAmount] = useState(String(row.amount));
 
   const save = () => actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0 }).then(() => { setEditing(false); reload(); });
   const remove = () => actions.deleteCashflowCost(row.id).then(reload);
+  const move = (dir) => actions.moveCashflowCost(row.id, dir).then(reload);
 
   if (editing) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: '1px solid ' + BRAND.border, flexWrap: 'wrap' }}>
-        <input value={label} onChange={(e) => setLabel(e.target.value)} style={{ flex: 1, minWidth: 120, padding: '6px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14 }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', borderTop: '1px solid ' + BRAND.border, flexWrap: 'wrap' }}>
+        <input autoFocus value={label} onChange={(e) => setLabel(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); } }}
+          style={{ flex: 1, minWidth: 120, padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
         <span style={{ color: BRAND.muted }}>£</span>
-        <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} style={{ width: 110, padding: '6px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14 }} />
-        <button className="btn" onClick={save}><Check size={14} /></button>
-        <button className="btn-ghost" onClick={() => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); }}><X size={14} /></button>
+        <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
+          style={{ width: 100, padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+        <button className="btn-icon" title="Save" onClick={save}><Check size={13} /></button>
+        <button className="btn-icon" title="Cancel" onClick={() => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); }}><X size={13} /></button>
       </div>
     );
   }
 
+  const reorderBtn = (dir, disabled, Icon) => (
+    <button onClick={() => !disabled && move(dir)} disabled={disabled} title={dir === 'up' ? 'Move up' : 'Move down'}
+      style={{ border: 'none', background: 'none', padding: 0, lineHeight: 0, cursor: disabled ? 'default' : 'pointer', color: disabled ? BRAND.border : BRAND.muted }}>
+      <Icon size={12} />
+    </button>
+  );
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: '1px solid ' + BRAND.border }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.label}</div>
-        <span style={{ fontSize: 11, color: BRAND.muted }}>
-          {row.recurring ? 'Recurring monthly' : `One-off · ${row.month}`}
-        </span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', borderTop: '1px solid ' + BRAND.border }}>
+      <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+        {reorderBtn('up', first, ChevronUp)}
+        {reorderBtn('down', last, ChevronDown)}
       </div>
-      <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(row.amount)}</span>
-      <button className="btn-icon" title="Edit" onClick={() => setEditing(true)}><Pencil size={13} /></button>
-      <button className="btn-icon" title="Remove" onClick={remove}><Trash2 size={13} /></button>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {row.label}
+        {!row.recurring && <span style={{ fontSize: 11, color: BRAND.muted }}> · one-off {row.month}</span>}
+      </span>
+      <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(row.amount)}</span>
+      <button className="btn-icon" title="Edit" onClick={() => setEditing(true)} style={{ padding: 3 }}><Pencil size={12} /></button>
+      <button className="btn-icon" title="Remove" onClick={remove} style={{ padding: 3 }}><Trash2 size={12} /></button>
     </div>
   );
 }
 
-function CfCostForm({ month, onDone, onCancel, actions }) {
+function CfCostForm({ month, category, onDone, onCancel, actions }) {
   const [label, setLabel] = useState('');
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState('expense');
   const [recurring, setRecurring] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -621,26 +638,21 @@ function CfCostForm({ month, onDone, onCancel, actions }) {
   };
 
   return (
-    <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12, marginBottom: 12 }}>
+    <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, margin: '4px 0 8px' }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <input autoFocus placeholder="What is it? (e.g. Office rent, Adam salary)" value={label} onChange={(e) => setLabel(e.target.value)}
+        <input autoFocus placeholder={category === 'wages' ? 'Who? (e.g. Adam, Freelance editor)' : 'What is it? (e.g. Office rent)'} value={label} onChange={(e) => setLabel(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-          style={{ flex: 1, minWidth: 180, padding: '8px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14 }} />
+          style={{ flex: 1, minWidth: 160, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
         <span style={{ color: BRAND.muted }}>£</span>
         <input type="number" step="0.01" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-          style={{ width: 120, padding: '8px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14 }} />
-        <Segmented value={category} onChange={setCategory} options={[{ value: 'expense', label: 'Expense' }, { value: 'wages', label: 'Wages' }]} />
-      </div>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer' }}>
+          style={{ width: 110, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
           <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} />
-          Recurring every month {recurring ? `(from ${monthOptionLabel(month)})` : `· one-off in ${monthOptionLabel(month)}`}
+          {recurring ? 'Recurring' : `One-off (${monthOptionLabel(month)})`}
         </label>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button className="btn-ghost" onClick={onCancel}><X size={14} /> Cancel</button>
-          <button className="btn" onClick={submit} disabled={!label.trim() || busy}><Check size={14} /> {busy ? 'Adding…' : 'Add cost'}</button>
-        </div>
+        <button className="btn-ghost" style={{ padding: '4px 8px' }} onClick={onCancel}><X size={13} /></button>
+        <button className="btn" style={{ padding: '5px 10px' }} onClick={submit} disabled={!label.trim() || busy}><Check size={13} /> {busy ? 'Adding…' : 'Add'}</button>
       </div>
     </div>
   );

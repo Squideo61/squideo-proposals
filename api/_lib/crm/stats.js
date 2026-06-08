@@ -1595,6 +1595,19 @@ async function cashflowRoute(req, res, action, user) {
   if (req.method === 'PATCH') {
     if (!action) return res.status(400).json({ error: 'id required' });
     const body = req.body || {};
+    // Reorder within a category — swap sort_order with the adjacent same-category row.
+    if (body.move === 'up' || body.move === 'down') {
+      const [row] = await sql`SELECT id, category, sort_order FROM cashflow_costs WHERE id = ${action}`;
+      if (!row) return res.status(404).json({ error: 'Not found' });
+      const so = row.sort_order;
+      const neighbour = body.move === 'up'
+        ? (await sql`SELECT id, sort_order FROM cashflow_costs WHERE category = ${row.category} AND sort_order < ${so} ORDER BY sort_order DESC NULLS LAST LIMIT 1`)[0]
+        : (await sql`SELECT id, sort_order FROM cashflow_costs WHERE category = ${row.category} AND sort_order > ${so} ORDER BY sort_order ASC LIMIT 1`)[0];
+      if (!neighbour) return res.status(200).json({ ok: true }); // already at the end
+      await sql`UPDATE cashflow_costs SET sort_order = ${neighbour.sort_order} WHERE id = ${row.id}`;
+      await sql`UPDATE cashflow_costs SET sort_order = ${so} WHERE id = ${neighbour.id}`;
+      return res.status(200).json({ ok: true });
+    }
     const [existing] = await sql`SELECT * FROM cashflow_costs WHERE id = ${action}`;
     if (!existing) return res.status(404).json({ error: 'Not found' });
     const label = body.label !== undefined ? (trimOrNull(body.label) || existing.label) : existing.label;
