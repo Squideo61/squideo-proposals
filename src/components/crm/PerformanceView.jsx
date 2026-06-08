@@ -244,6 +244,10 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
         })}
       </div>
 
+      {/* What's left to hit each target, and the daily run-rate needed for the
+          working days remaining. */}
+      <RemainingCard targets={targets} model={model} isSales={isSales} isMobile={isMobile} />
+
       {/* The Day Performance chart. */}
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20 }}>
         <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -478,6 +482,75 @@ function PaceCard({ title, big, sub, color, accent }) {
       <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>{title}</div>
       <div style={{ fontSize: 22, fontWeight: 700, color: color || BRAND.ink }}>{big}</div>
       <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>{sub}</div>
+    </div>
+  );
+}
+
+// What's still needed to reach each target, plus the daily run-rate required
+// across the working days remaining in the period. Recomputes live as days pass
+// and cash comes in (model.netSoFar / lastActualIdx drive it).
+function RemainingCard({ targets, model, isSales, isMobile }) {
+  const daysLeft = Math.max(0, model.N - model.lastActualIdx);
+  const noun = isSales ? 'sign' : 'bank';
+  const header = model.status === 'complete'
+    ? 'Period complete'
+    : `${daysLeft} working ${daysLeft === 1 ? 'day' : 'days'} left`;
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: isMobile ? 14 : '14px 18px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Remaining to make targets</span>
+        <span style={{ fontSize: 12, color: BRAND.muted }}>{header}</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {targets.map((t, i) => {
+          const target = (Number(t.amount) || 0) * model.spanMonths;
+          const remaining = Math.max(0, target - model.netSoFar);
+          const met = remaining <= 0.005;
+          const perDay = daysLeft > 0 ? remaining / daysLeft : null;
+          return (
+            <div
+              key={t.key}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: isMobile ? '1fr auto' : '1.3fr 1fr 1fr',
+                gap: 8, alignItems: 'center',
+                padding: '8px 0', borderTop: i === 0 ? 'none' : '1px solid ' + BRAND.border,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 3, background: t.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.label}</span>
+                <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(target)}</span>
+              </div>
+              {met ? (
+                <div style={{ gridColumn: isMobile ? '2' : '2 / span 2', textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#10B981' }}>
+                  Target met ✓
+                </div>
+              ) : (
+                <>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(remaining)}</div>
+                    {!isMobile && <div style={{ fontSize: 11, color: BRAND.muted }}>still to {noun}</div>}
+                  </div>
+                  {!isMobile && (
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.blue }}>
+                        {perDay != null ? formatGBP(perDay) : '—'}
+                      </div>
+                      <div style={{ fontSize: 11, color: BRAND.muted }}>{perDay != null ? 'per working day' : 'no days left'}</div>
+                    </div>
+                  )}
+                </>
+              )}
+              {isMobile && !met && (
+                <div style={{ gridColumn: '1 / span 2', textAlign: 'right', fontSize: 11, color: BRAND.muted, marginTop: -4 }}>
+                  {perDay != null ? `${formatGBP(perDay)} per working day` : 'no working days left'}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
