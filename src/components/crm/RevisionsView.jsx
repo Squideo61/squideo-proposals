@@ -45,13 +45,19 @@ export function DealLinkSelect({ projectId, value, kind = 'revision', onLinked }
 export function DealLinkSummary({ dealId, dealTitle }) {
   if (dealId && dealTitle) {
     return (
-      <span title="This revision project is linked to a CRM deal"
+      <a
+        href={'#/project/' + encodeURIComponent(dealId)}
+        title="Open the linked project page"
         style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink,
-          padding: '7px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: '#F8FAFC' }}>
+          padding: '7px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: '#F8FAFC',
+          textDecoration: 'none', cursor: 'pointer' }}
+        onMouseEnter={e => { e.currentTarget.style.background = '#EFF6FF'; e.currentTarget.style.borderColor = BRAND.blue; }}
+        onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = BRAND.border; }}
+      >
         <Link2 size={14} color={BRAND.muted} />
         <span style={{ color: BRAND.muted }}>Linked to</span>
         <strong style={{ color: BRAND.ink }}>{dealTitle}</strong>
-      </span>
+      </a>
     );
   }
   return (
@@ -68,14 +74,20 @@ export function DealLinkSummary({ dealId, dealTitle }) {
 export function VideoLinkBanner({ linked }) {
   if (linked) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
-        padding: '8px 12px', borderRadius: 8, background: '#ECFDF5', border: '1px solid #A7F3D0',
-        color: '#065F46', fontSize: 12.5 }}>
+      <a
+        href={'#/video/' + encodeURIComponent(linked.id)}
+        title="Open the linked video page"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
+          padding: '8px 12px', borderRadius: 8, background: '#ECFDF5', border: '1px solid #A7F3D0',
+          color: '#065F46', fontSize: 12.5, textDecoration: 'none', cursor: 'pointer' }}
+        onMouseEnter={e => { e.currentTarget.style.background = '#D1FAE5'; }}
+        onMouseLeave={e => { e.currentTarget.style.background = '#ECFDF5'; }}
+      >
         <Link2 size={14} />
         <span>Linked to video card:</span>
         <strong>{linked.title}</strong>
         {linked.dealTitle && <span style={{ color: '#047857' }}>· {linked.dealTitle}</span>}
-      </div>
+      </a>
     );
   }
   return (
