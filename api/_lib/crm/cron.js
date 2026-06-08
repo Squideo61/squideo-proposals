@@ -8,6 +8,7 @@ import { getFreshAccessToken, performGmailSend } from './gmail.js';
 import { del } from '@vercel/blob';
 import { buildResumeEmail } from '../quoteResumeEmail.js';
 import { signTaskActionToken } from '../auth.js';
+import { quarterTaxSummary } from './stats.js';
 
 export async function cronHandler(req, res, action) {
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
@@ -32,6 +33,7 @@ export async function cronHandler(req, res, action) {
     case 'quote-resume':      return cronQuoteResume(res);
     case 'scheduled-emails':  return cronScheduledEmails(res);
     case 'invoice-reminders': return cronInvoiceReminders(res);
+    case 'quarterly-tax-summary': return cronQuarterlyTaxSummary(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }
@@ -277,6 +279,69 @@ export async function cronInvoiceReminders(res) {
     }
   }
   return res.status(200).json({ ok: true, found: due.length, sent });
+}
+
+const QUARTER_TAX_NOTIFY_TO = process.env.QUARTER_TAX_NOTIFY_TO || 'adam@squideo.co.uk';
+
+// End-of-quarter summary: once a calendar quarter has fully ended, email + in-app
+// the owner the VAT and Corporation Tax they should have set aside for it. Runs
+// daily; a guard table makes it fire exactly once per quarter. On the very first
+// run it backfills the guard WITHOUT sending, so deploying mid-quarter doesn't
+// trigger a surprise summary for an old quarter — it only sends going forward.
+export async function cronQuarterlyTaxSummary(res) {
+  await sql`CREATE TABLE IF NOT EXISTS finance_quarter_summaries (quarter TEXT PRIMARY KEY, sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+  // Self-heal the role default so the owner target actually resolves a recipient.
+  await sql`UPDATE roles SET notification_defaults = jsonb_set(notification_defaults, '{finance.quarter_summary}', 'true', true) WHERE NOT (notification_defaults ? 'finance.quarter_summary')`;
+
+  // The most recently ENDED calendar quarter, relative to now.
+  const now = new Date();
+  let y = now.getUTCFullYear();
+  let q = Math.floor(now.getUTCMonth() / 3) - 1; // previous quarter (0-3)
+  if (q < 0) { q = 3; y -= 1; }
+  const qNum = q + 1;
+  const quarterKey = `${y}-Q${qNum}`;
+
+  const [existing] = await sql`SELECT 1 FROM finance_quarter_summaries WHERE quarter = ${quarterKey}`;
+  if (existing) return res.status(200).json({ ok: true, quarter: quarterKey, status: 'already-sent' });
+
+  // First-ever run: seed the guard for this quarter without sending.
+  const [{ cnt }] = await sql`SELECT COUNT(*)::int AS cnt FROM finance_quarter_summaries`;
+  if (cnt === 0) {
+    await sql`INSERT INTO finance_quarter_summaries (quarter) VALUES (${quarterKey}) ON CONFLICT DO NOTHING`;
+    return res.status(200).json({ ok: true, quarter: quarterKey, status: 'seeded-no-send' });
+  }
+
+  const s = await quarterTaxSummary(y, qNum);
+  const root = APP_URL.replace(/\/$/, '');
+  const link = `${root}/#/finance`;
+  const gbp = (n) => '£' + (Number(n) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const total = gbp((Number(s.vat) || 0) + (Number(s.corpTax) || 0));
+  const subject = `${s.label}: set aside ${gbp(s.vat)} VAT + ${gbp(s.corpTax)} Corp Tax`;
+  const html = `
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">${escapeHtml(s.label)} — money to set aside</h2>
+    <p style="margin:0 0 16px;color:#6B7785;">Based on cash banked in ${escapeHtml(s.label)} (ex-VAT) and your current cost base. Estimates — confirm with your accountant.</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:420px;">
+      <tr><td style="padding:8px 0;font-size:14px;">VAT to set aside</td><td style="padding:8px 0;font-size:16px;font-weight:700;text-align:right;color:#F59E0B;">${gbp(s.vat)}</td></tr>
+      <tr><td style="padding:8px 0;font-size:14px;border-top:1px solid #E5E9EE;">Corporation Tax to set aside</td><td style="padding:8px 0;font-size:16px;font-weight:700;text-align:right;color:#0E7490;border-top:1px solid #E5E9EE;">${gbp(s.corpTax)}</td></tr>
+      <tr><td style="padding:8px 0;font-size:14px;font-weight:700;border-top:2px solid #E5E9EE;">Total to set aside</td><td style="padding:8px 0;font-size:16px;font-weight:800;text-align:right;border-top:2px solid #E5E9EE;">${total}</td></tr>
+    </table>
+    <p style="margin:20px 0 0;"><a href="${link}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open Finance → VAT &amp; Corp tax</a></p>
+  `;
+  const text = `${s.label}: set aside ${gbp(s.vat)} VAT + ${gbp(s.corpTax)} Corporation Tax (total ${total}). ${link}`;
+
+  try {
+    await sendNotification('finance.quarter_summary', {
+      ownerEmail: QUARTER_TAX_NOTIFY_TO,
+      subject, html, text,
+      extraRecipients: [QUARTER_TAX_NOTIFY_TO],
+      inApp: { title: subject, body: `Set aside ${gbp(s.vat)} VAT + ${gbp(s.corpTax)} Corp Tax for ${s.label}.`, link: '#/finance' },
+    });
+    await sql`INSERT INTO finance_quarter_summaries (quarter) VALUES (${quarterKey}) ON CONFLICT DO NOTHING`;
+    return res.status(200).json({ ok: true, quarter: quarterKey, status: 'sent', vat: s.vat, corpTax: s.corpTax });
+  } catch (err) {
+    console.error('[cron quarterly-tax-summary] failed', { quarter: quarterKey, err: err.message });
+    return res.status(500).json({ ok: false, quarter: quarterKey, error: err.message });
+  }
 }
 
 export async function cronTaskReminders(res) {

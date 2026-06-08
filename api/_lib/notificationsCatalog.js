@@ -108,6 +108,13 @@ export const NOTIFICATIONS = [
     audience: 'broadcast',
     group: 'Revisions',
   },
+  {
+    key: 'finance.quarter_summary',
+    label: 'Quarterly VAT & Corp Tax summary',
+    description: 'At the end of each calendar quarter, a summary of the VAT and Corporation Tax you should have set aside.',
+    audience: 'owner',
+    group: 'Finance',
+  },
 ];
 
 const KEYS = new Set(NOTIFICATIONS.map(n => n.key));

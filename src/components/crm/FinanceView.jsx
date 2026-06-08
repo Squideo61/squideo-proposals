@@ -10,6 +10,7 @@ import { formatGBP, formatProposalNumber, useIsMobile } from '../../utils.js';
 import { PerformancePanel } from './PerformanceView.jsx';
 
 const VAT_COLOR = '#F59E0B';
+const CT_COLOR = '#0E7490';
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
 const shortMonth = (key) => {
   const [y, m] = key.split('-').map(Number);
@@ -57,9 +58,9 @@ const financeViewMemory = {
 function buildFinanceView(fin, { mode, qIdx, monthKey, isCurrentYear, monthIdx, effectiveYear }) {
   const months = fin?.months || [];
   const quarters = fin?.quarters || [];
-  const yearTotals = months.reduce((a, m) => ({ net: a.net + m.net, vat: a.vat + m.vat, gross: a.gross + m.gross }), { net: 0, vat: 0, gross: 0 });
+  const yearTotals = months.reduce((a, m) => ({ net: a.net + m.net, vat: a.vat + m.vat, gross: a.gross + m.gross, corpTax: a.corpTax + (m.corpTax || 0) }), { net: 0, vat: 0, gross: 0, corpTax: 0 });
 
-  const zero = { net: 0, vat: 0, gross: 0 };
+  const zero = { net: 0, vat: 0, gross: 0, corpTax: 0 };
   const displayMonths = mode === 'quarter' ? months.slice(qIdx * 3, qIdx * 3 + 3)
     : mode === 'month' ? months.filter((m) => m.month === monthKey)
     : months;
@@ -227,7 +228,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
         <Segmented
           value={section}
           onChange={setSection}
-          options={[{ value: 'income', label: firstTab.label }, { value: 'pending', label: 'Pending Payments' }, { value: 'vat', label: 'VAT' }]}
+          options={[{ value: 'income', label: firstTab.label }, { value: 'pending', label: 'Pending Payments' }, { value: 'vat', label: 'VAT & Corp tax' }]}
         />
         {section !== 'pending' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -298,23 +299,23 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
 
       {section === 'vat' && (
         <>
-          {/* VAT-to-save is the headline ask. */}
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : (mode === 'year' ? 'repeat(2, 1fr)' : '1fr'), gap: 12, marginBottom: 16 }}>
-            {mode !== 'year' ? (
-              <StatCard icon={PiggyBank} accent={VAT_COLOR} label={`VAT to set aside — ${view.periodLabel}`} value={formatGBP(view.totals.vat)} sub={`Set aside for ${view.periodLabel}`} />
-            ) : (
-              <>
-                <StatCard icon={PiggyBank} accent={VAT_COLOR} label={view.thisMonth ? `VAT to set aside — ${shortMonth(view.thisMonth.month)}` : `VAT to set aside — ${effectiveYear}`} value={formatGBP(view.thisMonth ? view.thisMonth.vat : view.totals.vat)} sub={view.thisMonth ? 'From cash banked this month' : 'Total for the year'} />
-                <QuarterMenuCard
-                  quarters={view.quarters}
-                  currentIdx={isCurrentYear ? Math.floor(monthIdx / 3) : -1}
-                  label={isCurrentYear && view.thisQuarter ? `VAT — ${view.thisQuarter.label}` : `VAT — ${effectiveYear}`}
-                  value={formatGBP(isCurrentYear && view.thisQuarter ? view.thisQuarter.vat : view.totals.vat)}
-                  onPick={(i) => { setQuarterKey(`${effectiveYear}-Q${i + 1}`); setMode('quarter'); }}
-                />
-              </>
-            )}
+          {/* VAT and Corporation Tax to set aside, both for the selected period. */}
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
+            <StatCard icon={PiggyBank} accent={VAT_COLOR} label={`VAT to set aside — ${view.periodLabel}`} value={formatGBP(view.totals.vat)} sub={`From cash banked in ${view.periodLabel}`} />
+            <StatCard icon={Landmark} accent={CT_COLOR} label={`Corp Tax to set aside — ${view.periodLabel}`} value={formatGBP(view.totals.corpTax || 0)} sub={`Estimated on ${view.periodLabel} profit (HMRC marginal relief)`} />
           </div>
+
+          {mode === 'year' && (
+            <div style={{ marginBottom: 16 }}>
+              <QuarterMenuCard
+                quarters={view.quarters}
+                currentIdx={isCurrentYear ? Math.floor(monthIdx / 3) : -1}
+                label={isCurrentYear && view.thisQuarter ? `Jump to a quarter — ${view.thisQuarter.label}` : `Jump to a quarter — ${effectiveYear}`}
+                value={formatGBP(isCurrentYear && view.thisQuarter ? view.thisQuarter.vat : view.totals.vat)}
+                onPick={(i) => { setQuarterKey(`${effectiveYear}-Q${i + 1}`); setMode('quarter'); }}
+              />
+            </div>
+          )}
 
           {/* Monthly breakdown table. */}
           <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20 }}>
@@ -328,6 +329,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
                     <th style={{ textAlign: 'left', padding: '8px 8px' }}>Month</th>
                     <th style={{ padding: '8px 8px' }}>Net (ex-VAT)</th>
                     <th style={{ padding: '8px 8px', color: VAT_COLOR }}>VAT to save</th>
+                    <th style={{ padding: '8px 8px', color: CT_COLOR }}>Corp Tax to save</th>
                     <th style={{ padding: '8px 8px' }}>Gross</th>
                   </tr>
                 </thead>
@@ -341,6 +343,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
                         </td>
                         <td style={{ textAlign: 'right', padding: '8px 8px' }}>{formatGBP(m.net)}</td>
                         <td style={{ textAlign: 'right', padding: '8px 8px', fontWeight: 600, color: m.vat > 0 ? VAT_COLOR : BRAND.muted }}>{formatGBP(m.vat)}</td>
+                        <td style={{ textAlign: 'right', padding: '8px 8px', fontWeight: 600, color: (m.corpTax || 0) > 0 ? CT_COLOR : BRAND.muted }}>{formatGBP(m.corpTax || 0)}</td>
                         <td style={{ textAlign: 'right', padding: '8px 8px', color: BRAND.muted }}>{formatGBP(m.gross)}</td>
                       </tr>
                     );
@@ -352,6 +355,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
                       <td style={{ textAlign: 'left', padding: '10px 8px' }}>Total {view.periodLabel}</td>
                       <td style={{ textAlign: 'right', padding: '10px 8px' }}>{formatGBP(view.totals.net)}</td>
                       <td style={{ textAlign: 'right', padding: '10px 8px', color: VAT_COLOR }}>{formatGBP(view.totals.vat)}</td>
+                      <td style={{ textAlign: 'right', padding: '10px 8px', color: CT_COLOR }}>{formatGBP(view.totals.corpTax || 0)}</td>
                       <td style={{ textAlign: 'right', padding: '10px 8px' }}>{formatGBP(view.totals.gross)}</td>
                     </tr>
                   </tfoot>

@@ -477,22 +477,39 @@ async function financeReport(year) {
     b.net += r.net; b.vat += r.vat; b.gross += r.gross;
   }
   const months = Object.entries(monthsMap).map(([month, v]) => ({
-    month, net: round2(v.net), vat: round2(v.vat), gross: round2(v.gross),
+    month, net: round2(v.net), vat: round2(v.vat), gross: round2(v.gross), corpTax: 0,
   }));
+
+  // Corporation Tax to set aside per month — computed on OPERATING profit (cash
+  // banked net − the cost base that month) at the YEAR's blended marginal rate.
+  // A loss month sets aside nothing. Mirrors the Cash Flow tab's CT (estimate).
+  try {
+    const costRows = await loadCashflowCostRows();
+    const autoDir = autoDirectorTaxMonthlyFrom(costRows);
+    const opProfit = {};
+    let opProfitYear = 0;
+    for (const m of months) {
+      const op = round2(m.net - operatingCostTotalForMonth(costRows, m.month, autoDir));
+      opProfit[m.month] = op;
+      opProfitYear += op;
+    }
+    const effRate = opProfitYear > 0 ? corpTaxOn(opProfitYear) / opProfitYear : 0;
+    for (const m of months) m.corpTax = Math.max(0, round2(opProfit[m.month] * effRate));
+  } catch { /* leave corpTax at 0 — the cost base is admin-only and may be empty */ }
 
   // YTD: whole year for a past year, else up to (and including) the current month.
   const now = new Date();
   const curYear = now.getUTCFullYear();
-  const ytd = { net: 0, vat: 0, gross: 0 };
+  const ytd = { net: 0, vat: 0, gross: 0, corpTax: 0 };
   for (const m of months) {
     const mi = Number(m.month.slice(5)) - 1;
     if (year < curYear || (year === curYear && mi <= now.getUTCMonth())) {
-      ytd.net += m.net; ytd.vat += m.vat; ytd.gross += m.gross;
+      ytd.net += m.net; ytd.vat += m.vat; ytd.gross += m.gross; ytd.corpTax += m.corpTax;
     }
   }
 
   // Calendar quarters — UK VAT returns are filed quarterly, so a quarter roll-up
-  // of the VAT-to-save is handy alongside the monthly view.
+  // of the VAT-to-save (and CT to set aside) is handy alongside the monthly view.
   const quarters = [0, 1, 2, 3].map((q) => {
     const qm = months.slice(q * 3, q * 3 + 3);
     return {
@@ -500,6 +517,7 @@ async function financeReport(year) {
       net: round2(qm.reduce((s, x) => s + x.net, 0)),
       vat: round2(qm.reduce((s, x) => s + x.vat, 0)),
       gross: round2(qm.reduce((s, x) => s + x.gross, 0)),
+      corpTax: round2(qm.reduce((s, x) => s + x.corpTax, 0)),
     };
   });
 
@@ -513,10 +531,19 @@ async function financeReport(year) {
   return {
     year,
     months,
-    ytd: { net: round2(ytd.net), vat: round2(ytd.vat), gross: round2(ytd.gross) },
+    ytd: { net: round2(ytd.net), vat: round2(ytd.vat), gross: round2(ytd.gross), corpTax: round2(ytd.corpTax) },
     quarters,
     outstanding: round2(outstanding),
   };
+}
+
+// Quarter roll-up of VAT + Corporation Tax to set aside (cash basis), for the
+// quarterly-summary cron. qNum is 1-4. Reuses the finance report.
+export async function quarterTaxSummary(year, qNum) {
+  const fin = await financeReport(year);
+  const q = (fin.quarters || [])[qNum - 1] || { label: `Q${qNum} ${year}`, net: 0, vat: 0, gross: 0, corpTax: 0 };
+  const months = (fin.months || []).slice((qNum - 1) * 3, (qNum - 1) * 3 + 3);
+  return { label: `Q${qNum} ${year}`, year, quarter: qNum, net: q.net, vat: q.vat, corpTax: q.corpTax || 0, gross: q.gross, months };
 }
 
 // A performance period: 'YYYY-MM' (month) or 'YYYY-Qn' (calendar quarter).
@@ -1554,6 +1581,26 @@ function employeeNI(annual) {
 // Estimate only — ignores other income and the >£100k PA taper interaction.
 function directorPersonalTax(annual) {
   return ukIncomeTax(annual) + employeeNI(annual);
+}
+
+// Shared with the Finance "VAT & Corp tax" report: load the cost base once and
+// compute a month's OPERATING cost total (everything except the auto CT line),
+// resolving the auto director-tax row from the tax_basis rows.
+async function loadCashflowCostRows() {
+  await ensureCashflow();
+  return sql`SELECT * FROM cashflow_costs ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
+}
+function autoDirectorTaxMonthlyFrom(costRows) {
+  return round2(costRows.filter((r) => r.tax_basis === true)
+    .reduce((s, r) => s + directorPersonalTax(monthlyAmountOf(r) * 12) / 12, 0));
+}
+function operatingCostTotalForMonth(costRows, mk, autoDir) {
+  let total = 0;
+  for (const r of costRows) {
+    if (!costAppliesToMonth(r, mk)) continue;
+    total += (r.auto_type === 'director_tax' ? autoDir : monthlyAmountOf(r));
+  }
+  return round2(total);
 }
 
 function serialiseCost(r) {
