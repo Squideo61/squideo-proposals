@@ -108,7 +108,6 @@ function NeonSection({ neon, loading }) {
           </div>
           <p style={{ fontSize: 12, color: BRAND.muted, marginTop: 14, lineHeight: 1.6 }}>
             <strong>Estimated</strong> from Neon Launch unit prices for this billing period to date
-            {neon.period?.start ? ` (since ${new Date(neon.period.start).toLocaleDateString()})` : ''}
             {neon.projectName ? ` · project “${neon.projectName}”` : ''}. For exact billing see your{' '}
             <a href="https://console.neon.tech/app/billing" target="_blank" rel="noreferrer"
               style={{ color: BRAND.blue, textDecoration: 'none' }}>
