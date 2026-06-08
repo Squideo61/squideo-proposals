@@ -88,25 +88,39 @@ function sumMetrics(payload) {
 }
 
 async function compute(key, { orgIdEnv, projectIdEnv, debug } = {}) {
-  // Neon now scopes every account under an organization; the consumption API
-  // requires org_id. Use the configured org, else the account's first org.
-  let orgId = orgIdEnv;
-  if (!orgId) {
+  // Neon scopes projects under organizations; the consumption API needs both
+  // org_id AND explicit project_ids (an org_id alone returns no projects).
+  // Resolve the candidate orgs, then find the one that actually has projects.
+  let candidateOrgs;
+  if (orgIdEnv) {
+    candidateOrgs = [orgIdEnv];
+  } else {
     const orgsPayload = await neonGet('/users/me/organizations', key);
-    const orgs = orgsPayload?.organizations || orgsPayload?.orgs || [];
-    if (!orgs.length) {
+    candidateOrgs = (orgsPayload?.organizations || orgsPayload?.orgs || []).map(o => o.id).filter(Boolean);
+    if (!candidateOrgs.length) {
       throw new Error('No Neon organization found for this API key. Set NEON_ORG_ID, or use an API key that belongs to your organization.');
     }
-    orgId = orgs[0].id;
   }
 
-  // Optional project name (nice-to-have label); failure here is non-fatal.
+  let orgId = null;
+  let projects = [];
+  for (const oid of candidateOrgs) {
+    const list = await neonGet(`/projects?org_id=${encodeURIComponent(oid)}&limit=100`, key);
+    const ps = list?.projects || [];
+    if (ps.length) { orgId = oid; projects = ps; break; }
+  }
+  if (!orgId) {
+    throw new Error('No Neon projects found for this API key in your organisation(s). Set NEON_ORG_ID / NEON_PROJECT_ID, or use an org-scoped API key.');
+  }
+
+  // Scope to a specific project if configured, else every project in the org.
+  let projectIds = projects.map(p => p.id);
   let projectName = null;
   if (projectIdEnv) {
-    try {
-      const p = await neonGet(`/projects/${projectIdEnv}`, key);
-      projectName = p?.project?.name || null;
-    } catch { /* label only */ }
+    projectIds = [projectIdEnv];
+    projectName = projects.find(p => p.id === projectIdEnv)?.name || null;
+  } else if (projects.length === 1) {
+    projectName = projects[0].name || null;
   }
 
   // Query a ~5-week window with daily granularity, then keep only the current
@@ -121,14 +135,19 @@ async function compute(key, { orgIdEnv, projectIdEnv, debug } = {}) {
     from, to, granularity: 'daily', org_id: orgId,
     metrics: METRICS.join(','), limit: '100',
   });
-  if (projectIdEnv) qs.append('project_ids', projectIdEnv);
+  for (const id of projectIds) qs.append('project_ids', id);
   const usagePayload = await neonGet(`/consumption_history/v2/projects?${qs}`, key);
   const { totals: m, periodStart } = sumMetrics(usagePayload);
 
   if (debug) {
     // Troubleshooting passthrough — shows exactly what Neon returned and how we
     // parsed it, so the response shape can be confirmed. Open ?debug=1 in-browser.
-    return { _debug: true, orgId, window: { from, to }, parsedTotals: m, periodStart, raw: usagePayload };
+    return {
+      _debug: true, orgId, candidateOrgs,
+      projectsFound: projects.map(p => ({ id: p.id, name: p.name })),
+      queriedProjectIds: projectIds,
+      window: { from, to }, parsedTotals: m, periodStart, raw: usagePayload,
+    };
   }
 
   const computeCuHours = m.compute_unit_seconds / 3600;
