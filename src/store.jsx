@@ -921,7 +921,7 @@ export function StoreProvider({ children }) {
       }).catch(() => null);
     },
     // Business → Finance (Cash Flow): costs, monthly profit, CT to set aside and
-    // a suggested target for a month ('YYYY-MM', default current).
+    // the wage-based revenue targets for a month ('YYYY-MM', default current).
     loadCashflow(month) {
       const path = '/api/crm/stats/cashflow' + (month ? '/' + month : '');
       return api.get(path).then((data) => {
@@ -957,10 +957,6 @@ export function StoreProvider({ children }) {
     // Persist a drag-reordered list of cost ids (sets sort_order = position).
     reorderCashflowCosts(ids) {
       return api.post('/api/crm/stats/cashflow-cost', { reorder: ids });
-    },
-    // Set the monthly profit goal that drives the suggested revenue target.
-    setCashflowProfitGoal(profitGoal) {
-      return api.post('/api/crm/stats/cashflow-cost', { profitGoal });
     },
     // Business → Finance: outstanding balance per signed deal (PO vs normal) +
     // the imported manual pending payments group.

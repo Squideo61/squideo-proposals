@@ -1,8 +1,8 @@
--- Cash Flow (Business → Finance → Performance → "Cash Flow" tab). Admin-only.
--- Company costs (recurring overheads + one-off entries) used to compute each
--- month's profit (cash received net − costs), Corporation Tax to set aside
--- (HMRC marginal relief on the trailing 12-month profit) and a suggested
--- monthly revenue target. Plus a dedicated activity feed for cost changes.
+-- Cash Flow (Business → Finance → Performance → "Cash Flow & Targets" tab).
+-- Admin-only. Company costs (recurring overheads + one-off entries) used to
+-- compute each month's profit (cash received net − costs), Corporation Tax to
+-- set aside (HMRC marginal relief on the trailing 12-month profit) and the
+-- wage-based revenue targets. Plus a dedicated activity feed for cost changes.
 --
 -- The app self-heals these (ensureCashflow in api/_lib/crm/stats.js), so this
 -- file documents the schema and lets a fresh DB skip the first-call ALTERs.
@@ -24,10 +24,7 @@ CREATE TABLE IF NOT EXISTS cashflow_costs (
 CREATE TABLE IF NOT EXISTS cashflow_activity (
   id          BIGSERIAL PRIMARY KEY,
   actor_email TEXT,
-  action      TEXT NOT NULL,        -- 'cost.add' | 'cost.update' | 'cost.delete' | 'goal.update'
+  action      TEXT NOT NULL,        -- 'cost.add' | 'cost.update' | 'cost.delete'
   summary     TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
--- Desired monthly profit, drives the suggested revenue target.
-ALTER TABLE settings ADD COLUMN IF NOT EXISTS cashflow_profit_goal NUMERIC;

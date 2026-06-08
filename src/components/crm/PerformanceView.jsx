@@ -350,9 +350,9 @@ function SalesVsPpView({ trend, isMobile, actions, history }) {
   );
 }
 
-// Cash Flow — company costs vs cash received: each month's profit, the
+// Cash Flow & Targets — company costs vs cash received: each month's profit, the
 // Corporation Tax to set aside (HMRC marginal relief on the trailing-12m profit)
-// and a suggested revenue target. Its own month picker (independent of the page),
+// and the wage-based revenue targets. Its own month picker (independent of the page),
 // a costs editor (recurring overheads + one-offs), a 12-month history and an
 // activity feed. Admin-only — rides on the Finance page's settings.manage gate.
 const PROFIT_POS = '#10B981';

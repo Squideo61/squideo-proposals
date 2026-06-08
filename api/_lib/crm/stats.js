@@ -1336,8 +1336,8 @@ async function incomeDateRoute(req, res) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cash Flow — company costs, monthly profit, Corporation Tax to set aside and a
-// suggested revenue target. Admin-only (rides on the same settings.manage gate
+// Cash Flow — company costs, monthly profit, Corporation Tax to set aside and the
+// wage-based revenue targets. Admin-only (rides on the same settings.manage gate
 // as the rest of stats). Self-heals its tables so a missing migration never 500s.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1436,7 +1436,6 @@ function ensureCashflow() {
     // 'director_tax'). tax_basis: a salary row that feeds the director-tax calc.
     await sql`ALTER TABLE cashflow_costs ADD COLUMN IF NOT EXISTS auto_type TEXT`;
     await sql`ALTER TABLE cashflow_costs ADD COLUMN IF NOT EXISTS tax_basis BOOLEAN NOT NULL DEFAULT false`;
-    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cashflow_profit_goal NUMERIC`;
 
     // Seed the cost base once (empty table only). Deterministic ids +
     // ON CONFLICT DO NOTHING so a concurrent cold-start re-seed can't duplicate.
@@ -1656,9 +1655,6 @@ async function cashflowReport(action) {
   const sel = history[history.length - 1];
   const monthReserve = round2(sel.profit * effectiveRate); // negative on a loss month = a CT saving
 
-  const [{ pg }] = await sql`SELECT COALESCE(cashflow_profit_goal, 0) AS pg FROM settings WHERE id = 1`;
-  const profitGoal = round2(Number(pg) || 0);
-
   // Wage-based targets. The "minimum" target is simply the full cost base (the
   // break-even). The £4k/£5k targets answer: what must we bill so both directors
   // can take a £4k/£5k wage? Each director's wage baseline is £3,000/mo (Adam's
@@ -1698,7 +1694,6 @@ async function cashflowReport(action) {
     month,
     selected: sel,
     corpTax: { effectiveRate, monthReserve, yearEstimate: ctYear, profit12, cashIn12, costs12, inProfit: sel.profit > 0 },
-    suggested: { profitGoal, breakEven: sel.costs, target: round2(sel.costs + profitGoal) },
     targets: wageTargets,
     history,
     lines,
@@ -1707,7 +1702,6 @@ async function cashflowReport(action) {
 }
 
 // Writes for the Cash Flow tab. action carries the cost id for PATCH/DELETE.
-//   POST { profitGoal }                          → set the monthly profit goal
 //   POST { label, category, amount, recurring, month?, effectiveFrom? } → add a cost
 //   PATCH/<id> { label?, category?, amount?, effectiveTo? }            → edit a cost
 //   DELETE/<id>                                  → remove a cost
@@ -1717,12 +1711,6 @@ async function cashflowRoute(req, res, action, user) {
 
   if (req.method === 'POST' || req.method === 'PUT') {
     const body = req.body || {};
-    if ('profitGoal' in body) {
-      const pg = Number(body.profitGoal) || 0;
-      await sql`UPDATE settings SET cashflow_profit_goal = ${pg} WHERE id = 1`;
-      await logCashflow(actor, 'goal.update', `Set monthly profit goal to ${gbp(pg)}`);
-      return res.status(200).json({ ok: true });
-    }
     // Drag-reorder: persist the given category's ids in their new order.
     if (Array.isArray(body.reorder)) {
       let i = 0;
