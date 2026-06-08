@@ -1396,9 +1396,9 @@ const CASHFLOW_COST_SEED = [
   ['Chloe', 'wages', 800.00, true, null],
   ['Hannah Bales', 'wages', 2121.11, true, null],
   ['Adam Leveson', 'wages', 2121.11, true, null],
-  // Wages — freelancers.
-  ['Lesley Ovington (freelance)', 'wages', 1750.00, true, null],
-  ['Freelance Copywriter', 'wages', 170.00, true, null],
+  // Freelancers.
+  ['Lesley Ovington', 'freelancer', 1750.00, true, null],
+  ['Freelance Copywriter', 'freelancer', 170.00, true, null],
   // One-offs — June 2026.
   ['Adam Director allowance', 'expense', 250.00, false, '2026-06'],
   ['Ben Director allowance', 'expense', 250.00, false, '2026-06'],
@@ -1446,6 +1446,15 @@ function ensureCashflow() {
         i += 1;
       }
     }
+
+    // One-time move of the seeded freelancers (Lesley + Freelance Copywriter)
+    // from wages into their own category, added after the original seed. Runs
+    // only until a freelancer row exists, so it never clobbers later manual
+    // recategorisation.
+    const [{ fcount }] = await sql`SELECT COUNT(*)::int AS fcount FROM cashflow_costs WHERE category = 'freelancer'`;
+    if (fcount === 0) {
+      await sql`UPDATE cashflow_costs SET category = 'freelancer' WHERE id IN ('cfseed42', 'cfseed43') AND category = 'wages'`;
+    }
   })().catch((err) => { cashflowEnsured = null; throw err; });
   return cashflowEnsured;
 }
@@ -1466,12 +1475,16 @@ function monthlyAmountOf(r) {
   return r.frequency === 'annual' ? amt / 12 : amt;
 }
 
+// Cost categories: staff wages, freelancers and operating expenses. Anything
+// unrecognised falls back to 'expense'.
+const normCategory = (c) => (c === 'wages' ? 'wages' : c === 'freelancer' ? 'freelancer' : 'expense');
+
 function serialiseCost(r) {
   const frequency = r.frequency === 'annual' ? 'annual' : 'monthly';
   return {
     id: r.id,
     label: r.label,
-    category: r.category === 'wages' ? 'wages' : 'expense',
+    category: normCategory(r.category),
     amount: Number(r.amount) || 0,
     frequency,
     monthlyAmount: round2(monthlyAmountOf(r)),
@@ -1526,19 +1539,22 @@ async function cashflowReport(action) {
   // Costs (resolved per month from the recurring + one-off rows).
   const costRows = await sql`SELECT * FROM cashflow_costs ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
   const costsForMonth = (mk) => {
-    let wages = 0, expenses = 0;
+    let wages = 0, expenses = 0, freelancers = 0;
     for (const r of costRows) {
       if (!costAppliesToMonth(r, mk)) continue;
       const amt = monthlyAmountOf(r);
-      if ((r.category || 'expense') === 'wages') wages += amt; else expenses += amt;
+      const cat = normCategory(r.category);
+      if (cat === 'wages') wages += amt;
+      else if (cat === 'freelancer') freelancers += amt;
+      else expenses += amt;
     }
-    return { wages: round2(wages), expenses: round2(expenses), total: round2(wages + expenses) };
+    return { wages: round2(wages), expenses: round2(expenses), freelancers: round2(freelancers), total: round2(wages + expenses + freelancers) };
   };
 
   const history = keys.map((mk) => {
     const c = costsForMonth(mk);
     const cashIn = round2(cashByMonth[mk] || 0);
-    return { month: mk, cashIn, wages: c.wages, expenses: c.expenses, costs: c.total, profit: round2(cashIn - c.total) };
+    return { month: mk, cashIn, wages: c.wages, expenses: c.expenses, freelancers: c.freelancers, costs: c.total, profit: round2(cashIn - c.total) };
   });
 
   const profit12 = round2(history.reduce((s, h) => s + h.profit, 0));
@@ -1596,7 +1612,7 @@ async function cashflowRoute(req, res, action, user) {
     }
     const label = trimOrNull(body.label);
     if (!label) return res.status(400).json({ error: 'label required' });
-    const category = body.category === 'wages' ? 'wages' : 'expense';
+    const category = normCategory(body.category);
     const frequency = body.frequency === 'annual' ? 'annual' : 'monthly';
     const amount = Number(body.amount) || 0;
     const recurring = body.recurring !== false;
@@ -1607,7 +1623,7 @@ async function cashflowRoute(req, res, action, user) {
     await sql`
       INSERT INTO cashflow_costs (id, label, category, amount, frequency, recurring, month, effective_from, sort_order)
       VALUES (${id}, ${label}, ${category}, ${amount}, ${frequency}, ${recurring}, ${month}, ${effectiveFrom}, ${m + 1})`;
-    const kindWord = category === 'wages' ? 'wage' : 'expense';
+    const kindWord = category === 'wages' ? 'wage' : category === 'freelancer' ? 'freelancer' : 'expense';
     const amtWord = frequency === 'annual' ? `${gbp(amount)}/yr (≈${gbp(amount / 12)}/mo)` : `${gbp(amount)}/mo`;
     await logCashflow(actor, 'cost.add', recurring
       ? `Added recurring ${kindWord} “${label}” ${amtWord}`
@@ -1634,7 +1650,7 @@ async function cashflowRoute(req, res, action, user) {
     const [existing] = await sql`SELECT * FROM cashflow_costs WHERE id = ${action}`;
     if (!existing) return res.status(404).json({ error: 'Not found' });
     const label = body.label !== undefined ? (trimOrNull(body.label) || existing.label) : existing.label;
-    const category = body.category !== undefined ? (body.category === 'wages' ? 'wages' : 'expense') : existing.category;
+    const category = body.category !== undefined ? normCategory(body.category) : existing.category;
     const frequency = body.frequency !== undefined ? (body.frequency === 'annual' ? 'annual' : 'monthly') : (existing.frequency || 'monthly');
     const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
     const effectiveTo = body.effectiveTo !== undefined ? trimOrNull(body.effectiveTo) : existing.effective_to;

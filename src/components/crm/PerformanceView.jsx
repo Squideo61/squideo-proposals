@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users, GripVertical } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users, GripVertical, Briefcase } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -400,7 +400,7 @@ function CashFlowView({ isMobile }) {
         <StatCard icon={Wallet} accent={BRAND.blue} label="Cash received"
           value={formatGBP(sel.cashIn)} sub="Net banked (ex-VAT)" />
         <StatCard icon={Receipt} accent="#0E7490" label="Costs"
-          value={formatGBP(sel.costs)} sub={`Wages ${formatGBP(sel.wages)} · Expenses ${formatGBP(sel.expenses)}`} />
+          value={formatGBP(sel.costs)} sub={`Wages ${formatGBP(sel.wages)} · Freelance ${formatGBP(sel.freelancers || 0)} · Expenses ${formatGBP(sel.expenses)}`} />
         <StatCard icon={PiggyBank} accent={VAT_COLOR_CF}
           label={ct.inProfit ? 'Corp Tax to set aside' : 'Corp Tax saving'}
           value={formatGBP(Math.abs(ct.monthReserve))}
@@ -533,13 +533,16 @@ function CfSuggested({ sug, onSaveGoal, onApply, isMobile }) {
 // rest so payroll reads as its own block.
 function CfCosts({ lines, month, monthLabel, actions, reload, isMobile }) {
   const wages = lines.filter((l) => l.category === 'wages');
-  const expenses = lines.filter((l) => l.category !== 'wages');
+  const freelancers = lines.filter((l) => l.category === 'freelancer');
+  const expenses = lines.filter((l) => l.category !== 'wages' && l.category !== 'freelancer');
   return (
     <>
       <CfCostPanel title="Expenses" icon={Receipt} accent="#0E7490" category="expense"
         rows={expenses} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
       <CfCostPanel title="Wages" icon={Users} accent={BRAND.blue} category="wages"
         rows={wages} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
+      <CfCostPanel title="Freelancers" icon={Briefcase} accent="#8B5CF6" category="freelancer"
+        rows={freelancers} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
     </>
   );
 }
@@ -596,10 +599,11 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
   const [label, setLabel] = useState(row.label);
   const [amount, setAmount] = useState(String(row.amount));
   const [frequency, setFrequency] = useState(row.frequency || 'monthly');
+  const [category, setCategory] = useState(row.category || 'expense');
 
-  const save = () => actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0, frequency }).then(() => { setEditing(false); reload(); });
+  const save = () => actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0, frequency, category }).then(() => { setEditing(false); reload(); });
   const remove = () => actions.deleteCashflowCost(row.id).then(reload);
-  const reset = () => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); setFrequency(row.frequency || 'monthly'); };
+  const reset = () => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); setFrequency(row.frequency || 'monthly'); setCategory(row.category || 'expense'); };
 
   if (editing) {
     const monthlyEst = frequency === 'annual' ? (parseFloat(amount) || 0) / 12 : null;
@@ -613,6 +617,7 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
           onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
           style={{ width: 96, padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
         <Segmented value={frequency} onChange={setFrequency} options={[{ value: 'monthly', label: '/mo' }, { value: 'annual', label: '/yr' }]} />
+        <Segmented value={category} onChange={setCategory} options={[{ value: 'expense', label: 'Exp' }, { value: 'wages', label: 'Wages' }, { value: 'freelancer', label: 'Free' }]} />
         {monthlyEst != null && <span style={{ fontSize: 11, color: BRAND.muted }}>≈{formatGBP(monthlyEst)}/mo</span>}
         <button className="btn-icon" title="Save" onClick={save}><Check size={13} /></button>
         <button className="btn-icon" title="Cancel" onClick={reset}><X size={13} /></button>
@@ -670,7 +675,7 @@ function CfCostForm({ month, category, onDone, onCancel, actions }) {
   return (
     <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, margin: '4px 0 8px' }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <input autoFocus placeholder={category === 'wages' ? 'Who? (e.g. Adam, Freelance editor)' : 'What is it? (e.g. Office rent)'} value={label} onChange={(e) => setLabel(e.target.value)}
+        <input autoFocus placeholder={category === 'wages' ? 'Who? (e.g. Adam, Callum)' : category === 'freelancer' ? 'Who? (e.g. Lesley, Freelance editor)' : 'What is it? (e.g. Office rent)'} value={label} onChange={(e) => setLabel(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
           style={{ flex: 1, minWidth: 160, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
         <span style={{ color: BRAND.muted }}>£</span>
