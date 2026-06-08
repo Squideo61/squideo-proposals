@@ -125,12 +125,15 @@ async function compute(key, { orgIdEnv, projectIdEnv, debug } = {}) {
 
   // Query a ~5-week window with daily granularity, then keep only the current
   // billing period (sumMetrics). Daily avoids the monthly-granularity quirk where
-  // Neon snaps both ends to the 1st of the month and rejects from == to; the
-  // billing period itself comes from Neon's `period_start`, not a calendar guess.
+  // Neon snaps both ends to the 1st of the month and rejects from == to. The
+  // range must be DAY-ALIGNED (midnight UTC) or the daily endpoint returns no
+  // data; `to` is start-of-tomorrow so today's usage is included. The billing
+  // period itself comes from Neon's `period_start`, not a calendar guess.
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const startOfUTCDay = (d) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   const now = new Date();
-  const fromDate = new Date(now.getTime() - 35 * 24 * 60 * 60 * 1000);
-  const from = new Date(Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth(), fromDate.getUTCDate())).toISOString();
-  const to = now.toISOString();
+  const from = startOfUTCDay(new Date(now.getTime() - 35 * DAY_MS)).toISOString();
+  const to = startOfUTCDay(new Date(now.getTime() + DAY_MS)).toISOString();
   const qs = new URLSearchParams({
     from, to, granularity: 'daily', org_id: orgId,
     metrics: METRICS.join(','), limit: '100',
