@@ -6,7 +6,7 @@ import { allCompanyBalances } from './companies.js';
 import { outstandingExtrasByDeal, ensureDealExtrasTable } from './extras.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
 import { archiveRecord } from './recycleBin.js';
-import { getMonthlyOperatingCosts } from '../xero.js';
+import { getMonthlyOperatingCosts, getMonthlyBillCosts } from '../xero.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
 // five paid-money sources as companies.js (allCompanyBalances /
@@ -1561,14 +1561,24 @@ async function cashflowReport(action) {
     return (ov && mk !== nowKey) ? ov.sales : (cashByMonth[mk] || 0);
   };
 
-  // Actual monthly operating costs from Xero (Cost of Sales + Operating Expenses)
-  // for PAST months — the current month always keeps the hand-built cost base.
-  // Best-effort: if Xero isn't connected with the reports scope, fall back to base.
+  // Actual monthly operating costs from Xero for PAST months — the current month
+  // always keeps the hand-built cost base. Prefer the P&L report (complete); if
+  // the reports scope isn't granted, fall back to supplier-bill (ACCPAY) totals
+  // which only need the existing invoices scope. Best-effort — on any failure we
+  // simply keep the hand-built base.
   let xeroCosts = new Map();
+  let xeroSource = null;
   try {
     xeroCosts = await getMonthlyOperatingCosts({ endMonth: month });
+    xeroSource = 'pl';
   } catch (err) {
-    console.error('[cashflow] Xero P&L unavailable', err?.message || err);
+    console.error('[cashflow] Xero P&L unavailable, trying bills', err?.message || err);
+    try {
+      xeroCosts = await getMonthlyBillCosts({ endMonth: month });
+      xeroSource = 'bills';
+    } catch (err2) {
+      console.error('[cashflow] Xero bills unavailable', err2?.message || err2);
+    }
   }
 
   // Costs (resolved per month from the recurring + one-off rows).
@@ -1622,6 +1632,7 @@ async function cashflowReport(action) {
     selected: sel,
     corpTax: { effectiveRate, monthReserve, yearEstimate: ctYear, profit12, cashIn12, costs12, inProfit: sel.profit > 0 },
     suggested: { profitGoal, breakEven: sel.costs, target: round2(sel.costs + profitGoal) },
+    xeroSource,
     history,
     lines,
     activity: activityRows.map((r) => ({ id: String(r.id), actor: r.actor_email || null, action: r.action, summary: r.summary, createdAt: r.created_at })),

@@ -499,6 +499,44 @@ export async function getMonthlyOperatingCosts({ endMonth, periods = 11 }) {
   return map;
 }
 
+// Fallback for when the reports scope isn't granted: monthly supplier-bill
+// (ACCPAY) totals, summed net (SubTotal, ex-VAT) by bill date. Uses the existing
+// accounting.invoices scope — no reconnect needed. Less complete than the P&L
+// report (misses spend not entered as a bill, e.g. some direct debits / card
+// payments), but a reasonable stand-in. Returns a Map of 'YYYY-MM' -> net total.
+export async function getMonthlyBillCosts({ endMonth, periods = 11 }) {
+  if (!/^\d{4}-\d{2}$/.test(endMonth || '')) throw new Error('[xero] endMonth (YYYY-MM) required');
+  const cacheKey = `bills|${endMonth}|${periods}`;
+  const hit = plCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < PL_TTL) return hit.map;
+
+  const [ey, em] = endMonth.split('-').map(Number); // em is 1-based
+  const from = new Date(Date.UTC(ey, em - 1 - periods, 1)); // first day of the oldest month
+  const until = new Date(Date.UTC(ey, em, 1));              // first day of the month after endMonth
+  const dt = (d) => `DateTime(${d.getUTCFullYear()},${d.getUTCMonth() + 1},${d.getUTCDate()})`;
+  const where = `Type=="ACCPAY" AND Date>=${dt(from)} AND Date<${dt(until)}`;
+
+  const map = new Map();
+  let page = 1;
+  while (true) {
+    const qs = new URLSearchParams({ where, page: String(page), Statuses: 'AUTHORISED,PAID' }).toString();
+    const json = await xeroFetch(`/api.xro/2.0/Invoices?${qs}`);
+    const invs = json?.Invoices || [];
+    for (const inv of invs) {
+      const ymd = parseXeroDate(inv.DateString || inv.Date);
+      if (!ymd) continue;
+      const mk = ymd.slice(0, 7);
+      const net = Number(inv.SubTotal) || 0;
+      map.set(mk, Math.round(((map.get(mk) || 0) + net) * 100) / 100);
+    }
+    if (invs.length < 100) break;
+    page += 1;
+    if (page > 100) break; // safety net
+  }
+  plCache.set(cacheKey, { at: Date.now(), map });
+  return map;
+}
+
 export async function createQuote({ contactId, lineItems, reference, status = 'SENT' }) {
   const payload = {
     Contact: { ContactID: contactId },

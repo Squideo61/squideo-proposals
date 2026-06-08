@@ -454,7 +454,12 @@ function CashFlowView({ isMobile }) {
       {/* 12-month history — click a month to jump to it. */}
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 16 }}>
         <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>Last 12 months</h3>
-        <p style={{ margin: '0 0 12px', fontSize: 11, color: BRAND.muted }}>Cash in for past months comes from the Live Sales Sheet; costs tagged <strong>Xero</strong> are actual operating costs. The current month uses live CRM cash and your cost base.</p>
+        <p style={{ margin: '0 0 12px', fontSize: 11, color: BRAND.muted }}>Cash in for past months comes from the Live Sales Sheet; costs tagged <strong>Xero</strong> are actual operating costs{cf.xeroSource === 'bills' ? ' (from supplier bills — see note below)' : cf.xeroSource === 'pl' ? ' (from your Profit & Loss)' : ''}. The current month uses live CRM cash and your cost base.</p>
+        {cf.xeroSource === 'bills' && (
+          <p style={{ margin: '0 0 12px', fontSize: 11, color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '6px 10px' }}>
+            Using Xero <strong>bills</strong> as a stand-in — the full Profit &amp; Loss feed needs the reports permission, which Xero rejected at reconnect. Bills miss any spend not entered as a supplier bill (some direct debits / card payments), so these may read a little low.
+          </p>
+        )}
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
