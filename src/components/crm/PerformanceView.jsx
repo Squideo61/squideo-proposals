@@ -643,10 +643,13 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
   const [frequency, setFrequency] = useState(row.frequency || 'monthly');
   const [category, setCategory] = useState(row.category || 'expense');
   const [note, setNote] = useState(row.note || '');
+  const [taxBasis, setTaxBasis] = useState(!!row.taxBasis);
 
-  const save = () => actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0, frequency, category, note: note.trim() }).then(() => { setEditing(false); reload(); });
+  const isAuto = row.autoType === 'director_tax';
+
+  const save = () => actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0, frequency, category, note: note.trim(), taxBasis }).then(() => { setEditing(false); reload(); });
   const remove = () => actions.deleteCashflowCost(row.id).then(reload);
-  const reset = () => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); setFrequency(row.frequency || 'monthly'); setCategory(row.category || 'expense'); setNote(row.note || ''); };
+  const reset = () => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); setFrequency(row.frequency || 'monthly'); setCategory(row.category || 'expense'); setNote(row.note || ''); setTaxBasis(!!row.taxBasis); };
 
   if (editing) {
     const monthlyEst = frequency === 'annual' ? (parseFloat(amount) || 0) / 12 : null;
@@ -655,12 +658,23 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
         <input autoFocus value={label} onChange={(e) => setLabel(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') reset(); }}
           style={{ flex: 1, minWidth: 120, padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
-        <span style={{ color: BRAND.muted }}>£</span>
-        <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
-          style={{ width: 96, padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
-        <Segmented value={frequency} onChange={setFrequency} options={[{ value: 'monthly', label: '/mo' }, { value: 'annual', label: '/yr' }]} />
+        {isAuto ? (
+          <span style={{ fontSize: 12, color: BRAND.muted }}>= {formatGBP(row.monthlyAmount ?? 0)}/mo (auto)</span>
+        ) : (
+          <>
+            <span style={{ color: BRAND.muted }}>£</span>
+            <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
+              style={{ width: 96, padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+            <Segmented value={frequency} onChange={setFrequency} options={[{ value: 'monthly', label: '/mo' }, { value: 'annual', label: '/yr' }]} />
+          </>
+        )}
         <Segmented value={category} onChange={setCategory} options={[{ value: 'expense', label: 'Exp' }, { value: 'marketing', label: 'Mktg' }, { value: 'wages', label: 'Staff' }, { value: 'freelancer', label: 'Free' }, { value: 'director', label: 'Dir' }, { value: 'allowance', label: 'Allow' }]} />
+        {category === 'director' && !isAuto && (
+          <label title="Include this salary when auto-calculating director personal tax" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: BRAND.ink, cursor: 'pointer' }}>
+            <input type="checkbox" checked={taxBasis} onChange={(e) => setTaxBasis(e.target.checked)} /> tax
+          </label>
+        )}
         {monthlyEst != null && <span style={{ fontSize: 11, color: BRAND.muted }}>≈{formatGBP(monthlyEst)}/mo</span>}
         <button className="btn-icon" title="Save" onClick={save}><Check size={13} /></button>
         <button className="btn-icon" title="Cancel" onClick={reset}><X size={13} /></button>
@@ -690,11 +704,16 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {row.label}
+          {row.taxBasis && <span title="Feeds the auto director personal-tax calc" style={{ fontSize: 11, color: BRAND.muted }}> · feeds director tax</span>}
           {!row.recurring && <span style={{ fontSize: 11, color: BRAND.muted }}> · one-off {row.month}</span>}
         </div>
-        {row.note && <div title={row.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.note}</div>}
+        {isAuto
+          ? <div style={{ fontSize: 11, color: '#CA8A04', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — UK income tax on the salaries marked “feeds director tax”{row.note ? ` · ${row.note}` : ''}</div>
+          : (row.note && <div title={row.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.note}</div>)}
       </div>
-      <CfFreqTag row={row} />
+      {isAuto
+        ? <span title="Auto-calculated — not editable directly" style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, padding: '1px 6px', borderRadius: 999, color: '#CA8A04', background: '#FEF9C3', border: '1px solid #FDE68A' }}>Auto</span>
+        : <CfFreqTag row={row} />}
       {row.frequency === 'annual' && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(row.amount)}/yr</span>}
       <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 64, textAlign: 'right' }}>{formatGBP(row.monthlyAmount ?? row.amount)}</span>
       <button className="btn-icon" title="Edit" onClick={() => setEditing(true)} style={{ padding: 3 }}><Pencil size={12} /></button>

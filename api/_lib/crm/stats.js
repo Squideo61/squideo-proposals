@@ -1389,8 +1389,8 @@ const CASHFLOW_COST_SEED = [
   ['Anna - part of B salary', 'director', 1047.50, true, null],
   ['Ben', 'director', 2113.50, true, null],
   ['Adam', 'director', 3500.00, true, null],
-  // Wages — staff salaries & tax.
-  ['Director personal tax saving', 'wages', 950.00, true, null],
+  // Director personal tax saving — auto-calculated (see flags migration below).
+  ['Director personal tax saving', 'director', 950.00, true, null],
   ['Callum', 'wages', 2480.00, true, null],
   ['Callum commission', 'wages', 448.55, true, null],
   ['Chloe', 'wages', 800.00, true, null],
@@ -1432,6 +1432,10 @@ function ensureCashflow() {
       )`;
     await sql`ALTER TABLE cashflow_costs ADD COLUMN IF NOT EXISTS frequency TEXT NOT NULL DEFAULT 'monthly'`;
     await sql`ALTER TABLE cashflow_costs ADD COLUMN IF NOT EXISTS note TEXT`;
+    // auto_type: a derived row whose amount is computed, not entered (currently
+    // 'director_tax'). tax_basis: a salary row that feeds the director-tax calc.
+    await sql`ALTER TABLE cashflow_costs ADD COLUMN IF NOT EXISTS auto_type TEXT`;
+    await sql`ALTER TABLE cashflow_costs ADD COLUMN IF NOT EXISTS tax_basis BOOLEAN NOT NULL DEFAULT false`;
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cashflow_profit_goal NUMERIC`;
 
     // Seed the cost base once (empty table only). Deterministic ids +
@@ -1475,6 +1479,13 @@ function ensureCashflow() {
       await sql`UPDATE cashflow_costs SET category = 'director' WHERE id IN ('cfseed33', 'cfseed34', 'cfseed35') AND category = 'wages'`;
       await sql`UPDATE cashflow_costs SET category = 'director' WHERE id IN ('cfseed29', 'cfseed32') AND category = 'expense'`;
     }
+    // Director personal tax saving auto-calculates from Adam + Ben's salaries.
+    // Mark the derived row and the two salary rows it's based on. Runs once.
+    const [{ autocount }] = await sql`SELECT COUNT(*)::int AS autocount FROM cashflow_costs WHERE auto_type IS NOT NULL`;
+    if (autocount === 0) {
+      await sql`UPDATE cashflow_costs SET auto_type = 'director_tax', category = 'director' WHERE id = 'cfseed36'`;
+      await sql`UPDATE cashflow_costs SET tax_basis = true WHERE id IN ('cfseed34', 'cfseed35')`;
+    }
   })().catch((err) => { cashflowEnsured = null; throw err; });
   return cashflowEnsured;
 }
@@ -1500,6 +1511,20 @@ function monthlyAmountOf(r) {
 const CATEGORIES = ['wages', 'freelancer', 'marketing', 'director', 'allowance'];
 const normCategory = (c) => (CATEGORIES.includes(c) ? c : 'expense');
 
+// UK personal income tax on an annual gross salary (2025/26 bands): £12,570
+// personal allowance (tapered £1 per £2 over £100k), 20% to £37,700 taxable,
+// 40% to the £125,140 additional-rate threshold, 45% above. Estimate only.
+function ukIncomeTax(annual) {
+  const a = Math.max(0, Number(annual) || 0);
+  const pa = a > 125140 ? 0 : a > 100000 ? Math.max(0, 12570 - (a - 100000) / 2) : 12570;
+  let taxable = Math.max(0, a - pa);
+  let tax = 0;
+  const basic = Math.min(taxable, 37700); tax += basic * 0.20; taxable -= basic;
+  const higher = Math.min(taxable, 125140 - 37700); tax += higher * 0.40; taxable -= higher;
+  tax += Math.max(taxable, 0) * 0.45;
+  return tax;
+}
+
 function serialiseCost(r) {
   const frequency = r.frequency === 'annual' ? 'annual' : 'monthly';
   return {
@@ -1510,6 +1535,8 @@ function serialiseCost(r) {
     frequency,
     monthlyAmount: round2(monthlyAmountOf(r)),
     note: r.note || null,
+    autoType: r.auto_type || null,
+    taxBasis: r.tax_basis === true,
     recurring: r.recurring !== false,
     month: r.month || null,
     effectiveFrom: r.effective_from || null,
@@ -1560,11 +1587,21 @@ async function cashflowReport(action) {
 
   // Costs (resolved per month from the recurring + one-off rows).
   const costRows = await sql`SELECT * FROM cashflow_costs ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
+
+  // Auto director personal-tax saving: UK income tax on each tax_basis salary row
+  // (annualised), summed back to a monthly figure. Recomputes whenever the
+  // underlying salaries change. The amount stored on the auto row is ignored.
+  const autoDirectorTaxMonthly = round2(
+    costRows.filter((r) => r.tax_basis === true)
+      .reduce((s, r) => s + ukIncomeTax(monthlyAmountOf(r) * 12) / 12, 0),
+  );
+  const resolvedAmount = (r) => (r.auto_type === 'director_tax' ? autoDirectorTaxMonthly : monthlyAmountOf(r));
+
   const costsForMonth = (mk) => {
     let wages = 0, expenses = 0, freelancers = 0, marketing = 0, director = 0, allowance = 0;
     for (const r of costRows) {
       if (!costAppliesToMonth(r, mk)) continue;
-      const amt = monthlyAmountOf(r);
+      const amt = resolvedAmount(r);
       const cat = normCategory(r.category);
       if (cat === 'wages') wages += amt;
       else if (cat === 'freelancer') freelancers += amt;
@@ -1595,6 +1632,10 @@ async function cashflowReport(action) {
   const profitGoal = round2(Number(pg) || 0);
 
   const lines = costRows.filter((r) => costAppliesToMonth(r, month)).map(serialiseCost);
+  // Reflect the computed value on the auto row (display + matches the totals).
+  for (const l of lines) {
+    if (l.autoType === 'director_tax') { l.amount = autoDirectorTaxMonthly; l.monthlyAmount = autoDirectorTaxMonthly; l.frequency = 'monthly'; }
+  }
   const activityRows = await sql`SELECT id, actor_email, action, summary, created_at FROM cashflow_activity ORDER BY created_at DESC LIMIT 40`;
 
   return {
@@ -1680,10 +1721,11 @@ async function cashflowRoute(req, res, action, user) {
     const frequency = body.frequency !== undefined ? (body.frequency === 'annual' ? 'annual' : 'monthly') : (existing.frequency || 'monthly');
     const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
     const note = body.note !== undefined ? trimOrNull(body.note) : existing.note;
+    const taxBasis = body.taxBasis !== undefined ? (body.taxBasis === true) : existing.tax_basis;
     const effectiveTo = body.effectiveTo !== undefined ? trimOrNull(body.effectiveTo) : existing.effective_to;
     await sql`
       UPDATE cashflow_costs
-         SET label = ${label}, category = ${category}, amount = ${amount}, frequency = ${frequency}, note = ${note}, effective_to = ${effectiveTo}, updated_at = NOW()
+         SET label = ${label}, category = ${category}, amount = ${amount}, frequency = ${frequency}, note = ${note}, tax_basis = ${taxBasis}, effective_to = ${effectiveTo}, updated_at = NOW()
        WHERE id = ${action}`;
     const upWord = frequency === 'annual' ? `${gbp(Number(amount) || 0)}/yr` : gbp(Number(amount) || 0);
     await logCashflow(actor, 'cost.update', `Updated “${label}” to ${upWord}`);
