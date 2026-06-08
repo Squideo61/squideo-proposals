@@ -355,7 +355,6 @@ function SalesVsPpView({ trend, isMobile, actions, history }) {
 // and a suggested revenue target. Its own month picker (independent of the page),
 // a costs editor (recurring overheads + one-offs), a 12-month history and an
 // activity feed. Admin-only — rides on the Finance page's settings.manage gate.
-const cfRound2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const PROFIT_POS = '#10B981';
 const PROFIT_NEG = '#EF4444';
 
@@ -392,18 +391,7 @@ function CashFlowView({ isMobile }) {
 
   const sel = cf.selected;
   const ct = cf.corpTax;
-  const sug = cf.suggested;
   const profitColor = sel.profit >= 0 ? PROFIT_POS : PROFIT_NEG;
-
-  const applyTargets = () => {
-    const base = (state.financeTargets && state.financeTargets.length) ? state.financeTargets : FALLBACK_TARGETS;
-    const list = base.map((t) => ({ ...t }));
-    if (list.length) {
-      list[0] = { ...list[0], amount: cfRound2(sug.breakEven) };
-      list[list.length - 1] = { ...list[list.length - 1], amount: cfRound2(sug.target) };
-    }
-    actions.saveFinanceTargets(list);
-  };
 
   return (
     <>
@@ -454,9 +442,6 @@ function CashFlowView({ isMobile }) {
 
       {/* Monthly revenue targets — minimum (cost base) + the wage-uplift targets. */}
       {cf.targets && <CfTargets targets={cf.targets} isMobile={isMobile} />}
-
-      {/* Suggested revenue target — costs + your profit goal. */}
-      <CfSuggested sug={sug} onSaveGoal={(g) => actions.setCashflowProfitGoal(g).then(reload)} onApply={applyTargets} isMobile={isMobile} />
 
       {/* Costs editor — recurring overheads + one-offs for the month. */}
       <CfCosts lines={cf.lines} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
@@ -559,38 +544,6 @@ function CfTargets({ targets, isMobile }) {
       </div>
       <p style={{ fontSize: 12, color: BRAND.muted, margin: '12px 0 0' }}>
         Each director’s wage baseline is {formatGBP(targets.baseline)}/mo on the graphs (Adam’s £500 car allowance is excluded). The wage targets lift both directors by the same amount and gross up for the extra income tax + employee NI — added on top of the minimum (which already funds today’s drawings). Estimate only.
-      </p>
-    </div>
-  );
-}
-
-function CfSuggested({ sug, onSaveGoal, onApply, isMobile }) {
-  const [goal, setGoal] = useState(String(sug.profitGoal || 0));
-  useEffect(() => { setGoal(String(sug.profitGoal || 0)); }, [sug.profitGoal]);
-  const dirty = (parseFloat(goal) || 0) !== (Number(sug.profitGoal) || 0);
-  return (
-    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${BRAND.blue}`, borderRadius: 10, padding: isMobile ? 14 : '14px 18px', marginBottom: 16 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>Suggested monthly revenue target</div>
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3, 1fr)', gap: 12, marginBottom: 12 }}>
-        <CfMini label="Break-even (cover costs)" value={formatGBP(sug.breakEven)} />
-        <CfMini label="Profit goal" value={formatGBP(sug.profitGoal)} />
-        <CfMini label="Target (costs + goal)" value={formatGBP(sug.target)} color={BRAND.blue} />
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <label style={{ fontSize: 13, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 6 }}>
-          Monthly profit goal <span style={{ color: BRAND.muted }}>£</span>
-          <input type="number" step="0.01" value={goal} onChange={(e) => setGoal(e.target.value)}
-            style={{ width: 130, padding: '6px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14 }} />
-        </label>
-        <button className="btn-ghost" disabled={!dirty} onClick={() => onSaveGoal(parseFloat(goal) || 0)}>
-          <Check size={14} /> Save goal
-        </button>
-        <button className="btn" style={{ marginLeft: 'auto' }} onClick={onApply} title="Set your Income performance ‘Minimum’ to break-even and the top target to costs + goal">
-          Apply to Income targets
-        </button>
-      </div>
-      <p style={{ fontSize: 12, color: BRAND.muted, margin: '10px 0 0' }}>
-        Suggestion only — applying overwrites your Income performance targets (Minimum → break-even, top target → costs + goal).
       </p>
     </div>
   );
