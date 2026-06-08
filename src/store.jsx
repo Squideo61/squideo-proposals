@@ -97,6 +97,7 @@ function emptyStore() {
     financeRefresh: 0,
     pendingPayments: null,
     income: null,
+    cashflow: null,
     financeTargets: [],
     salesTargets: [],
     bankHolidays: null,
@@ -914,6 +915,31 @@ export function StoreProvider({ children }) {
         setState(s => ({ ...s, income: data || null }));
         return data;
       }).catch(() => null);
+    },
+    // Business → Finance (Cash Flow): costs, monthly profit, CT to set aside and
+    // a suggested target for a month ('YYYY-MM', default current).
+    loadCashflow(month) {
+      const path = '/api/crm/stats/cashflow' + (month ? '/' + month : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, cashflow: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    // Add a cost line (recurring overhead or one-off). Caller reloads the month.
+    addCashflowCost(payload) {
+      return api.post('/api/crm/stats/cashflow-cost', payload);
+    },
+    // Edit a cost line ({ label?, category?, amount?, effectiveTo? }).
+    updateCashflowCost(id, patch) {
+      return api.patch('/api/crm/stats/cashflow-cost/' + id, patch);
+    },
+    // Remove a cost line.
+    deleteCashflowCost(id) {
+      return api.delete('/api/crm/stats/cashflow-cost/' + id);
+    },
+    // Set the monthly profit goal that drives the suggested revenue target.
+    setCashflowProfitGoal(profitGoal) {
+      return api.post('/api/crm/stats/cashflow-cost', { profitGoal });
     },
     // Business → Finance: outstanding balance per signed deal (PO vs normal) +
     // the imported manual pending payments group.

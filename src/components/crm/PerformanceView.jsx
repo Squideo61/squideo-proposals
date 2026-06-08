@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP, useIsMobile, workingDaysBetween, ukBankHolidays, todayKey } from '../../utils.js';
+import { formatGBP, useIsMobile, workingDaysBetween, ukBankHolidays, todayKey, formatRelativeTime } from '../../utils.js';
 
 const PPS_COLOR = '#F59E0B';
 // 'YYYY-MM' → "Jun '24" (the trailing window spans up to 3 years).
@@ -92,6 +92,7 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
   const period = mode === 'month' ? month : quarter;
   const isSales = section === 'sales';
   const isComparison = section === 'salesvspp';
+  const isCashflow = section === 'cashflow';
 
   useEffect(() => {
     if (!state.bankHolidays) actions.loadBankHolidays();
@@ -100,13 +101,13 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
   // Reload when the period/section changes OR when finance data changes elsewhere
   // (e.g. a PP marked paid bumps state.financeRefresh) so the pace chart stays live.
   useEffect(() => {
-    if (isComparison) { setLoading(false); return; } // pacing stats not needed here
+    if (isComparison || isCashflow) { setLoading(false); return; } // pacing stats not needed here
     let active = true;
     setLoading(true);
     const load = isSales ? actions.loadSalesStats(period) : actions.loadPerformanceStats(period);
     load.finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [actions, period, isSales, isComparison, state.financeRefresh]);
+  }, [actions, period, isSales, isComparison, isCashflow, state.financeRefresh]);
 
   // Sales vs PP's needs the rolling 36-month trend + (for the importer) history.
   // Refetch the trend too when finance data changes.
@@ -160,15 +161,17 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Performance</h2>
             <p style={{ fontSize: 13, color: BRAND.muted, margin: '2px 0 0' }}>
-              {isComparison
-                ? "Cash received each month vs new money owed created that month (ex-VAT), over the last 36 months. The latest owed point previews all outstanding cash still to collect (invoiced or not)."
-                : isSales
-                  ? 'New business signed (ex-VAT) across all customers, paced against your sales targets by working day.'
-                  : 'Cash received (ex-VAT) across all customers, paced against your income targets by working day.'}
+              {isCashflow
+                ? 'Company costs vs cash received — each month’s profit, the Corporation Tax to set aside (HMRC marginal relief), and a suggested revenue target.'
+                : isComparison
+                  ? "Cash received each month vs new money owed created that month (ex-VAT), over the last 36 months. The latest owed point previews all outstanding cash still to collect (invoiced or not)."
+                  : isSales
+                    ? 'New business signed (ex-VAT) across all customers, paced against your sales targets by working day.'
+                    : 'Cash received (ex-VAT) across all customers, paced against your income targets by working day.'}
             </p>
           </div>
         </div>
-        {!isComparison && (
+        {!isComparison && !isCashflow && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <button onClick={() => setEditing((v) => !v)} className="btn-ghost" title="Edit targets">
               <Pencil size={14} /> Targets
@@ -197,7 +200,7 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
           big
           value={section}
           onChange={setSection}
-          options={[{ value: 'income', label: 'Income performance' }, { value: 'sales', label: 'Sales performance' }, { value: 'salesvspp', label: "Sales vs PP's" }]}
+          options={[{ value: 'income', label: 'Income performance' }, { value: 'sales', label: 'Sales performance' }, { value: 'salesvspp', label: "Sales vs PP's" }, { value: 'cashflow', label: 'Cash Flow' }]}
         />
       </div>
 
@@ -205,7 +208,11 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
         <SalesVsPpView trend={state.trend} isMobile={isMobile} actions={actions} history={state.salesHistory} />
       )}
 
-      {!isComparison && editing && (
+      {isCashflow && (
+        <CashFlowView isMobile={isMobile} />
+      )}
+
+      {!isComparison && !isCashflow && editing && (
         <TargetEditor
           key={section}
           heading={isSales ? 'Monthly sales targets' : 'Monthly income targets'}
@@ -216,7 +223,7 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
       )}
 
       {/* Pace strip: where you are today vs each target's expected pace. */}
-      {!isComparison && (<>
+      {!isComparison && !isCashflow && (<>
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${targets.length + 1}, 1fr)`, gap: 12, marginBottom: 16 }}>
         <PaceCard
           title={model.status === 'future' ? 'Upcoming period' : `Working day ${model.lastActualIdx} of ${model.N}`}
@@ -326,6 +333,316 @@ function SalesVsPpView({ trend, isMobile, actions, history }) {
 
       <ImportHistoryPanel actions={actions} history={history} isMobile={isMobile} />
     </>
+  );
+}
+
+// Cash Flow — company costs vs cash received: each month's profit, the
+// Corporation Tax to set aside (HMRC marginal relief on the trailing-12m profit)
+// and a suggested revenue target. Its own month picker (independent of the page),
+// a costs editor (recurring overheads + one-offs), a 12-month history and an
+// activity feed. Admin-only — rides on the Finance page's settings.manage gate.
+const cfRound2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const PROFIT_POS = '#10B981';
+const PROFIT_NEG = '#EF4444';
+
+function CashFlowView({ isMobile }) {
+  const { state, actions } = useStore();
+  const [month, setMonth] = useState(() => todayKey().slice(0, 7));
+
+  const reload = () => actions.loadCashflow(month);
+  useEffect(() => { actions.loadCashflow(month); }, [actions, month, state.financeRefresh]);
+
+  const cf = state.cashflow && state.cashflow.month === month ? state.cashflow : null;
+  const monthLabel = monthOptionLabel(month);
+
+  if (!cf) {
+    return (
+      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 40, textAlign: 'center', color: BRAND.muted, fontSize: 14 }}>
+        Loading cash flow…
+      </div>
+    );
+  }
+
+  const sel = cf.selected;
+  const ct = cf.corpTax;
+  const sug = cf.suggested;
+  const profitColor = sel.profit >= 0 ? PROFIT_POS : PROFIT_NEG;
+
+  const applyTargets = () => {
+    const base = (state.financeTargets && state.financeTargets.length) ? state.financeTargets : FALLBACK_TARGETS;
+    const list = base.map((t) => ({ ...t }));
+    if (list.length) {
+      list[0] = { ...list[0], amount: cfRound2(sug.breakEven) };
+      list[list.length - 1] = { ...list[list.length - 1], amount: cfRound2(sug.target) };
+    }
+    actions.saveFinanceTargets(list);
+  };
+
+  return (
+    <>
+      {/* Month picker — lets you step back through previous months. */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <span style={{ fontSize: 13, color: BRAND.muted }}>Cash flow for <strong style={{ color: BRAND.ink }}>{monthLabel}</strong></span>
+        <select
+          value={month}
+          onChange={(e) => setMonth(e.target.value)}
+          style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
+        >
+          {recentMonths(24).map((k) => <option key={k} value={k}>{monthOptionLabel(k)}</option>)}
+        </select>
+      </div>
+
+      {/* Headline figures for the selected month. */}
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+        <StatCard icon={TrendingUp} accent={profitColor} label={`Profit — ${monthLabel}`}
+          value={<span style={{ color: profitColor }}>{formatGBP(sel.profit)}</span>}
+          sub="Cash received − costs" />
+        <StatCard icon={Wallet} accent={BRAND.blue} label="Cash received"
+          value={formatGBP(sel.cashIn)} sub="Net banked (ex-VAT)" />
+        <StatCard icon={Receipt} accent="#0E7490" label="Costs"
+          value={formatGBP(sel.costs)} sub={`Wages ${formatGBP(sel.wages)} · Expenses ${formatGBP(sel.expenses)}`} />
+        <StatCard icon={PiggyBank} accent={VAT_COLOR_CF}
+          label={ct.inProfit ? 'Corp Tax to set aside' : 'Corp Tax saving'}
+          value={formatGBP(Math.abs(ct.monthReserve))}
+          sub={ct.inProfit
+            ? `≈${Math.round((ct.effectiveRate || 0) * 100)}% effective · this month`
+            : 'This month’s loss reduces your CT'} />
+      </div>
+
+      {/* Corporation Tax — running 12-month estimate. */}
+      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${VAT_COLOR_CF}`, borderRadius: 10, padding: isMobile ? 14 : '14px 18px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+          <Calculator size={14} color={VAT_COLOR_CF} /> Corporation Tax — trailing 12 months
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: 12 }}>
+          <CfMini label="Profit (12m)" value={formatGBP(ct.profit12)} color={ct.profit12 >= 0 ? PROFIT_POS : PROFIT_NEG} />
+          <CfMini label="Cash in (12m)" value={formatGBP(ct.cashIn12)} />
+          <CfMini label="Costs (12m)" value={formatGBP(ct.costs12)} />
+          <CfMini label="Estimated CT (12m)" value={formatGBP(ct.yearEstimate)} color={VAT_COLOR_CF} />
+        </div>
+        <p style={{ fontSize: 12, color: BRAND.muted, margin: '12px 0 0' }}>
+          HMRC marginal relief: 19% up to £50k profit, 25% over £250k, tapered between. The monthly figure applies the blended {Math.round((ct.effectiveRate || 0) * 100)}% rate to this month’s profit. Estimate only — confirm with your accountant.
+        </p>
+      </div>
+
+      {/* Suggested revenue target — costs + your profit goal. */}
+      <CfSuggested sug={sug} onSaveGoal={(g) => actions.setCashflowProfitGoal(g).then(reload)} onApply={applyTargets} isMobile={isMobile} />
+
+      {/* Costs editor — recurring overheads + one-offs for the month. */}
+      <CfCosts lines={cf.lines} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
+
+      {/* 12-month history — click a month to jump to it. */}
+      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 16 }}>
+        <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>Last 12 months</h3>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead>
+              <tr style={{ textAlign: 'right', color: BRAND.muted, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                <th style={{ textAlign: 'left', padding: '8px 8px' }}>Month</th>
+                <th style={{ padding: '8px 8px' }}>Cash in</th>
+                <th style={{ padding: '8px 8px' }}>Costs</th>
+                <th style={{ padding: '8px 8px' }}>Profit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cf.history.slice().reverse().map((h) => {
+                const isThis = h.month === month;
+                return (
+                  <tr key={h.month}
+                    onClick={() => setMonth(h.month)}
+                    style={{ borderTop: '1px solid ' + BRAND.border, background: isThis ? '#F4FBFE' : 'transparent', cursor: 'pointer' }}>
+                    <td style={{ textAlign: 'left', padding: '8px 8px', fontWeight: isThis ? 700 : 500 }}>{monthShortYear(h.month)}</td>
+                    <td style={{ textAlign: 'right', padding: '8px 8px' }}>{formatGBP(h.cashIn)}</td>
+                    <td style={{ textAlign: 'right', padding: '8px 8px', color: BRAND.muted }}>{formatGBP(h.costs)}</td>
+                    <td style={{ textAlign: 'right', padding: '8px 8px', fontWeight: 700, color: h.profit >= 0 ? PROFIT_POS : PROFIT_NEG }}>{formatGBP(h.profit)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Activity feed — a log of cost changes. */}
+      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20 }}>
+        <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>Cash flow activity</h3>
+        {(!cf.activity || cf.activity.length === 0) ? (
+          <div style={{ color: BRAND.muted, fontSize: 13, padding: '8px 0' }}>No changes yet — add a cost to get started.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {cf.activity.map((a, i) => (
+              <div key={a.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '8px 0', borderTop: i === 0 ? 'none' : '1px solid ' + BRAND.border }}>
+                <span style={{ fontSize: 13, color: BRAND.ink, flex: 1, minWidth: 0 }}>{a.summary}</span>
+                <span style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap' }}>
+                  {a.actor ? a.actor.split('@')[0] + ' · ' : ''}{formatRelativeTime(a.createdAt)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+const VAT_COLOR_CF = '#F59E0B';
+
+function CfMini({ label, value, color }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 700, color: color || BRAND.ink }}>{value}</div>
+    </div>
+  );
+}
+
+function CfSuggested({ sug, onSaveGoal, onApply, isMobile }) {
+  const [goal, setGoal] = useState(String(sug.profitGoal || 0));
+  useEffect(() => { setGoal(String(sug.profitGoal || 0)); }, [sug.profitGoal]);
+  const dirty = (parseFloat(goal) || 0) !== (Number(sug.profitGoal) || 0);
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${BRAND.blue}`, borderRadius: 10, padding: isMobile ? 14 : '14px 18px', marginBottom: 16 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>Suggested monthly revenue target</div>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3, 1fr)', gap: 12, marginBottom: 12 }}>
+        <CfMini label="Break-even (cover costs)" value={formatGBP(sug.breakEven)} />
+        <CfMini label="Profit goal" value={formatGBP(sug.profitGoal)} />
+        <CfMini label="Target (costs + goal)" value={formatGBP(sug.target)} color={BRAND.blue} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <label style={{ fontSize: 13, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 6 }}>
+          Monthly profit goal <span style={{ color: BRAND.muted }}>£</span>
+          <input type="number" step="0.01" value={goal} onChange={(e) => setGoal(e.target.value)}
+            style={{ width: 130, padding: '6px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14 }} />
+        </label>
+        <button className="btn-ghost" disabled={!dirty} onClick={() => onSaveGoal(parseFloat(goal) || 0)}>
+          <Check size={14} /> Save goal
+        </button>
+        <button className="btn" style={{ marginLeft: 'auto' }} onClick={onApply} title="Set your Income performance ‘Minimum’ to break-even and the top target to costs + goal">
+          Apply to Income targets
+        </button>
+      </div>
+      <p style={{ fontSize: 12, color: BRAND.muted, margin: '10px 0 0' }}>
+        Suggestion only — applying overwrites your Income performance targets (Minimum → break-even, top target → costs + goal).
+      </p>
+    </div>
+  );
+}
+
+function CfCosts({ lines, month, monthLabel, actions, reload, isMobile }) {
+  const [adding, setAdding] = useState(false);
+  const wages = lines.filter((l) => l.category === 'wages');
+  const expenses = lines.filter((l) => l.category !== 'wages');
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>Costs — {monthLabel}</h3>
+        <button className="btn-ghost" onClick={() => setAdding((v) => !v)}><Plus size={14} /> Add cost</button>
+      </div>
+
+      {adding && <CfCostForm month={month} onDone={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} actions={actions} />}
+
+      {lines.length === 0 && !adding ? (
+        <div style={{ color: BRAND.muted, fontSize: 13, padding: '8px 0' }}>No costs for {monthLabel}. Add your wages and expenses to see your profit.</div>
+      ) : (
+        <>
+          {wages.length > 0 && <CfCostGroup icon={Users} title="Wages" rows={wages} actions={actions} reload={reload} isMobile={isMobile} />}
+          {expenses.length > 0 && <CfCostGroup icon={Receipt} title="Expenses" rows={expenses} actions={actions} reload={reload} isMobile={isMobile} />}
+        </>
+      )}
+    </div>
+  );
+}
+
+function CfCostGroup({ icon: Icon, title, rows, actions, reload, isMobile }) {
+  const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid ' + BRAND.border }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+          {Icon && <Icon size={13} />} {title}
+        </span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
+      </div>
+      {rows.map((r) => <CfCostRow key={r.id} row={r} actions={actions} reload={reload} isMobile={isMobile} />)}
+    </div>
+  );
+}
+
+function CfCostRow({ row, actions, reload, isMobile }) {
+  const [editing, setEditing] = useState(false);
+  const [label, setLabel] = useState(row.label);
+  const [amount, setAmount] = useState(String(row.amount));
+
+  const save = () => actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0 }).then(() => { setEditing(false); reload(); });
+  const remove = () => actions.deleteCashflowCost(row.id).then(reload);
+
+  if (editing) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: '1px solid ' + BRAND.border, flexWrap: 'wrap' }}>
+        <input value={label} onChange={(e) => setLabel(e.target.value)} style={{ flex: 1, minWidth: 120, padding: '6px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14 }} />
+        <span style={{ color: BRAND.muted }}>£</span>
+        <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} style={{ width: 110, padding: '6px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14 }} />
+        <button className="btn" onClick={save}><Check size={14} /></button>
+        <button className="btn-ghost" onClick={() => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); }}><X size={14} /></button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: '1px solid ' + BRAND.border }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.label}</div>
+        <span style={{ fontSize: 11, color: BRAND.muted }}>
+          {row.recurring ? 'Recurring monthly' : `One-off · ${row.month}`}
+        </span>
+      </div>
+      <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(row.amount)}</span>
+      <button className="btn-icon" title="Edit" onClick={() => setEditing(true)}><Pencil size={13} /></button>
+      <button className="btn-icon" title="Remove" onClick={remove}><Trash2 size={13} /></button>
+    </div>
+  );
+}
+
+function CfCostForm({ month, onDone, onCancel, actions }) {
+  const [label, setLabel] = useState('');
+  const [amount, setAmount] = useState('');
+  const [category, setCategory] = useState('expense');
+  const [recurring, setRecurring] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const submit = () => {
+    if (!label.trim() || busy) return;
+    setBusy(true);
+    const payload = {
+      label: label.trim(), amount: parseFloat(amount) || 0, category, recurring,
+      ...(recurring ? { effectiveFrom: month } : { month }),
+    };
+    actions.addCashflowCost(payload).then(onDone).finally(() => setBusy(false));
+  };
+
+  return (
+    <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12, marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input autoFocus placeholder="What is it? (e.g. Office rent, Adam salary)" value={label} onChange={(e) => setLabel(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          style={{ flex: 1, minWidth: 180, padding: '8px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14 }} />
+        <span style={{ color: BRAND.muted }}>£</span>
+        <input type="number" step="0.01" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          style={{ width: 120, padding: '8px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14 }} />
+        <Segmented value={category} onChange={setCategory} options={[{ value: 'expense', label: 'Expense' }, { value: 'wages', label: 'Wages' }]} />
+      </div>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink, cursor: 'pointer' }}>
+          <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} />
+          Recurring every month {recurring ? `(from ${monthOptionLabel(month)})` : `· one-off in ${monthOptionLabel(month)}`}
+        </label>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button className="btn-ghost" onClick={onCancel}><X size={14} /> Cancel</button>
+          <button className="btn" onClick={submit} disabled={!label.trim() || busy}><Check size={14} /> {busy ? 'Adding…' : 'Add cost'}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 

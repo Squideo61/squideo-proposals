@@ -1335,6 +1335,214 @@ async function incomeDateRoute(req, res) {
   return res.status(200).json({ ok: true, paidAt: iso });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Cash Flow — company costs, monthly profit, Corporation Tax to set aside and a
+// suggested revenue target. Admin-only (rides on the same settings.manage gate
+// as the rest of stats). Self-heals its tables so a missing migration never 500s.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let cashflowEnsured = null;
+function ensureCashflow() {
+  if (cashflowEnsured) return cashflowEnsured;
+  cashflowEnsured = (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS cashflow_costs (
+        id             TEXT PRIMARY KEY,
+        label          TEXT NOT NULL,
+        category       TEXT NOT NULL DEFAULT 'expense',
+        amount         NUMERIC NOT NULL DEFAULT 0,
+        recurring      BOOLEAN NOT NULL DEFAULT true,
+        month          TEXT,
+        effective_from TEXT,
+        effective_to   TEXT,
+        sort_order     INT,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS cashflow_activity (
+        id          BIGSERIAL PRIMARY KEY,
+        actor_email TEXT,
+        action      TEXT NOT NULL,
+        summary     TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cashflow_profit_goal NUMERIC`;
+  })().catch((err) => { cashflowEnsured = null; throw err; });
+  return cashflowEnsured;
+}
+
+const gbp = (n) => '£' + (Number(n) || 0).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const curMonthKey = () => monthKey(new Date());
+
+async function logCashflow(actorEmail, action, summary) {
+  try {
+    await sql`INSERT INTO cashflow_activity (actor_email, action, summary) VALUES (${actorEmail || null}, ${action}, ${summary})`;
+  } catch { /* non-fatal — the feed is a nicety, not a gate */ }
+}
+
+function serialiseCost(r) {
+  return {
+    id: r.id,
+    label: r.label,
+    category: r.category === 'wages' ? 'wages' : 'expense',
+    amount: Number(r.amount) || 0,
+    recurring: r.recurring !== false,
+    month: r.month || null,
+    effectiveFrom: r.effective_from || null,
+    effectiveTo: r.effective_to || null,
+  };
+}
+
+// Does a cost row contribute to month `mk` ('YYYY-MM')? One-offs hit their own
+// month; recurring costs apply across their effective window (open-ended both ends).
+function costAppliesToMonth(r, mk) {
+  if (r.recurring === false) return (r.month || null) === mk;
+  if (r.effective_from && mk < r.effective_from) return false;
+  if (r.effective_to && mk > r.effective_to) return false;
+  return true;
+}
+
+// HMRC Corporation Tax with marginal relief (no associated companies / no
+// distributions): 19% up to £50k, 25% over £250k, tapered between. At £50k this
+// returns 19%, at £250k exactly 25% — matching gov.uk's marginal-relief figures.
+const CT_LOWER = 50000, CT_UPPER = 250000, CT_MAIN = 0.25, CT_SMALL = 0.19, CT_MR_FRACTION = 3 / 200;
+function corpTaxOn(profit) {
+  const p = Math.max(0, Number(profit) || 0);
+  if (p <= CT_LOWER) return p * CT_SMALL;
+  if (p >= CT_UPPER) return p * CT_MAIN;
+  return p * CT_MAIN - CT_MR_FRACTION * (CT_UPPER - p);
+}
+
+// Cash Flow report for a month ('YYYY-MM', default current). Profit is on a CASH
+// basis: net cash received that month − costs (wages + expenses). The CT reserve
+// uses the blended marginal rate from the trailing-12-month profit so it tracks
+// what you'll actually owe; a loss month shows a negative reserve (a CT saving).
+async function cashflowReport(action) {
+  await ensureCashflow();
+  const month = /^\d{4}-\d{2}$/.test(action || '') ? action : curMonthKey();
+  const [my, mm] = month.split('-').map(Number); // mm is 1-based
+
+  // Trailing 12 months ending at (and including) the selected month.
+  const keys = [];
+  for (let i = 11; i >= 0; i--) keys.push(monthKey(new Date(Date.UTC(my, mm - 1 - i, 1))));
+  const since = new Date(Date.UTC(my, mm - 12, 1)).toISOString();
+  const until = new Date(Date.UTC(my, mm, 1)).toISOString(); // start of the month after the selected one
+
+  // Net cash received per month across the window.
+  const paidRows = await fetchPaidRows(since, until);
+  const cashByMonth = {};
+  for (const k of keys) cashByMonth[k] = 0;
+  for (const r of paidRows) { const k = monthKey(r.paidAt); if (k in cashByMonth) cashByMonth[k] += r.net; }
+
+  // Costs (resolved per month from the recurring + one-off rows).
+  const costRows = await sql`SELECT * FROM cashflow_costs ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
+  const costsForMonth = (mk) => {
+    let wages = 0, expenses = 0;
+    for (const r of costRows) {
+      if (!costAppliesToMonth(r, mk)) continue;
+      const amt = Number(r.amount) || 0;
+      if ((r.category || 'expense') === 'wages') wages += amt; else expenses += amt;
+    }
+    return { wages: round2(wages), expenses: round2(expenses), total: round2(wages + expenses) };
+  };
+
+  const history = keys.map((mk) => {
+    const c = costsForMonth(mk);
+    const cashIn = round2(cashByMonth[mk] || 0);
+    return { month: mk, cashIn, wages: c.wages, expenses: c.expenses, costs: c.total, profit: round2(cashIn - c.total) };
+  });
+
+  const profit12 = round2(history.reduce((s, h) => s + h.profit, 0));
+  const cashIn12 = round2(history.reduce((s, h) => s + h.cashIn, 0));
+  const costs12 = round2(history.reduce((s, h) => s + h.costs, 0));
+  const ctYear = round2(corpTaxOn(profit12));
+  const effectiveRate = profit12 > 0 ? ctYear / profit12 : 0;
+
+  const sel = history[history.length - 1];
+  const monthReserve = round2(sel.profit * effectiveRate); // negative on a loss month = a CT saving
+
+  const [{ pg }] = await sql`SELECT COALESCE(cashflow_profit_goal, 0) AS pg FROM settings WHERE id = 1`;
+  const profitGoal = round2(Number(pg) || 0);
+
+  const lines = costRows.filter((r) => costAppliesToMonth(r, month)).map(serialiseCost);
+  const activityRows = await sql`SELECT id, actor_email, action, summary, created_at FROM cashflow_activity ORDER BY created_at DESC LIMIT 40`;
+
+  return {
+    month,
+    selected: sel,
+    corpTax: { effectiveRate, monthReserve, yearEstimate: ctYear, profit12, cashIn12, costs12, inProfit: sel.profit > 0 },
+    suggested: { profitGoal, breakEven: sel.costs, target: round2(sel.costs + profitGoal) },
+    history,
+    lines,
+    activity: activityRows.map((r) => ({ id: String(r.id), actor: r.actor_email || null, action: r.action, summary: r.summary, createdAt: r.created_at })),
+  };
+}
+
+// Writes for the Cash Flow tab. action carries the cost id for PATCH/DELETE.
+//   POST { profitGoal }                          → set the monthly profit goal
+//   POST { label, category, amount, recurring, month?, effectiveFrom? } → add a cost
+//   PATCH/<id> { label?, category?, amount?, effectiveTo? }            → edit a cost
+//   DELETE/<id>                                  → remove a cost
+async function cashflowRoute(req, res, action, user) {
+  await ensureCashflow();
+  const actor = (user?.email || '').toLowerCase();
+
+  if (req.method === 'POST' || req.method === 'PUT') {
+    const body = req.body || {};
+    if ('profitGoal' in body) {
+      const pg = Number(body.profitGoal) || 0;
+      await sql`UPDATE settings SET cashflow_profit_goal = ${pg} WHERE id = 1`;
+      await logCashflow(actor, 'goal.update', `Set monthly profit goal to ${gbp(pg)}`);
+      return res.status(200).json({ ok: true });
+    }
+    const label = trimOrNull(body.label);
+    if (!label) return res.status(400).json({ error: 'label required' });
+    const category = body.category === 'wages' ? 'wages' : 'expense';
+    const amount = Number(body.amount) || 0;
+    const recurring = body.recurring !== false;
+    const month = recurring ? null : (trimOrNull(body.month) || curMonthKey());
+    const effectiveFrom = recurring ? (trimOrNull(body.effectiveFrom) || curMonthKey()) : null;
+    const id = makeId('cf');
+    const [{ m }] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM cashflow_costs`;
+    await sql`
+      INSERT INTO cashflow_costs (id, label, category, amount, recurring, month, effective_from, sort_order)
+      VALUES (${id}, ${label}, ${category}, ${amount}, ${recurring}, ${month}, ${effectiveFrom}, ${m + 1})`;
+    const kindWord = category === 'wages' ? 'wage' : 'expense';
+    await logCashflow(actor, 'cost.add', recurring
+      ? `Added recurring ${kindWord} “${label}” ${gbp(amount)}/mo`
+      : `Added one-off ${kindWord} “${label}” ${gbp(amount)} (${month})`);
+    return res.status(200).json({ ok: true });
+  }
+
+  if (req.method === 'PATCH') {
+    if (!action) return res.status(400).json({ error: 'id required' });
+    const body = req.body || {};
+    const [existing] = await sql`SELECT * FROM cashflow_costs WHERE id = ${action}`;
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const label = body.label !== undefined ? (trimOrNull(body.label) || existing.label) : existing.label;
+    const category = body.category !== undefined ? (body.category === 'wages' ? 'wages' : 'expense') : existing.category;
+    const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
+    const effectiveTo = body.effectiveTo !== undefined ? trimOrNull(body.effectiveTo) : existing.effective_to;
+    await sql`
+      UPDATE cashflow_costs
+         SET label = ${label}, category = ${category}, amount = ${amount}, effective_to = ${effectiveTo}, updated_at = NOW()
+       WHERE id = ${action}`;
+    await logCashflow(actor, 'cost.update', `Updated “${label}” to ${gbp(Number(amount) || 0)}`);
+    return res.status(200).json({ ok: true });
+  }
+
+  if (req.method === 'DELETE') {
+    if (!action) return res.status(400).json({ error: 'id required' });
+    const [existing] = await sql`SELECT label, amount FROM cashflow_costs WHERE id = ${action}`;
+    await sql`DELETE FROM cashflow_costs WHERE id = ${action}`;
+    if (existing) await logCashflow(actor, 'cost.delete', `Removed “${existing.label}” ${gbp(Number(existing.amount) || 0)}`);
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
 export async function statsRoute(req, res, id, action, user) {
   // Live financial figures — never let a browser/edge serve a stale copy (e.g.
   // showing an extra that's since been deleted, or yesterday's cash position).
@@ -1364,6 +1572,9 @@ export async function statsRoute(req, res, id, action, user) {
   }
   if (id === 'income-date') {
     return incomeDateRoute(req, res);
+  }
+  if (id === 'cashflow-cost') {
+    return cashflowRoute(req, res, action, user);
   }
 
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -1400,6 +1611,10 @@ export async function statsRoute(req, res, id, action, user) {
 
   if (id === 'income') {
     return res.status(200).json(await incomeReport(action));
+  }
+
+  if (id === 'cashflow') {
+    return res.status(200).json(await cashflowReport(action));
   }
 
   return res.status(404).json({ error: 'Unknown stats report' });
