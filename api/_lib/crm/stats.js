@@ -6,7 +6,6 @@ import { allCompanyBalances } from './companies.js';
 import { outstandingExtrasByDeal, ensureDealExtrasTable } from './extras.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
 import { archiveRecord } from './recycleBin.js';
-import { getMonthlyOperatingCosts, getMonthlyBillCosts } from '../xero.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
 // five paid-money sources as companies.js (allCompanyBalances /
@@ -1550,32 +1549,6 @@ async function cashflowReport(action) {
   for (const k of keys) cashByMonth[k] = 0;
   for (const r of paidRows) { const k = monthKey(r.paidAt); if (k in cashByMonth) cashByMonth[k] += r.net; }
 
-  // Pre-CRM months have no payment rows, so splice in the imported Live Sales
-  // Sheet "Sales (cash in)" figures (the same source the Sales vs PP's chart
-  // uses) for every PAST month. The current calendar month is never overridden —
-  // it always reflects live CRM cash so today's figure stays accurate.
-  const overrides = await fetchHistoryOverrides(keys);
-  const nowKey = monthKey(new Date());
-  const cashInFor = (mk) => {
-    const ov = overrides.get(mk);
-    return (ov && mk !== nowKey) ? ov.sales : (cashByMonth[mk] || 0);
-  };
-
-  // Actual monthly operating costs from Xero for PAST months — the current month
-  // always keeps the hand-built cost base. The P&L report (getMonthlyOperatingCosts)
-  // is the complete source but needs the accounting.reports.read scope, which the
-  // Xero app currently rejects; until that's grantable we read supplier-bill
-  // (ACCPAY) totals, which the existing invoices scope already covers. Best-effort —
-  // on any failure we simply keep the hand-built base.
-  let xeroCosts = new Map();
-  let xeroSource = null;
-  try {
-    xeroCosts = await getMonthlyBillCosts({ endMonth: month });
-    xeroSource = 'bills';
-  } catch (err) {
-    console.error('[cashflow] Xero bills unavailable', err?.message || err);
-  }
-
   // Costs (resolved per month from the recurring + one-off rows).
   const costRows = await sql`SELECT * FROM cashflow_costs ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
   const costsForMonth = (mk) => {
@@ -1595,16 +1568,8 @@ async function cashflowReport(action) {
 
   const history = keys.map((mk) => {
     const c = costsForMonth(mk);
-    const cashIn = round2(cashInFor(mk));
-    const xc = xeroCosts.get(mk);
-    const useXero = mk !== nowKey && xc != null;
-    const costs = useXero ? round2(xc) : c.total;
-    return {
-      month: mk, cashIn,
-      wages: c.wages, expenses: c.expenses, freelancers: c.freelancers, marketing: c.marketing, director: c.director,
-      costs, costSource: useXero ? 'xero' : 'base',
-      profit: round2(cashIn - costs),
-    };
+    const cashIn = round2(cashByMonth[mk] || 0);
+    return { month: mk, cashIn, wages: c.wages, expenses: c.expenses, freelancers: c.freelancers, marketing: c.marketing, director: c.director, costs: c.total, profit: round2(cashIn - c.total) };
   });
 
   const profit12 = round2(history.reduce((s, h) => s + h.profit, 0));
@@ -1627,7 +1592,6 @@ async function cashflowReport(action) {
     selected: sel,
     corpTax: { effectiveRate, monthReserve, yearEstimate: ctYear, profit12, cashIn12, costs12, inProfit: sel.profit > 0 },
     suggested: { profitGoal, breakEven: sel.costs, target: round2(sel.costs + profitGoal) },
-    xeroSource,
     history,
     lines,
     activity: activityRows.map((r) => ({ id: String(r.id), actor: r.actor_email || null, action: r.action, summary: r.summary, createdAt: r.created_at })),
