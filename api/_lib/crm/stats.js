@@ -1525,6 +1525,38 @@ function ukIncomeTax(annual) {
   return tax;
 }
 
+// Estimated personal tax for an owner-director drawing `annual` total from the
+// company as a £12,570 salary (covered by the personal allowance) plus the rest
+// as dividends. Returns income tax + employee NI + dividend tax (2025/26 rates).
+// Estimate only — ignores other income, the >£100k PA taper, etc.
+function directorPersonalTax(annual) {
+  const total = Math.max(0, Number(annual) || 0);
+  const PA = 12570;
+  const salary = Math.min(total, PA);            // salary up to the personal allowance
+  const dividends = Math.max(0, total - salary);
+
+  // Income tax on the salary — £0 while salary ≤ the personal allowance.
+  const incomeTax = ukIncomeTax(salary);
+
+  // Employee NI (Class 1): 8% between the £12,570 primary threshold and the
+  // £50,270 upper earnings limit, 2% above — so £0 at a £12,570 salary.
+  let ni = Math.min(Math.max(salary - 12570, 0), 50270 - 12570) * 0.08;
+  ni += Math.max(salary - 50270, 0) * 0.02;
+
+  // Dividend tax: dividends stack on top of the salary by total-income band.
+  // £500 allowance at 0% (still advances the band), then 8.75% to £50,270,
+  // 33.75% to £125,140, 39.35% above.
+  let lo = salary;            // dividends start stacking at this income level
+  let rem = dividends;
+  let divTax = 0;
+  const allow = Math.min(rem, 500); lo += allow; rem -= allow;                       // 0%
+  const basic = Math.min(rem, Math.max(0, 50270 - lo)); divTax += basic * 0.0875; lo += basic; rem -= basic;
+  const higher = Math.min(rem, Math.max(0, 125140 - lo)); divTax += higher * 0.3375; lo += higher; rem -= higher;
+  divTax += Math.max(rem, 0) * 0.3935;
+
+  return incomeTax + ni + divTax;
+}
+
 function serialiseCost(r) {
   const frequency = r.frequency === 'annual' ? 'annual' : 'monthly';
   return {
@@ -1593,7 +1625,7 @@ async function cashflowReport(action) {
   // underlying salaries change. The amount stored on the auto row is ignored.
   const autoDirectorTaxMonthly = round2(
     costRows.filter((r) => r.tax_basis === true)
-      .reduce((s, r) => s + ukIncomeTax(monthlyAmountOf(r) * 12) / 12, 0),
+      .reduce((s, r) => s + directorPersonalTax(monthlyAmountOf(r) * 12) / 12, 0),
   );
   const resolvedAmount = (r) => (r.auto_type === 'director_tax' ? autoDirectorTaxMonthly : monthlyAmountOf(r));
 

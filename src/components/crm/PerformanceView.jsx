@@ -708,7 +708,7 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
           {!row.recurring && <span style={{ fontSize: 11, color: BRAND.muted }}> · one-off {row.month}</span>}
         </div>
         {isAuto
-          ? <div style={{ fontSize: 11, color: '#CA8A04', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — UK income tax on the salaries marked “feeds director tax”{row.note ? ` · ${row.note}` : ''}</div>
+          ? <div title="Income tax + employee NI + dividend tax (2025/26 rates), assuming a £12,570 salary and the rest as dividends, on each pay marked “feeds director tax”" style={{ fontSize: 11, color: '#CA8A04', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — income tax + NI + dividend tax on the director pay marked “feeds director tax” (£12,570 salary + dividends, current rates){row.note ? ` · ${row.note}` : ''}</div>
           : (row.note && <div title={row.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.note}</div>)}
       </div>
       {isAuto
