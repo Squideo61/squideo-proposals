@@ -623,10 +623,11 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
   const [amount, setAmount] = useState(String(row.amount));
   const [frequency, setFrequency] = useState(row.frequency || 'monthly');
   const [category, setCategory] = useState(row.category || 'expense');
+  const [note, setNote] = useState(row.note || '');
 
-  const save = () => actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0, frequency, category }).then(() => { setEditing(false); reload(); });
+  const save = () => actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0, frequency, category, note: note.trim() }).then(() => { setEditing(false); reload(); });
   const remove = () => actions.deleteCashflowCost(row.id).then(reload);
-  const reset = () => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); setFrequency(row.frequency || 'monthly'); setCategory(row.category || 'expense'); };
+  const reset = () => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); setFrequency(row.frequency || 'monthly'); setCategory(row.category || 'expense'); setNote(row.note || ''); };
 
   if (editing) {
     const monthlyEst = frequency === 'annual' ? (parseFloat(amount) || 0) / 12 : null;
@@ -644,6 +645,9 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
         {monthlyEst != null && <span style={{ fontSize: 11, color: BRAND.muted }}>≈{formatGBP(monthlyEst)}/mo</span>}
         <button className="btn-icon" title="Save" onClick={save}><Check size={13} /></button>
         <button className="btn-icon" title="Cancel" onClick={reset}><X size={13} /></button>
+        <input placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') reset(); }}
+          style={{ flexBasis: '100%', padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
       </div>
     );
   }
@@ -664,10 +668,13 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
       <span title="Drag to reorder" style={{ flexShrink: 0, cursor: 'grab', color: BRAND.muted, display: 'flex', lineHeight: 0 }}>
         <GripVertical size={14} />
       </span>
-      <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {row.label}
-        {!row.recurring && <span style={{ fontSize: 11, color: BRAND.muted }}> · one-off {row.month}</span>}
-      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {row.label}
+          {!row.recurring && <span style={{ fontSize: 11, color: BRAND.muted }}> · one-off {row.month}</span>}
+        </div>
+        {row.note && <div title={row.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.note}</div>}
+      </div>
       <CfFreqTag row={row} />
       {row.frequency === 'annual' && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(row.amount)}/yr</span>}
       <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 64, textAlign: 'right' }}>{formatGBP(row.monthlyAmount ?? row.amount)}</span>
@@ -682,13 +689,14 @@ function CfCostForm({ month, category, onDone, onCancel, actions }) {
   const [amount, setAmount] = useState('');
   const [recurring, setRecurring] = useState(true);
   const [frequency, setFrequency] = useState('monthly');
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
   const submit = () => {
     if (!label.trim() || busy) return;
     setBusy(true);
     const payload = {
-      label: label.trim(), amount: parseFloat(amount) || 0, category, frequency, recurring,
+      label: label.trim(), amount: parseFloat(amount) || 0, category, frequency, recurring, note: note.trim(),
       ...(recurring ? { effectiveFrom: month } : { month }),
     };
     actions.addCashflowCost(payload).then(onDone).finally(() => setBusy(false));
@@ -714,6 +722,9 @@ function CfCostForm({ month, category, onDone, onCancel, actions }) {
         <button className="btn-ghost" style={{ padding: '4px 8px' }} onClick={onCancel}><X size={13} /></button>
         <button className="btn" style={{ padding: '5px 10px' }} onClick={submit} disabled={!label.trim() || busy}><Check size={13} /> {busy ? 'Adding…' : 'Add'}</button>
       </div>
+      <input placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+        style={{ width: '100%', boxSizing: 'border-box', marginTop: 8, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
       {monthlyEst != null && (
         <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>
           Annual cost — counted as <strong style={{ color: BRAND.ink }}>{formatGBP(monthlyEst)}/month</strong> (£{(parseFloat(amount) || 0).toLocaleString('en-GB')} ÷ 12).

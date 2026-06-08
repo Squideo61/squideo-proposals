@@ -1431,6 +1431,7 @@ function ensureCashflow() {
         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await sql`ALTER TABLE cashflow_costs ADD COLUMN IF NOT EXISTS frequency TEXT NOT NULL DEFAULT 'monthly'`;
+    await sql`ALTER TABLE cashflow_costs ADD COLUMN IF NOT EXISTS note TEXT`;
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cashflow_profit_goal NUMERIC`;
 
     // Seed the cost base once (empty table only). Deterministic ids +
@@ -1493,6 +1494,7 @@ function serialiseCost(r) {
     amount: Number(r.amount) || 0,
     frequency,
     monthlyAmount: round2(monthlyAmountOf(r)),
+    note: r.note || null,
     recurring: r.recurring !== false,
     month: r.month || null,
     effectiveFrom: r.effective_from || null,
@@ -1621,14 +1623,15 @@ async function cashflowRoute(req, res, action, user) {
     const category = normCategory(body.category);
     const frequency = body.frequency === 'annual' ? 'annual' : 'monthly';
     const amount = Number(body.amount) || 0;
+    const note = trimOrNull(body.note);
     const recurring = body.recurring !== false;
     const month = recurring ? null : (trimOrNull(body.month) || curMonthKey());
     const effectiveFrom = recurring ? (trimOrNull(body.effectiveFrom) || curMonthKey()) : null;
     const id = makeId('cf');
     const [{ m }] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM cashflow_costs`;
     await sql`
-      INSERT INTO cashflow_costs (id, label, category, amount, frequency, recurring, month, effective_from, sort_order)
-      VALUES (${id}, ${label}, ${category}, ${amount}, ${frequency}, ${recurring}, ${month}, ${effectiveFrom}, ${m + 1})`;
+      INSERT INTO cashflow_costs (id, label, category, amount, frequency, note, recurring, month, effective_from, sort_order)
+      VALUES (${id}, ${label}, ${category}, ${amount}, ${frequency}, ${note}, ${recurring}, ${month}, ${effectiveFrom}, ${m + 1})`;
     const kindWord = category === 'wages' ? 'wage' : category === 'freelancer' ? 'freelancer' : category === 'marketing' ? 'marketing cost' : 'expense';
     const amtWord = frequency === 'annual' ? `${gbp(amount)}/yr (≈${gbp(amount / 12)}/mo)` : `${gbp(amount)}/mo`;
     await logCashflow(actor, 'cost.add', recurring
@@ -1659,10 +1662,11 @@ async function cashflowRoute(req, res, action, user) {
     const category = body.category !== undefined ? normCategory(body.category) : existing.category;
     const frequency = body.frequency !== undefined ? (body.frequency === 'annual' ? 'annual' : 'monthly') : (existing.frequency || 'monthly');
     const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
+    const note = body.note !== undefined ? trimOrNull(body.note) : existing.note;
     const effectiveTo = body.effectiveTo !== undefined ? trimOrNull(body.effectiveTo) : existing.effective_to;
     await sql`
       UPDATE cashflow_costs
-         SET label = ${label}, category = ${category}, amount = ${amount}, frequency = ${frequency}, effective_to = ${effectiveTo}, updated_at = NOW()
+         SET label = ${label}, category = ${category}, amount = ${amount}, frequency = ${frequency}, note = ${note}, effective_to = ${effectiveTo}, updated_at = NOW()
        WHERE id = ${action}`;
     const upWord = frequency === 'annual' ? `${gbp(Number(amount) || 0)}/yr` : gbp(Number(amount) || 0);
     await logCashflow(actor, 'cost.update', `Updated “${label}” to ${upWord}`);
