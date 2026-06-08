@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -425,22 +425,6 @@ function CashFlowView({ isMobile }) {
           sub={ct.inProfit
             ? `≈${Math.round((ct.effectiveRate || 0) * 100)}% effective · this month`
             : 'This month’s loss reduces your CT'} />
-      </div>
-
-      {/* Corporation Tax — running 12-month estimate. */}
-      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${VAT_COLOR_CF}`, borderRadius: 10, padding: isMobile ? 14 : '14px 18px', marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
-          <Calculator size={14} color={VAT_COLOR_CF} /> Corporation Tax — trailing 12 months
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: 12 }}>
-          <CfMini label="Profit (12m)" value={formatGBP(ct.profit12)} color={ct.profit12 >= 0 ? PROFIT_POS : PROFIT_NEG} />
-          <CfMini label="Cash in (12m)" value={formatGBP(ct.cashIn12)} />
-          <CfMini label="Costs (12m)" value={formatGBP(ct.costs12)} />
-          <CfMini label="Estimated CT (12m)" value={formatGBP(ct.yearEstimate)} color={VAT_COLOR_CF} />
-        </div>
-        <p style={{ fontSize: 12, color: BRAND.muted, margin: '12px 0 0' }}>
-          HMRC marginal relief: 19% up to £50k profit, 25% over £250k, tapered between. The monthly figure applies the blended {Math.round((ct.effectiveRate || 0) * 100)}% rate to this month’s profit. Estimate only — confirm with your accountant.
-        </p>
       </div>
 
       {/* Monthly revenue targets — minimum (cost base) + the wage-uplift targets. */}
