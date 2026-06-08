@@ -658,8 +658,11 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
 
   const isAuto = row.autoType === 'director_tax';
 
-  const save = () => actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0, frequency, category, note: note.trim(), taxBasis }).then(() => { setEditing(false); reload(); });
-  const remove = () => actions.deleteCashflowCost(row.id).then(reload);
+  const save = () => {
+    const before = { label: row.label, amount: Number(row.amount) || 0, frequency: row.frequency || 'monthly', category: row.category || 'expense', note: row.note || '', taxBasis: !!row.taxBasis };
+    actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0, frequency, category, note: note.trim(), taxBasis }, before).then(() => { setEditing(false); reload(); });
+  };
+  const remove = () => actions.deleteCashflowCost(row.id, row).then(reload);
   const reset = () => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); setFrequency(row.frequency || 'monthly'); setCategory(row.category || 'expense'); setNote(row.note || ''); setTaxBasis(!!row.taxBasis); };
 
   if (editing) {

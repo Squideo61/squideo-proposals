@@ -1734,11 +1734,14 @@ async function cashflowRoute(req, res, action, user) {
     const recurring = body.recurring !== false;
     const month = recurring ? null : (trimOrNull(body.month) || curMonthKey());
     const effectiveFrom = recurring ? (trimOrNull(body.effectiveFrom) || curMonthKey()) : null;
-    const id = makeId('cf');
+    // Accept a client-supplied id so the CRM undo/redo can re-add the same row
+    // (redo of an add); fall back to a server id otherwise.
+    const id = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : makeId('cf');
     const [{ m }] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM cashflow_costs`;
     await sql`
       INSERT INTO cashflow_costs (id, label, category, amount, frequency, note, recurring, month, effective_from, sort_order)
-      VALUES (${id}, ${label}, ${category}, ${amount}, ${frequency}, ${note}, ${recurring}, ${month}, ${effectiveFrom}, ${m + 1})`;
+      VALUES (${id}, ${label}, ${category}, ${amount}, ${frequency}, ${note}, ${recurring}, ${month}, ${effectiveFrom}, ${m + 1})
+      ON CONFLICT (id) DO NOTHING`;
     const kindWord = category === 'wages' ? 'wage' : category === 'freelancer' ? 'freelancer' : category === 'marketing' ? 'marketing cost' : category === 'director' ? 'director cost' : category === 'allowance' ? 'director allowance' : 'expense';
     const amtWord = frequency === 'annual' ? `${gbp(amount)}/yr (≈${gbp(amount / 12)}/mo)` : `${gbp(amount)}/mo`;
     await logCashflow(actor, 'cost.add', recurring
@@ -1783,9 +1786,13 @@ async function cashflowRoute(req, res, action, user) {
 
   if (req.method === 'DELETE') {
     if (!action) return res.status(400).json({ error: 'id required' });
-    const [existing] = await sql`SELECT label, amount FROM cashflow_costs WHERE id = ${action}`;
-    await sql`DELETE FROM cashflow_costs WHERE id = ${action}`;
-    if (existing) await logCashflow(actor, 'cost.delete', `Removed “${existing.label}” ${gbp(Number(existing.amount) || 0)}`);
+    const [existing] = await sql`SELECT * FROM cashflow_costs WHERE id = ${action}`;
+    if (existing) {
+      // Archive the full row first so the CRM undo/redo can restore it (same id).
+      await archiveRecord('cashflow_cost', action, [{ table: 'cashflow_costs', row: existing }], actor);
+      await sql`DELETE FROM cashflow_costs WHERE id = ${action}`;
+      await logCashflow(actor, 'cost.delete', `Removed “${existing.label}” ${gbp(Number(existing.amount) || 0)}`);
+    }
     return res.status(200).json({ ok: true });
   }
 

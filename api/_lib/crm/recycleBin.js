@@ -14,7 +14,7 @@ import { makeId } from './shared.js';
 
 // Tables we allow restoring into. The table name can't be parameterised in the
 // json_populate_record call, so it must come from this fixed allowlist.
-const RESTORABLE_TABLES = new Set(['tasks', 'task_assignees', 'manual_pending_payments']);
+const RESTORABLE_TABLES = new Set(['tasks', 'task_assignees', 'manual_pending_payments', 'cashflow_costs']);
 
 let ensured = null;
 export function ensureDeletedRecords() {
@@ -63,6 +63,8 @@ export async function restoreRecord(recordId) {
       await sql`INSERT INTO task_assignees SELECT * FROM json_populate_record(NULL::task_assignees, ${json}::json) ON CONFLICT DO NOTHING`;
     } else if (table === 'manual_pending_payments') {
       await sql`INSERT INTO manual_pending_payments SELECT * FROM json_populate_record(NULL::manual_pending_payments, ${json}::json) ON CONFLICT (id) DO NOTHING`;
+    } else if (table === 'cashflow_costs') {
+      await sql`INSERT INTO cashflow_costs SELECT * FROM json_populate_record(NULL::cashflow_costs, ${json}::json) ON CONFLICT (id) DO NOTHING`;
     }
   }
   await sql`DELETE FROM deleted_records WHERE record_id = ${recordId}`;

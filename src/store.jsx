@@ -939,16 +939,44 @@ export function StoreProvider({ children }) {
       }).catch(() => null);
     },
     // Add a cost line (recurring overhead or one-off). Caller reloads the month.
+    // We mint the id client-side so the action is reversible: undo deletes that
+    // row, redo re-inserts the SAME id (server accepts a provided id).
     addCashflowCost(payload) {
-      return api.post('/api/crm/stats/cashflow-cost', payload);
+      const id = 'cf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      const full = { ...payload, id };
+      const promise = api.post('/api/crm/stats/cashflow-cost', full);
+      if (!suppressUndoRef.current) {
+        recordUndo({
+          label: `Add “${(payload.label || 'cost').trim()}”`,
+          undo: () => api.delete('/api/crm/stats/cashflow-cost/' + id).then(() => actions.bumpFinanceRefresh()),
+          redo: () => api.post('/api/crm/stats/cashflow-cost', full).then(() => actions.bumpFinanceRefresh()),
+        });
+      }
+      return promise;
     },
-    // Edit a cost line ({ label?, category?, amount?, effectiveTo? }).
-    updateCashflowCost(id, patch) {
-      return api.patch('/api/crm/stats/cashflow-cost/' + id, patch);
+    // Edit a cost line. Pass `before` (the row's pre-edit values for the patched
+    // keys) to make the edit undoable.
+    updateCashflowCost(id, patch, before) {
+      const promise = api.patch('/api/crm/stats/cashflow-cost/' + id, patch);
+      if (before && !suppressUndoRef.current) {
+        const entry = buildEditUndo(before, patch, `Edit “${before.label || ''}”`, (vals) =>
+          api.patch('/api/crm/stats/cashflow-cost/' + id, vals).then(() => actions.bumpFinanceRefresh()));
+        if (entry) recordUndo(entry);
+      }
+      return promise;
     },
-    // Remove a cost line.
-    deleteCashflowCost(id) {
-      return api.delete('/api/crm/stats/cashflow-cost/' + id);
+    // Remove a cost line. Pass the full `row` so the delete is undoable: the
+    // server archives the row (recycle bin) and undo restores it with the same id.
+    deleteCashflowCost(id, row) {
+      const promise = api.delete('/api/crm/stats/cashflow-cost/' + id);
+      if (row && !suppressUndoRef.current) {
+        recordUndo({
+          label: `Delete “${row.label || ''}”`,
+          undo: () => api.post('/api/crm/restore/' + encodeURIComponent(id)).then(() => actions.bumpFinanceRefresh()),
+          redo: () => api.delete('/api/crm/stats/cashflow-cost/' + id).then(() => actions.bumpFinanceRefresh()),
+        });
+      }
+      return promise;
     },
     // Move a cost up/down within its category (swaps sort order with its neighbour).
     moveCashflowCost(id, direction) {
