@@ -796,22 +796,108 @@ async function approveRevision(req, res) {
   const approvedBy = (body.approvedBy || '').trim().slice(0, 120) || 'Client';
   if (!videoId) return res.status(400).json({ error: 'videoId required' });
 
-  // The video must belong to the project this share_token unlocks.
+  // The video must belong to the project this share_token unlocks. We pull the
+  // joined deal + project info up front so the "finalise" notification below
+  // can reach the right people without an extra query.
   const [video] = await sql`
-    SELECT vid.id, vid.approved_at, vid.project_id FROM revision_videos vid
-    JOIN revision_projects rp ON rp.id = vid.project_id
-    WHERE vid.id = ${videoId} AND rp.share_token = ${token}
+    SELECT vid.id, vid.title, vid.approved_at, vid.project_id,
+           rp.title AS project_title, rp.client_name, rp.deal_id, rp.created_by
+      FROM revision_videos vid
+      JOIN revision_projects rp ON rp.id = vid.project_id
+     WHERE vid.id = ${videoId} AND rp.share_token = ${token}
   `;
   if (!video) return res.status(404).json({ error: 'Not found' });
   if (video.approved_at) {
     return res.status(200).json({ videoId, approvedAt: video.approved_at, alreadyApproved: true });
   }
+  // "Finalise and send revisions" is now a single action: approve AND submit
+  // the client's feedback together (the old separate buttons were merged on
+  // the client). One UPDATE stamps both.
   const [row] = await sql`
-    UPDATE revision_videos SET approved_at = NOW(), approved_by = ${approvedBy} WHERE id = ${videoId}
-    RETURNING approved_at, approved_by
+    UPDATE revision_videos
+       SET approved_at = NOW(),
+           approved_by = ${approvedBy},
+           feedback_submitted_at = COALESCE(feedback_submitted_at, NOW())
+     WHERE id = ${videoId}
+     RETURNING approved_at, approved_by, feedback_submitted_at
   `;
   await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${video.project_id}`;
-  return res.status(200).json({ videoId, approvedAt: row.approved_at, approvedBy: row.approved_by });
+
+  // Comment count for the notification copy.
+  const [{ n }] = await sql`
+    SELECT COUNT(*)::int AS n FROM revision_comments rc
+      JOIN revision_versions rv ON rv.id = rc.version_id
+     WHERE rv.video_id = ${videoId}
+  `;
+
+  // Notify the production team — assigned producers on the project_video,
+  // the producer assigned to this revision project, and Project Managers
+  // (role 'member'). Per-user prefs still gate delivery. Failure must not
+  // break the client's approval.
+  try {
+    const assigneeEmails = await revisionFinaliseRecipients(videoId, video.deal_id, video.created_by);
+    if (assigneeEmails.length) {
+      const link = `${APP_URL}/#/revisions`;
+      const clientLabel = video.client_name || approvedBy;
+      const itemTitle = video.title || video.project_title;
+      await sendNotification('revision.feedback_submitted', {
+        assigneeEmails,
+        subject: `${clientLabel} finalised "${itemTitle}" with ${n} comment${n === 1 ? '' : 's'}`,
+        html: revisionFeedbackHtml({ kind: 'video', projectTitle: video.project_title, itemTitle: video.title, clientName: clientLabel, commentCount: n, link }),
+        text: `${clientLabel} finalised ${itemTitle} with ${n} comment${n === 1 ? '' : 's'}. ${link}`,
+        inApp: { title: `${clientLabel} finalised ${itemTitle}`, body: `${n} comment${n === 1 ? '' : 's'} sent to the team`, link: '#/revisions' },
+      });
+    }
+  } catch (err) {
+    console.error('[revisions] finalise notify failed', err.message);
+  }
+
+  return res.status(200).json({
+    videoId,
+    approvedAt: row.approved_at,
+    approvedBy: row.approved_by,
+    feedbackSubmittedAt: row.feedback_submitted_at,
+    commentCount: n,
+  });
+}
+
+// Producers + Project Managers who should hear about a client finalising a
+// revision. Pref filter still applies via sendNotification's 'assignee'
+// audience; this just expands the candidate pool beyond the deal team.
+async function revisionFinaliseRecipients(revisionVideoId, dealId, fallbackEmail) {
+  const out = new Set();
+  // Producer(s) assigned to the linked project_video card.
+  try {
+    const rows = await sql`
+      SELECT va.user_email AS email
+        FROM project_videos pv
+        JOIN video_assignees va ON va.video_id = pv.id
+       WHERE pv.revision_video_id = ${revisionVideoId}
+    `;
+    for (const r of rows) if (r.email) out.add(String(r.email).toLowerCase());
+  } catch { /* project_videos may not be present */ }
+  // Producer explicitly assigned to this revision project.
+  try {
+    const [proj] = await sql`
+      SELECT rp.assignee_email
+        FROM revision_videos rv
+        JOIN revision_projects rp ON rp.id = rv.project_id
+       WHERE rv.id = ${revisionVideoId}
+    `;
+    if (proj?.assignee_email) out.add(String(proj.assignee_email).toLowerCase());
+  } catch { /* best-effort */ }
+  // Every Project Manager / Sales user (role id 'member' — the role the team
+  // calls "Production Manager" — see 20260606_project_manager_payment_notifications.sql).
+  try {
+    const rows = await sql`SELECT email FROM users WHERE role = 'member'`;
+    for (const r of rows) if (r.email) out.add(String(r.email).toLowerCase());
+  } catch { /* best-effort */ }
+  // Plus the deal team (assignees + owner) so existing recipients aren't lost.
+  try {
+    const team = await resolveDealTeamEmails(dealId, fallbackEmail);
+    for (const e of team) out.add(e);
+  } catch { /* best-effort */ }
+  return Array.from(out);
 }
 
 // Client submits their feedback for one video: stamps feedback_submitted_at and

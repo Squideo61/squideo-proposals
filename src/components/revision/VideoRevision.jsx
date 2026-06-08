@@ -105,11 +105,12 @@ export function VideoRevision({ token, data }) {
     Object.fromEntries((data.videos || []).map(v => [v.id, v.approvedAt || null])));
   const approvedAt = activeVideo ? approvals[activeVideo.id] : null;
   const [approving, setApproving] = useState(false);
-  // Per-video "feedback submitted" state (seeded from the server).
+  // Per-video "feedback submitted" state (seeded from the server). The
+  // standalone "Send feedback" button has been folded into "Finalise and send
+  // revisions", so submitted is now stamped by finalise() and the polling
+  // loop — but we still track it for the engagement analytics endpoint.
   const [submitted, setSubmitted] = useState(() =>
     Object.fromEntries((data.videos || []).map(v => [v.id, v.feedbackSubmittedAt || null])));
-  const feedbackSubmittedAt = activeVideo ? submitted[activeVideo.id] : null;
-  const [sending, setSending] = useState(false);
 
   const [draft, setDraft] = useState('');
   const [pinTime, setPinTime] = useState(null);
@@ -192,39 +193,29 @@ export function VideoRevision({ token, data }) {
     }
   }
 
-  async function sendFeedback() {
-    if (!activeVideo || sending) return;
-    const msg = feedbackSubmittedAt
-      ? 'Re-send your feedback for this video to the team?'
-      : "Send your feedback for this video to the team? They'll be notified you've finished commenting.";
-    if (!window.confirm(msg)) return;
-    setSending(true);
-    try {
-      const res = await actions.submitRevisionFeedback(token, activeVideo.id, name);
-      setSubmitted(prev => ({ ...prev, [activeVideo.id]: res?.feedbackSubmittedAt || new Date().toISOString() }));
-      showMsg('Feedback sent to the team — thank you!');
-    } catch (err) {
-      showMsg(err.message || 'Could not send feedback');
-    } finally {
-      setSending(false);
-    }
-  }
-
-  async function approve() {
+  // "Finalise and send revisions" merges what used to be Approve + Send
+  // feedback into a single client action. Server-side, approveRevision now
+  // stamps both approved_at and feedback_submitted_at and fires the team
+  // notification.
+  async function finalise() {
     if (!activeVideo || approvedAt) return;
+    const commentCount = versionComments.length;
     const single = videos.length === 1;
-    const msg = single
-      ? 'Approve this video? This finalises it and no further comments can be added.'
-      : `Approve "${activeVideo.title}"? This finalises this video; your other videos stay open.`;
+    const what = single ? 'this video' : `"${activeVideo.title}"`;
+    const tail = commentCount > 0
+      ? `Your ${commentCount} comment${commentCount === 1 ? '' : 's'} will be sent to the production team.`
+      : 'No comments will be sent — only the approval.';
+    const msg = `Finalise ${what} and send your revisions? This locks ${what} so no further comments can be added. ${tail}`;
     if (!window.confirm(msg)) return;
     setApproving(true);
     try {
       const res = await actions.approveRevision(token, activeVideo.id, name);
       const at = res.approvedAt || new Date().toISOString();
       setApprovals(prev => ({ ...prev, [activeVideo.id]: at }));
-      showMsg('Video approved — thank you!');
+      setSubmitted(prev => ({ ...prev, [activeVideo.id]: res.feedbackSubmittedAt || new Date().toISOString() }));
+      showMsg('Revisions finalised and sent — thank you!');
     } catch (err) {
-      showMsg(err.message || 'Could not approve');
+      showMsg(err.message || 'Could not finalise');
     } finally {
       setApproving(false);
     }
@@ -379,28 +370,17 @@ export function VideoRevision({ token, data }) {
               <CalendarClock size={15} color={BRAND.blue} /> Schedule Review Call
             </a>
           )}
-          {!approvedAt && (
-            <button onClick={sendFeedback} disabled={sending}
-              title={feedbackSubmittedAt ? 'Re-send your feedback to the team' : 'Send your comments to the team'}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
-                border: `1px solid ${feedbackSubmittedAt ? BRAND.border : BRAND.blue}`,
-                background: feedbackSubmittedAt ? '#fff' : BRAND.blue,
-                color: feedbackSubmittedAt ? BRAND.ink : '#fff', fontSize: 13, fontWeight: 600,
-                cursor: sending ? 'default' : 'pointer' }}>
-              <Send size={15} /> {sending ? 'Sending…' : (feedbackSubmittedAt ? 'Feedback sent · re-send' : 'Send feedback')}
-            </button>
-          )}
           {approvedAt ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
               background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600 }}>
-              <CheckCircle2 size={15} /> {videos.length > 1 ? 'Video approved' : 'Revisions approved'}
+              <CheckCircle2 size={15} /> {videos.length > 1 ? 'Video finalised' : 'Revisions finalised'}
             </span>
           ) : (
-            <button onClick={approve} disabled={approving}
+            <button onClick={finalise} disabled={approving}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
                 border: 'none', background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600,
                 cursor: approving ? 'default' : 'pointer' }}>
-              <CheckCircle2 size={15} /> {approving ? 'Approving…' : (videos.length > 1 ? 'Approve this video' : 'Approve Revisions')}
+              <CheckCircle2 size={15} /> {approving ? 'Sending…' : 'Finalise and send revisions'}
             </button>
           )}
         </div>

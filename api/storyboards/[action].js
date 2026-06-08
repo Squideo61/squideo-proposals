@@ -833,20 +833,93 @@ async function approveStoryboard(req, res) {
   if (!storyboardId) return res.status(400).json({ error: 'storyboardId required' });
 
   const [storyboard] = await sql`
-    SELECT sb.id, sb.approved_at, sb.project_id FROM storyboards sb
-    JOIN storyboard_projects sp ON sp.id = sb.project_id
-    WHERE sb.id = ${storyboardId} AND sp.share_token = ${token}
+    SELECT sb.id, sb.title, sb.approved_at, sb.project_id,
+           sp.title AS project_title, sp.client_name, sp.deal_id, sp.created_by
+      FROM storyboards sb
+      JOIN storyboard_projects sp ON sp.id = sb.project_id
+     WHERE sb.id = ${storyboardId} AND sp.share_token = ${token}
   `;
   if (!storyboard) return res.status(404).json({ error: 'Not found' });
   if (storyboard.approved_at) {
     return res.status(200).json({ storyboardId, approvedAt: storyboard.approved_at, alreadyApproved: true });
   }
+  // "Finalise and send revisions" — approve + submit feedback in one go.
   const [row] = await sql`
-    UPDATE storyboards SET approved_at = NOW(), approved_by = ${approvedBy} WHERE id = ${storyboardId}
-    RETURNING approved_at, approved_by
+    UPDATE storyboards
+       SET approved_at = NOW(),
+           approved_by = ${approvedBy},
+           feedback_submitted_at = COALESCE(feedback_submitted_at, NOW())
+     WHERE id = ${storyboardId}
+     RETURNING approved_at, approved_by, feedback_submitted_at
   `;
   await sql`UPDATE storyboard_projects SET updated_at = NOW() WHERE id = ${storyboard.project_id}`;
-  return res.status(200).json({ storyboardId, approvedAt: row.approved_at, approvedBy: row.approved_by });
+
+  const [{ n }] = await sql`
+    SELECT COUNT(*)::int AS n FROM storyboard_comments sc
+      JOIN storyboard_versions sv ON sv.id = sc.version_id
+     WHERE sv.storyboard_id = ${storyboardId}
+  `;
+
+  // Notify the production team — see revisionFinaliseRecipients in
+  // api/revisions/[action].js for the rationale. Best-effort.
+  try {
+    const assigneeEmails = await storyboardFinaliseRecipients(storyboardId, storyboard.deal_id, storyboard.created_by);
+    if (assigneeEmails.length) {
+      const link = `${APP_URL}/#/storyboards`;
+      const clientLabel = storyboard.client_name || approvedBy;
+      const itemTitle = storyboard.title || storyboard.project_title;
+      await sendNotification('storyboard.feedback_submitted', {
+        assigneeEmails,
+        subject: `${clientLabel} finalised "${itemTitle}" with ${n} comment${n === 1 ? '' : 's'}`,
+        html: revisionFeedbackHtml({ kind: 'storyboard', projectTitle: storyboard.project_title, itemTitle: storyboard.title, clientName: clientLabel, commentCount: n, link }),
+        text: `${clientLabel} finalised ${itemTitle} with ${n} comment${n === 1 ? '' : 's'}. ${link}`,
+        inApp: { title: `${clientLabel} finalised ${itemTitle}`, body: `${n} comment${n === 1 ? '' : 's'} sent to the team`, link: '#/storyboards' },
+      });
+    }
+  } catch (err) {
+    console.error('[storyboards] finalise notify failed', err.message);
+  }
+
+  return res.status(200).json({
+    storyboardId,
+    approvedAt: row.approved_at,
+    approvedBy: row.approved_by,
+    feedbackSubmittedAt: row.feedback_submitted_at,
+    commentCount: n,
+  });
+}
+
+// Mirror of revisionFinaliseRecipients for storyboards. Walks the storyboard_id
+// link instead of revision_video_id; same audience semantics.
+async function storyboardFinaliseRecipients(storyboardId, dealId, fallbackEmail) {
+  const out = new Set();
+  try {
+    const rows = await sql`
+      SELECT va.user_email AS email
+        FROM project_videos pv
+        JOIN video_assignees va ON va.video_id = pv.id
+       WHERE pv.storyboard_id = ${storyboardId}
+    `;
+    for (const r of rows) if (r.email) out.add(String(r.email).toLowerCase());
+  } catch { /* best-effort */ }
+  try {
+    const [proj] = await sql`
+      SELECT sp.assignee_email
+        FROM storyboards sb
+        JOIN storyboard_projects sp ON sp.id = sb.project_id
+       WHERE sb.id = ${storyboardId}
+    `;
+    if (proj?.assignee_email) out.add(String(proj.assignee_email).toLowerCase());
+  } catch { /* best-effort */ }
+  try {
+    const rows = await sql`SELECT email FROM users WHERE role = 'member'`;
+    for (const r of rows) if (r.email) out.add(String(r.email).toLowerCase());
+  } catch { /* best-effort */ }
+  try {
+    const team = await resolveDealTeamEmails(dealId, fallbackEmail);
+    for (const e of team) out.add(e);
+  } catch { /* best-effort */ }
+  return Array.from(out);
 }
 
 // Client submits their feedback for one storyboard: stamps feedback_submitted_at

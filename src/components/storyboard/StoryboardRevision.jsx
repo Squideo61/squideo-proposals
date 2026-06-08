@@ -118,8 +118,6 @@ export function StoryboardRevision({ token, data }) {
   // Per-storyboard "feedback submitted" state (seeded from the server).
   const [submitted, setSubmitted] = useState(() =>
     Object.fromEntries((data.storyboards || []).map(s => [s.id, s.feedbackSubmittedAt || null])));
-  const feedbackSubmittedAt = activeStoryboard ? submitted[activeStoryboard.id] : null;
-  const [sending, setSending] = useState(false);
 
   const [draft, setDraft] = useState('');
   const [posting, setPosting] = useState(false);
@@ -215,39 +213,28 @@ export function StoryboardRevision({ token, data }) {
     }
   }
 
-  async function sendFeedback() {
-    if (!activeStoryboard || sending) return;
-    const msg = feedbackSubmittedAt
-      ? 'Re-send your feedback for this storyboard to the team?'
-      : "Send your feedback for this storyboard to the team? They'll be notified you've finished commenting.";
-    if (!window.confirm(msg)) return;
-    setSending(true);
-    try {
-      const res = await actions.submitStoryboardFeedback(token, activeStoryboard.id, name);
-      setSubmitted(prev => ({ ...prev, [activeStoryboard.id]: res?.feedbackSubmittedAt || new Date().toISOString() }));
-      showMsg('Feedback sent to the team — thank you!');
-    } catch (err) {
-      showMsg(err.message || 'Could not send feedback');
-    } finally {
-      setSending(false);
-    }
-  }
-
-  async function approve() {
+  // "Finalise and send revisions" — single client action, mirrors the video
+  // viewer. Server-side, approveStoryboard now stamps both approved_at and
+  // feedback_submitted_at and fires the team notification.
+  async function finalise() {
     if (!activeStoryboard || approvedAt) return;
+    const commentCount = (comments || []).filter(c => c.versionId === version?.id).length;
     const single = storyboards.length === 1;
-    const msg = single
-      ? 'Approve this storyboard? This finalises it and no further comments can be added.'
-      : `Approve "${activeStoryboard.title}"? This finalises this storyboard; your others stay open.`;
+    const what = single ? 'this storyboard' : `"${activeStoryboard.title}"`;
+    const tail = commentCount > 0
+      ? `Your ${commentCount} comment${commentCount === 1 ? '' : 's'} will be sent to the production team.`
+      : 'No comments will be sent — only the approval.';
+    const msg = `Finalise ${what} and send your revisions? This locks ${what} so no further comments can be added. ${tail}`;
     if (!window.confirm(msg)) return;
     setApproving(true);
     try {
       const res = await actions.approveStoryboard(token, activeStoryboard.id, name);
       const at = res.approvedAt || new Date().toISOString();
       setApprovals(prev => ({ ...prev, [activeStoryboard.id]: at }));
-      showMsg('Storyboard approved — thank you!');
+      setSubmitted(prev => ({ ...prev, [activeStoryboard.id]: res.feedbackSubmittedAt || new Date().toISOString() }));
+      showMsg('Revisions finalised and sent — thank you!');
     } catch (err) {
-      showMsg(err.message || 'Could not approve');
+      showMsg(err.message || 'Could not finalise');
     } finally {
       setApproving(false);
     }
@@ -366,28 +353,17 @@ export function StoryboardRevision({ token, data }) {
               <CalendarClock size={15} color={BRAND.blue} /> Schedule Review Call
             </a>
           )}
-          {!approvedAt && (
-            <button onClick={sendFeedback} disabled={sending}
-              title={feedbackSubmittedAt ? 'Re-send your feedback to the team' : 'Send your comments to the team'}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
-                border: `1px solid ${feedbackSubmittedAt ? BRAND.border : BRAND.blue}`,
-                background: feedbackSubmittedAt ? '#fff' : BRAND.blue,
-                color: feedbackSubmittedAt ? BRAND.ink : '#fff', fontSize: 13, fontWeight: 600,
-                cursor: sending ? 'default' : 'pointer' }}>
-              <Send size={15} /> {sending ? 'Sending…' : (feedbackSubmittedAt ? 'Feedback sent · re-send' : 'Send feedback')}
-            </button>
-          )}
           {approvedAt ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
               background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600 }}>
-              <CheckCircle2 size={15} /> {storyboards.length > 1 ? 'Storyboard approved' : 'Storyboard approved'}
+              <CheckCircle2 size={15} /> Storyboard finalised
             </span>
           ) : (
-            <button onClick={approve} disabled={approving}
+            <button onClick={finalise} disabled={approving}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
                 border: 'none', background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600,
                 cursor: approving ? 'default' : 'pointer' }}>
-              <CheckCircle2 size={15} /> {approving ? 'Approving…' : (storyboards.length > 1 ? 'Approve this storyboard' : 'Approve Storyboard')}
+              <CheckCircle2 size={15} /> {approving ? 'Sending…' : 'Finalise and send revisions'}
             </button>
           )}
         </div>
