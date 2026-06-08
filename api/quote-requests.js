@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { put } from '@vercel/blob';
 import sql from './_lib/db.js';
 import { sendMail, APP_URL } from './_lib/email.js';
-import { resolveRecipients } from './_lib/notifications.js';
+import { resolveRecipients, persistInApp } from './_lib/notifications.js';
 import { buildResumeEmail } from './_lib/quoteResumeEmail.js';
 import { signQuoteRequestActionToken, verifyQuoteRequestActionToken } from './_lib/auth.js';
 import { qualifyQuoteRequest, disqualifyQuoteRequest } from './_lib/quoteRequestActions.js';
@@ -524,6 +524,23 @@ export default async function handler(req, res) {
         html: buildNotificationEmail(qr, storedFiles, { qualifyUrl, disqualifyUrl, crmUrl }),
       });
     }));
+
+    // Mirror the email in the in-app bell for every pref-resolved recipient.
+    // This path hand-rolls per-recipient emails (to customise the Qualify/
+    // Disqualify buttons) instead of going through sendNotification, so the
+    // in-app write that sendNotification normally does has to happen here too —
+    // otherwise the bell stays empty on a new quote request. The NOTIFY_TO env
+    // fallback is intentionally excluded (it may not be a real user, same as
+    // sendNotification's extraRecipients).
+    if (subscribed.length) {
+      const inAppBody =
+        [qr.company, qr.budget, qr.timeline].filter(Boolean).join(' · ') ||
+        (qr.project_details ? qr.project_details.slice(0, 200) : null);
+      await persistInApp('quote_request.new', subscribed, {
+        subject,
+        inApp: { title: subject, body: inAppBody, link: '#/quote-requests' },
+      });
+    }
 
     try {
       if (qr.form_session_id) {

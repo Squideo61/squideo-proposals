@@ -188,7 +188,7 @@ export async function sendNotification(key, {
 // email's subject/text; callers can override via `inApp`. `link` should be an
 // in-app hash route (e.g. '#/admin/users') so the bell navigates without a
 // full reload — distinct from the absolute APP_URL link used in the email.
-async function persistInApp(key, recipients, { subject, text, inApp }) {
+export async function persistInApp(key, recipients, { subject, text, inApp }) {
   const title = String(inApp?.title || subject || 'Notification').slice(0, 200);
   const body = inApp?.body != null
     ? String(inApp.body).slice(0, 500)
