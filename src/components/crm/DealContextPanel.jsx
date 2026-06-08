@@ -457,6 +457,7 @@ function describeEvent(e) {
     case 'email_sent':    return 'Email sent';
     case 'email_scheduled': return 'Email scheduled';
     case 'email_linked':  return 'Email linked';
+    case 'revision_draft_uploaded': return `Revised video uploaded${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'revision_completed':   return `Revision complete${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'revision_reopened':    return `Revision reopened${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'revision_assigned':    return `Revisions assigned${p.assignee ? ` to ${p.assignee}` : ''}`;

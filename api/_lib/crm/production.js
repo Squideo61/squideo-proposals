@@ -335,10 +335,50 @@ async function withVideoExtras(video) {
       if (sv?.blob_url) storyboard = { url: sv.blob_url };
     } catch { /* storyboard tables not present */ }
   }
+  let revisionStatus = null;
   if (video.revisionVideoId) {
     try {
-      const rv = (await sql`SELECT blob_url, mime_type FROM revision_versions WHERE video_id = ${video.revisionVideoId} ORDER BY version_number DESC LIMIT 1`)[0];
+      const rv = (await sql`
+        SELECT version_number, label, blob_url, mime_type, created_at
+          FROM revision_versions
+         WHERE video_id = ${video.revisionVideoId}
+         ORDER BY version_number DESC
+         LIMIT 1
+      `)[0];
       if (rv?.blob_url) draftVideo = { url: rv.blob_url, mimeType: rv.mime_type || null };
+      // Status block used by the video page to surface "Draft N · uploaded X"
+      // and the review/approval/feedback state alongside the preview.
+      const [{ version_count }] = await sql`
+        SELECT COUNT(*)::int AS version_count FROM revision_versions WHERE video_id = ${video.revisionVideoId}
+      `;
+      const [vid] = await sql`
+        SELECT approved_at, approved_by, feedback_submitted_at
+          FROM revision_videos WHERE id = ${video.revisionVideoId}
+      `;
+      let commentCount = 0, openCommentCount = 0;
+      if (rv?.version_number != null) {
+        const [c] = await sql`
+          SELECT COUNT(*)::int AS total,
+                 COUNT(*) FILTER (WHERE completed_at IS NULL)::int AS open
+            FROM revision_comments rc
+            JOIN revision_versions rv2 ON rv2.id = rc.version_id
+           WHERE rv2.video_id = ${video.revisionVideoId}
+             AND rv2.version_number = ${rv.version_number}
+        `;
+        commentCount = c?.total || 0;
+        openCommentCount = c?.open || 0;
+      }
+      revisionStatus = {
+        versionCount: Number(version_count) || 0,
+        latestVersionNumber: rv?.version_number != null ? Number(rv.version_number) : null,
+        latestVersionLabel: rv?.label || null,
+        latestVersionAt: rv?.created_at || null,
+        approvedAt: vid?.approved_at || null,
+        approvedBy: vid?.approved_by || null,
+        feedbackSubmittedAt: vid?.feedback_submitted_at || null,
+        commentCount,
+        openCommentCount,
+      };
     } catch { /* revision tables not present */ }
   }
   video.preview = {
@@ -347,6 +387,7 @@ async function withVideoExtras(video) {
     storyboard,
     video: draftVideo,
   };
+  video.revisionStatus = revisionStatus;
   video.paymentOption = await paymentOptionForDeal(video.dealId);
   return video;
 }

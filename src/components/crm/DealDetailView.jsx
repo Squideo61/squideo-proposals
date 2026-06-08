@@ -2155,6 +2155,7 @@ function describeEvent(e) {
     case 'task_reopened': return `Task reopened: ${p.title || ''}`;
     case 'email_sent':    return p.subject ? `Email sent: ${p.subject}` : 'Email sent';
     case 'note':          return p.text || 'Note added';
+    case 'revision_draft_uploaded': return `Revised video uploaded: ${p.video || 'video'}${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'revision_completed':   return `Revision complete: ${p.video || 'video'}${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'revision_reopened':    return `Revision reopened: ${p.video || 'video'}${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'revision_assigned':    return `Revisions assigned${p.assignee ? ` to ${p.assignee}` : ''}`;

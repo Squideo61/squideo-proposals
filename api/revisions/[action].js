@@ -463,7 +463,7 @@ async function registerVersion(req, res, user, videoId) {
   const label = body.label ? String(body.label).trim() : null;
   if (!blobUrl) return res.status(400).json({ error: 'blobUrl required' });
 
-  const [video] = await sql`SELECT id, project_id FROM revision_videos WHERE id = ${videoId}`;
+  const [video] = await sql`SELECT id, project_id, title FROM revision_videos WHERE id = ${videoId}`;
   if (!video) return res.status(404).json({ error: 'video not found' });
 
   // Draft numbers run per video.
@@ -486,6 +486,15 @@ async function registerVersion(req, res, user, videoId) {
   // again and leave comments.
   await sql`UPDATE revision_videos SET approved_at = NULL, approved_by = NULL WHERE id = ${videoId}`;
   await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${video.project_id}`;
+  // Surface the new draft on the deal/video timeline so the project page shows
+  // that a revised cut was uploaded (otherwise the preview silently updates and
+  // the team has no signal something landed).
+  await logToDeal(
+    video.project_id,
+    'revision_draft_uploaded',
+    { video: video.title, draft: next, label: label || null },
+    user.email,
+  );
   return res.status(201).json(versionRow(row));
 }
 

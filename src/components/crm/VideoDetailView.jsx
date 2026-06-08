@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Film, FolderOpen, Send, ExternalLink, Trash2, FileText, Upload, CheckCircle2, Circle, ListChecks, ChevronDown, ChevronRight, Image as ImageIcon } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { useIsMobile } from '../../utils.js';
+import { useIsMobile, formatRelativeTime } from '../../utils.js';
 import {
   PRODUCTION_PHASES, PHASE_BY_ID, PAYMENT_OPTION_LABEL,
   VIDEO_MILESTONES, STAGE_LABEL,
@@ -172,7 +172,7 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           height: isMobile ? 'auto' : 'calc(100vh - 96px)',
           display: 'flex', flexDirection: 'column', gap: 16,
         }}>
-          <PreviewPane preview={video.preview} isMobile={isMobile} />
+          <PreviewPane preview={video.preview} revisionStatus={video.revisionStatus} sentForReview={!!video.revisionVideoId} isMobile={isMobile} />
           <div style={{ flex: isMobile ? 'none' : 1, minHeight: 0, overflowY: isMobile ? 'visible' : 'auto' }}>
             {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['activity', 'comments']} />}
           </div>
@@ -191,7 +191,7 @@ const PREVIEW_META = {
   video:      { label: 'Draft video', icon: Film, empty: 'No draft video yet — use “Send for review”, then upload a draft.' },
 };
 
-function PreviewPane({ preview, isMobile }) {
+function PreviewPane({ preview, revisionStatus, sentForReview, isMobile }) {
   const p = preview || {};
   const kind = PREVIEW_META[p.current] ? p.current : 'script';
   const asset = kind === 'script' ? p.script : kind === 'storyboard' ? p.storyboard : p.video;
@@ -199,6 +199,16 @@ function PreviewPane({ preview, isMobile }) {
   const Icon = meta.icon;
   const url = asset?.url || null;
   const isDriveScript = kind === 'script' && url && url.includes('drive.google.com');
+  // Label the draft (e.g. "Draft 2 preview") + show when it was uploaded, so a
+  // freshly-arrived revised cut is visible at a glance rather than silently
+  // replacing the existing preview asset.
+  const showDraftMeta = kind === 'video' && revisionStatus;
+  const draftLabel = showDraftMeta && revisionStatus.latestVersionNumber != null
+    ? (revisionStatus.latestVersionLabel || ('Draft ' + revisionStatus.latestVersionNumber))
+    : meta.label;
+  const headerTitle = showDraftMeta && revisionStatus.latestVersionNumber != null
+    ? draftLabel + ' preview'
+    : meta.label + ' preview';
 
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, overflow: 'hidden',
@@ -206,7 +216,10 @@ function PreviewPane({ preview, isMobile }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
         borderBottom: '1px solid ' + BRAND.border, flexShrink: 0 }}>
         <Icon size={15} color={BRAND.blue} />
-        <strong style={{ fontSize: 13, color: BRAND.ink }}>{meta.label} preview</strong>
+        <strong style={{ fontSize: 13, color: BRAND.ink }}>{headerTitle}</strong>
+        {showDraftMeta && revisionStatus.latestVersionAt && (
+          <span style={{ fontSize: 11, color: BRAND.muted }}>· uploaded {formatRelativeTime(revisionStatus.latestVersionAt)}</span>
+        )}
         {url && (
           <a href={url} target="_blank" rel="noreferrer"
             style={{ marginLeft: 'auto', fontSize: 12, color: BRAND.blue, textDecoration: 'none',
@@ -215,6 +228,9 @@ function PreviewPane({ preview, isMobile }) {
           </a>
         )}
       </div>
+      {kind === 'video' && (revisionStatus || sentForReview) && (
+        <RevisionStatusRow revisionStatus={revisionStatus} sentForReview={sentForReview} />
+      )}
       <div style={{ flex: 1, minHeight: 0, position: 'relative', background: kind === 'storyboard' ? '#0B1B26' : '#fff',
         overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {!url ? (
@@ -234,6 +250,54 @@ function PreviewPane({ preview, isMobile }) {
           <video src={url} controls style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }} />
         )}
       </div>
+    </div>
+  );
+}
+
+// Slim status strip under the draft-video preview header summarising the
+// current revision round: sent state, comments, feedback submitted, approval.
+// Always renders when the video is linked to the Revisions section, even
+// before the first draft is uploaded (so the producer can see the link is
+// live but awaiting a cut).
+function RevisionStatusRow({ revisionStatus, sentForReview }) {
+  const rs = revisionStatus || {};
+  const hasDraft = rs.latestVersionNumber != null;
+  const pills = [];
+  if (sentForReview && !hasDraft) {
+    pills.push({ text: 'Sent · awaiting first draft', color: BRAND.muted });
+  } else if (sentForReview) {
+    pills.push({ text: 'Sent for review', color: BRAND.blue });
+  }
+  if (hasDraft && rs.versionCount > 1) {
+    pills.push({ text: rs.versionCount + ' drafts', color: BRAND.muted });
+  }
+  if (hasDraft && rs.commentCount > 0) {
+    pills.push({
+      text: (rs.openCommentCount > 0
+        ? rs.openCommentCount + ' open / ' + rs.commentCount + ' comments'
+        : rs.commentCount + ' comments · all addressed'),
+      color: rs.openCommentCount > 0 ? '#C2410C' : '#16A34A',
+    });
+  }
+  if (rs.feedbackSubmittedAt && !rs.approvedAt) {
+    pills.push({ text: 'Client sent feedback', color: '#7C3AED' });
+  }
+  if (rs.approvedAt) {
+    pills.push({ text: 'Approved' + (rs.approvedBy ? ' by ' + rs.approvedBy : ''), color: '#16A34A' });
+  }
+  if (!pills.length) return null;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+      padding: '6px 12px', background: '#F8FAFC',
+      borderBottom: '1px solid ' + BRAND.border, flexShrink: 0,
+    }}>
+      {pills.map((p, i) => (
+        <span key={i} style={{ fontSize: 11, fontWeight: 700, color: p.color }}>
+          {i > 0 && <span style={{ color: BRAND.muted, fontWeight: 400, marginRight: 8 }}>·</span>}
+          {p.text}
+        </span>
+      ))}
     </div>
   );
 }
