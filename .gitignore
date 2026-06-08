@@ -8,3 +8,4 @@ dist
 .claude/worktrees/
 
 .env*.local
+.vercel

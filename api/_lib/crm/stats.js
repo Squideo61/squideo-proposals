@@ -1341,6 +1341,69 @@ async function incomeDateRoute(req, res) {
 // as the rest of stats). Self-heals its tables so a missing migration never 500s.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// One-time seed of the company's monthly cost base (owner's cost sheet, Jun 2026).
+// Recurring overheads apply to every month (effective_from NULL) so the trailing
+// 12-month profit / Corporation Tax estimate is meaningful; the two director
+// allowances are one-offs in 2026-06. Items with no cost on the source sheet
+// (cancelled / blank / paid-off) are omitted. Seeded only into an EMPTY table —
+// after that the in-app editor is the source of truth, so edits are never
+// clobbered. [label, category('wages'|'expense'), amount, recurring, month|null].
+const CASHFLOW_COST_SEED = [
+  // Software & subscriptions.
+  ['Kendall Accountant', 'expense', 150.00, true, null],
+  ['mr horse 3x Licenses', 'expense', 47.00, true, null],
+  ['YouTube Premium family', 'expense', 20.00, true, null],
+  ['Monday.com', 'expense', 210.00, true, null],
+  ['Xero', 'expense', 50.20, true, null],
+  ['G Suite', 'expense', 300.00, true, null],
+  ['Adobe Team Creative Cloud', 'expense', 247.96, true, null],
+  ['Streak', 'expense', 91.50, true, null],
+  ['Subly Premium', 'expense', 39.00, true, null],
+  ['Microsoft Office x4 licenses', 'expense', 60.48, true, null],
+  ['Go Prospero (proposals) - 2 users', 'expense', 18.00, true, null],
+  ['Duda Websites', 'expense', 81.00, true, null],
+  ['Freepik + Flaticon Subscription (2 accounts)', 'expense', 20.00, true, null],
+  ['Voice over spend estimation - Fiverr', 'expense', 750.00, true, null],
+  ['Spotify Family', 'expense', 15.00, true, null],
+  ['Vimeo Annual Membership', 'expense', 5.75, true, null],
+  ['WeTransfer', 'expense', 21.00, true, null],
+  ['Envato Elements', 'expense', 75.00, true, null],
+  ['Netflix', 'expense', 21.00, true, null],
+  ['Vercel (Squideo custom software)', 'expense', 18.00, true, null],
+  ['ChatGPT', 'expense', 27.00, true, null],
+  ['Loom', 'expense', 18.00, true, null],
+  ['iCloud', 'expense', 8.99, true, null],
+  ['Natural Reader - AI voiceover generator', 'expense', 8.00, true, null],
+  // Direct debits.
+  ['Phone Contracts', 'expense', 32.00, true, null],
+  ['Windsor Telecom', 'expense', 40.14, true, null],
+  ['AXA Specialist Risk Insurance (liability + indemnity)', 'expense', 85.00, true, null],
+  ['Bank Overdraft Fee', 'expense', 31.25, true, null],
+  ['Misc bank charges', 'expense', 50.00, true, null],
+  ['Ben Car Lease', 'expense', 339.00, true, null],
+  // Marketing.
+  ['PPC Budget UK', 'expense', 3000.00, true, null],
+  ['Sophie Risan - Marketing Fee', 'expense', 600.00, true, null],
+  // Director pension (employer contribution).
+  ['Director Pensions Base (£300 each PM)', 'expense', 600.00, true, null],
+  // Wages — staff salaries & tax.
+  ['Anna - part of B salary', 'wages', 1047.50, true, null],
+  ['Ben', 'wages', 2113.50, true, null],
+  ['Adam', 'wages', 3500.00, true, null],
+  ['Director personal tax saving', 'wages', 950.00, true, null],
+  ['Callum', 'wages', 2480.00, true, null],
+  ['Callum commission', 'wages', 448.55, true, null],
+  ['Chloe', 'wages', 800.00, true, null],
+  ['Hannah Bales', 'wages', 2121.11, true, null],
+  ['Adam Leveson', 'wages', 2121.11, true, null],
+  // Wages — freelancers.
+  ['Lesley Ovington (freelance)', 'wages', 1750.00, true, null],
+  ['Freelance Copywriter', 'wages', 170.00, true, null],
+  // One-offs — June 2026.
+  ['Adam Director allowance', 'expense', 250.00, false, '2026-06'],
+  ['Ben Director allowance', 'expense', 250.00, false, '2026-06'],
+];
+
 let cashflowEnsured = null;
 function ensureCashflow() {
   if (cashflowEnsured) return cashflowEnsured;
@@ -1368,6 +1431,20 @@ function ensureCashflow() {
         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cashflow_profit_goal NUMERIC`;
+
+    // Seed the cost base once (empty table only). Deterministic ids +
+    // ON CONFLICT DO NOTHING so a concurrent cold-start re-seed can't duplicate.
+    const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM cashflow_costs`;
+    if (count === 0) {
+      let i = 0;
+      for (const [label, category, amount, recurring, month] of CASHFLOW_COST_SEED) {
+        await sql`
+          INSERT INTO cashflow_costs (id, label, category, amount, recurring, month, effective_from, sort_order)
+          VALUES (${'cfseed' + i}, ${label}, ${category}, ${amount}, ${recurring}, ${month}, ${null}, ${i})
+          ON CONFLICT (id) DO NOTHING`;
+        i += 1;
+      }
+    }
   })().catch((err) => { cashflowEnsured = null; throw err; });
   return cashflowEnsured;
 }
