@@ -52,7 +52,7 @@ export function StorageTab() {
         <Stat label="Total CRM cost / mo (est.)" value={fmtUsd(grandTotal)}
           sub="Neon + Vercel Blob + fixed costs" big />
         <Stat label="Neon database" value={neon?.configured ? fmtUsd(neonUsd) : '—'}
-          sub={neon?.configured ? 'this billing period' : 'not configured'} />
+          sub={neon?.configured ? 'this billing period' : neon?.error ? 'error — see below' : 'not configured'} />
         <Stat label="Vercel Blob storage" value={fmtUsd(blobUsd)} sub="storage only" />
         <Stat label="Fixed monthly costs" value={fmtUsd(fixedUsd)}
           sub={`${(state.costItems || []).length} item${(state.costItems || []).length === 1 ? '' : 's'}`} />
@@ -72,6 +72,17 @@ function NeonSection({ neon, loading }) {
       <SectionHeader icon={Database} title="Neon database (Postgres)" />
       {!neon ? (
         <Muted>{loading ? 'Loading…' : 'No data yet.'}</Muted>
+      ) : neon.error ? (
+        <div style={{
+          padding: 16, background: '#FEF2F2', border: '1px solid #FECACA',
+          borderRadius: 10, color: '#991B1B', fontSize: 13, lineHeight: 1.6,
+        }}>
+          Couldn't load Neon usage: {neon.error}
+          <div style={{ marginTop: 6, color: '#7F1D1D' }}>
+            If your project is under an organisation, make sure the API key can access it
+            (or set <code>NEON_ORG_ID</code> in Vercel), then hit Refresh.
+          </div>
+        </div>
       ) : !neon.configured ? (
         <div style={{
           padding: 16, background: '#FEF3C7', border: '1px solid #FCD34D',

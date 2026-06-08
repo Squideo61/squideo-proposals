@@ -9,7 +9,8 @@
 // to ~30 req/min/account); pass ?refresh=1 to recompute.
 //
 // Requires env NEON_API_KEY (Neon Console → Account settings → API keys).
-// Optional env NEON_PROJECT_ID — otherwise the first project on the account is used.
+// Optional env NEON_ORG_ID — otherwise the account's first organization is used.
+// Optional env NEON_PROJECT_ID — otherwise all projects in the org are summed.
 import { cors, requirePermission } from './_lib/middleware.js';
 
 // Launch plan unit prices (https://neon.com/pricing, 2026). Adjust here if Neon
@@ -36,42 +37,67 @@ async function neonGet(path, key) {
   return res.json();
 }
 
-// Sum every numeric consumption metric across the periods/datapoints the API
-// returns for the window. The v2 endpoint nests metrics under
-// projects[].periods[].consumption[] — we flatten and add up the fields we bill on.
+const METRICS = [
+  'compute_unit_seconds',
+  'root_branch_bytes_month',
+  'child_branch_bytes_month',
+  'instant_restore_bytes_month',
+  'public_network_transfer_bytes',
+  'private_network_transfer_bytes',
+];
+
+// Sum each metric across every project/period/datapoint the API returns for the
+// window. The v2 endpoint nests metrics as projects[].periods[].consumption[]
+// where each datapoint carries a `metrics: [{ metric_name, value }]` array
+// (older shapes put the metrics as flat keys on the datapoint — handle both).
 function sumMetrics(payload) {
-  const totals = {
-    compute_unit_seconds: 0,
-    root_branch_bytes_month: 0,
-    child_branch_bytes_month: 0,
-    instant_restore_bytes_month: 0,
-    public_network_transfer_bytes: 0,
-    private_network_transfer_bytes: 0,
-  };
-  const add = (point) => {
-    for (const k of Object.keys(totals)) {
-      const v = Number(point?.[k]);
+  const totals = {};
+  for (const k of METRICS) totals[k] = 0;
+  const addFlat = (obj) => {
+    for (const k of METRICS) {
+      const v = Number(obj?.[k]);
       if (Number.isFinite(v)) totals[k] += v;
     }
   };
   for (const project of payload?.projects || []) {
     for (const period of project?.periods || []) {
-      for (const point of period?.consumption || []) add(point);
+      for (const point of period?.consumption || []) {
+        if (Array.isArray(point?.metrics)) {
+          for (const m of point.metrics) {
+            if (m && m.metric_name in totals) {
+              const v = Number(m.value);
+              if (Number.isFinite(v)) totals[m.metric_name] += v;
+            }
+          }
+        } else {
+          addFlat(point);
+        }
+      }
     }
   }
   return totals;
 }
 
-async function compute(key, projectIdEnv) {
-  // Resolve the project: explicit env wins, else take the first on the account.
-  let projectId = projectIdEnv;
+async function compute(key, { orgIdEnv, projectIdEnv } = {}) {
+  // Neon now scopes every account under an organization; the consumption API
+  // requires org_id. Use the configured org, else the account's first org.
+  let orgId = orgIdEnv;
+  if (!orgId) {
+    const orgsPayload = await neonGet('/users/me/organizations', key);
+    const orgs = orgsPayload?.organizations || orgsPayload?.orgs || [];
+    if (!orgs.length) {
+      throw new Error('No Neon organization found for this API key. Set NEON_ORG_ID, or use an API key that belongs to your organization.');
+    }
+    orgId = orgs[0].id;
+  }
+
+  // Optional project name (nice-to-have label); failure here is non-fatal.
   let projectName = null;
-  if (!projectId) {
-    const list = await neonGet('/projects', key);
-    const first = (list?.projects || [])[0];
-    if (!first) throw new Error('No Neon projects found for this API key');
-    projectId = first.id;
-    projectName = first.name;
+  if (projectIdEnv) {
+    try {
+      const p = await neonGet(`/projects/${projectIdEnv}`, key);
+      projectName = p?.project?.name || null;
+    } catch { /* label only */ }
   }
 
   // Current billing period to date: start of this UTC month → now.
@@ -79,8 +105,10 @@ async function compute(key, projectIdEnv) {
   const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const to = now.toISOString();
   const qs = new URLSearchParams({
-    from, to, granularity: 'monthly', project_ids: projectId,
+    from, to, granularity: 'monthly', org_id: orgId,
+    metrics: METRICS.join(','), limit: '100',
   });
+  if (projectIdEnv) qs.append('project_ids', projectIdEnv);
   const usagePayload = await neonGet(`/consumption_history/v2/projects?${qs}`, key);
   const m = sumMetrics(usagePayload);
 
@@ -100,7 +128,8 @@ async function compute(key, projectIdEnv) {
 
   return {
     configured: true,
-    projectId,
+    orgId,
+    projectId: projectIdEnv || null,
     projectName,
     period: { from, to },
     usage: { computeCuHours, storageGbMonth, pitrGbMonth, egressGb, privateEgressGb },
@@ -135,7 +164,10 @@ export default async function handler(req, res) {
     if (!refresh && cache && (Date.now() - cache.at) < TTL_MS) {
       return res.status(200).json({ ...cache.data, cached: true });
     }
-    const data = await compute(key, process.env.NEON_PROJECT_ID);
+    const data = await compute(key, {
+      orgIdEnv: process.env.NEON_ORG_ID,
+      projectIdEnv: process.env.NEON_PROJECT_ID,
+    });
     cache = { at: Date.now(), data };
     return res.status(200).json({ ...data, cached: false });
   } catch (err) {

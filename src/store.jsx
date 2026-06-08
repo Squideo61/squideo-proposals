@@ -1437,8 +1437,8 @@ export function StoreProvider({ children }) {
     // ---------- Admin: Neon database usage / cost ----------
     loadNeonUsage({ refresh = false } = {}) {
       return api.get('/api/neon-usage' + (refresh ? '?refresh=1' : ''))
-        .then((data) => { if (data && !data.error) setState(s => ({ ...s, neonUsage: data })); return data; })
-        .catch(() => {});
+        .then((data) => { if (data) setState(s => ({ ...s, neonUsage: data })); return data; })
+        .catch((err) => { setState(s => ({ ...s, neonUsage: { error: err?.message || 'Could not load Neon usage' } })); });
     },
 
     // Editable fixed monthly CRM cost line items (shared with the settings row).
