@@ -212,9 +212,6 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
               <PoundSterling size={22} color={BRAND.blue} />
               <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Finance</h1>
             </div>
-            <p style={{ fontSize: 13, color: BRAND.muted, margin: '2px 0 0' }}>
-              Cash received across all customers. Figures are ex-VAT (net); VAT to set aside is shown separately.
-            </p>
           </div>
         </div>
       </header>
