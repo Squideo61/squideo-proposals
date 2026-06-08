@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users, GripVertical, Briefcase, Megaphone, Crown } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users, GripVertical, Briefcase, Megaphone, Crown, Coins } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -349,10 +349,11 @@ const PROFIT_NEG = '#EF4444';
 // stays tidy as categories come and go.
 function costBreakdownSub(sel) {
   return [
-    ['Wages', sel.wages],
+    ['Staff', sel.wages],
     ['Freelance', sel.freelancers],
     ['Marketing', sel.marketing],
-    ['Director', sel.director],
+    ['Directors', sel.director],
+    ['Allowances', sel.allowance],
     ['Expenses', sel.expenses],
   ].filter(([, v]) => (Number(v) || 0) > 0.005).map(([l, v]) => `${l} ${formatGBP(v)}`).join(' · ');
 }
@@ -547,20 +548,23 @@ function CfCosts({ lines, month, monthLabel, actions, reload, isMobile }) {
   const wages = lines.filter((l) => l.category === 'wages');
   const freelancers = lines.filter((l) => l.category === 'freelancer');
   const marketing = lines.filter((l) => l.category === 'marketing');
-  const director = lines.filter((l) => l.category === 'director');
-  const expenses = lines.filter((l) => !['wages', 'freelancer', 'marketing', 'director'].includes(l.category));
+  const directors = lines.filter((l) => l.category === 'director');
+  const allowances = lines.filter((l) => l.category === 'allowance');
+  const expenses = lines.filter((l) => !['wages', 'freelancer', 'marketing', 'director', 'allowance'].includes(l.category));
   return (
     <>
       <CfCostPanel title="Expenses" icon={Receipt} accent="#0E7490" category="expense"
         rows={expenses} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
       <CfCostPanel title="Marketing" icon={Megaphone} accent="#F97316" category="marketing"
         rows={marketing} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
-      <CfCostPanel title="Wages" icon={Users} accent={BRAND.blue} category="wages"
+      <CfCostPanel title="Staff Wages" icon={Users} accent={BRAND.blue} category="wages"
         rows={wages} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
       <CfCostPanel title="Freelancer Costs" icon={Briefcase} accent="#8B5CF6" category="freelancer"
         rows={freelancers} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
-      <CfCostPanel title="Director Allowances" icon={Crown} accent="#CA8A04" category="director"
-        rows={director} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
+      <CfCostPanel title="Directors" icon={Crown} accent="#CA8A04" category="director"
+        rows={directors} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
+      <CfCostPanel title="Director Allowances" icon={Coins} accent="#D97706" category="allowance"
+        rows={allowances} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
     </>
   );
 }
@@ -656,7 +660,7 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
           onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
           style={{ width: 96, padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
         <Segmented value={frequency} onChange={setFrequency} options={[{ value: 'monthly', label: '/mo' }, { value: 'annual', label: '/yr' }]} />
-        <Segmented value={category} onChange={setCategory} options={[{ value: 'expense', label: 'Exp' }, { value: 'marketing', label: 'Mktg' }, { value: 'wages', label: 'Wages' }, { value: 'freelancer', label: 'Free' }, { value: 'director', label: 'Dir' }]} />
+        <Segmented value={category} onChange={setCategory} options={[{ value: 'expense', label: 'Exp' }, { value: 'marketing', label: 'Mktg' }, { value: 'wages', label: 'Staff' }, { value: 'freelancer', label: 'Free' }, { value: 'director', label: 'Dir' }, { value: 'allowance', label: 'Allow' }]} />
         {monthlyEst != null && <span style={{ fontSize: 11, color: BRAND.muted }}>≈{formatGBP(monthlyEst)}/mo</span>}
         <button className="btn-icon" title="Save" onClick={save}><Check size={13} /></button>
         <button className="btn-icon" title="Cancel" onClick={reset}><X size={13} /></button>
@@ -722,7 +726,7 @@ function CfCostForm({ month, category, onDone, onCancel, actions }) {
   return (
     <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, margin: '4px 0 8px' }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <input autoFocus placeholder={category === 'wages' ? 'Who? (e.g. Adam, Callum)' : category === 'freelancer' ? 'Who? (e.g. Lesley, Freelance editor)' : category === 'marketing' ? 'What is it? (e.g. PPC, Agency fee)' : category === 'director' ? 'Who? (e.g. Adam allowance)' : 'What is it? (e.g. Office rent)'} value={label} onChange={(e) => setLabel(e.target.value)}
+        <input autoFocus placeholder={category === 'wages' ? 'Who? (e.g. Callum, Chloe)' : category === 'freelancer' ? 'Who? (e.g. Lesley, Freelance editor)' : category === 'marketing' ? 'What is it? (e.g. PPC, Agency fee)' : category === 'director' ? 'Who/what? (e.g. Adam, pension, car)' : category === 'allowance' ? 'Who? (e.g. Adam allowance)' : 'What is it? (e.g. Office rent)'} value={label} onChange={(e) => setLabel(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
           style={{ flex: 1, minWidth: 160, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
         <span style={{ color: BRAND.muted }}>£</span>

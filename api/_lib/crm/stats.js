@@ -1380,16 +1380,16 @@ const CASHFLOW_COST_SEED = [
   ['AXA Specialist Risk Insurance (liability + indemnity)', 'expense', 85.00, true, null],
   ['Bank Overdraft Fee', 'expense', 31.25, true, null],
   ['Misc bank charges', 'expense', 50.00, true, null],
-  ['Ben Car Lease', 'expense', 339.00, true, null],
+  ['Ben Car Lease', 'director', 339.00, true, null],
   // Marketing.
   ['PPC Budget UK', 'marketing', 3000.00, true, null],
   ['Sophie Risan - Marketing Fee', 'marketing', 600.00, true, null],
-  // Director pension (employer contribution).
-  ['Director Pensions Base (£300 each PM)', 'expense', 600.00, true, null],
+  // Directors — pension, salaries (Adam/Ben/Anna); Ben's car lease is above.
+  ['Director Pensions Base (£300 each PM)', 'director', 600.00, true, null],
+  ['Anna - part of B salary', 'director', 1047.50, true, null],
+  ['Ben', 'director', 2113.50, true, null],
+  ['Adam', 'director', 3500.00, true, null],
   // Wages — staff salaries & tax.
-  ['Anna - part of B salary', 'wages', 1047.50, true, null],
-  ['Ben', 'wages', 2113.50, true, null],
-  ['Adam', 'wages', 3500.00, true, null],
   ['Director personal tax saving', 'wages', 950.00, true, null],
   ['Callum', 'wages', 2480.00, true, null],
   ['Callum commission', 'wages', 448.55, true, null],
@@ -1400,8 +1400,8 @@ const CASHFLOW_COST_SEED = [
   ['Lesley Ovington', 'freelancer', 1750.00, true, null],
   ['Freelance Copywriter', 'freelancer', 170.00, true, null],
   // Director allowances — June 2026 one-offs.
-  ['Adam Director allowance', 'director', 250.00, false, '2026-06'],
-  ['Ben Director allowance', 'director', 250.00, false, '2026-06'],
+  ['Adam Director allowance', 'allowance', 250.00, false, '2026-06'],
+  ['Ben Director allowance', 'allowance', 250.00, false, '2026-06'],
 ];
 
 let cashflowEnsured = null;
@@ -1461,10 +1461,19 @@ function ensureCashflow() {
     if (mcount === 0) {
       await sql`UPDATE cashflow_costs SET category = 'marketing' WHERE id IN ('cfseed30', 'cfseed31') AND category = 'expense'`;
     }
-    // And the seeded director allowances into their own category.
+    // (Historical) the original seeded allowances were moved expense → director.
     const [{ dcount }] = await sql`SELECT COUNT(*)::int AS dcount FROM cashflow_costs WHERE category = 'director'`;
     if (dcount === 0) {
       await sql`UPDATE cashflow_costs SET category = 'director' WHERE id IN ('cfseed44', 'cfseed45') AND category = 'expense'`;
+    }
+    // Directors split: 'director' now holds the directors themselves (Adam/Ben/Anna
+    // + Ben's car + pension); the two allowances move to their own 'allowance'
+    // category. Runs once (until an 'allowance' row exists).
+    const [{ acount }] = await sql`SELECT COUNT(*)::int AS acount FROM cashflow_costs WHERE category = 'allowance'`;
+    if (acount === 0) {
+      await sql`UPDATE cashflow_costs SET category = 'allowance' WHERE id IN ('cfseed44', 'cfseed45') AND category = 'director'`;
+      await sql`UPDATE cashflow_costs SET category = 'director' WHERE id IN ('cfseed33', 'cfseed34', 'cfseed35') AND category = 'wages'`;
+      await sql`UPDATE cashflow_costs SET category = 'director' WHERE id IN ('cfseed29', 'cfseed32') AND category = 'expense'`;
     }
   })().catch((err) => { cashflowEnsured = null; throw err; });
   return cashflowEnsured;
@@ -1488,7 +1497,7 @@ function monthlyAmountOf(r) {
 
 // Cost categories: staff wages, freelancers, marketing, director allowances and
 // operating expenses. Anything unrecognised falls back to 'expense'.
-const CATEGORIES = ['wages', 'freelancer', 'marketing', 'director'];
+const CATEGORIES = ['wages', 'freelancer', 'marketing', 'director', 'allowance'];
 const normCategory = (c) => (CATEGORIES.includes(c) ? c : 'expense');
 
 function serialiseCost(r) {
@@ -1552,7 +1561,7 @@ async function cashflowReport(action) {
   // Costs (resolved per month from the recurring + one-off rows).
   const costRows = await sql`SELECT * FROM cashflow_costs ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
   const costsForMonth = (mk) => {
-    let wages = 0, expenses = 0, freelancers = 0, marketing = 0, director = 0;
+    let wages = 0, expenses = 0, freelancers = 0, marketing = 0, director = 0, allowance = 0;
     for (const r of costRows) {
       if (!costAppliesToMonth(r, mk)) continue;
       const amt = monthlyAmountOf(r);
@@ -1561,15 +1570,16 @@ async function cashflowReport(action) {
       else if (cat === 'freelancer') freelancers += amt;
       else if (cat === 'marketing') marketing += amt;
       else if (cat === 'director') director += amt;
+      else if (cat === 'allowance') allowance += amt;
       else expenses += amt;
     }
-    return { wages: round2(wages), expenses: round2(expenses), freelancers: round2(freelancers), marketing: round2(marketing), director: round2(director), total: round2(wages + expenses + freelancers + marketing + director) };
+    return { wages: round2(wages), expenses: round2(expenses), freelancers: round2(freelancers), marketing: round2(marketing), director: round2(director), allowance: round2(allowance), total: round2(wages + expenses + freelancers + marketing + director + allowance) };
   };
 
   const history = keys.map((mk) => {
     const c = costsForMonth(mk);
     const cashIn = round2(cashByMonth[mk] || 0);
-    return { month: mk, cashIn, wages: c.wages, expenses: c.expenses, freelancers: c.freelancers, marketing: c.marketing, director: c.director, costs: c.total, profit: round2(cashIn - c.total) };
+    return { month: mk, cashIn, wages: c.wages, expenses: c.expenses, freelancers: c.freelancers, marketing: c.marketing, director: c.director, allowance: c.allowance, costs: c.total, profit: round2(cashIn - c.total) };
   });
 
   const profit12 = round2(history.reduce((s, h) => s + h.profit, 0));
@@ -1639,7 +1649,7 @@ async function cashflowRoute(req, res, action, user) {
     await sql`
       INSERT INTO cashflow_costs (id, label, category, amount, frequency, note, recurring, month, effective_from, sort_order)
       VALUES (${id}, ${label}, ${category}, ${amount}, ${frequency}, ${note}, ${recurring}, ${month}, ${effectiveFrom}, ${m + 1})`;
-    const kindWord = category === 'wages' ? 'wage' : category === 'freelancer' ? 'freelancer' : category === 'marketing' ? 'marketing cost' : category === 'director' ? 'director allowance' : 'expense';
+    const kindWord = category === 'wages' ? 'wage' : category === 'freelancer' ? 'freelancer' : category === 'marketing' ? 'marketing cost' : category === 'director' ? 'director cost' : category === 'allowance' ? 'director allowance' : 'expense';
     const amtWord = frequency === 'annual' ? `${gbp(amount)}/yr (≈${gbp(amount / 12)}/mo)` : `${gbp(amount)}/mo`;
     await logCashflow(actor, 'cost.add', recurring
       ? `Added recurring ${kindWord} “${label}” ${amtWord}`
