@@ -115,8 +115,21 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
     if (isComparison) actions.loadTrend(36);
   }, [actions, isComparison, state.financeRefresh]);
 
+  // Income targets mirror the Cash Flow & Targets figures live: keep each saved
+  // target's label/colour but source its amount from the cashflow targets
+  // (Minimum / £4k / £5k, in order). Sales targets stay manually managed.
+  useEffect(() => {
+    if (!isSales && !isComparison) actions.loadCashflowTargets();
+  }, [actions, isSales, isComparison, state.financeRefresh]);
+
   const targetSource = isSales ? state.salesTargets : state.financeTargets;
-  const targets = (targetSource && targetSource.length) ? targetSource : FALLBACK_TARGETS;
+  const savedTargets = (targetSource && targetSource.length) ? targetSource : FALLBACK_TARGETS;
+  const cfTargets = state.cashflowTargets;
+  const targets = useMemo(() => {
+    if (isSales || !cfTargets) return savedTargets;
+    const amounts = [cfTargets.minimum, ...(Array.isArray(cfTargets.draws) ? cfTargets.draws.map((d) => d.amount) : [])];
+    return savedTargets.map((t, i) => (i < amounts.length && amounts[i] != null ? { ...t, amount: amounts[i] } : t));
+  }, [savedTargets, cfTargets, isSales]);
   const holidays = useMemo(
     () => (Array.isArray(state.bankHolidays) && state.bankHolidays.length ? new Set(state.bankHolidays) : ukBankHolidays),
     [state.bankHolidays],
@@ -217,6 +230,7 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
           key={section}
           heading={isSales ? 'Monthly sales targets' : 'Monthly income targets'}
           targets={targets}
+          amountsLocked={!isSales && !!cfTargets}
           onSave={(list) => { (isSales ? actions.saveSalesTargets(list) : actions.saveFinanceTargets(list)); setEditing(false); }}
           onCancel={() => setEditing(false)}
         />
@@ -1039,7 +1053,7 @@ function RemainingCard({ targets, model, isSales, isMobile }) {
   );
 }
 
-function TargetEditor({ targets, onSave, onCancel, heading = 'Monthly targets' }) {
+function TargetEditor({ targets, onSave, onCancel, heading = 'Monthly targets', amountsLocked = false }) {
   const [rows, setRows] = useState(() => targets.map((t) => ({ ...t })));
   const set = (i, patch) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   return (
@@ -1059,13 +1073,19 @@ function TargetEditor({ targets, onSave, onCancel, heading = 'Monthly targets' }
               type="number"
               step="0.01"
               value={r.amount}
+              readOnly={amountsLocked}
               onChange={(e) => set(i, { amount: parseFloat(e.target.value) || 0 })}
-              style={{ width: 140, padding: '6px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14 }}
+              style={{ width: 140, padding: '6px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 14, background: amountsLocked ? '#F8FAFC' : 'white', color: amountsLocked ? BRAND.muted : BRAND.ink }}
             />
             <span style={{ fontSize: 12, color: BRAND.muted }}>/ month (ex-VAT)</span>
           </div>
         ))}
       </div>
+      {amountsLocked && (
+        <p style={{ fontSize: 12, color: BRAND.muted, margin: '12px 0 0' }}>
+          Amounts come from the <strong>Cash Flow &amp; Targets</strong> tab (Minimum / £4k / £5k) and update automatically as your costs change — edit the labels here, change the figures there.
+        </p>
+      )}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
         <button onClick={onCancel} className="btn-ghost"><X size={14} /> Cancel</button>
         <button onClick={() => onSave(rows)} className="btn"><Check size={14} /> Save targets</button>

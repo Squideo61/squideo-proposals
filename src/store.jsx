@@ -98,6 +98,7 @@ function emptyStore() {
     pendingPayments: null,
     income: null,
     cashflow: null,
+    cashflowTargets: null,
     financeTargets: [],
     salesTargets: [],
     costItems: [],
@@ -926,6 +927,15 @@ export function StoreProvider({ children }) {
       return api.get(path).then((data) => {
         setState(s => ({ ...s, cashflow: data || null }));
         return data;
+      }).catch(() => null);
+    },
+    // Just the current-month Cash Flow & Targets figures (minimum + £4k/£5k wage
+    // targets), so the Income performance graph can mirror them live. Kept in its
+    // own slice — independent of the month-specific `cashflow` the tab browses.
+    loadCashflowTargets() {
+      return api.get('/api/crm/stats/cashflow').then((data) => {
+        setState(s => ({ ...s, cashflowTargets: (data && data.targets) || null }));
+        return (data && data.targets) || null;
       }).catch(() => null);
     },
     // Add a cost line (recurring overhead or one-off). Caller reloads the month.
