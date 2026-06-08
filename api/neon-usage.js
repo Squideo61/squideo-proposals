@@ -145,6 +145,7 @@ async function compute(key, { orgIdEnv, projectIdEnv, debug } = {}) {
     return {
       _debug: true, orgId, candidateOrgs,
       projectsFound: projects.map(p => ({ id: p.id, name: p.name })),
+      projectSample: projects[0] || null, // full object — to see what usage fields it carries
       queriedProjectIds: projectIds,
       window: { from, to }, parsedTotals: m, periodStart, raw: usagePayload,
     };
