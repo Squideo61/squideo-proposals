@@ -180,6 +180,13 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           {!video.revisionVideoId && (video.dealRevisionVideos || []).length > 0 && (
             <LinkRevisionCard dealId={video.dealId} videoId={videoId} candidates={video.dealRevisionVideos} />
           )}
+          {(video.storyboardId || video.storyboardStatus) && (
+            <StoryboardStatusCard storyboardStatus={video.storyboardStatus} linked={!!video.storyboardId}
+              dealId={video.dealId} videoId={videoId} />
+          )}
+          {!video.storyboardId && (video.dealStoryboards || []).length > 0 && (
+            <LinkStoryboardCard dealId={video.dealId} videoId={videoId} candidates={video.dealStoryboards} />
+          )}
           <div style={{ flex: isMobile ? 'none' : 1, minHeight: 0, overflowY: isMobile ? 'visible' : 'auto' }}>
             {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['activity', 'comments']} />}
           </div>
@@ -256,6 +263,77 @@ function PreviewPane({ preview, revisionStatus, sentForReview, isMobile }) {
         ) : (
           <video src={url} controls style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         )}
+      </div>
+    </div>
+  );
+}
+
+// Mirror of RevisionStatusCard for the storyboard side. Same shape, just
+// pointed at storyboardStatus + the storyboard link/unlink actions.
+function StoryboardStatusCard({ storyboardStatus, linked, dealId, videoId }) {
+  const { actions, showMsg } = useStore();
+  const [unlinking, setUnlinking] = useState(false);
+  const unlink = () => {
+    if (!window.confirm('Unlink this video from its storyboard? The drafts and comments will still exist in the Storyboards section.')) return;
+    setUnlinking(true);
+    actions.unlinkStoryboard(dealId, videoId)
+      .then(() => showMsg('Unlinked from storyboard'))
+      .catch(err => showMsg(err.message || 'Could not unlink'))
+      .finally(() => setUnlinking(false));
+  };
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+        borderBottom: '1px solid ' + BRAND.border }}>
+        <FileText size={15} color={BRAND.blue} />
+        <strong style={{ fontSize: 13, color: BRAND.ink }}>Storyboard review</strong>
+        <button onClick={unlink} disabled={unlinking}
+          title="Unlink this video from the storyboard (drafts + comments stay in the Storyboards section)"
+          style={{ marginLeft: 'auto', background: '#F1F5F9', border: '1px solid ' + BRAND.border,
+            borderRadius: 6, cursor: unlinking ? 'default' : 'pointer',
+            color: BRAND.muted, padding: '3px 10px', fontSize: 12, fontWeight: 600 }}>
+          {unlinking ? 'Unlinking…' : 'Unlink'}
+        </button>
+      </div>
+      <RevisionStatusRow revisionStatus={storyboardStatus} sentForReview={linked} />
+    </div>
+  );
+}
+
+// Mirror of LinkRevisionCard for the storyboard side.
+function LinkStoryboardCard({ dealId, videoId, candidates }) {
+  const { actions, showMsg } = useStore();
+  const [pick, setPick] = useState(candidates[0]?.id || '');
+  const [busy, setBusy] = useState(false);
+  const link = () => {
+    if (!pick || busy) return;
+    setBusy(true);
+    actions.linkStoryboard(dealId, videoId, pick)
+      .then(() => showMsg('Linked — storyboard activity will appear here.'))
+      .catch(err => showMsg(err.message || 'Could not link storyboard'))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+        borderBottom: '1px solid ' + BRAND.border }}>
+        <FileText size={15} color={BRAND.blue} />
+        <strong style={{ fontSize: 13, color: BRAND.ink }}>Link to a storyboard</strong>
+      </div>
+      <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ fontSize: 12, color: BRAND.muted }}>
+          This deal has storyboards in the Storyboards section but this video isn't linked to one yet.
+        </div>
+        <select value={pick} onChange={(e) => setPick(e.target.value)} style={ctrl}>
+          {candidates.map(c => (
+            <option key={c.id} value={c.id}>
+              {c.title}{c.versionCount > 0 ? ` (${c.versionCount} draft${c.versionCount === 1 ? '' : 's'})` : ''}
+            </option>
+          ))}
+        </select>
+        <button onClick={link} disabled={!pick || busy} className="btn" style={{ alignSelf: 'flex-start' }}>
+          {busy ? 'Linking…' : 'Link this video'}
+        </button>
       </div>
     </div>
   );

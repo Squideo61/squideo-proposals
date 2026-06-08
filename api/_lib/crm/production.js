@@ -18,24 +18,6 @@ import { handleUpload } from '@vercel/blob/client';
 import { waitUntil } from '@vercel/functions';
 import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull, driveFilesEnabled } from './shared.js';
-
-// Self-heal: column added later for "do not auto-relink by title" state. When
-// the producer explicitly links or unlinks via the video page, we stamp this
-// timestamp; loadVideo's title-based auto-link then skips locked rows so the
-// next page load doesn't silently undo their choice.
-let revisionLockColumnEnsured = null;
-async function ensureRevisionLockColumn() {
-  if (revisionLockColumnEnsured) return revisionLockColumnEnsured;
-  revisionLockColumnEnsured = (async () => {
-    try {
-      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS revision_link_locked_at TIMESTAMPTZ`;
-    } catch (err) {
-      revisionLockColumnEnsured = null;
-      console.warn('[production] ensureRevisionLockColumn failed', err.message);
-    }
-  })();
-  return revisionLockColumnEnsured;
-}
 import { serialiseDeal, ensureDealFileDriveColumns, dealDriveFolder, driveErrorHint } from './deals.js';
 import { getFreshAccessToken } from './gmail.js';
 import { uploadToFolder, ensureSubfolderByPath, ensureNamedSubfolder, deleteDriveFile } from '../googleDrive.js';
@@ -62,6 +44,27 @@ const MILESTONE_DRIVE_PATH = {
 
 // Public base for client revision share links (matches RevisionsView.jsx).
 const REVISION_PUBLIC_BASE = 'https://app.squideo.com';
+
+// Self-heal: columns added later for "do not auto-relink by title" state.
+// When the producer explicitly links or unlinks a revision OR storyboard via
+// the video page, we stamp the matching timestamp; loadVideo's title-based
+// auto-link then skips locked rows so the next page load doesn't silently
+// undo their choice.
+let linkLockColumnsEnsured = null;
+async function ensureLinkLockColumns() {
+  if (linkLockColumnsEnsured) return linkLockColumnsEnsured;
+  linkLockColumnsEnsured = (async () => {
+    try {
+      await sql`ALTER TABLE project_videos
+        ADD COLUMN IF NOT EXISTS revision_link_locked_at  TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS storyboard_link_locked_at TIMESTAMPTZ`;
+    } catch (err) {
+      linkLockColumnsEnsured = null;
+      console.warn('[production] ensureLinkLockColumns failed', err.message);
+    }
+  })();
+  return linkLockColumnsEnsured;
+}
 
 // Board / single-video query: a video joined to its project (deal) + customer.
 const VIDEO_SELECT = (whereSql) => sql`
@@ -189,6 +192,14 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     if (subaction === 'unlink-revision') {
       if (req.method !== 'POST') return res.status(405).end();
       return unlinkRevisionVideo(res, videoId);
+    }
+    if (subaction === 'link-storyboard') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return linkStoryboard(req, res, videoId, user);
+    }
+    if (subaction === 'unlink-storyboard') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return unlinkStoryboard(res, videoId);
     }
     if (subaction === 'send-storyboard-for-review') {
       if (req.method !== 'POST') return res.status(405).end();
@@ -355,11 +366,56 @@ async function withVideoExtras(video) {
   // and the latest draft video (from the Video Revisions hand-off). Both guarded
   // so a missing/legacy table never breaks the video load.
   let storyboard = null, draftVideo = null;
+  // Self-heal mirror of the revision auto-link, for the storyboard side: if a
+  // producer created the storyboard project + storyboard through the
+  // Storyboards admin (instead of clicking "Storyboard review" on the video
+  // page), the project_video's storyboard_id is never set. Match by title via
+  // a storyboard project linked to this deal (either link direction). Skipped
+  // once the producer has explicitly linked/unlinked from the video page.
+  if (!video.storyboardId && video.dealId && video.title) {
+    try {
+      await ensureLinkLockColumns();
+      const [locked] = await sql`SELECT storyboard_link_locked_at FROM project_videos WHERE id = ${video.id}`;
+      if (!locked?.storyboard_link_locked_at) {
+        const [match] = await sql`
+          SELECT sb.id
+            FROM storyboards sb
+            JOIN storyboard_projects sp ON sp.id = sb.project_id
+            LEFT JOIN deals d ON d.id = ${video.dealId}
+           WHERE (sp.deal_id = ${video.dealId} OR d.storyboard_project_id = sp.id)
+             AND lower(btrim(sb.title)) = lower(btrim(${video.title}))
+           LIMIT 1
+        `;
+        if (match?.id) {
+          await sql`UPDATE project_videos SET storyboard_id = ${match.id}, updated_at = NOW() WHERE id = ${video.id}`;
+          video.storyboardId = match.id;
+        }
+      }
+    } catch { /* storyboard tables may not exist yet */ }
+  }
   if (video.storyboardId) {
     try {
       const sv = (await sql`SELECT blob_url FROM storyboard_versions WHERE storyboard_id = ${video.storyboardId} ORDER BY version_number DESC LIMIT 1`)[0];
       if (sv?.blob_url) storyboard = { url: sv.blob_url };
     } catch { /* storyboard tables not present */ }
+  }
+  // Storyboard candidates on the same deal — drives the "Link to a storyboard"
+  // picker when this video isn't linked yet.
+  if (video.dealId) {
+    try {
+      video.dealStoryboards = await sql`
+        SELECT sb.id, sb.title, sp.id AS project_id, sp.title AS project_title,
+               (SELECT COUNT(*)::int FROM storyboard_versions WHERE storyboard_id = sb.id) AS version_count
+          FROM storyboards sb
+          JOIN storyboard_projects sp ON sp.id = sb.project_id
+          LEFT JOIN deals d ON d.id = ${video.dealId}
+         WHERE sp.deal_id = ${video.dealId} OR d.storyboard_project_id = sp.id
+         ORDER BY sb.sort_order, sb.title
+      `.then(rows => rows.map(r => ({
+        id: r.id, title: r.title, projectId: r.project_id, projectTitle: r.project_title,
+        versionCount: Number(r.version_count) || 0,
+      })));
+    } catch { video.dealStoryboards = []; }
   }
   // Self-heal: if a producer created the revision project + video through the
   // Revisions admin (instead of clicking "Send for review" on the video page),
@@ -370,7 +426,7 @@ async function withVideoExtras(video) {
   // so a manual choice isn't silently overwritten on the next load.
   if (!video.revisionVideoId && video.dealId && video.title) {
     try {
-      await ensureRevisionLockColumn();
+      await ensureLinkLockColumns();
       const [locked] = await sql`SELECT revision_link_locked_at FROM project_videos WHERE id = ${video.id}`;
       if (!locked?.revision_link_locked_at) {
         const [match] = await sql`
@@ -455,6 +511,52 @@ async function withVideoExtras(video) {
       };
     } catch { /* revision tables not present */ }
   }
+  // Mirror of revisionStatus for the storyboard side: latest draft, approval,
+  // feedback, comment counts. Drives the "Storyboard review" status card on
+  // the video page.
+  let storyboardStatus = null;
+  if (video.storyboardId) {
+    try {
+      const sv = (await sql`
+        SELECT version_number, label, blob_url, mime_type, created_at
+          FROM storyboard_versions
+         WHERE storyboard_id = ${video.storyboardId}
+         ORDER BY version_number DESC
+         LIMIT 1
+      `)[0];
+      const [{ version_count }] = await sql`
+        SELECT COUNT(*)::int AS version_count FROM storyboard_versions WHERE storyboard_id = ${video.storyboardId}
+      `;
+      const [sb] = await sql`
+        SELECT approved_at, approved_by, feedback_submitted_at
+          FROM storyboards WHERE id = ${video.storyboardId}
+      `;
+      let commentCount = 0, openCommentCount = 0;
+      if (sv?.version_number != null) {
+        const [c] = await sql`
+          SELECT COUNT(*)::int AS total,
+                 COUNT(*) FILTER (WHERE completed_at IS NULL)::int AS open
+            FROM storyboard_comments sc
+            JOIN storyboard_versions sv2 ON sv2.id = sc.version_id
+           WHERE sv2.storyboard_id = ${video.storyboardId}
+             AND sv2.version_number = ${sv.version_number}
+        `;
+        commentCount = c?.total || 0;
+        openCommentCount = c?.open || 0;
+      }
+      storyboardStatus = {
+        versionCount: Number(version_count) || 0,
+        latestVersionNumber: sv?.version_number != null ? Number(sv.version_number) : null,
+        latestVersionLabel: sv?.label || null,
+        latestVersionAt: sv?.created_at || null,
+        approvedAt: sb?.approved_at || null,
+        approvedBy: sb?.approved_by || null,
+        feedbackSubmittedAt: sb?.feedback_submitted_at || null,
+        commentCount,
+        openCommentCount,
+      };
+    } catch { /* storyboard tables not present */ }
+  }
   video.preview = {
     current: previewKindForStage(video.productionPhase, video.productionStage),
     script: video.script ? { url: video.script.url, filename: video.script.filename, mimeType: video.script.mimeType } : null,
@@ -462,6 +564,7 @@ async function withVideoExtras(video) {
     video: draftVideo,
   };
   video.revisionStatus = revisionStatus;
+  video.storyboardStatus = storyboardStatus;
   video.paymentOption = await paymentOptionForDeal(video.dealId);
   return video;
 }
@@ -790,7 +893,7 @@ async function linkRevisionVideo(req, res, videoId, user) {
      LIMIT 1
   `;
   if (!rv) return res.status(404).json({ error: 'Revision video not found on this deal' });
-  await ensureRevisionLockColumn();
+  await ensureLinkLockColumns();
   await sql`UPDATE project_videos
               SET revision_video_id = ${revisionVideoId},
                   revision_link_locked_at = NOW(),
@@ -804,11 +907,52 @@ async function linkRevisionVideo(req, res, videoId, user) {
 // up to a different revision_video. Stamps revision_link_locked_at so the
 // title-based auto-link in loadVideo doesn't silently put it back.
 async function unlinkRevisionVideo(res, videoId) {
-  await ensureRevisionLockColumn();
+  await ensureLinkLockColumns();
   const [row] = await sql`
     UPDATE project_videos
        SET revision_video_id = NULL,
            revision_link_locked_at = NOW(),
+           updated_at = NOW()
+     WHERE id = ${videoId}
+     RETURNING id
+  `;
+  if (!row) return res.status(404).json({ error: 'Video not found' });
+  return res.status(200).json({ ok: true });
+}
+
+// Manually link this project_video to an existing storyboard on the same
+// deal's storyboard project. Mirrors linkRevisionVideo.
+async function linkStoryboard(req, res, videoId, user) {
+  const { storyboardId } = req.body || {};
+  if (!storyboardId) return res.status(400).json({ error: 'storyboardId required' });
+  const [video] = await sql`SELECT id, deal_id FROM project_videos WHERE id = ${videoId}`;
+  if (!video) return res.status(404).json({ error: 'Video not found' });
+  const [sb] = await sql`
+    SELECT sb.id, sp.deal_id AS sp_deal_id, d.storyboard_project_id
+      FROM storyboards sb
+      JOIN storyboard_projects sp ON sp.id = sb.project_id
+      LEFT JOIN deals d ON d.id = ${video.deal_id}
+     WHERE sb.id = ${storyboardId}
+       AND (sp.deal_id = ${video.deal_id} OR d.storyboard_project_id = sp.id)
+     LIMIT 1
+  `;
+  if (!sb) return res.status(404).json({ error: 'Storyboard not found on this deal' });
+  await ensureLinkLockColumns();
+  await sql`UPDATE project_videos
+              SET storyboard_id = ${storyboardId},
+                  storyboard_link_locked_at = NOW(),
+                  updated_at = NOW()
+            WHERE id = ${videoId}`;
+  return res.status(200).json({ ok: true, storyboardId });
+}
+
+// Clear the project_video → storyboard link. Mirrors unlinkRevisionVideo.
+async function unlinkStoryboard(res, videoId) {
+  await ensureLinkLockColumns();
+  const [row] = await sql`
+    UPDATE project_videos
+       SET storyboard_id = NULL,
+           storyboard_link_locked_at = NOW(),
            updated_at = NOW()
      WHERE id = ${videoId}
      RETURNING id

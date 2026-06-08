@@ -2159,6 +2159,7 @@ function describeEvent(e) {
     case 'revision_completed':   return `Revision complete: ${p.video || 'video'}${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'revision_reopened':    return `Revision reopened: ${p.video || 'video'}${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'revision_assigned':    return `Revisions assigned${p.assignee ? ` to ${p.assignee}` : ''}`;
+    case 'storyboard_draft_uploaded': return `Revised storyboard uploaded: ${p.storyboard || 'storyboard'}${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'storyboard_revision_completed': return `Storyboard revision complete: ${p.storyboard || 'storyboard'}${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'storyboard_revision_reopened':  return `Storyboard revision reopened: ${p.storyboard || 'storyboard'}${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'storyboard_revision_assigned':  return `Storyboard revisions assigned${p.assignee ? ` to ${p.assignee}` : ''}`;

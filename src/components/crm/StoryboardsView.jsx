@@ -8,7 +8,7 @@ import { Modal } from '../ui.jsx';
 import { PdfThumb } from '../storyboard/PdfThumb.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
 import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
-import { DealLinkSelect, AssigneeSelect, CommentDone, CommentFlag, InternalNote } from './RevisionsView.jsx';
+import { DealLinkSummary, AssigneeSelect, CommentDone, CommentFlag, InternalNote, VideoLinkBanner } from './RevisionsView.jsx';
 
 const APPROVED_CHIP = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
   borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: 11, fontWeight: 700 };
@@ -253,8 +253,7 @@ function ProjectDetail({ projectId, onBack }) {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <AssigneeSelect value={detail.assigneeEmail} users={state.users}
             onChange={(email) => actions.assignStoryboardProject(projectId, email)} />
-          <DealLinkSelect projectId={projectId} value={detail.dealId} kind="storyboard"
-            onLinked={() => actions.loadStoryboardDetail(projectId)} />
+          <DealLinkSummary dealId={detail.dealId} dealTitle={detail.dealTitle} />
           <button onClick={addStoryboard} className="btn-ghost"><Plus size={14} /> Add storyboard</button>
           <CopyLinkButton token={detail.shareToken} showMsg={showMsg} />
         </div>
@@ -342,6 +341,8 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
           onClick={() => { if (window.confirm(`Delete "${storyboard.title}" and all its drafts?`)) actions.deleteStoryboard(projectId, storyboard.id); }}
           className="btn-ghost" style={{ marginLeft: 'auto' }} title="Delete storyboard"><Trash2 size={14} /></button>
       </div>
+
+      <VideoLinkBanner linked={storyboard.linkedProjectVideo} />
 
       {/* Upload a new draft PDF for this storyboard */}
       <div

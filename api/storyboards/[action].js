@@ -455,12 +455,27 @@ async function projectDetail(res, id) {
     SELECT name, email, first_seen, last_seen FROM storyboard_viewers
     WHERE project_id = ${id} ORDER BY last_seen DESC
   `;
+  // Each storyboard may be linked back to a project_video card on a deal (via
+  // project_videos.storyboard_id). The UI surfaces a "Linked to video card …"
+  // / "Not linked to a video card" banner off this map.
+  const links = storyboards.length
+    ? await sql`
+        SELECT pv.id AS pv_id, pv.title AS pv_title, pv.storyboard_id, pv.deal_id, d.title AS deal_title
+          FROM project_videos pv
+          LEFT JOIN deals d ON d.id = pv.deal_id
+         WHERE pv.storyboard_id = ANY(${storyboards.map(s => s.id)})
+      `
+    : [];
+  const linkByStoryboard = Object.fromEntries(links.map(l => [l.storyboard_id, {
+    id: l.pv_id, title: l.pv_title, dealId: l.deal_id, dealTitle: l.deal_title,
+  }]));
   return res.status(200).json({
     ...projectRow(project),
     storyboards: storyboards.map(sb => ({
       id: sb.id, title: sb.title, sortOrder: sb.sort_order, createdAt: sb.created_at,
       approvedAt: sb.approved_at || null, approvedBy: sb.approved_by || null,
       feedbackSubmittedAt: sb.feedback_submitted_at || null,
+      linkedProjectVideo: linkByStoryboard[sb.id] || null,
       versions: versions.filter(v => v.storyboard_id === sb.id).map(ver => ({
         ...versionRow(ver), views: viewsByVersion[ver.id] || [],
       })),
@@ -534,7 +549,7 @@ async function registerVersion(req, res, user, storyboardId) {
   const label = body.label ? String(body.label).trim() : null;
   if (!blobUrl) return res.status(400).json({ error: 'blobUrl required' });
 
-  const [storyboard] = await sql`SELECT id, project_id FROM storyboards WHERE id = ${storyboardId}`;
+  const [storyboard] = await sql`SELECT id, project_id, title FROM storyboards WHERE id = ${storyboardId}`;
   if (!storyboard) return res.status(404).json({ error: 'storyboard not found' });
 
   // Draft numbers run per storyboard.
@@ -557,6 +572,14 @@ async function registerVersion(req, res, user, storyboardId) {
   // review again and leave comments.
   await sql`UPDATE storyboards SET approved_at = NULL, approved_by = NULL WHERE id = ${storyboardId}`;
   await sql`UPDATE storyboard_projects SET updated_at = NOW() WHERE id = ${storyboard.project_id}`;
+  // Surface on the deal timeline so the project page shows that a revised
+  // storyboard PDF landed (mirrors revision_draft_uploaded).
+  await logToDeal(
+    storyboard.project_id,
+    'storyboard_draft_uploaded',
+    { storyboard: storyboard.title, draft: next, label: label || null },
+    user.email,
+  );
   return res.status(201).json(versionRow(row));
 }
 

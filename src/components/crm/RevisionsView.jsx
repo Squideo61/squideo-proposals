@@ -65,7 +65,7 @@ export function DealLinkSummary({ dealId, dealTitle }) {
 
 // Banner inside a revision-video card showing which project_video card it's
 // connected to on the deal page, or warning when nothing is connected yet.
-function VideoLinkBanner({ linked }) {
+export function VideoLinkBanner({ linked }) {
   if (linked) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
