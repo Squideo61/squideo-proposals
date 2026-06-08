@@ -554,7 +554,7 @@ export function StoryboardRevision({ token, data }) {
                     background: (draft.trim() || asset) ? BRAND.blue : BRAND.border, color: '#fff', fontWeight: 600,
                     fontSize: 13, cursor: (draft.trim() || asset) ? 'pointer' : 'default',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                  <Send size={14} /> {posting ? 'Sending…' : 'Send'}
+                  <Send size={14} /> {posting ? 'Adding…' : 'Add comment'}
                 </button>
               </div>
             </div>
