@@ -2711,11 +2711,20 @@ export function StoreProvider({ children }) {
     },
 
     // ---------- Public storyboard viewer (no auth) ----------
-    loadPublicStoryboard(token) {
+    loadPublicStoryboard(token, viewerEmail) {
       setState(s => ({ ...s, loading: true }));
-      return api.get('/api/storyboards/public?token=' + encodeURIComponent(token))
+      const q = new URLSearchParams({ token });
+      if (viewerEmail) q.set('viewerEmail', viewerEmail);
+      return api.get('/api/storyboards/public?' + q.toString())
         .then((data) => { setState(s => ({ ...s, loading: false })); return data; })
         .catch((err) => { setState(s => ({ ...s, loading: false })); throw err; });
+    },
+    // Silent poll variant — same endpoint, no global loading flash. Used by
+    // StoryboardRevision's heartbeat to refresh comments + activeViewers state.
+    pollPublicStoryboard(token, viewerEmail) {
+      const q = new URLSearchParams({ token });
+      if (viewerEmail) q.set('viewerEmail', viewerEmail);
+      return api.get('/api/storyboards/public?' + q.toString());
     },
 
     postStoryboardComment(token, payload) {

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock, Eye, Pencil, Trash2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
+import { ConflictBanner } from './ConflictBanner.jsx';
 
 const NAME_KEY = 'squideo.revision.name';
 const EMAIL_KEY = 'squideo.revision.email';
@@ -405,9 +406,7 @@ export function VideoRevision({ token, data }) {
         </div>
       </div>
 
-      {activeViewers.length > 0 && (
-        <PresenceBanner viewers={activeViewers} />
-      )}
+      <ConflictBanner activeViewers={activeViewers} />
 
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         {/* Player + marker strip */}
@@ -593,24 +592,3 @@ export function VideoRevision({ token, data }) {
   );
 }
 
-// Slim "currently viewing" strip under the header. Lists everyone whose
-// presence heartbeat landed in the last 2 minutes (the server filter). Marks
-// the requester with "(you)".
-function PresenceBanner({ viewers }) {
-  if (!viewers || !viewers.length) return null;
-  const label = viewers
-    .map(v => v.name + (v.you ? ' (you)' : ''))
-    .join(', ');
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 8,
-      padding: '6px 18px', background: '#EFF8FC',
-      borderBottom: `1px solid ${BRAND.border}`,
-      color: BRAND.ink, fontSize: 12,
-    }}>
-      <Eye size={14} color={BRAND.blue} />
-      <span style={{ fontWeight: 600, color: BRAND.muted }}>Currently viewing:</span>
-      <span>{label}</span>
-    </div>
-  );
-}

@@ -140,6 +140,8 @@ function ensureStoryboardTables() {
       await sql`ALTER TABLE storyboard_versions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
       await sql`ALTER TABLE storyboard_versions ADD COLUMN IF NOT EXISTS completed_by TEXT`;
       await sql`ALTER TABLE storyboard_projects ADD COLUMN IF NOT EXISTS assignee_email TEXT`;
+      // Presence "session start" — drives the live ConflictBanner.
+      await sql`ALTER TABLE storyboard_viewers ADD COLUMN IF NOT EXISTS session_started_at TIMESTAMPTZ`;
       // 20260606_revision_comment_completion.sql (per-comment completion).
       await sql`ALTER TABLE storyboard_comments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
       await sql`ALTER TABLE storyboard_comments ADD COLUMN IF NOT EXISTS completed_by TEXT`;
@@ -708,11 +710,32 @@ function escapeHtml(s) {
 async function publicView(req, res) {
   const token = req.query.token ? String(req.query.token) : null;
   if (!token) return res.status(400).json({ error: 'token required' });
+  // Polled on a heartbeat by StoryboardRevision, so this endpoint doubles as
+  // presence: bump the viewer's last_seen and report who else is on the page.
+  const viewerEmail = (req.query.viewerEmail || '').toString().trim().toLowerCase() || null;
 
   const [project] = await sql`
     SELECT id, title, client_name FROM storyboard_projects WHERE share_token = ${token}
   `;
   if (!project) return res.status(404).json({ error: 'Not found' });
+
+  // Heartbeat (best-effort): only fires once the viewer has passed the gate.
+  if (viewerEmail) {
+    try {
+      await sql`
+        UPDATE storyboard_viewers
+           SET last_seen = NOW(),
+               session_started_at = CASE
+                 WHEN last_seen IS NULL
+                   OR last_seen < NOW() - INTERVAL '2 minutes'
+                   OR session_started_at IS NULL
+                 THEN NOW()
+                 ELSE session_started_at
+               END
+         WHERE project_id = ${project.id} AND lower(email) = ${viewerEmail}
+      `;
+    } catch { /* presence is not load-bearing */ }
+  }
 
   const [cfg] = await sql`SELECT revision_call_url FROM settings WHERE id = 1`;
 
@@ -739,6 +762,15 @@ async function publicView(req, res) {
     mimeType: v.mime_type, pageCount: v.page_count != null ? Number(v.page_count) : null,
     pdfUrl: v.blob_url, createdAt: v.created_at,
   });
+  // Active viewers (last 2 minutes) — drives the ConflictBanner. We never
+  // return co-viewers' emails; names only plus a `you` flag computed against
+  // the requester, and sessionStartedAt for arrival ordering.
+  const viewers = await sql`
+    SELECT name, lower(email) AS email, last_seen, session_started_at
+      FROM storyboard_viewers
+     WHERE project_id = ${project.id} AND last_seen > NOW() - INTERVAL '2 minutes'
+     ORDER BY COALESCE(session_started_at, last_seen) ASC
+  `;
   // Field allowlist: only what the viewer needs.
   return res.status(200).json({
     title: project.title,
@@ -751,6 +783,12 @@ async function publicView(req, res) {
       versions: versions.filter(v => v.storyboard_id === sb.id).map(mapVersion),
     })),
     comments: comments.map(commentRow),
+    activeViewers: viewers.map(v => ({
+      name: v.name,
+      lastSeen: v.last_seen,
+      sessionStartedAt: v.session_started_at,
+      you: !!(viewerEmail && v.email === viewerEmail),
+    })),
   });
 }
 
@@ -767,10 +805,19 @@ async function recordViewer(req, res) {
   const [proj] = await sql`SELECT id FROM storyboard_projects WHERE share_token = ${token}`;
   if (!proj) return res.status(404).json({ error: 'Not found' });
   await sql`
-    INSERT INTO storyboard_viewers (id, project_id, name, email)
-    VALUES (${crypto.randomUUID()}, ${proj.id}, ${name}, ${email})
+    INSERT INTO storyboard_viewers (id, project_id, name, email, session_started_at, last_seen)
+    VALUES (${crypto.randomUUID()}, ${proj.id}, ${name}, ${email}, NOW(), NOW())
     ON CONFLICT (project_id, lower(email))
-    DO UPDATE SET name = EXCLUDED.name, last_seen = NOW()
+    DO UPDATE SET
+      name = EXCLUDED.name,
+      last_seen = NOW(),
+      session_started_at = CASE
+        WHEN storyboard_viewers.last_seen IS NULL
+          OR storyboard_viewers.last_seen < NOW() - INTERVAL '2 minutes'
+          OR storyboard_viewers.session_started_at IS NULL
+        THEN NOW()
+        ELSE storyboard_viewers.session_started_at
+      END
   `;
   return res.status(200).json({ ok: true });
 }

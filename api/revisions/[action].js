@@ -39,6 +39,9 @@ function ensureRevisionFeedbackColumns() {
     await sql`ALTER TABLE revision_comments ADD COLUMN IF NOT EXISTS completed_by TEXT`;
     // Internal producer note (db/migrations/20260606_revision_producer_notes.sql).
     await sql`ALTER TABLE revision_comments ADD COLUMN IF NOT EXISTS producer_note TEXT`;
+    // Presence "session start" so the live ConflictBanner can tell who joined
+    // first vs second. NULL on legacy rows; recordViewer/heartbeat set it.
+    await sql`ALTER TABLE revision_viewers ADD COLUMN IF NOT EXISTS session_started_at TIMESTAMPTZ`;
   })().catch((err) => { revisionFeedbackEnsured = null; throw err; });
   return revisionFeedbackEnsured;
 }
@@ -653,11 +656,22 @@ async function publicView(req, res) {
   if (!project) return res.status(404).json({ error: 'Not found' });
 
   // Heartbeat: bump last_seen if this viewer has already passed the name+email
-  // gate (a no-op for the very first publicView call before the gate).
+  // gate (a no-op for the very first publicView call before the gate). If
+  // their last heartbeat was > 2 minutes ago (or they had no session start
+  // yet), treat this as a fresh session so the ConflictBanner ordering
+  // reflects "who's actively here right now".
   if (viewerEmail) {
     try {
       await sql`
-        UPDATE revision_viewers SET last_seen = NOW()
+        UPDATE revision_viewers
+           SET last_seen = NOW(),
+               session_started_at = CASE
+                 WHEN last_seen IS NULL
+                   OR last_seen < NOW() - INTERVAL '2 minutes'
+                   OR session_started_at IS NULL
+                 THEN NOW()
+                 ELSE session_started_at
+               END
          WHERE project_id = ${project.id} AND lower(email) = ${viewerEmail}
       `;
     } catch { /* best-effort; presence is not load-bearing */ }
@@ -685,12 +699,13 @@ async function publicView(req, res) {
   `;
   // "Currently viewing" = anyone the gate has accepted whose heartbeat landed
   // within the last 2 minutes. We never return co-viewers' emails — just names
-  // plus a `you` flag computed against the requester.
+  // plus a `you` flag computed against the requester. sessionStartedAt drives
+  // the ConflictBanner (who joined first vs second).
   const viewers = await sql`
-    SELECT name, lower(email) AS email, last_seen
+    SELECT name, lower(email) AS email, last_seen, session_started_at
       FROM revision_viewers
      WHERE project_id = ${project.id} AND last_seen > NOW() - INTERVAL '2 minutes'
-     ORDER BY last_seen DESC
+     ORDER BY COALESCE(session_started_at, last_seen) ASC
   `;
   const mapVersion = (v) => ({
     id: v.id, videoId: v.video_id, versionNumber: v.version_number, label: v.label,
@@ -711,6 +726,7 @@ async function publicView(req, res) {
     activeViewers: viewers.map(v => ({
       name: v.name,
       lastSeen: v.last_seen,
+      sessionStartedAt: v.session_started_at,
       you: !!(viewerEmail && v.email === viewerEmail),
     })),
   });
@@ -749,11 +765,23 @@ async function recordViewer(req, res) {
   }
   const [proj] = await sql`SELECT id FROM revision_projects WHERE share_token = ${token}`;
   if (!proj) return res.status(404).json({ error: 'Not found' });
+  // Reset session_started_at when this is a brand-new viewer or one returning
+  // after being away (>2 minutes since last heartbeat); otherwise keep the
+  // existing start so we don't lose the "who joined first" ordering.
   await sql`
-    INSERT INTO revision_viewers (id, project_id, name, email)
-    VALUES (${crypto.randomUUID()}, ${proj.id}, ${name}, ${email})
+    INSERT INTO revision_viewers (id, project_id, name, email, session_started_at, last_seen)
+    VALUES (${crypto.randomUUID()}, ${proj.id}, ${name}, ${email}, NOW(), NOW())
     ON CONFLICT (project_id, lower(email))
-    DO UPDATE SET name = EXCLUDED.name, last_seen = NOW()
+    DO UPDATE SET
+      name = EXCLUDED.name,
+      last_seen = NOW(),
+      session_started_at = CASE
+        WHEN revision_viewers.last_seen IS NULL
+          OR revision_viewers.last_seen < NOW() - INTERVAL '2 minutes'
+          OR revision_viewers.session_started_at IS NULL
+        THEN NOW()
+        ELSE revision_viewers.session_started_at
+      END
   `;
   return res.status(200).json({ ok: true });
 }

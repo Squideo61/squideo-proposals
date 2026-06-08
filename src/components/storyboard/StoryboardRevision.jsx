@@ -5,6 +5,7 @@ import { useStore } from '../../store.jsx';
 import { loadPdf } from '../../lib/pdf.js';
 import { PdfPage } from './PdfPage.jsx';
 import { PdfThumb } from './PdfThumb.jsx';
+import { ConflictBanner } from '../revision/ConflictBanner.jsx';
 
 const NAME_KEY = 'squideo.storyboard.name';
 const EMAIL_KEY = 'squideo.storyboard.email';
@@ -92,6 +93,7 @@ export function StoryboardRevision({ token, data }) {
   const version = versions.find(v => v.id === versionId) || versions[0] || null;
 
   const [comments, setComments] = useState(data.comments || []);
+  const [activeViewers, setActiveViewers] = useState(data.activeViewers || []);
   const [pageNumber, setPageNumber] = useState(1);
   const [draftPin, setDraftPin] = useState(null); // { x, y } | null
   const [activeCommentId, setActiveCommentId] = useState(null);
@@ -257,6 +259,26 @@ export function StoryboardRevision({ token, data }) {
     actions.recordStoryboardView(token, { versionId: version.id, name, email });
   }, [identified, version?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Live updates + presence heartbeat: poll publicView every ~6s once the
+  // viewer has identified themselves. Refreshes comments and the
+  // activeViewers list (which drives the ConflictBanner). We deliberately
+  // don't overwrite the local storyboards/versions arrays.
+  useEffect(() => {
+    if (!identified || !email) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const d = await actions.pollPublicStoryboard(token, email);
+        if (!alive || !d) return;
+        if (Array.isArray(d.comments)) setComments(d.comments);
+        if (Array.isArray(d.activeViewers)) setActiveViewers(d.activeViewers);
+      } catch { /* polling is best-effort */ }
+    };
+    tick();
+    const handle = setInterval(tick, 6000);
+    return () => { alive = false; clearInterval(handle); };
+  }, [identified, email, token]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Arrow keys step through slides (unless typing in the composer).
   useEffect(() => {
     function onKey(e) {
@@ -370,6 +392,8 @@ export function StoryboardRevision({ token, data }) {
           )}
         </div>
       </div>
+
+      <ConflictBanner activeViewers={activeViewers} />
 
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         {/* Slide thumbnail rail */}
