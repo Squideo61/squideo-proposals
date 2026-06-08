@@ -19,11 +19,16 @@ export function StorageTab() {
   const { state, actions } = useStore();
   const blob = state.blobUsage;
   const neon = state.neonUsage;
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(!blob || !neon);
 
   useEffect(() => {
-    if (!blob) actions.loadBlobUsage({ refresh: false });
-    if (!neon) actions.loadNeonUsage({ refresh: false });
+    const needBlob = !blob, needNeon = !neon;
+    if (!needBlob && !needNeon) { setLoading(false); return; }
+    setLoading(true);
+    Promise.all([
+      needBlob ? actions.loadBlobUsage({ refresh: false }) : null,
+      needNeon ? actions.loadNeonUsage({ refresh: false }) : null,
+    ]).finally(() => setLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function refreshAll() {
@@ -128,7 +133,7 @@ function BlobSection({ blob, loading }) {
     <div style={{ marginBottom: 24 }}>
       <SectionHeader icon={HardDrive} title="Vercel Blob storage" />
       {!blob ? (
-        <Muted>{loading ? 'Calculating…' : 'No data yet.'}</Muted>
+        <Muted>{loading ? 'Loading…' : 'No data yet.'}</Muted>
       ) : (
         <>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
