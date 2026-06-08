@@ -1311,6 +1311,11 @@ export function StoreProvider({ children }) {
       return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/link-revision', { revisionVideoId })
         .then((resp) => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadVideo(videoId)]).then(() => resp));
     },
+    // Clear the link so this video isn't connected to any revision_video.
+    unlinkRevisionVideo(dealId, videoId) {
+      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/unlink-revision', {})
+        .then((resp) => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadVideo(videoId)]).then(() => resp));
+    },
     // Hand off to the Storyboard Revisions section (lazily links a storyboard to
     // the video) and return its public share link.
     sendStoryboardForReview(dealId, videoId) {

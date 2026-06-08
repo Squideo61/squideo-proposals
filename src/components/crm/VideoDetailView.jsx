@@ -174,7 +174,8 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
         }}>
           <PreviewPane preview={video.preview} revisionStatus={video.revisionStatus} sentForReview={!!video.revisionVideoId} isMobile={isMobile} />
           {(video.revisionVideoId || video.revisionStatus) && (
-            <RevisionStatusCard revisionStatus={video.revisionStatus} sentForReview={!!video.revisionVideoId} />
+            <RevisionStatusCard revisionStatus={video.revisionStatus} sentForReview={!!video.revisionVideoId}
+              dealId={video.dealId} videoId={videoId} />
           )}
           {!video.revisionVideoId && (video.dealRevisionVideos || []).length > 0 && (
             <LinkRevisionCard dealId={video.dealId} videoId={videoId} candidates={video.dealRevisionVideos} />
@@ -305,13 +306,29 @@ function LinkRevisionCard({ dealId, videoId, candidates }) {
 // round even when the production stage hasn't reached Video yet (the
 // PreviewPane might be showing the script/storyboard, but the producer still
 // needs to know a revised cut has landed).
-function RevisionStatusCard({ revisionStatus, sentForReview }) {
+function RevisionStatusCard({ revisionStatus, sentForReview, dealId, videoId }) {
+  const { actions, showMsg } = useStore();
+  const [unlinking, setUnlinking] = useState(false);
+  const unlink = () => {
+    if (!window.confirm('Unlink this video from its revision? The drafts and comments will still exist in the Revisions section.')) return;
+    setUnlinking(true);
+    actions.unlinkRevisionVideo(dealId, videoId)
+      .then(() => showMsg('Unlinked from revision'))
+      .catch(err => showMsg(err.message || 'Could not unlink'))
+      .finally(() => setUnlinking(false));
+  };
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
         borderBottom: '1px solid ' + BRAND.border }}>
         <Film size={15} color={BRAND.blue} />
         <strong style={{ fontSize: 13, color: BRAND.ink }}>Client review</strong>
+        <button onClick={unlink} disabled={unlinking}
+          title="Unlink this video from the revision (drafts + comments stay in the Revisions section)"
+          style={{ marginLeft: 'auto', background: 'transparent', border: 'none', cursor: 'pointer',
+            color: BRAND.muted, padding: '2px 6px', fontSize: 12 }}>
+          {unlinking ? 'Unlinking…' : 'Unlink'}
+        </button>
       </div>
       <RevisionStatusRow revisionStatus={revisionStatus} sentForReview={sentForReview} />
     </div>

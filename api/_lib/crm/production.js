@@ -18,6 +18,24 @@ import { handleUpload } from '@vercel/blob/client';
 import { waitUntil } from '@vercel/functions';
 import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull, driveFilesEnabled } from './shared.js';
+
+// Self-heal: column added later for "do not auto-relink by title" state. When
+// the producer explicitly links or unlinks via the video page, we stamp this
+// timestamp; loadVideo's title-based auto-link then skips locked rows so the
+// next page load doesn't silently undo their choice.
+let revisionLockColumnEnsured = null;
+async function ensureRevisionLockColumn() {
+  if (revisionLockColumnEnsured) return revisionLockColumnEnsured;
+  revisionLockColumnEnsured = (async () => {
+    try {
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS revision_link_locked_at TIMESTAMPTZ`;
+    } catch (err) {
+      revisionLockColumnEnsured = null;
+      console.warn('[production] ensureRevisionLockColumn failed', err.message);
+    }
+  })();
+  return revisionLockColumnEnsured;
+}
 import { serialiseDeal, ensureDealFileDriveColumns, dealDriveFolder, driveErrorHint } from './deals.js';
 import { getFreshAccessToken } from './gmail.js';
 import { uploadToFolder, ensureSubfolderByPath, ensureNamedSubfolder, deleteDriveFile } from '../googleDrive.js';
@@ -167,6 +185,10 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     if (subaction === 'link-revision') {
       if (req.method !== 'POST') return res.status(405).end();
       return linkRevisionVideo(req, res, videoId, user);
+    }
+    if (subaction === 'unlink-revision') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return unlinkRevisionVideo(res, videoId);
     }
     if (subaction === 'send-storyboard-for-review') {
       if (req.method !== 'POST') return res.status(405).end();
@@ -343,21 +365,27 @@ async function withVideoExtras(video) {
   // Revisions admin (instead of clicking "Send for review" on the video page),
   // this row's revision_video_id is never set and the video page shows nothing.
   // Look for a matching revision_video on a revision project linked to this deal
-  // (either link direction) and back-fill it.
+  // (either link direction) and back-fill it. Skipped once the producer has
+  // explicitly linked or unlinked from the video page (revision_link_locked_at),
+  // so a manual choice isn't silently overwritten on the next load.
   if (!video.revisionVideoId && video.dealId && video.title) {
     try {
-      const [match] = await sql`
-        SELECT rv.id
-          FROM revision_videos rv
-          JOIN revision_projects rp ON rp.id = rv.project_id
-          LEFT JOIN deals d ON d.id = ${video.dealId}
-         WHERE (rp.deal_id = ${video.dealId} OR d.revision_project_id = rp.id)
-           AND lower(btrim(rv.title)) = lower(btrim(${video.title}))
-         LIMIT 1
-      `;
-      if (match?.id) {
-        await sql`UPDATE project_videos SET revision_video_id = ${match.id}, updated_at = NOW() WHERE id = ${video.id}`;
-        video.revisionVideoId = match.id;
+      await ensureRevisionLockColumn();
+      const [locked] = await sql`SELECT revision_link_locked_at FROM project_videos WHERE id = ${video.id}`;
+      if (!locked?.revision_link_locked_at) {
+        const [match] = await sql`
+          SELECT rv.id
+            FROM revision_videos rv
+            JOIN revision_projects rp ON rp.id = rv.project_id
+            LEFT JOIN deals d ON d.id = ${video.dealId}
+           WHERE (rp.deal_id = ${video.dealId} OR d.revision_project_id = rp.id)
+             AND lower(btrim(rv.title)) = lower(btrim(${video.title}))
+           LIMIT 1
+        `;
+        if (match?.id) {
+          await sql`UPDATE project_videos SET revision_video_id = ${match.id}, updated_at = NOW() WHERE id = ${video.id}`;
+          video.revisionVideoId = match.id;
+        }
       }
     } catch { /* self-heal is best-effort */ }
   }
@@ -762,8 +790,31 @@ async function linkRevisionVideo(req, res, videoId, user) {
      LIMIT 1
   `;
   if (!rv) return res.status(404).json({ error: 'Revision video not found on this deal' });
-  await sql`UPDATE project_videos SET revision_video_id = ${revisionVideoId}, updated_at = NOW() WHERE id = ${videoId}`;
+  await ensureRevisionLockColumn();
+  await sql`UPDATE project_videos
+              SET revision_video_id = ${revisionVideoId},
+                  revision_link_locked_at = NOW(),
+                  updated_at = NOW()
+            WHERE id = ${videoId}`;
   return res.status(200).json({ ok: true, revisionVideoId });
+}
+
+// Clear the project_video → revision_video link. Doesn't touch the revision
+// project itself — the producer can re-link later, or this video can be hooked
+// up to a different revision_video. Stamps revision_link_locked_at so the
+// title-based auto-link in loadVideo doesn't silently put it back.
+async function unlinkRevisionVideo(res, videoId) {
+  await ensureRevisionLockColumn();
+  const [row] = await sql`
+    UPDATE project_videos
+       SET revision_video_id = NULL,
+           revision_link_locked_at = NOW(),
+           updated_at = NOW()
+     WHERE id = ${videoId}
+     RETURNING id
+  `;
+  if (!row) return res.status(404).json({ error: 'Video not found' });
+  return res.status(200).json({ ok: true });
 }
 
 // Hand a video off to the Storyboard Revisions section: lazily create the deal's
