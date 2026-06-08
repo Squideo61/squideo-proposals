@@ -375,7 +375,10 @@ function CashFlowView({ isMobile }) {
   const { state, actions } = useStore();
   const [month, setMonth] = useState(() => todayKey().slice(0, 7));
 
-  const reload = () => actions.loadCashflow(month);
+  // Reload the viewed month and refresh the shared current-month targets slice so
+  // the Income performance graph reflects cost edits straight away (it reads
+  // state.cashflowTargets reactively).
+  const reload = () => { actions.loadCashflowTargets(); return actions.loadCashflow(month); };
   useEffect(() => { actions.loadCashflow(month); }, [actions, month, state.financeRefresh]);
 
   const cf = state.cashflow && state.cashflow.month === month ? state.cashflow : null;
