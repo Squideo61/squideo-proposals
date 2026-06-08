@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock } from 'lucide-react';
+import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock, Eye, Pencil, Trash2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 
@@ -93,6 +93,10 @@ export function VideoRevision({ token, data }) {
   const version = versions.find(v => v.id === versionId) || versions[0] || null;
 
   const [comments, setComments] = useState(data.comments || []);
+  const [activeViewers, setActiveViewers] = useState(data.activeViewers || []);
+  const [editingId, setEditingId] = useState(null);
+  const [editingText, setEditingText] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   // Approval is per-video.
@@ -231,6 +235,79 @@ export function VideoRevision({ token, data }) {
     actions.recordRevisionView(token, { versionId: version.id, name, email });
   }, [identified, version?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Live updates + presence heartbeat: poll publicView every ~6s once the
+  // viewer has identified themselves. Refreshes comments (so co-viewers'
+  // changes appear live), the activeViewers list (drives the presence banner),
+  // and per-video approval / feedback-submitted state. We deliberately do NOT
+  // overwrite the local videos/versions arrays or any in-progress UI state.
+  useEffect(() => {
+    if (!identified || !email) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const d = await actions.pollPublicRevision(token, email);
+        if (!alive || !d) return;
+        setComments(d.comments || []);
+        setActiveViewers(d.activeViewers || []);
+        if (Array.isArray(d.videos)) {
+          setApprovals(prev => {
+            const next = { ...prev };
+            for (const v of d.videos) next[v.id] = v.approvedAt || null;
+            return next;
+          });
+          setSubmitted(prev => {
+            const next = { ...prev };
+            for (const v of d.videos) next[v.id] = v.feedbackSubmittedAt || null;
+            return next;
+          });
+        }
+      } catch { /* polling is best-effort */ }
+    };
+    tick();
+    const handle = setInterval(tick, 6000);
+    return () => { alive = false; clearInterval(handle); };
+  }, [identified, email, token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function startEdit(c) {
+    if (approvedAt) return;
+    setEditingId(c.id);
+    setEditingText(c.body || '');
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditingText('');
+  }
+
+  async function saveEdit() {
+    const id = editingId;
+    const text = editingText.trim();
+    if (!id || !text || savingEdit) return;
+    setSavingEdit(true);
+    try {
+      const updated = await actions.editRevisionComment(token, id, text, email);
+      setComments(prev => prev.map(c => (c.id === id ? { ...c, ...updated } : c)));
+      setEditingId(null);
+      setEditingText('');
+    } catch (err) {
+      showMsg(err.message || 'Could not save changes');
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function deleteComment(c) {
+    if (approvedAt) return;
+    if (!window.confirm('Delete this comment? This cannot be undone.')) return;
+    try {
+      await actions.deleteRevisionComment(token, c.id, email);
+      setComments(prev => prev.filter(x => x.id !== c.id));
+      if (editingId === c.id) cancelEdit();
+    } catch (err) {
+      showMsg(err.message || 'Could not delete comment');
+    }
+  }
+
   // ── Gate screen ─────────────────────────────────────────────────────────────
   if (!identified) {
     return (
@@ -328,6 +405,10 @@ export function VideoRevision({ token, data }) {
         </div>
       </div>
 
+      {activeViewers.length > 0 && (
+        <PresenceBanner viewers={activeViewers} />
+      )}
+
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         {/* Player + marker strip */}
         <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', background: '#0B1B26', minWidth: 0 }}>
@@ -380,22 +461,68 @@ export function VideoRevision({ token, data }) {
                 Play the video, pause where you'd like a change, and leave a comment.
               </p>
             )}
-            {versionComments.map(c => (
-              <div key={c.id} style={{ marginBottom: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                  <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
-                  {c.timecodeSeconds != null && (
-                    <button onClick={() => seekTo(c.timecodeSeconds)}
-                      style={{ background: 'transparent', border: 'none', color: BRAND.blue, cursor: 'pointer',
-                        fontSize: 12, fontWeight: 700, padding: 0 }}>
-                      {tc(c.timecodeSeconds)}
-                    </button>
+            {versionComments.map(c => {
+              const isEditing = editingId === c.id;
+              const canManage = c.mine && !approvedAt;
+              return (
+                <div key={c.id} style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
+                    {c.timecodeSeconds != null && (
+                      <button onClick={() => seekTo(c.timecodeSeconds)}
+                        style={{ background: 'transparent', border: 'none', color: BRAND.blue, cursor: 'pointer',
+                          fontSize: 12, fontWeight: 700, padding: 0 }}>
+                        {tc(c.timecodeSeconds)}
+                      </button>
+                    )}
+                    {canManage && !isEditing && (
+                      <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4 }}>
+                        <button onClick={() => startEdit(c)} title="Edit"
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer',
+                            color: BRAND.muted, padding: 2, display: 'inline-flex' }}>
+                          <Pencil size={13} />
+                        </button>
+                        <button onClick={() => deleteComment(c)} title="Delete"
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer',
+                            color: BRAND.muted, padding: 2, display: 'inline-flex' }}>
+                          <Trash2 size={13} />
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                  {isEditing ? (
+                    <div style={{ marginTop: 4 }}>
+                      <textarea
+                        value={editingText}
+                        onChange={e => setEditingText(e.target.value)}
+                        rows={3}
+                        autoFocus
+                        style={{ width: '100%', resize: 'vertical', padding: 8, borderRadius: 8,
+                          border: `1px solid ${BRAND.border}`, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
+                      />
+                      <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
+                        <button onClick={cancelEdit} disabled={savingEdit}
+                          style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`,
+                            background: '#fff', color: BRAND.ink, fontSize: 12, cursor: 'pointer' }}>
+                          Cancel
+                        </button>
+                        <button onClick={saveEdit} disabled={savingEdit || !editingText.trim()}
+                          style={{ padding: '6px 12px', borderRadius: 8, border: 'none',
+                            background: editingText.trim() ? BRAND.blue : BRAND.border, color: '#fff',
+                            fontWeight: 600, fontSize: 12, cursor: editingText.trim() ? 'pointer' : 'default' }}>
+                          {savingEdit ? 'Saving…' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {c.body && <div style={{ fontSize: 13, color: BRAND.ink, marginTop: 2, whiteSpace: 'pre-wrap' }}>{c.body}</div>}
+                      {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
+                    </>
                   )}
                 </div>
-                {c.body && <div style={{ fontSize: 13, color: BRAND.ink, marginTop: 2, whiteSpace: 'pre-wrap' }}>{c.body}</div>}
-                {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Composer (hidden once approved) */}
@@ -462,6 +589,28 @@ export function VideoRevision({ token, data }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Slim "currently viewing" strip under the header. Lists everyone whose
+// presence heartbeat landed in the last 2 minutes (the server filter). Marks
+// the requester with "(you)".
+function PresenceBanner({ viewers }) {
+  if (!viewers || !viewers.length) return null;
+  const label = viewers
+    .map(v => v.name + (v.you ? ' (you)' : ''))
+    .join(', ');
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8,
+      padding: '6px 18px', background: '#EFF8FC',
+      borderBottom: `1px solid ${BRAND.border}`,
+      color: BRAND.ink, fontSize: 12,
+    }}>
+      <Eye size={14} color={BRAND.blue} />
+      <span style={{ fontWeight: 600, color: BRAND.muted }}>Currently viewing:</span>
+      <span>{label}</span>
     </div>
   );
 }

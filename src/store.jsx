@@ -2416,15 +2416,45 @@ export function StoreProvider({ children }) {
     },
 
     // ---------- Public revision viewer (no auth) ----------
-    loadPublicRevision(token) {
+    // The endpoint doubles as a presence heartbeat: when viewerEmail is sent
+    // along, the server bumps last_seen and returns activeViewers + per-comment
+    // `mine` flags. The viewer polls this on a timer for live updates.
+    loadPublicRevision(token, viewerEmail) {
       setState(s => ({ ...s, loading: true }));
-      return api.get('/api/revisions/public?token=' + encodeURIComponent(token))
+      const q = new URLSearchParams({ token });
+      if (viewerEmail) q.set('viewerEmail', viewerEmail);
+      return api.get('/api/revisions/public?' + q.toString())
         .then((data) => { setState(s => ({ ...s, loading: false })); return data; })
         .catch((err) => { setState(s => ({ ...s, loading: false })); throw err; });
     },
 
+    // Silent poll variant — same endpoint, no global loading flash. Used by the
+    // viewer's heartbeat to refresh comments + activeViewers + approval state.
+    pollPublicRevision(token, viewerEmail) {
+      const q = new URLSearchParams({ token });
+      if (viewerEmail) q.set('viewerEmail', viewerEmail);
+      return api.get('/api/revisions/public?' + q.toString());
+    },
+
     postRevisionComment(token, payload) {
       return api.post('/api/revisions/comment?token=' + encodeURIComponent(token), payload);
+    },
+
+    // Client edits the body of their own comment.
+    editRevisionComment(token, id, body, viewerEmail) {
+      return api.patch(
+        '/api/revisions/comment?token=' + encodeURIComponent(token) + '&id=' + encodeURIComponent(id),
+        { body, viewerEmail },
+      );
+    },
+
+    // Client deletes their own comment.
+    deleteRevisionComment(token, id, viewerEmail) {
+      return api.delete(
+        '/api/revisions/comment?token=' + encodeURIComponent(token)
+          + '&id=' + encodeURIComponent(id)
+          + '&viewerEmail=' + encodeURIComponent(viewerEmail),
+      );
     },
 
     // Name + email gate: records the viewer before they see the videos.

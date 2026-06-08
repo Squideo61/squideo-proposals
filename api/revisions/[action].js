@@ -73,8 +73,12 @@ export default async function handler(req, res) {
       return await publicView(req, res);
     }
     if (action === 'comment') {
-      if (req.method !== 'POST') return res.status(405).end();
-      return await postComment(req, res);
+      if (req.method === 'POST')   return await postComment(req, res);
+      // Client edits or deletes their own comment (gated by author email + the
+      // share token; locked once the video is approved).
+      if (req.method === 'PATCH')  return await updateComment(req, res);
+      if (req.method === 'DELETE') return await deleteComment(req, res);
+      return res.status(405).end();
     }
     // Public client-upload token for a comment's supporting asset. Authorised by
     // the share_token (the same unguessable link that unlocks the revision), so
@@ -615,11 +619,25 @@ function escapeHtml(s) {
 async function publicView(req, res) {
   const token = req.query.token ? String(req.query.token) : null;
   if (!token) return res.status(400).json({ error: 'token required' });
+  // Polled on a heartbeat by VideoRevision, so the same endpoint doubles as
+  // presence: bump the viewer's last_seen and report who else is on the page.
+  const viewerEmail = (req.query.viewerEmail || '').toString().trim().toLowerCase() || null;
 
   const [project] = await sql`
     SELECT id, title, client_name FROM revision_projects WHERE share_token = ${token}
   `;
   if (!project) return res.status(404).json({ error: 'Not found' });
+
+  // Heartbeat: bump last_seen if this viewer has already passed the name+email
+  // gate (a no-op for the very first publicView call before the gate).
+  if (viewerEmail) {
+    try {
+      await sql`
+        UPDATE revision_viewers SET last_seen = NOW()
+         WHERE project_id = ${project.id} AND lower(email) = ${viewerEmail}
+      `;
+    } catch { /* best-effort; presence is not load-bearing */ }
+  }
 
   const [cfg] = await sql`SELECT revision_call_url FROM settings WHERE id = 1`;
 
@@ -634,12 +652,21 @@ async function publicView(req, res) {
   `;
   const comments = await sql`
     SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds, rc.body,
-           rc.author_name, rc.created_at,
+           rc.author_name, rc.author_email, rc.created_at,
            rc.attachment_url, rc.attachment_name, rc.attachment_type
     FROM revision_comments rc
     JOIN revision_versions rv ON rv.id = rc.version_id
     WHERE rv.project_id = ${project.id}
     ORDER BY rc.created_at ASC
+  `;
+  // "Currently viewing" = anyone the gate has accepted whose heartbeat landed
+  // within the last 2 minutes. We never return co-viewers' emails — just names
+  // plus a `you` flag computed against the requester.
+  const viewers = await sql`
+    SELECT name, lower(email) AS email, last_seen
+      FROM revision_viewers
+     WHERE project_id = ${project.id} AND last_seen > NOW() - INTERVAL '2 minutes'
+     ORDER BY last_seen DESC
   `;
   const mapVersion = (v) => ({
     id: v.id, videoId: v.video_id, versionNumber: v.version_number, label: v.label,
@@ -656,8 +683,34 @@ async function publicView(req, res) {
       feedbackSubmittedAt: vid.feedback_submitted_at || null,
       versions: versions.filter(v => v.video_id === vid.id).map(mapVersion),
     })),
-    comments: comments.map(commentRow),
+    comments: comments.map(r => publicCommentRow(r, viewerEmail)),
+    activeViewers: viewers.map(v => ({
+      name: v.name,
+      lastSeen: v.last_seen,
+      you: !!(viewerEmail && v.email === viewerEmail),
+    })),
   });
+}
+
+// A public-facing comment shape: like commentRow() but adds `mine` and masks
+// other reviewers' emails. Used by publicView only.
+function publicCommentRow(r, viewerEmail) {
+  const ownerEmail = (r.author_email || '').toLowerCase();
+  const mine = !!(viewerEmail && ownerEmail && ownerEmail === viewerEmail);
+  return {
+    id: r.id,
+    versionId: r.version_id,
+    parentId: r.parent_id,
+    timecodeSeconds: r.timecode_seconds != null ? Number(r.timecode_seconds) : null,
+    body: r.body,
+    authorName: r.author_name,
+    authorEmail: mine ? r.author_email : null,
+    createdAt: r.created_at,
+    attachmentUrl: r.attachment_url || null,
+    attachmentName: r.attachment_name || null,
+    attachmentType: r.attachment_type || null,
+    mine,
+  };
 }
 
 // Records (upserts) a reviewer who passed the name + email gate.
@@ -903,7 +956,70 @@ async function postComment(req, res) {
     RETURNING id, version_id, parent_id, timecode_seconds, body, author_name, author_email, created_at,
               attachment_url, attachment_name, attachment_type
   `;
-  return res.status(201).json(commentRow(row));
+  // Return the public-shaped row so the client immediately sees mine:true on
+  // the freshly-created comment (no need to wait for the next poll).
+  return res.status(201).json(publicCommentRow(row, (authorEmail || '').toLowerCase()));
+}
+
+// Client edits the body of their own comment. Authed by share_token + matching
+// author_email; refused once the video has been approved.
+async function updateComment(req, res) {
+  const token = req.query.token ? String(req.query.token) : null;
+  const id = req.query.id ? String(req.query.id) : null;
+  if (!token || !id) return res.status(400).json({ error: 'token and id required' });
+  const body = parseBody(req);
+  const newText = (body.body || '').trim();
+  const viewerEmail = (body.viewerEmail || '').trim().toLowerCase();
+  if (!viewerEmail) return res.status(400).json({ error: 'viewerEmail required' });
+  if (!newText) return res.status(400).json({ error: 'comment body required' });
+  if (newText.length > 4000) return res.status(400).json({ error: 'comment too long' });
+
+  const [match] = await sql`
+    SELECT rc.id, lower(rc.author_email) AS owner_email, vid.approved_at
+      FROM revision_comments rc
+      JOIN revision_versions rv ON rv.id = rc.version_id
+      JOIN revision_videos vid ON vid.id = rv.video_id
+      JOIN revision_projects rp ON rp.id = rv.project_id
+     WHERE rc.id = ${id} AND rp.share_token = ${token}
+  `;
+  if (!match) return res.status(404).json({ error: 'not found' });
+  if (match.approved_at) return res.status(403).json({ error: 'This video has been approved and is now locked.' });
+  if (!match.owner_email || match.owner_email !== viewerEmail) {
+    return res.status(403).json({ error: 'You can only edit your own comments.' });
+  }
+
+  const [row] = await sql`
+    UPDATE revision_comments SET body = ${newText}
+     WHERE id = ${id}
+     RETURNING id, version_id, parent_id, timecode_seconds, body, author_name, author_email, created_at,
+               attachment_url, attachment_name, attachment_type
+  `;
+  return res.status(200).json(publicCommentRow(row, viewerEmail));
+}
+
+// Client deletes their own comment. Same authz as updateComment.
+async function deleteComment(req, res) {
+  const token = req.query.token ? String(req.query.token) : null;
+  const id = req.query.id ? String(req.query.id) : null;
+  if (!token || !id) return res.status(400).json({ error: 'token and id required' });
+  const viewerEmail = (req.query.viewerEmail || '').toString().trim().toLowerCase();
+  if (!viewerEmail) return res.status(400).json({ error: 'viewerEmail required' });
+
+  const [match] = await sql`
+    SELECT rc.id, lower(rc.author_email) AS owner_email, vid.approved_at
+      FROM revision_comments rc
+      JOIN revision_versions rv ON rv.id = rc.version_id
+      JOIN revision_videos vid ON vid.id = rv.video_id
+      JOIN revision_projects rp ON rp.id = rv.project_id
+     WHERE rc.id = ${id} AND rp.share_token = ${token}
+  `;
+  if (!match) return res.status(404).json({ error: 'not found' });
+  if (match.approved_at) return res.status(403).json({ error: 'This video has been approved and is now locked.' });
+  if (!match.owner_email || match.owner_email !== viewerEmail) {
+    return res.status(403).json({ error: 'You can only delete your own comments.' });
+  }
+  await sql`DELETE FROM revision_comments WHERE id = ${id}`;
+  return res.status(200).json({ ok: true });
 }
 
 // ─── Row mappers ─────────────────────────────────────────────────────────────
