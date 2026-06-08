@@ -254,7 +254,7 @@ function PreviewPane({ preview, revisionStatus, sentForReview, isMobile }) {
             <PdfPage url={url} pageNumber={1} />
           </div>
         ) : (
-          <video src={url} controls style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }} />
+          <video src={url} controls style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         )}
       </div>
     </div>
@@ -325,8 +325,9 @@ function RevisionStatusCard({ revisionStatus, sentForReview, dealId, videoId }) 
         <strong style={{ fontSize: 13, color: BRAND.ink }}>Client review</strong>
         <button onClick={unlink} disabled={unlinking}
           title="Unlink this video from the revision (drafts + comments stay in the Revisions section)"
-          style={{ marginLeft: 'auto', background: 'transparent', border: 'none', cursor: 'pointer',
-            color: BRAND.muted, padding: '2px 6px', fontSize: 12 }}>
+          style={{ marginLeft: 'auto', background: '#F1F5F9', border: '1px solid ' + BRAND.border,
+            borderRadius: 6, cursor: unlinking ? 'default' : 'pointer',
+            color: BRAND.muted, padding: '3px 10px', fontSize: 12, fontWeight: 600 }}>
           {unlinking ? 'Unlinking…' : 'Unlink'}
         </button>
       </div>
