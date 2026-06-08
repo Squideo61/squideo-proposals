@@ -39,6 +39,55 @@ export function DealLinkSelect({ projectId, value, kind = 'revision', onLinked }
   );
 }
 
+// Read-only summary of which CRM deal this revision project belongs to.
+// Replaces the old <DealLinkSelect> dropdown — the linkage now lives in the
+// admin/migration code only; this just tells the producer what they're in.
+export function DealLinkSummary({ dealId, dealTitle }) {
+  if (dealId && dealTitle) {
+    return (
+      <span title="This revision project is linked to a CRM deal"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink,
+          padding: '7px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: '#F8FAFC' }}>
+        <Link2 size={14} color={BRAND.muted} />
+        <span style={{ color: BRAND.muted }}>Linked to</span>
+        <strong style={{ color: BRAND.ink }}>{dealTitle}</strong>
+      </span>
+    );
+  }
+  return (
+    <span title="No CRM deal is linked to this revision project"
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#92400E',
+        padding: '7px 10px', borderRadius: 8, border: '1px solid #FCD34D', background: '#FFFBEB' }}>
+      <Link2 size={14} /> Not linked to a deal
+    </span>
+  );
+}
+
+// Banner inside a revision-video card showing which project_video card it's
+// connected to on the deal page, or warning when nothing is connected yet.
+function VideoLinkBanner({ linked }) {
+  if (linked) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
+        padding: '8px 12px', borderRadius: 8, background: '#ECFDF5', border: '1px solid #A7F3D0',
+        color: '#065F46', fontSize: 12.5 }}>
+        <Link2 size={14} />
+        <span>Linked to video card:</span>
+        <strong>{linked.title}</strong>
+        {linked.dealTitle && <span style={{ color: '#047857' }}>· {linked.dealTitle}</span>}
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
+      padding: '8px 12px', borderRadius: 8, background: '#FFFBEB', border: '1px solid #FCD34D',
+      color: '#92400E', fontSize: 12.5 }}>
+      <Link2 size={14} />
+      Not linked to a video card. Open the project's video page and use "Link to a revision".
+    </div>
+  );
+}
+
 // Assign a producer to this revision project — independent of who produced the
 // original video. Shared by Video & Storyboard revision detail headers.
 export function AssigneeSelect({ value, users, onChange }) {
@@ -370,8 +419,7 @@ function ProjectDetail({ projectId, onBack }) {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <AssigneeSelect value={detail.assigneeEmail} users={state.users}
             onChange={(email) => actions.assignRevisionProject(projectId, email)} />
-          <DealLinkSelect projectId={projectId} value={detail.dealId} kind="revision"
-            onLinked={() => actions.loadRevisionDetail(projectId)} />
+          <DealLinkSummary dealId={detail.dealId} dealTitle={detail.dealTitle} />
           <button onClick={addVideo} className="btn-ghost"><Plus size={14} /> Add video</button>
           <CopyLinkButton token={detail.shareToken} showMsg={showMsg} />
         </div>
@@ -462,6 +510,8 @@ function VideoCard({ projectId, video, commentsByVersion }) {
           onClick={() => { if (window.confirm(`Delete "${video.title}" and all its drafts?`)) actions.deleteRevisionVideo(projectId, video.id); }}
           className="btn-ghost" style={{ marginLeft: 'auto' }} title="Delete video"><Trash2 size={14} /></button>
       </div>
+
+      <VideoLinkBanner linked={video.linkedProjectVideo} />
 
       {/* Upload a new draft for this video */}
       <div

@@ -372,12 +372,27 @@ async function projectDetail(res, id) {
     SELECT name, email, first_seen, last_seen FROM revision_viewers
     WHERE project_id = ${id} ORDER BY last_seen DESC
   `;
+  // Each revision_video may be linked back to a project_video card on a deal
+  // (via project_videos.revision_video_id). The UI shows a "Linked to …" /
+  // "Not linked to a video card" banner per video off this map.
+  const links = videos.length
+    ? await sql`
+        SELECT pv.id AS pv_id, pv.title AS pv_title, pv.revision_video_id, pv.deal_id, d.title AS deal_title
+          FROM project_videos pv
+          LEFT JOIN deals d ON d.id = pv.deal_id
+         WHERE pv.revision_video_id = ANY(${videos.map(v => v.id)})
+      `
+    : [];
+  const linkByRevisionVideo = Object.fromEntries(links.map(l => [l.revision_video_id, {
+    id: l.pv_id, title: l.pv_title, dealId: l.deal_id, dealTitle: l.deal_title,
+  }]));
   return res.status(200).json({
     ...projectRow(project),
     videos: videos.map(vid => ({
       id: vid.id, title: vid.title, sortOrder: vid.sort_order, createdAt: vid.created_at,
       approvedAt: vid.approved_at || null, approvedBy: vid.approved_by || null,
       feedbackSubmittedAt: vid.feedback_submitted_at || null,
+      linkedProjectVideo: linkByRevisionVideo[vid.id] || null,
       versions: versions.filter(v => v.video_id === vid.id).map(ver => ({
         ...versionRow(ver), views: viewsByVersion[ver.id] || [],
       })),
