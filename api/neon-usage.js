@@ -87,7 +87,7 @@ function sumMetrics(payload) {
   return { totals, periodStart };
 }
 
-async function compute(key, { orgIdEnv, projectIdEnv } = {}) {
+async function compute(key, { orgIdEnv, projectIdEnv, debug } = {}) {
   // Neon now scopes every account under an organization; the consumption API
   // requires org_id. Use the configured org, else the account's first org.
   let orgId = orgIdEnv;
@@ -124,6 +124,12 @@ async function compute(key, { orgIdEnv, projectIdEnv } = {}) {
   if (projectIdEnv) qs.append('project_ids', projectIdEnv);
   const usagePayload = await neonGet(`/consumption_history/v2/projects?${qs}`, key);
   const { totals: m, periodStart } = sumMetrics(usagePayload);
+
+  if (debug) {
+    // Troubleshooting passthrough — shows exactly what Neon returned and how we
+    // parsed it, so the response shape can be confirmed. Open ?debug=1 in-browser.
+    return { _debug: true, orgId, window: { from, to }, parsedTotals: m, periodStart, raw: usagePayload };
+  }
 
   const computeCuHours = m.compute_unit_seconds / 3600;
   const storageGbMonth = (m.root_branch_bytes_month + m.child_branch_bytes_month) / 1e9;
@@ -173,6 +179,14 @@ export default async function handler(req, res) {
   }
 
   try {
+    if (req.query?.debug) {
+      const dbg = await compute(key, {
+        orgIdEnv: process.env.NEON_ORG_ID,
+        projectIdEnv: process.env.NEON_PROJECT_ID,
+        debug: true,
+      });
+      return res.status(200).json(dbg);
+    }
     const refresh = req.query?.refresh;
     if (!refresh && cache && (Date.now() - cache.at) < TTL_MS) {
       return res.status(200).json({ ...cache.data, cached: true });
