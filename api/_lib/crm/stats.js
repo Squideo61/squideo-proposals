@@ -1659,6 +1659,34 @@ async function cashflowReport(action) {
   const [{ pg }] = await sql`SELECT COALESCE(cashflow_profit_goal, 0) AS pg FROM settings WHERE id = 1`;
   const profitGoal = round2(Number(pg) || 0);
 
+  // Wage-based targets. The "minimum" target is simply the full cost base (the
+  // break-even). The £4k/£5k targets answer: what must we bill so both directors
+  // can take a £4k/£5k wage? Each director's wage baseline is £3,000/mo (Adam's
+  // £3,500 drawing less his £500 car allowance — a perk, not wage), so a £4k draw
+  // is a +£1,000 uplift. Both directors get the SAME uplift, and we gross up for
+  // the extra income tax + employee NI that uplift incurs (the current cost base
+  // already funds their current drawings and tax, so we only add the marginal
+  // extra). tax_basis rows are the directors whose drawings scale (Adam + Ben).
+  const WAGE_BASELINE = 3000;
+  const TARGET_DRAWS = [4000, 5000];
+  const taxBasisRows = costRows.filter((r) => r.tax_basis === true && costAppliesToMonth(r, month));
+  const targetForDraw = (drawLevel) => {
+    const uplift = Math.max(0, drawLevel - WAGE_BASELINE);
+    let extra = 0;
+    for (const r of taxBasisRows) {
+      const curM = monthlyAmountOf(r);
+      const extraTax = (directorPersonalTax((curM + uplift) * 12) - directorPersonalTax(curM * 12)) / 12;
+      extra += uplift + extraTax;
+    }
+    return round2(sel.costs + extra);
+  };
+  const wageTargets = {
+    minimum: round2(sel.costs),
+    baseline: WAGE_BASELINE,
+    directors: taxBasisRows.length,
+    draws: TARGET_DRAWS.map((d) => ({ draw: d, uplift: d - WAGE_BASELINE, amount: targetForDraw(d) })),
+  };
+
   const lines = costRows.filter((r) => costAppliesToMonth(r, month)).map(serialiseCost);
   // Reflect the computed value on the auto row (display + matches the totals).
   for (const l of lines) {
@@ -1671,6 +1699,7 @@ async function cashflowReport(action) {
     selected: sel,
     corpTax: { effectiveRate, monthReserve, yearEstimate: ctYear, profit12, cashIn12, costs12, inProfit: sel.profit > 0 },
     suggested: { profitGoal, breakEven: sel.costs, target: round2(sel.costs + profitGoal) },
+    targets: wageTargets,
     history,
     lines,
     activity: activityRows.map((r) => ({ id: String(r.id), actor: r.actor_email || null, action: r.action, summary: r.summary, createdAt: r.created_at })),

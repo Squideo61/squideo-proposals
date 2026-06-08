@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users, GripVertical, Briefcase, Megaphone, Crown, Coins } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -162,7 +162,7 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
             <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Performance</h2>
             <p style={{ fontSize: 13, color: BRAND.muted, margin: '2px 0 0' }}>
               {isCashflow
-                ? 'Company costs vs cash received — each month’s profit, the Corporation Tax to set aside (HMRC marginal relief), and a suggested revenue target.'
+                ? 'Company costs vs cash received — each month’s profit, the Corporation Tax to set aside (HMRC marginal relief), and the monthly revenue targets that fund your wages.'
                 : isComparison
                   ? "Cash received each month vs new money owed created that month (ex-VAT), over the last 36 months. The latest owed point previews all outstanding cash still to collect (invoiced or not)."
                   : isSales
@@ -200,7 +200,7 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
           big
           value={section}
           onChange={setSection}
-          options={[{ value: 'income', label: 'Income performance' }, { value: 'sales', label: 'Sales performance' }, { value: 'salesvspp', label: "Sales vs PP's" }, { value: 'cashflow', label: 'Cash Flow' }]}
+          options={[{ value: 'income', label: 'Income performance' }, { value: 'sales', label: 'Sales performance' }, { value: 'salesvspp', label: "Sales vs PP's" }, { value: 'cashflow', label: 'Cash Flow & Targets' }]}
         />
       </div>
 
@@ -438,6 +438,9 @@ function CashFlowView({ isMobile }) {
         </p>
       </div>
 
+      {/* Monthly revenue targets — minimum (cost base) + the wage-uplift targets. */}
+      {cf.targets && <CfTargets targets={cf.targets} isMobile={isMobile} />}
+
       {/* Suggested revenue target — costs + your profit goal. */}
       <CfSuggested sug={sug} onSaveGoal={(g) => actions.setCashflowProfitGoal(g).then(reload)} onApply={applyTargets} isMobile={isMobile} />
 
@@ -505,6 +508,44 @@ function CfMini({ label, value, color }) {
     <div>
       <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{label}</div>
       <div style={{ fontSize: 18, fontWeight: 700, color: color || BRAND.ink }}>{value}</div>
+    </div>
+  );
+}
+
+// The three monthly revenue targets, headlined on the Cash Flow & Targets tab.
+// "Minimum" is the full cost base (break-even). The £4k/£5k targets are what you
+// must bill so both directors can draw that wage — each director's wage baseline
+// is £3,000/mo (Adam's £3,500 drawing less his £500 car allowance), both get the
+// same uplift, and the figure grosses up the extra income tax + NI on it.
+function CfTargets({ targets, isMobile }) {
+  const draws = Array.isArray(targets.draws) ? targets.draws : [];
+  const cards = [
+    { key: 'min', label: 'Minimum Target', value: targets.minimum, sub: 'Composed of all expenses & wages', accent: BRAND.muted },
+    ...draws.map((d) => ({
+      key: 'd' + d.draw,
+      label: `£${(d.draw / 1000)}k wage target`,
+      value: d.amount,
+      sub: `Lets both directors draw £${d.draw.toLocaleString('en-GB')}/mo (tax included)`,
+      accent: BRAND.blue,
+    })),
+  ];
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${BRAND.blue}`, borderRadius: 10, padding: isMobile ? 14 : '14px 18px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
+        <Target size={14} color={BRAND.blue} /> Monthly revenue targets
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12 }}>
+        {cards.map((c) => (
+          <div key={c.key} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '12px 14px', background: '#FBFCFE' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>{c.label}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: c.accent, lineHeight: 1.1, marginBottom: 6 }}>{formatGBP(c.value)}</div>
+            <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.35 }}>{c.sub}</div>
+          </div>
+        ))}
+      </div>
+      <p style={{ fontSize: 12, color: BRAND.muted, margin: '12px 0 0' }}>
+        Each director’s wage baseline is {formatGBP(targets.baseline)}/mo on the graphs (Adam’s £500 car allowance is excluded). The wage targets lift both directors by the same amount and gross up for the extra income tax + employee NI — added on top of the minimum (which already funds today’s drawings). Estimate only.
+      </p>
     </div>
   );
 }
