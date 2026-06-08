@@ -36,11 +36,13 @@ const SCRIPT_FOLDER_PATH = ['2. Pre-Production', '1. Script and Text Direction']
 const REVISION_BLOB_TOKEN =
   process.env.REVISION_BLOB_READ_WRITE_TOKEN || process.env.REVIEW_BLOB_READ_WRITE_TOKEN;
 const MILESTONE_DRIVE_PATH = {
-  script:           ['2. Pre-Production', '1. Script and Text Direction'],
-  visual_direction: ['1. Resources', 'Reference Imagery'],
-  storyboard:       ['2. Pre-Production', '2. Storyboards'],
-  video:            ['3. Video'],
+  script:     ['2. Pre-Production', '1. Script and Text Direction'],
+  storyboard: ['2. Pre-Production', '2. Storyboards'],
+  video:      ['3. Video'],
 };
+// Reference imagery uploaded under the combined Script & Text Direction
+// milestone is filed separately from the script doc, by file type.
+const REFERENCE_IMAGERY_PATH = ['1. Resources', 'Reference Imagery'];
 
 // Public base for client revision share links (matches RevisionsView.jsx).
 const REVISION_PUBLIC_BASE = 'https://app.squideo.com';
@@ -347,16 +349,20 @@ async function withVideoExtras(video) {
   ]);
   video.milestones = milestones.map(m => ({ id: m.milestone, approvedAt: m.approved_at, approvedBy: m.approved_by }));
 
-  const grouped = { script: [], visual_direction: [], storyboard: [], video: [] };
+  const grouped = { script: [], storyboard: [], video: [] };
   for (const a of assets) {
+    // Legacy 'visual_direction' assets now live under the combined Script & Text
+    // Direction milestone ('script'). The data migration renames them, but map
+    // here too so any straggler still surfaces.
+    const key = a.milestone === 'visual_direction' ? 'script' : a.milestone;
     const item = {
-      id: a.id, milestone: a.milestone, filename: a.filename, mimeType: a.mime_type || null,
+      id: a.id, milestone: key, filename: a.filename, mimeType: a.mime_type || null,
       sizeBytes: a.size_bytes != null ? Number(a.size_bytes) : null,
       url: a.blob_url || a.web_view_link || null,
       driveUrl: a.web_view_link || null,
       uploadedBy: a.uploaded_by || null, createdAt: a.created_at,
     };
-    if (grouped[a.milestone]) grouped[a.milestone].push(item); // already DESC → [0] is latest
+    if (grouped[key]) grouped[key].push(item); // already DESC → [0] is latest
   }
   video.milestoneAssets = grouped;
   const latestScript = grouped.script[0] || null;
@@ -748,7 +754,13 @@ async function registerMilestoneAsset(req, res, videoId, user) {
 async function syncMilestoneAssetToDrive(assetId, dealId, milestone, filename, mimeType, blobUrl, userEmail) {
   const accessToken = await getFreshAccessToken(userEmail);
   const root = await dealDriveFolder(accessToken, dealId);
-  const folderId = (await ensureSubfolderByPath(accessToken, root, MILESTONE_DRIVE_PATH[milestone] || [])) || root;
+  // Images on the combined script milestone are reference imagery → file them
+  // in the Reference Imagery folder rather than alongside the script doc.
+  const isImage = (mimeType || '').startsWith('image/');
+  const path = (milestone === 'script' && isImage)
+    ? REFERENCE_IMAGERY_PATH
+    : (MILESTONE_DRIVE_PATH[milestone] || []);
+  const folderId = (await ensureSubfolderByPath(accessToken, root, path)) || root;
   const resp = await fetch(blobUrl);
   if (!resp.ok) throw new Error('blob fetch ' + resp.status);
   const buffer = Buffer.from(await resp.arrayBuffer());

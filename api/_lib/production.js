@@ -114,6 +114,17 @@ export async function ensureProductionSchema() {
             WHERE a.video_id = vs.video_id AND a.milestone = 'script' AND a.filename = vs.filename AND a.created_at = vs.created_at
          )
       `;
+      // Fold the legacy 'visual_direction' milestone into the combined
+      // 'script' (Script & Text Direction) milestone — script + text direction
+      // are sent to the client together. Assets carry over freely; approvals
+      // are de-duped first (the unique (video_id, milestone) index).
+      await sql`UPDATE video_milestone_assets SET milestone = 'script' WHERE milestone = 'visual_direction'`;
+      await sql`
+        DELETE FROM video_milestones v
+         WHERE v.milestone = 'visual_direction'
+           AND EXISTS (SELECT 1 FROM video_milestones s WHERE s.video_id = v.video_id AND s.milestone = 'script')
+      `;
+      await sql`UPDATE video_milestones SET milestone = 'script' WHERE milestone = 'visual_direction'`;
       // Multiple producers / team members per video and per project (deal).
       await sql`
         CREATE TABLE IF NOT EXISTS video_assignees (

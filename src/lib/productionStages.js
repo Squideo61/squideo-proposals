@@ -108,14 +108,16 @@ export const PAYMENT_TERMS_LABEL = Object.fromEntries(PAYMENT_TERMS.map(t => [t.
 // Read-only on the video/board — the proposal is the source of truth.
 export const PAYMENT_OPTION_LABEL = { '5050': '50/50', full: 'Full up-front', po: 'PO' };
 
-// ── Per-video milestones (Script → Visual Direction → Storyboard → Video). Each
+// ── Per-video milestones (Script & Text Direction → Storyboard → Video). Each
 // approval advances the video card to a mapped board stage (forward-only).
-// Mirror of the copy in api/_lib/productionStages.js — keep in lockstep. ──
+// Script and text/visual direction are sent to the client together, so they
+// share one milestone (the legacy 'visual_direction' milestone was folded into
+// 'script'). Mirror of the copy in api/_lib/productionStages.js — keep in
+// lockstep. ──
 export const VIDEO_MILESTONES = [
-  { id: 'script',           label: 'Script',           phase: 'pre_production', stage: 'scripts_completed' },
-  { id: 'visual_direction', label: 'Visual Direction', phase: 'pre_production', stage: 'storyboard' },
-  { id: 'storyboard',       label: 'Storyboard',       phase: 'pre_production', stage: 'project_started' },
-  { id: 'video',            label: 'Video',            phase: 'production',     stage: 'signed_off' },
+  { id: 'script',     label: 'Script & Text Direction', phase: 'pre_production', stage: 'storyboard' },
+  { id: 'storyboard', label: 'Storyboard',              phase: 'pre_production', stage: 'project_started' },
+  { id: 'video',      label: 'Video',                   phase: 'production',     stage: 'signed_off' },
 ];
 export const VIDEO_MILESTONE_BY_ID = Object.fromEntries(VIDEO_MILESTONES.map(m => [m.id, m]));
 

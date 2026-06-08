@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Film, FolderOpen, Send, ExternalLink, Trash2, FileText, Upload, CheckCircle2, Circle, ListChecks, ChevronDown, ChevronRight, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, Film, FolderOpen, Send, ExternalLink, Trash2, FileText, Upload, CheckCircle2, Circle, ListChecks, ChevronDown, ChevronRight } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
@@ -476,10 +476,11 @@ function fmtDate(iso) {
 
 // Per-milestone uploader config (typed accept + icon + dropzone hint).
 const MILESTONE_UI = {
-  script:           { icon: FileText,  accept: '.pdf,.doc,.docx,.txt,.rtf,application/pdf', hint: 'Drop the script here, or click to upload (PDF, DOC…)' },
-  visual_direction: { icon: ImageIcon, accept: 'image/*,application/pdf',                   hint: 'Drop visual direction here (images, references, PDF)' },
-  storyboard:       { icon: FileText,  accept: 'application/pdf',                           hint: 'Drop the storyboard PDF here, or click to upload' },
-  video:            { icon: Film,      accept: 'video/*',                                   hint: 'Drop the draft video here, or click to upload' },
+  // Script & Text Direction is one milestone — accepts the script doc plus any
+  // reference imagery / text-direction PDFs (they're sent to the client together).
+  script:     { icon: FileText, accept: '.pdf,.doc,.docx,.txt,.rtf,application/pdf,image/*', hint: 'Drop the script & text direction here (PDF, DOC, images…)' },
+  storyboard: { icon: FileText, accept: 'application/pdf',                                   hint: 'Drop the storyboard PDF here, or click to upload' },
+  video:      { icon: Film,     accept: 'video/*',                                          hint: 'Drop the draft video here, or click to upload' },
 };
 
 const isPdf   = (a) => (a?.mimeType || '').includes('pdf') || /\.pdf$/i.test(a?.filename || '');
@@ -496,7 +497,7 @@ function MilestonePreview({ asset }) {
   return null; // documents: the file list carries a View link
 }
 
-// Milestones: Script → Visual Direction → Storyboard → Video. Each is an
+// Milestones: Script & Text Direction → Storyboard → Video. Each is an
 // expandable panel where producers upload typed content, preview it, and
 // approve — approving advances the card forward on the board.
 function MilestonesCard({ video, videoId }) {

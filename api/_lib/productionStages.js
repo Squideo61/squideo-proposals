@@ -87,13 +87,15 @@ export function isValidPaymentTerms(id) {
   return id == null || PAYMENT_TERMS.some(t => t.id === id);
 }
 
-// ── Per-video milestones (Script → Visual Direction → Storyboard → Video). Each
-// approval advances the video card to a mapped board stage (forward-only). ──
+// ── Per-video milestones (Script & Text Direction → Storyboard → Video). Each
+// approval advances the video card to a mapped board stage (forward-only).
+// Script and text/visual direction are sent to the client together, so they
+// share one milestone (the legacy 'visual_direction' milestone was folded into
+// 'script'). Mirror of the copy in src/lib/productionStages.js. ──
 export const VIDEO_MILESTONES = [
-  { id: 'script',           label: 'Script',           phase: 'pre_production', stage: 'scripts_completed' },
-  { id: 'visual_direction', label: 'Visual Direction', phase: 'pre_production', stage: 'storyboard' },
-  { id: 'storyboard',       label: 'Storyboard',       phase: 'pre_production', stage: 'project_started' },
-  { id: 'video',            label: 'Video',            phase: 'production',     stage: 'signed_off' },
+  { id: 'script',     label: 'Script & Text Direction', phase: 'pre_production', stage: 'storyboard' },
+  { id: 'storyboard', label: 'Storyboard',              phase: 'pre_production', stage: 'project_started' },
+  { id: 'video',      label: 'Video',                   phase: 'production',     stage: 'signed_off' },
 ];
 export const VIDEO_MILESTONE_BY_ID = Object.fromEntries(VIDEO_MILESTONES.map(m => [m.id, m]));
 
