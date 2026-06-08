@@ -164,6 +164,10 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       if (req.method !== 'POST') return res.status(405).end();
       return sendVideoForReview(res, videoId, user);
     }
+    if (subaction === 'link-revision') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return linkRevisionVideo(req, res, videoId, user);
+    }
     if (subaction === 'send-storyboard-for-review') {
       if (req.method !== 'POST') return res.status(405).end();
       return sendStoryboardForReview(res, videoId, user);
@@ -356,6 +360,26 @@ async function withVideoExtras(video) {
         video.revisionVideoId = match.id;
       }
     } catch { /* self-heal is best-effort */ }
+  }
+  // Surface every revision_video on a revision project linked to this deal,
+  // so the video page can let the producer manually pick the right one when
+  // the title-based auto-link above couldn't find a match. Cheap query; only
+  // returns when at least one revision project is associated with the deal.
+  if (video.dealId) {
+    try {
+      video.dealRevisionVideos = await sql`
+        SELECT rv.id, rv.title, rp.id AS project_id, rp.title AS project_title,
+               (SELECT COUNT(*)::int FROM revision_versions WHERE video_id = rv.id) AS version_count
+          FROM revision_videos rv
+          JOIN revision_projects rp ON rp.id = rv.project_id
+          LEFT JOIN deals d ON d.id = ${video.dealId}
+         WHERE rp.deal_id = ${video.dealId} OR d.revision_project_id = rp.id
+         ORDER BY rv.sort_order, rv.title
+      `.then(rows => rows.map(r => ({
+        id: r.id, title: r.title, projectId: r.project_id, projectTitle: r.project_title,
+        versionCount: Number(r.version_count) || 0,
+      })));
+    } catch { video.dealRevisionVideos = []; }
   }
   let revisionStatus = null;
   if (video.revisionVideoId) {
@@ -717,6 +741,29 @@ async function sendVideoForReview(res, videoId, user) {
     shareToken,
     reviewUrl: `${REVISION_PUBLIC_BASE}/?revision=${shareToken}`,
   });
+}
+
+// Manually link this project_video to an existing revision_video on the same
+// deal's revision project. Used by the "Link revision" picker on the video
+// page when the auto-match by title couldn't find a candidate (e.g. titles
+// differ). Refuses cross-deal links to keep ownership clean.
+async function linkRevisionVideo(req, res, videoId, user) {
+  const { revisionVideoId } = req.body || {};
+  if (!revisionVideoId) return res.status(400).json({ error: 'revisionVideoId required' });
+  const [video] = await sql`SELECT id, deal_id FROM project_videos WHERE id = ${videoId}`;
+  if (!video) return res.status(404).json({ error: 'Video not found' });
+  const [rv] = await sql`
+    SELECT rv.id, rp.deal_id AS rp_deal_id, d.revision_project_id
+      FROM revision_videos rv
+      JOIN revision_projects rp ON rp.id = rv.project_id
+      LEFT JOIN deals d ON d.id = ${video.deal_id}
+     WHERE rv.id = ${revisionVideoId}
+       AND (rp.deal_id = ${video.deal_id} OR d.revision_project_id = rp.id)
+     LIMIT 1
+  `;
+  if (!rv) return res.status(404).json({ error: 'Revision video not found on this deal' });
+  await sql`UPDATE project_videos SET revision_video_id = ${revisionVideoId}, updated_at = NOW() WHERE id = ${videoId}`;
+  return res.status(200).json({ ok: true, revisionVideoId });
 }
 
 // Hand a video off to the Storyboard Revisions section: lazily create the deal's

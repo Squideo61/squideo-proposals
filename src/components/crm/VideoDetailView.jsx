@@ -176,6 +176,9 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           {(video.revisionVideoId || video.revisionStatus) && (
             <RevisionStatusCard revisionStatus={video.revisionStatus} sentForReview={!!video.revisionVideoId} />
           )}
+          {!video.revisionVideoId && (video.dealRevisionVideos || []).length > 0 && (
+            <LinkRevisionCard dealId={video.dealId} videoId={videoId} candidates={video.dealRevisionVideos} />
+          )}
           <div style={{ flex: isMobile ? 'none' : 1, minHeight: 0, overflowY: isMobile ? 'visible' : 'auto' }}>
             {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['activity', 'comments']} />}
           </div>
@@ -252,6 +255,47 @@ function PreviewPane({ preview, revisionStatus, sentForReview, isMobile }) {
         ) : (
           <video src={url} controls style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }} />
         )}
+      </div>
+    </div>
+  );
+}
+
+// Shown when the deal has a revision project but the title-based auto-link
+// couldn't match this specific project_video. Lets the producer pick which
+// revision_video to connect, so the status card then takes over.
+function LinkRevisionCard({ dealId, videoId, candidates }) {
+  const { actions, showMsg } = useStore();
+  const [pick, setPick] = useState(candidates[0]?.id || '');
+  const [busy, setBusy] = useState(false);
+  const link = () => {
+    if (!pick || busy) return;
+    setBusy(true);
+    actions.linkRevisionVideo(dealId, videoId, pick)
+      .then(() => showMsg('Linked — revision activity will appear here.'))
+      .catch(err => showMsg(err.message || 'Could not link revision'))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+        borderBottom: '1px solid ' + BRAND.border }}>
+        <Film size={15} color={BRAND.blue} />
+        <strong style={{ fontSize: 13, color: BRAND.ink }}>Link to a revision</strong>
+      </div>
+      <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ fontSize: 12, color: BRAND.muted }}>
+          This deal has revisions in the Revisions section but this video isn't linked to one yet.
+        </div>
+        <select value={pick} onChange={(e) => setPick(e.target.value)} style={ctrl}>
+          {candidates.map(c => (
+            <option key={c.id} value={c.id}>
+              {c.title}{c.versionCount > 0 ? ` (${c.versionCount} draft${c.versionCount === 1 ? '' : 's'})` : ''}
+            </option>
+          ))}
+        </select>
+        <button onClick={link} disabled={!pick || busy} className="btn" style={{ alignSelf: 'flex-start' }}>
+          {busy ? 'Linking…' : 'Link this video'}
+        </button>
       </div>
     </div>
   );
