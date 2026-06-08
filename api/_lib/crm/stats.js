@@ -1562,23 +1562,18 @@ async function cashflowReport(action) {
   };
 
   // Actual monthly operating costs from Xero for PAST months — the current month
-  // always keeps the hand-built cost base. Prefer the P&L report (complete); if
-  // the reports scope isn't granted, fall back to supplier-bill (ACCPAY) totals
-  // which only need the existing invoices scope. Best-effort — on any failure we
-  // simply keep the hand-built base.
+  // always keeps the hand-built cost base. The P&L report (getMonthlyOperatingCosts)
+  // is the complete source but needs the accounting.reports.read scope, which the
+  // Xero app currently rejects; until that's grantable we read supplier-bill
+  // (ACCPAY) totals, which the existing invoices scope already covers. Best-effort —
+  // on any failure we simply keep the hand-built base.
   let xeroCosts = new Map();
   let xeroSource = null;
   try {
-    xeroCosts = await getMonthlyOperatingCosts({ endMonth: month });
-    xeroSource = 'pl';
+    xeroCosts = await getMonthlyBillCosts({ endMonth: month });
+    xeroSource = 'bills';
   } catch (err) {
-    console.error('[cashflow] Xero P&L unavailable, trying bills', err?.message || err);
-    try {
-      xeroCosts = await getMonthlyBillCosts({ endMonth: month });
-      xeroSource = 'bills';
-    } catch (err2) {
-      console.error('[cashflow] Xero bills unavailable', err2?.message || err2);
-    }
+    console.error('[cashflow] Xero bills unavailable', err?.message || err);
   }
 
   // Costs (resolved per month from the recurring + one-off rows).

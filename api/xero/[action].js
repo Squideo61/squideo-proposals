@@ -42,9 +42,10 @@ const SCOPES = [
   'accounting.contacts',
   'accounting.invoices',
   'accounting.payments',
-  // Read-only Profit & Loss report — powers the Cash Flow tab's actual monthly
-  // operating costs for past months. Requires a one-off reconnect to grant.
-  'accounting.reports.read',
+  // NB: accounting.reports.read (Profit & Loss) was rejected as invalid_scope on
+  // this Xero app, which broke the whole consent screen — so it's left out to keep
+  // reconnect working. The Cash Flow tab reads operating costs from supplier bills
+  // (ACCPAY) instead, which the invoices scope above already covers.
 ].join(' ');
 
 function redirectUri() {
