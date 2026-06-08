@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, ChevronUp, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Calculator, Users, GripVertical } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -546,7 +546,23 @@ function CfCosts({ lines, month, monthLabel, actions, reload, isMobile }) {
 
 function CfCostPanel({ title, icon: Icon, accent, category, rows, month, monthLabel, actions, reload, isMobile }) {
   const [adding, setAdding] = useState(false);
-  const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const [dragId, setDragId] = useState(null);
+  const [overId, setOverId] = useState(null);
+  const total = rows.reduce((s, r) => s + (Number(r.monthlyAmount ?? r.amount) || 0), 0);
+
+  const onDrop = () => {
+    if (dragId && overId && dragId !== overId) {
+      const ids = rows.map((r) => r.id);
+      const from = ids.indexOf(dragId);
+      const to = ids.indexOf(overId);
+      if (from >= 0 && to >= 0) {
+        ids.splice(to, 0, ids.splice(from, 1)[0]);
+        actions.reorderCashflowCosts(ids).then(reload);
+      }
+    }
+    setDragId(null); setOverId(null);
+  };
+
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${accent}`, borderRadius: 12, padding: isMobile ? 12 : '12px 18px', marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
@@ -554,7 +570,7 @@ function CfCostPanel({ title, icon: Icon, accent, category, rows, month, monthLa
           {Icon && <Icon size={14} color={accent} />} {title} — {monthLabel}
         </h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 15, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}<span style={{ fontSize: 11, fontWeight: 500, color: BRAND.muted }}> /mo</span></span>
           <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={13} /> Add</button>
         </div>
       </div>
@@ -564,57 +580,68 @@ function CfCostPanel({ title, icon: Icon, accent, category, rows, month, monthLa
       {rows.length === 0 && !adding ? (
         <div style={{ color: BRAND.muted, fontSize: 13, padding: '4px 0' }}>No {title.toLowerCase()} for {monthLabel}.</div>
       ) : (
-        rows.map((r, i) => (
-          <CfCostRow key={r.id} row={r} first={i === 0} last={i === rows.length - 1} actions={actions} reload={reload} />
+        rows.map((r) => (
+          <CfCostRow key={r.id} row={r} actions={actions} reload={reload}
+            dragging={dragId === r.id} over={overId === r.id && dragId !== r.id}
+            onDragStart={() => setDragId(r.id)} onDragOver={() => setOverId(r.id)}
+            onDrop={onDrop} onDragEnd={() => { setDragId(null); setOverId(null); }} />
         ))
       )}
     </div>
   );
 }
 
-function CfCostRow({ row, first, last, actions, reload }) {
+function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOver, onDrop, onDragEnd }) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(row.label);
   const [amount, setAmount] = useState(String(row.amount));
+  const [frequency, setFrequency] = useState(row.frequency || 'monthly');
 
-  const save = () => actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0 }).then(() => { setEditing(false); reload(); });
+  const save = () => actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0, frequency }).then(() => { setEditing(false); reload(); });
   const remove = () => actions.deleteCashflowCost(row.id).then(reload);
-  const move = (dir) => actions.moveCashflowCost(row.id, dir).then(reload);
+  const reset = () => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); setFrequency(row.frequency || 'monthly'); };
 
   if (editing) {
+    const monthlyEst = frequency === 'annual' ? (parseFloat(amount) || 0) / 12 : null;
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', borderTop: '1px solid ' + BRAND.border, flexWrap: 'wrap' }}>
         <input autoFocus value={label} onChange={(e) => setLabel(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); } }}
+          onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') reset(); }}
           style={{ flex: 1, minWidth: 120, padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
         <span style={{ color: BRAND.muted }}>£</span>
         <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
-          style={{ width: 100, padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+          style={{ width: 96, padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+        <Segmented value={frequency} onChange={setFrequency} options={[{ value: 'monthly', label: '/mo' }, { value: 'annual', label: '/yr' }]} />
+        {monthlyEst != null && <span style={{ fontSize: 11, color: BRAND.muted }}>≈{formatGBP(monthlyEst)}/mo</span>}
         <button className="btn-icon" title="Save" onClick={save}><Check size={13} /></button>
-        <button className="btn-icon" title="Cancel" onClick={() => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); }}><X size={13} /></button>
+        <button className="btn-icon" title="Cancel" onClick={reset}><X size={13} /></button>
       </div>
     );
   }
 
-  const reorderBtn = (dir, disabled, Icon) => (
-    <button onClick={() => !disabled && move(dir)} disabled={disabled} title={dir === 'up' ? 'Move up' : 'Move down'}
-      style={{ border: 'none', background: 'none', padding: 0, lineHeight: 0, cursor: disabled ? 'default' : 'pointer', color: disabled ? BRAND.border : BRAND.muted }}>
-      <Icon size={12} />
-    </button>
-  );
-
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', borderTop: '1px solid ' + BRAND.border }}>
-      <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-        {reorderBtn('up', first, ChevronUp)}
-        {reorderBtn('down', last, ChevronDown)}
-      </div>
+    <div
+      draggable
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
+      onDragOver={(e) => { e.preventDefault(); onDragOver(); }}
+      onDrop={(e) => { e.preventDefault(); onDrop(); }}
+      onDragEnd={onDragEnd}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
+        borderTop: over ? '2px solid ' + BRAND.blue : '1px solid ' + BRAND.border,
+        background: over ? '#F4FBFE' : 'transparent', opacity: dragging ? 0.4 : 1,
+      }}
+    >
+      <span title="Drag to reorder" style={{ flexShrink: 0, cursor: 'grab', color: BRAND.muted, display: 'flex', lineHeight: 0 }}>
+        <GripVertical size={14} />
+      </span>
       <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {row.label}
+        {row.frequency === 'annual' && <span style={{ fontSize: 11, color: BRAND.muted }}> · {formatGBP(row.amount)}/yr</span>}
         {!row.recurring && <span style={{ fontSize: 11, color: BRAND.muted }}> · one-off {row.month}</span>}
       </span>
-      <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(row.amount)}</span>
+      <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(row.monthlyAmount ?? row.amount)}</span>
       <button className="btn-icon" title="Edit" onClick={() => setEditing(true)} style={{ padding: 3 }}><Pencil size={12} /></button>
       <button className="btn-icon" title="Remove" onClick={remove} style={{ padding: 3 }}><Trash2 size={12} /></button>
     </div>
@@ -625,17 +652,20 @@ function CfCostForm({ month, category, onDone, onCancel, actions }) {
   const [label, setLabel] = useState('');
   const [amount, setAmount] = useState('');
   const [recurring, setRecurring] = useState(true);
+  const [frequency, setFrequency] = useState('monthly');
   const [busy, setBusy] = useState(false);
 
   const submit = () => {
     if (!label.trim() || busy) return;
     setBusy(true);
     const payload = {
-      label: label.trim(), amount: parseFloat(amount) || 0, category, recurring,
+      label: label.trim(), amount: parseFloat(amount) || 0, category, frequency, recurring,
       ...(recurring ? { effectiveFrom: month } : { month }),
     };
     actions.addCashflowCost(payload).then(onDone).finally(() => setBusy(false));
   };
+
+  const monthlyEst = frequency === 'annual' ? (parseFloat(amount) || 0) / 12 : null;
 
   return (
     <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, margin: '4px 0 8px' }}>
@@ -647,6 +677,7 @@ function CfCostForm({ month, category, onDone, onCancel, actions }) {
         <input type="number" step="0.01" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
           style={{ width: 110, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+        <Segmented value={frequency} onChange={setFrequency} options={[{ value: 'monthly', label: 'Monthly' }, { value: 'annual', label: 'Annual' }]} />
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
           <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} />
           {recurring ? 'Recurring' : `One-off (${monthOptionLabel(month)})`}
@@ -654,6 +685,11 @@ function CfCostForm({ month, category, onDone, onCancel, actions }) {
         <button className="btn-ghost" style={{ padding: '4px 8px' }} onClick={onCancel}><X size={13} /></button>
         <button className="btn" style={{ padding: '5px 10px' }} onClick={submit} disabled={!label.trim() || busy}><Check size={13} /> {busy ? 'Adding…' : 'Add'}</button>
       </div>
+      {monthlyEst != null && (
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>
+          Annual cost — counted as <strong style={{ color: BRAND.ink }}>{formatGBP(monthlyEst)}/month</strong> (£{(parseFloat(amount) || 0).toLocaleString('en-GB')} ÷ 12).
+        </div>
+      )}
     </div>
   );
 }

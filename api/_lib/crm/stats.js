@@ -1430,6 +1430,7 @@ function ensureCashflow() {
         summary     TEXT NOT NULL,
         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
+    await sql`ALTER TABLE cashflow_costs ADD COLUMN IF NOT EXISTS frequency TEXT NOT NULL DEFAULT 'monthly'`;
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cashflow_profit_goal NUMERIC`;
 
     // Seed the cost base once (empty table only). Deterministic ids +
@@ -1458,12 +1459,22 @@ async function logCashflow(actorEmail, action, summary) {
   } catch { /* non-fatal — the feed is a nicety, not a gate */ }
 }
 
+// An annual cost is entered as a yearly figure; its monthly-equivalent (÷12) is
+// what feeds every profit/CT calculation. Monthly costs pass straight through.
+function monthlyAmountOf(r) {
+  const amt = Number(r.amount) || 0;
+  return r.frequency === 'annual' ? amt / 12 : amt;
+}
+
 function serialiseCost(r) {
+  const frequency = r.frequency === 'annual' ? 'annual' : 'monthly';
   return {
     id: r.id,
     label: r.label,
     category: r.category === 'wages' ? 'wages' : 'expense',
     amount: Number(r.amount) || 0,
+    frequency,
+    monthlyAmount: round2(monthlyAmountOf(r)),
     recurring: r.recurring !== false,
     month: r.month || null,
     effectiveFrom: r.effective_from || null,
@@ -1518,7 +1529,7 @@ async function cashflowReport(action) {
     let wages = 0, expenses = 0;
     for (const r of costRows) {
       if (!costAppliesToMonth(r, mk)) continue;
-      const amt = Number(r.amount) || 0;
+      const amt = monthlyAmountOf(r);
       if ((r.category || 'expense') === 'wages') wages += amt; else expenses += amt;
     }
     return { wages: round2(wages), expenses: round2(expenses), total: round2(wages + expenses) };
@@ -1573,9 +1584,20 @@ async function cashflowRoute(req, res, action, user) {
       await logCashflow(actor, 'goal.update', `Set monthly profit goal to ${gbp(pg)}`);
       return res.status(200).json({ ok: true });
     }
+    // Drag-reorder: persist the given category's ids in their new order.
+    if (Array.isArray(body.reorder)) {
+      let i = 0;
+      for (const cid of body.reorder) {
+        if (typeof cid !== 'string') continue;
+        await sql`UPDATE cashflow_costs SET sort_order = ${i}, updated_at = NOW() WHERE id = ${cid}`;
+        i += 1;
+      }
+      return res.status(200).json({ ok: true });
+    }
     const label = trimOrNull(body.label);
     if (!label) return res.status(400).json({ error: 'label required' });
     const category = body.category === 'wages' ? 'wages' : 'expense';
+    const frequency = body.frequency === 'annual' ? 'annual' : 'monthly';
     const amount = Number(body.amount) || 0;
     const recurring = body.recurring !== false;
     const month = recurring ? null : (trimOrNull(body.month) || curMonthKey());
@@ -1583,11 +1605,12 @@ async function cashflowRoute(req, res, action, user) {
     const id = makeId('cf');
     const [{ m }] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM cashflow_costs`;
     await sql`
-      INSERT INTO cashflow_costs (id, label, category, amount, recurring, month, effective_from, sort_order)
-      VALUES (${id}, ${label}, ${category}, ${amount}, ${recurring}, ${month}, ${effectiveFrom}, ${m + 1})`;
+      INSERT INTO cashflow_costs (id, label, category, amount, frequency, recurring, month, effective_from, sort_order)
+      VALUES (${id}, ${label}, ${category}, ${amount}, ${frequency}, ${recurring}, ${month}, ${effectiveFrom}, ${m + 1})`;
     const kindWord = category === 'wages' ? 'wage' : 'expense';
+    const amtWord = frequency === 'annual' ? `${gbp(amount)}/yr (≈${gbp(amount / 12)}/mo)` : `${gbp(amount)}/mo`;
     await logCashflow(actor, 'cost.add', recurring
-      ? `Added recurring ${kindWord} “${label}” ${gbp(amount)}/mo`
+      ? `Added recurring ${kindWord} “${label}” ${amtWord}`
       : `Added one-off ${kindWord} “${label}” ${gbp(amount)} (${month})`);
     return res.status(200).json({ ok: true });
   }
@@ -1612,13 +1635,15 @@ async function cashflowRoute(req, res, action, user) {
     if (!existing) return res.status(404).json({ error: 'Not found' });
     const label = body.label !== undefined ? (trimOrNull(body.label) || existing.label) : existing.label;
     const category = body.category !== undefined ? (body.category === 'wages' ? 'wages' : 'expense') : existing.category;
+    const frequency = body.frequency !== undefined ? (body.frequency === 'annual' ? 'annual' : 'monthly') : (existing.frequency || 'monthly');
     const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
     const effectiveTo = body.effectiveTo !== undefined ? trimOrNull(body.effectiveTo) : existing.effective_to;
     await sql`
       UPDATE cashflow_costs
-         SET label = ${label}, category = ${category}, amount = ${amount}, effective_to = ${effectiveTo}, updated_at = NOW()
+         SET label = ${label}, category = ${category}, amount = ${amount}, frequency = ${frequency}, effective_to = ${effectiveTo}, updated_at = NOW()
        WHERE id = ${action}`;
-    await logCashflow(actor, 'cost.update', `Updated “${label}” to ${gbp(Number(amount) || 0)}`);
+    const upWord = frequency === 'annual' ? `${gbp(Number(amount) || 0)}/yr` : gbp(Number(amount) || 0);
+    await logCashflow(actor, 'cost.update', `Updated “${label}” to ${upWord}`);
     return res.status(200).json({ ok: true });
   }
 

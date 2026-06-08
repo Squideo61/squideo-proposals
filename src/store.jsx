@@ -941,6 +941,10 @@ export function StoreProvider({ children }) {
     moveCashflowCost(id, direction) {
       return api.patch('/api/crm/stats/cashflow-cost/' + id, { move: direction });
     },
+    // Persist a drag-reordered list of cost ids (sets sort_order = position).
+    reorderCashflowCosts(ids) {
+      return api.post('/api/crm/stats/cashflow-cost', { reorder: ids });
+    },
     // Set the monthly profit goal that drives the suggested revenue target.
     setCashflowProfitGoal(profitGoal) {
       return api.post('/api/crm/stats/cashflow-cost', { profitGoal });
