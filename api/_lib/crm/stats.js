@@ -1436,6 +1436,10 @@ function ensureCashflow() {
     // 'director_tax'). tax_basis: a salary row that feeds the director-tax calc.
     await sql`ALTER TABLE cashflow_costs ADD COLUMN IF NOT EXISTS auto_type TEXT`;
     await sql`ALTER TABLE cashflow_costs ADD COLUMN IF NOT EXISTS tax_basis BOOLEAN NOT NULL DEFAULT false`;
+    // One-time cleanup: the profit-goal / suggested-target feature was removed,
+    // so drop its now-dead column. IF EXISTS makes this an idempotent no-op once
+    // it's run (safe to leave; can be deleted in a later pass).
+    await sql`ALTER TABLE settings DROP COLUMN IF EXISTS cashflow_profit_goal`;
 
     // Seed the cost base once (empty table only). Deterministic ids +
     // ON CONFLICT DO NOTHING so a concurrent cold-start re-seed can't duplicate.
