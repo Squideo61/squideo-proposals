@@ -192,11 +192,28 @@ export default async function handler(req, res) {
     if (!('dealId' in body)) return res.status(400).json({ error: 'dealId required' });
     const newDealId = body.dealId ? String(body.dealId) : null;
 
+    const beforeRows = await sql`SELECT deal_id FROM proposals WHERE id = ${id}`;
+    if (!beforeRows.length) return res.status(404).json({ error: 'Proposal not found' });
+    const oldDealId = beforeRows[0].deal_id || null;
+
     if (newDealId) {
       const dealRows = await sql`SELECT id FROM deals WHERE id = ${newDealId}`;
       if (!dealRows.length) return res.status(404).json({ error: 'Deal not found' });
     }
     await sql`UPDATE proposals SET deal_id = ${newDealId}, updated_at = NOW() WHERE id = ${id}`;
+
+    // If the proposal was attached only to its own auto-created shadow deal
+    // (deterministic id `deal_<proposalId>`), re-linking it to a real deal
+    // leaves that shadow orphaned — delete it, mirroring the DELETE cleanup, so
+    // the pipeline doesn't show a duplicate "Untitled deal".
+    if (oldDealId && oldDealId !== newDealId && oldDealId === 'deal_' + id) {
+      try {
+        const stillLinked = await sql`SELECT 1 FROM proposals WHERE deal_id = ${oldDealId} LIMIT 1`;
+        if (!stillLinked.length) await sql`DELETE FROM deals WHERE id = ${oldDealId}`;
+      } catch (err) {
+        console.error('[proposals] orphan auto-deal cleanup failed', err.message);
+      }
+    }
 
     let advanced = null;
     if (newDealId) {

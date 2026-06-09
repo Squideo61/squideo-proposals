@@ -599,6 +599,9 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
       )}
       {choosingProposal && (
         <CreateOrLinkProposalModal
+          deal={deal}
+          contact={contact}
+          company={company}
           onClose={() => setChoosingProposal(false)}
           onCreate={() => { setChoosingProposal(false); onCreateProposal?.(dealId); }}
           onLink={async (proposalId) => {
@@ -2350,25 +2353,84 @@ function FormRow({ label, children }) {
 }
 
 // Modal for the deal's "Create or link proposal" button. Offers creating a
-// fresh proposal, or linking one of the existing proposals that isn't attached
-// to any deal yet (filtered by _dealId from the global proposals map).
-function CreateOrLinkProposalModal({ onClose, onCreate, onLink }) {
+// fresh proposal, or linking an existing proposal. "Linkable" means a proposal
+// with no deal, or one attached only to its own auto-created shadow deal
+// (deterministic id `deal_<proposalId>`) — those shadows are just a side-effect
+// of saving a standalone proposal, so they're fair game to re-point at a real
+// deal. Proposals whose contact/company/name match this deal are surfaced as
+// suggestions at the top.
+function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, onLink }) {
   const { state } = useStore();
   const [query, setQuery] = useState('');
   const [linkingId, setLinkingId] = useState(null);
 
-  const unassigned = useMemo(() => {
+  // Why a proposal looks connected to this deal (null = no obvious link).
+  const suggestionReason = (p) => {
+    const norm = (s) => String(s || '').trim().toLowerCase();
+    if (p._contactId && deal?.primaryContactId && p._contactId === deal.primaryContactId) return 'Same contact';
+    if (p._companyId && deal?.companyId && p._companyId === deal.companyId) return 'Same company';
+    const pc = norm(p.clientName);
+    const pb = norm(p.contactBusinessName);
+    if (pc && pc === norm(contact?.name)) return 'Matches contact name';
+    if (pb && (pb === norm(company?.name) || pb === norm(deal?.title))) return 'Matches company';
+    return null;
+  };
+
+  const linkable = useMemo(() => {
     const q = query.trim().toLowerCase();
     return Object.entries(state.proposals || {})
-      .map(([id, p]) => ({ id, ...p }))
-      .filter((p) => !p._dealId && !p.archived)
+      .map(([id, p]) => ({ id, ...p, _reason: null }))
+      .filter((p) => !p.archived && (!p._dealId || p._dealId === 'deal_' + p.id))
+      .map((p) => ({ ...p, _reason: suggestionReason(p) }))
       .filter((p) => {
         if (!q) return true;
         const hay = `${p.clientName || ''} ${p.contactBusinessName || ''} ${p.proposalTitle || ''} ${formatProposalNumber(p._number) || ''}`.toLowerCase();
         return hay.includes(q);
       })
-      .sort((a, b) => String(b._createdAt || '').localeCompare(String(a._createdAt || '')));
-  }, [state.proposals, query]);
+      // Suggested first, then newest.
+      .sort((a, b) => {
+        if (!!a._reason !== !!b._reason) return a._reason ? -1 : 1;
+        return String(b._createdAt || '').localeCompare(String(a._createdAt || ''));
+      });
+  }, [state.proposals, query, deal, contact, company]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const renderRow = (p) => {
+    const num = formatProposalNumber(p._number);
+    const signed = !!p._signature;
+    const price = p.totalExVat ?? p.basePrice;
+    return (
+      <button
+        key={p.id}
+        disabled={!!linkingId}
+        onClick={() => { setLinkingId(p.id); onLink(p.id); }}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          width: '100%', padding: '8px 10px', background: 'white',
+          border: '1px solid ' + (p._reason ? '#86EFAC' : BRAND.border), borderRadius: 6,
+          cursor: linkingId ? 'default' : 'pointer', textAlign: 'left', fontFamily: 'inherit',
+          opacity: linkingId && linkingId !== p.id ? 0.5 : 1,
+        }}
+      >
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {num ? <span style={{ color: BRAND.muted, fontSize: 11 }}>{num}</span> : null}
+            <span>{p.clientName || p.contactBusinessName || 'Untitled'}</span>
+            {signed ? <Badge color="green">Signed</Badge> : <Badge color="grey">Unsigned</Badge>}
+            {p._reason ? <Badge color="green">{p._reason}</Badge> : null}
+          </div>
+          {price != null && (
+            <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>{formatGBP(price)} ex VAT</div>
+          )}
+        </div>
+        <span style={{ fontSize: 12, color: BRAND.blue, fontWeight: 600, whiteSpace: 'nowrap' }}>
+          {linkingId === p.id ? 'Linking…' : 'Link'}
+        </span>
+      </button>
+    );
+  };
+
+  const suggested = linkable.filter((p) => p._reason);
+  const others = linkable.filter((p) => !p._reason);
 
   return (
     <Modal onClose={onClose} maxWidth={520}>
@@ -2383,55 +2445,31 @@ function CreateOrLinkProposalModal({ onClose, onCreate, onLink }) {
         style={{ width: '100%', justifyContent: 'center', background: '#22C55E', borderColor: '#22C55E', color: '#fff', marginBottom: 18 }}
       ><FileText size={14} /> Create new proposal</button>
 
-      <div style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
-        Or link an existing proposal
-      </div>
       <input
         className="input"
-        placeholder="Search unassigned proposals…"
+        placeholder="Search proposals to link…"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         style={{ width: '100%', marginBottom: 10, boxSizing: 'border-box' }}
       />
-      <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {unassigned.length === 0 && (
+      <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {linkable.length === 0 && (
           <div style={{ fontSize: 13, color: BRAND.muted, fontStyle: 'italic', padding: '8px 2px' }}>
-            {query.trim() ? 'No matching unassigned proposals.' : 'No unassigned proposals available.'}
+            {query.trim() ? 'No matching proposals.' : 'No proposals available to link.'}
           </div>
         )}
-        {unassigned.map((p) => {
-          const num = formatProposalNumber(p._number);
-          const signed = !!p._signature;
-          const price = p.totalExVat ?? p.basePrice;
-          return (
-            <button
-              key={p.id}
-              disabled={!!linkingId}
-              onClick={() => { setLinkingId(p.id); onLink(p.id); }}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-                width: '100%', padding: '8px 10px', background: 'white',
-                border: '1px solid ' + BRAND.border, borderRadius: 6,
-                cursor: linkingId ? 'default' : 'pointer', textAlign: 'left', fontFamily: 'inherit',
-                opacity: linkingId && linkingId !== p.id ? 0.5 : 1,
-              }}
-            >
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  {num ? <span style={{ color: BRAND.muted, fontSize: 11 }}>{num}</span> : null}
-                  <span>{p.clientName || p.contactBusinessName || 'Untitled'}</span>
-                  {signed ? <Badge color="green">Signed</Badge> : <Badge color="grey">Unsigned</Badge>}
-                </div>
-                {price != null && (
-                  <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>{formatGBP(price)} ex VAT</div>
-                )}
-              </div>
-              <span style={{ fontSize: 12, color: BRAND.blue, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                {linkingId === p.id ? 'Linking…' : 'Link'}
-              </span>
-            </button>
-          );
-        })}
+        {suggested.length > 0 && (
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#16A34A', textTransform: 'uppercase', letterSpacing: 0.4, padding: '2px 2px' }}>
+            Suggested — looks connected to this deal
+          </div>
+        )}
+        {suggested.map(renderRow)}
+        {others.length > 0 && (
+          <div style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, padding: suggested.length ? '8px 2px 2px' : '2px 2px' }}>
+            {suggested.length ? 'Other proposals' : 'Unassigned proposals'}
+          </div>
+        )}
+        {others.map(renderRow)}
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
