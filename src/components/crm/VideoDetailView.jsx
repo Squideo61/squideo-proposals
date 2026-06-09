@@ -81,10 +81,10 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
             <button onClick={() => onOpenProject(video.dealId)} className="btn-ghost"><FolderOpen size={14} /> Open project</button>
           )}
           <button onClick={sendStoryboard} className="btn-ghost">
-            {video.storyboardId ? <><ExternalLink size={14} /> Storyboard link</> : <><Send size={14} /> Storyboard review</>}
+            {video.storyboardId ? <><ExternalLink size={14} /> Storyboard Review Link</> : <><Send size={14} /> Storyboard review</>}
           </button>
           <button onClick={sendForReview} className="btn-ghost">
-            {video.revisionVideoId ? <><ExternalLink size={14} /> Review link</> : <><Send size={14} /> Send for review</>}
+            {video.revisionVideoId ? <><ExternalLink size={14} /> Video Review Link</> : <><Send size={14} /> Send for review</>}
           </button>
           <button onClick={remove} className="btn-ghost is-danger"><Trash2 size={14} /> Delete</button>
         </div>
