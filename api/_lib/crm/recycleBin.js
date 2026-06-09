@@ -11,6 +11,23 @@
 
 import sql from '../db.js';
 import { makeId } from './shared.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
+
+// Restore must mirror the permission that gated the original delete, so a low-
+// privilege account can't resurrect records it could never have removed. Keyed
+// by the `entity` label passed to archiveRecord(). Entities whose delete was
+// gated by an ownership check (tasks: creator / assignee / tasks.manage_all)
+// additionally allow the original deleter to undo — see restoreRoute.
+const RESTORE_PERMISSION = {
+  task:          'tasks.manage_all',
+  manual_pp:     'finance.manage',
+  cashflow_cost: 'finance.manage',
+  project_video: 'production.access',
+};
+// Entities whose delete allowed the row's owner (not just a permission holder).
+// For these, the original deleter may always restore their own deletion.
+const OWNER_RESTORABLE = new Set(['task']);
 
 // Tables we allow restoring into. The table name can't be parameterised in the
 // json_populate_record call, so it must come from this fixed allowlist.
@@ -86,9 +103,32 @@ export async function restoreRecord(recordId) {
 }
 
 // POST /api/crm/restore/<recordId> — bring back a recently deleted record.
-export async function restoreRoute(req, res, id) {
+// Authorisation mirrors the original delete: the caller must hold the entity's
+// manage permission (RESTORE_PERMISSION), or — for ownership-gated entities —
+// be the user who deleted the record. Without this gate any authenticated
+// account could resurrect financial / production / task rows it never owned.
+export async function restoreRoute(req, res, id, user) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!id) return res.status(400).json({ error: 'record id required' });
+  await ensureDeletedRecords();
+
+  const [meta] = await sql`
+    SELECT entity, deleted_by FROM deleted_records
+    WHERE record_id = ${id} ORDER BY deleted_at DESC LIMIT 1`;
+  // Nothing archived under this id — idempotent no-op (don't reveal anything).
+  if (!meta) return res.status(200).json({ ok: false, restored: false });
+
+  const slug = RESTORE_PERMISSION[meta.entity];
+  if (!slug) return res.status(403).json({ error: 'This record type cannot be restored' });
+
+  const role = await getRole(user?.role);
+  const isDeleter = !!(meta.deleted_by && user?.email
+    && meta.deleted_by.toLowerCase() === user.email.toLowerCase());
+  const allowed = hasPermission(role, slug) || (OWNER_RESTORABLE.has(meta.entity) && isDeleter);
+  if (!allowed) {
+    return res.status(403).json({ error: 'You do not have permission to restore this record' });
+  }
+
   const ok = await restoreRecord(id);
   return res.status(200).json({ ok, restored: ok });
 }

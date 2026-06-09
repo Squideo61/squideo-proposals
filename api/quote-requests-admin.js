@@ -243,6 +243,6 @@ export default async function handler(req, res) {
     return res.status(405).end();
   } catch (err) {
     console.error('[quote-requests-admin] error', err);
-    return res.status(500).json({ error: err.message || 'Request failed' });
+    return res.status(500).json({ error: 'Request failed' });
   }
 }

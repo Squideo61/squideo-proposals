@@ -120,6 +120,6 @@ export default async function handler(req, res) {
     return res.status(405).end();
   } catch (err) {
     console.error('[notifications] handler error', err);
-    if (!res.headersSent) return res.status(500).json({ error: err?.message || 'Server error' });
+    if (!res.headersSent) return res.status(500).json({ error: 'Server error' });
   }
 }

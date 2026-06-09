@@ -90,7 +90,7 @@ export default async function handler(req, res) {
     return res.status(404).json({ error: 'Unknown action' });
   } catch (err) {
     console.error('[partner]', err);
-    return res.status(500).json({ error: err?.message || 'Server error' });
+    return res.status(500).json({ error: 'Server error' });
   }
 }
 

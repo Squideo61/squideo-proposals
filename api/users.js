@@ -39,7 +39,8 @@ export default async function handler(req, res) {
   } catch (err) {
     console.error('[users] handler error', err);
     if (!res.headersSent) {
-      return res.status(500).json({ error: err?.message || 'Server error' });
+      // Generic message only — detail is logged above, never returned to client.
+      return res.status(500).json({ error: 'Server error' });
     }
   }
 }

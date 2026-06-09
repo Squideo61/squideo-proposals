@@ -1,5 +1,6 @@
 // Shared helpers used across the per-resource CRM handlers.
 import sql from '../db.js';
+import crypto from 'crypto';
 
 // Self-heal for db/migrations/20260519_email_message_deals.sql — the
 // message-level email/deal join table. Called by every file that reads or
@@ -87,8 +88,12 @@ export function gmailRedirectUri(req) {
   return `${proto}://${host}/api/crm/gmail/callback`;
 }
 
+// `prefix_<timestamp>_<random>`. The timestamp keeps ids loosely sortable for
+// debugging; the random suffix is from a CSPRNG (72 bits) so ids that double as
+// bearer capabilities (e.g. proposal ids — read/signed unauthenticated by id)
+// aren't predictable. Never use Math.random() here.
 export const makeId = (prefix) =>
-  prefix + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  prefix + '_' + Date.now() + '_' + crypto.randomBytes(9).toString('hex');
 
 export function trimOrNull(v) {
   if (v === undefined || v === null) return null;

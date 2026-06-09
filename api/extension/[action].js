@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     }
   } catch (err) {
     console.error('[extension] unhandled', { action, method: req.method, err });
-    return res.status(500).json({ error: err.message || 'Server error' });
+    return res.status(500).json({ error: 'Server error' });
   }
 }
 

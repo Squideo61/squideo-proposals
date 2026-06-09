@@ -1,6 +1,14 @@
 import { useState, useEffect } from 'react';
 
-export const makeId = () => 'id_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+// `id_<timestamp>_<random>`. Used to mint proposal ids, which act as the
+// unauthenticated capability to read/sign a proposal — so the random suffix
+// must come from a CSPRNG (Web Crypto), never Math.random(). 72 bits of entropy.
+const randHex = (bytes) => {
+  const a = new Uint8Array(bytes);
+  crypto.getRandomValues(a);
+  return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
+};
+export const makeId = () => 'id_' + Date.now() + '_' + randHex(9);
 
 export function useIsMobile() {
   const [mobile, setMobile] = useState(() => window.innerWidth <= 640);

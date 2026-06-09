@@ -110,11 +110,13 @@ export default async function handler(req, res) {
       case 'address-lookup': return await addressLookupRoute(req, res, id, action, user);
       case 'tracking':  return await trackingRoute(req, res, id, action, user);
       case 'stats':     return await statsRoute(req, res, id, action, user);
-      case 'restore':   return await restoreRoute(req, res, id);
+      case 'restore':   return await restoreRoute(req, res, id, user);
       default:           return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {
     console.error('[crm] unhandled', { resource, id, action, method: req.method, err });
-    return res.status(500).json({ error: err.message || 'Server error' });
+    // Generic message only — never echo the raw error (could carry DB/internal
+    // detail). The detail is in the server log above.
+    return res.status(500).json({ error: 'Server error' });
   }
 }

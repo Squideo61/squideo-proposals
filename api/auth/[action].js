@@ -74,6 +74,56 @@ async function clearFailedLogins(email, ip) {
   await sql`DELETE FROM failed_logins WHERE email = ${email} AND ip = ${ip}`;
 }
 
+// Second-factor brute-force throttle. The email-OTP path already caps attempts
+// per code, but the TOTP and backup-code methods had no limit — a single
+// 5-minute challenge token could be replayed for thousands of 6-digit guesses.
+// We cap failed 2fa-verify attempts per account in a rolling window. Reaching
+// the cap requires already knowing the password (you need a valid challenge
+// token to call 2fa-verify at all), so this only hardens the second factor.
+const TWOFA_MAX_ATTEMPTS = 5;
+const TWOFA_LOCKOUT_MINUTES = 10;
+
+let twofaAttemptsEnsured = null;
+function ensureTwofaAttempts() {
+  if (twofaAttemptsEnsured) return twofaAttemptsEnsured;
+  twofaAttemptsEnsured = sql`
+    CREATE TABLE IF NOT EXISTS twofa_attempts (
+      email    TEXT PRIMARY KEY,
+      attempts INT NOT NULL DEFAULT 0,
+      last_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `.then(() => {}).catch((err) => { twofaAttemptsEnsured = null; throw err; });
+  return twofaAttemptsEnsured;
+}
+
+async function isTwoFaLocked(email) {
+  await ensureTwofaAttempts();
+  // INTERVAL literal must be constant — keep the 10 here in step with
+  // TWOFA_LOCKOUT_MINUTES.
+  const rows = await sql`
+    SELECT attempts FROM twofa_attempts
+    WHERE email = ${email} AND last_at > NOW() - INTERVAL '10 minutes'
+  `;
+  return rows.length > 0 && rows[0].attempts >= TWOFA_MAX_ATTEMPTS;
+}
+
+async function recordTwoFaFailure(email) {
+  await ensureTwofaAttempts();
+  await sql`
+    INSERT INTO twofa_attempts (email, attempts, last_at)
+    VALUES (${email}, 1, NOW())
+    ON CONFLICT (email) DO UPDATE SET
+      attempts = CASE WHEN twofa_attempts.last_at > NOW() - INTERVAL '10 minutes'
+                      THEN twofa_attempts.attempts + 1 ELSE 1 END,
+      last_at  = NOW()
+  `;
+}
+
+async function clearTwoFaAttempts(email) {
+  await ensureTwofaAttempts();
+  await sql`DELETE FROM twofa_attempts WHERE email = ${email}`;
+}
+
 async function loadUser(email) {
   const rows = await sql`
     SELECT email, name, avatar, role, password_hash,
@@ -335,23 +385,36 @@ export default async function handler(req, res) {
     } catch {
       return res.status(401).json({ error: 'Challenge expired. Please sign in again.' });
     }
+    if (await isTwoFaLocked(email)) {
+      return res.status(429).json({ error: 'Too many incorrect codes. Try again in 10 minutes.' });
+    }
     const user = await loadUser(email);
     if (!user) return res.status(401).json({ error: 'Account not found' });
 
     if (method === 'totp') {
       if (!user.totp_secret || !verifyTotp(user.totp_secret, code)) {
+        await recordTwoFaFailure(email);
         return res.status(401).json({ error: 'Invalid authenticator code' });
       }
     } else if (method === 'email') {
       const r = await verifyEmailOtp(email, 'login', code);
-      if (!r.ok) return res.status(401).json({ error: r.error });
+      if (!r.ok) {
+        await recordTwoFaFailure(email);
+        return res.status(401).json({ error: r.error });
+      }
     } else if (method === 'backup') {
       const { ok, remaining } = consumeBackupCode(user.backup_code_hashes || [], code);
-      if (!ok) return res.status(401).json({ error: 'Invalid backup code' });
+      if (!ok) {
+        await recordTwoFaFailure(email);
+        return res.status(401).json({ error: 'Invalid backup code' });
+      }
       await sql`UPDATE users SET backup_code_hashes = ${remaining} WHERE email = ${email}`;
     } else {
       return res.status(400).json({ error: 'Unknown method' });
     }
+
+    // Second factor verified — clear the throttle slot.
+    await clearTwoFaAttempts(email);
 
     if (remember_device) {
       await issueTrustedDevice(res, email, req.headers['user-agent']);
