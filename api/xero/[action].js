@@ -6,9 +6,10 @@
 
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
-import { sendMail, APP_URL } from '../_lib/email.js';
+import { APP_URL } from '../_lib/email.js';
 import { getOrCreateContact, createInvoice, emailInvoice, getInvoicePdf, getInvoiceNumber, getNextInvoiceNumber } from '../_lib/xero.js';
-import { xeroContactIdForProposal } from '../_lib/dealStage.js';
+import { xeroContactIdForProposal, dealIdForProposal } from '../_lib/dealStage.js';
+import { sendNotification } from '../_lib/notifications.js';
 import {
   lineItemsForProject,
   lineItemsForDiscountedProject,
@@ -198,6 +199,70 @@ export default async function handler(req, res) {
     }
   }
 
+  // --- /api/xero/invoice-intent ---
+  // Fired the moment a signed client clicks "Send me an invoice instead",
+  // BEFORE they fill in billing / actually issue anything. Lets the team know
+  // a client wants to be invoiced (they may not finish). Client-facing, so no
+  // auth — but it only ever notifies, never mutates billing, and is deduped to
+  // one alert per proposal via invoice_route_intents.
+  if (action === 'invoice-intent') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const { proposalId } = req.body || {};
+    if (!proposalId) return res.status(400).json({ error: 'proposalId required' });
+
+    // Claim the "first click" atomically: the INSERT only returns a row the
+    // first time this proposal is seen; later clicks hit the conflict and
+    // return nothing, so we notify exactly once.
+    let claimed;
+    try {
+      claimed = await sql`
+        INSERT INTO invoice_route_intents (proposal_id)
+        VALUES (${proposalId})
+        ON CONFLICT (proposal_id) DO NOTHING
+        RETURNING proposal_id
+      `;
+    } catch (err) {
+      console.error('[invoice-intent] claim failed', err);
+      return res.status(200).json({ ok: true }); // never block the client UI
+    }
+    if (!claimed.length) return res.status(200).json({ ok: true, deduped: true });
+
+    try {
+      const [proposalRows, sigRows] = await Promise.all([
+        sql`SELECT data FROM proposals WHERE id = ${proposalId}`,
+        sql`SELECT name, email FROM signatures WHERE proposal_id = ${proposalId}`,
+      ]);
+      const proposal = proposalRows[0]?.data;
+      // Only a signed proposal exposes the invoice route; if it's not signed,
+      // someone's poking the endpoint — drop the intent so a later genuine
+      // click can still notify.
+      if (!proposal || !sigRows[0]) {
+        await sql`DELETE FROM invoice_route_intents WHERE proposal_id = ${proposalId}`;
+        return res.status(200).json({ ok: true });
+      }
+      const sig = sigRows[0];
+      const title = proposal.proposalTitle || proposal.clientName || proposalId;
+      const link = `${APP_URL}/?proposal=${proposalId}`;
+      const dealId = await dealIdForProposal(proposalId);
+      await sendNotification('invoice.client_requested', {
+        subject: `🧾 Invoice requested: ${title}`,
+        html: `<p>${sig.name || 'A client'} (${sig.email || ''}) chose <strong>"Send me an invoice"</strong> on the signed proposal <strong>${title}</strong>.</p>
+               <p>They haven't issued it yet — they still need to confirm their billing details. This is a heads-up that they want to be invoiced rather than pay by card.</p>
+               <p style="margin:16px 0;"><a href="${link}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open the proposal</a></p>`,
+        text: `${sig.name || 'A client'} chose "Send me an invoice" for "${title}". They haven't issued it yet. ${link}`,
+        inApp: {
+          title: `🧾 Invoice requested: ${title}`,
+          body: `${sig.name || 'A client'} wants to be invoiced rather than pay by card`,
+          link: dealId ? `#/deal/${dealId}` : null,
+        },
+      });
+      await sql`UPDATE invoice_route_intents SET notified_at = NOW() WHERE proposal_id = ${proposalId}`;
+    } catch (err) {
+      console.error('[invoice-intent] notify failed', err);
+    }
+    return res.status(200).json({ ok: true });
+  }
+
   // --- /api/xero/invoice ---
   // Client signed but doesn't want to pay by card today — they want an
   // emailed invoice. Mirrors the Stripe-paid path's invoice creation but is
@@ -283,27 +348,26 @@ export default async function handler(req, res) {
     }
 
     try {
-      const users = await sql`SELECT email FROM users`;
-      const recipients = users.map(u => u.email).filter(Boolean);
-      const ownerEmail = proposal.preparedByEmail || null;
-      const to = ownerEmail ? [ownerEmail, ...recipients.filter(e => e !== ownerEmail)] : recipients;
       const title = proposal.proposalTitle || proposal.clientName || proposalId;
       const link = `${APP_URL}/?proposal=${proposalId}`;
       const invoiceLink = `${APP_URL}/api/xero/invoice-pdf?invoiceId=${encodeURIComponent(invoiceId)}`;
-      if (to.length) {
-        await sendMail({
-          to,
-          subject: `📄 Invoice issued: ${title}`,
-          html: `<p>${signed.name || 'A client'} (${signed.email || ''}) chose the email-me-an-invoice route for <strong>${title}</strong>.</p>
-                 <p>Billing company: <strong>${billing.companyName}</strong> (${billing.accountsEmail || ''})</p>
-                 <p>An invoice ${isDeposit ? '(50% deposit)' : '(full payment)'} has been issued from Xero and emailed to the client.</p>
-                 <p style="margin:16px 0;"><a href="${invoiceLink}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">View invoice</a></p>
-                 <p><a href="${link}">Open the proposal</a></p>`,
-          text: `${signed.name || 'A client'} chose invoice route for "${title}". Xero invoice issued. View invoice: ${invoiceLink} — Proposal: ${link}`,
-        });
-      }
+      const dealId = await dealIdForProposal(proposalId);
+      await sendNotification('invoice.issued', {
+        subject: `📄 Invoice issued: ${title}`,
+        html: `<p>${signed.name || 'A client'} (${signed.email || ''}) chose the email-me-an-invoice route for <strong>${title}</strong>.</p>
+               <p>Billing company: <strong>${billing.companyName}</strong> (${billing.accountsEmail || ''})</p>
+               <p>An invoice ${isDeposit ? '(50% deposit)' : '(full payment)'} has been issued from Xero and emailed to the client.</p>
+               <p style="margin:16px 0;"><a href="${invoiceLink}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">View invoice</a></p>
+               <p><a href="${link}">Open the proposal</a></p>`,
+        text: `${signed.name || 'A client'} chose invoice route for "${title}". Xero invoice issued. View invoice: ${invoiceLink} — Proposal: ${link}`,
+        inApp: {
+          title: `📄 Invoice issued: ${title}`,
+          body: `${signed.name || 'A client'} was invoiced ${isDeposit ? '(50% deposit)' : '(full payment)'} · ${billing.companyName}`,
+          link: dealId ? `#/deal/${dealId}` : null,
+        },
+      });
     } catch (err) {
-      console.error('[invoice] notification email failed', err);
+      console.error('[invoice] issued notification failed', err);
     }
 
     return res.status(200).json({ ok: true, invoiceId });

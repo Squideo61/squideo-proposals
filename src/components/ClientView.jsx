@@ -1113,7 +1113,19 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
             paymentChoice={paymentChoice}
             vatRate={data.vatRate}
             onPayNow={handlePayNow}
-            onChooseInvoice={() => setPaymentChoice('invoice')}
+            onChooseInvoice={() => {
+              setPaymentChoice('invoice');
+              // Heads-up to the team that this client wants an invoice (they
+              // may not finish issuing it). Fire-and-forget; deduped server-side.
+              if (!isPreview) {
+                fetch('/api/xero/invoice-intent', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ proposalId: id }),
+                  keepalive: true,
+                }).catch(() => {});
+              }
+            }}
             onUndoInvoice={() => setPaymentChoice(null)}
             onConfirmInvoice={handleConfirmInvoice}
             onPoConfirm={handlePoConfirm}

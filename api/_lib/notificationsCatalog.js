@@ -60,6 +60,20 @@ export const NOTIFICATIONS = [
     group: 'Payments',
   },
   {
+    key: 'invoice.client_requested',
+    label: 'Client chose to be invoiced',
+    description: "A client picks 'Send me an invoice' instead of paying by card on a signed proposal.",
+    audience: 'broadcast',
+    group: 'Payments',
+  },
+  {
+    key: 'invoice.issued',
+    label: 'Invoice issued to client',
+    description: 'An invoice is issued from Xero to a client via the email-me-an-invoice route.',
+    audience: 'broadcast',
+    group: 'Payments',
+  },
+  {
     key: 'task.reminder',
     label: 'Task reminders',
     description: 'Daily 9am summary of tasks assigned to you that are due.',

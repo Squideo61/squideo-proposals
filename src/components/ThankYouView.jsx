@@ -264,7 +264,19 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
             </button>
 
             <button
-              onClick={() => setPaymentChoice('invoice')}
+              onClick={() => {
+                setPaymentChoice('invoice');
+                // Heads-up to the team that this client wants an invoice (they
+                // may not finish issuing it). Fire-and-forget; deduped server-side.
+                if (useRealStripe) {
+                  fetch('/api/xero/invoice-intent', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ proposalId }),
+                    keepalive: true,
+                  }).catch(() => {});
+                }
+              }}
               style={{ background: 'none', border: 'none', color: BRAND.muted, cursor: 'pointer', fontSize: 13, marginTop: 12, width: '100%', textAlign: 'center', padding: 8 }}
             >
               Skip - send me an invoice instead
