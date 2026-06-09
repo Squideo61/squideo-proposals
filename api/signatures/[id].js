@@ -129,10 +129,11 @@ export default async function handler(req, res) {
     // unlike the proposal's basePrice that we sync on every save). Excludes
     // the recurring partner-programme subscription — that's separate revenue.
     // Best-effort: don't break the sign flow on a deal-side failure.
+    let dealId = null;
     try {
       // Guarantee a deal exists for the signed proposal — if the save-time
       // auto-create never ran, this creates the deal card now.
-      const dealId = await ensureDealForProposal(id);
+      dealId = await ensureDealForProposal(id);
       if (dealId) {
         await advanceStage(dealId, 'signed', { payload: { proposalId: id, signerName: name, signerEmail: email } });
         const proposalRows = await sql`SELECT data FROM proposals WHERE id = ${id}`;
@@ -159,6 +160,9 @@ export default async function handler(req, res) {
         subject: `🎉 Signed: ${title}`,
         html: signedHtml({ proposal, signature: rest, signerName: name, signerEmail: email, signedAt, link }),
         text: `${name || 'Someone'} (${email || ''}) signed "${title}" on ${signedAt}. ${link}`,
+        // Bell click deep-links to the deal/project page (in-app hash route,
+        // distinct from the absolute APP_URL link used in the email).
+        inApp: dealId ? { link: `#/deal/${dealId}` } : null,
       });
 
       if (email) {
