@@ -427,13 +427,6 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, companies, isMobi
         const sumNet = (arr) => arr.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
         return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <SignedDealsPanel
-            rows={pending.normal || []}
-            total={pending.totals.normal}
-            onOpenDeal={onOpenDeal}
-            onCreateInvoice={setInvTarget}
-            isMobile={isMobile}
-          />
           {invoicedManual.length > 0 && (
             <ManualPendingGroup
               title="Invoiced — awaiting payment"
@@ -463,9 +456,16 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, companies, isMobi
             companies={companies}
             isMobile={isMobile}
           />
+          <SignedDealsPanel
+            rows={pending.normal || []}
+            total={pending.totals.normal}
+            onOpenDeal={onOpenDeal}
+            onCreateInvoice={setInvTarget}
+            isMobile={isMobile}
+          />
           {pps.length > 0 && (
             <ManualPendingGroup
-              title="Imported (Live Sales Sheet)"
+              title="Imported PP's - Live Sales Sheet"
               note="Outstanding PP's from your sheet"
               kind="pp"
               rows={pps}
