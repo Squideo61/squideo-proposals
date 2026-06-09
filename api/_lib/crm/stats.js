@@ -229,6 +229,9 @@ function ensureManualPendingPayments() {
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'pp'`;
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS po_number TEXT`;
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS deal_id TEXT`;
+    // A row can instead be linked to a customer (company) directly — used for
+    // one-off imported items that belong to a client but not a specific deal.
+    await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS company_id TEXT`;
 
     // Remove accidental duplicate seed rows from a concurrent-cold-start race
     // (two instances both saw an empty table and both inserted). Keep the
@@ -289,6 +292,8 @@ function serialiseManualPP(r) {
     kind: r.kind || 'pp',
     poNumber: r.po_number || null,
     dealId: r.deal_id || null,
+    companyId: r.company_id || null,
+    linkedCompanyName: r.linked_company_name || null,
   };
 }
 
@@ -296,7 +301,12 @@ function serialiseManualPP(r) {
 async function fetchManualPending() {
   try {
     await ensureManualPendingPayments();
-    const rows = await sql`SELECT * FROM manual_pending_payments WHERE status <> 'paid' ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
+    const rows = await sql`
+      SELECT m.*, c.name AS linked_company_name
+        FROM manual_pending_payments m
+        LEFT JOIN companies c ON c.id = m.company_id
+       WHERE m.status <> 'paid'
+       ORDER BY m.sort_order ASC NULLS LAST, m.created_at ASC`;
     return rows.map(serialiseManualPP);
   } catch {
     return [];
@@ -354,7 +364,7 @@ async function autoLinkManualToCrm() {
   try {
     await ensureManualPendingPayments();
     const [manualRows, byDeal] = await Promise.all([
-      sql`SELECT id, company, amount_ex_vat FROM manual_pending_payments WHERE status <> 'paid' AND deal_id IS NULL`,
+      sql`SELECT id, company, amount_ex_vat FROM manual_pending_payments WHERE status <> 'paid' AND deal_id IS NULL AND company_id IS NULL`,
       signedDealsAgg(),
     ]);
     if (!manualRows.length || !byDeal.size) return 0;
@@ -1114,9 +1124,18 @@ async function pendingManualRoute(req, res, action) {
     if (!action) return res.status(400).json({ error: 'id required' });
     const body = req.body || {};
     // Link (or unlink) the row to a CRM deal. { dealId: '<id>' | null }.
+    // A row links to a deal OR a company, never both — picking a deal clears
+    // any company link.
     if ('dealId' in body) {
       const dealId = trimOrNull(body.dealId);
-      await sql`UPDATE manual_pending_payments SET deal_id = ${dealId} WHERE id = ${action}`;
+      await sql`UPDATE manual_pending_payments SET deal_id = ${dealId}, company_id = NULL WHERE id = ${action}`;
+      return res.status(200).json({ ok: true, rows: await fetchManualPending() });
+    }
+    // Link (or unlink) the row to a customer (company). { companyId: '<id>' | null }.
+    // Picking a company clears any deal link (mutually exclusive).
+    if ('companyId' in body) {
+      const companyId = trimOrNull(body.companyId);
+      await sql`UPDATE manual_pending_payments SET company_id = ${companyId}, deal_id = NULL WHERE id = ${action}`;
       return res.status(200).json({ ok: true, rows: await fetchManualPending() });
     }
     if ('invoiced' in body) {

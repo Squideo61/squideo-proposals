@@ -1022,6 +1022,11 @@ export function StoreProvider({ children }) {
     linkPendingPayment(id, dealId) {
       return api.patch('/api/crm/stats/pending-manual/' + id, { dealId: dealId || null });
     },
+    // Link an imported pending payment to a customer/company (or unlink with
+    // null). Mutually exclusive with the deal link.
+    linkPendingPaymentCompany(id, companyId) {
+      return api.patch('/api/crm/stats/pending-manual/' + id, { companyId: companyId || null });
+    },
     // Signed CRM deals for the "link to deal" picker. [{ dealId, company, title, number, net }].
     loadLinkableDeals() {
       return api.get('/api/crm/stats/linkable-deals')

@@ -81,6 +81,12 @@ function buildFinanceView(fin, { mode, qIdx, monthKey, isCurrentYear, monthIdx, 
 export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
+  // All CRM companies, shaped for the "link to customer" picker on imported
+  // pending-payment rows.
+  const companyOptions = Object.values(state.companies || {})
+    .filter((c) => c && c.id && c.name)
+    .map((c) => ({ id: c.id, name: c.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const now = new Date();
   const [section, setSection] = useState(financeViewMemory.section); // 'income' | 'pending' | 'vat'
   const [perfSection, setPerfSection] = useState(financeViewMemory.perfSection); // Performance toggle: 'income' | 'sales' | 'salesvspp'
@@ -375,7 +381,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
           </div>
           {/* Pending Payments — outstanding signed deals, split PO vs normal, plus
               the imported Live Sales Sheet group. */}
-          <PendingPayments pending={pending} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} isMobile={isMobile} actions={actions} onChanged={refreshFinance} />
+          <PendingPayments pending={pending} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} companies={companyOptions} isMobile={isMobile} actions={actions} onChanged={refreshFinance} />
         </>
       )}
     </div>
@@ -393,7 +399,7 @@ const PAYMENT_TYPE_META = {
   invoice: { label: 'Invoice', color: '#0E7490', bg: '#ECFEFF' },
 };
 
-function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions, onChanged }) {
+function PendingPayments({ pending, onOpenDeal, onOpenCompany, companies, isMobile, actions, onChanged }) {
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 20 }}>
       <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -429,6 +435,8 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
               actions={actions}
               onChanged={onChanged}
               onOpenDeal={onOpenDeal}
+              onOpenCompany={onOpenCompany}
+              companies={companies}
               isMobile={isMobile}
             />
           )}
@@ -439,6 +447,8 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
             actions={actions}
             onChanged={onChanged}
             onOpenDeal={onOpenDeal}
+            onOpenCompany={onOpenCompany}
+            companies={companies}
             isMobile={isMobile}
           />
           <ManualPendingGroup
@@ -450,6 +460,8 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
             actions={actions}
             onChanged={onChanged}
             onOpenDeal={onOpenDeal}
+            onOpenCompany={onOpenCompany}
+            companies={companies}
             isMobile={isMobile}
           />
         </div>
@@ -466,14 +478,16 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, isMobile, actions
 const MANUAL_PP_COLS = '1fr 92px 80px 92px 92px';
 const MANUAL_PP_COLS_M = '1fr 64px 72px 76px';
 
-function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', accent = '#0E7490', rows, total, actions, onChanged, onOpenDeal, isMobile, bare = false }) {
+function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', accent = '#0E7490', rows, total, actions, onChanged, onOpenDeal, onOpenCompany, companies, isMobile, bare = false }) {
   const cols = isMobile ? MANUAL_PP_COLS_M : MANUAL_PP_COLS;
   const vatTotal = rows.reduce((s, r) => s + (Number(r.vat) || 0), 0);
   const grossTotal = total + vatTotal;
   const noun = kind === 'po' ? 'PO' : 'PP';
   const isInvoicedGroup = variant === 'invoiced';
 
-  // Link (or unlink) a row to a CRM deal. Undoable.
+  // Link (or unlink) a row to a CRM deal. Undoable. Linking to a deal clears
+  // any company link server-side, so the undo restores the deal link (the most
+  // recent prior state we can cheaply reinstate).
   const setLink = (r, dealId) => {
     if (!actions) return;
     const prev = r.dealId || null;
@@ -483,6 +497,20 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
         label: dealId ? `Link ${r.company || noun} to deal` : `Unlink ${r.company || noun}`,
         undo: () => actions.linkPendingPayment(r.id, prev).then(() => onChanged && onChanged()),
         redo: () => actions.linkPendingPayment(r.id, dealId).then(() => onChanged && onChanged()),
+      });
+    });
+  };
+
+  // Link (or unlink) a row to a customer (company). Undoable.
+  const setCompanyLink = (r, companyId) => {
+    if (!actions) return;
+    const prev = r.companyId || null;
+    actions.linkPendingPaymentCompany(r.id, companyId).then(() => {
+      if (onChanged) onChanged();
+      actions.recordUndo && actions.recordUndo({
+        label: companyId ? `Link ${r.company || noun} to customer` : `Unlink ${r.company || noun}`,
+        undo: () => actions.linkPendingPaymentCompany(r.id, prev).then(() => onChanged && onChanged()),
+        redo: () => actions.linkPendingPaymentCompany(r.id, companyId).then(() => onChanged && onChanged()),
       });
     });
   };
@@ -563,7 +591,10 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
                 onInvoice={() => setInvoiced(r, true)}
                 onUninvoice={() => setInvoiced(r, false)}
                 onLink={(dealId) => setLink(r, dealId)}
+                onLinkCompany={(companyId) => setCompanyLink(r, companyId)}
+                companies={companies}
                 onOpenDeal={onOpenDeal}
+                onOpenCompany={onOpenCompany}
                 onRemove={() => remove(r)}
               />
             ))}
@@ -592,17 +623,24 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
   );
 }
 
-function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onPaid, onInvoice, onUninvoice, onLink, onOpenDeal, onRemove }) {
+function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onPaid, onInvoice, onUninvoice, onLink, onLinkCompany, companies, onOpenDeal, onOpenCompany, onRemove }) {
   const [picking, setPicking] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const isInvoicedGroup = variant === 'invoiced';
   const isCompanyInvoice = r.kind === 'company-invoice';
-  const linked = !!r.dealId;
+  const linkedDeal = !!r.dealId;
+  const linkedCompany = !!r.companyId;
+  const linked = linkedDeal || linkedCompany;
   const net = Number(r.amountExVat) || 0;
   const vat = Number(r.vat) || 0;
   const subtitle = [r.invoiceType, r.poNumber, r.description, r.note].filter(Boolean).join(' · ');
   const pay = (method) => { setPicking(false); onPaid(method); };
-  const openDeal = () => { if (linked && onOpenDeal) onOpenDeal(r.dealId); };
+  // Open whatever the row is linked to — its deal, or its customer.
+  const canOpen = (linkedDeal && onOpenDeal) || (linkedCompany && onOpenCompany);
+  const openLinked = () => {
+    if (linkedDeal && onOpenDeal) onOpenDeal(r.dealId);
+    else if (linkedCompany && onOpenCompany) onOpenCompany(r.companyId);
+  };
   return (
     <>
     <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '5px 14px' }}>
@@ -613,20 +651,28 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
               Not linked to a deal
             </span>
           ) : linked ? (
-            <span onClick={openDeal} title={onOpenDeal ? 'Open linked deal' : 'Linked to a CRM deal'}
-              style={{ cursor: onOpenDeal ? 'pointer' : 'default', fontSize: 9, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              Linked
+            <span onClick={openLinked}
+              title={linkedCompany
+                ? (r.linkedCompanyName ? `Linked to customer: ${r.linkedCompanyName}` : 'Linked to a customer')
+                : (onOpenDeal ? 'Open linked deal' : 'Linked to a CRM deal')}
+              style={{ cursor: canOpen ? 'pointer' : 'default', fontSize: 9, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {linkedCompany ? 'Customer' : 'Linked'}
             </span>
           ) : (
             <span style={{ fontSize: 9, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
               Imported
             </span>
           )}
-          <span onClick={openDeal} style={{ fontSize: 13, fontWeight: 600, color: (linked && onOpenDeal) ? BRAND.blue : BRAND.ink, cursor: (linked && onOpenDeal) ? 'pointer' : 'default', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span onClick={openLinked} style={{ fontSize: 13, fontWeight: 600, color: canOpen ? BRAND.blue : BRAND.ink, cursor: canOpen ? 'pointer' : 'default', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {r.company || 'Unattributed'}
           </span>
+          {linkedCompany && r.linkedCompanyName && r.linkedCompanyName !== r.company && (
+            <span title={`Linked to customer: ${r.linkedCompanyName}`} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>
+              → {r.linkedCompanyName}
+            </span>
+          )}
           {onLink && !isCompanyInvoice && (
-            <button type="button" onClick={() => setLinkOpen((v) => !v)} title={linked ? 'Change or remove the deal link' : 'Link to a CRM deal'}
+            <button type="button" onClick={() => setLinkOpen((v) => !v)} title={linked ? 'Change or remove the link' : 'Link to a deal or customer'}
               style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 11, lineHeight: 1, padding: '1px 3px', textDecoration: 'underline' }}>
               {linked ? 'edit' : 'link'}
             </button>
@@ -706,10 +752,13 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
       </div>
     </div>
     {linkOpen && (
-      <DealLinkPicker
+      <LinkPicker
         actions={actions}
-        linked={linked}
-        onPick={(dealId) => { setLinkOpen(false); onLink(dealId); }}
+        companies={companies}
+        linkedDeal={linkedDeal}
+        linkedCompany={linkedCompany}
+        onPickDeal={(dealId) => { setLinkOpen(false); onLink(dealId); }}
+        onPickCompany={(companyId) => { setLinkOpen(false); onLinkCompany && onLinkCompany(companyId); }}
         onClose={() => setLinkOpen(false)}
       />
     )}
@@ -717,58 +766,105 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
   );
 }
 
-// Searchable list of signed CRM deals to link an imported PP to. Renders as a
-// full-width panel beneath the row; loads the deal list on open.
-function DealLinkPicker({ actions, linked, onPick, onClose }) {
+// Searchable picker to link an imported PP to either a signed CRM deal OR a
+// customer (company). Renders as a full-width panel beneath the row; a toggle
+// switches between the two modes. Deals load lazily on first open of that tab.
+function LinkPicker({ actions, companies, linkedDeal, linkedCompany, onPickDeal, onPickCompany, onClose }) {
+  const [mode, setMode] = useState('deal'); // 'deal' | 'company'
   const [deals, setDeals] = useState(null);
   const [q, setQ] = useState('');
   useEffect(() => {
+    if (mode !== 'deal' || deals !== null) return undefined;
     let active = true;
     actions.loadLinkableDeals().then((list) => { if (active) setDeals(list); });
     return () => { active = false; };
-  }, [actions]);
+  }, [actions, mode, deals]);
+
   const needle = q.trim().toLowerCase();
-  const filtered = (deals || []).filter((d) => {
+  const filteredDeals = (deals || []).filter((d) => {
     if (!needle) return true;
     const hay = `${d.company || ''} ${d.title || ''} ${d.number ? formatProposalNumber(d.number) : ''}`.toLowerCase();
     return hay.includes(needle);
   }).slice(0, 40);
+  const filteredCompanies = (companies || []).filter((c) => {
+    if (!needle) return true;
+    return (c.name || '').toLowerCase().includes(needle);
+  }).slice(0, 40);
+
+  const Tab = ({ id, label }) => (
+    <button
+      type="button"
+      onClick={() => { setMode(id); setQ(''); }}
+      style={{
+        fontSize: 12, fontWeight: 600, padding: '4px 10px', borderRadius: 7, cursor: 'pointer',
+        border: '1px solid ' + (mode === id ? BRAND.blue : BRAND.border),
+        background: mode === id ? '#EFF6FF' : 'white',
+        color: mode === id ? BRAND.blue : BRAND.muted,
+      }}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <div style={{ borderTop: '1px solid ' + BRAND.border, background: BRAND.paper, padding: '10px 14px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <Tab id="deal" label="Deal" />
+        <Tab id="company" label="Customer" />
         <input
           autoFocus
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search deals by company, title or number…"
+          placeholder={mode === 'deal' ? 'Search deals by company, title or number…' : 'Search customers by name…'}
           style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13 }}
         />
-        {linked && (
-          <button type="button" onClick={() => onPick(null)} className="btn-ghost" style={{ fontSize: 12 }}>Unlink</button>
+        {(linkedDeal || linkedCompany) && (
+          <button type="button" onClick={() => (linkedCompany ? onPickCompany(null) : onPickDeal(null))} className="btn-ghost" style={{ fontSize: 12 }}>Unlink</button>
         )}
         <button type="button" onClick={onClose} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
       </div>
       <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {deals === null ? (
-          <div style={{ fontSize: 12, color: BRAND.muted, padding: '6px 4px' }}>Loading deals…</div>
-        ) : filtered.length === 0 ? (
-          <div style={{ fontSize: 12, color: BRAND.muted, padding: '6px 4px' }}>No matching deals.</div>
-        ) : filtered.map((d) => (
-          <button
-            key={d.dealId}
-            type="button"
-            onClick={() => onPick(d.dealId)}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'white'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-            style={{ display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', textAlign: 'left', border: 'none', background: 'transparent', cursor: 'pointer', padding: '6px 8px', borderRadius: 6 }}
-          >
-            <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {d.company || d.title || 'Untitled deal'}
-            </span>
-            {d.number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{formatProposalNumber(d.number)}</span>}
-            <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(d.net)} net</span>
-          </button>
-        ))}
+        {mode === 'deal' ? (
+          deals === null ? (
+            <div style={{ fontSize: 12, color: BRAND.muted, padding: '6px 4px' }}>Loading deals…</div>
+          ) : filteredDeals.length === 0 ? (
+            <div style={{ fontSize: 12, color: BRAND.muted, padding: '6px 4px' }}>No matching deals.</div>
+          ) : filteredDeals.map((d) => (
+            <button
+              key={d.dealId}
+              type="button"
+              onClick={() => onPickDeal(d.dealId)}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'white'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              style={{ display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', textAlign: 'left', border: 'none', background: 'transparent', cursor: 'pointer', padding: '6px 8px', borderRadius: 6 }}
+            >
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {d.company || d.title || 'Untitled deal'}
+              </span>
+              {d.number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{formatProposalNumber(d.number)}</span>}
+              <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(d.net)} net</span>
+            </button>
+          ))
+        ) : (
+          (companies || []).length === 0 ? (
+            <div style={{ fontSize: 12, color: BRAND.muted, padding: '6px 4px' }}>No customers found.</div>
+          ) : filteredCompanies.length === 0 ? (
+            <div style={{ fontSize: 12, color: BRAND.muted, padding: '6px 4px' }}>No matching customers.</div>
+          ) : filteredCompanies.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => onPickCompany(c.id)}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'white'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              style={{ display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', textAlign: 'left', border: 'none', background: 'transparent', cursor: 'pointer', padding: '6px 8px', borderRadius: 6 }}
+            >
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {c.name}
+              </span>
+            </button>
+          ))
+        )}
       </div>
     </div>
   );
@@ -911,7 +1007,7 @@ function PendingImportPanel({ actions, count, isMobile, kind = 'pp' }) {
 // click-through to the deal) with imported Live Sales Sheet POs (manual rows with
 // invoice/paid/remove actions + the sheet import panel). A single header carries
 // the combined grand total; each row type keeps its own behaviour.
-function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChanged, onOpenDeal, isMobile }) {
+function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChanged, onOpenDeal, onOpenCompany, companies, isMobile }) {
   const importedNet = importedRows.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
   const grand = (Number(crmTotal) || 0) + importedNet;
   const count = crmRows.length + importedRows.length;
@@ -936,6 +1032,8 @@ function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChang
         actions={actions}
         onChanged={onChanged}
         onOpenDeal={onOpenDeal}
+        onOpenCompany={onOpenCompany}
+        companies={companies}
         isMobile={isMobile}
       />
     </div>
