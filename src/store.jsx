@@ -800,6 +800,21 @@ export function StoreProvider({ children }) {
         throw err;
       });
     },
+    // Link an existing (unassigned) proposal to a deal. The server sets
+    // proposals.deal_id and ratchets the deal's stage to the proposal's current
+    // state; we then reload the deal so its Proposal card + pipeline bar update.
+    linkProposalToDeal(proposalId, dealId) {
+      return api.patch('/api/proposals/' + encodeURIComponent(proposalId), { dealId })
+        .then((resp) => {
+          setState(s => (
+            s.proposals[proposalId]
+              ? { ...s, proposals: { ...s.proposals, [proposalId]: { ...s.proposals[proposalId], _dealId: dealId || null } } }
+              : s
+          ));
+          if (dealId) return actions.loadDealDetail(dealId).then(() => resp);
+          return resp;
+        });
+    },
     deleteProposal(id) {
       // Cancel any pending debounced save — otherwise an in-flight PUT (e.g.
       // user typed in the builder, hit Back, then deleted within 800ms) fires

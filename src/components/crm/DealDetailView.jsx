@@ -99,6 +99,8 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   // can choose whole-thread vs single-message scope at submit time.
   const [linkEmailTarget, setLinkEmailTarget] = useState(null);
   const [newDealFromEmail, setNewDealFromEmail] = useState(null);
+  // "Create or link proposal" chooser modal.
+  const [choosingProposal, setChoosingProposal] = useState(false);
 
   useEffect(() => {
     if (dealId) {
@@ -225,10 +227,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             <>
               {proposals.length === 0 && (
                 <button
-                  onClick={() => onCreateProposal?.(dealId)}
+                  onClick={() => setChoosingProposal(true)}
                   className="btn"
                   style={{ background: '#22C55E', borderColor: '#22C55E', color: '#fff' }}
-                ><FileText size={14} /> Create proposal</button>
+                ><FileText size={14} /> Create or link proposal</button>
               )}
               <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
               <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
@@ -593,6 +595,21 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           currentDealId={dealId}
           onClose={() => setLinkEmailTarget(null)}
           onLinked={() => { setLinkEmailTarget(null); actions.loadDealDetail(dealId); }}
+        />
+      )}
+      {choosingProposal && (
+        <CreateOrLinkProposalModal
+          onClose={() => setChoosingProposal(false)}
+          onCreate={() => { setChoosingProposal(false); onCreateProposal?.(dealId); }}
+          onLink={async (proposalId) => {
+            try {
+              await actions.linkProposalToDeal(proposalId, dealId);
+              setChoosingProposal(false);
+              showMsg('Proposal linked');
+            } catch (e) {
+              showMsg(e?.message || 'Could not link proposal');
+            }
+          }}
         />
       )}
       {newDealFromEmail && (
@@ -2329,6 +2346,98 @@ function FormRow({ label, children }) {
       <span>{label}</span>
       {children}
     </label>
+  );
+}
+
+// Modal for the deal's "Create or link proposal" button. Offers creating a
+// fresh proposal, or linking one of the existing proposals that isn't attached
+// to any deal yet (filtered by _dealId from the global proposals map).
+function CreateOrLinkProposalModal({ onClose, onCreate, onLink }) {
+  const { state } = useStore();
+  const [query, setQuery] = useState('');
+  const [linkingId, setLinkingId] = useState(null);
+
+  const unassigned = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return Object.entries(state.proposals || {})
+      .map(([id, p]) => ({ id, ...p }))
+      .filter((p) => !p._dealId && !p.archived)
+      .filter((p) => {
+        if (!q) return true;
+        const hay = `${p.clientName || ''} ${p.contactBusinessName || ''} ${p.proposalTitle || ''} ${formatProposalNumber(p._number) || ''}`.toLowerCase();
+        return hay.includes(q);
+      })
+      .sort((a, b) => String(b._createdAt || '').localeCompare(String(a._createdAt || '')));
+  }, [state.proposals, query]);
+
+  return (
+    <Modal onClose={onClose} maxWidth={520}>
+      <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Add a proposal</h2>
+      <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 16px' }}>
+        Create a new proposal for this deal, or link an existing one that isn't attached to a deal yet.
+      </p>
+
+      <button
+        onClick={onCreate}
+        className="btn"
+        style={{ width: '100%', justifyContent: 'center', background: '#22C55E', borderColor: '#22C55E', color: '#fff', marginBottom: 18 }}
+      ><FileText size={14} /> Create new proposal</button>
+
+      <div style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+        Or link an existing proposal
+      </div>
+      <input
+        className="input"
+        placeholder="Search unassigned proposals…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        style={{ width: '100%', marginBottom: 10, boxSizing: 'border-box' }}
+      />
+      <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {unassigned.length === 0 && (
+          <div style={{ fontSize: 13, color: BRAND.muted, fontStyle: 'italic', padding: '8px 2px' }}>
+            {query.trim() ? 'No matching unassigned proposals.' : 'No unassigned proposals available.'}
+          </div>
+        )}
+        {unassigned.map((p) => {
+          const num = formatProposalNumber(p._number);
+          const signed = !!p._signature;
+          const price = p.totalExVat ?? p.basePrice;
+          return (
+            <button
+              key={p.id}
+              disabled={!!linkingId}
+              onClick={() => { setLinkingId(p.id); onLink(p.id); }}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                width: '100%', padding: '8px 10px', background: 'white',
+                border: '1px solid ' + BRAND.border, borderRadius: 6,
+                cursor: linkingId ? 'default' : 'pointer', textAlign: 'left', fontFamily: 'inherit',
+                opacity: linkingId && linkingId !== p.id ? 0.5 : 1,
+              }}
+            >
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  {num ? <span style={{ color: BRAND.muted, fontSize: 11 }}>{num}</span> : null}
+                  <span>{p.clientName || p.contactBusinessName || 'Untitled'}</span>
+                  {signed ? <Badge color="green">Signed</Badge> : <Badge color="grey">Unsigned</Badge>}
+                </div>
+                {price != null && (
+                  <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>{formatGBP(price)} ex VAT</div>
+                )}
+              </div>
+              <span style={{ fontSize: 12, color: BRAND.blue, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                {linkingId === p.id ? 'Linking…' : 'Link'}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+        <button onClick={onClose} className="btn-ghost">Cancel</button>
+      </div>
+    </Modal>
   );
 }
 

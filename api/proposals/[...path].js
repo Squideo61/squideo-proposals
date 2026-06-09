@@ -183,6 +183,67 @@ export default async function handler(req, res) {
     });
   }
 
+  if (req.method === 'PATCH') {
+    // Link (or unlink) this proposal to an existing CRM deal. Linking sets
+    // proposals.deal_id and ratchets the deal forward to mirror the proposal's
+    // current lifecycle point — after that the regular view/sign/pay hooks
+    // (which key off proposal.deal_id) drive the remaining stages automatically.
+    const body = req.body || {};
+    if (!('dealId' in body)) return res.status(400).json({ error: 'dealId required' });
+    const newDealId = body.dealId ? String(body.dealId) : null;
+
+    if (newDealId) {
+      const dealRows = await sql`SELECT id FROM deals WHERE id = ${newDealId}`;
+      if (!dealRows.length) return res.status(404).json({ error: 'Deal not found' });
+    }
+    await sql`UPDATE proposals SET deal_id = ${newDealId}, updated_at = NOW() WHERE id = ${id}`;
+
+    let advanced = null;
+    if (newDealId) {
+      // Work out the furthest point the proposal already reached so the deal
+      // jumps straight to it (advanceStage only ever moves forward).
+      let target = 'proposal_sent';
+      try {
+        const viewed = (await sql`SELECT 1 FROM proposal_views WHERE proposal_id = ${id} LIMIT 1`).length > 0;
+        const signed = (await sql`SELECT 1 FROM signatures WHERE proposal_id = ${id} LIMIT 1`).length > 0;
+        let paid = false;
+        try {
+          await ensurePbPaidColumn();
+          const paidRows = await sql`
+            SELECT (
+                (SELECT COALESCE(SUM(amount),0) FROM payments WHERE proposal_id = ${id} AND paid_at IS NOT NULL)
+              + COALESCE((SELECT paid_amount FROM proposal_billing WHERE proposal_id = ${id}), 0)
+              + (SELECT COALESCE(SUM(amount),0) FROM manual_payments WHERE proposal_id = ${id} AND manual_invoice_id IS NULL)
+              + (SELECT COALESCE(SUM(amount),0) FROM manual_invoices WHERE proposal_id = ${id} AND status = 'paid')
+              + (SELECT COALESCE(SUM(amount),0) FROM partner_invoices WHERE proposal_id = ${id})
+            ) AS paid_total
+          `;
+          paid = Number(paidRows[0]?.paid_total || 0) > 0;
+        } catch (err) {
+          console.error('[proposals] link paid-check failed', err.message);
+        }
+        if (viewed) target = 'viewed';
+        if (signed) target = 'signed';
+        if (paid) target = 'paid';
+      } catch (err) {
+        console.error('[proposals] link state-check failed', err.message);
+      }
+      try {
+        advanced = await advanceStage(newDealId, target, {
+          actorEmail: user.email || null,
+          payload: { proposalId: id, source: 'link' },
+        });
+        await sql`
+          INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+          VALUES (${newDealId}, 'proposal_linked', ${JSON.stringify({ proposalId: id })}, ${user.email || null})
+        `;
+      } catch (err) {
+        console.error('[proposals] link advanceStage failed', err);
+      }
+    }
+    return res.status(200).json({ ok: true, dealId: newDealId, advanced });
+  }
+
   if (req.method === 'DELETE') {
     // Users with proposals.manage_all can delete anything. Others can
     // delete proposals they own (preparedByEmail matches their login).
