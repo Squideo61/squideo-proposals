@@ -354,7 +354,7 @@ function SalesVsPpView({ trend, isMobile, actions, history }) {
 // Corporation Tax to set aside (HMRC marginal relief on the trailing-12m profit)
 // and the wage-based revenue targets. Its own month picker (independent of the page),
 // a costs editor (recurring overheads + one-offs), a 12-month history and an
-// activity feed. Admin-only — rides on the Finance page's settings.manage gate.
+// activity feed. Admin + Director only — rides on the Finance page's finance.manage gate.
 const PROFIT_POS = '#10B981';
 const PROFIT_NEG = '#EF4444';
 

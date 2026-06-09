@@ -12,7 +12,7 @@ const TABS = [
   { id: 'users',         label: 'Users + invites',  icon: Users,    perm: 'users.manage' },
   { id: 'roles',         label: 'Roles',            icon: Shield,   perm: 'roles.manage' },
   { id: 'notifications', label: 'Notifications',    icon: Bell,     perm: 'users.manage' },
-  { id: 'storage',       label: 'Storage & CRM costs', icon: Wallet, perm: 'settings.manage' },
+  { id: 'storage',       label: 'Storage & CRM costs', icon: Wallet, perm: 'finance.manage' },
 ];
 
 export function AdminView({ tab = 'users', onBack, onChangeTab }) {

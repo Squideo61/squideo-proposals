@@ -10,7 +10,7 @@ import { archiveRecord } from './recycleBin.js';
 // Business finance/performance aggregates across ALL customers. Unions the same
 // five paid-money sources as companies.js (allCompanyBalances /
 // computeCompanyLifetime) so the headline totals reconcile with the per-company
-// pages. Read-only; gated behind settings.manage (whole-business figures).
+// pages. Read-only; gated behind finance.manage (whole-business figures).
 //
 // Routes (period travels in the `action` segment so it survives the vercel.json
 // path→query rewrite without relying on query-string preservation):
@@ -1890,8 +1890,8 @@ export async function statsRoute(req, res, id, action, user) {
     return res.status(200).json({ dates: await bankHolidaysEW() });
   }
 
-  // Whole-business finances — owner/admin only.
-  if (!hasPermission(await getRole(user.role), 'settings.manage')) {
+  // Whole-business finances — Admin + Director (anyone with finance.manage).
+  if (!hasPermission(await getRole(user.role), 'finance.manage')) {
     return res.status(403).json({ error: 'You do not have permission to view business finances' });
   }
 

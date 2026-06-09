@@ -2,7 +2,7 @@
 // "Storage" tab. Lists every blob across the stores we use, sums sizes grouped
 // by top-level prefix (category), and estimates the monthly *storage* cost.
 //
-// GET (settings.manage). Module-cached ~1h because list() counts as Advanced
+// GET (finance.manage). Module-cached ~1h because list() counts as Advanced
 // Operations; pass ?refresh=1 to recompute.
 import { list } from '@vercel/blob';
 import { cors, requirePermission } from './_lib/middleware.js';
@@ -78,7 +78,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).end();
 
-  const auth = await requirePermission(req, res, 'settings.manage');
+  const auth = await requirePermission(req, res, 'finance.manage');
   if (!auth) return;
 
   try {

@@ -5,7 +5,7 @@
 // Neon's API returns *usage metrics*, not invoice dollars, so the $ figures here
 // are estimates. Link out to the Neon Console for exact billing.
 //
-// GET (settings.manage). Module-cached ~1h (the consumption API is rate-limited
+// GET (finance.manage). Module-cached ~1h (the consumption API is rate-limited
 // to ~30 req/min/account); pass ?refresh=1 to recompute.
 //
 // Requires env NEON_API_KEY (Neon Console → Account settings → API keys).
@@ -186,7 +186,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).end();
 
-  const auth = await requirePermission(req, res, 'settings.manage');
+  const auth = await requirePermission(req, res, 'finance.manage');
   if (!auth) return;
 
   const key = process.env.NEON_API_KEY;

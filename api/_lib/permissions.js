@@ -11,6 +11,7 @@ export const PERMISSIONS = [
   { slug: 'users.manage',         group: 'Workspace',  label: 'Manage users + invites' },
   { slug: 'roles.manage',         group: 'Workspace',  label: 'Manage roles + permissions' },
   { slug: 'settings.manage',      group: 'Workspace',  label: 'Edit workspace settings' },
+  { slug: 'finance.manage',       group: 'Workspace',  label: 'View + edit business finance (Cash Flow, Performance, Storage costs)' },
 
   { slug: 'proposals.manage_all', group: 'Proposals',  label: 'Edit / delete any proposal' },
   { slug: 'signatures.manage_all',group: 'Proposals',  label: 'Edit / delete any signature record' },
