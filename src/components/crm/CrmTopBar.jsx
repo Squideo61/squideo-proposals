@@ -42,8 +42,8 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   const canAdmin = permissionsInclude(perms, 'users.manage')
     || permissionsInclude(perms, 'roles.manage')
     || permissionsInclude(perms, 'settings.manage');
-  // Whole-business finances — owner/admin only.
-  const canBusiness = permissionsInclude(perms, 'settings.manage');
+  // Whole-business finances — anyone with finance.manage (owner/admin + Director).
+  const canBusiness = permissionsInclude(perms, 'finance.manage');
 
   const sections = [
     {
