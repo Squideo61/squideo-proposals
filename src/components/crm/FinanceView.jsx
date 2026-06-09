@@ -79,7 +79,7 @@ function buildFinanceView(fin, { mode, qIdx, monthKey, isCurrentYear, monthIdx, 
   return { months, quarters, displayMonths, totals, chart, thisMonth, thisQuarter, periodLabel };
 }
 
-export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
+export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   // All CRM companies, shaped for the "link to customer" picker on imported
@@ -388,7 +388,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
           </div>
           {/* Pending Payments — outstanding signed deals, split PO vs normal, plus
               the imported Live Sales Sheet group and active partners. */}
-          <PendingPayments pending={pending} partners={activePartners} partnerTotal={partnerTotal} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} companies={companyOptions} isMobile={isMobile} actions={actions} onChanged={refreshFinance} />
+          <PendingPayments pending={pending} partners={activePartners} partnerTotal={partnerTotal} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} onOpenPartner={onOpenPartner} companies={companyOptions} isMobile={isMobile} actions={actions} onChanged={refreshFinance} />
         </>
       )}
     </div>
@@ -406,7 +406,7 @@ const PAYMENT_TYPE_META = {
   invoice: { label: 'Invoice', color: '#0E7490', bg: '#ECFEFF' },
 };
 
-function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCompany, companies, isMobile, actions, onChanged }) {
+function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCompany, onOpenPartner, companies, isMobile, actions, onChanged }) {
   // The deal + portion to invoice when an INV button is clicked (opens the
   // shared Xero create-invoice modal, pre-filled with the deal's suggested lines).
   const [invTarget, setInvTarget] = useState(null);
@@ -484,7 +484,7 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
               isMobile={isMobile}
             />
           )}
-          <PartnersPanel partners={partners} total={partnerTotal} isMobile={isMobile} />
+          <PartnersPanel partners={partners} total={partnerTotal} onOpenPartner={onOpenPartner} isMobile={isMobile} />
         </div>
         );
       })()}
@@ -530,7 +530,7 @@ const PARTNER_STATUS_META = {
   active: { label: 'Subscription', color: '#15803D', bg: '#ECFDF3' },
   credits_only: { label: 'Credits only', color: '#1D4ED8', bg: '#EFF6FF' },
 };
-function PartnersPanel({ partners, total, isMobile }) {
+function PartnersPanel({ partners, total, onOpenPartner, isMobile }) {
   const list = partners || [];
   if (list.length === 0) return null;
   return (
@@ -545,8 +545,19 @@ function PartnersPanel({ partners, total, isMobile }) {
       {list.map((p) => {
         const meta = PARTNER_STATUS_META[p.status] || PARTNER_STATUS_META.active;
         const credits = Number(p.creditsRemaining) || 0;
+        const open = () => onOpenPartner && p.clientKey && onOpenPartner(p.clientKey);
+        const clickable = !!(onOpenPartner && p.clientKey);
         return (
-          <div key={p.clientKey} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderTop: '1px solid ' + BRAND.border }}>
+          <div
+            key={p.clientKey}
+            role={clickable ? 'button' : undefined}
+            tabIndex={clickable ? 0 : undefined}
+            onClick={clickable ? open : undefined}
+            onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } } : undefined}
+            onMouseEnter={clickable ? (e) => { e.currentTarget.style.background = BRAND.paper; } : undefined}
+            onMouseLeave={clickable ? (e) => { e.currentTarget.style.background = 'transparent'; } : undefined}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderTop: '1px solid ' + BRAND.border, cursor: clickable ? 'pointer' : 'default', background: 'transparent' }}
+          >
             <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.clientName || 'Partner'}</span>
             <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, background: meta.bg, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{meta.label}</span>
             {p.status === 'credits_only' && credits > 0 && (
