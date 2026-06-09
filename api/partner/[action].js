@@ -179,16 +179,51 @@ async function listCredits(res) {
     ORDER BY s.any_recurring_active DESC, s.client_name NULLS LAST
   `;
 
-  const list = rows.map(r => ({
-    clientKey: r.client_key,
-    clientName: r.client_name,
-    subscriptions: { count: r.sub_count, active: r.sub_active_count },
-    creditsIssued: Number(r.credits_issued) || 0,
-    creditsUsed: Number(r.credits_used) || 0,
-    creditsRemaining: Number(r.credits_remaining) || 0,
-    lastPaymentAt: r.last_payment_at,
-    status: r.status,
-  }));
+  // Per-client partner monthly fee (ex-VAT) + monthly credit allocation, taken
+  // from the latest signed partner proposal. Drives the £ figure shown on the
+  // Finance → Pending Payments "Partners" section: a subscription contributes its
+  // monthly fee; a credits-only client contributes its remaining-credit value at
+  // ratePerCredit = partnerExVat / partnerCredits.
+  const feeRows = await sql`
+    SELECT DISTINCT ON (ps.client_key)
+           ps.client_key,
+           (sg.data->'amountBreakdown'->>'partnerExVat')::numeric AS partner_ex_vat,
+           NULLIF(sg.data->>'partnerCredits', '')::numeric        AS partner_credits
+      FROM partner_subscriptions ps
+      JOIN signatures sg ON sg.proposal_id = ps.proposal_id
+     WHERE (sg.data->'amountBreakdown'->>'partnerExVat') IS NOT NULL
+     ORDER BY ps.client_key, sg.signed_at DESC NULLS LAST
+  `;
+  const feeByClient = new Map(feeRows.map(r => [r.client_key, {
+    exVat: Number(r.partner_ex_vat) || 0,
+    credits: Number(r.partner_credits) || 0,
+  }]));
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+  const list = rows.map(r => {
+    const creditsRemaining = Number(r.credits_remaining) || 0;
+    const fee = feeByClient.get(r.client_key) || { exVat: 0, credits: 0 };
+    const ratePerCredit = fee.credits > 0 ? fee.exVat / fee.credits : 0;
+    const monthlyNet = r2(fee.exVat); // ex-VAT recurring fee
+    // Outstanding (ex-VAT): subscription → next month's fee; credits-only → the
+    // value of the credits still owed in work; inactive → nothing.
+    const outstanding = r.status === 'active'
+      ? monthlyNet
+      : (r.status === 'credits_only' ? r2(creditsRemaining * ratePerCredit) : 0);
+    return {
+      clientKey: r.client_key,
+      clientName: r.client_name,
+      subscriptions: { count: r.sub_count, active: r.sub_active_count },
+      creditsIssued: Number(r.credits_issued) || 0,
+      creditsUsed: Number(r.credits_used) || 0,
+      creditsRemaining,
+      lastPaymentAt: r.last_payment_at,
+      status: r.status,
+      monthlyNet,
+      ratePerCredit: r2(ratePerCredit),
+      outstanding,
+    };
+  });
 
   return res.status(200).json(list);
 }

@@ -145,8 +145,10 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
   useEffect(() => { if (isSales) actions.loadSalesFinanceStats(effectiveYear); }, [actions, isSales, effectiveYear]);
   useEffect(() => { if (isSales) actions.loadSalesLedger(periodParam); }, [actions, isSales, periodParam]);
 
-  // Outstanding deals aren't period-scoped — load once.
+  // Outstanding deals aren't period-scoped — load once. Same for partner credits
+  // (the Partners section in Pending Payments).
   useEffect(() => { actions.loadPendingPayments(); }, [actions]);
+  useEffect(() => { actions.fetchPartnerCreditsList(); }, [actions]);
 
   // Rolling trend (charts) — load 36 months (the Performance comparison needs
   // the full window; the bar charts below slice the last 12). Period-independent.
@@ -183,6 +185,10 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
   const salesLedger = state.salesLedger && state.salesLedger.period === periodParam ? state.salesLedger : null;
   const pending = state.pendingPayments;
   const income = state.income && state.income.period === periodParam ? state.income : null;
+  // Active partners (subscription + credits-only) for the Pending Payments
+  // Partners section; their outstanding £ rolls into the total outstanding.
+  const activePartners = (state.partnerCreditsList || []).filter((p) => p.status === 'active' || p.status === 'credits_only');
+  const partnerTotal = activePartners.reduce((s, p) => s + (Number(p.outstanding) || 0), 0);
 
   const isCurrentYear = effectiveYear === now.getFullYear();
   const monthIdx = now.getMonth();
@@ -378,11 +384,11 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany }) {
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
             <StatCard icon={PoundSterling} accent={BRAND.ink} label="Total Invoiced" value={formatGBP(pending?.totals?.invoiced || 0)} sub="Invoiced & awaiting — CRM + imports · ex-VAT (net)" />
             <StatCard icon={PoundSterling} accent="#0E7490" label="Not yet invoiced" value={formatGBP(pending?.totals?.notInvoiced || 0)} sub="Everything still to bill — signed work + imports · ex-VAT (net)" />
-            <StatCard icon={PoundSterling} accent={BRAND.blue} label="Total pending payments" value={formatGBP((pending?.totals?.invoiced || 0) + (pending?.totals?.notInvoiced || 0))} sub="Invoiced + not yet invoiced — all outstanding · ex-VAT (net)" />
+            <StatCard icon={PoundSterling} accent={BRAND.blue} label="Total pending payments" value={formatGBP((pending?.totals?.invoiced || 0) + (pending?.totals?.notInvoiced || 0) + partnerTotal)} sub="Invoiced + not yet invoiced + partners — all outstanding · ex-VAT (net)" />
           </div>
           {/* Pending Payments — outstanding signed deals, split PO vs normal, plus
-              the imported Live Sales Sheet group. */}
-          <PendingPayments pending={pending} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} companies={companyOptions} isMobile={isMobile} actions={actions} onChanged={refreshFinance} />
+              the imported Live Sales Sheet group and active partners. */}
+          <PendingPayments pending={pending} partners={activePartners} partnerTotal={partnerTotal} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} companies={companyOptions} isMobile={isMobile} actions={actions} onChanged={refreshFinance} />
         </>
       )}
     </div>
@@ -400,7 +406,7 @@ const PAYMENT_TYPE_META = {
   invoice: { label: 'Invoice', color: '#0E7490', bg: '#ECFEFF' },
 };
 
-function PendingPayments({ pending, onOpenDeal, onOpenCompany, companies, isMobile, actions, onChanged }) {
+function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCompany, companies, isMobile, actions, onChanged }) {
   // The deal + portion to invoice when an INV button is clicked (opens the
   // shared Xero create-invoice modal, pre-filled with the deal's suggested lines).
   const [invTarget, setInvTarget] = useState(null);
@@ -478,6 +484,7 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, companies, isMobi
               isMobile={isMobile}
             />
           )}
+          <PartnersPanel partners={partners} total={partnerTotal} isMobile={isMobile} />
         </div>
         );
       })()}
@@ -512,6 +519,43 @@ function SignedDealsPanel({ rows, total, onOpenDeal, onCreateInvoice, isMobile }
       {rows.map((d) => (
         <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isMobile={isMobile} />
       ))}
+    </div>
+  );
+}
+
+// Active partners (subscription + credits-only) from the Partner Programme — each
+// contributes to the total outstanding: a subscription is its next monthly fee,
+// a credits-only client is the value of its remaining credits (both ex-VAT).
+const PARTNER_STATUS_META = {
+  active: { label: 'Subscription', color: '#15803D', bg: '#ECFDF3' },
+  credits_only: { label: 'Credits only', color: '#1D4ED8', bg: '#EFF6FF' },
+};
+function PartnersPanel({ partners, total, isMobile }) {
+  const list = partners || [];
+  if (list.length === 0) return null;
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '3px solid #6D28D9' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Partners</span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
+        </div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Active Partner Programme · {list.length} {list.length === 1 ? 'partner' : 'partners'} · subscription = next month’s fee, credits only = remaining-credit value · ex-VAT</div>
+      </div>
+      {list.map((p) => {
+        const meta = PARTNER_STATUS_META[p.status] || PARTNER_STATUS_META.active;
+        const credits = Number(p.creditsRemaining) || 0;
+        return (
+          <div key={p.clientKey} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderTop: '1px solid ' + BRAND.border }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.clientName || 'Partner'}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, background: meta.bg, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{meta.label}</span>
+            {p.status === 'credits_only' && credits > 0 && (
+              <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{credits % 1 === 0 ? credits : credits.toFixed(1)} left</span>
+            )}
+            <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 64, textAlign: 'right' }}>{formatGBP(p.outstanding)}{p.status === 'active' ? '/mo' : ''}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
