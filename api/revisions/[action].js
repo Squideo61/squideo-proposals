@@ -42,6 +42,11 @@ function ensureRevisionFeedbackColumns() {
     // Presence "session start" so the live ConflictBanner can tell who joined
     // first vs second. NULL on legacy rows; recordViewer/heartbeat set it.
     await sql`ALTER TABLE revision_viewers ADD COLUMN IF NOT EXISTS session_started_at TIMESTAMPTZ`;
+    // Spatial anchor pinned to a spot on the video frame, mirroring storyboard
+    // comments (db/migrations/20260609_revision_comment_anchors.sql). Stored as
+    // normalised [0,1] floats so re-renders at any size resolve cleanly.
+    await sql`ALTER TABLE revision_comments ADD COLUMN IF NOT EXISTS anchor_x DOUBLE PRECISION`;
+    await sql`ALTER TABLE revision_comments ADD COLUMN IF NOT EXISTS anchor_y DOUBLE PRECISION`;
   })().catch((err) => { revisionFeedbackEnsured = null; throw err; });
   return revisionFeedbackEnsured;
 }
@@ -362,7 +367,8 @@ async function projectDetail(res, id) {
     return m;
   }, {});
   const comments = await sql`
-    SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds, rc.body,
+    SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds,
+           rc.anchor_x, rc.anchor_y, rc.body,
            rc.author_name, rc.author_email, rc.created_at,
            rc.attachment_url, rc.attachment_name, rc.attachment_type,
            rc.completed_at, rc.completed_by, rc.producer_note
@@ -689,7 +695,8 @@ async function publicView(req, res) {
     ORDER BY version_number DESC
   `;
   const comments = await sql`
-    SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds, rc.body,
+    SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds,
+           rc.anchor_x, rc.anchor_y, rc.body,
            rc.author_name, rc.author_email, rc.created_at,
            rc.attachment_url, rc.attachment_name, rc.attachment_type
     FROM revision_comments rc
@@ -742,6 +749,8 @@ function publicCommentRow(r, viewerEmail) {
     versionId: r.version_id,
     parentId: r.parent_id,
     timecodeSeconds: r.timecode_seconds != null ? Number(r.timecode_seconds) : null,
+    anchorX: r.anchor_x != null ? Number(r.anchor_x) : null,
+    anchorY: r.anchor_y != null ? Number(r.anchor_y) : null,
     body: r.body,
     authorName: r.author_name,
     authorEmail: mine ? r.author_email : null,
@@ -1060,6 +1069,18 @@ async function postComment(req, res) {
     const t = Number(body.timecodeSeconds);
     if (Number.isFinite(t) && t >= 0) timecode = Math.round(t * 100) / 100;
   }
+  // Spatial pin (optional) — normalised [0,1] coords, both must be present and
+  // in range or neither is stored.
+  let anchorX = null, anchorY = null;
+  if (body.anchorX !== null && body.anchorX !== undefined && body.anchorX !== '' &&
+      body.anchorY !== null && body.anchorY !== undefined && body.anchorY !== '') {
+    const ax = Number(body.anchorX);
+    const ay = Number(body.anchorY);
+    if (Number.isFinite(ax) && Number.isFinite(ay) && ax >= 0 && ax <= 1 && ay >= 0 && ay <= 1) {
+      anchorX = Math.round(ax * 1e5) / 1e5;
+      anchorY = Math.round(ay * 1e5) / 1e5;
+    }
+  }
   if (!versionId) return res.status(400).json({ error: 'versionId required' });
   if (!text && !attachmentUrl) return res.status(400).json({ error: 'comment body or attachment required' });
   if (text.length > 4000) return res.status(400).json({ error: 'comment too long' });
@@ -1087,11 +1108,11 @@ async function postComment(req, res) {
   const id = crypto.randomUUID();
   const [row] = await sql`
     INSERT INTO revision_comments
-      (id, version_id, parent_id, timecode_seconds, body, author_name, author_email,
+      (id, version_id, parent_id, timecode_seconds, anchor_x, anchor_y, body, author_name, author_email,
        attachment_url, attachment_name, attachment_type)
-    VALUES (${id}, ${versionId}, ${validParent}, ${timecode}, ${text}, ${authorName}, ${authorEmail},
+    VALUES (${id}, ${versionId}, ${validParent}, ${timecode}, ${anchorX}, ${anchorY}, ${text}, ${authorName}, ${authorEmail},
             ${attachmentUrl}, ${attachmentName}, ${attachmentType})
-    RETURNING id, version_id, parent_id, timecode_seconds, body, author_name, author_email, created_at,
+    RETURNING id, version_id, parent_id, timecode_seconds, anchor_x, anchor_y, body, author_name, author_email, created_at,
               attachment_url, attachment_name, attachment_type
   `;
   // Return the public-shaped row so the client immediately sees mine:true on
@@ -1129,7 +1150,7 @@ async function updateComment(req, res) {
   const [row] = await sql`
     UPDATE revision_comments SET body = ${newText}
      WHERE id = ${id}
-     RETURNING id, version_id, parent_id, timecode_seconds, body, author_name, author_email, created_at,
+     RETURNING id, version_id, parent_id, timecode_seconds, anchor_x, anchor_y, body, author_name, author_email, created_at,
                attachment_url, attachment_name, attachment_type
   `;
   return res.status(200).json(publicCommentRow(row, viewerEmail));
@@ -1209,6 +1230,8 @@ function commentRow(r) {
     versionId: r.version_id,
     parentId: r.parent_id,
     timecodeSeconds: r.timecode_seconds != null ? Number(r.timecode_seconds) : null,
+    anchorX: r.anchor_x != null ? Number(r.anchor_x) : null,
+    anchorY: r.anchor_y != null ? Number(r.anchor_y) : null,
     body: r.body,
     authorName: r.author_name,
     authorEmail: r.author_email,

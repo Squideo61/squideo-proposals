@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock, Eye, Pencil, Trash2, Maximize2, Minimize2 } from 'lucide-react';
+import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock, Eye, Pencil, Trash2, MapPin } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { ConflictBanner } from './ConflictBanner.jsx';
@@ -65,35 +65,7 @@ function CommentAttachment({ url, name, type }) {
 export function VideoRevision({ token, data }) {
   const { actions, showMsg } = useStore();
   const videoRef = useRef(null);
-  const playerWrapRef = useRef(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  // Use a wrapper-level fullscreen so the DRAFT overlay travels with the video.
-  // The native <video> fullscreen renders only the media element, which would
-  // strip the watermark and let a screen-recorder grab a clean copy.
-  useEffect(() => {
-    const handler = () => {
-      const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-      setIsFullscreen(fsEl === playerWrapRef.current);
-    };
-    document.addEventListener('fullscreenchange', handler);
-    document.addEventListener('webkitfullscreenchange', handler);
-    return () => {
-      document.removeEventListener('fullscreenchange', handler);
-      document.removeEventListener('webkitfullscreenchange', handler);
-    };
-  }, []);
-
-  function toggleFullscreen() {
-    const el = playerWrapRef.current;
-    if (!el) return;
-    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-    if (fsEl) {
-      (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
-    } else {
-      (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
-    }
-  }
+  const composerRef = useRef(null);
 
   // ── Name + email gate ──────────────────────────────────────────────────────
   const [name, setName] = useState(() => localStorage.getItem(NAME_KEY) || '');
@@ -149,6 +121,13 @@ export function VideoRevision({ token, data }) {
   const [assetUploading, setAssetUploading] = useState(false);
   const fileRef = useRef(null);
 
+  // Spatial pin on the current frame: { x, y } in [0,1] coords. Captured by
+  // clicking the video while "place spot" mode is active. The pin's timecode
+  // is taken from the playhead at the moment of the click.
+  const [draftPin, setDraftPin] = useState(null);
+  const [placingSpot, setPlacingSpot] = useState(false);
+  const [activeCommentId, setActiveCommentId] = useState(null);
+
   function selectVideo(id) {
     setVideoId(id);
     const v = videos.find(x => x.id === id);
@@ -170,6 +149,38 @@ export function VideoRevision({ token, data }) {
 
   const markers = versionComments.filter(c => c.timecodeSeconds != null);
 
+  // Stable 1-based numbering for anchored comments — assigned in the same
+  // order the comment list shows them so the pin number matches the list.
+  const pinNumberByComment = useMemo(() => {
+    const m = {}; let n = 0;
+    versionComments.forEach(c => {
+      if (c.anchorX != null && c.anchorY != null) m[c.id] = ++n;
+    });
+    return m;
+  }, [versionComments]);
+
+  // Pins to render over the current frame: anchored comments whose timecode
+  // is within ±0.4s of the playhead, plus the draft pin (if any). Keeping the
+  // window tight avoids visual clutter while scrubbing.
+  const framePins = useMemo(() => {
+    const tolerance = 0.4;
+    const matches = versionComments
+      .filter(c => c.anchorX != null && c.anchorY != null && c.timecodeSeconds != null
+        && Math.abs((c.timecodeSeconds ?? 0) - currentTime) <= tolerance)
+      .map(c => ({
+        id: c.id,
+        x: c.anchorX, y: c.anchorY,
+        timecode: c.timecodeSeconds,
+        label: pinNumberByComment[c.id],
+        active: c.id === activeCommentId,
+        draft: false,
+      }));
+    if (draftPin) {
+      matches.push({ id: '__draft__', x: draftPin.x, y: draftPin.y, draft: true });
+    }
+    return matches;
+  }, [versionComments, currentTime, draftPin, activeCommentId, pinNumberByComment]);
+
   function seekTo(seconds) {
     const v = videoRef.current;
     if (!v) return;
@@ -179,6 +190,29 @@ export function VideoRevision({ token, data }) {
 
   function onComposerFocus() {
     setPinTime(videoRef.current ? videoRef.current.currentTime : 0);
+  }
+
+  // Click-to-pin: enabled while `placingSpot` is on AND the video is paused.
+  // The click coordinates are normalised against the rendered frame so they
+  // resolve cleanly at any size.
+  function handleFrameClick(e) {
+    if (!placingSpot) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const x = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+    const t = videoRef.current ? videoRef.current.currentTime : 0;
+    setDraftPin({ x: Math.round(x * 1e5) / 1e5, y: Math.round(y * 1e5) / 1e5 });
+    setPinTime(t);
+    setPinned(true);
+    setPlacingSpot(false);
+    if (composerRef.current) composerRef.current.focus();
+  }
+
+  function startPlacing() {
+    const v = videoRef.current;
+    if (v && !v.paused) v.pause();
+    setPlacingSpot(true);
   }
 
   async function attachFile(file) {
@@ -207,6 +241,8 @@ export function VideoRevision({ token, data }) {
         authorName: name,
         authorEmail: email,
         timecodeSeconds: pinned ? (pinTime ?? 0) : null,
+        anchorX: draftPin ? draftPin.x : null,
+        anchorY: draftPin ? draftPin.y : null,
         attachmentUrl: asset?.url || null,
         attachmentName: asset?.name || null,
         attachmentType: asset?.type || null,
@@ -214,6 +250,8 @@ export function VideoRevision({ token, data }) {
       setComments(prev => [...prev, created]);
       setDraft('');
       setPinTime(null);
+      setDraftPin(null);
+      setPlacingSpot(false);
       setAsset(null);
     } catch (err) {
       showMsg(err.message || 'Could not post comment');
@@ -422,20 +460,7 @@ export function VideoRevision({ token, data }) {
         {/* Player + marker strip */}
         <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', background: '#0B1B26', minWidth: 0 }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
-            <div
-              ref={playerWrapRef}
-              style={{
-                position: 'relative',
-                display: isFullscreen ? 'flex' : 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                maxWidth: '100%',
-                maxHeight: '100%',
-                width: isFullscreen ? '100%' : 'auto',
-                height: isFullscreen ? '100%' : 'auto',
-                background: isFullscreen ? '#000' : 'transparent',
-              }}
-            >
+            <div style={{ position: 'relative', display: 'inline-flex', maxWidth: '100%', maxHeight: '100%' }}>
               <video
                 ref={videoRef}
                 key={version.id}
@@ -453,19 +478,59 @@ export function VideoRevision({ token, data }) {
                 backgroundImage: `url("data:image/svg+xml,${DRAFT_SVG}")`,
                 backgroundRepeat: 'repeat',
               }} />
-              <button
-                onClick={toggleFullscreen}
-                title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              {/* Pin layer. Sits above the video but stops 56px from the
+                  bottom so the native controls (play/scrub/volume) stay
+                  clickable. Only intercepts pointer events while the client
+                  is actively placing a spot — at other times it lets clicks
+                  through to play/pause and only renders the pins. */}
+              <div
+                onClick={handleFrameClick}
                 style={{
-                  position: 'absolute', top: 8, right: 8,
-                  width: 32, height: 32,
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'rgba(0,0,0,0.55)', color: '#fff',
-                  border: 'none', borderRadius: 6, cursor: 'pointer',
+                  position: 'absolute', top: 0, left: 0, right: 0, bottom: 56,
+                  cursor: placingSpot ? 'crosshair' : 'default',
+                  pointerEvents: placingSpot ? 'auto' : 'none',
                 }}
               >
-                {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-              </button>
+                {framePins.map(p => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!p.draft) {
+                        setActiveCommentId(p.id);
+                        if (p.timecode != null) seekTo(p.timecode);
+                      }
+                    }}
+                    title={p.label != null ? `Comment ${p.label}` : undefined}
+                    style={{
+                      position: 'absolute',
+                      left: `${p.x * 100}%`, top: `${p.y * 100}%`,
+                      transform: 'translate(-50%, -50%)',
+                      width: 26, height: 26, padding: 0, borderRadius: '50%',
+                      background: p.draft ? '#F59E0B' : (p.active ? '#16A34A' : BRAND.blue),
+                      color: '#fff', fontSize: 12, fontWeight: 700,
+                      border: '2px solid #fff', boxShadow: '0 1px 4px rgba(0,0,0,0.45)',
+                      cursor: placingSpot ? 'crosshair' : 'pointer',
+                      pointerEvents: placingSpot ? 'none' : 'auto',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+                    }}
+                  >
+                    {p.draft ? '' : (p.label ?? '')}
+                  </button>
+                ))}
+              </div>
+              {placingSpot && (
+                <div style={{
+                  position: 'absolute', top: 8, left: '50%', transform: 'translateX(-50%)',
+                  background: 'rgba(15, 23, 42, 0.85)', color: '#fff',
+                  fontSize: 12, fontWeight: 600, padding: '6px 12px', borderRadius: 999,
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  pointerEvents: 'none',
+                }}>
+                  <MapPin size={13} /> Click on the frame to pin your comment
+                </div>
+              )}
             </div>
           </div>
           <div style={{ position: 'relative', height: 28, background: '#0B1B26',
@@ -500,12 +565,26 @@ export function VideoRevision({ token, data }) {
             {versionComments.map(c => {
               const isEditing = editingId === c.id;
               const canManage = c.mine && !approvedAt;
+              const pinNo = pinNumberByComment[c.id];
+              const active = c.id === activeCommentId;
               return (
-                <div key={c.id} style={{ marginBottom: 14 }}>
+                <div key={c.id}
+                  onClick={() => {
+                    if (isEditing) return;
+                    setActiveCommentId(c.id);
+                    if (c.timecodeSeconds != null) seekTo(c.timecodeSeconds);
+                  }}
+                  style={{ marginBottom: 14, padding: 8, borderRadius: 8, cursor: isEditing ? 'default' : 'pointer',
+                    background: active ? '#EEF7FB' : 'transparent', border: active ? `1px solid ${BRAND.blue}` : '1px solid transparent' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    {pinNo != null && (
+                      <span title="Pinned to a spot" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: 18, height: 18, borderRadius: '50%', background: BRAND.blue, color: '#fff',
+                        fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{pinNo}</span>
+                    )}
                     <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
                     {c.timecodeSeconds != null && (
-                      <button onClick={() => seekTo(c.timecodeSeconds)}
+                      <button onClick={(e) => { e.stopPropagation(); seekTo(c.timecodeSeconds); }}
                         style={{ background: 'transparent', border: 'none', color: BRAND.blue, cursor: 'pointer',
                           fontSize: 12, fontWeight: 700, padding: 0 }}>
                         {tc(c.timecodeSeconds)}
@@ -513,12 +592,12 @@ export function VideoRevision({ token, data }) {
                     )}
                     {canManage && !isEditing && (
                       <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4 }}>
-                        <button onClick={() => startEdit(c)} title="Edit"
+                        <button onClick={(e) => { e.stopPropagation(); startEdit(c); }} title="Edit"
                           style={{ background: 'transparent', border: 'none', cursor: 'pointer',
                             color: BRAND.muted, padding: 2, display: 'inline-flex' }}>
                           <Pencil size={13} />
                         </button>
-                        <button onClick={() => deleteComment(c)} title="Delete"
+                        <button onClick={(e) => { e.stopPropagation(); deleteComment(c); }} title="Delete"
                           style={{ background: 'transparent', border: 'none', cursor: 'pointer',
                             color: BRAND.muted, padding: 2, display: 'inline-flex' }}>
                           <Trash2 size={13} />
@@ -527,7 +606,7 @@ export function VideoRevision({ token, data }) {
                     )}
                   </div>
                   {isEditing ? (
-                    <div style={{ marginTop: 4 }}>
+                    <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
                       <textarea
                         value={editingText}
                         onChange={e => setEditingText(e.target.value)}
@@ -570,13 +649,32 @@ export function VideoRevision({ token, data }) {
             </div>
           ) : (
           <div style={{ borderTop: `1px solid ${BRAND.border}`, padding: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
                 <input type="checkbox" checked={pinned} onChange={e => setPinned(e.target.checked)} />
                 Attach to {tc(pinned ? (pinTime ?? currentTime) : currentTime)}
               </label>
+              {draftPin ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#B45309',
+                  background: '#FEF3C7', borderRadius: 999, padding: '3px 10px', fontWeight: 600, fontSize: 12 }}>
+                  <MapPin size={13} /> Pinned to a spot
+                  <button onClick={() => setDraftPin(null)} title="Remove pin"
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#B45309', padding: 0, display: 'flex' }}>
+                    <X size={13} />
+                  </button>
+                </span>
+              ) : (
+                <button onClick={startPlacing} disabled={placingSpot}
+                  title="Pause and click on the frame to anchor your comment to that spot"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12,
+                    padding: '3px 10px', borderRadius: 999, border: `1px solid ${BRAND.border}`,
+                    background: placingSpot ? BRAND.paper : '#fff', color: BRAND.ink, cursor: 'pointer', fontWeight: 600 }}>
+                  <MapPin size={13} /> {placingSpot ? 'Click the frame…' : 'Pin a spot'}
+                </button>
+              )}
             </div>
             <textarea
+              ref={composerRef}
               value={draft}
               onChange={e => setDraft(e.target.value)}
               onFocus={onComposerFocus}
