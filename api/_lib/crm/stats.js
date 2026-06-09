@@ -490,21 +490,17 @@ async function financeReport(year) {
     month, net: round2(v.net), vat: round2(v.vat), gross: round2(v.gross), corpTax: 0,
   }));
 
-  // Corporation Tax to set aside per month — computed on TAXABLE profit (cash
-  // banked net − the CT-deductible cost base, which excludes director dividends
-  // and the personal-tax line) at the YEAR's blended marginal rate. A loss month
-  // sets aside nothing. Mirrors the Cash Flow tab's CT (estimate).
+  // Corporation Tax to set aside per month — on TAXABLE profit (cash banked net −
+  // the CT-deductible cost base, which excludes director dividends and the
+  // personal-tax line), each month annualised to pick the HMRC marginal band
+  // (monthlyCorpTax) so a profitable month reserves CT regardless of empty earlier
+  // months. A loss month reserves nothing. Mirrors the Cash Flow tab (estimate).
   try {
     const costRows = await loadCashflowCostRows();
-    const taxProfit = {};
-    let taxProfitYear = 0;
     for (const m of months) {
       const tp = round2(m.net - deductibleCostTotalForMonth(costRows, m.month));
-      taxProfit[m.month] = tp;
-      taxProfitYear += tp;
+      m.corpTax = monthlyCorpTax(tp);
     }
-    const effRate = taxProfitYear > 0 ? corpTaxOn(taxProfitYear) / taxProfitYear : 0;
-    for (const m of months) m.corpTax = Math.max(0, round2(taxProfit[m.month] * effRate));
   } catch { /* leave corpTax at 0 — the cost base is admin-only and may be empty */ }
 
   // YTD: whole year for a past year, else up to (and including) the current month.
@@ -1668,6 +1664,17 @@ function corpTaxOn(profit) {
   return p * CT_MAIN - CT_MR_FRACTION * (CT_UPPER - p);
 }
 
+// Corporation Tax to set aside for ONE month, from its taxable profit. We
+// annualise the month (×12) to pick the right HMRC marginal band, then take a
+// twelfth back. Self-contained per month — so a profitable month reserves CT
+// even while earlier months are empty/unfilled (a trailing-12m or year-to-date
+// rate reads 0% until the back-months catch up, which is why CT showed £0). A
+// loss month reserves nothing.
+function monthlyCorpTax(taxProfit) {
+  const tp = Math.max(0, Number(taxProfit) || 0);
+  return round2(corpTaxOn(tp * 12) / 12);
+}
+
 // Cash Flow report for a month ('YYYY-MM', default current). Profit is on a CASH
 // basis: net cash received that month − costs (wages + expenses). The CT reserve
 // uses the blended marginal rate from the trailing-12-month profit so it tracks
@@ -1724,21 +1731,16 @@ async function cashflowReport(action) {
     return { month: mk, c, cashIn, opProfit: round2(cashIn - c.total), taxProfit: round2(cashIn - deductibleCostTotalForMonth(costRows, mk)) };
   });
 
-  // Corporation Tax is computed on TAXABLE profit (cash − the CT-deductible cost
+  // Corporation Tax per month on TAXABLE profit (cash − the CT-deductible cost
   // base: director dividends and the personal-tax line are excluded — see
-  // deductibleCostTotalForMonth), pre-CT so it never feeds its own basis (no
-  // circularity), then added on top as a cost line. The blended marginal rate
-  // comes from the trailing-12m taxable profit.
-  const taxProfit12 = round2(opHistory.reduce((s, h) => s + h.taxProfit, 0));
+  // deductibleCostTotalForMonth). Each month is annualised to pick the HMRC
+  // marginal band (monthlyCorpTax), so a profitable month reserves CT regardless
+  // of empty earlier months. Pre-CT so it never feeds its own basis, then folded
+  // into the expenses bucket + total so profit, costs and the revenue targets are
+  // all CT-inclusive (a loss month reserves nothing).
   const cashIn12 = round2(opHistory.reduce((s, h) => s + h.cashIn, 0));
-  const ctYear = round2(corpTaxOn(Math.max(0, taxProfit12)));
-  const effectiveRate = taxProfit12 > 0 ? ctYear / taxProfit12 : 0;
-  const corpTaxOfMonth = (taxProfit) => Math.max(0, round2(taxProfit * effectiveRate));
-
-  // Fold the month's CT into the expenses bucket + total so profit, costs and the
-  // revenue targets are all CT-inclusive (a loss month sets aside nothing).
   const history = opHistory.map((h) => {
-    const corpTax = corpTaxOfMonth(h.taxProfit);
+    const corpTax = monthlyCorpTax(h.taxProfit);
     const expenses = round2(h.c.expenses + corpTax);
     const costs = round2(h.c.total + corpTax);
     return { month: h.month, cashIn: h.cashIn, wages: h.c.wages, expenses, freelancers: h.c.freelancers, marketing: h.c.marketing, director: h.c.director, allowance: h.c.allowance, corpTax, costs, profit: round2(h.cashIn - costs) };
@@ -1748,7 +1750,10 @@ async function cashflowReport(action) {
   const sel = history[history.length - 1];
   const selOp = opHistory[opHistory.length - 1];
   const corpTaxMonthly = sel.corpTax;
-  const monthReserve = round2(selOp.taxProfit * effectiveRate); // negative on a loss month = a CT saving
+  const inProfit = selOp.taxProfit > 0.005;
+  const effectiveRate = inProfit ? corpTaxMonthly / selOp.taxProfit : 0;
+  const ctYear = round2(corpTaxOn(Math.max(0, selOp.taxProfit) * 12)); // annualised current-month run-rate
+  const monthReserve = corpTaxMonthly;
 
   // Wage-based targets. The "minimum" target is simply the full cost base (the
   // break-even). The £4k/£5k targets answer: what must we bill so both directors
@@ -1797,7 +1802,7 @@ async function cashflowReport(action) {
   return {
     month,
     selected: sel,
-    corpTax: { effectiveRate, monthReserve, monthly: corpTaxMonthly, yearEstimate: ctYear, profit12: taxProfit12, cashIn12, costs12, inProfit: selOp.taxProfit > 0 },
+    corpTax: { effectiveRate, monthReserve, monthly: corpTaxMonthly, yearEstimate: ctYear, profit12: round2(selOp.taxProfit * 12), cashIn12, costs12, inProfit },
     targets: wageTargets,
     history,
     lines,
