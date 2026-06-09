@@ -110,10 +110,16 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
   }, [actions, period, isSales, isComparison, isCashflow, state.financeRefresh]);
 
   // Sales vs PP's needs the rolling 36-month trend + (for the importer) history.
-  // Refetch the trend too when finance data changes.
+  // Refetch the trend too when finance data changes. Partner credits feed the
+  // outstanding partner total added to the latest "money owed" point.
   useEffect(() => {
-    if (isComparison) actions.loadTrend(36);
+    if (isComparison) { actions.loadTrend(36); actions.fetchPartnerCreditsList(); }
   }, [actions, isComparison, state.financeRefresh]);
+
+  // Outstanding partner total (active partners not yet collected this month).
+  const partnerOutstanding = (state.partnerCreditsList || [])
+    .filter((p) => p.status === 'active' || p.status === 'credits_only')
+    .reduce((s, p) => s + (Number(p.outstanding) || 0), 0);
 
   // Income targets mirror the Cash Flow & Targets figures live: keep each saved
   // target's label/colour but source its amount from the cashflow targets
@@ -218,7 +224,7 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
       </div>
 
       {isComparison && (
-        <SalesVsPpView trend={state.trend} isMobile={isMobile} actions={actions} history={state.salesHistory} />
+        <SalesVsPpView trend={state.trend} isMobile={isMobile} actions={actions} history={state.salesHistory} partnerOutstanding={partnerOutstanding} />
       )}
 
       {isCashflow && (
@@ -304,15 +310,18 @@ export function PerformancePanel({ section: sectionProp, onSection } = {}) {
 // Sales vs PP's — cash received each month vs new money owed created that month
 // over the last 36 months. The owed line is tomorrow's income, so the gap reads
 // as the forward pipeline. Admins can backfill pre-CRM months from the sheet.
-function SalesVsPpView({ trend, isMobile, actions, history }) {
+function SalesVsPpView({ trend, isMobile, actions, history, partnerOutstanding = 0 }) {
   const months = trend?.months || [];
   const chart = useMemo(() => months.map((m, i) => ({
     label: monthShortYear(m.month),
     cashIn: m.cashIn,
     // The latest point previews ALL outstanding cash still owed (invoiced or
-    // not), not just what was created that month.
-    pps: (i === months.length - 1 && m.ppsOutstanding != null) ? m.ppsOutstanding : m.pps,
-  })), [months]);
+    // not), not just what was created that month — plus the outstanding partner
+    // fees (recurring income owed) that sit outside signings/extras.
+    pps: (i === months.length - 1)
+      ? (m.ppsOutstanding != null ? m.ppsOutstanding : m.pps) + (Number(partnerOutstanding) || 0)
+      : m.pps,
+  })), [months, partnerOutstanding]);
   const totals = months.reduce(
     (a, m) => ({ cashIn: a.cashIn + (m.cashIn || 0), pps: a.pps + (m.pps || 0) }),
     { cashIn: 0, pps: 0 },

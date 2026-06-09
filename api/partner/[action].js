@@ -81,6 +81,11 @@ export default async function handler(req, res) {
       return await setManualFee(req, res);
     }
 
+    if (action === 'mark-fee-paid') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return await markFeePaid(req, res, user);
+    }
+
     return res.status(404).json({ error: 'Unknown action' });
   } catch (err) {
     console.error('[partner]', err);
@@ -98,46 +103,119 @@ export default async function handler(req, res) {
 // Adjustments: kind='adjustment' rows on credit_allocations. Positive
 //   credit_cost adds to "issued"; negative adds to "used".
 
-// Manual monthly-spend override per partner (ex-VAT), for clients added before
-// the fee system (no partnerExVat on a signed proposal). Self-healed.
-let manualFeesEnsured = null;
-function ensurePartnerManualFees() {
-  if (manualFeesEnsured) return manualFeesEnsured;
-  manualFeesEnsured = sql`
-    CREATE TABLE IF NOT EXISTS partner_manual_fees (
-      client_key  TEXT PRIMARY KEY,
-      monthly_net NUMERIC,
-      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`.catch((err) => { manualFeesEnsured = null; throw err; });
-  return manualFeesEnsured;
+// Partner billing tables, self-healed:
+//  · partner_manual_fees  — manual monthly spend (ex-VAT) + VAT rate per partner,
+//    for clients added before the fee system (no partnerExVat on a proposal).
+//  · partner_fee_payments — a month marked paid for a partner: its net + VAT, so
+//    it flows into income + the VAT-to-save figure via fetchPaidRows.
+let partnerBillingEnsured = null;
+function ensurePartnerBilling() {
+  if (partnerBillingEnsured) return partnerBillingEnsured;
+  partnerBillingEnsured = (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS partner_manual_fees (
+        client_key  TEXT PRIMARY KEY,
+        monthly_net NUMERIC,
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`ALTER TABLE partner_manual_fees ADD COLUMN IF NOT EXISTS vat_rate NUMERIC NOT NULL DEFAULT 0.20`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS partner_fee_payments (
+        id         TEXT PRIMARY KEY,
+        client_key TEXT NOT NULL,
+        month      TEXT NOT NULL,
+        net        NUMERIC NOT NULL DEFAULT 0,
+        vat        NUMERIC NOT NULL DEFAULT 0,
+        method     TEXT,
+        paid_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_by TEXT,
+        UNIQUE (client_key, month)
+      )`;
+  })().catch((err) => { partnerBillingEnsured = null; throw err; });
+  return partnerBillingEnsured;
 }
 
-// POST /api/partner/manual-fee { clientKey, monthlyNet } — set or clear a
-// partner's manual monthly spend (ex-VAT). A blank/0 amount clears it (falls
-// back to the derived value). Feeds the Pending Payments "Partners" figure.
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const curMonthKey = () => new Date().toISOString().slice(0, 7);
+
+// POST /api/partner/manual-fee { clientKey, monthlyNet?, vatRate? } — set a
+// partner's manual monthly spend (ex-VAT) and/or VAT rate (fraction, e.g. 0.20).
+// Only the provided fields change. Feeds the Pending Payments "Partners" figure.
 async function setManualFee(req, res) {
-  await ensurePartnerManualFees();
+  await ensurePartnerBilling();
   const body = req.body || {};
   const clientKey = body.clientKey ? String(body.clientKey) : null;
   if (!clientKey) return res.status(400).json({ error: 'clientKey required' });
-  const raw = body.monthlyNet;
-  const amount = (raw === '' || raw == null) ? null : Number(raw);
-  if (amount != null && (!Number.isFinite(amount) || amount < 0)) {
-    return res.status(400).json({ error: 'monthlyNet must be a non-negative number' });
+  const hasNet = Object.prototype.hasOwnProperty.call(body, 'monthlyNet');
+  const hasVat = Object.prototype.hasOwnProperty.call(body, 'vatRate');
+  let net = null, vat = null;
+  if (hasNet) {
+    const raw = body.monthlyNet;
+    net = (raw === '' || raw == null) ? null : Number(raw);
+    if (net != null && (!Number.isFinite(net) || net < 0)) return res.status(400).json({ error: 'monthlyNet must be a non-negative number' });
+    if (net === 0) net = null; // 0 = cleared (fall back to derived)
   }
-  if (amount == null || amount === 0) {
-    await sql`DELETE FROM partner_manual_fees WHERE client_key = ${clientKey}`;
-  } else {
-    await sql`
-      INSERT INTO partner_manual_fees (client_key, monthly_net, updated_at)
-      VALUES (${clientKey}, ${amount}, NOW())
-      ON CONFLICT (client_key) DO UPDATE SET monthly_net = EXCLUDED.monthly_net, updated_at = NOW()`;
+  if (hasVat) {
+    const raw = body.vatRate;
+    vat = (raw === '' || raw == null) ? 0.20 : Number(raw);
+    if (!Number.isFinite(vat) || vat < 0 || vat > 1) return res.status(400).json({ error: 'vatRate must be a fraction between 0 and 1' });
   }
-  return res.status(200).json({ ok: true, clientKey, monthlyNet: amount });
+  const [existing] = await sql`SELECT monthly_net, vat_rate FROM partner_manual_fees WHERE client_key = ${clientKey}`;
+  const finalNet = hasNet ? net : (existing ? existing.monthly_net : null);
+  const finalVat = hasVat ? vat : (existing ? Number(existing.vat_rate) : 0.20);
+  await sql`
+    INSERT INTO partner_manual_fees (client_key, monthly_net, vat_rate, updated_at)
+    VALUES (${clientKey}, ${finalNet}, ${finalVat}, NOW())
+    ON CONFLICT (client_key) DO UPDATE SET monthly_net = EXCLUDED.monthly_net, vat_rate = EXCLUDED.vat_rate, updated_at = NOW()`;
+  return res.status(200).json({ ok: true, clientKey, monthlyNet: finalNet, vatRate: finalVat });
+}
+
+// POST /api/partner/mark-fee-paid { clientKey, month?, method?, net?, paid? } —
+// mark (or, with paid:false, un-mark) a partner's monthly fee as collected for a
+// month (default this month). Records net + VAT so it lands in income + VAT-to-
+// save. `net` overrides the stored monthly figure for that one month if supplied.
+async function markFeePaid(req, res, user) {
+  await ensurePartnerBilling();
+  const body = req.body || {};
+  const clientKey = body.clientKey ? String(body.clientKey) : null;
+  if (!clientKey) return res.status(400).json({ error: 'clientKey required' });
+  const month = /^\d{4}-\d{2}$/.test(String(body.month || '')) ? String(body.month) : curMonthKey();
+  const unpay = body.paid === false;
+
+  if (unpay) {
+    await sql`DELETE FROM partner_fee_payments WHERE client_key = ${clientKey} AND month = ${month}`;
+    return res.status(200).json({ ok: true, clientKey, month, paid: false });
+  }
+
+  // Resolve this partner's net + VAT rate (manual override, else the derived fee).
+  const [fee] = await sql`SELECT monthly_net, vat_rate FROM partner_manual_fees WHERE client_key = ${clientKey}`;
+  const [derived] = await sql`
+    SELECT (sg.data->'amountBreakdown'->>'partnerExVat')::numeric AS ex_vat,
+           (sg.data->>'vatRate')::numeric AS rate
+      FROM partner_subscriptions ps
+      JOIN signatures sg ON sg.proposal_id = ps.proposal_id
+     WHERE ps.client_key = ${clientKey}
+       AND (sg.data->'amountBreakdown'->>'partnerExVat') IS NOT NULL
+     ORDER BY sg.signed_at DESC NULLS LAST LIMIT 1`;
+  const net = body.net != null && body.net !== ''
+    ? Number(body.net)
+    : (fee && fee.monthly_net != null ? Number(fee.monthly_net) : (derived ? Number(derived.ex_vat) : 0));
+  if (!Number.isFinite(net) || net <= 0) {
+    return res.status(400).json({ error: 'No monthly amount set for this partner — add one first.' });
+  }
+  const vatRate = fee ? Number(fee.vat_rate) : (derived && derived.rate != null ? Number(derived.rate) : 0.20);
+  const vat = r2(net * vatRate);
+  const method = (body.method || 'BACS').toString().slice(0, 40);
+
+  await sql`
+    INSERT INTO partner_fee_payments (id, client_key, month, net, vat, method, paid_at, created_by)
+    VALUES (${'pfp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)}, ${clientKey}, ${month}, ${r2(net)}, ${vat}, ${method}, NOW(), ${user.email || null})
+    ON CONFLICT (client_key, month) DO UPDATE SET net = EXCLUDED.net, vat = EXCLUDED.vat, method = EXCLUDED.method, paid_at = NOW(), created_by = EXCLUDED.created_by`;
+  return res.status(200).json({ ok: true, clientKey, month, paid: true, net: r2(net), vat });
 }
 
 async function listCredits(res) {
-  await ensurePartnerManualFees();
+  await ensurePartnerBilling();
   const rows = await sql`
     WITH sub_totals AS (
       SELECT
@@ -232,7 +310,8 @@ async function listCredits(res) {
     SELECT DISTINCT ON (ps.client_key)
            ps.client_key,
            (sg.data->'amountBreakdown'->>'partnerExVat')::numeric AS partner_ex_vat,
-           NULLIF(sg.data->>'partnerCredits', '')::numeric        AS partner_credits
+           NULLIF(sg.data->>'partnerCredits', '')::numeric        AS partner_credits,
+           NULLIF(sg.data->>'vatRate', '')::numeric               AS vat_rate
       FROM partner_subscriptions ps
       JOIN signatures sg ON sg.proposal_id = ps.proposal_id
      WHERE (sg.data->'amountBreakdown'->>'partnerExVat') IS NOT NULL
@@ -241,23 +320,36 @@ async function listCredits(res) {
   const feeByClient = new Map(feeRows.map(r => [r.client_key, {
     exVat: Number(r.partner_ex_vat) || 0,
     credits: Number(r.partner_credits) || 0,
+    rate: r.vat_rate == null ? null : Number(r.vat_rate),
   }]));
-  // Manual monthly-spend overrides (set by hand for pre-system partners).
-  const manualFeeRows = await sql`SELECT client_key, monthly_net FROM partner_manual_fees`;
-  const manualByClient = new Map(manualFeeRows.map(r => [r.client_key, r.monthly_net == null ? null : Number(r.monthly_net)]));
-  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  // Manual monthly-spend + VAT-rate overrides (set by hand for pre-system partners).
+  const manualFeeRows = await sql`SELECT client_key, monthly_net, vat_rate FROM partner_manual_fees`;
+  const manualByClient = new Map(manualFeeRows.map(r => [r.client_key, {
+    net: r.monthly_net == null ? null : Number(r.monthly_net),
+    vatRate: r.vat_rate == null ? 0.20 : Number(r.vat_rate),
+    hasRow: true,
+  }]));
+  // Which partners have this month's fee marked paid (so it's collected, not owed).
+  const thisMonth = curMonthKey();
+  const paidRows = await sql`SELECT client_key, net, vat FROM partner_fee_payments WHERE month = ${thisMonth}`;
+  const paidByClient = new Map(paidRows.map(r => [r.client_key, { net: Number(r.net) || 0, vat: Number(r.vat) || 0 }]));
 
   const list = rows.map(r => {
     const creditsRemaining = Number(r.credits_remaining) || 0;
     const fee = feeByClient.get(r.client_key) || { exVat: 0, credits: 0 };
     const ratePerCredit = fee.credits > 0 ? fee.exVat / fee.credits : 0;
-    const manualMonthly = manualByClient.has(r.client_key) ? manualByClient.get(r.client_key) : null;
+    const manual = manualByClient.get(r.client_key) || null;
+    const manualMonthly = manual ? manual.net : null;
+    const vatRate = manual ? manual.vatRate : (fee.rate != null ? fee.rate : 0.20);
     const monthlyNet = manualMonthly != null ? r2(manualMonthly) : r2(fee.exVat); // ex-VAT recurring fee
-    // Outstanding (ex-VAT): a manual override wins; otherwise subscription → next
-    // month's fee, credits-only → value of the credits still owed, inactive → nil.
-    const outstanding = manualMonthly != null
+    // Base outstanding (ex-VAT): a manual override wins; otherwise subscription →
+    // next month's fee, credits-only → value of credits still owed, inactive → nil.
+    const baseOutstanding = manualMonthly != null
       ? r2(manualMonthly)
       : (r.status === 'active' ? monthlyNet : (r.status === 'credits_only' ? r2(creditsRemaining * ratePerCredit) : 0));
+    // This month already marked paid → collected, so nothing's outstanding now.
+    const paidThisMonth = paidByClient.has(r.client_key);
+    const outstanding = paidThisMonth ? 0 : baseOutstanding;
     return {
       clientKey: r.client_key,
       clientName: r.client_name,
@@ -268,8 +360,12 @@ async function listCredits(res) {
       lastPaymentAt: r.last_payment_at,
       status: r.status,
       monthlyNet,
+      vatRate: r2(vatRate),
+      monthlyVat: r2(monthlyNet * vatRate),
       ratePerCredit: r2(ratePerCredit),
       manualFee: manualMonthly != null,
+      paidThisMonth,
+      paidThisMonthAt: paidThisMonth ? thisMonth : null,
       outstanding,
     };
   });

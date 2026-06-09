@@ -471,6 +471,20 @@ async function fetchPaidRows(sinceISO, untilISO) {
     push(r.paid_at, { net, vat, gross: net + vat });
   }
 
+  // Partner fee months marked paid (manual partners) — net + VAT stored directly,
+  // so they hit cash-in AND the VAT-to-save figure. Guarded: the table is created
+  // by the partner route's self-heal, which may not have run on a fresh deploy.
+  try {
+    const partnerFeeRows = await sql`
+      SELECT net, vat, paid_at FROM partner_fee_payments
+       WHERE paid_at >= ${sinceISO} AND paid_at < ${untilISO}`;
+    for (const r of partnerFeeRows) {
+      const net = Number(r.net) || 0;
+      const vat = Number(r.vat) || 0;
+      push(r.paid_at, { net, vat, gross: net + vat });
+    }
+  } catch { /* partner_fee_payments not created yet — ignore */ }
+
   return rows;
 }
 

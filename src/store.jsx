@@ -1149,6 +1149,14 @@ export function StoreProvider({ children }) {
     setPartnerManualFee(clientKey, monthlyNet) {
       return api.post('/api/partner/manual-fee', { clientKey, monthlyNet });
     },
+    // Set a partner's VAT rate (fraction, e.g. 0.20) for the VAT-to-save split.
+    setPartnerVatRate(clientKey, vatRate) {
+      return api.post('/api/partner/manual-fee', { clientKey, vatRate });
+    },
+    // Mark (or un-mark) a partner's fee for this month as collected → income + VAT.
+    markPartnerFeePaid(clientKey, paid = true) {
+      return api.post('/api/partner/mark-fee-paid', { clientKey, paid });
+    },
     fetchPartnerCreditDetail(clientKey) {
       return api.get('/api/partner/clients?key=' + encodeURIComponent(clientKey))
         .then((data) => {

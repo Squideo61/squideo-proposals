@@ -114,6 +114,8 @@ export function PartnerCreditsView({ onBack, onOpen }) {
                   <Th align="right">Used</Th>
                   <Th align="right">Remaining</Th>
                   <Th align="right">Monthly £</Th>
+                  <Th align="right">VAT</Th>
+                  <Th align="center">This month</Th>
                   {!isMobile && <Th>Usage</Th>}
                   {!isMobile && <Th>Last payment</Th>}
                 </tr>
@@ -121,7 +123,7 @@ export function PartnerCreditsView({ onBack, onOpen }) {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={isMobile ? 6 : 8} style={{ padding: 40, textAlign: 'center', color: BRAND.muted }}>
+                    <td colSpan={isMobile ? 8 : 10} style={{ padding: 40, textAlign: 'center', color: BRAND.muted }}>
                       No clients in this view.
                     </td>
                   </tr>
@@ -160,6 +162,24 @@ export function PartnerCreditsView({ onBack, onOpen }) {
                             .then(() => actions.fetchPartnerCreditsList())
                             .then(() => showMsg('Monthly spend saved'))
                             .catch((err) => showMsg(err?.message || 'Could not save'))}
+                        />
+                      </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                        <VatRateCell
+                          row={row}
+                          onSave={(rate) => actions.setPartnerVatRate(row.clientKey, rate)
+                            .then(() => actions.fetchPartnerCreditsList())
+                            .then(() => showMsg('VAT rate saved'))
+                            .catch((err) => showMsg(err?.message || 'Could not save'))}
+                        />
+                      </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                        <PaidToggle
+                          row={row}
+                          onToggle={(paid) => actions.markPartnerFeePaid(row.clientKey, paid)
+                            .then(() => actions.fetchPartnerCreditsList())
+                            .then(() => showMsg(paid ? 'Marked paid — added to income + VAT' : 'Marked unpaid'))
+                            .catch((err) => showMsg(err?.message || 'Could not update'))}
                         />
                       </td>
                       {!isMobile && (
@@ -220,6 +240,65 @@ function MonthlyFeeCell({ row, onSave }) {
         style={{ width: 84, padding: '4px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
       />
     </span>
+  );
+}
+
+// Editable VAT rate (%) per partner. Stored as a fraction (0.20); shown as 20.
+function VatRateCell({ row, onSave }) {
+  const toPct = (r) => (r != null ? Math.round(Number(r) * 100) : 20);
+  const [val, setVal] = useState(String(toPct(row.vatRate)));
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setVal(String(toPct(row.vatRate))); }, [row.vatRate]);
+  const commit = () => {
+    const next = Math.max(0, Math.min(100, parseFloat(val) || 0));
+    if (next === toPct(row.vatRate)) return;
+    setSaving(true);
+    Promise.resolve(onSave(next / 100)).finally(() => setSaving(false));
+  };
+  return (
+    <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: 2, justifyContent: 'flex-end' }}>
+      <input
+        type="number" step="1" min="0" max="100"
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+        disabled={saving}
+        title="VAT rate % on this partner's fee — feeds the VAT you set aside"
+        style={{ width: 46, padding: '4px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12, textAlign: 'right' }}
+      />
+      <span style={{ color: BRAND.muted, fontSize: 12 }}>%</span>
+    </span>
+  );
+}
+
+// "Mark paid" toggle for THIS month — records income + VAT (or undoes it).
+function PaidToggle({ row, onToggle }) {
+  const [busy, setBusy] = useState(false);
+  const paid = !!row.paidThisMonth;
+  const noAmount = !(Number(row.monthlyNet) > 0);
+  const click = (e) => {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    Promise.resolve(onToggle(!paid)).finally(() => setBusy(false));
+  };
+  return (
+    <button
+      onClick={click}
+      disabled={busy || (noAmount && !paid)}
+      title={paid ? 'Collected this month — click to undo' : (noAmount ? 'Set a monthly amount first' : 'Mark this month collected (records income + VAT to save)')}
+      style={{
+        fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6,
+        cursor: (busy || (noAmount && !paid)) ? 'default' : 'pointer',
+        border: '1px solid ' + (paid ? '#A7F3D0' : BRAND.border),
+        background: paid ? '#ECFDF3' : 'white',
+        color: paid ? '#15803D' : (noAmount ? BRAND.muted : BRAND.ink),
+        opacity: noAmount && !paid ? 0.6 : 1,
+      }}
+    >
+      {paid ? '✓ Paid' : 'Mark paid'}
+    </button>
   );
 }
 
