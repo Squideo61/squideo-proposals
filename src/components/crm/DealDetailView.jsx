@@ -73,7 +73,7 @@ function toEmbedSrc(raw) {
 // `productionOnly` strips the sales/financial chrome (pipeline, order summary,
 // proposals, invoices, edit/delete…) so producers/copywriters get a focused
 // project view — the deal page doubles as the project page once signed.
-export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, onOpenCompany, productionOnly = false }) {
+export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposal, onOpenVideo, onOpenCompany, productionOnly = false }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
@@ -223,6 +223,13 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           {!productionOnly && (
             <>
+              {proposals.length === 0 && (
+                <button
+                  onClick={() => onCreateProposal?.(dealId)}
+                  className="btn"
+                  style={{ background: '#22C55E', borderColor: '#22C55E', color: '#fff' }}
+                ><FileText size={14} /> Create proposal</button>
+              )}
               <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
               <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
               <button

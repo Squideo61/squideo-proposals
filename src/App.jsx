@@ -164,6 +164,14 @@ function AppShell() {
     else setModal({ type: 'templates' });
   };
 
+  // Same as createNew but pre-links the new proposal to a deal so the builder
+  // lands populated with the deal's contact + company (see createFrom).
+  const createForDeal = (dealId) => {
+    const tpls = Object.values(state.templates);
+    if (tpls.length === 0) createFrom(DEFAULT_PROPOSAL, { dealId });
+    else setModal({ type: 'templates', dealId });
+  };
+
   // Create a proposal pre-linked to an existing deal, pre-filling client and
   // company from the deal so the builder isn't blank.
   const createFrom = (base, { dealId } = {}) => {
@@ -378,6 +386,7 @@ function AppShell() {
           dealId={activeId}
           onBack={() => goBack(view === 'project' ? 'projects' : 'pipeline')}
           onOpenProposal={(id, signed) => navigate(signed ? 'client' : 'builder', id)}
+          onCreateProposal={createForDeal}
           onOpenVideo={(id) => navigate('video', id)}
           onOpenCompany={(id) => navigate('company', id)}
         />
