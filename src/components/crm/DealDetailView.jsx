@@ -3621,8 +3621,11 @@ const EMAIL_ATTACH_MAX_BYTES = 20 * 1024 * 1024;
 // Tags the rich-text toolbar can produce. Anything else (scripts, styles,
 // inline event handlers) is stripped before the HTML leaves the browser.
 const EMAIL_HTML_SANITIZE = {
-  ALLOWED_TAGS: ['b', 'strong', 'i', 'em', 'u', 'a', 'ul', 'ol', 'li', 'p', 'br', 'span', 'div'],
-  ALLOWED_ATTR: ['href', 'target', 'rel'],
+  // `style` is allowed so the toolbar's text/highlight colours survive (DOMPurify
+  // still strips dangerous CSS); `font` + `color` covers the <font> tags older
+  // browsers emit for foreColor/backColor.
+  ALLOWED_TAGS: ['b', 'strong', 'i', 'em', 'u', 'a', 'ul', 'ol', 'li', 'p', 'br', 'span', 'div', 'font'],
+  ALLOWED_ATTR: ['href', 'target', 'rel', 'style', 'color'],
 };
 
 function sanitizeEmailHtml(html) {
@@ -3698,16 +3701,47 @@ function RichTextEditor({ editorRef, initialHtml, onChange }) {
 // shared editorRef. Rendered at the bottom of the message box, below the
 // signature (Gmail-style).
 function RichTextToolbar({ editorRef, onChange, onAttach }) {
+  // Which colour palette (if any) is open. Single value so opening one closes
+  // the other.
+  const [openPalette, setOpenPalette] = useState(null); // 'text' | 'highlight' | null
+  const barRef = useRef(null);
+  // Dismiss an open palette when clicking anywhere outside the toolbar.
+  useEffect(() => {
+    if (!openPalette) return undefined;
+    const onDocDown = (e) => { if (barRef.current && !barRef.current.contains(e.target)) setOpenPalette(null); };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [openPalette]);
   const emit = () => { if (editorRef.current) onChange(editorRef.current.innerHTML); };
   const exec = (cmd, val = null) => {
     document.execCommand(cmd, false, val);
     if (editorRef.current) editorRef.current.focus();
     emit();
   };
+  // Colour commands need styleWithCSS on so Chromium emits inline-style spans
+  // (which the sanitizer keeps) rather than legacy <font> tags.
+  const execColor = (kind, color) => {
+    try { document.execCommand('styleWithCSS', false, true); } catch { /* unsupported */ }
+    if (kind === 'text') {
+      document.execCommand('foreColor', false, color);
+    } else {
+      // hiliteColor is the standard; Chromium older builds need backColor.
+      const ok = document.execCommand('hiliteColor', false, color);
+      if (!ok) document.execCommand('backColor', false, color);
+    }
+    try { document.execCommand('styleWithCSS', false, false); } catch { /* unsupported */ }
+    if (editorRef.current) editorRef.current.focus();
+    emit();
+    setOpenPalette(null);
+  };
   const addLink = () => {
     const url = window.prompt('Link URL (include https://):', 'https://');
     if (url && url !== 'https://') exec('createLink', url);
   };
+  // Swatches for the two pickers. Text defaults back to the body ink; highlight
+  // "none" clears via transparent.
+  const TEXT_COLORS = ['#0F2A3D', '#5B7282', '#E11D48', '#EA580C', '#CA8A04', '#16A34A', '#2563EB', '#7C3AED'];
+  const HILITE_COLORS = ['transparent', '#FEF08A', '#FDE68A', '#BBF7D0', '#BAE6FD', '#FBCFE8', '#FED7AA', '#E9D5FF'];
   const toolBtn = {
     background: 'transparent', border: '1px solid transparent', borderRadius: 4,
     cursor: 'pointer', color: BRAND.ink, fontSize: 13, lineHeight: 1,
@@ -3728,14 +3762,63 @@ function RichTextToolbar({ editorRef, onChange, onAttach }) {
       {children}
     </button>
   );
+  // Trigger + swatch popover for a colour picker. `colors` are CSS values;
+  // 'transparent' renders as a "no colour" checker swatch.
+  const ColorBtn = ({ kind, title, colors, swatch, label }) => (
+    <span style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        type="button"
+        title={title}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpenPalette((p) => (p === kind ? null : kind))}
+        style={{ ...toolBtn, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, lineHeight: 1 }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = '#EEF3F6'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+      >
+        <span style={{ fontSize: 13 }}>{label}</span>
+        <span style={{ width: 14, height: 3, borderRadius: 1, background: swatch }} />
+      </button>
+      {openPalette === kind && (
+        <div
+          onMouseDown={(e) => e.preventDefault()}
+          style={{
+            position: 'absolute', bottom: '100%', left: 0, marginBottom: 4, zIndex: 20,
+            display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, padding: 6,
+            background: '#fff', border: '1px solid ' + BRAND.border, borderRadius: 6,
+            boxShadow: '0 4px 16px rgba(15,42,61,0.18)',
+          }}
+        >
+          {colors.map((c) => (
+            <button
+              key={c}
+              type="button"
+              title={c === 'transparent' ? 'No highlight' : c}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => execColor(kind, c)}
+              style={{
+                width: 20, height: 20, borderRadius: 4, cursor: 'pointer',
+                border: '1px solid ' + BRAND.border,
+                background: c === 'transparent'
+                  ? 'repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50% / 10px 10px'
+                  : c,
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </span>
+  );
   return (
-    <div style={{
+    <div ref={barRef} style={{
       display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center',
       padding: '4px 6px', borderTop: '1px solid ' + BRAND.border, background: '#FAFBFC',
     }}>
       <Btn cmd="bold" title="Bold"><strong>B</strong></Btn>
       <Btn cmd="italic" title="Italic"><em>I</em></Btn>
       <Btn cmd="underline" title="Underline"><span style={{ textDecoration: 'underline' }}>U</span></Btn>
+      <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
+      <ColorBtn kind="text" title="Text colour" colors={TEXT_COLORS} swatch="#E11D48" label="A" />
+      <ColorBtn kind="highlight" title="Highlight colour" colors={HILITE_COLORS} swatch="#FEF08A" label="🖍" />
       <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
       <Btn cmd="insertUnorderedList" title="Bulleted list">• —</Btn>
       <Btn cmd="insertOrderedList" title="Numbered list">1.</Btn>
