@@ -3700,12 +3700,29 @@ function RichTextEditor({ editorRef, initialHtml, onChange }) {
     // Seed once on mount; remounts (new draft) come with a fresh key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // In a contentEditable, clicking a link just moves the caret. Mirror Gmail/
+  // word processors: Ctrl/Cmd+click opens it in a new tab. The title hint is set
+  // on hover so users discover the shortcut.
+  const onEditorClick = (e) => {
+    const a = e.target.closest && e.target.closest('a[href]');
+    if (!a) return;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      window.open(a.href, '_blank', 'noopener,noreferrer');
+    }
+  };
+  const onEditorOver = (e) => {
+    const a = e.target.closest && e.target.closest('a[href]');
+    if (a && !a.title) a.title = `${a.href}\n(Ctrl/Cmd+click to open)`;
+  };
   return (
     <div
       ref={editorRef}
       contentEditable
       suppressContentEditableWarning
       onInput={() => editorRef.current && onChange(editorRef.current.innerHTML)}
+      onClick={onEditorClick}
+      onMouseOver={onEditorOver}
       className="email-body"
       style={{
         // Match the To/Subject inputs: same font stack and normal weight.
