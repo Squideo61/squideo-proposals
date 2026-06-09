@@ -10,7 +10,7 @@ import { BillingFields, emptyBilling, isBillingValid } from './BillingFields.jsx
 
 export function ThankYouView({ proposalId, proposal, signed, payment, onViewProposal, useRealStripe = true, showMsg }) {
   const autoPrintFiredRef = useRef(false);
-  const [paymentChoice, setPaymentChoice] = useState(null); // null | 'invoice' | 'processing'
+  const [paymentChoice, setPaymentChoice] = useState(null); // null (choice screen) | 'pay' | 'invoice' | 'processing'
   const [billing, setBilling] = useState(() => emptyBilling(signed?.email));
   const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
   const [invoiceConfirmed, setInvoiceConfirmed] = useState(false);
@@ -120,6 +120,20 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
     }
   };
 
+  // Client opts into the invoice route. Flips to the billing panel and gives
+  // the team a heads-up (deduped server-side) that they want to be invoiced.
+  const chooseInvoice = () => {
+    setPaymentChoice('invoice');
+    if (useRealStripe) {
+      fetch('/api/xero/invoice-intent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposalId }),
+        keepalive: true,
+      }).catch(() => {});
+    }
+  };
+
   const handleConfirmInvoice = async () => {
     if (!billingValid) return;
     setInvoiceSubmitting(true);
@@ -217,7 +231,49 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
           </div>
         </div>
 
-        {showPaymentPanel && paymentChoice !== 'invoice' && (
+        {/* Choice screen: two clear buttons (pay now vs request an invoice),
+            shown before we ask for any billing details. */}
+        {showPaymentPanel && paymentChoice == null && (
+          <div style={{
+            background: 'white',
+            border: '2px solid ' + BRAND.blue,
+            borderRadius: 12,
+            padding: 24,
+            marginBottom: 20,
+          }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>
+              {isDeposit ? 'Pay your deposit or request an invoice' : 'Pay now or request an invoice'}
+            </h3>
+            <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 20, lineHeight: 1.5 }}>
+              {isDeposit
+                ? 'Your 50% deposit of ' + formatGBP(amountDue) + ' reserves your place in our production schedule.'
+                : 'Your total of ' + formatGBP(amountDue) + ' is due to start production.'}
+            </p>
+
+            <button
+              onClick={() => setPaymentChoice('pay')}
+              className="btn"
+              style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}
+            >
+              <CreditCard size={16} /> {isDeposit ? 'Pay your deposit now' : 'Pay now'}
+            </button>
+            <p style={{ fontSize: 12.5, color: BRAND.muted, textAlign: 'center', margin: '10px 0 18px', lineHeight: 1.5 }}>
+              {isDeposit
+                ? 'Pay your deposit now to get started as soon as possible.'
+                : 'Pay now to get started as soon as possible.'}
+            </p>
+
+            <button
+              onClick={chooseInvoice}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 14, fontSize: 15, fontWeight: 600, background: 'white', color: BRAND.blue, border: '1px solid ' + BRAND.blue, borderRadius: 8, cursor: 'pointer' }}
+            >
+              <FileText size={16} /> {isDeposit ? 'Send me a deposit invoice' : 'Send me an invoice'}
+            </button>
+          </div>
+        )}
+
+        {/* Pay-by-card panel, shown once they've chosen to pay now. */}
+        {showPaymentPanel && paymentChoice != null && paymentChoice !== 'invoice' && (
           <div style={{
             background: 'white',
             border: '2px solid ' + BRAND.blue,
@@ -264,22 +320,10 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
             </button>
 
             <button
-              onClick={() => {
-                setPaymentChoice('invoice');
-                // Heads-up to the team that this client wants an invoice (they
-                // may not finish issuing it). Fire-and-forget; deduped server-side.
-                if (useRealStripe) {
-                  fetch('/api/xero/invoice-intent', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ proposalId }),
-                    keepalive: true,
-                  }).catch(() => {});
-                }
-              }}
+              onClick={chooseInvoice}
               style={{ background: 'none', border: 'none', color: BRAND.muted, cursor: 'pointer', fontSize: 13, marginTop: 12, width: '100%', textAlign: 'center', padding: 8 }}
             >
-              Skip - send me an invoice instead
+              {isDeposit ? 'Send me a deposit invoice instead' : 'Send me an invoice instead'}
             </button>
           </div>
         )}
@@ -318,7 +362,7 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
             >
               {invoiceSubmitting ? 'Issuing invoice…' : 'Issue invoice for ' + formatGBP(amountDue)}
             </button>
-            <button onClick={() => setPaymentChoice(null)} className="btn-ghost" style={{ marginTop: 12, fontSize: 12, width: '100%', textAlign: 'center' }}>
+            <button onClick={() => setPaymentChoice('pay')} className="btn-ghost" style={{ marginTop: 12, fontSize: 12, width: '100%', textAlign: 'center' }}>
               Changed your mind? Pay now instead
             </button>
           </div>

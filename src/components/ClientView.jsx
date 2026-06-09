@@ -1113,6 +1113,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
             paymentChoice={paymentChoice}
             vatRate={data.vatRate}
             onPayNow={handlePayNow}
+            onChoosePay={() => setPaymentChoice('pay')}
             onChooseInvoice={() => {
               setPaymentChoice('invoice');
               // Heads-up to the team that this client wants an invoice (they
@@ -1126,7 +1127,7 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
                 }).catch(() => {});
               }
             }}
-            onUndoInvoice={() => setPaymentChoice(null)}
+            onUndoInvoice={() => setPaymentChoice('pay')}
             onConfirmInvoice={handleConfirmInvoice}
             onPoConfirm={handlePoConfirm}
             onDownloadReceipt={payment ? () => openReceiptWindow(data, signed, payment) : undefined}

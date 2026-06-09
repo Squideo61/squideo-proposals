@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Download, FileText } from 'lucide-react';
+import { Check, CreditCard, Download, FileText } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { formatGBP } from '../utils.js';
 import { BillingFields, emptyBilling, isBillingValid } from './BillingFields.jsx';
 
-export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChooseInvoice, onUndoInvoice, onConfirmInvoice, onPoConfirm, onDownloadReceipt, onDownloadSignedProposal, previewMode = false, dealInvoices = null }) {
+export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow, onChoosePay, onChooseInvoice, onUndoInvoice, onConfirmInvoice, onPoConfirm, onDownloadReceipt, onDownloadSignedProposal, previewMode = false, dealInvoices = null }) {
   const isPO = signed.paymentOption === 'po';
   const amountDue = signed.paymentOption === '5050' ? signed.total / 2 : signed.total;
   const isDeposit = signed.paymentOption === '5050';
@@ -235,10 +235,46 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
         </div>
       )}
 
-      {!payment && !previewMode && !isPO && paymentChoice !== 'invoice' && (
+      {/* Choice screen: two clear buttons (pay now vs request an invoice),
+          shown before we ask for any billing details. */}
+      {!payment && !previewMode && !isPO && paymentChoice == null && (
         <div style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24 }}>
           <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>
-            Would you like to pay your {isDeposit ? 'deposit' : 'invoice'} now?
+            {isDeposit ? 'Pay your deposit or request an invoice' : 'Pay now or request an invoice'}
+          </h3>
+          <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 20, lineHeight: 1.5 }}>
+            {isDeposit
+              ? 'Your 50% deposit of ' + formatGBP(amountDue) + ' reserves your place in our production schedule.'
+              : 'Your total of ' + formatGBP(amountDue) + ' is due to start production.'}
+          </p>
+
+          <button
+            onClick={onChoosePay}
+            className="btn"
+            style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}
+          >
+            <CreditCard size={16} /> {isDeposit ? 'Pay your deposit now' : 'Pay now'}
+          </button>
+          <p style={{ fontSize: 12.5, color: BRAND.muted, textAlign: 'center', margin: '10px 0 18px', lineHeight: 1.5 }}>
+            {isDeposit
+              ? 'Pay your deposit now to get started as soon as possible.'
+              : 'Pay now to get started as soon as possible.'}
+          </p>
+
+          <button
+            onClick={onChooseInvoice}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 14, fontSize: 15, fontWeight: 600, background: 'white', color: BRAND.blue, border: '1px solid ' + BRAND.blue, borderRadius: 8, cursor: 'pointer' }}
+          >
+            <FileText size={16} /> {isDeposit ? 'Send me a deposit invoice' : 'Send me an invoice'}
+          </button>
+        </div>
+      )}
+
+      {/* Pay-by-card panel, shown once they've chosen to pay now. */}
+      {!payment && !previewMode && !isPO && paymentChoice != null && paymentChoice !== 'invoice' && (
+        <div style={{ background: 'white', border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24 }}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>
+            Pay your {isDeposit ? 'deposit' : 'invoice'} now
           </h3>
           <p style={{ fontSize: 14, color: BRAND.muted, marginTop: 6, marginBottom: 16, lineHeight: 1.5 }}>
             {isDeposit
@@ -275,7 +311,7 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
           </button>
 
           <button onClick={onChooseInvoice} style={{ background: 'none', border: 'none', color: BRAND.muted, cursor: 'pointer', fontSize: 13, marginTop: 12, width: '100%', textAlign: 'center', padding: 8 }}>
-            Skip - send me an invoice instead
+            {isDeposit ? 'Send me a deposit invoice instead' : 'Send me an invoice instead'}
           </button>
         </div>
       )}
