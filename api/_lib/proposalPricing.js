@@ -1,0 +1,115 @@
+// Authoritative server-side recompute of what a client owes for a signed
+// proposal. Every PRICE comes from the proposal's `data` (staff-controlled);
+// only the SELECTIONS (which video option, which extras + quantities, partner
+// credits, payment option) come from the signature. This mirrors the client
+// pricing in src/components/ClientView.jsx so the figure matches what the
+// client saw — while never trusting any client-supplied amount/total. Used by
+// the Stripe checkout route to reject tampered (under-payment) amounts.
+
+const VARIANT_ELIGIBLE_IDS = new Set(['translatedsubs', 'fulltranslate']);
+
+// Mirror of extraHasVariants in src/defaults.js.
+function extraHasVariants(extra) {
+  if (!extra) return false;
+  if (!VARIANT_ELIGIBLE_IDS.has(extra.id)) return false;
+  if (typeof extra.variantsEnabled === 'boolean') return extra.variantsEnabled;
+  return true;
+}
+
+// Mirror of computeBaseDiscount in src/utils.js.
+function computeBaseDiscount(basePrice, discount) {
+  const v = Number(discount?.value) || 0;
+  if (v <= 0) return 0;
+  const base = Number(basePrice) || 0;
+  if (discount?.type === 'amount') return Math.min(v, base);
+  return base * Math.min(v, 100) / 100;
+}
+
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Recompute the gross amount due *now* for a signed proposal, plus the partner
+// ex-VAT split the checkout uses for its two line items. Returns null if there
+// isn't enough data to price (caller should refuse the checkout).
+//
+//   proposalData  — proposals.data JSONB (prices, vatRate, discount, partner cfg)
+//   signatureData — signatures.data JSONB (the client's selections only)
+export function computeProposalCheckout(proposalData, signatureData) {
+  if (!proposalData) return null;
+  const data = proposalData;
+  const sig = signatureData || {};
+  const vatRate = Number(data.vatRate) || 0;
+
+  // --- Base / selected video-option price (matched back to the proposal) ---
+  const proposalVideoOptions = Array.isArray(data.videoOptions) && data.videoOptions.length
+    ? data.videoOptions : null;
+  let effectiveBasePrice = Number(data.basePrice) || 0;
+  if (proposalVideoOptions) {
+    const sel = sig.selectedVideoOption || null;
+    let opt = null;
+    if (sel) {
+      opt = proposalVideoOptions.find(v =>
+        (v.id && sel.id && v.id === sel.id)
+        || (v.label && sel.label && v.label === sel.label)
+      ) || null;
+    }
+    // No match → the client's default selection is the first option.
+    effectiveBasePrice = Number((opt || proposalVideoOptions[0])?.price) || effectiveBasePrice;
+  }
+
+  // --- Selected extras (prices from the proposal, matched by id) ---
+  const proposalExtras = Array.isArray(data.optionalExtras) ? data.optionalExtras : [];
+  const extrasById = new Map(proposalExtras.map(e => [e.id, e]));
+  const selectedExtras = Array.isArray(sig.selectedExtras) ? sig.selectedExtras : [];
+  let extrasTotal = 0;
+  for (const selRaw of selectedExtras) {
+    const e = extrasById.get(selRaw?.id);
+    if (!e) continue; // a selection not present in the proposal can't be charged
+    const qty = extraHasVariants(e) ? Math.max(1, Number(selRaw.quantity) || 1) : 1;
+    extrasTotal += (Number(e.price) || 0) * qty;
+  }
+
+  const partnerSelected = sig.partnerSelected === true;
+  const partnerCredits = Math.max(1, Number(sig.partnerCredits) || 1);
+
+  // --- Standard (non-partner) totals ---
+  const manualDiscount = partnerSelected ? 0 : computeBaseDiscount(effectiveBasePrice, data.discount);
+  const netBasePrice = effectiveBasePrice - manualDiscount;
+  const subtotal = netBasePrice + extrasTotal;        // ex VAT
+  const total = subtotal * (1 + vatRate);             // gross
+
+  // --- Partner-programme ladder (all rates from the proposal) ---
+  const pp = data.partnerProgramme || {};
+  const partnerBaseDiscount   = pp.discountRate ?? 0.10;
+  const partnerExtraPerCredit = pp.extraDiscountPerCredit ?? 0;
+  const partnerMaxDiscount    = pp.maxDiscount ?? partnerBaseDiscount;
+  const effectiveDiscount = Math.min(
+    partnerBaseDiscount + Math.max(0, partnerCredits - 1) * partnerExtraPerCredit,
+    partnerMaxDiscount
+  );
+  const standardRatePerMin = Number(pp.standardRatePerMin) || Number(data.basePrice) || 0;
+  const partnerRatePerMin  = standardRatePerMin * (1 - effectiveDiscount);
+  const partnerSubtotal     = partnerRatePerMin * partnerCredits;   // ex VAT (recurring)
+  const partnerTotal        = partnerSubtotal * (1 + vatRate);      // gross
+  const partnerDiscount     = subtotal * effectiveDiscount;
+  const discountedSubtotal  = subtotal - partnerDiscount;          // project ex VAT
+  const discountedTotal     = discountedSubtotal * (1 + vatRate);  // gross
+
+  const paymentOption = sig.paymentOption || 'full';
+  const isDeposit = !partnerSelected && paymentOption === '5050';
+
+  // Gross amount collected *now*. Mirrors ClientView.dueNowTotal + the deposit
+  // split (partner always pays the full discounted project + first month).
+  const amountGross = partnerSelected
+    ? (discountedTotal + partnerTotal)
+    : (isDeposit ? total / 2 : total);
+
+  return {
+    vatRate,
+    isDeposit,
+    partnerSelected,
+    partnerCredits,
+    amountGross: round2(amountGross),
+    projectExVat: round2(discountedSubtotal),
+    partnerExVat: round2(partnerSubtotal),
+  };
+}

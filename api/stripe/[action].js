@@ -6,6 +6,7 @@ import { sendNotification } from '../_lib/notifications.js';
 import { getOrCreateContact, createInvoice, emailInvoice, createPayment } from '../_lib/xero.js';
 import { advanceStage, dealIdForProposal, xeroContactIdForProposal } from '../_lib/dealStage.js';
 import { enterProduction } from '../_lib/production.js';
+import { computeProposalCheckout } from '../_lib/proposalPricing.js';
 import {
   lineItemsForProject,
   lineItemsForDiscountedProject,
@@ -679,6 +680,38 @@ export default async function handler(req, res) {
     const validEmail = typeof customerEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail.trim())
       ? customerEmail.trim()
       : undefined;
+
+    // Price authority. The request body's `amount` / `partner.*` are
+    // client-controlled, so a tampered request could open a Checkout session
+    // for far less than the proposal is worth (and still flip the deal to
+    // "paid" + enter production via the webhook). Recompute the amount due now
+    // from the proposal's own prices and the signed selections, and refuse a
+    // session that would collect materially less. We only enforce a floor —
+    // legitimate requests (which carry the real figure) pass untouched, so the
+    // exact amount the client saw is preserved.
+    const [propRow] = await sql`SELECT data FROM proposals WHERE id = ${proposalId}`;
+    if (!propRow) return res.status(404).json({ error: 'Proposal not found' });
+    const [sigRow] = await sql`SELECT data FROM signatures WHERE proposal_id = ${proposalId}`;
+    if (!sigRow) return res.status(409).json({ error: 'This proposal must be signed before payment.' });
+    const authoritative = computeProposalCheckout(propRow.data, sigRow.data);
+    if (!authoritative || !(authoritative.amountGross > 0)) {
+      console.error('[stripe checkout] could not price proposal', { proposalId });
+      return res.status(422).json({ error: 'Unable to price this proposal. Please contact us.' });
+    }
+    // The gross this request would actually collect now (partner path charges
+    // the discounted project + first partner month as two lines).
+    const requestedCharge = (partner && Number(partner.partnerExVat) > 0)
+      ? ((Number(partner.projectExVat) || 0) + (Number(partner.partnerExVat) || 0)) * (1 + (Number(partner.vatRate) || 0))
+      : Number(amount);
+    // Tolerance absorbs rounding / legacy-proposal drift without letting a real
+    // under-payment (e.g. £1 against a £5,000 proposal) through.
+    const tolerance = Math.max(0.5, authoritative.amountGross * 0.01);
+    if (!(requestedCharge >= authoritative.amountGross - tolerance)) {
+      console.warn('[stripe checkout] under-payment blocked', {
+        proposalId, requestedCharge, expected: authoritative.amountGross,
+      });
+      return res.status(409).json({ error: 'Payment amount does not match the proposal. Please refresh the page and try again.' });
+    }
 
     // Persist billing JSON keyed by proposalId so the webhook can build a Xero
     // contact + invoice. Allowlist the keys we know about so a hostile client
