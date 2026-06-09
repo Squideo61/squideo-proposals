@@ -10,10 +10,20 @@
 // Browser-targeted OAuth callbacks (api/xero connect/callback) intentionally
 // respond with text/HTML because they're hit by a redirect, not an XHR.
 
+import crypto from 'crypto';
 import { verifyToken } from './auth.js';
 import { lookupExtensionToken } from './extension.js';
 import { getRole } from './userRoles.js';
 import { hasPermission } from './permissions.js';
+
+// Constant-time string comparison for shared secrets (CRON_SECRET, etc.) so a
+// match can't be inferred from response timing. Length-safe: a mismatch in
+// length returns false without throwing.
+export function timingSafeEqualStr(a, b) {
+  const ab = Buffer.from(String(a ?? ''));
+  const bb = Buffer.from(String(b ?? ''));
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
 
 export function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');

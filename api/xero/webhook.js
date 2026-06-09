@@ -22,6 +22,7 @@ import { APP_URL } from '../_lib/email.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 import { enterProduction } from '../_lib/production.js';
 import { markExtrasPaidForXeroInvoice } from '../_lib/crm/extras.js';
+import { escapeHtml } from '../_lib/crm/shared.js';
 
 // Raw body is required for signature verification — turn Vercel's parser off.
 export const config = { api: { bodyParser: false } };
@@ -157,7 +158,7 @@ async function creditForPaidInvoice(inv) {
       const link = `${APP_URL}/#/partner-credits`;
       await sendNotification('payment.partner_credit', {
         subject: `🔁 Subscription payment: ${name}`,
-        html: `<p>Xero invoice <strong>${label}</strong> for <strong>${name}</strong> was paid.</p>
+        html: `<p>Xero invoice <strong>${escapeHtml(label)}</strong> for <strong>${escapeHtml(name)}</strong> was paid.</p>
                <p><strong>${credits}</strong> credit${credits === 1 ? '' : 's'} added automatically.</p>
                <p><a href="${link}">Open Partner Credits</a></p>`,
         text: `${name}: Xero invoice ${label} paid — ${credits} credit(s) added automatically. ${link}`,

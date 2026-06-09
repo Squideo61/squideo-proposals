@@ -35,6 +35,17 @@ import {
 const OTP_TTL_MINUTES = 10;
 const OTP_MAX_ATTEMPTS = 5;
 const BCRYPT_COST = 12;
+const MIN_PASSWORD_LENGTH = 10;
+
+// A valid bcrypt hash used to equalise login timing on the "user not found"
+// path — without a compare there, the faster response would reveal which
+// emails are registered. Computed lazily (once per instance) so it only costs
+// a hash when a no-user login actually hits it, not on every cold start.
+let _dummyHash = null;
+function dummyPasswordHash() {
+  if (!_dummyHash) _dummyHash = bcrypt.hashSync('squideo-no-such-user', BCRYPT_COST);
+  return _dummyHash;
+}
 
 // Login rate-limit: 5 failed attempts per (email, IP) within 10 minutes
 // triggers a lockout. Resets on successful login. The 10-minute window
@@ -269,6 +280,9 @@ export default async function handler(req, res) {
 
     const user = await loadUser(email);
     if (!user) {
+      // Run a throwaway compare so an unknown email takes the same time as a
+      // wrong password for a known one (no user-enumeration timing oracle).
+      await bcrypt.compare(String(password), dummyPasswordHash());
       await recordFailedLogin(email, ip);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
@@ -305,6 +319,9 @@ export default async function handler(req, res) {
   if (action === 'signup') {
     const { email, name, password, inviteToken } = req.body;
     if (!email || !name || !password) return res.status(400).json({ error: 'email, name and password are required' });
+    if (String(password).length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+    }
     const token = (inviteToken || '').trim();
     if (!token) return res.status(400).json({ error: 'An invite is required to create an account' });
 

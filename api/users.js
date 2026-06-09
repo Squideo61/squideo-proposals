@@ -85,7 +85,7 @@ async function usersHandler(req, res) {
 
     if (new_password !== undefined) {
       if (!current_password) return res.status(400).json({ error: 'Current password is required' });
-      if (new_password.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+      if (new_password.length < 10) return res.status(400).json({ error: 'New password must be at least 10 characters' });
       const rows = await sql`SELECT password_hash FROM users WHERE email = ${payload.email}`;
       if (!rows[0]) return res.status(404).json({ error: 'User not found' });
       const valid = await bcrypt.compare(current_password, rows[0].password_hash);

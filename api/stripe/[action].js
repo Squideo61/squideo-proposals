@@ -7,6 +7,7 @@ import { getOrCreateContact, createInvoice, emailInvoice, createPayment } from '
 import { advanceStage, dealIdForProposal, xeroContactIdForProposal } from '../_lib/dealStage.js';
 import { enterProduction } from '../_lib/production.js';
 import { computeProposalCheckout } from '../_lib/proposalPricing.js';
+import { escapeHtml } from '../_lib/crm/shared.js';
 import {
   lineItemsForProject,
   lineItemsForDiscountedProject,
@@ -361,9 +362,9 @@ async function pushRecurringXeroInvoice({ stripe, invoice }) {
       if (amount != null) {
         await sendNotification('payment.partner_credit', {
           subject: `🔁 Partner month ${monthNumber} paid: ${title}`,
-          html: `<p>Stripe just collected month ${monthNumber} of the Partner Programme for <strong>${title}</strong>.</p>
+          html: `<p>Stripe just collected month ${monthNumber} of the Partner Programme for <strong>${escapeHtml(title)}</strong>.</p>
                  <p>Amount: <strong>£${amount.toFixed(2)}</strong></p>
-                 <p>A matching Xero invoice (${referenceBase} — Partner month ${monthNumber}) has been issued AUTHORISED and emailed to the billing contact.</p>
+                 <p>A matching Xero invoice (${escapeHtml(referenceBase)} — Partner month ${monthNumber}) has been issued AUTHORISED and emailed to the billing contact.</p>
                  <p><a href="${link}">Open the proposal</a></p>`,
           text: `Partner month ${monthNumber} of "${title}" paid (£${amount.toFixed(2)}). Xero invoice issued. ${link}`,
         });

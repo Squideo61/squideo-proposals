@@ -1,7 +1,7 @@
 // CRM dispatcher — routes /api/crm/:resource/... to the per-resource handler
 // in api/_lib/crm/<resource>.js. Kept as a single Vercel function so the
 // project stays well under the 12-function cap.
-import { cors, requireAuth } from '../_lib/middleware.js';
+import { cors, requireAuth, timingSafeEqualStr } from '../_lib/middleware.js';
 import { companiesRoute } from '../_lib/crm/companies.js';
 import { contactsRoute } from '../_lib/crm/contacts.js';
 import { dealsRoute } from '../_lib/crm/deals.js';
@@ -79,7 +79,7 @@ export default async function handler(req, res) {
   // there's no session in those background calls.
   if (resource === 'gmail' && id === 'backfill') {
     const auth = req.headers.authorization || '';
-    if (auth === 'Bearer ' + (process.env.CRON_SECRET || '')) {
+    if (timingSafeEqualStr(auth, 'Bearer ' + (process.env.CRON_SECRET || ''))) {
       return gmailBackfill(req, res, /* userFromSession */ null);
     }
     // No CRON_SECRET → fall through to the authenticated user path below.

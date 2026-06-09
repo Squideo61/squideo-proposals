@@ -9,6 +9,7 @@ import { del } from '@vercel/blob';
 import { buildResumeEmail } from '../quoteResumeEmail.js';
 import { signTaskActionToken } from '../auth.js';
 import { quarterTaxSummary } from './stats.js';
+import { timingSafeEqualStr } from '../middleware.js';
 
 export async function cronHandler(req, res, action) {
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
@@ -21,7 +22,7 @@ export async function cronHandler(req, res, action) {
     return res.status(500).json({ error: 'Cron secret not configured' });
   }
   const auth = req.headers.authorization || '';
-  if (auth !== 'Bearer ' + expected) {
+  if (!timingSafeEqualStr(auth, 'Bearer ' + expected)) {
     return res.status(401).json({ error: 'Unauthorised' });
   }
 
