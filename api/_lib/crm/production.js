@@ -26,6 +26,7 @@ import { isValidStage } from '../dealStage.js';
 import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, isValidMilestone, VIDEO_MILESTONE_BY_ID, stageOrderIndex, previewKindForStage, FIRST_PRODUCTION } from '../productionStages.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { archiveRecord } from './recycleBin.js';
 
 // Where scripts live inside a deal's Drive folder (from the FOLDER_TEMPLATE in
 // googleDrive.js).
@@ -235,8 +236,29 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     }
     if (req.method === 'PATCH') return updateVideo(req, res, videoId);
     if (req.method === 'DELETE') {
-      const r = await sql`DELETE FROM project_videos WHERE id = ${videoId} RETURNING id`;
-      if (!r.length) return res.status(404).json({ error: 'Video not found' });
+      const [vid] = await sql`SELECT * FROM project_videos WHERE id = ${videoId}`;
+      if (!vid) return res.status(404).json({ error: 'Video not found' });
+      // Archive the video + its cascade children (parent first) so the delete is
+      // undoable via /api/crm/restore/:videoId. Best-effort — a failed archive
+      // must not block the delete itself.
+      try {
+        const [milestones, assets, scripts, assignees] = await Promise.all([
+          sql`SELECT * FROM video_milestones WHERE video_id = ${videoId}`,
+          sql`SELECT * FROM video_milestone_assets WHERE video_id = ${videoId}`,
+          sql`SELECT * FROM video_scripts WHERE video_id = ${videoId}`,
+          sql`SELECT * FROM video_assignees WHERE video_id = ${videoId}`,
+        ]);
+        await archiveRecord('project_video', videoId, [
+          { table: 'project_videos', row: vid },
+          ...milestones.map((row) => ({ table: 'video_milestones', row })),
+          ...assets.map((row) => ({ table: 'video_milestone_assets', row })),
+          ...scripts.map((row) => ({ table: 'video_scripts', row })),
+          ...assignees.map((row) => ({ table: 'video_assignees', row })),
+        ], user.email);
+      } catch (err) {
+        console.error('[production] archive before delete failed', err.message);
+      }
+      await sql`DELETE FROM project_videos WHERE id = ${videoId}`; // cascades children
       return res.status(200).json({ ok: true });
     }
     return res.status(405).end();

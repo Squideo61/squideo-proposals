@@ -1394,7 +1394,16 @@ export function StoreProvider({ children }) {
     },
     deleteProjectVideo(dealId, videoId) {
       const done = () => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadProductionVideos()]);
-      return api.delete('/api/crm/production/video/' + encodeURIComponent(videoId)).then(done).catch(done);
+      return api.delete('/api/crm/production/video/' + encodeURIComponent(videoId)).then(() => {
+        // The server archived the video + its children before deleting, so undo
+        // restores it (same id) and redo deletes it again.
+        actions.recordUndo({
+          label: 'Delete video',
+          undo: () => api.post('/api/crm/restore/' + encodeURIComponent(videoId)).then(done),
+          redo: () => actions.deleteProjectVideo(dealId, videoId),
+        });
+        return done();
+      }).catch(done);
     },
     addProjectCredits(dealId, delta) {
       return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/credits', { delta })

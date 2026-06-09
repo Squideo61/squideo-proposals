@@ -14,7 +14,11 @@ import { makeId } from './shared.js';
 
 // Tables we allow restoring into. The table name can't be parameterised in the
 // json_populate_record call, so it must come from this fixed allowlist.
-const RESTORABLE_TABLES = new Set(['tasks', 'task_assignees', 'manual_pending_payments', 'cashflow_costs']);
+const RESTORABLE_TABLES = new Set([
+  'tasks', 'task_assignees', 'manual_pending_payments', 'cashflow_costs',
+  // Production video + its cascade children (re-inserted parent-first on restore).
+  'project_videos', 'video_milestones', 'video_milestone_assets', 'video_scripts', 'video_assignees',
+]);
 
 let ensured = null;
 export function ensureDeletedRecords() {
@@ -65,6 +69,16 @@ export async function restoreRecord(recordId) {
       await sql`INSERT INTO manual_pending_payments SELECT * FROM json_populate_record(NULL::manual_pending_payments, ${json}::json) ON CONFLICT (id) DO NOTHING`;
     } else if (table === 'cashflow_costs') {
       await sql`INSERT INTO cashflow_costs SELECT * FROM json_populate_record(NULL::cashflow_costs, ${json}::json) ON CONFLICT (id) DO NOTHING`;
+    } else if (table === 'project_videos') {
+      await sql`INSERT INTO project_videos SELECT * FROM json_populate_record(NULL::project_videos, ${json}::json) ON CONFLICT (id) DO NOTHING`;
+    } else if (table === 'video_milestones') {
+      await sql`INSERT INTO video_milestones SELECT * FROM json_populate_record(NULL::video_milestones, ${json}::json) ON CONFLICT (id) DO NOTHING`;
+    } else if (table === 'video_milestone_assets') {
+      await sql`INSERT INTO video_milestone_assets SELECT * FROM json_populate_record(NULL::video_milestone_assets, ${json}::json) ON CONFLICT (id) DO NOTHING`;
+    } else if (table === 'video_scripts') {
+      await sql`INSERT INTO video_scripts SELECT * FROM json_populate_record(NULL::video_scripts, ${json}::json) ON CONFLICT (id) DO NOTHING`;
+    } else if (table === 'video_assignees') {
+      await sql`INSERT INTO video_assignees SELECT * FROM json_populate_record(NULL::video_assignees, ${json}::json) ON CONFLICT DO NOTHING`;
     }
   }
   await sql`DELETE FROM deleted_records WHERE record_id = ${recordId}`;
