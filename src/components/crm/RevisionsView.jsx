@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight, BarChart3, Eye, Send, Link2, User, Check, Flag } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -481,6 +481,138 @@ function ProjectDetail({ projectId, onBack }) {
 }
 
 // One video within a project: its own upload dropzone + list of drafts.
+// Producer-side mirror of the client revision player's spatial pins. Anchored
+// comments re-appear over the frame when the playhead is within ±0.4s of their
+// timecode; clicking a comment seeks + pauses so its pin pops back into view.
+// Read-only — producers don't add new pins from this view.
+function DraftBlock({ projectId, video, version, comments, isMobile }) {
+  const { actions } = useStore();
+  const videoRef = useRef(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [activeCommentId, setActiveCommentId] = useState(null);
+
+  // Same 1-based numbering as the client view: pin number === position among
+  // anchored comments in the sidebar order.
+  const pinNumberByComment = useMemo(() => {
+    const m = {}; let n = 0;
+    comments.forEach(c => {
+      if (c.anchorX != null && c.anchorY != null) m[c.id] = ++n;
+    });
+    return m;
+  }, [comments]);
+
+  const framePins = useMemo(() => {
+    const tolerance = 0.4;
+    return comments
+      .filter(c => c.anchorX != null && c.anchorY != null && c.timecodeSeconds != null
+        && Math.abs((c.timecodeSeconds ?? 0) - currentTime) <= tolerance)
+      .map(c => ({
+        id: c.id,
+        x: c.anchorX, y: c.anchorY,
+        timecode: c.timecodeSeconds,
+        label: pinNumberByComment[c.id],
+        active: c.id === activeCommentId,
+      }));
+  }, [comments, currentTime, activeCommentId, pinNumberByComment]);
+
+  function seekTo(seconds) {
+    const el = videoRef.current;
+    if (!el) return;
+    el.currentTime = seconds;
+    el.pause();
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 14, alignItems: 'flex-start' }}>
+      <div style={{ flex: isMobile ? '1 1 auto' : '1 1 62%', minWidth: 0, width: '100%' }}>
+        <div style={{ position: 'relative', display: 'inline-block', maxWidth: '100%' }}>
+          <video
+            ref={videoRef}
+            src={version.videoUrl}
+            controls
+            onTimeUpdate={e => setCurrentTime(e.target.currentTime || 0)}
+            style={{ display: 'block', width: '100%', maxHeight: '60vh', borderRadius: 8, background: '#000' }}
+          />
+          {/* Pin layer — stops 56px from the bottom so native controls stay clickable */}
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 56, pointerEvents: 'none' }}>
+            {framePins.map(p => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveCommentId(p.id);
+                  if (p.timecode != null) seekTo(p.timecode);
+                }}
+                title={p.label != null ? `Comment ${p.label}` : undefined}
+                style={{
+                  position: 'absolute',
+                  left: `${p.x * 100}%`, top: `${p.y * 100}%`,
+                  transform: 'translate(-50%, -50%)',
+                  width: 26, height: 26, padding: 0, borderRadius: '50%',
+                  background: p.active ? '#16A34A' : BRAND.blue,
+                  color: '#fff', fontSize: 12, fontWeight: 700,
+                  border: '2px solid #fff', boxShadow: '0 1px 4px rgba(0,0,0,0.45)',
+                  cursor: 'pointer', pointerEvents: 'auto',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+                }}
+              >
+                {p.label ?? ''}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={{ flex: isMobile ? '1 1 auto' : '1 1 38%', minWidth: 0, width: '100%', maxHeight: isMobile ? undefined : '60vh', overflowY: 'auto' }}>
+        {comments.length === 0 ? (
+          <div style={{ fontSize: 13, color: BRAND.muted, padding: '4px 2px' }}>No comments yet.</div>
+        ) : comments.map(c => {
+          const pinNo = pinNumberByComment[c.id];
+          const active = c.id === activeCommentId;
+          return (
+            <div key={c.id}
+              onClick={() => {
+                setActiveCommentId(c.id);
+                if (c.timecodeSeconds != null) seekTo(c.timecodeSeconds);
+              }}
+              style={{ marginBottom: 10, padding: 6, borderRadius: 8, cursor: 'pointer',
+                opacity: c.completedAt ? 0.55 : 1,
+                background: active ? '#EEF7FB' : 'transparent',
+                border: active ? `1px solid ${BRAND.blue}` : '1px solid transparent' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                {pinNo != null && (
+                  <span title="Pinned to a spot" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: 18, height: 18, borderRadius: '50%', background: BRAND.blue, color: '#fff',
+                    fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{pinNo}</span>
+                )}
+                <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
+                {c.timecodeSeconds != null && (
+                  <span style={{ color: BRAND.blue, fontSize: 12, fontWeight: 700 }}>{tc(c.timecodeSeconds)}</span>
+                )}
+                <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center' }}
+                  onClick={e => e.stopPropagation()}>
+                  <CommentFlag note={c.producerNote}
+                    onSave={(note) => actions.setRevisionCommentNote(projectId, c.id, note)} />
+                  <CommentDone
+                    done={!!c.completedAt}
+                    title={c.completedAt
+                      ? `Done ${formatRelativeTime(c.completedAt)}${c.completedBy ? ' by ' + c.completedBy : ''} — click to reopen`
+                      : 'Mark this revision done'}
+                    onClick={() => actions.completeRevisionComment(projectId, c.id, !c.completedAt)}
+                  />
+                </span>
+              </div>
+              {c.body && <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap', textDecoration: c.completedAt ? 'line-through' : 'none' }}>{c.body}</div>}
+              {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
+              <InternalNote note={c.producerNote} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function VideoCard({ projectId, video, commentsByVersion }) {
   const { actions, showMsg } = useStore();
   const isMobile = useIsMobile();
@@ -585,41 +717,13 @@ function VideoCard({ projectId, video, commentsByVersion }) {
                     ))}
                   </div>
                 )}
-                {/* Video on the left, comments on the right (stacks on mobile).
-                    Fullscreen is available via the native player controls. */}
-                <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 14, alignItems: 'flex-start' }}>
-                  <div style={{ flex: isMobile ? '1 1 auto' : '1 1 62%', minWidth: 0, width: '100%' }}>
-                    <video src={v.videoUrl} controls style={{ display: 'block', width: '100%', maxHeight: '60vh', borderRadius: 8, background: '#000' }} />
-                  </div>
-                  <div style={{ flex: isMobile ? '1 1 auto' : '1 1 38%', minWidth: 0, width: '100%', maxHeight: isMobile ? undefined : '60vh', overflowY: 'auto' }}>
-                    {comments.length === 0 ? (
-                      <div style={{ fontSize: 13, color: BRAND.muted, padding: '4px 2px' }}>No comments yet.</div>
-                    ) : comments.map(c => (
-                      <div key={c.id} style={{ marginBottom: 10, opacity: c.completedAt ? 0.55 : 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                          <strong style={{ fontSize: 13, color: BRAND.ink }}>{c.authorName}</strong>
-                          {c.timecodeSeconds != null && (
-                            <span style={{ color: BRAND.blue, fontSize: 12, fontWeight: 700 }}>{tc(c.timecodeSeconds)}</span>
-                          )}
-                          <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                            <CommentFlag note={c.producerNote}
-                              onSave={(note) => actions.setRevisionCommentNote(projectId, c.id, note)} />
-                            <CommentDone
-                              done={!!c.completedAt}
-                              title={c.completedAt
-                                ? `Done ${formatRelativeTime(c.completedAt)}${c.completedBy ? ' by ' + c.completedBy : ''} — click to reopen`
-                                : 'Mark this revision done'}
-                              onClick={() => actions.completeRevisionComment(projectId, c.id, !c.completedAt)}
-                            />
-                          </span>
-                        </div>
-                        {c.body && <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap', textDecoration: c.completedAt ? 'line-through' : 'none' }}>{c.body}</div>}
-                        {c.attachmentUrl && <CommentAttachment url={c.attachmentUrl} name={c.attachmentName} type={c.attachmentType} />}
-                        <InternalNote note={c.producerNote} />
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <DraftBlock
+                  projectId={projectId}
+                  video={video}
+                  version={v}
+                  comments={comments}
+                  isMobile={isMobile}
+                />
               </>
             )}
           </div>
