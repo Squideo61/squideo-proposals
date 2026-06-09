@@ -18,6 +18,30 @@ import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgre
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
+// Render plain text with any http(s) URLs turned into clickable links that open
+// in a new tab. Used for quote-request notes, which the client pastes raw.
+const URL_RE = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]}'"])/gi;
+function Linkify({ text }) {
+  if (!text) return null;
+  // Capturing group in the regex keeps the URLs as their own array elements.
+  const parts = String(text).split(URL_RE);
+  return parts.map((part, i) => (
+    /^https?:\/\//i.test(part)
+      ? (
+        <a
+          key={i}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: BRAND.blue, textDecoration: 'underline', wordBreak: 'break-all' }}
+        >
+          {part}
+        </a>
+      )
+      : part
+  ));
+}
+
 // Turn a share link into an inline-embeddable player URL. Loom is the primary
 // case (loom.com/share/ID → loom.com/embed/ID); YouTube/Vimeo handled too.
 // Returns null when the provider isn't recognised — caller falls back to a link.
@@ -267,7 +291,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onOpenVideo, on
         )}
         {deal.notes && (
           <div style={{ marginTop: 16, padding: 12, background: '#F8FAFC', borderRadius: 8, fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap' }}>
-            {deal.notes}
+            <Linkify text={deal.notes} />
           </div>
         )}
         {deal.stage === 'lost' && deal.lostReason && (
