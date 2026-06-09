@@ -76,6 +76,11 @@ export default async function handler(req, res) {
       return await markMonthPaid(req, res, user, subId);
     }
 
+    if (action === 'manual-fee') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return await setManualFee(req, res);
+    }
+
     return res.status(404).json({ error: 'Unknown action' });
   } catch (err) {
     console.error('[partner]', err);
@@ -93,7 +98,46 @@ export default async function handler(req, res) {
 // Adjustments: kind='adjustment' rows on credit_allocations. Positive
 //   credit_cost adds to "issued"; negative adds to "used".
 
+// Manual monthly-spend override per partner (ex-VAT), for clients added before
+// the fee system (no partnerExVat on a signed proposal). Self-healed.
+let manualFeesEnsured = null;
+function ensurePartnerManualFees() {
+  if (manualFeesEnsured) return manualFeesEnsured;
+  manualFeesEnsured = sql`
+    CREATE TABLE IF NOT EXISTS partner_manual_fees (
+      client_key  TEXT PRIMARY KEY,
+      monthly_net NUMERIC,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`.catch((err) => { manualFeesEnsured = null; throw err; });
+  return manualFeesEnsured;
+}
+
+// POST /api/partner/manual-fee { clientKey, monthlyNet } — set or clear a
+// partner's manual monthly spend (ex-VAT). A blank/0 amount clears it (falls
+// back to the derived value). Feeds the Pending Payments "Partners" figure.
+async function setManualFee(req, res) {
+  await ensurePartnerManualFees();
+  const body = req.body || {};
+  const clientKey = body.clientKey ? String(body.clientKey) : null;
+  if (!clientKey) return res.status(400).json({ error: 'clientKey required' });
+  const raw = body.monthlyNet;
+  const amount = (raw === '' || raw == null) ? null : Number(raw);
+  if (amount != null && (!Number.isFinite(amount) || amount < 0)) {
+    return res.status(400).json({ error: 'monthlyNet must be a non-negative number' });
+  }
+  if (amount == null || amount === 0) {
+    await sql`DELETE FROM partner_manual_fees WHERE client_key = ${clientKey}`;
+  } else {
+    await sql`
+      INSERT INTO partner_manual_fees (client_key, monthly_net, updated_at)
+      VALUES (${clientKey}, ${amount}, NOW())
+      ON CONFLICT (client_key) DO UPDATE SET monthly_net = EXCLUDED.monthly_net, updated_at = NOW()`;
+  }
+  return res.status(200).json({ ok: true, clientKey, monthlyNet: amount });
+}
+
 async function listCredits(res) {
+  await ensurePartnerManualFees();
   const rows = await sql`
     WITH sub_totals AS (
       SELECT
@@ -198,18 +242,22 @@ async function listCredits(res) {
     exVat: Number(r.partner_ex_vat) || 0,
     credits: Number(r.partner_credits) || 0,
   }]));
+  // Manual monthly-spend overrides (set by hand for pre-system partners).
+  const manualFeeRows = await sql`SELECT client_key, monthly_net FROM partner_manual_fees`;
+  const manualByClient = new Map(manualFeeRows.map(r => [r.client_key, r.monthly_net == null ? null : Number(r.monthly_net)]));
   const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
   const list = rows.map(r => {
     const creditsRemaining = Number(r.credits_remaining) || 0;
     const fee = feeByClient.get(r.client_key) || { exVat: 0, credits: 0 };
     const ratePerCredit = fee.credits > 0 ? fee.exVat / fee.credits : 0;
-    const monthlyNet = r2(fee.exVat); // ex-VAT recurring fee
-    // Outstanding (ex-VAT): subscription → next month's fee; credits-only → the
-    // value of the credits still owed in work; inactive → nothing.
-    const outstanding = r.status === 'active'
-      ? monthlyNet
-      : (r.status === 'credits_only' ? r2(creditsRemaining * ratePerCredit) : 0);
+    const manualMonthly = manualByClient.has(r.client_key) ? manualByClient.get(r.client_key) : null;
+    const monthlyNet = manualMonthly != null ? r2(manualMonthly) : r2(fee.exVat); // ex-VAT recurring fee
+    // Outstanding (ex-VAT): a manual override wins; otherwise subscription → next
+    // month's fee, credits-only → value of the credits still owed, inactive → nil.
+    const outstanding = manualMonthly != null
+      ? r2(manualMonthly)
+      : (r.status === 'active' ? monthlyNet : (r.status === 'credits_only' ? r2(creditsRemaining * ratePerCredit) : 0));
     return {
       clientKey: r.client_key,
       clientName: r.client_name,
@@ -221,6 +269,7 @@ async function listCredits(res) {
       status: r.status,
       monthlyNet,
       ratePerCredit: r2(ratePerCredit),
+      manualFee: manualMonthly != null,
       outstanding,
     };
   });

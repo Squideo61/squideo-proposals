@@ -1144,6 +1144,11 @@ export function StoreProvider({ children }) {
         return list;
       }).catch(() => []);
     },
+    // Set/clear a partner's manual monthly spend (ex-VAT). Feeds the Pending
+    // Payments "Partners" figure for clients added before the fee system.
+    setPartnerManualFee(clientKey, monthlyNet) {
+      return api.post('/api/partner/manual-fee', { clientKey, monthlyNet });
+    },
     fetchPartnerCreditDetail(clientKey) {
       return api.get('/api/partner/clients?key=' + encodeURIComponent(clientKey))
         .then((data) => {

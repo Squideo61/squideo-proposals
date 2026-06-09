@@ -113,6 +113,7 @@ export function PartnerCreditsView({ onBack, onOpen }) {
                   <Th align="right">Issued</Th>
                   <Th align="right">Used</Th>
                   <Th align="right">Remaining</Th>
+                  <Th align="right">Monthly £</Th>
                   {!isMobile && <Th>Usage</Th>}
                   {!isMobile && <Th>Last payment</Th>}
                 </tr>
@@ -120,7 +121,7 @@ export function PartnerCreditsView({ onBack, onOpen }) {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={isMobile ? 5 : 7} style={{ padding: 40, textAlign: 'center', color: BRAND.muted }}>
+                    <td colSpan={isMobile ? 6 : 8} style={{ padding: 40, textAlign: 'center', color: BRAND.muted }}>
                       No clients in this view.
                     </td>
                   </tr>
@@ -152,6 +153,15 @@ export function PartnerCreditsView({ onBack, onOpen }) {
                       <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtCredits(issued)}</td>
                       <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtCredits(used)}</td>
                       <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{fmtCredits(row.creditsRemaining)}</td>
+                      <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                        <MonthlyFeeCell
+                          row={row}
+                          onSave={(v) => actions.setPartnerManualFee(row.clientKey, v)
+                            .then(() => actions.fetchPartnerCreditsList())
+                            .then(() => showMsg('Monthly spend saved'))
+                            .catch((err) => showMsg(err?.message || 'Could not save'))}
+                        />
+                      </td>
                       {!isMobile && (
                         <td style={{ padding: '12px 8px', minWidth: 160 }}>
                           <div style={{ background: BRAND.border, borderRadius: 999, height: 8, overflow: 'hidden' }}>
@@ -170,6 +180,46 @@ export function PartnerCreditsView({ onBack, onOpen }) {
         </Card>
       )}
     </div>
+  );
+}
+
+// Inline editable monthly spend (ex-VAT). Click stops the row opening; saves on
+// blur / Enter only when the value actually changed. Shows an "auto" hint when
+// the figure is derived from the signed proposal rather than set by hand.
+function MonthlyFeeCell({ row, onSave }) {
+  const initial = row.monthlyNet != null && row.monthlyNet !== 0 ? String(row.monthlyNet) : '';
+  const [val, setVal] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setVal(row.monthlyNet != null && row.monthlyNet !== 0 ? String(row.monthlyNet) : '');
+  }, [row.monthlyNet]);
+  const commit = () => {
+    const current = Number(row.monthlyNet) || 0;
+    const next = parseFloat(val) || 0;
+    if (next === current) return;
+    setSaving(true);
+    Promise.resolve(onSave(next)).finally(() => setSaving(false));
+  };
+  return (
+    <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
+      {!row.manualFee && (Number(row.monthlyNet) || 0) > 0 && (
+        <span title="Derived from the signed partner proposal — type to override" style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>auto</span>
+      )}
+      <span style={{ color: BRAND.muted, fontSize: 12 }}>£</span>
+      <input
+        type="number"
+        step="0.01"
+        min="0"
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+        placeholder="0.00"
+        disabled={saving}
+        title="Monthly spend, ex-VAT — feeds the Finance Pending Payments total"
+        style={{ width: 84, padding: '4px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+      />
+    </span>
   );
 }
 
