@@ -496,11 +496,16 @@ export default async function handler(req, res) {
     } catch {
       return res.status(401).json({ error: 'Enrolment session expired. Please sign in again.' });
     }
+    if (await isTwoFaLocked(email)) {
+      return res.status(429).json({ error: 'Too many incorrect codes. Try again in 10 minutes.' });
+    }
     const user = await loadUser(email);
     if (!user || !user.totp_secret) return res.status(400).json({ error: 'Start enrolment first' });
     if (!verifyTotp(user.totp_secret, code)) {
+      await recordTwoFaFailure(email);
       return res.status(401).json({ error: 'Invalid authenticator code' });
     }
+    await clearTwoFaAttempts(email);
     const { codes, hashes } = generateBackupCodes(10);
     await sql`
       UPDATE users
