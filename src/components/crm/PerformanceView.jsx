@@ -358,21 +358,6 @@ function SalesVsPpView({ trend, isMobile, actions, history }) {
 const PROFIT_POS = '#10B981';
 const PROFIT_NEG = '#EF4444';
 
-// One-line cost split for the Costs card — only the buckets with a value, so it
-// stays tidy as categories come and go.
-function costBreakdownSub(sel) {
-  const corpTax = Number(sel.corpTax) || 0;
-  return [
-    ['Staff', sel.wages],
-    ['Freelance', sel.freelancers],
-    ['Marketing', sel.marketing],
-    ['Directors', sel.director],
-    ['Allowances', sel.allowance],
-    ['Expenses', (Number(sel.expenses) || 0) - corpTax], // sel.expenses includes the CT line; show operating only
-    ['Corp Tax', corpTax],
-  ].filter(([, v]) => (Number(v) || 0) > 0.005).map(([l, v]) => `${l} ${formatGBP(v)}`).join(' · ');
-}
-
 function CashFlowView({ isMobile }) {
   const { state, actions } = useStore();
   const [month, setMonth] = useState(() => todayKey().slice(0, 7));
@@ -420,7 +405,7 @@ function CashFlowView({ isMobile }) {
         <StatCard icon={Wallet} accent={BRAND.blue} label="Cash received"
           value={formatGBP(sel.cashIn)} sub="Net banked (ex-VAT)" />
         <StatCard icon={Receipt} accent="#0E7490" label="Costs"
-          value={formatGBP(sel.costs)} sub={costBreakdownSub(sel)} />
+          value={formatGBP(sel.costs)} sub="All monthly costs (ex-VAT)" />
         <StatCard icon={PiggyBank} accent={VAT_COLOR_CF}
           label={ct.inProfit ? 'Corp Tax to set aside' : 'Corp Tax saving'}
           value={formatGBP(Math.abs(ct.monthReserve))}
