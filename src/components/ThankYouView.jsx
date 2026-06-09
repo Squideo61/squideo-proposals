@@ -385,14 +385,11 @@ export function ThankYouView({ proposalId, proposal, signed, payment, onViewProp
           marginBottom: 20,
         }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, letterSpacing: 0.7, textTransform: 'uppercase', marginBottom: 14 }}>What happens next</div>
-          {NEXT_STEPS.map((step, i) => (
-            <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 12, fontSize: 14, lineHeight: 1.6 }}>
-              <div style={{ width: 24, height: 24, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0, marginTop: 1 }}>
-                {i + 1}
-              </div>
-              <span>{step}</span>
-            </div>
-          ))}
+          {/* Post-sign: the earlier "accept" / "invoice or PO setup" steps are
+              already done, so show only the final step, without numbering. */}
+          <div style={{ fontSize: 14, lineHeight: 1.6 }}>
+            {NEXT_STEPS[NEXT_STEPS.length - 1]}
+          </div>
           {CONFIG?.company?.phone && (
             <p style={{ margin: '14px 0 0', fontSize: 14, lineHeight: 1.6 }}>
               Still got questions? Give us a call on{' '}
