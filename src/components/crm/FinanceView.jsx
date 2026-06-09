@@ -8,6 +8,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatProposalNumber, useIsMobile } from '../../utils.js';
 import { PerformancePanel } from './PerformanceView.jsx';
+import { CreateXeroInvoiceModal } from './CreateXeroInvoiceModal.jsx';
 
 const VAT_COLOR = '#F59E0B';
 const CT_COLOR = '#0E7490';
@@ -400,13 +401,16 @@ const PAYMENT_TYPE_META = {
 };
 
 function PendingPayments({ pending, onOpenDeal, onOpenCompany, companies, isMobile, actions, onChanged }) {
+  // The deal + portion to invoice when an INV button is clicked (opens the
+  // shared Xero create-invoice modal, pre-filled with the deal's suggested lines).
+  const [invTarget, setInvTarget] = useState(null);
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 20 }}>
       <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
         Pending Payments
       </h3>
       <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
-        Invoiced and outstanding amounts awaiting payment — shown ex-VAT (net). POs show their full signed total; each line is tagged "Not invoiced" until an invoice is raised.
+        Invoiced and outstanding amounts awaiting payment — shown ex-VAT (net). Each signed-deal line is tagged "Not invoiced" until raised; hit INV to invoice that portion straight from here.
       </p>
       {!pending ? (
         <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
@@ -423,6 +427,13 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, companies, isMobi
         const sumNet = (arr) => arr.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
         return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <SignedDealsPanel
+            rows={pending.normal || []}
+            total={pending.totals.normal}
+            onOpenDeal={onOpenDeal}
+            onCreateInvoice={setInvTarget}
+            isMobile={isMobile}
+          />
           {invoicedManual.length > 0 && (
             <ManualPendingGroup
               title="Invoiced — awaiting payment"
@@ -448,25 +459,59 @@ function PendingPayments({ pending, onOpenDeal, onOpenCompany, companies, isMobi
             onChanged={onChanged}
             onOpenDeal={onOpenDeal}
             onOpenCompany={onOpenCompany}
+            onCreateInvoice={setInvTarget}
             companies={companies}
             isMobile={isMobile}
           />
-          <ManualPendingGroup
-            title="Imported (Live Sales Sheet)"
-            note="Outstanding PP's from your sheet"
-            kind="pp"
-            rows={pps}
-            total={sumNet(pps)}
-            actions={actions}
-            onChanged={onChanged}
-            onOpenDeal={onOpenDeal}
-            onOpenCompany={onOpenCompany}
-            companies={companies}
-            isMobile={isMobile}
-          />
+          {pps.length > 0 && (
+            <ManualPendingGroup
+              title="Imported (Live Sales Sheet)"
+              note="Outstanding PP's from your sheet"
+              kind="pp"
+              rows={pps}
+              total={sumNet(pps)}
+              actions={actions}
+              onChanged={onChanged}
+              onOpenDeal={onOpenDeal}
+              onOpenCompany={onOpenCompany}
+              companies={companies}
+              isMobile={isMobile}
+            />
+          )}
         </div>
         );
       })()}
+      {invTarget && (
+        <CreateXeroInvoiceModal
+          companyId={invTarget.companyId || undefined}
+          dealId={invTarget.companyId ? undefined : invTarget.dealId}
+          deals={invTarget.companyId ? [{ id: invTarget.dealId, title: invTarget.title, stage: invTarget.stage || 'signed', company_id: invTarget.companyId }] : undefined}
+          initialDealId={invTarget.dealId}
+          mode={invTarget.mode}
+          onClose={() => setInvTarget(null)}
+          onCreated={() => { setInvTarget(null); onChanged && onChanged(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Signed deals (PO and non-PO) with an outstanding balance — each line tagged
+// invoiced / not-invoiced, with an INV button on the not-yet-invoiced portions.
+function SignedDealsPanel({ rows, total, onOpenDeal, onCreateInvoice, isMobile }) {
+  if (!rows || rows.length === 0) return null;
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: `3px solid ${BRAND.blue}` }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Signed deals — outstanding</span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
+        </div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Signed work still owed · {rows.length} {rows.length === 1 ? 'deal' : 'deals'} · each line tagged invoiced / not invoiced · INV raises an invoice for that portion</div>
+      </div>
+      {rows.map((d) => (
+        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isMobile={isMobile} />
+      ))}
     </div>
   );
 }
@@ -1007,7 +1052,7 @@ function PendingImportPanel({ actions, count, isMobile, kind = 'pp' }) {
 // click-through to the deal) with imported Live Sales Sheet POs (manual rows with
 // invoice/paid/remove actions + the sheet import panel). A single header carries
 // the combined grand total; each row type keeps its own behaviour.
-function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChanged, onOpenDeal, onOpenCompany, companies, isMobile }) {
+function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChanged, onOpenDeal, onOpenCompany, onCreateInvoice, companies, isMobile }) {
   const importedNet = importedRows.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
   const grand = (Number(crmTotal) || 0) + importedNet;
   const count = crmRows.length + importedRows.length;
@@ -1021,7 +1066,7 @@ function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChang
         <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Paid regardless of project stage · signed deals + imported sheet · {count} {count === 1 ? 'item' : 'items'} · Inv marks invoiced, ✓ marks paid (→ income), ✕ removes</div>
       </div>
       {crmRows.map((d) => (
-        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} />
+        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} />
       ))}
       <ManualPendingGroup
         bare
@@ -1286,7 +1331,22 @@ function NotInvoicedTag() {
   );
 }
 
-function PendingRow({ d, onOpenDeal }) {
+// A small INV button that raises an invoice for one outstanding line. Stops the
+// row's open-deal click. Maps the line type to the create-invoice mode: a 50%
+// final needs mode:'final'; deposit / full / PO use the default suggested lines.
+function InvButton({ d, line, onCreateInvoice }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onCreateInvoice({ dealId: d.dealId, companyId: d.companyId, title: d.title || d.company, stage: d.stage, mode: line.type === 'final' ? 'final' : undefined }); }}
+      title="Create an invoice for this"
+      style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: '#0E7490', background: '#ECFEFF', border: '1px solid #A5E0EC', borderRadius: 4, padding: '2px 7px', cursor: 'pointer', flexShrink: 0 }}
+    >
+      INV
+    </button>
+  );
+}
+
+function PendingRow({ d, onOpenDeal, onCreateInvoice }) {
   const name = d.company || d.title || 'Untitled deal';
   // Only keep the deal title as a second line when it adds something beyond the
   // company name (avoids showing e.g. "Beyond PR" twice).
@@ -1296,6 +1356,9 @@ function PendingRow({ d, onOpenDeal }) {
   const single = lines.length === 1;
   const single0 = single ? lines[0] : null;
   const showCommitted = Math.abs((d.committed || 0) - (d.outstanding || 0)) > 0.005;
+  // INV button shows on a not-yet-invoiced line of a real deal (not extras, which
+  // ride on the final invoice; not company-level invoice rows with no dealId).
+  const canInvoice = (l) => !!(onCreateInvoice && d.dealId && l.invoiced === false && l.type !== 'extra');
   // Deal rows open the deal; company-level invoice rows (no dealId) open the company.
   const open = () => onOpenDeal && onOpenDeal(d.dealId || d.companyId);
   return (
@@ -1322,6 +1385,7 @@ function PendingRow({ d, onOpenDeal }) {
             </span>
           )}
         </div>
+        {single && single0 && canInvoice(single0) && <InvButton d={d} line={single0} onCreateInvoice={onCreateInvoice} />}
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(d.outstanding)}</div>
           {showCommitted && <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>}
@@ -1346,6 +1410,7 @@ function PendingRow({ d, onOpenDeal }) {
                 )}
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                {canInvoice(l) && <InvButton d={d} line={l} onCreateInvoice={onCreateInvoice} />}
                 <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{formatGBP(l.amount)}</span>
               </span>
             </div>

@@ -967,10 +967,11 @@ async function pendingPaymentsReport() {
   const normal = [];
   const po = [];
   for (const did of dealIds) {
-    // "Project work" (non-PO signed deals) is no longer listed or counted here —
-    // it's tracked via the imported lists / company invoices. Only POs remain.
+    // Every signed deal with an outstanding balance is listed (PO and non-PO);
+    // each line is tagged invoiced / not-invoiced so a not-yet-invoiced portion
+    // (e.g. a 50% final) shows and can be invoiced from the list. The Live Sales
+    // Sheet import is legacy now — the CRM deal is the source of truth.
     const isPo = !!poByDeal.get(did);
-    if (!isPo) continue;
     const inc = committed.get(did) || 0;
     const paidInc = paid.get(did) || 0;
     // The full outstanding on signed work (signed − paid) — both invoiced and
@@ -1088,8 +1089,8 @@ async function pendingPaymentsReport() {
     arr.reduce((s, item) => s + (item.lines || []).reduce(
       (ls, l) => ls + ((!!l.invoiced === wantInvoiced) ? (Number(l.amount) || 0) : 0), 0), 0),
   );
-  const invoiced = round2(sumLinesByStatus(po, true) + companyInvoicedNet + manualInvoiced);
-  const notInvoiced = round2(sumLinesByStatus(po, false) + (manualTotal - manualInvoiced));
+  const invoiced = round2(sumLinesByStatus(po, true) + sumLinesByStatus(normal, true) + companyInvoicedNet + manualInvoiced);
+  const notInvoiced = round2(sumLinesByStatus(po, false) + sumLinesByStatus(normal, false) + (manualTotal - manualInvoiced));
 
   return {
     normal, po, manual, companyInvoices,
