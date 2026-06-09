@@ -29,8 +29,8 @@ export async function getRole(id) {
 
 // Self-heal for system roles added after the initial roles seed (currently the
 // 'copywriter' role — same permissions as Producer for now). Idempotent and
-// module-level cached. Called by listRoles so the role always appears in the
-// admin UI / user role dropdown even if the migration wasn't applied manually.
+// module-level cached. Called by listRoles AND the /me permissions path so the
+// role + its permissions are correct even if the migration wasn't applied.
 let systemRolesEnsured = null;
 export function ensureSystemRoles() {
   if (systemRolesEnsured) return systemRolesEnsured;
@@ -41,6 +41,15 @@ export function ensureSystemRoles() {
         VALUES ('copywriter', 'Copywriter', '["revisions.access", "production.access"]'::jsonb, '{}'::jsonb, true)
         ON CONFLICT (id) DO NOTHING
       `;
+      // Back-fill finance.manage on a Director role that pre-dates the permission
+      // (the 20260609 migration is ON CONFLICT DO NOTHING, so it won't update an
+      // existing role). Without this, Directors can't reach the Finance section.
+      const upd = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["finance.manage"]'::jsonb, updated_at = NOW()
+         WHERE id = 'director' AND NOT (permissions @> '["finance.manage"]'::jsonb)
+      `;
+      if ((upd.count || upd.rowCount || 0) > 0) invalidateRoleCache('director');
     } catch (err) {
       systemRolesEnsured = null;
       console.warn('[roles] ensure system roles failed', err.message);

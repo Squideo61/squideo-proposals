@@ -16,7 +16,7 @@ import {
 } from '../_lib/middleware.js';
 import { sendMail, twoFactorCodeHtml, inviteAcceptedHtml, APP_URL } from '../_lib/email.js';
 import { sendNotification } from '../_lib/notifications.js';
-import { getRole } from '../_lib/userRoles.js';
+import { getRole, ensureSystemRoles } from '../_lib/userRoles.js';
 import {
   generateTotpSecret,
   verifyTotp,
@@ -91,6 +91,9 @@ function publicUser(u) {
 // their role. Used by the /me endpoint so the SPA knows which UI to show.
 async function publicUserWithPermissions(u) {
   const base = publicUser(u);
+  // Self-heal system roles first (e.g. back-fills finance.manage onto a Director
+  // role created before that permission existed) so /me returns current perms.
+  await ensureSystemRoles();
   const role = await getRole(base.role);
   return { ...base, permissions: role?.permissions || [], roleName: role?.name || base.role };
 }
