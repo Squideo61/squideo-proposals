@@ -50,6 +50,25 @@ export function ensureSystemRoles() {
          WHERE id = 'director' AND NOT (permissions @> '["finance.manage"]'::jsonb)
       `;
       if ((upd.count || upd.rowCount || 0) > 0) invalidateRoleCache('director');
+
+      // The £ (sales & finance) notifications bell is for Admin (covered by '*'),
+      // Directors and Project Managers (role id 'member'). Back-fill the gating
+      // permission onto the latter two so the bell appears without a migration.
+      const fnUpd = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["finance.notifications"]'::jsonb, updated_at = NOW()
+         WHERE id IN ('director', 'member') AND NOT (permissions @> '["finance.notifications"]'::jsonb)
+      `;
+      if ((fnUpd.count || fnUpd.rowCount || 0) > 0) invalidateRoleCache();
+
+      // The "pending payment marked paid" alert is a new broadcast key — default
+      // it ON for Admin / Director / Project Manager so they actually receive it
+      // (a key absent from notification_defaults resolves to OFF).
+      await sql`
+        UPDATE roles
+           SET notification_defaults = notification_defaults || '{"pp.marked_paid": true}'::jsonb, updated_at = NOW()
+         WHERE id IN ('admin', 'director', 'member') AND NOT (notification_defaults ? 'pp.marked_paid')
+      `;
     } catch (err) {
       systemRolesEnsured = null;
       console.warn('[roles] ensure system roles failed', err.message);

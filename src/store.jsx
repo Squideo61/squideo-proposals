@@ -28,6 +28,17 @@ function saveLocal(key, value) {
   } catch { /* quota / disabled — ignore */ }
 }
 
+// Normalize the /api/notifications response into the per-channel shape the
+// bells read. Tolerates the older flat `{ items, unread }` payload (general).
+function normalizeNotificationChannels(r) {
+  const ch = r?.channels;
+  const norm = (c) => ({ items: Array.isArray(c?.items) ? c.items : [], unread: c?.unread || 0 });
+  return {
+    finance: norm(ch?.finance),
+    general: norm(ch?.general || { items: r?.items, unread: r?.unread }),
+  };
+}
+
 function emptyStore() {
   return {
     // CRM-wide undo/redo history. Each entry is { label, undo, redo } where
@@ -106,10 +117,10 @@ function emptyStore() {
     bankHolidays: null,
     partnerCreditsList: null,
     partnerCreditDetail: {},
-    // In-app notification feed (the bell). notifications: newest-first list,
-    // notificationsUnread: server-reported unread count.
-    notifications: [],
-    notificationsUnread: 0,
+    // In-app notification feed (the bells). The feed is split into two channels
+    // — 'finance' (the £ bell) and 'general' (the standard bell). Each holds a
+    // newest-first `items` list + server-reported `unread` count.
+    notificationsByChannel: { finance: { items: [], unread: 0 }, general: { items: [], unread: 0 } },
     session: null,
     loading: true,
     composerContext: loadLocal(COMPOSER_CONTEXT_KEY, null),
@@ -421,7 +432,7 @@ export function StoreProvider({ children }) {
       }).catch(() => {});
       api.get('/api/notifications').then((r) => {
         if (cancelled || !r) return;
-        setState(s => ({ ...s, notifications: Array.isArray(r.items) ? r.items : [], notificationsUnread: r.unread || 0 }));
+        setState(s => ({ ...s, notificationsByChannel: normalizeNotificationChannels(r) }));
       }).catch(() => {});
     };
     refresh(); // prime immediately so the bell badge is populated on load
@@ -2916,40 +2927,46 @@ export function StoreProvider({ children }) {
       return api.put('/api/users?_kind=notifications&email=' + encodeURIComponent(email), { overrides });
     },
 
-    // ---------- In-app notification feed (the bell) ----------
+    // ---------- In-app notification feed (the bells) ----------
+    // Each action takes a `channel` ('finance' | 'general') so the two bells
+    // operate independently. State lives in s.notificationsByChannel[channel].
     loadNotifications() {
       return api.get('/api/notifications').then((r) => {
-        setState(s => ({ ...s, notifications: Array.isArray(r?.items) ? r.items : [], notificationsUnread: r?.unread || 0 }));
+        setState(s => ({ ...s, notificationsByChannel: normalizeNotificationChannels(r) }));
         return r;
       });
     },
-    // Optimistically flag the given ids read and recompute the badge from the
-    // loaded list, then persist. Server failure is non-fatal — the next poll
-    // reconciles.
-    markNotificationsRead(ids) {
+    // Optimistically flag the given ids read in their channel and recompute the
+    // badge, then persist. Server failure is non-fatal — the next poll reconciles.
+    markNotificationsRead(ids, channel = 'general') {
       const idset = new Set(ids);
       setState(s => {
-        const notifications = s.notifications.map(n => (idset.has(n.id) ? { ...n, read: true } : n));
-        return { ...s, notifications, notificationsUnread: notifications.filter(n => !n.read).length };
+        const ch = s.notificationsByChannel[channel] || { items: [], unread: 0 };
+        const items = ch.items.map(n => (idset.has(n.id) ? { ...n, read: true } : n));
+        return { ...s, notificationsByChannel: { ...s.notificationsByChannel, [channel]: { items, unread: items.filter(n => !n.read).length } } };
       });
       return api.post('/api/notifications', { ids }).catch(() => {});
     },
-    markAllNotificationsRead() {
-      setState(s => ({ ...s, notifications: s.notifications.map(n => ({ ...n, read: true })), notificationsUnread: 0 }));
-      return api.post('/api/notifications', { all: true }).catch(() => {});
-    },
-    // Remove a single notification from the feed. Optimistic; next poll reconciles.
-    dismissNotification(id) {
+    markAllNotificationsRead(channel = 'general') {
       setState(s => {
-        const notifications = s.notifications.filter(n => n.id !== id);
-        return { ...s, notifications, notificationsUnread: notifications.filter(n => !n.read).length };
+        const ch = s.notificationsByChannel[channel] || { items: [], unread: 0 };
+        return { ...s, notificationsByChannel: { ...s.notificationsByChannel, [channel]: { items: ch.items.map(n => ({ ...n, read: true })), unread: 0 } } };
+      });
+      return api.post('/api/notifications', { all: true, channel }).catch(() => {});
+    },
+    // Remove a single notification from its channel. Optimistic; next poll reconciles.
+    dismissNotification(id, channel = 'general') {
+      setState(s => {
+        const ch = s.notificationsByChannel[channel] || { items: [], unread: 0 };
+        const items = ch.items.filter(n => n.id !== id);
+        return { ...s, notificationsByChannel: { ...s.notificationsByChannel, [channel]: { items, unread: items.filter(n => !n.read).length } } };
       });
       return api.delete('/api/notifications?id=' + encodeURIComponent(id)).catch(() => {});
     },
-    // Clear the whole feed.
-    clearNotifications() {
-      setState(s => ({ ...s, notifications: [], notificationsUnread: 0 }));
-      return api.delete('/api/notifications').catch(() => {});
+    // Clear one channel's feed.
+    clearNotifications(channel = 'general') {
+      setState(s => ({ ...s, notificationsByChannel: { ...s.notificationsByChannel, [channel]: { items: [], unread: 0 } } }));
+      return api.delete('/api/notifications?channel=' + encodeURIComponent(channel)).catch(() => {});
     },
 
     // ---------- Proposal client resolver ----------

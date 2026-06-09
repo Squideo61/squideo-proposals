@@ -44,6 +44,8 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     || permissionsInclude(perms, 'settings.manage');
   // Whole-business finances — anyone with finance.manage (owner/admin + Director).
   const canBusiness = permissionsInclude(perms, 'finance.manage');
+  // The £ (sales & finance) notifications bell — Admin, Directors, Project Managers.
+  const canFinanceBell = permissionsInclude(perms, 'finance.notifications');
 
   const sections = [
     {
@@ -245,6 +247,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
           );
         })}
 
+        {canFinanceBell && <NotificationBell onOpenLink={onOpenLink} inline channel="finance" />}
         <NotificationBell onOpenLink={onOpenLink} inline />
 
         <div ref={accountRef} style={{ position: 'relative' }}>

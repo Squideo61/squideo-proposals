@@ -14,6 +14,7 @@ import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
+import { notifyPpMarkedPaid } from '../_lib/crm/stats.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -211,6 +212,16 @@ async function markFeePaid(req, res, user) {
     INSERT INTO partner_fee_payments (id, client_key, month, net, vat, method, paid_at, created_by)
     VALUES (${'pfp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)}, ${clientKey}, ${month}, ${r2(net)}, ${vat}, ${method}, NOW(), ${user.email || null})
     ON CONFLICT (client_key, month) DO UPDATE SET net = EXCLUDED.net, vat = EXCLUDED.vat, method = EXCLUDED.method, paid_at = NOW(), created_by = EXCLUDED.created_by`;
+
+  // Broadcast in-app alert to the sales & finance bell (best-effort).
+  const [partner] = await sql`SELECT client_name FROM partner_subscriptions WHERE client_key = ${clientKey} ORDER BY created_at DESC LIMIT 1`;
+  await notifyPpMarkedPaid({
+    label: `${partner?.client_name || clientKey} (partner)`,
+    amount: r2(net),
+    method,
+    actorName: user?.name || user?.email || null,
+  });
+
   return res.status(200).json({ ok: true, clientKey, month, paid: true, net: r2(net), vat });
 }
 

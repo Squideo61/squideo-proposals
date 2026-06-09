@@ -6,6 +6,7 @@ import { allCompanyBalances } from './companies.js';
 import { outstandingExtrasByDeal, ensureDealExtrasTable } from './extras.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
 import { archiveRecord } from './recycleBin.js';
+import { sendNotification } from '../notifications.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
 // five paid-money sources as companies.js (allCompanyBalances /
@@ -1108,10 +1109,33 @@ async function pendingPaymentsReport() {
   };
 }
 
+// Fire a broadcast IN-APP alert (no email) when a pending payment is ticked off
+// as paid — an imported PP/PO row here, or a partner fee from api/partner. Sales
+// & finance channel (the £ bell). Best-effort: never blocks the mark-paid reply.
+export async function notifyPpMarkedPaid({ label, amount, method, actorName }) {
+  try {
+    const money = gbp(Number(amount) || 0);
+    const by = actorName ? ` by ${actorName}` : '';
+    const via = method ? ` (${method})` : '';
+    await sendNotification('pp.marked_paid', {
+      inAppOnly: true,
+      subject: `Pending payment marked paid: ${label}`,
+      text: `${label} marked paid${via}${by}.`,
+      inApp: {
+        title: `Payment received: ${label || 'Pending payment'}`,
+        body: `${money}${via} marked paid${by}.`,
+        link: '#/finance',
+      },
+    });
+  } catch (err) {
+    console.warn('[stats] pp.marked_paid notify failed', err.message);
+  }
+}
+
 // GET list / POST import / DELETE one — the imported manual pending payments.
 // Caller has already checked settings.manage. `action` carries the row id on
 // DELETE. POST body: { rows: [{company,invoiceType,description,amountExVat,vat,paymentMethod,note}], mode }.
-async function pendingManualRoute(req, res, action) {
+async function pendingManualRoute(req, res, action, user) {
   await ensureManualPendingPayments();
 
   if (req.method === 'GET') {
@@ -1162,12 +1186,22 @@ async function pendingManualRoute(req, res, action) {
     }
     const paid = body.paid !== false; // default → paid
     const method = trimOrNull(body.method);
+    const [before] = await sql`SELECT company, description, amount_ex_vat FROM manual_pending_payments WHERE id = ${action}`;
     await sql`
       UPDATE manual_pending_payments
          SET status = ${paid ? 'paid' : 'pending'},
              paid_at = ${paid ? new Date().toISOString() : null},
              paid_method = ${paid ? (method || null) : null}
        WHERE id = ${action}`;
+    // Only alert on a transition INTO paid (not when un-marking).
+    if (paid && before) {
+      await notifyPpMarkedPaid({
+        label: before.company || before.description || 'Pending payment',
+        amount: before.amount_ex_vat,
+        method,
+        actorName: user?.name || user?.email || null,
+      });
+    }
     return res.status(200).json({ ok: true, rows: await fetchManualPending() });
   }
 
@@ -1941,7 +1975,7 @@ export async function statsRoute(req, res, id, action, user) {
     return historyRoute(req, res);
   }
   if (id === 'pending-manual') {
-    return pendingManualRoute(req, res, action);
+    return pendingManualRoute(req, res, action, user);
   }
   if (id === 'linkable-deals') {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

@@ -1,8 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bell, Check, X } from 'lucide-react';
+import { Bell, PoundSterling, Check, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatRelativeTime, useIsMobile } from '../utils.js';
+
+// Per-channel presentation. 'general' is the standard bell; 'finance' is the £
+// bell shown to its left for sales/money updates.
+const CHANNEL_META = {
+  general: { icon: Bell, label: 'Notifications', accent: BRAND.blue, badge: '#EF4444' },
+  finance: { icon: PoundSterling, label: 'Sales & finance', accent: '#0E7490', badge: '#0E7490' },
+};
 
 // Floating notification center. Mounted once at the app root so the bell is
 // available on every screen. Sits in the right-hand gutter of the centered
@@ -11,15 +18,18 @@ import { formatRelativeTime, useIsMobile } from '../utils.js';
 // The feed is populated by the store's 60s poll (store.jsx); this component is
 // purely presentational + marks things read. `onOpenLink` receives an in-app
 // hash route (e.g. '#/admin/users') so clicking a notification navigates
-// without a full reload.
-export function NotificationBell({ onOpenLink, inline = false }) {
+// without a full reload. `channel` selects which feed/bell this instance is.
+export function NotificationBell({ onOpenLink, inline = false, channel = 'general' }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
-  const items = state.notifications || [];
-  const unread = state.notificationsUnread || 0;
+  const meta = CHANNEL_META[channel] || CHANNEL_META.general;
+  const Icon = meta.icon;
+  const feed = (state.notificationsByChannel && state.notificationsByChannel[channel]) || { items: [], unread: 0 };
+  const items = feed.items || [];
+  const unread = feed.unread || 0;
 
   // Close on outside click / Escape.
   useEffect(() => {
@@ -35,7 +45,7 @@ export function NotificationBell({ onOpenLink, inline = false }) {
   useEffect(() => { if (open) actions.loadNotifications().catch(() => {}); }, [open, actions]);
 
   const onItemClick = (n) => {
-    if (!n.read) actions.markNotificationsRead([n.id]);
+    if (!n.read) actions.markNotificationsRead([n.id], channel);
     if (n.link) {
       setOpen(false);
       onOpenLink?.(n.link);
@@ -54,22 +64,22 @@ export function NotificationBell({ onOpenLink, inline = false }) {
     <div ref={wrapRef} style={wrapStyle}>
       <button
         onClick={() => setOpen(o => !o)}
-        aria-label={unread > 0 ? `Notifications (${unread} unread)` : 'Notifications'}
-        title="Notifications"
+        aria-label={unread > 0 ? `${meta.label} (${unread} unread)` : meta.label}
+        title={meta.label}
         style={{
           position: 'relative',
           width: 40, height: 40, borderRadius: '50%',
           background: 'white', border: '1px solid ' + BRAND.border,
           boxShadow: inline ? 'none' : '0 2px 8px rgba(15,42,61,0.12)',
           cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: open ? BRAND.blue : BRAND.ink,
+          color: open ? meta.accent : BRAND.ink,
         }}
       >
-        <Bell size={18} />
+        <Icon size={18} />
         {unread > 0 && (
           <span style={{
             position: 'absolute', top: -3, right: -3, minWidth: 18, height: 18, padding: '0 4px',
-            borderRadius: 999, background: '#EF4444', color: 'white', fontSize: 10, fontWeight: 700,
+            borderRadius: 999, background: meta.badge, color: 'white', fontSize: 10, fontWeight: 700,
             display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid white',
           }}>{badge}</span>
         )}
@@ -85,11 +95,11 @@ export function NotificationBell({ onOpenLink, inline = false }) {
           boxShadow: '0 12px 32px rgba(15,42,61,0.18)', overflow: 'hidden',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid ' + BRAND.border }}>
-            <strong style={{ fontSize: 14 }}>Notifications</strong>
+            <strong style={{ fontSize: 14 }}>{meta.label}</strong>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               {unread > 0 && (
                 <button
-                  onClick={() => actions.markAllNotificationsRead()}
+                  onClick={() => actions.markAllNotificationsRead(channel)}
                   className="btn-ghost"
                   style={{ fontSize: 12, padding: '4px 8px' }}
                 >
@@ -98,7 +108,7 @@ export function NotificationBell({ onOpenLink, inline = false }) {
               )}
               {items.length > 0 && (
                 <button
-                  onClick={() => actions.clearNotifications()}
+                  onClick={() => actions.clearNotifications(channel)}
                   className="btn-ghost"
                   style={{ fontSize: 12, padding: '4px 8px' }}
                 >
@@ -134,7 +144,7 @@ export function NotificationBell({ onOpenLink, inline = false }) {
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                       <span style={{
                         flexShrink: 0, marginTop: 6, width: 7, height: 7, borderRadius: '50%',
-                        background: n.read ? 'transparent' : BRAND.blue,
+                        background: n.read ? 'transparent' : meta.accent,
                       }} />
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={{ fontSize: 13, fontWeight: n.read ? 500 : 700, color: BRAND.ink, lineHeight: 1.35 }}>{n.title}</div>
@@ -144,7 +154,7 @@ export function NotificationBell({ onOpenLink, inline = false }) {
                     </div>
                   </button>
                   <button
-                    onClick={(e) => { e.stopPropagation(); actions.dismissNotification(n.id); }}
+                    onClick={(e) => { e.stopPropagation(); actions.dismissNotification(n.id, channel); }}
                     aria-label="Dismiss notification"
                     title="Dismiss"
                     style={{

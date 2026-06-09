@@ -162,6 +162,7 @@ export async function sendNotification(key, {
   extraRecipients = null,
   throwOnError = false,
   inApp = null,
+  inAppOnly = false,
 } = {}) {
   const recipients = await resolveRecipients(key, { ownerEmail, assigneeEmails, excludeEmails });
 
@@ -173,6 +174,10 @@ export async function sendNotification(key, {
   if (recipients.length) {
     await persistInApp(key, recipients, { subject, text, inApp });
   }
+
+  // In-app-only alerts (e.g. ticking a pending payment paid) skip email entirely
+  // so frequent manual actions don't spam inboxes — the bell is enough.
+  if (inAppOnly) return { sent: 0, recipients, inApp: recipients.length };
 
   const extras = (extraRecipients || [])
     .filter(Boolean)
