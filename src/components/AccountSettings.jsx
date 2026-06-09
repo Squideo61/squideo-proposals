@@ -210,10 +210,23 @@ export function AccountSettings({ onClose, onLogout }) {
         />
       )}
 
-      <div style={{ borderTop: '1px solid ' + BRAND.border, marginTop: 24, paddingTop: 20 }}>
+      <div style={{ borderTop: '1px solid ' + BRAND.border, marginTop: 24, paddingTop: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <button className="btn-ghost" onClick={onLogout} style={{ color: '#DC2626', width: '100%', justifyContent: 'center' }}>
           Sign out
         </button>
+        <button
+          className="btn-ghost"
+          onClick={() => {
+            if (!window.confirm('Sign out of every device, including this one? You and anyone signed in as you will need to log in again.')) return;
+            actions.signOutEverywhere();
+          }}
+          style={{ color: '#DC2626', width: '100%', justifyContent: 'center' }}
+        >
+          Sign out of all devices
+        </button>
+        <p style={{ margin: 0, fontSize: 12, color: BRAND.muted, textAlign: 'center' }}>
+          Use this if you think your account may be compromised — it invalidates every active session.
+        </p>
       </div>
     </Modal>
   );

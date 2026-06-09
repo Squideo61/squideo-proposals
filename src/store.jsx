@@ -702,6 +702,16 @@ export function StoreProvider({ children }) {
       saveLocal(DRAFTS_KEY, []);
       setState({ ...emptyStore(), loading: false, composerContext: null, drafts: [] });
     },
+    // "Sign out everywhere": bump the server-side token version so every active
+    // session (including this one) is rejected on its next request, then tear
+    // down local state exactly like logout.
+    signOutEverywhere() {
+      return api.post('/api/auth/signout-all', {}).catch(() => {}).then(() => {
+        saveLocal(COMPOSER_CONTEXT_KEY, null);
+        saveLocal(DRAFTS_KEY, []);
+        setState({ ...emptyStore(), loading: false, composerContext: null, drafts: [] });
+      });
+    },
     signup(user) {
       setState(s => ({ ...s, session: {
         email: user.email,

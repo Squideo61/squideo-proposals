@@ -5,7 +5,9 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import sql from './_lib/db.js';
-import { cors, requireAuth, requireAdmin, requirePermission } from './_lib/middleware.js';
+import { cors, requireAuth, requireAdmin, requirePermission, sessionCookieHeader, appendSetCookie } from './_lib/middleware.js';
+import { signToken } from './_lib/auth.js';
+import { bumpTokenVersion } from './_lib/sessions.js';
 import { sendMail, inviteHtml, APP_URL } from './_lib/email.js';
 import { getRole } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
@@ -92,6 +94,12 @@ async function usersHandler(req, res) {
       if (!valid) return res.status(400).json({ error: 'Current password is incorrect' });
       const hash = await bcrypt.hash(new_password, 12);
       await sql`UPDATE users SET password_hash = ${hash} WHERE email = ${payload.email}`;
+      // Changing the password invalidates every other session for this user.
+      // Re-issue the current one (with the new version) so the caller stays
+      // logged in while other devices are signed out on their next request.
+      const newTv = await bumpTokenVersion(payload.email);
+      const jwt = await signToken({ email: payload.email, name: payload.name, role: payload.role || 'member', tv: newTv ?? 0 });
+      appendSetCookie(res, sessionCookieHeader(jwt));
       return res.status(200).json({ ok: true });
     }
 

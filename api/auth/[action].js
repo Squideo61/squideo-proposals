@@ -14,6 +14,7 @@ import {
   sessionCookieHeader,
   clearSessionCookieHeader,
 } from '../_lib/middleware.js';
+import { getTokenVersion, bumpTokenVersion } from '../_lib/sessions.js';
 import { sendMail, twoFactorCodeHtml, inviteAcceptedHtml, APP_URL } from '../_lib/email.js';
 import { sendNotification } from '../_lib/notifications.js';
 import { getRole, ensureSystemRoles } from '../_lib/userRoles.js';
@@ -183,7 +184,10 @@ async function issueTrustedDevice(res, email, userAgent) {
 }
 
 async function issueSession(res, user) {
-  const jwt = await signToken({ email: user.email, name: user.name, role: user.role || 'member' });
+  // Stamp the user's current token version into the session so it can be
+  // revoked later by bumping that version (see api/_lib/sessions.js).
+  const tv = await getTokenVersion(user.email);
+  const jwt = await signToken({ email: user.email, name: user.name, role: user.role || 'member', tv: tv ?? 0 });
   appendSetCookie(res, sessionCookieHeader(jwt));
   return jwt;
 }
@@ -267,6 +271,22 @@ export default async function handler(req, res) {
   }
 
   if (req.method !== 'POST') return res.status(405).end();
+
+  // ---------- signout-all (authed) ----------
+  // "Sign out everywhere" — bumps the user's token version so every existing
+  // session (this one included) is rejected on its next request, then clears
+  // the current cookie. Use after a suspected token compromise.
+  if (action === 'signout-all') {
+    const payload = await requireAuth(req, res);
+    if (!payload) return;
+    await bumpTokenVersion(payload.email);
+    // Also revoke any Chrome-extension tokens — they authenticate separately
+    // from the session JWT, so "sign out everywhere" must kill them too.
+    await sql`UPDATE extension_tokens SET revoked_at = NOW() WHERE user_email = ${payload.email} AND revoked_at IS NULL`
+      .catch((err) => console.warn('[signout-all] extension token revoke failed', err.message));
+    appendSetCookie(res, clearSessionCookieHeader());
+    return res.status(200).json({ ok: true });
+  }
 
   // ---------- login ----------
   if (action === 'login') {
@@ -507,6 +527,10 @@ export default async function handler(req, res) {
       WHERE email = ${payload.email}
     `;
     await sql`DELETE FROM trusted_devices WHERE email = ${payload.email}`;
+    // A 2FA reset is a security event — invalidate every other session for this
+    // user, then re-issue the current one so the caller isn't logged out.
+    await bumpTokenVersion(payload.email);
+    await issueSession(res, user);
     return res.status(200).json({ ok: true });
   }
 

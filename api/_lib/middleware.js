@@ -15,6 +15,7 @@ import { verifyToken } from './auth.js';
 import { lookupExtensionToken } from './extension.js';
 import { getRole } from './userRoles.js';
 import { hasPermission } from './permissions.js';
+import { getTokenVersion } from './sessions.js';
 
 // Constant-time string comparison for shared secrets (CRON_SECRET, etc.) so a
 // match can't be inferred from response timing. Length-safe: a mismatch in
@@ -77,12 +78,41 @@ export async function requireAuth(req, res) {
     return null;
   }
   // 1. Try as a session JWT (the normal web-app path).
+  let jwtPayload = null;
   try {
-    return await verifyToken(token);
-  } catch { /* fall through */ }
+    jwtPayload = await verifyToken(token);
+  } catch { /* not a valid session JWT — fall through to extension token */ }
+
+  if (jwtPayload) {
+    // Signature is valid; enforce session-token revocation. The token's `tv`
+    // claim must match the user's current token_version — a mismatch means the
+    // session was revoked (password change / 2FA reset / "sign out everywhere")
+    // or the token predates revocation support.
+    let currentTv;
+    try {
+      currentTv = await getTokenVersion(jwtPayload.email);
+    } catch (err) {
+      // Fail open on an infra error: the signature is already proven, so we
+      // keep the app available and just skip the (best-effort) liveness check.
+      console.warn('[requireAuth] token_version lookup failed; allowing on valid signature', err.message);
+      return jwtPayload;
+    }
+    if (currentTv === null) { // user no longer exists
+      res.status(401).json({ error: 'Invalid token' });
+      return null;
+    }
+    const claimedTv = Number.isInteger(jwtPayload.tv) ? jwtPayload.tv : -1;
+    if (claimedTv !== currentTv) {
+      res.status(401).json({ error: 'Session expired' });
+      return null;
+    }
+    return jwtPayload;
+  }
+
   // 2. Fall back to a stored extension token. Adds one DB query but only for
   //    callers that don't have a valid JWT; web-app traffic still short-circuits
-  //    on the JWT verify above.
+  //    on the JWT verify above. Extension tokens have their own revocation
+  //    (revoked_at / expires_at), so they skip the token_version check.
   try {
     const ext = await lookupExtensionToken(token);
     if (ext) return ext;
