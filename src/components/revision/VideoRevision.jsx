@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock, Eye, Pencil, Trash2 } from 'lucide-react';
+import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock, Eye, Pencil, Trash2, Maximize2, Minimize2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { ConflictBanner } from './ConflictBanner.jsx';
@@ -65,6 +65,35 @@ function CommentAttachment({ url, name, type }) {
 export function VideoRevision({ token, data }) {
   const { actions, showMsg } = useStore();
   const videoRef = useRef(null);
+  const playerWrapRef = useRef(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Use a wrapper-level fullscreen so the DRAFT overlay travels with the video.
+  // The native <video> fullscreen renders only the media element, which would
+  // strip the watermark and let a screen-recorder grab a clean copy.
+  useEffect(() => {
+    const handler = () => {
+      const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+      setIsFullscreen(fsEl === playerWrapRef.current);
+    };
+    document.addEventListener('fullscreenchange', handler);
+    document.addEventListener('webkitfullscreenchange', handler);
+    return () => {
+      document.removeEventListener('fullscreenchange', handler);
+      document.removeEventListener('webkitfullscreenchange', handler);
+    };
+  }, []);
+
+  function toggleFullscreen() {
+    const el = playerWrapRef.current;
+    if (!el) return;
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    if (fsEl) {
+      (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+    } else {
+      (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
+    }
+  }
 
   // ── Name + email gate ──────────────────────────────────────────────────────
   const [name, setName] = useState(() => localStorage.getItem(NAME_KEY) || '');
@@ -393,13 +422,27 @@ export function VideoRevision({ token, data }) {
         {/* Player + marker strip */}
         <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', background: '#0B1B26', minWidth: 0 }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
-            <div style={{ position: 'relative', display: 'inline-flex', maxWidth: '100%', maxHeight: '100%' }}>
+            <div
+              ref={playerWrapRef}
+              style={{
+                position: 'relative',
+                display: isFullscreen ? 'flex' : 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                maxWidth: '100%',
+                maxHeight: '100%',
+                width: isFullscreen ? '100%' : 'auto',
+                height: isFullscreen ? '100%' : 'auto',
+                background: isFullscreen ? '#000' : 'transparent',
+              }}
+            >
               <video
                 ref={videoRef}
                 key={version.id}
                 src={version.videoUrl}
                 controls
-                controlsList="nodownload"
+                controlsList="nodownload nofullscreen"
+                disablePictureInPicture
                 onContextMenu={e => e.preventDefault()}
                 onLoadedMetadata={e => setDuration(e.target.duration || 0)}
                 onTimeUpdate={e => setCurrentTime(e.target.currentTime || 0)}
@@ -410,6 +453,19 @@ export function VideoRevision({ token, data }) {
                 backgroundImage: `url("data:image/svg+xml,${DRAFT_SVG}")`,
                 backgroundRepeat: 'repeat',
               }} />
+              <button
+                onClick={toggleFullscreen}
+                title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                style={{
+                  position: 'absolute', top: 8, right: 8,
+                  width: 32, height: 32,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(0,0,0,0.55)', color: '#fff',
+                  border: 'none', borderRadius: 6, cursor: 'pointer',
+                }}
+              >
+                {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </button>
             </div>
           </div>
           <div style={{ position: 'relative', height: 28, background: '#0B1B26',
