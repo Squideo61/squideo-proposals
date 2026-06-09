@@ -511,9 +511,9 @@ function CfTargets({ targets, isMobile }) {
     { key: 'min', label: 'Minimum Target', value: targets.minimum, sub: 'Composed of all expenses & wages', accent: BRAND.muted },
     ...draws.map((d) => ({
       key: 'd' + d.draw,
-      label: `£${(d.draw / 1000)}k wage target`,
+      label: `£${(d.draw / 1000)}k take-home target`,
       value: d.amount,
-      sub: `Lets both directors draw £${d.draw.toLocaleString('en-GB')}/mo (tax included)`,
+      sub: `Both directors take home £${d.draw.toLocaleString('en-GB')}/mo after tax (business funds the tax)`,
       accent: BRAND.blue,
     })),
   ];
@@ -532,7 +532,7 @@ function CfTargets({ targets, isMobile }) {
         ))}
       </div>
       <p style={{ fontSize: 12, color: BRAND.muted, margin: '12px 0 0' }}>
-        Each director’s wage baseline is {formatGBP(targets.baseline)}/mo on the graphs (Adam’s £500 car allowance is excluded). The wage targets lift both directors by the same amount and gross up for the extra income tax + employee NI — added on top of the minimum (which already funds today’s drawings). Estimate only.
+        Take-home (net) targets, based on Adam — each director keeps this much after tax (Ben’s pay is a composite of his + Anna’s salaries less his car lease, so it mirrors Adam). Baseline {formatGBP(targets.baseline)}/mo; Adam’s £500 car allowance is excluded from the wage but still taxed. The business funds the income tax + employee NI so the take-home is clean — added on top of the minimum (which already funds today’s drawings). Estimate only.
       </p>
     </div>
   );

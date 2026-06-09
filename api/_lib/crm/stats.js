@@ -1755,31 +1755,33 @@ async function cashflowReport(action) {
   const ctYear = round2(corpTaxOn(Math.max(0, selOp.taxProfit) * 12)); // annualised current-month run-rate
   const monthReserve = corpTaxMonthly;
 
-  // Wage-based targets. The "minimum" target is simply the full cost base (the
-  // break-even). The £4k/£5k targets answer: what must we bill so both directors
-  // can take a £4k/£5k wage? Each director's wage baseline is £3,000/mo (Adam's
-  // £3,500 drawing less his £500 car allowance — a perk, not wage), so a £4k draw
-  // is a +£1,000 uplift. Both directors get the SAME uplift, and we gross up for
-  // the extra income tax + employee NI that uplift incurs (the current cost base
-  // already funds their current drawings and tax, so we only add the marginal
-  // extra). tax_basis rows are the directors whose drawings scale (Adam + Ben).
+  // Wage-based targets. The "minimum" target is the full cost base (break-even).
+  // The £4k/£5k targets answer: what must we bill so both directors TAKE HOME
+  // (net) that much, with the business funding their personal tax? Each draw level
+  // is the director's net wage; the uplift over the £3,000 baseline is extra
+  // take-home (funded clean) and we add the income tax + employee NI on it so the
+  // take-home stays net. Based on ADAM for both directors (Ben's pay is a
+  // composite of his + Anna's salaries less his car lease, so we mirror Adam for
+  // parity). Adam's taxable drawing = wage + his £500 car allowance — the car is
+  // excluded from the wage figure but is still taxed, so the gross-up is computed
+  // on (wage + car). Added on top of the minimum, which already funds today's
+  // drawings + tax. tax_basis rows = the directors who scale (Adam + Ben).
   const WAGE_BASELINE = 3000;
+  const CAR_ALLOWANCE = 500;
   const TARGET_DRAWS = [4000, 5000];
   const taxBasisRows = costRows.filter((r) => r.tax_basis === true && costAppliesToMonth(r, month));
+  const numDirectors = taxBasisRows.length || 2;
+  const adamCurrentTaxable = WAGE_BASELINE + CAR_ALLOWANCE; // £3,500/mo (wage + car)
   const targetForDraw = (drawLevel) => {
-    const uplift = Math.max(0, drawLevel - WAGE_BASELINE);
-    let extra = 0;
-    for (const r of taxBasisRows) {
-      const curM = monthlyAmountOf(r);
-      const extraTax = (directorPersonalTax((curM + uplift) * 12) - directorPersonalTax(curM * 12)) / 12;
-      extra += uplift + extraTax;
-    }
-    return round2(sel.costs + extra);
+    const netUplift = Math.max(0, drawLevel - WAGE_BASELINE);       // extra net take-home each
+    const adamNewTaxable = drawLevel + CAR_ALLOWANCE;               // grossed-up taxable (wage + car)
+    const extraTax = (directorPersonalTax(adamNewTaxable * 12) - directorPersonalTax(adamCurrentTaxable * 12)) / 12;
+    return round2(sel.costs + numDirectors * (netUplift + extraTax));
   };
   const wageTargets = {
     minimum: round2(sel.costs),
     baseline: WAGE_BASELINE,
-    directors: taxBasisRows.length,
+    directors: numDirectors,
     draws: TARGET_DRAWS.map((d) => ({ draw: d, uplift: d - WAGE_BASELINE, amount: targetForDraw(d) })),
   };
 
