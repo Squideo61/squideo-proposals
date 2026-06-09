@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Film, FolderOpen, Send, ExternalLink, Trash2, FileText, Upload, CheckCircle2, Circle, ListChecks, ChevronDown, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Film, FolderOpen, Send, ExternalLink, Trash2, FileText, Upload, CheckCircle2, Circle, ListChecks, ChevronDown, ChevronRight, Link2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
@@ -205,6 +205,17 @@ const PREVIEW_META = {
   video:      { label: 'Draft video', icon: Film, empty: 'No draft video yet — use “Send for review”, then upload a draft.' },
 };
 
+// Turn a Google Drive/Docs link into an embeddable preview URL, or null if it
+// isn't a recognised Google link (caller then shows a plain "View" button).
+function googleEmbedUrl(url) {
+  if (!url) return null;
+  if (url.includes('drive.google.com')) return url.replace('/view', '/preview');
+  // docs.google.com/{document,spreadsheets,presentation}/d/<id>/… → …/preview
+  const m = url.match(/^(https:\/\/docs\.google\.com\/[a-z]+\/d\/[^/?#]+)/i);
+  if (m) return m[1] + '/preview';
+  return null;
+}
+
 function PreviewPane({ preview, revisionStatus, sentForReview, isMobile }) {
   const p = preview || {};
   const kind = PREVIEW_META[p.current] ? p.current : 'script';
@@ -212,7 +223,9 @@ function PreviewPane({ preview, revisionStatus, sentForReview, isMobile }) {
   const meta = PREVIEW_META[kind];
   const Icon = meta.icon;
   const url = asset?.url || null;
-  const isDriveScript = kind === 'script' && url && url.includes('drive.google.com');
+  // Embeddable Google preview URL for a script doc — covers Drive files
+  // (…/view → …/preview) and Google Docs/Sheets/Slides (…/edit → …/preview).
+  const scriptEmbedUrl = kind === 'script' ? googleEmbedUrl(url) : null;
   // Label the draft (e.g. "Draft 2 preview") + show when it was uploaded, so a
   // freshly-arrived revised cut is visible at a glance rather than silently
   // replacing the existing preview asset.
@@ -250,8 +263,8 @@ function PreviewPane({ preview, revisionStatus, sentForReview, isMobile }) {
         {!url ? (
           <div style={{ color: BRAND.muted, fontSize: 13, textAlign: 'center', padding: 18, lineHeight: 1.5 }}>{meta.empty}</div>
         ) : kind === 'script' ? (
-          isDriveScript ? (
-            <iframe src={url.replace('/view', '/preview')} title="Script preview"
+          scriptEmbedUrl ? (
+            <iframe src={scriptEmbedUrl} title="Script preview"
               style={{ width: '100%', height: '100%', border: 0 }} />
           ) : (
             <a href={url} target="_blank" rel="noreferrer" className="btn"><ExternalLink size={14} /> View script</a>
@@ -494,7 +507,9 @@ function MilestonePreview({ asset }) {
   if (isVideo(asset)) return <div style={box}><video src={asset.url} controls style={{ width: '100%', display: 'block', background: '#000' }} /></div>;
   if (isImage(asset)) return <div style={box}><img src={asset.url} alt={asset.filename} style={{ width: '100%', display: 'block' }} /></div>;
   if (isPdf(asset))   return <div style={{ ...box, background: '#0B1B26', padding: 8 }}><PdfPage url={asset.url} pageNumber={1} /></div>;
-  return null; // documents: the file list carries a View link
+  const gembed = googleEmbedUrl(asset.url);
+  if (gembed) return <div style={{ ...box, height: 360 }}><iframe src={gembed} title={asset.filename} style={{ width: '100%', height: '100%', border: 0 }} /></div>;
+  return null; // other documents: the file list carries a View link
 }
 
 // Milestones: Script & Text Direction → Storyboard → Video. Each is an
@@ -535,6 +550,10 @@ function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
   const fileRef = useRef(null);
   const [progress, setProgress] = useState(null); // null = idle
   const [busy, setBusy] = useState(false);
+  // Inline "link a Google Doc" form (alternative to uploading a file).
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrlInput, setLinkUrlInput] = useState('');
+  const [linkTitle, setLinkTitle] = useState('');
   const stageLabel = STAGE_LABEL[m.phase]?.[m.stage] || m.stage;
   const latest = assets[0] || null;
 
@@ -544,6 +563,17 @@ function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
     try { await actions.uploadMilestoneAsset(videoId, m.id, file, { onProgress: setProgress }); showMsg('Uploaded'); }
     catch (e) { showMsg(e.message || 'Upload failed'); }
     finally { setProgress(null); if (fileRef.current) fileRef.current.value = ''; }
+  }
+  async function handleLink() {
+    const url = linkUrlInput.trim();
+    if (!/^https?:\/\//i.test(url)) { showMsg('Enter a full URL starting with http:// or https://'); return; }
+    setBusy(true);
+    try {
+      await actions.linkMilestoneAsset(videoId, m.id, url, linkTitle.trim() || null);
+      showMsg('Linked');
+      setLinkOpen(false); setLinkUrlInput(''); setLinkTitle('');
+    } catch (e) { showMsg(e.message || 'Could not link'); }
+    finally { setBusy(false); }
   }
   async function approve(val) {
     setBusy(true);
@@ -603,6 +633,40 @@ function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
                 <div style={{ marginBottom: 8 }}>Uploading… {progress}%</div>
                 <div style={{ height: 6, background: BRAND.border, borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{ width: progress + '%', height: '100%', background: BRAND.blue, transition: 'width .2s' }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ marginTop: 8 }}>
+            {!linkOpen ? (
+              <button onClick={() => setLinkOpen(true)} className="btn-ghost"
+                style={{ fontSize: 12, padding: '4px 8px' }}>
+                <Link2 size={13} /> <span style={{ marginLeft: 4 }}>Link a Google Doc</span>
+              </button>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 10,
+                border: '1px solid ' + BRAND.border, borderRadius: 8, background: '#FAFBFC' }}>
+                <input
+                  type="url" style={ctrl} autoFocus
+                  placeholder="Paste a Google Doc or Drive link (https://…)"
+                  value={linkUrlInput}
+                  onChange={(e) => setLinkUrlInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleLink(); }}
+                />
+                <input
+                  type="text" style={ctrl}
+                  placeholder="Label (optional, e.g. “Script v2”)"
+                  value={linkTitle}
+                  onChange={(e) => setLinkTitle(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleLink(); }}
+                />
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  <button onClick={() => { setLinkOpen(false); setLinkUrlInput(''); setLinkTitle(''); }}
+                    className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+                  <button onClick={handleLink} disabled={busy} className="btn" style={{ fontSize: 12 }}>
+                    {busy ? 'Linking…' : 'Link document'}
+                  </button>
                 </div>
               </div>
             )}

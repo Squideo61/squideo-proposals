@@ -1499,6 +1499,14 @@ export function StoreProvider({ children }) {
       actions._mergeVideo(video);
       return video;
     },
+    // Attach an external link (e.g. a Google Doc script) to a milestone instead
+    // of uploading a file. Registers a link-only asset; re-opens the milestone.
+    linkMilestoneAsset(videoId, milestone, url, filename) {
+      return api.post(
+        '/api/crm/production/video/' + encodeURIComponent(videoId) + '/milestone-asset?register=1&milestone=' + encodeURIComponent(milestone),
+        { linkUrl: url, filename: filename || null }
+      ).then((video) => { actions._mergeVideo(video); return video; });
+    },
     deleteMilestoneAsset(videoId, assetId) {
       return api.delete('/api/crm/production/video/' + encodeURIComponent(videoId) + '/milestone-asset?assetId=' + encodeURIComponent(assetId))
         .then((video) => { actions._mergeVideo(video); return video; })

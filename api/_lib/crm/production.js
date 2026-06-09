@@ -725,12 +725,20 @@ async function registerMilestoneAsset(req, res, videoId, user) {
   if (!video) return res.status(404).json({ error: 'Video not found' });
 
   const body = req.body || {};
-  const blobUrl = trimOrNull(body.blobUrl);
-  if (!blobUrl) return res.status(400).json({ error: 'blobUrl required' });
-  const blobPathname = body.blobPathname ? String(body.blobPathname) : null;
-  const filename = trimOrNull(body.filename) || 'file';
-  const mimeType = body.mimeType ? String(body.mimeType) : null;
-  const sizeBytes = Number.isFinite(Number(body.sizeBytes)) ? Number(body.sizeBytes) : null;
+  // Two ways to register: a freshly-uploaded blob, or an external link (e.g. a
+  // Google Doc script). A link stores the URL in blob_url with no pathname and
+  // skips the Drive sync (there's no file to copy).
+  const linkUrl = trimOrNull(body.linkUrl);
+  const isLink = !!linkUrl;
+  if (isLink && !/^https?:\/\//i.test(linkUrl)) {
+    return res.status(400).json({ error: 'Enter a full URL starting with http:// or https://' });
+  }
+  const blobUrl = linkUrl || trimOrNull(body.blobUrl);
+  if (!blobUrl) return res.status(400).json({ error: 'blobUrl or linkUrl required' });
+  const blobPathname = isLink ? null : (body.blobPathname ? String(body.blobPathname) : null);
+  const filename = trimOrNull(body.filename) || (isLink ? 'Linked document' : 'file');
+  const mimeType = isLink ? 'link' : (body.mimeType ? String(body.mimeType) : null);
+  const sizeBytes = isLink ? null : (Number.isFinite(Number(body.sizeBytes)) ? Number(body.sizeBytes) : null);
 
   const id = makeId('vma');
   await sql`
@@ -738,11 +746,11 @@ async function registerMilestoneAsset(req, res, videoId, user) {
       (id, video_id, milestone, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by)
     VALUES (${id}, ${videoId}, ${milestone}, ${filename}, ${mimeType}, ${sizeBytes}, ${blobUrl}, ${blobPathname}, ${user.email || null})
   `;
-  // A fresh upload re-opens the milestone for review.
+  // A fresh upload (or link) re-opens the milestone for review.
   await sql`DELETE FROM video_milestones WHERE video_id = ${videoId} AND milestone = ${milestone}`;
 
-  // Best-effort Drive sync, buffered — skip very large files (stay Blob-only).
-  if (driveFilesEnabled() && (sizeBytes == null || sizeBytes <= 100 * 1024 * 1024)) {
+  // Best-effort Drive sync, buffered — skip links (no file) and very large files.
+  if (!isLink && driveFilesEnabled() && (sizeBytes == null || sizeBytes <= 100 * 1024 * 1024)) {
     waitUntil(syncMilestoneAssetToDrive(id, video.deal_id, milestone, filename, mimeType, blobUrl, user.email)
       .catch((err) => console.error('[milestone] drive sync failed', err.message)));
   }
