@@ -886,10 +886,11 @@ function LinkPicker({ actions, companies, linkedDeal, linkedCompany, onPickDeal,
     const hay = `${d.company || ''} ${d.title || ''} ${d.number ? formatProposalNumber(d.number) : ''}`.toLowerCase();
     return hay.includes(needle);
   }).slice(0, 40);
-  const filteredCompanies = (companies || []).filter((c) => {
-    if (!needle) return true;
-    return (c.name || '').toLowerCase().includes(needle);
-  }).slice(0, 40);
+  // Customers: only suggest once they start typing — the full company list is
+  // too long to dump into the dropdown. Empty query → no results.
+  const filteredCompanies = needle
+    ? (companies || []).filter((c) => (c.name || '').toLowerCase().includes(needle)).slice(0, 40)
+    : [];
 
   const Tab = ({ id, label }) => (
     <button
@@ -946,8 +947,8 @@ function LinkPicker({ actions, companies, linkedDeal, linkedCompany, onPickDeal,
             </button>
           ))
         ) : (
-          (companies || []).length === 0 ? (
-            <div style={{ fontSize: 12, color: BRAND.muted, padding: '6px 4px' }}>No customers found.</div>
+          !needle ? (
+            <div style={{ fontSize: 12, color: BRAND.muted, padding: '6px 4px' }}>Start typing to search customers…</div>
           ) : filteredCompanies.length === 0 ? (
             <div style={{ fontSize: 12, color: BRAND.muted, padding: '6px 4px' }}>No matching customers.</div>
           ) : filteredCompanies.map((c) => (
