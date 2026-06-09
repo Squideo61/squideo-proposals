@@ -162,7 +162,15 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
       </div>
 
           <MilestonesCard video={video} videoId={videoId} />
-          {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['emails']} />}
+          {/* Emails + Comments sit side-by-side, full width, growing with their
+              content — so the team can read a long comment thread without the
+              cramped scroll the old right-column panel forced. */}
+          {video.dealId && (
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, alignItems: 'start' }}>
+              <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['emails']} />
+              <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['comments']} />
+            </div>
+          )}
         </div>
 
         {/* Right column: stage-locked preview + activity/comments, full height */}
@@ -188,7 +196,7 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
             <LinkStoryboardCard dealId={video.dealId} videoId={videoId} candidates={video.dealStoryboards} />
           )}
           <div style={{ flex: isMobile ? 'none' : 1, minHeight: 0, overflowY: isMobile ? 'visible' : 'auto' }}>
-            {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['activity', 'comments']} />}
+            {video.dealId && <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['activity']} />}
           </div>
         </div>
       </div>
