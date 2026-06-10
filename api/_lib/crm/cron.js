@@ -346,9 +346,11 @@ export async function cronQuarterlyTaxSummary(res) {
 }
 
 export async function cronTaskReminders(res) {
-  // Daily 9am UTC sweep — pick up everything due in the next 24 hours that
-  // hasn't been reminded yet. Granularity is intentionally coarse to fit
-  // Vercel Hobby's 1-cron-per-day limit; on Pro this can move to */15.
+  // Runs every 15 minutes (vercel.json). Fire a reminder once a task is at /
+  // near its due time — the 15-minute lookahead matches the cron cadence so a
+  // reminder lands at most ~15 min early and never late. Already-overdue tasks
+  // that were never reminded (e.g. created past due) are swept too, since
+  // there's no lower bound. reminded_at keeps it to once per task.
   const due = await sql`
     SELECT t.id, t.title, t.due_at, t.assignee_email, t.deal_id, t.notes,
            d.title AS deal_title,
@@ -359,7 +361,7 @@ export async function cronTaskReminders(res) {
     WHERE t.done_at IS NULL
       AND t.reminded_at IS NULL
       AND t.due_at IS NOT NULL
-      AND t.due_at <= NOW() + INTERVAL '24 hours'
+      AND t.due_at <= NOW() + INTERVAL '15 minutes'
     ORDER BY t.due_at ASC
     LIMIT 200
   `;
