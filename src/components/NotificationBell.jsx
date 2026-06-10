@@ -1,8 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bell, PoundSterling, Check, X } from 'lucide-react';
+import { Bell, PoundSterling, Check, X, Monitor } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatRelativeTime, useIsMobile } from '../utils.js';
+import {
+  desktopNotificationsSupported, getDesktopPermission, getDesktopPref,
+  setDesktopPref, requestDesktopPermission,
+} from '../lib/desktopNotifications.js';
+import { enablePush, disablePush } from '../lib/pushSubscribe.js';
 
 // Per-channel presentation. 'general' is the standard bell; 'finance' is the £
 // bell shown to its left for sales/money updates.
@@ -119,6 +124,8 @@ export function NotificationBell({ onOpenLink, inline = false, channel = 'genera
             </div>
           </div>
 
+          {channel === 'general' && <DesktopAlertsRow />}
+
           <div style={{ overflowY: 'auto' }}>
             {items.length === 0 ? (
               <div style={{ padding: '28px 16px', textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>
@@ -173,6 +180,86 @@ export function NotificationBell({ onOpenLink, inline = false, channel = 'genera
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Opt-in control for desktop notifications, shown at the top of the general
+// bell's panel. Drives both tiers: requesting permission lights up the in-tab
+// popups (Tier 1) and registers this browser for background push (Tier 2).
+function DesktopAlertsRow() {
+  const [perm, setPerm] = useState(() => getDesktopPermission());
+  const [pref, setPref] = useState(() => getDesktopPref());
+  const [busy, setBusy] = useState(false);
+
+  if (!desktopNotificationsSupported()) return null;
+
+  const enable = async () => {
+    setBusy(true);
+    try {
+      const result = await requestDesktopPermission();
+      setPerm(result);
+      if (result === 'granted') {
+        setDesktopPref(true);
+        setPref('on');
+        // Best-effort background push; in-tab alerts work regardless.
+        await enablePush();
+      }
+    } finally { setBusy(false); }
+  };
+
+  const mute = async () => {
+    setBusy(true);
+    try {
+      setDesktopPref(false);
+      setPref('off');
+      await disablePush();
+    } finally { setBusy(false); }
+  };
+
+  const unmute = async () => {
+    setBusy(true);
+    try {
+      setDesktopPref(true);
+      setPref('on');
+      await enablePush();
+    } finally { setBusy(false); }
+  };
+
+  const wrap = {
+    display: 'flex', alignItems: 'center', gap: 8,
+    padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border,
+    background: '#FAFBFC', fontSize: 12.5, color: BRAND.muted,
+  };
+  const link = { background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', color: BRAND.blue, fontWeight: 600, font: 'inherit' };
+
+  if (perm === 'denied') {
+    return (
+      <div style={wrap}>
+        <Monitor size={14} />
+        <span>Desktop alerts are blocked in your browser settings.</span>
+      </div>
+    );
+  }
+
+  if (perm === 'granted') {
+    return (
+      <div style={wrap}>
+        <Monitor size={14} color={pref === 'on' ? '#16A34A' : BRAND.muted} />
+        <span style={{ flex: 1 }}>Desktop alerts {pref === 'on' ? 'on' : 'off'}</span>
+        {pref === 'on'
+          ? <button onClick={mute} disabled={busy} style={link}>Mute</button>
+          : <button onClick={unmute} disabled={busy} style={link}>Turn on</button>}
+      </div>
+    );
+  }
+
+  // permission === 'default' — never asked.
+  return (
+    <div style={wrap}>
+      <Monitor size={14} />
+      <span style={{ flex: 1 }}>Get task reminders &amp; alerts on your desktop.</span>
+      <button onClick={enable} disabled={busy} style={link}>{busy ? 'Enabling…' : 'Enable'}</button>
     </div>
   );
 }

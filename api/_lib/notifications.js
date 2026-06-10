@@ -18,6 +18,7 @@
 
 import sql from './db.js';
 import { sendMail } from './email.js';
+import { sendWebPush } from './push.js';
 import { NOTIFICATIONS, isValidNotificationKey, getNotificationMeta } from './notificationsCatalog.js';
 
 export { NOTIFICATIONS, isValidNotificationKey, getNotificationMeta };
@@ -193,19 +194,33 @@ export async function sendNotification(key, {
 // email's subject/text; callers can override via `inApp`. `link` should be an
 // in-app hash route (e.g. '#/admin/users') so the bell navigates without a
 // full reload — distinct from the absolute APP_URL link used in the email.
+//
+// Each persisted row is also mirrored to the recipient's desktop via Web Push
+// (Tier 2) — a no-op when push isn't provisioned or the user has no devices
+// subscribed. The push tag defaults to `notif-<rowId>` so it matches the in-tab
+// (Tier 1) dedupe tag for the same item; callers may override via inApp.tag.
 export async function persistInApp(key, recipients, { subject, text, inApp }) {
   const title = String(inApp?.title || subject || 'Notification').slice(0, 200);
   const body = inApp?.body != null
     ? String(inApp.body).slice(0, 500)
     : (text ? (String(text).replace(/\s*https?:\/\/\S+\s*$/i, '').trim().slice(0, 500) || null) : null);
   const link = inApp?.link || null;
-  try {
-    for (const email of recipients) {
+  const tagOverride = inApp?.tag || null;
+  const pushes = [];
+  for (const email of recipients) {
+    try {
       // eslint-disable-next-line no-await-in-loop
-      await sql`INSERT INTO in_app_notifications (user_email, notification_key, title, body, link)
-                VALUES (${email}, ${key}, ${title}, ${body}, ${link})`;
+      const rows = await sql`INSERT INTO in_app_notifications (user_email, notification_key, title, body, link)
+                VALUES (${email}, ${key}, ${title}, ${body}, ${link})
+                RETURNING id`;
+      const id = rows[0]?.id;
+      const tag = tagOverride || (id != null ? `notif-${id}` : undefined);
+      pushes.push(sendWebPush([email], { title, body, link, tag }));
+    } catch (err) {
+      console.warn('[notifications] in-app persist failed', err.message);
     }
-  } catch (err) {
-    console.warn('[notifications] in-app persist failed', err.message);
   }
+  // Best-effort fan-out; sendWebPush swallows its own errors. Awaited so the
+  // sends complete before a serverless function freezes.
+  if (pushes.length) { try { await Promise.allSettled(pushes); } catch { /* ignore */ } }
 }

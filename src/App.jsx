@@ -11,6 +11,7 @@ import { PublicClientShell } from './components/PublicClientShell.jsx';
 import { RevisionShell } from './components/revision/RevisionShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
 import { NotificationBell } from './components/NotificationBell.jsx';
+import { DesktopNotifier } from './components/DesktopNotifier.jsx';
 import { CrmTopBar } from './components/crm/CrmTopBar.jsx';
 
 const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: m[name] })));
@@ -315,6 +316,7 @@ function AppShell() {
     const producerBoard = !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards');
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
+        <DesktopNotifier onOpenLink={openLink} />
         <div style={producerBoard ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <Suspense fallback={<ViewFallback />}>
           {view === 'video' && activeId ? (
@@ -346,6 +348,7 @@ function AppShell() {
 
   return (
     <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
+      <DesktopNotifier onOpenLink={openLink} />
       {!NO_TOPBAR_VIEWS.has(view) && (
         <CrmTopBar
           view={view}

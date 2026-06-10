@@ -1,6 +1,6 @@
 import sql from '../db.js';
 import { sendMail, APP_URL } from '../email.js';
-import { sendNotification, resolveRecipients } from '../notifications.js';
+import { sendNotification, resolveRecipients, persistInApp } from '../notifications.js';
 import { registerWatch } from '../gmailTokens.js';
 import { syncHistory } from '../gmailSync.js';
 import { escapeHtml } from './shared.js';
@@ -405,6 +405,19 @@ export async function cronTaskReminders(res) {
       }
     });
     if (anySent) {
+      // Mirror the email into the bell + a background desktop push (Tier 2),
+      // so a reminder still lands if the assignee isn't reading email. Tagged
+      // task-<id> to collapse with the in-tab popup the app fires at due time.
+      const inAppLink = t.deal_id ? `#/deal/${t.deal_id}` : '#/tasks';
+      await persistInApp('task.reminder', subscribed, {
+        subject,
+        inApp: {
+          title: `Task due: ${t.title}`,
+          body: t.deal_title || t.notes || null,
+          link: inAppLink,
+          tag: `task-${t.id}`,
+        },
+      });
       // Stamp once per task — we don't track per-assignee delivery state on
       // purpose; if one address bounces, the team coordinates in-app.
       await sql`UPDATE tasks SET reminded_at = NOW() WHERE id = ${t.id}`;
