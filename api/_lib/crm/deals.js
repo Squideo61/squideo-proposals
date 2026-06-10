@@ -224,6 +224,34 @@ export async function annotateDeals(rows) {
     emailOpenMap = new Map(eoRows.map(r => [r.did, r]));
   } catch (_) { /* email_tracking not present */ }
 
+  // Next incomplete task per deal (earliest due first, undated last).
+  let nextTaskMap = new Map();
+  try {
+    const taskRows = await sql`
+      SELECT DISTINCT ON (deal_id) deal_id, title, due_at
+        FROM tasks
+       WHERE deal_id = ANY(${ids}) AND done_at IS NULL
+       ORDER BY deal_id, due_at ASC NULLS LAST`;
+    nextTaskMap = new Map(taskRows.map(r => [r.deal_id, { title: r.title, dueAt: r.due_at || null }]));
+  } catch (_) { /* tasks not present */ }
+
+  // Most recent email (sent or received) linked to each deal — thread- or
+  // message-scoped, mirroring the deal-detail email union.
+  let lastEmailMap = new Map();
+  try {
+    const emRows = await sql`
+      SELECT deal_id, MAX(sent_at) AS last_at FROM (
+        SELECT etd.deal_id, em.sent_at
+          FROM email_thread_deals etd JOIN email_messages em ON em.gmail_thread_id = etd.gmail_thread_id
+         WHERE etd.deal_id = ANY(${ids})
+        UNION ALL
+        SELECT emd.deal_id, em.sent_at
+          FROM email_message_deals emd JOIN email_messages em ON em.gmail_message_id = emd.gmail_message_id
+         WHERE emd.deal_id = ANY(${ids})
+      ) q GROUP BY deal_id`;
+    lastEmailMap = new Map(emRows.map(r => [r.deal_id, r.last_at]));
+  } catch (_) { /* email tables not present */ }
+
   return rows.map(r => {
     const pv = propViewMap.get(r.id);
     const eo = emailOpenMap.get(r.id);
@@ -240,6 +268,8 @@ export async function annotateDeals(rows) {
       ...serialiseDeal(r),
       proposalCount: propMap.get(r.id) || 0,
       videoCount: vidMap.get(r.id) || 0,
+      nextTask: nextTaskMap.get(r.id) || null,
+      lastEmailAt: lastEmailMap.get(r.id) || null,
       saleStatus: {
         isPo: poRouteSet.has(r.id),
         poNumber: r.po_number || null,

@@ -20,7 +20,7 @@ const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: 
 const NO_TOPBAR_VIEWS = new Set(['builder', 'template-builder', 'client']);
 // Board views that read better edge-to-edge — they opt out of the centred
 // max-width cap and stay full width (their columns/rows can use the room).
-const FULL_WIDTH_VIEWS = new Set(['pipeline', 'production']);
+const FULL_WIDTH_VIEWS = new Set(['production']);
 
 const ListView = lazyNamed(() => import('./components/ListView.jsx'), 'ListView');
 const BuilderView = lazyNamed(() => import('./components/BuilderView.jsx'), 'BuilderView');

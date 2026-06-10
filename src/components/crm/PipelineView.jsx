@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Check, ChevronDown, Plus, KanbanSquare, Eye, Mail, FileText, MousePointerClick } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, Plus, KanbanSquare, Eye, Mail, FileText, CheckSquare } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile } from '../../utils.js';
@@ -295,13 +295,14 @@ function formatDuration(secs) {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-// Lightweight, clickable engagement indicator: green eye + last-opened time when
-// the client has opened the proposal or a tracked email; faint eye when a
-// proposal was sent but not yet opened. Click opens a details popover (rendered
-// in a portal so the row container's overflow:hidden can't clip it).
-function PipelineTrackingEye({ deal }) {
-  const t = deal.tracking || {};
-  const sentSomething = (deal.proposalCount || 0) > 0 || t.tracked;
+const shortDate = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+// One channel's engagement eye (proposal OR email). Renders only when something
+// was sent/linked on that channel: a green eye + last-opened time once opened, a
+// faint eye while sent-but-unopened. Click toggles a details popover (portal so
+// the row container's overflow:hidden can't clip it). `lines` are popover detail
+// rows shown when opened.
+function TrackingEyeChip({ icon: Icon, channel, sent, opened, lastOpenedAt, lines }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const btnRef = useRef(null);
@@ -322,58 +323,39 @@ function PipelineTrackingEye({ deal }) {
       window.removeEventListener('resize', close);
     };
   }, [open]);
-  if (!sentSomething) return null;
-  const opened = !!t.tracked;
+  if (!sent) return null;
   const colour = opened ? '#16A34A' : BRAND.muted;
   const toggle = (e) => {
     e.stopPropagation();
     if (open) { setOpen(false); return; }
     const r = btnRef.current.getBoundingClientRect();
-    const W = 240;
+    const W = 220;
     setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.right - W, window.innerWidth - W - 8)) });
     setOpen(true);
   };
-  const spent = formatDuration(t.totalSeconds);
   return (
     <span style={{ display: 'inline-flex', flexShrink: 0 }}>
       <button
         ref={btnRef}
         type="button"
         onClick={toggle}
-        title={opened ? 'View engagement' : 'Sent · not opened yet'}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 3, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, color: colour }}
+        title={`${channel} — ${opened && lastOpenedAt ? 'last opened ' + formatRelativeTime(lastOpenedAt) : 'not opened yet'}`}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 2, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, color: colour }}
       >
-        <Eye size={14} color={colour} fill={opened ? colour + '22' : 'none'} />
-        {opened && t.lastOpenedAt && (
-          <span style={{ fontSize: 10.5, fontWeight: 700, color: colour }}>{formatRelativeTime(t.lastOpenedAt).replace(' ago', '')}</span>
+        <Icon size={11} color={colour} />
+        <Eye size={13} color={colour} fill={opened ? colour + '22' : 'none'} />
+        {opened && lastOpenedAt && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: colour }}>{formatRelativeTime(lastOpenedAt).replace(' ago', '')}</span>
         )}
       </button>
       {open && pos && createPortal(
-        <div ref={popRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 1000, width: 240, padding: '10px 12px', background: 'white', textAlign: 'left', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 8px 24px rgba(15,42,61,0.18)' }}>
-          {!opened ? (
-            <div style={{ fontSize: 12.5, color: BRAND.muted }}>Sent · not opened yet</div>
-          ) : (
-            <>
-              {t.proposalOpens > 0 && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 12.5, color: '#16A34A' }}>
-                    <FileText size={13} /> Proposal · {t.proposalOpens} view{t.proposalOpens === 1 ? '' : 's'}
-                  </div>
-                  {t.lastProposalOpenAt && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>Last opened {formatRelativeTime(t.lastProposalOpenAt)}</div>}
-                  {(t.locations || []).length > 0 && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>{t.locations.slice(0, 3).join(', ')}</div>}
-                  {spent && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>Time spent {spent}</div>}
-                </div>
-              )}
-              {t.emailOpens > 0 && (
-                <div style={{ marginTop: t.proposalOpens > 0 ? 8 : 0, paddingTop: t.proposalOpens > 0 ? 8 : 0, borderTop: t.proposalOpens > 0 ? '1px solid ' + BRAND.border : 'none' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 12.5, color: BRAND.blue }}>
-                    <Mail size={13} /> Emails · {t.emailOpens} open{t.emailOpens === 1 ? '' : 's'}
-                  </div>
-                  {t.lastEmailOpenAt && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>Last opened {formatRelativeTime(t.lastEmailOpenAt)}</div>}
-                </div>
-              )}
-            </>
-          )}
+        <div ref={popRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 1000, width: 220, padding: '10px 12px', background: 'white', textAlign: 'left', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 8px 24px rgba(15,42,61,0.18)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 12.5, color: opened ? '#16A34A' : BRAND.ink }}>
+            <Icon size={13} /> {channel}
+          </div>
+          {opened
+            ? (lines || []).map((l, i) => <div key={i} style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>{l}</div>)
+            : <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>Sent · not opened yet</div>}
         </div>,
         document.body,
       )}
@@ -388,6 +370,27 @@ function DealRow({ deal, onOpen }) {
   const name = company?.name || deal.title || 'Untitled deal';
   const subtitle = company?.name && deal.title && deal.title !== company.name ? deal.title : null;
   const ageDays = daysSince(deal.stageChangedAt);
+
+  const t = deal.tracking || {};
+  const proposalSent = (deal.proposalCount || 0) > 0;
+  const emailSent = !!deal.lastEmailAt;
+  const spent = formatDuration(t.totalSeconds);
+  const propLines = [
+    t.proposalOpens > 0 ? `${t.proposalOpens} view${t.proposalOpens === 1 ? '' : 's'}` : null,
+    t.lastProposalOpenAt ? `Last opened ${formatRelativeTime(t.lastProposalOpenAt)}` : null,
+    (t.locations || []).length ? t.locations.slice(0, 3).join(', ') : null,
+    spent ? `Time spent ${spent}` : null,
+  ].filter(Boolean);
+  const emailLines = [
+    t.emailOpens > 0 ? `${t.emailOpens} open${t.emailOpens === 1 ? '' : 's'}` : null,
+    t.lastEmailOpenAt ? `Last opened ${formatRelativeTime(t.lastEmailOpenAt)}` : null,
+  ].filter(Boolean);
+
+  const due = deal.nextTask?.dueAt ? new Date(deal.nextTask.dueAt) : null;
+  const overdue = due && due.getTime() < Date.now();
+  const lastEmail = deal.lastEmailAt ? new Date(deal.lastEmailAt) : null;
+  const hasMeta = subtitle || deal.nextTask || lastEmail;
+
   return (
     <div
       draggable
@@ -406,9 +409,13 @@ function DealRow({ deal, onOpen }) {
             {name}
           </span>
           <SaleStatusPills deal={deal} />
-          <PipelineTrackingEye deal={deal} />
         </div>
-        <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+        {/* Tracking eyes (proposal + email) sit on the right, next to the figure. */}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <TrackingEyeChip icon={FileText} channel="Proposal" sent={proposalSent} opened={t.proposalOpens > 0} lastOpenedAt={t.lastProposalOpenAt} lines={propLines} />
+          <TrackingEyeChip icon={Mail} channel="Emails" sent={emailSent} opened={t.emailOpens > 0} lastOpenedAt={t.lastEmailOpenAt} lines={emailLines} />
+        </span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, fontVariantNumeric: 'tabular-nums', flexShrink: 0, minWidth: 64, textAlign: 'right' }}>
           {deal.value != null ? formatGBP(deal.value) : <span style={{ color: BRAND.muted, fontWeight: 400 }}>—</span>}
         </span>
         {ageDays != null && (
@@ -418,9 +425,22 @@ function DealRow({ deal, onOpen }) {
         )}
         <Avatar user={owner} fallback={deal.ownerEmail} />
       </div>
-      {subtitle && (
-        <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 2, marginLeft: 0 }}>
-          {subtitle}
+      {hasMeta && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 3, fontSize: 11.5, color: BRAND.muted }}>
+          {subtitle && <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200 }}>{subtitle}</span>}
+          {deal.nextTask && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: overdue ? '#B91C1C' : BRAND.muted, minWidth: 0 }} title="Next due task">
+              <CheckSquare size={12} style={{ flexShrink: 0 }} />
+              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>
+                {deal.nextTask.title}{due ? ` · ${shortDate(due)}` : ''}
+              </span>
+            </span>
+          )}
+          {lastEmail && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }} title="Date of last email">
+              <Mail size={12} /> {shortDate(lastEmail)}
+            </span>
+          )}
         </div>
       )}
     </div>
