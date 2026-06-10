@@ -39,6 +39,25 @@ function predictMenuItem(predict, item) {
     onClick: () => predict.toggle(item, !on),
   };
 }
+
+// Resolve the flagged key set into a live list of predicted-this-month payments,
+// intersecting it with the current pending rows + active partners. A flagged item
+// that's no longer pending (paid/removed) simply drops out. Each item carries the
+// ids needed to open its deal/customer/partner. Shared by the Predicted tab and
+// the Performance chart's projection. Net (ex-VAT) amounts, sorted high→low.
+function collectPredicted(pending, partners, predictKeys) {
+  if (!predictKeys || predictKeys.size === 0) return [];
+  const out = [];
+  const seen = new Set();
+  const add = (key, it) => { if (predictKeys.has(key) && !seen.has(key)) { seen.add(key); out.push({ key, ...it }); } };
+  const p = pending || {};
+  for (const d of (p.normal || [])) if (d.dealId) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Signed deal', dealId: d.dealId });
+  for (const d of (p.po || [])) if (d.dealId) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Purchase order', dealId: d.dealId });
+  for (const r of (p.manual || [])) add(predictKeyForManual(r), { name: r.company || r.description || 'Pending payment', amount: Number(r.amountExVat) || 0, source: r.kind === 'po' ? 'Imported PO' : 'Imported PP', dealId: r.dealId || null, companyId: r.companyId || null });
+  for (const r of (p.companyInvoices || [])) add(predictKeyForManual(r), { name: r.company || r.description || 'Company invoice', amount: Number(r.amountExVat) || 0, source: 'Company invoice', companyId: r.companyId || null });
+  for (const pt of (partners || [])) if (pt.clientKey) add(predictKeyForPartner(pt.clientKey), { name: pt.clientName || 'Partner', amount: Number(pt.outstanding) || 0, source: 'Partner', clientKey: pt.clientKey });
+  return out.sort((a, b) => b.amount - a.amount);
+}
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
 const shortMonth = (key) => {
   const [y, m] = key.split('-').map(Number);
@@ -232,6 +251,12 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
     keys: predictKeys,
     toggle: (item, on) => actions.togglePredictedPayment(currentMonthKey, item.key, on, item.label || null, Number(item.amount) || 0),
   }), [currentMonthKey, predictKeys, actions]);
+  // Live total of everything still predicted to land this month — drives the
+  // Predicted tab and the "with predicted" projection on the Performance chart.
+  const predictedTotal = useMemo(
+    () => collectPredicted(pending, activePartners, predictKeys).reduce((s, it) => s + it.amount, 0),
+    [pending, activePartners, predictKeys],
+  );
 
   const isCurrentYear = effectiveYear === now.getFullYear();
   const monthIdx = now.getMonth();
@@ -276,7 +301,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
 
       {/* Performance — cash pacing vs targets — sits above the finance tabs. Its
           Income/Sales toggle is lifted here so it also drives the first tab. */}
-      <PerformancePanel section={perfSection} onSection={setPerfSection} />
+      <PerformancePanel section={perfSection} onSection={setPerfSection} predictedTotal={predictedTotal} predictedMonthKey={currentMonthKey} />
 
       {/* Section tabs — Income (or Sales) / Pending Payments / VAT. The period
           picker lives here, next to the figures it drives, so changing it shows
@@ -472,19 +497,12 @@ const PAYMENT_TYPE_META = {
 // (and is already counted in the banked figure). Projects the month-end position
 // as banked-so-far + everything still predicted to land. All figures ex-VAT (net).
 function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, bankedNet, onUnpredict, onOpenDeal, onOpenCompany, onOpenPartner, isMobile }) {
-  const items = useMemo(() => {
-    if (!predictKeys || predictKeys.size === 0) return [];
-    const out = [];
-    const seen = new Set();
-    const add = (key, it) => { if (predictKeys.has(key) && !seen.has(key)) { seen.add(key); out.push({ key, ...it }); } };
-    const p = pending || {};
-    for (const d of (p.normal || [])) if (d.dealId) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Signed deal', open: onOpenDeal ? () => onOpenDeal(d.dealId) : null });
-    for (const d of (p.po || [])) if (d.dealId) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Purchase order', open: onOpenDeal ? () => onOpenDeal(d.dealId) : null });
-    for (const r of (p.manual || [])) add(predictKeyForManual(r), { name: r.company || r.description || 'Pending payment', amount: Number(r.amountExVat) || 0, source: r.kind === 'po' ? 'Imported PO' : 'Imported PP', open: r.dealId && onOpenDeal ? () => onOpenDeal(r.dealId) : (r.companyId && onOpenCompany ? () => onOpenCompany(r.companyId) : null) });
-    for (const r of (p.companyInvoices || [])) add(predictKeyForManual(r), { name: r.company || r.description || 'Company invoice', amount: Number(r.amountExVat) || 0, source: 'Company invoice', open: r.companyId && onOpenCompany ? () => onOpenCompany(r.companyId) : null });
-    for (const pt of (partners || [])) if (pt.clientKey) add(predictKeyForPartner(pt.clientKey), { name: pt.clientName || 'Partner', amount: Number(pt.outstanding) || 0, source: 'Partner', open: onOpenPartner ? () => onOpenPartner(pt.clientKey) : null });
-    return out.sort((a, b) => b.amount - a.amount);
-  }, [pending, partners, predictKeys, onOpenDeal, onOpenCompany, onOpenPartner]);
+  const items = useMemo(() => collectPredicted(pending, partners, predictKeys).map((it) => ({
+    ...it,
+    open: it.dealId && onOpenDeal ? () => onOpenDeal(it.dealId)
+      : it.companyId && onOpenCompany ? () => onOpenCompany(it.companyId)
+        : it.clientKey && onOpenPartner ? () => onOpenPartner(it.clientKey) : null,
+  })), [pending, partners, predictKeys, onOpenDeal, onOpenCompany, onOpenPartner]);
 
   const predictedTotal = items.reduce((s, it) => s + it.amount, 0);
   const projected = (Number(bankedNet) || 0) + predictedTotal;
