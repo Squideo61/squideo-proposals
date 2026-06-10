@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -419,7 +420,7 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
         Pending Payments
       </h3>
       <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
-        Invoiced and outstanding amounts awaiting payment — shown ex-VAT (net). Each signed-deal line is tagged "Not invoiced" until raised; hit INV to invoice that portion straight from here.
+        Invoiced and outstanding amounts awaiting payment — shown ex-VAT (net). Each signed-deal line is tagged "Not invoiced" until raised; use the ⋮ menu on a row to invoice, mark paid or open the deal.
       </p>
       {!pending ? (
         <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
@@ -576,7 +577,7 @@ function SignedDealsPanel({ rows, total, onOpenDeal, onCreateInvoice, isMobile }
           <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Signed deals — outstanding</span>
           <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
         </div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Signed work still owed · {rows.length} {rows.length === 1 ? 'deal' : 'deals'} · each line tagged invoiced / not invoiced · INV raises an invoice for that portion</div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Signed work still owed · {rows.length} {rows.length === 1 ? 'deal' : 'deals'} · each line tagged invoiced / not invoiced · use the ⋮ menu to raise an invoice</div>
       </div>
       {rows.map((d) => (
         <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isMobile={isMobile} />
@@ -725,7 +726,7 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
             <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{title}</span>
             <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
           </div>
-          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{note} · {rows.length} {rows.length === 1 ? 'item' : 'items'} · {isInvoicedGroup ? '✓ marks paid (→ income), ↩ back to pending, ✕ removes' : 'Inv marks invoiced, ✓ marks paid (→ income), ✕ removes'}</div>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{note} · {rows.length} {rows.length === 1 ? 'item' : 'items'} · use the ⋮ menu to {isInvoicedGroup ? 'mark paid or move back to pending' : 'mark invoiced, mark paid or remove'}</div>
         </div>
       )}
       {rows.length === 0 ? (
@@ -786,7 +787,6 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
 }
 
 function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onPaid, onInvoice, onUninvoice, onLink, onLinkCompany, companies, onOpenDeal, onOpenCompany, onRemove }) {
-  const [picking, setPicking] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const isInvoicedGroup = variant === 'invoiced';
   const isCompanyInvoice = r.kind === 'company-invoice';
@@ -796,13 +796,23 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
   const net = Number(r.amountExVat) || 0;
   const vat = Number(r.vat) || 0;
   const subtitle = [r.invoiceType, r.poNumber, r.description, r.note].filter(Boolean).join(' · ');
-  const pay = (method) => { setPicking(false); onPaid(method); };
   // Open whatever the row is linked to — its deal, or its customer.
   const canOpen = (linkedDeal && onOpenDeal) || (linkedCompany && onOpenCompany);
   const openLinked = () => {
     if (linkedDeal && onOpenDeal) onOpenDeal(r.dealId);
     else if (linkedCompany && onOpenCompany) onOpenCompany(r.companyId);
   };
+  // Shared ⋮ menu actions — company invoices (not linked to a deal) carry none.
+  const rowActions = isCompanyInvoice ? [] : [
+    isInvoicedGroup
+      ? { label: 'Move back to pending', icon: RotateCcw, onClick: onUninvoice }
+      : { label: 'Mark invoiced', icon: FileText, onClick: onInvoice },
+    { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => onPaid('stripe') },
+    { label: 'Mark paid — BACS', icon: Banknote, onClick: () => onPaid('bacs') },
+    onLink && { label: linked ? 'Edit link' : 'Link to deal / customer', icon: Link2, onClick: () => setLinkOpen(true) },
+    canOpen && { label: linkedCompany ? 'Open customer' : 'Open deal', icon: ExternalLink, onClick: openLinked },
+    { label: 'Remove', icon: Trash2, danger: true, onClick: onRemove },
+  ];
   return (
     <>
     <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '5px 14px' }}>
@@ -833,12 +843,6 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
               → {r.linkedCompanyName}
             </span>
           )}
-          {onLink && !isCompanyInvoice && (
-            <button type="button" onClick={() => setLinkOpen((v) => !v)} title={linked ? 'Change or remove the link' : 'Link to a deal or customer'}
-              style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 11, lineHeight: 1, padding: '1px 3px', textDecoration: 'underline' }}>
-              {linked ? 'edit' : 'link'}
-            </button>
-          )}
         </div>
         {subtitle && (
           <div title={subtitle} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{subtitle}</div>
@@ -847,70 +851,8 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
       <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{formatGBP(net)}</div>
       <div style={{ textAlign: 'right', fontSize: 13, color: vat > 0 ? VAT_COLOR : BRAND.muted }}>{formatGBP(vat)}</div>
       {!isMobile && <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{formatGBP(net + vat)}</div>}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-        {isCompanyInvoice ? null : picking ? (
-          <>
-            {/* Choose how it was paid — both add it to income. */}
-            <button type="button" onClick={() => pay('stripe')} title="Mark paid via Stripe"
-              style={{ flexShrink: 0, border: '1px solid #1D4ED8', background: '#EFF6FF', color: '#1D4ED8', cursor: 'pointer', fontSize: 11, fontWeight: 700, lineHeight: 1, padding: '3px 6px', borderRadius: 4 }}>
-              Stripe
-            </button>
-            <button type="button" onClick={() => pay('bacs')} title="Mark paid via BACS"
-              style={{ flexShrink: 0, border: '1px solid #15803D', background: '#ECFDF3', color: '#15803D', cursor: 'pointer', fontSize: 11, fontWeight: 700, lineHeight: 1, padding: '3px 6px', borderRadius: 4 }}>
-              BACS
-            </button>
-            <button type="button" onClick={() => setPicking(false)} title="Cancel"
-              style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 14, lineHeight: 1, padding: '2px 2px' }}>
-              ✕
-            </button>
-          </>
-        ) : (
-          <>
-            {isInvoicedGroup ? (
-              <button
-                type="button"
-                onClick={onUninvoice}
-                title="Move back to pending (not invoiced)"
-                style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 14, lineHeight: 1, padding: '2px 4px' }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = BRAND.ink; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
-              >
-                ↩
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={onInvoice}
-                title="Mark invoiced — moves to the invoiced list"
-                style={{ flexShrink: 0, border: '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer', color: BRAND.muted, fontSize: 10, fontWeight: 700, lineHeight: 1, padding: '3px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3 }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = BRAND.blue; e.currentTarget.style.borderColor = BRAND.blue; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; e.currentTarget.style.borderColor = BRAND.border; }}
-              >
-                Inv
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setPicking(true)}
-              title="Mark paid — add to income"
-              style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 15, lineHeight: 1, padding: '2px 4px' }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = '#15803D'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
-            >
-              ✓
-            </button>
-            <button
-              type="button"
-              onClick={onRemove}
-              title="Remove (mistake — not income)"
-              style={{ flexShrink: 0, border: 'none', background: 'none', cursor: 'pointer', color: BRAND.muted, fontSize: 15, lineHeight: 1, padding: '2px 4px' }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = '#EF4444'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
-            >
-              ✕
-            </button>
-          </>
-        )}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+        <RowActionsMenu items={rowActions} />
       </div>
     </div>
     {linkOpen && (
@@ -1181,7 +1123,7 @@ function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChang
           <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Purchase Orders</span>
           <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(grand)}</span>
         </div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Paid regardless of project stage · signed deals + imported sheet · {count} {count === 1 ? 'item' : 'items'} · Inv marks invoiced, ✓ marks paid (→ income), ✕ removes</div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Paid regardless of project stage · signed deals + imported sheet · {count} {count === 1 ? 'item' : 'items'} · use the ⋮ menu on a row for its actions</div>
       </div>
       {crmRows.map((d) => (
         <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isPo onMarkPoReceived={onMarkPoReceived} />
@@ -1462,71 +1404,84 @@ function PoStatusPill({ d }) {
   );
 }
 
-// Per-row kebab menu for PO deals: Mark/Edit PO received, Create invoice (for the
-// first invoiceable line, passing the PO number as the Xero reference), Open deal.
-function PoActionsMenu({ d, invoiceableLine, onCreateInvoice, onMarkPoReceived, onOpenDeal }) {
+// Generic per-row kebab (⋮) actions menu — used on EVERY Pending Payments row so
+// the action affordance is consistent. `items` is an array of
+// { label, icon, onClick, danger? }; falsy entries are skipped. Renders nothing
+// when there are no actions.
+function RowActionsMenu({ items }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const [pos, setPos] = useState(null); // { top, left } in viewport coords
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+  const visible = (items || []).filter(Boolean);
+  const MENU_W = 200;
   useEffect(() => {
     if (!open) return undefined;
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onDown = (e) => {
+      if (btnRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    // The menu is fixed-positioned (rendered in a portal so the panels'
+    // overflow:hidden can't clip it) — close it on scroll/resize so it never
+    // drifts away from its row.
+    const close = () => setOpen(false);
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onEsc);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
   }, [open]);
-  const received = !!d.poReceivedAt;
-  const items = [
-    { label: received ? 'Edit PO number' : 'Mark PO received', icon: Check, go: () => onMarkPoReceived({ dealId: d.dealId, title: d.title, company: d.company, poNumber: d.poNumber || '' }) },
-    ...(invoiceableLine ? [{ label: 'Create invoice', icon: FileText, go: () => onCreateInvoice({ dealId: d.dealId, companyId: d.companyId, title: d.title || d.company, stage: d.stage, mode: invoiceableLine.type === 'final' ? 'final' : undefined, reference: d.poNumber || undefined }) }] : []),
-    ...(onOpenDeal ? [{ label: 'Open deal', icon: ExternalLink, go: () => onOpenDeal(d.dealId || d.companyId) }] : []),
-  ];
+  if (!visible.length) return null;
+  const toggle = (e) => {
+    e.stopPropagation();
+    if (open) { setOpen(false); return; }
+    const r = btnRef.current.getBoundingClientRect();
+    const estH = visible.length * 34 + 8;
+    // Flip above the button if there isn't room below.
+    const top = (r.bottom + estH > window.innerHeight - 8 && r.top - estH > 8) ? r.top - estH - 4 : r.bottom + 4;
+    setPos({ top, left: Math.max(8, r.right - MENU_W) });
+    setOpen(true);
+  };
   return (
-    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
+    <>
       <button
-        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
         title="Actions"
         aria-haspopup="menu"
         aria-expanded={open}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid ' + BRAND.border, background: open ? BRAND.paper : 'white', cursor: 'pointer', color: BRAND.ink }}
+        style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid ' + BRAND.border, background: open ? BRAND.paper : 'white', cursor: 'pointer', color: BRAND.ink }}
       >
         <MoreVertical size={15} />
       </button>
-      {open && (
-        <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 30, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 8px 24px rgba(15,42,61,0.14)', minWidth: 176, padding: 4 }}>
-          {items.map((it) => {
+      {open && pos && createPortal(
+        <div ref={menuRef} role="menu" style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 1000, width: MENU_W, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 8px 24px rgba(15,42,61,0.18)', padding: 4 }}>
+          {visible.map((it) => {
             const Icon = it.icon;
             return (
               <button
                 key={it.label}
                 role="menuitem"
-                onClick={(e) => { e.stopPropagation(); setOpen(false); it.go(); }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, color: BRAND.ink, borderRadius: 6 }}
+                onClick={(e) => { e.stopPropagation(); setOpen(false); it.onClick(); }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, color: it.danger ? '#B91C1C' : BRAND.ink, borderRadius: 6 }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
               >
-                <Icon size={14} /> {it.label}
+                {Icon && <Icon size={14} />} {it.label}
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
-  );
-}
-
-// A small INV button that raises an invoice for one outstanding line. Stops the
-// row's open-deal click. Maps the line type to the create-invoice mode: a 50%
-// final needs mode:'final'; deposit / full / PO use the default suggested lines.
-function InvButton({ d, line, onCreateInvoice }) {
-  return (
-    <button
-      onClick={(e) => { e.stopPropagation(); onCreateInvoice({ dealId: d.dealId, companyId: d.companyId, title: d.title || d.company, stage: d.stage, mode: line.type === 'final' ? 'final' : undefined }); }}
-      title="Create an invoice for this"
-      style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: '#0E7490', background: '#ECFEFF', border: '1px solid #A5E0EC', borderRadius: 4, padding: '2px 7px', cursor: 'pointer', flexShrink: 0 }}
-    >
-      INV
-    </button>
+    </>
   );
 }
 
@@ -1540,14 +1495,27 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
   const single = lines.length === 1;
   const single0 = single ? lines[0] : null;
   const showCommitted = Math.abs((d.committed || 0) - (d.outstanding || 0)) > 0.005;
-  // INV button shows on a not-yet-invoiced line of a real deal (not extras, which
-  // ride on the final invoice; not company-level invoice rows with no dealId).
+  // A not-yet-invoiced line of a real deal can be invoiced (not extras, which ride
+  // on the final invoice; not company-level invoice rows with no dealId).
   const canInvoice = (l) => !!(onCreateInvoice && d.dealId && l.invoiced === false && l.type !== 'extra');
-  // PO rows consolidate their actions into a kebab menu (Mark PO received /
-  // Create invoice / Open deal); the first invoiceable line drives "Create invoice".
-  const invoiceableLine = isPo ? lines.find((l) => canInvoice(l)) : null;
   // Deal rows open the deal; company-level invoice rows (no dealId) open the company.
   const open = () => onOpenDeal && onOpenDeal(d.dealId || d.companyId);
+  // Every row's actions live behind the shared ⋮ menu. PO deals lead with their
+  // PO action; then one "Create invoice" per not-yet-invoiced line (labelled by
+  // its portion when there's more than one); then "Open deal".
+  const invoiceLines = lines.filter(canInvoice);
+  const rowActions = [
+    isPo && onMarkPoReceived && {
+      label: d.poReceivedAt ? 'Edit PO number' : 'Mark PO received', icon: Check,
+      onClick: () => onMarkPoReceived({ dealId: d.dealId, title: d.title, company: d.company, poNumber: d.poNumber || '' }),
+    },
+    ...invoiceLines.map((l) => ({
+      label: invoiceLines.length > 1 ? `Invoice ${PAYMENT_TYPE_META[l.type]?.label || 'amount'}` : 'Create invoice',
+      icon: FileText,
+      onClick: () => onCreateInvoice({ dealId: d.dealId, companyId: d.companyId, title: d.title || d.company, stage: d.stage, mode: l.type === 'final' ? 'final' : undefined, reference: isPo ? (d.poNumber || undefined) : undefined }),
+    })),
+    onOpenDeal && { label: 'Open deal', icon: ExternalLink, onClick: open },
+  ];
   return (
     <div
       role="button"
@@ -1573,14 +1541,11 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
             </span>
           )}
         </div>
-        {!isPo && single && single0 && canInvoice(single0) && <InvButton d={d} line={single0} onCreateInvoice={onCreateInvoice} />}
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(d.outstanding)}</div>
           {showCommitted && <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>}
         </div>
-        {isPo && onMarkPoReceived && (
-          <PoActionsMenu d={d} invoiceableLine={invoiceableLine} onCreateInvoice={onCreateInvoice} onMarkPoReceived={onMarkPoReceived} onOpenDeal={onOpenDeal} />
-        )}
+        <RowActionsMenu items={rowActions} />
       </div>
       {subtitle && (
         <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1601,7 +1566,6 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
                 )}
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                {!isPo && canInvoice(l) && <InvButton d={d} line={l} onCreateInvoice={onCreateInvoice} />}
                 <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{formatGBP(l.amount)}</span>
               </span>
             </div>
