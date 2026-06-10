@@ -54,13 +54,13 @@ function collectPredicted(pending, partners, predictKeys) {
   const add = (key, it) => { if (!seen.has(key)) { seen.add(key); out.push({ key, ...it }); } };
   const keys = predictKeys || new Set();
   const p = pending || {};
-  for (const d of (p.normal || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Signed deal', dealId: d.dealId });
-  for (const d of (p.po || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Purchase order', dealId: d.dealId });
-  for (const r of (p.manual || [])) if (keys.has(predictKeyForManual(r))) add(predictKeyForManual(r), { name: r.company || r.description || 'Pending payment', amount: Number(r.amountExVat) || 0, source: r.kind === 'po' ? 'Imported PO' : 'Imported PP', dealId: r.dealId || null, companyId: r.companyId || null });
-  for (const r of (p.companyInvoices || [])) if (keys.has(predictKeyForManual(r))) add(predictKeyForManual(r), { name: r.company || r.description || 'Company invoice', amount: Number(r.amountExVat) || 0, source: 'Company invoice', companyId: r.companyId || null });
+  for (const d of (p.normal || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Signed deal', dealId: d.dealId, type: 'deal', row: d, isPo: false });
+  for (const d of (p.po || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Purchase order', dealId: d.dealId, type: 'deal', row: d, isPo: true });
+  for (const r of (p.manual || [])) if (keys.has(predictKeyForManual(r))) add(predictKeyForManual(r), { name: r.company || r.description || 'Pending payment', amount: Number(r.amountExVat) || 0, source: r.kind === 'po' ? 'Imported PO' : 'Imported PP', dealId: r.dealId || null, companyId: r.companyId || null, type: 'manual', row: r });
+  for (const r of (p.companyInvoices || [])) if (keys.has(predictKeyForManual(r))) add(predictKeyForManual(r), { name: r.company || r.description || 'Company invoice', amount: Number(r.amountExVat) || 0, source: 'Company invoice', companyId: r.companyId || null, type: 'manual', row: r });
   // Active partners ride along automatically (subscription = next month's fee,
   // credits-only = remaining-credit value) — no manual flag needed.
-  for (const pt of (partners || [])) if (pt.clientKey) add(predictKeyForPartner(pt.clientKey), { name: pt.clientName || 'Partner', amount: Number(pt.outstanding) || 0, source: 'Partner', clientKey: pt.clientKey, auto: true });
+  for (const pt of (partners || [])) if (pt.clientKey) add(predictKeyForPartner(pt.clientKey), { name: pt.clientName || 'Partner', amount: Number(pt.outstanding) || 0, source: 'Partner', clientKey: pt.clientKey, auto: true, type: 'partner', row: pt });
   return out.sort((a, b) => b.amount - a.amount);
 }
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
@@ -504,6 +504,54 @@ const PAYMENT_TYPE_META = {
   invoice: { label: 'Invoice', color: '#0E7490', bg: '#ECFEFF' },
 };
 
+// The secondary (subtitle) line for a predicted row — mirrors what each item
+// shows on the Pending Payments list.
+function predictedSubtitle(item) {
+  const r = item.row || {};
+  if (item.type === 'deal') return (r.company && r.title && r.title !== r.company) ? r.title : null;
+  if (item.type === 'manual') return [r.invoiceType, r.poNumber, r.description, r.note].filter(Boolean).join(' · ') || null;
+  if (item.type === 'partner') {
+    const credits = Number(r.creditsRemaining) || 0;
+    return (r.status === 'credits_only' && credits > 0) ? `${credits % 1 === 0 ? credits : credits.toFixed(1)} credits left` : null;
+  }
+  return null;
+}
+
+// The same badges an item carries on the Pending Payments list: proposal number
+// + payment-type + PO pill + invoiced tags for deals; imported/linked badge for
+// manual rows; subscription/credits badge for partners.
+function PredictedRowBadges({ item }) {
+  const r = item.row || {};
+  if (item.type === 'deal') {
+    const number = r.number ? formatProposalNumber(r.number) : '';
+    const lines = (r.lines && r.lines.length) ? r.lines : [];
+    const types = [...new Set(lines.map((l) => l.type))];
+    const anyNotInvoiced = lines.some((l) => l.invoiced === false);
+    return (
+      <>
+        {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
+        {item.isPo && <PoStatusPill d={r} />}
+        {types.map((t) => <PaymentBadge key={t} type={t} />)}
+        {anyNotInvoiced && <NotInvoicedTag />}
+      </>
+    );
+  }
+  if (item.type === 'manual') {
+    if (r.kind === 'company-invoice') {
+      return <span style={{ fontSize: 9, fontWeight: 700, color: '#B45309', background: '#FFFBEB', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>Not linked to a deal</span>;
+    }
+    if (r.companyId || r.dealId) {
+      return <span style={{ fontSize: 9, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{r.companyId ? 'Customer' : 'Linked'}</span>;
+    }
+    return <span style={{ fontSize: 9, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>Imported</span>;
+  }
+  if (item.type === 'partner') {
+    const meta = PARTNER_STATUS_META[r.status] || PARTNER_STATUS_META.active;
+    return <span style={{ fontSize: 9, fontWeight: 700, color: meta.color, background: meta.bg, padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{meta.label}</span>;
+  }
+  return null;
+}
+
 // The "Predicted <month> Payments" tab. Derives its list live by intersecting the
 // flagged item keys (state.predictedPayments.keys) with the current pending rows +
 // active partners — so a predicted item that's since been paid simply drops off
@@ -578,6 +626,8 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
           <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
             {items.map((it) => {
               const clickable = !!it.open;
+              const subtitle = predictedSubtitle(it);
+              const perMo = it.type === 'partner' && it.row?.status === 'active';
               return (
                 <div
                   key={it.key}
@@ -589,9 +639,17 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
                   style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: clickable ? 'pointer' : 'default' }}
                 >
-                  <span style={{ fontSize: 13, fontWeight: 600, color: clickable ? BRAND.blue : BRAND.ink, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: clickable ? BRAND.blue : BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{it.name}</span>
+                      <PredictedRowBadges item={it} />
+                    </div>
+                    {subtitle && (
+                      <div title={subtitle} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>{subtitle}</div>
+                    )}
+                  </div>
                   <span style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, background: BRAND.paper, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{it.source}</span>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 70, textAlign: 'right' }}>{formatGBP(it.amount)}</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 70, textAlign: 'right' }}>{formatGBP(it.amount)}{perMo ? '/mo' : ''}</span>
                   {it.auto ? (
                     <span title="Always predicted while the partner is active" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, color: PREDICT_COLOR }}>
                       <CalendarCheck size={14} />
