@@ -14,7 +14,7 @@ import { enablePush, disablePush } from '../lib/pushSubscribe.js';
 const CHANNEL_META = {
   general: { icon: Bell, label: 'Notifications', accent: BRAND.blue, badge: '#EF4444' },
   finance: { icon: PoundSterling, label: 'Sales & finance', accent: '#0E7490', badge: '#0E7490' },
-  tracking: { icon: Eye, label: 'Email & proposal views', accent: '#16A34A', badge: '#16A34A' },
+  tracking: { icon: Eye, label: 'View Tracking', accent: '#16A34A', badge: '#16A34A' },
 };
 
 // Floating notification center. Mounted once at the app root so the bell is

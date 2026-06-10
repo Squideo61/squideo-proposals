@@ -201,7 +201,7 @@ export function getNotificationMeta(key) {
 // The in-app notification channels (bells). Order is left→right in the top bar:
 // 'tracking' (eye) · 'finance' (£) · 'general' (standard bell).
 export const NOTIFICATION_CHANNELS = [
-  { key: 'tracking', label: 'Email & proposal views', short: 'Tracking' },
+  { key: 'tracking', label: 'View Tracking', short: 'Views' },
   { key: 'finance', label: 'Sales & finance', short: 'Finance' },
   { key: 'general', label: 'Updates', short: 'Updates' },
 ];
