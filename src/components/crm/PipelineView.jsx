@@ -407,18 +407,35 @@ function DealRow({ deal, onOpen }) {
             {name}
           </span>
           <SaleStatusPills deal={deal} />
-          {/* Next due task + last-email date inline with the title for compactness. */}
-          {deal.nextTask && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: overdue ? '#B91C1C' : BRAND.muted, flexShrink: 0, minWidth: 0 }} title="Next due task">
-              <CheckSquare size={12} style={{ flexShrink: 0 }} />
-              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}>
-                {deal.nextTask.title}{due ? ` · ${shortDate(due)}` : ''}
-              </span>
-            </span>
-          )}
-          {lastEmail && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: BRAND.muted, flexShrink: 0 }} title="Date of last email">
-              <Mail size={12} /> {shortDate(lastEmail)}
+          {/* Next due task + last-email date inline with the title, each as its own
+              distinct chip so it's obvious what they are and where one ends. */}
+          {(deal.nextTask || lastEmail) && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 2, minWidth: 0 }}>
+              {deal.nextTask && (
+                <span
+                  title={`Next due task: ${deal.nextTask.title}${due ? ' · ' + shortDate(due) : ''}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 1, minWidth: 0,
+                    color: overdue ? '#B91C1C' : '#475569',
+                    background: overdue ? '#FEF2F2' : '#F1F5F9',
+                    border: '1px solid ' + (overdue ? '#FECACA' : BRAND.border) }}
+                >
+                  <CheckSquare size={12} style={{ flexShrink: 0 }} />
+                  <span style={{ color: BRAND.muted, fontWeight: 500, flexShrink: 0 }}>Task</span>
+                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 130 }}>
+                    {deal.nextTask.title}{due ? ` · ${shortDate(due)}` : ''}
+                  </span>
+                </span>
+              )}
+              {lastEmail && (
+                <span
+                  title={`Last email ${shortDate(lastEmail)}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0, color: '#475569', background: '#F1F5F9', border: '1px solid ' + BRAND.border }}
+                >
+                  <Mail size={12} style={{ flexShrink: 0 }} />
+                  <span style={{ color: BRAND.muted, fontWeight: 500 }}>Last email</span>
+                  {shortDate(lastEmail)}
+                </span>
+              )}
             </span>
           )}
         </div>
