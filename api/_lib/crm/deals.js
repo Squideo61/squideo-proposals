@@ -149,6 +149,114 @@ async function setDealAssignees(dealId, emails) {
   }
 }
 
+// Annotate a set of deal rows (must be SELECT * so po fields are present) with
+// the per-deal extras the Kanban / pipeline render from: proposal + video counts,
+// sale status (PO route + invoiced) and engagement tracking (proposal + email
+// opens). Shared by the deals list and the stage-move response so a drag-drop
+// reflects fresh pills/tracking immediately. Each lookup is guarded so a missing
+// table degrades quietly; all batched/keyed by deal id.
+export async function annotateDeals(rows) {
+  await ensureDealPo();
+  const ids = rows.map(r => r.id);
+  if (!ids.length) return [];
+
+  const proposalCounts = await sql`SELECT deal_id, COUNT(*)::int AS n FROM proposals WHERE deal_id = ANY(${ids}) GROUP BY deal_id`;
+  const propMap = new Map(proposalCounts.map(r => [r.deal_id, r.n]));
+
+  let vidMap = new Map();
+  try {
+    const videoCounts = await sql`SELECT deal_id, COUNT(*)::int AS n FROM project_videos WHERE deal_id = ANY(${ids}) GROUP BY deal_id`;
+    vidMap = new Map(videoCounts.map(r => [r.deal_id, r.n]));
+  } catch (_) { /* project_videos not yet migrated */ }
+
+  // PO route: any signed proposal on the deal chose the PO payment option.
+  let poRouteSet = new Set();
+  try {
+    const poRows = await sql`
+      SELECT p.deal_id AS did, bool_or(s.data->>'paymentOption' = 'po') AS is_po
+        FROM signatures s JOIN proposals p ON p.id = s.proposal_id
+       WHERE p.deal_id = ANY(${ids}) GROUP BY p.deal_id`;
+    poRouteSet = new Set(poRows.filter(r => r.is_po).map(r => r.did));
+  } catch (_) { /* no signatures table */ }
+
+  // Invoiced: a manual invoice (issued/paid) or a raised proposal-billing invoice.
+  let invoicedSet = new Set();
+  try {
+    const invRows = await sql`
+      SELECT DISTINCT did FROM (
+        SELECT COALESCE(mi.deal_id, pr.deal_id) AS did
+          FROM manual_invoices mi
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+         WHERE mi.status IN ('issued','paid')
+           AND COALESCE(mi.deal_id, pr.deal_id) = ANY(${ids})
+        UNION
+        SELECT p.deal_id AS did
+          FROM proposal_billing pb JOIN proposals p ON p.id = pb.proposal_id
+         WHERE pb.xero_invoice_id IS NOT NULL AND p.deal_id = ANY(${ids})
+      ) q WHERE did IS NOT NULL`;
+    invoicedSet = new Set(invRows.map(r => r.did));
+  } catch (_) { /* invoices tables not present */ }
+
+  // Proposal opens (the client opening the proposal).
+  let propViewMap = new Map();
+  try {
+    const pvRows = await sql`
+      SELECT p.deal_id AS did, COUNT(*)::int AS opens, MAX(pv.last_active_at) AS last_at,
+             COALESCE(SUM(pv.duration_seconds),0)::int AS secs,
+             ARRAY_REMOVE(ARRAY_AGG(DISTINCT pv.city), NULL) AS cities,
+             ARRAY_REMOVE(ARRAY_AGG(DISTINCT pv.country), NULL) AS countries
+        FROM proposal_views pv JOIN proposals p ON p.id = pv.proposal_id
+       WHERE p.deal_id = ANY(${ids}) GROUP BY p.deal_id`;
+    propViewMap = new Map(pvRows.map(r => [r.did, r]));
+  } catch (_) { /* proposal_views not present */ }
+
+  // Email opens (real opens > 5s after send, on the deal's tracked threads).
+  let emailOpenMap = new Map();
+  try {
+    const eoRows = await sql`
+      SELECT etd.deal_id AS did,
+             COUNT(*) FILTER (WHERE ev.kind='open' AND ev.occurred_at > t.sent_at + interval '5 seconds')::int AS opens,
+             MAX(ev.occurred_at) FILTER (WHERE ev.kind='open' AND ev.occurred_at > t.sent_at + interval '5 seconds') AS last_at
+        FROM email_thread_deals etd
+        JOIN email_tracking t ON t.gmail_thread_id = etd.gmail_thread_id
+        LEFT JOIN email_tracking_events ev ON ev.tracking_id = t.id
+       WHERE etd.deal_id = ANY(${ids}) GROUP BY etd.deal_id`;
+    emailOpenMap = new Map(eoRows.map(r => [r.did, r]));
+  } catch (_) { /* email_tracking not present */ }
+
+  return rows.map(r => {
+    const pv = propViewMap.get(r.id);
+    const eo = emailOpenMap.get(r.id);
+    const proposalOpens = pv ? Number(pv.opens) || 0 : 0;
+    const emailOpens = eo ? Number(eo.opens) || 0 : 0;
+    const lastProposalOpenAt = pv?.last_at || null;
+    const lastEmailOpenAt = eo?.last_at || null;
+    const locations = [];
+    for (const c of (pv?.cities || [])) if (c) locations.push(c);
+    if (!locations.length) for (const c of (pv?.countries || [])) if (c) locations.push(c);
+    const ts = [lastProposalOpenAt, lastEmailOpenAt].filter(Boolean).map(t => new Date(t).getTime());
+    const lastOpenedAt = ts.length ? new Date(Math.max(...ts)).toISOString() : null;
+    return {
+      ...serialiseDeal(r),
+      proposalCount: propMap.get(r.id) || 0,
+      videoCount: vidMap.get(r.id) || 0,
+      saleStatus: {
+        isPo: poRouteSet.has(r.id),
+        poNumber: r.po_number || null,
+        poReceivedAt: r.po_received_at || null,
+        invoiced: invoicedSet.has(r.id),
+      },
+      tracking: {
+        tracked: proposalOpens + emailOpens > 0,
+        proposalOpens, lastProposalOpenAt,
+        emailOpens, lastEmailOpenAt,
+        locations, totalSeconds: pv ? Number(pv.secs) || 0 : 0,
+        lastOpenedAt,
+      },
+    };
+  });
+}
+
 export async function dealsRoute(req, res, id, action, user, subaction = null) {
   if (!id) {
     if (req.method === 'GET') {
@@ -156,7 +264,6 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       // stages as columns and groups client-side).
       const stage = req.query.stage ? String(req.query.stage) : null;
       const owner = req.query.owner ? String(req.query.owner) : null;
-      await ensureDealPo(); // so SELECT * carries po_number/po_received_at
       let rows;
       if (stage && owner) {
         rows = await sql`SELECT * FROM deals WHERE stage = ${stage} AND owner_email = ${owner} ORDER BY stage_changed_at DESC`;
@@ -168,113 +275,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         rows = await sql`SELECT * FROM deals ORDER BY stage_changed_at DESC`;
       }
 
-      // Annotate with primary contact + linked-proposal counts so the Kanban
-      // can render without n+1 fetches.
-      const ids = rows.map(r => r.id);
-      const proposalCounts = ids.length
-        ? await sql`SELECT deal_id, COUNT(*)::int AS n FROM proposals WHERE deal_id = ANY(${ids}) GROUP BY deal_id`
-        : [];
-      const propMap = new Map(proposalCounts.map(r => [r.deal_id, r.n]));
-
-      // Video count for the production board's cards. Guarded so a workspace
-      // that hasn't applied the production migration still lists deals.
-      let vidMap = new Map();
-      try {
-        const videoCounts = ids.length
-          ? await sql`SELECT deal_id, COUNT(*)::int AS n FROM project_videos WHERE deal_id = ANY(${ids}) GROUP BY deal_id`
-          : [];
-        vidMap = new Map(videoCounts.map(r => [r.deal_id, r.n]));
-      } catch (_) { /* project_videos not yet migrated */ }
-
-      // --- Sales-pipeline annotations (saleStatus + tracking). Each guarded so a
-      // missing table degrades quietly; all batched/keyed by deal id. ---
-
-      // PO route: any signed proposal on the deal chose the PO payment option.
-      let poRouteSet = new Set();
-      try {
-        const poRows = ids.length ? await sql`
-          SELECT p.deal_id AS did, bool_or(s.data->>'paymentOption' = 'po') AS is_po
-            FROM signatures s JOIN proposals p ON p.id = s.proposal_id
-           WHERE p.deal_id = ANY(${ids}) GROUP BY p.deal_id` : [];
-        poRouteSet = new Set(poRows.filter(r => r.is_po).map(r => r.did));
-      } catch (_) { /* no signatures table */ }
-
-      // Invoiced: a manual invoice (issued/paid) or a raised proposal-billing invoice.
-      let invoicedSet = new Set();
-      try {
-        const invRows = ids.length ? await sql`
-          SELECT DISTINCT did FROM (
-            SELECT COALESCE(mi.deal_id, pr.deal_id) AS did
-              FROM manual_invoices mi
-              LEFT JOIN proposals pr ON pr.id = mi.proposal_id
-             WHERE mi.status IN ('issued','paid')
-               AND COALESCE(mi.deal_id, pr.deal_id) = ANY(${ids})
-            UNION
-            SELECT p.deal_id AS did
-              FROM proposal_billing pb JOIN proposals p ON p.id = pb.proposal_id
-             WHERE pb.xero_invoice_id IS NOT NULL AND p.deal_id = ANY(${ids})
-          ) q WHERE did IS NOT NULL` : [];
-        invoicedSet = new Set(invRows.map(r => r.did));
-      } catch (_) { /* invoices tables not present */ }
-
-      // Proposal opens (the client opening the proposal).
-      let propViewMap = new Map();
-      try {
-        const pvRows = ids.length ? await sql`
-          SELECT p.deal_id AS did, COUNT(*)::int AS opens, MAX(pv.last_active_at) AS last_at,
-                 COALESCE(SUM(pv.duration_seconds),0)::int AS secs,
-                 ARRAY_REMOVE(ARRAY_AGG(DISTINCT pv.city), NULL) AS cities,
-                 ARRAY_REMOVE(ARRAY_AGG(DISTINCT pv.country), NULL) AS countries
-            FROM proposal_views pv JOIN proposals p ON p.id = pv.proposal_id
-           WHERE p.deal_id = ANY(${ids}) GROUP BY p.deal_id` : [];
-        propViewMap = new Map(pvRows.map(r => [r.did, r]));
-      } catch (_) { /* proposal_views not present */ }
-
-      // Email opens (real opens > 5s after send, on the deal's tracked threads).
-      let emailOpenMap = new Map();
-      try {
-        const eoRows = ids.length ? await sql`
-          SELECT etd.deal_id AS did,
-                 COUNT(*) FILTER (WHERE ev.kind='open' AND ev.occurred_at > t.sent_at + interval '5 seconds')::int AS opens,
-                 MAX(ev.occurred_at) FILTER (WHERE ev.kind='open' AND ev.occurred_at > t.sent_at + interval '5 seconds') AS last_at
-            FROM email_thread_deals etd
-            JOIN email_tracking t ON t.gmail_thread_id = etd.gmail_thread_id
-            LEFT JOIN email_tracking_events ev ON ev.tracking_id = t.id
-           WHERE etd.deal_id = ANY(${ids}) GROUP BY etd.deal_id` : [];
-        emailOpenMap = new Map(eoRows.map(r => [r.did, r]));
-      } catch (_) { /* email_tracking not present */ }
-
-      return res.status(200).json(rows.map(r => {
-        const pv = propViewMap.get(r.id);
-        const eo = emailOpenMap.get(r.id);
-        const proposalOpens = pv ? Number(pv.opens) || 0 : 0;
-        const emailOpens = eo ? Number(eo.opens) || 0 : 0;
-        const lastProposalOpenAt = pv?.last_at || null;
-        const lastEmailOpenAt = eo?.last_at || null;
-        const locations = [];
-        for (const c of (pv?.cities || [])) if (c) locations.push(c);
-        if (!locations.length) for (const c of (pv?.countries || [])) if (c) locations.push(c);
-        const ts = [lastProposalOpenAt, lastEmailOpenAt].filter(Boolean).map(t => new Date(t).getTime());
-        const lastOpenedAt = ts.length ? new Date(Math.max(...ts)).toISOString() : null;
-        return {
-          ...serialiseDeal(r),
-          proposalCount: propMap.get(r.id) || 0,
-          videoCount: vidMap.get(r.id) || 0,
-          saleStatus: {
-            isPo: poRouteSet.has(r.id),
-            poNumber: r.po_number || null,
-            poReceivedAt: r.po_received_at || null,
-            invoiced: invoicedSet.has(r.id),
-          },
-          tracking: {
-            tracked: proposalOpens + emailOpens > 0,
-            proposalOpens, lastProposalOpenAt,
-            emailOpens, lastEmailOpenAt,
-            locations, totalSeconds: pv ? Number(pv.secs) || 0 : 0,
-            lastOpenedAt,
-          },
-        };
-      }));
+      return res.status(200).json(await annotateDeals(rows));
     }
     if (req.method === 'POST') {
       const body = req.body || {};
@@ -334,12 +335,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
       VALUES (${id}, 'stage_change', ${JSON.stringify({ from: cur.stage, to: stage, manual: true, lostReason: lostReason || null })}, ${user.email || null})
     `;
-    const rows = await sql`
-      SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-             value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
-      FROM deals WHERE id = ${id}
-    `;
-    return res.status(200).json({ ok: true, changed: true, deal: serialiseDeal(rows[0]) });
+    // Return the FULLY annotated deal (saleStatus + tracking) so the pipeline's
+    // pills/engagement update immediately on drop, with fresh server state.
+    const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
+    const [deal] = await annotateDeals(rows);
+    return res.status(200).json({ ok: true, changed: true, deal });
   }
 
   if (action === 'comments') {
