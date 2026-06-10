@@ -15,6 +15,7 @@ import { OrderSummaryCard } from './OrderSummaryCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
 import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
+import { TrackingEye } from './EmailTracking.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
@@ -851,8 +852,11 @@ function EmailRow({ email, onOpen, threadCount, expanded, dealTitle, onLinkAnoth
             {snippetTrim}
           </div>
         )}
-        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
-          {formatRelativeTime(email.sentAt)}{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}
+        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span>{formatRelativeTime(email.sentAt)}{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}</span>
+          {/* Thread-level tracking (only present on threads with an outbound
+              tracked send), so it shows even when the latest message is a reply. */}
+          <TrackingEye tracking={email.tracking} />
         </div>
         <div
           style={{

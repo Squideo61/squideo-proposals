@@ -7,6 +7,7 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
+import { trackingForDealThreads } from './tracking.js';
 import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree, isFolderWithin, listFolderContents, getDriveFile } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
@@ -937,6 +938,12 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       if (prows.length) dealProducerEmails = prows.map(r => r.user_email);
     } catch (_) { /* deal_assignees not yet migrated */ }
 
+    // Open/click tracking for this deal's outbound threads, team-wide (not just
+    // the viewer's own sends). Keyed by thread; degrades to {} pre-migration.
+    const emailTracking = await trackingForDealThreads(
+      Array.from(new Set(emails.map(e => e.gmail_thread_id).filter(Boolean)))
+    );
+
     return res.status(200).json({
       ...deal,
       // Whether deal files are Drive-backed (drives the client upload path/cap),
@@ -985,6 +992,9 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         // inbound resolver picked it up (header / contact / domain match).
         // Used by the row's "(Auto-)Linked to <deal>" label.
         manuallyLinked: em.thread_resolved_by === 'manual' || em.message_linked === true,
+        // Streak-style open/click tracking for this thread's outbound sends.
+        // Null for untracked threads / inbound-only; the UI gates on direction.
+        tracking: emailTracking[em.gmail_thread_id] || null,
       })),
       files: files.map(f => ({
         id: f.id, filename: f.filename, mimeType: f.mime_type || null,

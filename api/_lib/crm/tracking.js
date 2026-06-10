@@ -40,9 +40,8 @@ export async function recordTrackedSend({ token, userEmail, messageId, threadId,
 export async function trackingForThreads(userEmail, threadIds) {
   const ids = (threadIds || []).filter(Boolean);
   if (!ids.length) return {};
-  let rows;
   try {
-    rows = await sql`
+    const rows = await sql`
       SELECT t.gmail_thread_id AS thread_id,
              COUNT(*) FILTER (WHERE e.kind = 'open'
                AND e.occurred_at > t.sent_at + interval '5 seconds')                       AS opens,
@@ -59,21 +58,52 @@ export async function trackingForThreads(userEmail, threadIds) {
          AND t.gmail_thread_id = ANY(${ids})
        GROUP BY t.gmail_thread_id
     `;
+    return mapTrackingRows(rows);
   } catch (err) {
     // Table not migrated yet, etc. — tracking is additive, so degrade quietly.
     console.warn('[tracking] trackingForThreads failed', err.message);
     return {};
   }
+}
 
+// Same aggregation, but for a deal/project context: NOT scoped to one sender,
+// because a deal's emails may have been sent by any team member. The threads are
+// already authorised by virtue of being linked to the deal the caller can see.
+export async function trackingForDealThreads(threadIds) {
+  const ids = (threadIds || []).filter(Boolean);
+  if (!ids.length) return {};
+  try {
+    const rows = await sql`
+      SELECT t.gmail_thread_id AS thread_id,
+             COUNT(*) FILTER (WHERE e.kind = 'open'
+               AND e.occurred_at > t.sent_at + interval '5 seconds')                       AS opens,
+             MAX(e.occurred_at) FILTER (WHERE e.kind = 'open'
+               AND e.occurred_at > t.sent_at + interval '5 seconds')                       AS last_opened_at,
+             COUNT(*) FILTER (WHERE e.kind = 'click')                                       AS clicks,
+             MAX(e.occurred_at) FILTER (WHERE e.kind = 'click')                             AS last_clicked_at,
+             ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.city) FILTER (WHERE e.kind = 'open'), NULL)  AS cities,
+             ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.country) FILTER (WHERE e.kind = 'open'), NULL) AS countries,
+             ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.link_url) FILTER (WHERE e.kind = 'click'), NULL) AS clicked_urls
+        FROM email_tracking t
+        LEFT JOIN email_tracking_events e ON e.tracking_id = t.id
+       WHERE t.gmail_thread_id = ANY(${ids})
+       GROUP BY t.gmail_thread_id
+    `;
+    return mapTrackingRows(rows);
+  } catch (err) {
+    console.warn('[tracking] trackingForDealThreads failed', err.message);
+    return {};
+  }
+}
+
+function mapTrackingRows(rows) {
   const out = {};
   for (const r of rows) {
-    const opens = Number(r.opens) || 0;
-    const clicks = Number(r.clicks) || 0;
     out[r.thread_id] = {
       tracked: true,
-      opens,
+      opens: Number(r.opens) || 0,
       lastOpenedAt: r.last_opened_at || null,
-      clicks,
+      clicks: Number(r.clicks) || 0,
       lastClickedAt: r.last_clicked_at || null,
       locations: buildLocations(r.cities, r.countries),
       clickedUrls: r.clicked_urls || [],
