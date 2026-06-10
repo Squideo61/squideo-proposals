@@ -1243,6 +1243,82 @@ async function pendingManualRoute(req, res, action, user) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
+// Predicted-this-month payments — a manually curated shortlist of pending
+// payments the user expects to land this calendar month. We store only a set of
+// opaque item keys (each computed client-side per pending row, e.g. `deal:<id>`,
+// `manual:<id>`, `partner:<key>`) scoped to a `YYYY-MM` month, plus a label +
+// amount snapshot for record-keeping. The Finance "Predicted" tab derives the
+// live list by intersecting these keys with the current pending rows, so a paid
+// item naturally drops off. A new month starts empty.
+let predictedPaymentsReady = null;
+function ensurePredictedPayments() {
+  if (predictedPaymentsReady) return predictedPaymentsReady;
+  predictedPaymentsReady = sql`
+    CREATE TABLE IF NOT EXISTS predicted_payments (
+      item_key text NOT NULL,
+      month text NOT NULL,
+      label text,
+      amount_ex_vat numeric DEFAULT 0,
+      created_by text,
+      created_at timestamptz DEFAULT now(),
+      PRIMARY KEY (item_key, month)
+    )
+  `.then(() => true).catch((err) => { predictedPaymentsReady = null; throw err; });
+  return predictedPaymentsReady;
+}
+
+function serverMonthKey() {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+// GET  /stats/predicted-payments/:month   → { month, keys, items, bankedNet }
+// POST /stats/predicted-payments/:month     { itemKey, predicted, label, amountExVat }
+async function predictedPaymentsRoute(req, res, action, user) {
+  await ensurePredictedPayments();
+  const month = /^\d{4}-\d{2}$/.test(action || '') ? action : serverMonthKey();
+
+  const snapshot = async () => {
+    const rows = await sql`SELECT item_key, label, amount_ex_vat FROM predicted_payments WHERE month = ${month}`;
+    // The cash already banked this calendar month — the base the predicted
+    // total is added to for the projected month-end figure.
+    let bankedNet = 0;
+    try { bankedNet = round2((await incomeReport(month)).total || 0); } catch { bankedNet = 0; }
+    return {
+      month,
+      bankedNet,
+      keys: rows.map((r) => r.item_key),
+      items: rows.map((r) => ({ key: r.item_key, label: r.label || null, amount: Number(r.amount_ex_vat) || 0 })),
+    };
+  };
+
+  if (req.method === 'GET') {
+    return res.status(200).json(await snapshot());
+  }
+
+  if (req.method === 'POST' || req.method === 'PUT') {
+    const body = req.body || {};
+    const itemKey = trimOrNull(body.itemKey);
+    if (!itemKey) return res.status(400).json({ error: 'itemKey required' });
+    const predicted = body.predicted !== false; // default → mark predicted
+    if (predicted) {
+      const label = trimOrNull(body.label);
+      const amount = numberOrNull(body.amountExVat) || 0;
+      const actor = user?.name || user?.email || null;
+      await sql`
+        INSERT INTO predicted_payments (item_key, month, label, amount_ex_vat, created_by)
+        VALUES (${itemKey}, ${month}, ${label}, ${amount}, ${actor})
+        ON CONFLICT (item_key, month)
+        DO UPDATE SET label = EXCLUDED.label, amount_ex_vat = EXCLUDED.amount_ex_vat`;
+    } else {
+      await sql`DELETE FROM predicted_payments WHERE item_key = ${itemKey} AND month = ${month}`;
+    }
+    return res.status(200).json(await snapshot());
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
 // Income period: 'YYYY' (whole year), 'YYYY-MM' (month) or 'YYYY-Qn' (calendar
 // quarter). Same window shape as parsePerformancePeriod, plus a year branch so
 // the Finance page's Year mode works. Defaults to the current month.
@@ -1983,6 +2059,9 @@ export async function statsRoute(req, res, id, action, user) {
   }
   if (id === 'pending-manual') {
     return pendingManualRoute(req, res, action, user);
+  }
+  if (id === 'predicted-payments') {
+    return predictedPaymentsRoute(req, res, action, user);
   }
   if (id === 'linkable-deals') {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

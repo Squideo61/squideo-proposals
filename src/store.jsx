@@ -108,6 +108,7 @@ function emptyStore() {
     // Performance panel — which loads its own period — refetches in step.
     financeRefresh: 0,
     pendingPayments: null,
+    predictedPayments: null,
     income: null,
     cashflow: null,
     cashflowTargets: null,
@@ -1030,6 +1031,31 @@ export function StoreProvider({ children }) {
         setState(s => ({ ...s, pendingPayments: data || null }));
         return data;
       }).catch(() => null);
+    },
+    // Predicted-this-month payments — the curated shortlist behind the Finance
+    // "Predicted <month> Payments" tab. Keyed by an opaque per-row item key and
+    // scoped to a 'YYYY-MM' month.
+    loadPredictedPayments(month) {
+      return api.get('/api/crm/stats/predicted-payments/' + month).then((data) => {
+        setState(s => ({ ...s, predictedPayments: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    // Toggle one pending payment on/off the predicted list. Optimistic on the
+    // key set so the row + total update instantly; the server reply (with a
+    // refreshed banked-net figure) replaces it.
+    togglePredictedPayment(month, itemKey, predicted, label = null, amountExVat = 0) {
+      setState(s => {
+        const cur = s.predictedPayments && s.predictedPayments.month === month
+          ? s.predictedPayments
+          : { month, keys: [], items: [], bankedNet: 0 };
+        const set = new Set(cur.keys || []);
+        if (predicted) set.add(itemKey); else set.delete(itemKey);
+        return { ...s, predictedPayments: { ...cur, month, keys: [...set] } };
+      });
+      return api.post('/api/crm/stats/predicted-payments/' + month, { itemKey, predicted, label, amountExVat })
+        .then((data) => { if (data) setState(s => ({ ...s, predictedPayments: data })); return data; })
+        .catch(() => {});
     },
     // Import manual pending payments / POs (Live Sales Sheet); refresh after.
     importPendingPayments(rows, mode = 'replace', kind = 'pp') {

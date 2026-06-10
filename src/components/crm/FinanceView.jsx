@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote } from 'lucide-react';
+import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote, CalendarCheck, TrendingUp } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -15,6 +15,30 @@ import { Modal } from '../ui.jsx';
 
 const VAT_COLOR = '#F59E0B';
 const CT_COLOR = '#0E7490';
+const PREDICT_COLOR = '#7C3AED';
+
+// "Predicted this month" plumbing. Any Pending-Payments row can be flagged as a
+// payment the user expects to land this calendar month; the flagged set powers
+// the Finance "Predicted <month> Payments" tab. Each row computes a stable
+// `key` (so the flag survives reloads) + a `label`/`amount` snapshot, and the
+// shared context exposes the current flagged-key set + a toggle. Rows read it via
+// `usePredict()` and add a single ⋮-menu entry through `predictMenuItem(...)`.
+const PredictContext = createContext(null);
+const usePredict = () => useContext(PredictContext);
+const predictKeyForDeal = (dealId) => `deal:${dealId}`;
+const predictKeyForManual = (r) => `${r.kind === 'company-invoice' ? 'companyInvoice' : 'manual'}:${r.id}`;
+const predictKeyForPartner = (clientKey) => `partner:${clientKey}`;
+// Build the ⋮-menu entry for a row, or null when prediction isn't available
+// (no context / no usable key).
+function predictMenuItem(predict, item) {
+  if (!predict || !item || !item.key) return null;
+  const on = predict.keys.has(item.key);
+  return {
+    label: on ? 'Remove from predicted' : 'Predict this month',
+    icon: CalendarCheck,
+    onClick: () => predict.toggle(item, !on),
+  };
+}
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
 const shortMonth = (key) => {
   const [y, m] = key.split('-').map(Number);
@@ -92,7 +116,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
     .map((c) => ({ id: c.id, name: c.name }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const now = new Date();
-  const [section, setSection] = useState(financeViewMemory.section); // 'income' | 'pending' | 'vat'
+  const [section, setSection] = useState(financeViewMemory.section); // 'income' | 'predicted' | 'pending' | 'vat'
   const [perfSection, setPerfSection] = useState(financeViewMemory.perfSection); // Performance toggle: 'income' | 'sales' | 'salesvspp'
   const [mode, setMode] = useState(financeViewMemory.mode); // 'month' | 'quarter' | 'year'
   const [year, setYear] = useState(() => financeViewMemory.year ?? now.getFullYear());
@@ -153,6 +177,12 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
   useEffect(() => { actions.loadPendingPayments(); }, [actions]);
   useEffect(() => { actions.fetchPartnerCreditsList(); }, [actions]);
 
+  // Predicted-this-month list — always the current calendar month, independent of
+  // the period picker. Passed as a key to the store so a month rollover reloads.
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const currentMonthName = now.toLocaleString('en-GB', { month: 'long' });
+  useEffect(() => { actions.loadPredictedPayments(currentMonthKey); }, [actions, currentMonthKey]);
+
   // Rolling trend (charts) — load 36 months (the Performance comparison needs
   // the full window; the bar charts below slice the last 12). Period-independent.
   useEffect(() => { if (!state.trend) actions.loadTrend(36); }, [actions, state.trend]);
@@ -193,6 +223,16 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
   const activePartners = (state.partnerCreditsList || []).filter((p) => p.status === 'active' || p.status === 'credits_only');
   const partnerTotal = activePartners.reduce((s, p) => s + (Number(p.outstanding) || 0), 0);
 
+  // Predicted-this-month flags + the shared toggle, exposed to every Pending
+  // Payments row via context (so the ⋮ menu can flag/unflag without prop drilling).
+  const predicted = state.predictedPayments && state.predictedPayments.month === currentMonthKey ? state.predictedPayments : null;
+  const predictKeys = useMemo(() => new Set(predicted?.keys || []), [predicted]);
+  const predictCtx = useMemo(() => ({
+    month: currentMonthKey,
+    keys: predictKeys,
+    toggle: (item, on) => actions.togglePredictedPayment(currentMonthKey, item.key, on, item.label || null, Number(item.amount) || 0),
+  }), [currentMonthKey, predictKeys, actions]);
+
   const isCurrentYear = effectiveYear === now.getFullYear();
   const monthIdx = now.getMonth();
 
@@ -220,6 +260,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
   const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
 
   return (
+    <PredictContext.Provider value={predictCtx}>
     <div style={{ padding: isMobile ? '20px 16px' : '40px 24px', maxWidth: 1100, margin: '0 auto' }}>
       <header style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -244,9 +285,9 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
         <Segmented
           value={section}
           onChange={setSection}
-          options={[{ value: 'income', label: firstTab.label }, { value: 'pending', label: 'Pending Payments' }, { value: 'vat', label: 'VAT & Corp tax' }]}
+          options={[{ value: 'income', label: firstTab.label }, { value: 'predicted', label: `Predicted ${currentMonthName} Payments` }, { value: 'pending', label: 'Pending Payments' }, { value: 'vat', label: 'VAT & Corp tax' }]}
         />
-        {section !== 'pending' && (
+        {section !== 'pending' && section !== 'predicted' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <Segmented
               value={mode}
@@ -311,6 +352,21 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
             <IncomePayments income={income} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={firstTab.view.periodLabel} onSetDate={setIncomeDate} />
           )}
         </>
+      )}
+
+      {section === 'predicted' && (
+        <PredictedPaymentsSection
+          pending={pending}
+          partners={activePartners}
+          predictKeys={predictKeys}
+          monthName={currentMonthName}
+          bankedNet={predicted?.bankedNet || 0}
+          onUnpredict={(key) => actions.togglePredictedPayment(currentMonthKey, key, false)}
+          onOpenDeal={onOpenDeal}
+          onOpenCompany={onOpenCompany}
+          onOpenPartner={onOpenPartner}
+          isMobile={isMobile}
+        />
       )}
 
       {section === 'vat' && (
@@ -395,6 +451,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
         </>
       )}
     </div>
+    </PredictContext.Provider>
   );
 }
 
@@ -408,6 +465,90 @@ const PAYMENT_TYPE_META = {
   extra: { label: 'Extra', color: '#C2410C', bg: '#FFF7ED' },
   invoice: { label: 'Invoice', color: '#0E7490', bg: '#ECFEFF' },
 };
+
+// The "Predicted <month> Payments" tab. Derives its list live by intersecting the
+// flagged item keys (state.predictedPayments.keys) with the current pending rows +
+// active partners — so a predicted item that's since been paid simply drops off
+// (and is already counted in the banked figure). Projects the month-end position
+// as banked-so-far + everything still predicted to land. All figures ex-VAT (net).
+function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, bankedNet, onUnpredict, onOpenDeal, onOpenCompany, onOpenPartner, isMobile }) {
+  const items = useMemo(() => {
+    if (!predictKeys || predictKeys.size === 0) return [];
+    const out = [];
+    const seen = new Set();
+    const add = (key, it) => { if (predictKeys.has(key) && !seen.has(key)) { seen.add(key); out.push({ key, ...it }); } };
+    const p = pending || {};
+    for (const d of (p.normal || [])) if (d.dealId) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Signed deal', open: onOpenDeal ? () => onOpenDeal(d.dealId) : null });
+    for (const d of (p.po || [])) if (d.dealId) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Purchase order', open: onOpenDeal ? () => onOpenDeal(d.dealId) : null });
+    for (const r of (p.manual || [])) add(predictKeyForManual(r), { name: r.company || r.description || 'Pending payment', amount: Number(r.amountExVat) || 0, source: r.kind === 'po' ? 'Imported PO' : 'Imported PP', open: r.dealId && onOpenDeal ? () => onOpenDeal(r.dealId) : (r.companyId && onOpenCompany ? () => onOpenCompany(r.companyId) : null) });
+    for (const r of (p.companyInvoices || [])) add(predictKeyForManual(r), { name: r.company || r.description || 'Company invoice', amount: Number(r.amountExVat) || 0, source: 'Company invoice', open: r.companyId && onOpenCompany ? () => onOpenCompany(r.companyId) : null });
+    for (const pt of (partners || [])) if (pt.clientKey) add(predictKeyForPartner(pt.clientKey), { name: pt.clientName || 'Partner', amount: Number(pt.outstanding) || 0, source: 'Partner', open: onOpenPartner ? () => onOpenPartner(pt.clientKey) : null });
+    return out.sort((a, b) => b.amount - a.amount);
+  }, [pending, partners, predictKeys, onOpenDeal, onOpenCompany, onOpenPartner]);
+
+  const predictedTotal = items.reduce((s, it) => s + it.amount, 0);
+  const projected = (Number(bankedNet) || 0) + predictedTotal;
+
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+        <StatCard icon={Wallet} accent={BRAND.blue} label={`Banked so far — ${monthName}`} value={formatGBP(bankedNet || 0)} sub="Cash already received this month · ex-VAT (net)" />
+        <StatCard icon={CalendarCheck} accent={PREDICT_COLOR} label="Predicted still to come" value={formatGBP(predictedTotal)} sub={`${items.length} ${items.length === 1 ? 'payment' : 'payments'} flagged & still outstanding · ex-VAT (net)`} />
+        <StatCard icon={TrendingUp} accent={BRAND.ink} label={`Projected ${monthName} month-end`} value={formatGBP(projected)} sub="Banked + everything predicted, if all predicted payers pay · ex-VAT (net)" />
+      </div>
+
+      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 4 }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+          Predicted {monthName} Payments
+        </h3>
+        <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
+          Pending payments you expect to land this month. Flag any row from Pending Payments using its <strong>⋮</strong> menu → <strong>Predict this month</strong>; a flagged item drops off here automatically once it's paid. Shown ex-VAT (net).
+        </p>
+        {!pending ? (
+          <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
+        ) : items.length === 0 ? (
+          <div style={{ padding: '14px 4px', fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>
+            Nothing predicted yet — open the <strong>Pending Payments</strong> tab and use a row's ⋮ menu to mark it “Predict this month”.
+          </div>
+        ) : (
+          <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+            {items.map((it) => {
+              const clickable = !!it.open;
+              return (
+                <div
+                  key={it.key}
+                  role={clickable ? 'button' : undefined}
+                  tabIndex={clickable ? 0 : undefined}
+                  onClick={clickable ? it.open : undefined}
+                  onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); it.open(); } } : undefined}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: clickable ? 'pointer' : 'default' }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 600, color: clickable ? BRAND.blue : BRAND.ink, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}</span>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, background: BRAND.paper, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{it.source}</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 70, textAlign: 'right' }}>{formatGBP(it.amount)}</span>
+                  <button
+                    type="button"
+                    title="Remove from predicted"
+                    onClick={(e) => { e.stopPropagation(); onUnpredict(it.key); }}
+                    style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, border: '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer', color: BRAND.muted }}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              );
+            })}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 14px', borderTop: '2px solid ' + BRAND.border, fontSize: 13, fontWeight: 700, color: BRAND.ink }}>
+              <span>Total predicted</span>
+              <span>{formatGBP(predictedTotal)}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
 
 function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCompany, onOpenPartner, companies, isMobile, actions, onChanged }) {
   // The deal + portion to invoice when an INV button is clicked (opens the
@@ -595,6 +736,7 @@ const PARTNER_STATUS_META = {
   credits_only: { label: 'Credits only', color: '#1D4ED8', bg: '#EFF6FF' },
 };
 function PartnersPanel({ partners, total, onOpenPartner, isMobile }) {
+  const predict = usePredict();
   const list = partners || [];
   if (list.length === 0) return null;
   return (
@@ -611,6 +753,11 @@ function PartnersPanel({ partners, total, onOpenPartner, isMobile }) {
         const credits = Number(p.creditsRemaining) || 0;
         const open = () => onOpenPartner && p.clientKey && onOpenPartner(p.clientKey);
         const clickable = !!(onOpenPartner && p.clientKey);
+        const predictKey = p.clientKey ? predictKeyForPartner(p.clientKey) : null;
+        const predictItem = predictKey
+          ? predictMenuItem(predict, { key: predictKey, label: p.clientName || 'Partner', amount: p.outstanding })
+          : null;
+        const isPredicted = !!(predictKey && predict?.keys.has(predictKey));
         return (
           <div
             key={p.clientKey}
@@ -623,11 +770,13 @@ function PartnersPanel({ partners, total, onOpenPartner, isMobile }) {
             style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderTop: '1px solid ' + BRAND.border, cursor: clickable ? 'pointer' : 'default', background: 'transparent' }}
           >
             <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.clientName || 'Partner'}</span>
+            {isPredicted && <PredictedTag />}
             <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, background: meta.bg, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{meta.label}</span>
             {p.status === 'credits_only' && credits > 0 && (
               <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{credits % 1 === 0 ? credits : credits.toFixed(1)} left</span>
             )}
             <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 64, textAlign: 'right' }}>{formatGBP(p.outstanding)}{p.status === 'active' ? '/mo' : ''}</span>
+            {predictItem && <span onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }}><RowActionsMenu items={[predictItem]} /></span>}
           </div>
         );
       })}
@@ -789,6 +938,7 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
 }
 
 function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onPaid, onInvoice, onUninvoice, onLink, onLinkCompany, companies, onOpenDeal, onOpenCompany, onRemove, onChanged }) {
+  const predict = usePredict();
   const [linkOpen, setLinkOpen] = useState(false);
   const [payingInvoice, setPayingInvoice] = useState(false);
   const isInvoicedGroup = variant === 'invoiced';
@@ -821,6 +971,10 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
     canOpen && { label: linkedCompany ? 'Open customer' : 'Open deal', icon: ExternalLink, onClick: openLinked },
     { label: 'Remove', icon: Trash2, danger: true, onClick: onRemove },
   ];
+  const predictKey = predictKeyForManual(r);
+  const predictItem = predictMenuItem(predict, { key: predictKey, label: r.company || r.description || 'Pending payment', amount: net });
+  if (predictItem) rowActions.push(predictItem);
+  const isPredicted = !!predict?.keys.has(predictKey);
   return (
     <>
     <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '5px 14px' }}>
@@ -846,6 +1000,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
           <span onClick={openLinked} style={{ fontSize: 13, fontWeight: 600, color: canOpen ? BRAND.blue : BRAND.ink, cursor: canOpen ? 'pointer' : 'default', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {r.company || 'Unattributed'}
           </span>
+          {isPredicted && <PredictedTag />}
           {linkedCompany && r.linkedCompanyName && r.linkedCompanyName !== r.company && (
             <span title={`Linked to customer: ${r.linkedCompanyName}`} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>
               → {r.linkedCompanyName}
@@ -1408,6 +1563,15 @@ function NotInvoicedTag() {
   );
 }
 
+// Marks a row the user expects to be paid this month (drives the Predicted tab).
+function PredictedTag() {
+  return (
+    <span title="Predicted to pay this month" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, color: PREDICT_COLOR, background: '#F5F3FF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+      <CalendarCheck size={10} /> Predicted
+    </span>
+  );
+}
+
 // PO status pill: amber "Pending PO" until the PO is received, then a green
 // "PO <number>" once recorded. Shown only on PO-route deal rows.
 function PoStatusPill({ d }) {
@@ -1503,6 +1667,7 @@ function RowActionsMenu({ items }) {
 }
 
 function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoReceived }) {
+  const predict = usePredict();
   const name = d.company || d.title || 'Untitled deal';
   // Only keep the deal title as a second line when it adds something beyond the
   // company name (avoids showing e.g. "Beyond PR" twice).
@@ -1532,7 +1697,9 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
       onClick: () => onCreateInvoice({ dealId: d.dealId, companyId: d.companyId, title: d.title || d.company, stage: d.stage, mode: l.type === 'final' ? 'final' : undefined, reference: isPo ? (d.poNumber || undefined) : undefined }),
     })),
     onOpenDeal && { label: 'Open deal', icon: ExternalLink, onClick: open },
+    d.dealId && predictMenuItem(predict, { key: predictKeyForDeal(d.dealId), label: name, amount: d.outstanding }),
   ];
+  const isPredicted = !!(d.dealId && predict?.keys.has(predictKeyForDeal(d.dealId)));
   return (
     <div
       role="button"
@@ -1551,6 +1718,7 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
           {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
           {single && <PaymentBadge type={single0.type} />}
           {isPo && <PoStatusPill d={d} />}
+          {isPredicted && <PredictedTag />}
           {single && single0.invoiced === false && <NotInvoicedTag />}
           {single && single0.label && (
             <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
