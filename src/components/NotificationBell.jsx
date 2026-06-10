@@ -124,7 +124,9 @@ export function NotificationBell({ onOpenLink, inline = false, channel = 'genera
             </div>
           </div>
 
-          {channel === 'general' && <DesktopAlertsRow />}
+          {/* Shown in both bells — desktop alerts are a single global toggle that
+              already covers general + finance, so it's reachable from either. */}
+          <DesktopAlertsRow />
 
           <div style={{ overflowY: 'auto' }}>
             {items.length === 0 ? (
