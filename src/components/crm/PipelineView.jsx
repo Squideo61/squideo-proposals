@@ -414,16 +414,14 @@ function DealRow({ deal, onOpen }) {
               {deal.nextTask && (
                 <span
                   title={`Next due task: ${deal.nextTask.title}${due ? ' · ' + shortDate(due) : ''}`}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 1, minWidth: 0,
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
                     color: overdue ? '#B91C1C' : '#475569',
                     background: overdue ? '#FEF2F2' : '#F1F5F9',
                     border: '1px solid ' + (overdue ? '#FECACA' : BRAND.border) }}
                 >
                   <CheckSquare size={12} style={{ flexShrink: 0 }} />
-                  <span style={{ color: BRAND.muted, fontWeight: 500, flexShrink: 0 }}>Task</span>
-                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 130 }}>
-                    {deal.nextTask.title}{due ? ` · ${shortDate(due)}` : ''}
-                  </span>
+                  <span style={{ color: BRAND.muted, fontWeight: 500, flexShrink: 0 }}>Next task</span>
+                  {due && <span style={{ flexShrink: 0 }}>· {shortDate(due)}</span>}
                 </span>
               )}
               {lastEmail && (
