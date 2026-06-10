@@ -12,7 +12,11 @@ const BADGE = '#FB923C';
 // Persistent Xero-style top bar shown across every CRM view. Navigation is
 // grouped into three section dropdowns (Business / Sales / Projects); Admin,
 // Account and "New Proposal" sit as standalone utilities on the right.
-export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLink }) {
+// `producer` renders a stripped bar for the producer/copywriter shell: logo +
+// Tasks + notification bells + Account, with no Sales/Business/Projects nav or
+// Emails (those views don't exist in that shell). Gives producers the header and
+// notification bells they'd otherwise be missing entirely.
+export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLink, producer = false }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const undoStack = state.undoStack || [];
@@ -108,13 +112,14 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'white', borderBottom: '1px solid ' + BRAND.border }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: isMobile ? '0 12px' : '0 24px', height: 56, maxWidth: fullWidth ? 'none' : APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <button
-          onClick={() => navigate('list')}
+          onClick={() => navigate(producer ? 'production' : 'list')}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginRight: 6, color: BRAND.ink }}
         >
           <Logo size={28} />
           {!isMobile && <span style={{ fontSize: 17, fontWeight: 700 }}>Squideo</span>}
         </button>
 
+        {!producer && (
         <nav ref={navRef} style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
           {sections.map((s) => {
             const isActive = activeSection === s.key;
@@ -197,6 +202,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
             Contacts
           </button>
         </nav>
+        )}
 
         <div style={{ flex: 1 }} />
 
@@ -226,7 +232,8 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
 
         {[
           { label: 'Tasks', icon: CheckSquare, views: ['tasks'], go: () => navigate('tasks'), count: openTasksDue },
-          { label: 'Emails', icon: Mail, views: ['emails', 'triage'], go: () => navigate('emails'), count: triageCount },
+          // Emails inbox view doesn't exist in the producer shell.
+          ...(producer ? [] : [{ label: 'Emails', icon: Mail, views: ['emails', 'triage'], go: () => navigate('emails'), count: triageCount }]),
         ].map((item) => {
           const Icon = item.icon;
           const active = item.views.includes(view);

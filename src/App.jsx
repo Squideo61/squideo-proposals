@@ -313,10 +313,20 @@ function AppShell() {
   if (producerOnly) {
     // The production board (the fall-through case) stays full width; the detail
     // pages a producer opens are centred at the cap like the rest of the app.
-    const producerBoard = !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards');
+    const producerBoard = !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards' || view === 'tasks');
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <DesktopNotifier onOpenLink={openLink} />
+        {/* Trimmed top bar: logo + Tasks + notification bells + Account. No
+            Sales/Business/Projects nav — producers stay scoped to production. */}
+        <CrmTopBar
+          producer
+          view={view}
+          fullWidth={producerBoard}
+          navigate={navigate}
+          onManageAccount={() => setModal({ type: 'account' })}
+          onOpenLink={openLink}
+        />
         <div style={producerBoard ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <Suspense fallback={<ViewFallback />}>
           {view === 'video' && activeId ? (
@@ -329,6 +339,8 @@ function AppShell() {
             <RevisionsView onBack={() => navigate('production')} />
           ) : view === 'storyboards' ? (
             <StoryboardsView onBack={() => navigate('production')} />
+          ) : view === 'tasks' ? (
+            <TasksView onBack={() => navigate('production')} onOpenDeal={(id) => navigate('deal', id)} />
           ) : (
             <ProductionView onBack={null} onOpenVideo={(id) => navigate('video', id)} onOpenProject={(id) => navigate('project', id)} onOpenProjects={() => navigate('projects')} />
           )}
@@ -339,6 +351,11 @@ function AppShell() {
         {state.composerContext && (
           <Suspense fallback={null}>
             <EmailComposerHost />
+          </Suspense>
+        )}
+        {modal && modal.type === 'account' && (
+          <Suspense fallback={null}>
+            <AccountSettings onClose={() => setModal(null)} onLogout={logout} />
           </Suspense>
         )}
         <Toast msg={toast} />
