@@ -33,7 +33,8 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   const perms = user.permissions;
 
   // Notification counts — lifted verbatim from the old ListView header.
-  const openTasksDue = (state.tasks || []).filter(t => !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= Date.now() + 24 * 60 * 60 * 1000).length;
+  // Badge only counts tasks that have fired: due time reached (triggered) or past (overdue).
+  const openTasksDue = (state.tasks || []).filter(t => !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= Date.now()).length;
   const triageCount = (state.triage || []).length;
   const newQuoteRequestsCount = (state.quoteRequests || []).filter(q => q.status === 'new').length;
 

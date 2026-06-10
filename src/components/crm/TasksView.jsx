@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, CheckSquare, Plus, Square, Trash2 } from 'lucide-react';
+import { ArrowLeft, CheckSquare, Pencil, Plus, Square, Trash2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -37,11 +37,8 @@ export function TasksView({ onBack, onOpenDeal }) {
       ) : (
         <>
           <Bucket title="Overdue" tasks={buckets.overdue} accent="#D32F2F" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
-          <Bucket title="Today" tasks={buckets.today} accent={BRAND.blue} actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
-          <Bucket title="Upcoming (7 days)" tasks={buckets.soon} accent="#7C3AED" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
-          <Bucket title="Later" tasks={buckets.later} accent="#94A3B8" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
-          <Bucket title="No due date" tasks={buckets.someday} accent="#94A3B8" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
-          <Bucket title="Done" tasks={buckets.done} accent="#16A34A" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} collapsed />
+          <Bucket title="To-do" tasks={buckets.todo} accent={BRAND.blue} actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
+          <Bucket title="Completed" tasks={buckets.done} accent="#16A34A" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} collapsed />
         </>
       )}
 
@@ -96,8 +93,8 @@ function TaskRow({ task, actions, state, onOpenDeal, onEdit }) {
         <Icon size={16} color={done ? '#16A34A' : BRAND.muted} />
       </button>
       <button
-        onClick={() => onEdit?.(task)}
-        title="Edit task"
+        onClick={() => (deal ? onOpenDeal?.(deal.id) : onEdit?.(task))}
+        title={deal ? `Open ${deal.title}` : 'Edit task'}
         style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}
       >
         <div style={{ fontSize: 14, fontWeight: 500, textDecoration: done ? 'line-through' : 'none', color: done ? BRAND.muted : BRAND.ink, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -134,6 +131,15 @@ function TaskRow({ task, actions, state, onOpenDeal, onEdit }) {
         </div>
       )}
       <button
+        onClick={(e) => { stop(e); onEdit?.(task); }}
+        className="btn-icon"
+        aria-label="Edit task"
+        title="Edit task"
+        style={{ padding: 6 }}
+      >
+        <Pencil size={14} />
+      </button>
+      <button
         onClick={(e) => { stop(e); if (window.confirm('Delete this task?')) actions.deleteTask(task.id); }}
         className="btn-icon is-danger"
         aria-label="Delete task"
@@ -146,21 +152,23 @@ function TaskRow({ task, actions, state, onOpenDeal, onEdit }) {
 }
 
 function bucketTasks(tasks) {
-  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
-  const endOfToday = new Date(startOfToday); endOfToday.setDate(endOfToday.getDate() + 1);
-  const sevenOut = new Date(startOfToday); sevenOut.setDate(sevenOut.getDate() + 7);
+  const now = Date.now();
 
-  const out = { overdue: [], today: [], soon: [], later: [], someday: [], done: [] };
+  // Three buckets: everything still open is either Overdue (due time passed) or
+  // To-do; finished tasks go to Completed.
+  const out = { overdue: [], todo: [], done: [] };
   for (const t of tasks) {
     if (t.doneAt) { out.done.push(t); continue; }
-    if (!t.dueAt) { out.someday.push(t); continue; }
-    const due = new Date(t.dueAt).getTime();
-    if (due < startOfToday.getTime()) out.overdue.push(t);
-    else if (due < endOfToday.getTime()) out.today.push(t);
-    else if (due < sevenOut.getTime()) out.soon.push(t);
-    else out.later.push(t);
+    if (t.dueAt && new Date(t.dueAt).getTime() < now) out.overdue.push(t);
+    else out.todo.push(t);
   }
-  for (const k of ['overdue', 'today', 'soon', 'later']) out[k].sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt));
+  // Overdue oldest-first; to-do soonest-first (undated tasks sink to the bottom).
+  out.overdue.sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt));
+  out.todo.sort((a, b) => {
+    if (!a.dueAt) return b.dueAt ? 1 : 0;
+    if (!b.dueAt) return -1;
+    return new Date(a.dueAt) - new Date(b.dueAt);
+  });
   out.done.sort((a, b) => new Date(b.doneAt) - new Date(a.doneAt));
   return out;
 }
