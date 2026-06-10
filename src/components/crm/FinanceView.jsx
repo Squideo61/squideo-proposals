@@ -8,7 +8,7 @@ import {
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatProposalNumber, useIsMobile } from '../../utils.js';
-import { PerformancePanel } from './PerformanceView.jsx';
+import { PerformancePanel, resolveIncomeTargets } from './PerformanceView.jsx';
 import { CreateXeroInvoiceModal } from './CreateXeroInvoiceModal.jsx';
 import { MarkInvoicePaidModal } from './MarkInvoicePaidModal.jsx';
 import { Modal } from '../ui.jsx';
@@ -257,6 +257,13 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
     () => collectPredicted(pending, activePartners, predictKeys).reduce((s, it) => s + it.amount, 0),
     [pending, activePartners, predictKeys],
   );
+  // Live monthly income targets (Minimum / £4k / £5k) for the Predicted tab's
+  // over/under-target metric — same figures the Performance pacing uses.
+  useEffect(() => { actions.loadCashflowTargets(); }, [actions]);
+  const incomeTargets = useMemo(
+    () => resolveIncomeTargets(state.financeTargets, state.cashflowTargets),
+    [state.financeTargets, state.cashflowTargets],
+  );
 
   const isCurrentYear = effectiveYear === now.getFullYear();
   const monthIdx = now.getMonth();
@@ -386,6 +393,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
           predictKeys={predictKeys}
           monthName={currentMonthName}
           bankedNet={predicted?.bankedNet || 0}
+          targets={incomeTargets}
           onUnpredict={(key) => actions.togglePredictedPayment(currentMonthKey, key, false)}
           onOpenDeal={onOpenDeal}
           onOpenCompany={onOpenCompany}
@@ -496,7 +504,7 @@ const PAYMENT_TYPE_META = {
 // active partners — so a predicted item that's since been paid simply drops off
 // (and is already counted in the banked figure). Projects the month-end position
 // as banked-so-far + everything still predicted to land. All figures ex-VAT (net).
-function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, bankedNet, onUnpredict, onOpenDeal, onOpenCompany, onOpenPartner, isMobile }) {
+function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, bankedNet, targets, onUnpredict, onOpenDeal, onOpenCompany, onOpenPartner, isMobile }) {
   const items = useMemo(() => collectPredicted(pending, partners, predictKeys).map((it) => ({
     ...it,
     open: it.dealId && onOpenDeal ? () => onOpenDeal(it.dealId)
@@ -514,6 +522,39 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
         <StatCard icon={CalendarCheck} accent={PREDICT_COLOR} label="Predicted still to come" value={formatGBP(predictedTotal)} sub={`${items.length} ${items.length === 1 ? 'payment' : 'payments'} flagged & still outstanding · ex-VAT (net)`} />
         <StatCard icon={TrendingUp} accent={BRAND.ink} label={`Projected ${monthName} month-end`} value={formatGBP(projected)} sub="Banked + everything predicted, if all predicted payers pay · ex-VAT (net)" />
       </div>
+
+      {/* If all predicted land — the projected month-end vs each monthly income
+          target: "+£X over" (green) or "−£X under" (red). */}
+      {(targets || []).length > 0 && (
+        <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${PREDICT_COLOR}`, borderRadius: 10, padding: isMobile ? 14 : '14px 18px', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>If all predicted land</span>
+            <span style={{ fontSize: 12, color: BRAND.muted }}>
+              projected month-end <strong style={{ color: PREDICT_COLOR }}>{formatGBP(projected)}</strong> · +{formatGBP(predictedTotal)} predicted
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${targets.length}, 1fr)`, gap: 10 }}>
+            {targets.map((t) => {
+              const target = Number(t.amount) || 0;
+              const delta = projected - target;
+              const over = delta >= 0;
+              return (
+                <div key={t.key} style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '10px 12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4, minWidth: 0 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 3, background: t.color, flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.label}</span>
+                    <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(target)}</span>
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: over ? '#10B981' : '#EF4444' }}>
+                    {(over ? '+' : '−') + formatGBP(Math.abs(delta))}
+                  </div>
+                  <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>{over ? 'over target' : 'under target'} with predicted</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 4 }}>
         <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>

@@ -17,11 +17,21 @@ const monthShortYear = (key) => {
 };
 
 // Fallback if settings hasn't loaded targets yet (matches api/settings.js seed).
-const FALLBACK_TARGETS = [
+export const FALLBACK_TARGETS = [
   { key: 'minimum', label: 'Minimum', amount: 27806.92, color: '#F59E0B' },
   { key: 't4k', label: '4k', amount: 30606.92, color: '#94A3B8' },
   { key: 'dream', label: 'Dream 5k', amount: 33406.92, color: '#EAB308' },
 ];
+
+// Resolve the live monthly income targets — saved labels/colours with amounts
+// sourced from the Cash Flow & Targets figures (Minimum / £4k / £5k, in order)
+// when present. Shared with the Finance Predicted tab's over/under-target metric.
+export function resolveIncomeTargets(financeTargets, cashflowTargets) {
+  const saved = (financeTargets && financeTargets.length) ? financeTargets : FALLBACK_TARGETS;
+  if (!cashflowTargets) return saved;
+  const amounts = [cashflowTargets.minimum, ...(Array.isArray(cashflowTargets.draws) ? cashflowTargets.draws.map((d) => d.amount) : [])];
+  return saved.map((t, i) => (i < amounts.length && amounts[i] != null ? { ...t, amount: amounts[i] } : t));
+}
 
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
 
@@ -168,17 +178,15 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
     const predTotal = Number(predictedTotal) || 0;
     const showPredicted = !isSales && period === predictedMonthKey && predTotal > 0 && lastActualIdx > 0 && lastActualIdx < N;
     const predictedMonthEnd = netSoFar + predTotal;
-    const remainingDays = N - lastActualIdx;
 
     const data = workingDays.map((wd, i) => {
       const dayNum = i + 1;
       const point = { day: dayNum };
       point.actual = dayNum <= lastActualIdx ? Number(cumTo(wd).toFixed(2)) : null;
       for (const t of targets) point[t.key] = Number(((Number(t.amount) || 0) * spanMonths * dayNum / N).toFixed(2));
-      // Connect to the live cash line at today, then climb linearly to month-end.
-      point.predicted = showPredicted && dayNum >= lastActualIdx
-        ? Number((netSoFar + predTotal * (dayNum - lastActualIdx) / remainingDays).toFixed(2))
-        : null;
+      // A flat reference line across the whole graph at the theoretical maximum
+      // income (banked so far + everything predicted) — not a diagonal projection.
+      point.predicted = showPredicted ? Number(predictedMonthEnd.toFixed(2)) : null;
       return point;
     });
 
@@ -288,13 +296,6 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
           working days remaining. */}
       <RemainingCard targets={targets} model={model} isSales={isSales} isMobile={isMobile} />
 
-      {/* If all flagged predicted payments land — where the month ends vs each
-          target. Only when there's a live predicted projection (income, current
-          month, period still running). */}
-      {model.showPredicted && (
-        <PredictedOutlookCard targets={targets} model={model} isMobile={isMobile} />
-      )}
-
       {/* The Day Performance chart. */}
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20 }}>
         <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -319,7 +320,7 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
               ))}
               <Line type="monotone" dataKey="actual" name={isSales ? 'Sales signed (net)' : 'Cash received (net)'} stroke={BRAND.blue} strokeWidth={2.75} dot={false} connectNulls={false} />
               {model.showPredicted && (
-                <Line type="monotone" dataKey="predicted" name="With predicted" stroke={PREDICT_COLOR} strokeWidth={1.75} strokeDasharray="5 4" strokeOpacity={0.65} dot={false} connectNulls />
+                <Line type="monotone" dataKey="predicted" name="Theoretical max (with predicted)" stroke={PREDICT_COLOR} strokeWidth={1.5} strokeDasharray="5 4" strokeOpacity={0.32} dot={false} connectNulls isAnimationActive={false} />
               )}
             </LineChart>
           </ResponsiveContainer>
@@ -1018,44 +1019,6 @@ function RemainingCard({ targets, model, isSales, isMobile }) {
                   {perDay != null ? `${formatGBP(perDay)} per working day` : 'no working days left'}
                 </div>
               )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// Projects the month-end if every flagged predicted payment lands (banked so far
-// + predicted total) and shows, per target, whether that clears it — "+£X over"
-// (green) or "−£X under" (red). The headline is the projected with-predicted
-// month-end. Mirrors the chart's faint "with predicted" line.
-function PredictedOutlookCard({ targets, model, isMobile }) {
-  const projected = model.predictedMonthEnd;
-  return (
-    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${PREDICT_COLOR}`, borderRadius: 10, padding: isMobile ? 14 : '14px 18px', marginBottom: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>If all predicted land</span>
-        <span style={{ fontSize: 12, color: BRAND.muted }}>
-          projected month-end <strong style={{ color: PREDICT_COLOR }}>{formatGBP(projected)}</strong> · +{formatGBP(model.predTotal)} predicted
-        </span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${targets.length}, 1fr)`, gap: 10 }}>
-        {targets.map((t) => {
-          const target = (Number(t.amount) || 0) * model.spanMonths;
-          const delta = projected - target;
-          const over = delta >= 0;
-          return (
-            <div key={t.key} style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '10px 12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4, minWidth: 0 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 3, background: t.color, flexShrink: 0 }} />
-                <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.label}</span>
-                <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(target)}</span>
-              </div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: over ? '#10B981' : '#EF4444' }}>
-                {(over ? '+' : '−') + formatGBP(Math.abs(delta))}
-              </div>
-              <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>{over ? 'over target' : 'under target'} with predicted</div>
             </div>
           );
         })}
