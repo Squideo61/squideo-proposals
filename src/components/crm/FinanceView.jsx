@@ -40,22 +40,27 @@ function predictMenuItem(predict, item) {
   };
 }
 
-// Resolve the flagged key set into a live list of predicted-this-month payments,
-// intersecting it with the current pending rows + active partners. A flagged item
-// that's no longer pending (paid/removed) simply drops out. Each item carries the
-// ids needed to open its deal/customer/partner. Shared by the Predicted tab and
-// the Performance chart's projection. Net (ex-VAT) amounts, sorted high→low.
+// Resolve the live list of predicted-this-month payments. Signed deals / POs /
+// imported rows / company invoices are included only when manually flagged (key
+// in `predictKeys`); a flagged item that's no longer pending (paid/removed) drops
+// out. **Active partners are always included** (recurring income — predicted by
+// default, marked `auto`) until they cancel/unsubscribe (then they're no longer
+// in `partners`). Each item carries the ids needed to open its deal/customer/
+// partner. Shared by the Predicted tab and the Performance projection. Net
+// (ex-VAT) amounts, sorted high→low.
 function collectPredicted(pending, partners, predictKeys) {
-  if (!predictKeys || predictKeys.size === 0) return [];
   const out = [];
   const seen = new Set();
-  const add = (key, it) => { if (predictKeys.has(key) && !seen.has(key)) { seen.add(key); out.push({ key, ...it }); } };
+  const add = (key, it) => { if (!seen.has(key)) { seen.add(key); out.push({ key, ...it }); } };
+  const keys = predictKeys || new Set();
   const p = pending || {};
-  for (const d of (p.normal || [])) if (d.dealId) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Signed deal', dealId: d.dealId });
-  for (const d of (p.po || [])) if (d.dealId) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Purchase order', dealId: d.dealId });
-  for (const r of (p.manual || [])) add(predictKeyForManual(r), { name: r.company || r.description || 'Pending payment', amount: Number(r.amountExVat) || 0, source: r.kind === 'po' ? 'Imported PO' : 'Imported PP', dealId: r.dealId || null, companyId: r.companyId || null });
-  for (const r of (p.companyInvoices || [])) add(predictKeyForManual(r), { name: r.company || r.description || 'Company invoice', amount: Number(r.amountExVat) || 0, source: 'Company invoice', companyId: r.companyId || null });
-  for (const pt of (partners || [])) if (pt.clientKey) add(predictKeyForPartner(pt.clientKey), { name: pt.clientName || 'Partner', amount: Number(pt.outstanding) || 0, source: 'Partner', clientKey: pt.clientKey });
+  for (const d of (p.normal || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Signed deal', dealId: d.dealId });
+  for (const d of (p.po || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Purchase order', dealId: d.dealId });
+  for (const r of (p.manual || [])) if (keys.has(predictKeyForManual(r))) add(predictKeyForManual(r), { name: r.company || r.description || 'Pending payment', amount: Number(r.amountExVat) || 0, source: r.kind === 'po' ? 'Imported PO' : 'Imported PP', dealId: r.dealId || null, companyId: r.companyId || null });
+  for (const r of (p.companyInvoices || [])) if (keys.has(predictKeyForManual(r))) add(predictKeyForManual(r), { name: r.company || r.description || 'Company invoice', amount: Number(r.amountExVat) || 0, source: 'Company invoice', companyId: r.companyId || null });
+  // Active partners ride along automatically (subscription = next month's fee,
+  // credits-only = remaining-credit value) — no manual flag needed.
+  for (const pt of (partners || [])) if (pt.clientKey) add(predictKeyForPartner(pt.clientKey), { name: pt.clientName || 'Partner', amount: Number(pt.outstanding) || 0, source: 'Partner', clientKey: pt.clientKey, auto: true });
   return out.sort((a, b) => b.amount - a.amount);
 }
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
@@ -519,7 +524,7 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
     <>
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
         <StatCard icon={Wallet} accent={BRAND.blue} label={`Banked so far — ${monthName}`} value={formatGBP(bankedNet || 0)} sub="Cash already received this month · ex-VAT (net)" />
-        <StatCard icon={CalendarCheck} accent={PREDICT_COLOR} label="Predicted still to come" value={formatGBP(predictedTotal)} sub={`${items.length} ${items.length === 1 ? 'payment' : 'payments'} flagged & still outstanding · ex-VAT (net)`} />
+        <StatCard icon={CalendarCheck} accent={PREDICT_COLOR} label="Predicted still to come" value={formatGBP(predictedTotal)} sub={`${items.length} ${items.length === 1 ? 'payment' : 'payments'} predicted this month (partners auto-included) · ex-VAT (net)`} />
         <StatCard icon={TrendingUp} accent={BRAND.ink} label={`Projected ${monthName} month-end`} value={formatGBP(projected)} sub="Banked + everything predicted, if all predicted payers pay · ex-VAT (net)" />
       </div>
 
@@ -587,14 +592,20 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
                   <span style={{ fontSize: 13, fontWeight: 600, color: clickable ? BRAND.blue : BRAND.ink, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}</span>
                   <span style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, background: BRAND.paper, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{it.source}</span>
                   <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 70, textAlign: 'right' }}>{formatGBP(it.amount)}</span>
-                  <button
-                    type="button"
-                    title="Remove from predicted"
-                    onClick={(e) => { e.stopPropagation(); onUnpredict(it.key); }}
-                    style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, border: '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer', color: BRAND.muted }}
-                  >
-                    <X size={14} />
-                  </button>
+                  {it.auto ? (
+                    <span title="Always predicted while the partner is active" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, color: PREDICT_COLOR }}>
+                      <CalendarCheck size={14} />
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      title="Remove from predicted"
+                      onClick={(e) => { e.stopPropagation(); onUnpredict(it.key); }}
+                      style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, border: '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer', color: BRAND.muted }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -857,7 +868,6 @@ const PARTNER_STATUS_META = {
   credits_only: { label: 'Credits only', color: '#1D4ED8', bg: '#EFF6FF' },
 };
 function PartnersPanel({ partners, total, onOpenPartner, isMobile }) {
-  const predict = usePredict();
   const list = partners || [];
   if (list.length === 0) return null;
   return (
@@ -874,11 +884,6 @@ function PartnersPanel({ partners, total, onOpenPartner, isMobile }) {
         const credits = Number(p.creditsRemaining) || 0;
         const open = () => onOpenPartner && p.clientKey && onOpenPartner(p.clientKey);
         const clickable = !!(onOpenPartner && p.clientKey);
-        const predictKey = p.clientKey ? predictKeyForPartner(p.clientKey) : null;
-        const predictItem = predictKey
-          ? predictMenuItem(predict, { key: predictKey, label: p.clientName || 'Partner', amount: p.outstanding })
-          : null;
-        const isPredicted = !!(predictKey && predict?.keys.has(predictKey));
         return (
           <div
             key={p.clientKey}
@@ -891,13 +896,12 @@ function PartnersPanel({ partners, total, onOpenPartner, isMobile }) {
             style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderTop: '1px solid ' + BRAND.border, cursor: clickable ? 'pointer' : 'default', background: 'transparent' }}
           >
             <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.clientName || 'Partner'}</span>
-            {isPredicted && <PredictedTag />}
+            <PredictedTag auto />
             <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, background: meta.bg, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{meta.label}</span>
             {p.status === 'credits_only' && credits > 0 && (
               <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{credits % 1 === 0 ? credits : credits.toFixed(1)} left</span>
             )}
             <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 64, textAlign: 'right' }}>{formatGBP(p.outstanding)}{p.status === 'active' ? '/mo' : ''}</span>
-            {predictItem && <span onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }}><RowActionsMenu items={[predictItem]} /></span>}
           </div>
         );
       })}
@@ -1685,10 +1689,11 @@ function NotInvoicedTag() {
 }
 
 // Marks a row the user expects to be paid this month (drives the Predicted tab).
-function PredictedTag() {
+// `auto` rows (active partners) are always predicted, not manually flagged.
+function PredictedTag({ auto = false }) {
   return (
-    <span title="Predicted to pay this month" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, color: PREDICT_COLOR, background: '#F5F3FF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
-      <CalendarCheck size={10} /> Predicted
+    <span title={auto ? 'Always predicted while the partner is active' : 'Predicted to pay this month'} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, color: PREDICT_COLOR, background: '#F5F3FF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+      <CalendarCheck size={10} /> {auto ? 'Predicted (auto)' : 'Predicted'}
     </span>
   );
 }
