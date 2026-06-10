@@ -636,25 +636,22 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
         const pps = pendingManual.filter((r) => r.kind !== 'po');
         const pos = pendingManual.filter((r) => r.kind === 'po');
         const sumNet = (arr) => arr.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
+        // Signed deals split by invoice status: invoiced portions join the
+        // Invoiced panel, not-yet-invoiced portions stay in Signed deals.
+        const { notInvoiced: signedOutstanding, invoiced: signedInvoiced } = splitSignedByInvoiced(pending.normal);
+        const sumOut = (arr) => round2Money(arr.reduce((s, d) => s + (Number(d.outstanding) || 0), 0));
         return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {invoicedManual.length > 0 && (
-            <ManualPendingGroup
-              title="Invoiced — awaiting payment"
-              note="Invoiced items awaiting payment"
-              kind="pp"
-              variant="invoiced"
-              accent={BRAND.blue}
-              rows={invoicedManual}
-              total={sumNet(invoicedManual)}
-              actions={actions}
-              onChanged={onChanged}
-              onOpenDeal={onOpenDeal}
-              onOpenCompany={onOpenCompany}
-              companies={companies}
-              isMobile={isMobile}
-            />
-          )}
+          <InvoicedAwaitingPanel
+            dealRows={signedInvoiced}
+            manualRows={invoicedManual}
+            actions={actions}
+            onChanged={onChanged}
+            onOpenDeal={onOpenDeal}
+            onOpenCompany={onOpenCompany}
+            companies={companies}
+            isMobile={isMobile}
+          />
           <PurchaseOrdersPanel
             crmRows={pending.po || []}
             crmTotal={pending.totals.po}
@@ -669,8 +666,8 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
             isMobile={isMobile}
           />
           <SignedDealsPanel
-            rows={pending.normal || []}
-            total={pending.totals.normal}
+            rows={signedOutstanding}
+            total={sumOut(signedOutstanding)}
             onOpenDeal={onOpenDeal}
             onCreateInvoice={setInvTarget}
             isMobile={isMobile}
@@ -767,8 +764,29 @@ function MarkPoReceivedModal({ target, actions, onClose, onSaved }) {
   );
 }
 
-// Signed deals (PO and non-PO) with an outstanding balance — each line tagged
-// invoiced / not-invoiced, with an INV button on the not-yet-invoiced portions.
+const round2Money = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Split each signed deal's lines by invoice status: not-yet-invoiced portions
+// (→ "Signed deals — outstanding") vs invoiced-and-awaiting portions (→ the
+// "Invoiced — awaiting payment" panel). A deal with a mix shows in both, but
+// every individual line appears in exactly one panel — never double-counted.
+function splitSignedByInvoiced(deals) {
+  const notInvoiced = [];
+  const invoiced = [];
+  for (const d of (deals || [])) {
+    const lines = (d.lines && d.lines.length) ? d.lines : [{ type: 'full', amount: d.outstanding, invoiced: false }];
+    const notInv = lines.filter((l) => l.invoiced === false);
+    const inv = lines.filter((l) => l.invoiced === true);
+    const sum = (arr) => round2Money(arr.reduce((s, l) => s + (Number(l.amount) || 0), 0));
+    if (notInv.length) notInvoiced.push({ ...d, lines: notInv, outstanding: sum(notInv) });
+    if (inv.length) invoiced.push({ ...d, lines: inv, outstanding: sum(inv) });
+  }
+  return { notInvoiced, invoiced };
+}
+
+// Signed deals (non-PO) with a NOT-yet-invoiced balance — each line tagged, with
+// an INV action on the not-yet-invoiced portions (the invoiced portions move to
+// the Invoiced — awaiting payment panel).
 function SignedDealsPanel({ rows, total, onOpenDeal, onCreateInvoice, isMobile }) {
   if (!rows || rows.length === 0) return null;
   return (
@@ -778,11 +796,55 @@ function SignedDealsPanel({ rows, total, onOpenDeal, onCreateInvoice, isMobile }
           <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Signed deals — outstanding</span>
           <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
         </div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Signed work still owed · {rows.length} {rows.length === 1 ? 'deal' : 'deals'} · each line tagged invoiced / not invoiced · use the ⋮ menu to raise an invoice</div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Signed work still to invoice · {rows.length} {rows.length === 1 ? 'deal' : 'deals'} · use the ⋮ menu to raise an invoice (invoiced portions move to “Invoiced — awaiting payment”)</div>
       </div>
       {rows.map((d) => (
         <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isMobile={isMobile} />
       ))}
+    </div>
+  );
+}
+
+// "Invoiced — awaiting payment" — one panel combining the invoiced-and-awaiting
+// portions of signed CRM deals (click through to the deal; they auto-clear when
+// the Xero invoice is paid) with the imported invoiced rows + company invoices
+// (mark paid via their ⋮ menu). Mirrors the PurchaseOrdersPanel composition.
+function InvoicedAwaitingPanel({ dealRows, manualRows, actions, onChanged, onOpenDeal, onOpenCompany, companies, isMobile }) {
+  const deals = dealRows || [];
+  const manual = manualRows || [];
+  const dealNet = deals.reduce((s, d) => s + (Number(d.outstanding) || 0), 0);
+  const manualNet = manual.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
+  const grand = round2Money(dealNet + manualNet);
+  const count = deals.length + manual.length;
+  if (count === 0) return null;
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: `3px solid ${BRAND.blue}` }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Invoiced — awaiting payment</span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(grand)}</span>
+        </div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Invoiced items awaiting payment · {count} {count === 1 ? 'item' : 'items'} · signed-deal invoices auto-clear when paid in Xero; use the ⋮ menu on imported rows to mark paid</div>
+      </div>
+      {deals.map((d) => (
+        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} isMobile={isMobile} />
+      ))}
+      {manual.length > 0 && (
+        <ManualPendingGroup
+          bare
+          kind="pp"
+          variant="invoiced"
+          accent={BRAND.blue}
+          rows={manual}
+          total={manualNet}
+          actions={actions}
+          onChanged={onChanged}
+          onOpenDeal={onOpenDeal}
+          onOpenCompany={onOpenCompany}
+          companies={companies}
+          isMobile={isMobile}
+        />
+      )}
     </div>
   );
 }
