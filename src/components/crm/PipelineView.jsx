@@ -368,7 +368,6 @@ function DealRow({ deal, onOpen }) {
   const owner = deal.ownerEmail ? state.users[deal.ownerEmail] : null;
   const company = deal.companyId ? state.companies[deal.companyId] : null;
   const name = company?.name || deal.title || 'Untitled deal';
-  const subtitle = company?.name && deal.title && deal.title !== company.name ? deal.title : null;
   const ageDays = daysSince(deal.stageChangedAt);
 
   const t = deal.tracking || {};
@@ -389,7 +388,6 @@ function DealRow({ deal, onOpen }) {
   const due = deal.nextTask?.dueAt ? new Date(deal.nextTask.dueAt) : null;
   const overdue = due && due.getTime() < Date.now();
   const lastEmail = deal.lastEmailAt ? new Date(deal.lastEmailAt) : null;
-  const hasMeta = subtitle || deal.nextTask || lastEmail;
 
   return (
     <div
@@ -405,10 +403,24 @@ function DealRow({ deal, onOpen }) {
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>
             {name}
           </span>
           <SaleStatusPills deal={deal} />
+          {/* Next due task + last-email date inline with the title for compactness. */}
+          {deal.nextTask && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: overdue ? '#B91C1C' : BRAND.muted, flexShrink: 0, minWidth: 0 }} title="Next due task">
+              <CheckSquare size={12} style={{ flexShrink: 0 }} />
+              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}>
+                {deal.nextTask.title}{due ? ` · ${shortDate(due)}` : ''}
+              </span>
+            </span>
+          )}
+          {lastEmail && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: BRAND.muted, flexShrink: 0 }} title="Date of last email">
+              <Mail size={12} /> {shortDate(lastEmail)}
+            </span>
+          )}
         </div>
         {/* Tracking eyes (proposal + email) sit on the right, next to the figure. */}
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -425,24 +437,6 @@ function DealRow({ deal, onOpen }) {
         )}
         <Avatar user={owner} fallback={deal.ownerEmail} />
       </div>
-      {hasMeta && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 3, fontSize: 11.5, color: BRAND.muted }}>
-          {subtitle && <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200 }}>{subtitle}</span>}
-          {deal.nextTask && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: overdue ? '#B91C1C' : BRAND.muted, minWidth: 0 }} title="Next due task">
-              <CheckSquare size={12} style={{ flexShrink: 0 }} />
-              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>
-                {deal.nextTask.title}{due ? ` · ${shortDate(due)}` : ''}
-              </span>
-            </span>
-          )}
-          {lastEmail && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }} title="Date of last email">
-              <Mail size={12} /> {shortDate(lastEmail)}
-            </span>
-          )}
-        </div>
-      )}
     </div>
   );
 }
