@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronDown, Plus, KanbanSquare } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ArrowLeft, Check, ChevronDown, Plus, KanbanSquare, Eye, Mail, FileText, MousePointerClick } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP, useIsMobile } from '../../utils.js';
+import { formatGBP, formatRelativeTime, useIsMobile } from '../../utils.js';
 import { Modal } from '../ui.jsx';
 import { PIPELINE_STAGES } from '../../lib/stages.js';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
@@ -246,27 +247,146 @@ function StageRow({ stage, deals, onDrop, onOpenDeal }) {
         <span style={{ fontSize: 11, color: BRAND.muted }}>{collapsed ? 'Show' : 'Hide'}</span>
       </button>
       {!collapsed && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-          gap: 8,
-        }}>
-          {deals.map(d => <DealCard key={d.id} deal={d} onOpen={() => onOpenDeal(d.id)} />)}
-          {deals.length === 0 && (
-            <div style={{ padding: '16px 8px', color: BRAND.muted, fontSize: 12, fontStyle: 'italic' }}>
-              No deals
-            </div>
-          )}
-        </div>
+        deals.length === 0 ? (
+          <div style={{ padding: '12px 8px', color: BRAND.muted, fontSize: 12, fontStyle: 'italic' }}>
+            No deals
+          </div>
+        ) : (
+          <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
+            {deals.map(d => <DealRow key={d.id} deal={d} onOpen={() => onOpenDeal(d.id)} />)}
+          </div>
+        )
       )}
     </div>
   );
 }
 
-function DealCard({ deal, onOpen }) {
+// A small uppercase status pill mirroring the Pending-Payments pill language.
+function PipelinePill({ label, tone }) {
+  const c = tone === 'green' ? { color: '#15803D', bg: '#ECFDF3' }
+    : tone === 'amber' ? { color: '#B45309', bg: '#FFFBEB' }
+    : { color: '#0E7490', bg: '#ECFEFF' };
+  return (
+    <span style={{ fontSize: 9, fontWeight: 700, color: c.color, background: c.bg, padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+      {label}
+    </span>
+  );
+}
+
+// Sale-status pills for signed/paid deals: PO route (Pending PO → PO <number>),
+// otherwise invoiced state.
+function SaleStatusPills({ deal }) {
+  const s = deal.saleStatus;
+  if (!s || !['signed', 'paid'].includes(deal.stage)) return null;
+  if (s.isPo) {
+    return s.poReceivedAt
+      ? <PipelinePill label={`PO ${s.poNumber || ''}`.trim()} tone="green" />
+      : <PipelinePill label="Pending PO" tone="amber" />;
+  }
+  return s.invoiced ? <PipelinePill label="Invoiced" tone="green" /> : <PipelinePill label="Not invoiced" tone="amber" />;
+}
+
+function formatDuration(secs) {
+  const s = Math.round(Number(secs) || 0);
+  if (s <= 0) return null;
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+// Lightweight, clickable engagement indicator: green eye + last-opened time when
+// the client has opened the proposal or a tracked email; faint eye when a
+// proposal was sent but not yet opened. Click opens a details popover (rendered
+// in a portal so the row container's overflow:hidden can't clip it).
+function PipelineTrackingEye({ deal }) {
+  const t = deal.tracking || {};
+  const sentSomething = (deal.proposalCount || 0) > 0 || t.tracked;
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const popRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (btnRef.current?.contains(e.target) || popRef.current?.contains(e.target)) return; setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const close = () => setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
+  if (!sentSomething) return null;
+  const opened = !!t.tracked;
+  const colour = opened ? '#16A34A' : BRAND.muted;
+  const toggle = (e) => {
+    e.stopPropagation();
+    if (open) { setOpen(false); return; }
+    const r = btnRef.current.getBoundingClientRect();
+    const W = 240;
+    setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.right - W, window.innerWidth - W - 8)) });
+    setOpen(true);
+  };
+  const spent = formatDuration(t.totalSeconds);
+  return (
+    <span style={{ display: 'inline-flex', flexShrink: 0 }}>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        title={opened ? 'View engagement' : 'Sent · not opened yet'}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 3, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, color: colour }}
+      >
+        <Eye size={14} color={colour} fill={opened ? colour + '22' : 'none'} />
+        {opened && t.lastOpenedAt && (
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: colour }}>{formatRelativeTime(t.lastOpenedAt).replace(' ago', '')}</span>
+        )}
+      </button>
+      {open && pos && createPortal(
+        <div ref={popRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 1000, width: 240, padding: '10px 12px', background: 'white', textAlign: 'left', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 8px 24px rgba(15,42,61,0.18)' }}>
+          {!opened ? (
+            <div style={{ fontSize: 12.5, color: BRAND.muted }}>Sent · not opened yet</div>
+          ) : (
+            <>
+              {t.proposalOpens > 0 && (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 12.5, color: '#16A34A' }}>
+                    <FileText size={13} /> Proposal · {t.proposalOpens} view{t.proposalOpens === 1 ? '' : 's'}
+                  </div>
+                  {t.lastProposalOpenAt && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>Last opened {formatRelativeTime(t.lastProposalOpenAt)}</div>}
+                  {(t.locations || []).length > 0 && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>{t.locations.slice(0, 3).join(', ')}</div>}
+                  {spent && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>Time spent {spent}</div>}
+                </div>
+              )}
+              {t.emailOpens > 0 && (
+                <div style={{ marginTop: t.proposalOpens > 0 ? 8 : 0, paddingTop: t.proposalOpens > 0 ? 8 : 0, borderTop: t.proposalOpens > 0 ? '1px solid ' + BRAND.border : 'none' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 12.5, color: BRAND.blue }}>
+                    <Mail size={13} /> Emails · {t.emailOpens} open{t.emailOpens === 1 ? '' : 's'}
+                  </div>
+                  {t.lastEmailOpenAt && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>Last opened {formatRelativeTime(t.lastEmailOpenAt)}</div>}
+                </div>
+              )}
+            </>
+          )}
+        </div>,
+        document.body,
+      )}
+    </span>
+  );
+}
+
+function DealRow({ deal, onOpen }) {
   const { state } = useStore();
   const owner = deal.ownerEmail ? state.users[deal.ownerEmail] : null;
   const company = deal.companyId ? state.companies[deal.companyId] : null;
+  const name = company?.name || deal.title || 'Untitled deal';
+  const subtitle = company?.name && deal.title && deal.title !== company.name ? deal.title : null;
   const ageDays = daysSince(deal.stageChangedAt);
   return (
     <div
@@ -276,30 +396,33 @@ function DealCard({ deal, onOpen }) {
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
-      style={{
-        background: 'white',
-        border: '1px solid ' + BRAND.border,
-        borderRadius: 8,
-        padding: 10,
-        cursor: 'grab',
-        boxShadow: '0 1px 2px rgba(15,42,61,0.04)',
-      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
+      style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: 'grab', padding: '8px 12px' }}
     >
-      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4, lineHeight: 1.3 }}>{deal.title}</div>
-      {company && <div style={{ fontSize: 11, color: BRAND.muted, marginBottom: 6 }}>{company.name}</div>}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginTop: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, fontVariantNumeric: 'tabular-nums' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {name}
+          </span>
+          <SaleStatusPills deal={deal} />
+          <PipelineTrackingEye deal={deal} />
+        </div>
+        <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
           {deal.value != null ? formatGBP(deal.value) : <span style={{ color: BRAND.muted, fontWeight: 400 }}>—</span>}
         </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {ageDays != null && (
-            <span style={{ fontSize: 10, color: ageDays > 14 ? '#92400E' : BRAND.muted }} title={`${ageDays} days in stage`}>
-              {ageDays}d
-            </span>
-          )}
-          <Avatar user={owner} fallback={deal.ownerEmail} />
-        </div>
+        {ageDays != null && (
+          <span style={{ fontSize: 10, color: ageDays > 14 ? '#92400E' : BRAND.muted, flexShrink: 0, minWidth: 22, textAlign: 'right' }} title={`${ageDays} days in stage`}>
+            {ageDays}d
+          </span>
+        )}
+        <Avatar user={owner} fallback={deal.ownerEmail} />
       </div>
+      {subtitle && (
+        <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 2, marginLeft: 0 }}>
+          {subtitle}
+        </div>
+      )}
     </div>
   );
 }
