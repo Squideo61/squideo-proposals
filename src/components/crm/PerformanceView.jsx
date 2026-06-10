@@ -271,9 +271,16 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
         <PaceCard
           title={model.status === 'future' ? 'Upcoming period' : `Working day ${model.lastActualIdx} of ${model.N}`}
           big={formatGBP(model.netSoFar)}
-          sub={model.status === 'in_progress'
-            ? `${isSales ? 'Signed' : 'Net banked'} so far · projected ${formatGBP(model.projected)} by end`
-            : (model.status === 'complete' ? `${isSales ? 'Signed' : 'Net banked'} (final)` : `No ${isSales ? 'sales' : 'cash'} yet`)}
+          sub={(() => {
+            if (model.status === 'complete') return `${isSales ? 'Signed' : 'Net banked'} (final)`;
+            if (model.status === 'future') return `No ${isSales ? 'sales' : 'cash'} yet`;
+            // Sales keeps the run-rate projection; Income shows the projected
+            // month-end with predicted payments (banked + predicted) instead.
+            if (isSales) return `Signed so far · projected ${formatGBP(model.projected)} by end`;
+            return model.showPredicted
+              ? `Net banked so far · projected month-end ${formatGBP(model.predictedMonthEnd)} with predicted`
+              : 'Net banked so far';
+          })()}
           color={BRAND.blue}
         />
         {isSales && targets.map((t) => {
