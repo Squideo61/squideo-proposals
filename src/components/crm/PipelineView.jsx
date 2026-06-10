@@ -70,7 +70,7 @@ export function PipelineView({ onBack, onOpenDeal }) {
             memberOptions={memberOptions}
             sessionEmail={sessionEmail}
           />
-          <span style={{ fontSize: 13, color: BRAND.muted }}>{deals.length} deals</span>
+          <span style={{ fontSize: 13, color: BRAND.muted }}>{deals.length} deals · all amounts ex-VAT (net)</span>
         </div>
         <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New deal</button>
       </header>
@@ -363,6 +363,83 @@ function TrackingEyeChip({ icon: Icon, channel, sent, opened, lastOpenedAt, line
   );
 }
 
+// Combined email pill: the last-email date and the open tracking in one chip
+// (merges what used to be a separate "Last email" chip + email eye). Shows the
+// envelope + date, and a green eye + last-open time once a tracked email's been
+// opened. Click toggles a details popover (portal so the row can't clip it).
+function EmailMetaPill({ lastEmailAt, opens, lastOpenedAt }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const popRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (btnRef.current?.contains(e.target) || popRef.current?.contains(e.target)) return; setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const close = () => setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
+  if (!lastEmailAt) return null;
+  const opened = (opens || 0) > 0;
+  const eyeColour = opened ? '#16A34A' : BRAND.muted;
+  const dt = new Date(lastEmailAt);
+  const toggle = (e) => {
+    e.stopPropagation();
+    if (open) { setOpen(false); return; }
+    const r = btnRef.current.getBoundingClientRect();
+    const W = 200;
+    setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - W - 8)) });
+    setOpen(true);
+  };
+  return (
+    <span style={{ display: 'inline-flex', flexShrink: 0 }}>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        title={`Last email ${shortDate(dt)}${opened && lastOpenedAt ? ' · opened ' + formatRelativeTime(lastOpenedAt) : ''}`}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0, color: '#475569', background: '#F1F5F9', border: '1px solid ' + BRAND.border, cursor: 'pointer' }}
+      >
+        <Mail size={12} style={{ flexShrink: 0 }} />
+        <span style={{ color: BRAND.muted, fontWeight: 500 }}>Last email</span>
+        {shortDate(dt)}
+        {opened && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 2, color: eyeColour, fontWeight: 700 }}>
+            <Eye size={12} color={eyeColour} fill={eyeColour + '22'} />
+            {lastOpenedAt ? formatRelativeTime(lastOpenedAt).replace(' ago', '') : ''}
+          </span>
+        )}
+      </button>
+      {open && pos && createPortal(
+        <div ref={popRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 1000, width: 200, padding: '10px 12px', background: 'white', textAlign: 'left', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 8px 24px rgba(15,42,61,0.18)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 12.5, color: BRAND.ink }}>
+            <Mail size={13} /> Emails
+          </div>
+          <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 3 }}>Last email {shortDate(dt)}</div>
+          {opened ? (
+            <>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: '#16A34A', marginTop: 4 }}>{opens} open{opens === 1 ? '' : 's'}</div>
+              {lastOpenedAt && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>Last opened {formatRelativeTime(lastOpenedAt)}</div>}
+            </>
+          ) : (
+            <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 4 }}>Not opened yet</div>
+          )}
+        </div>,
+        document.body,
+      )}
+    </span>
+  );
+}
+
 function DealRow({ deal, onOpen }) {
   const { state } = useStore();
   const owner = deal.ownerEmail ? state.users[deal.ownerEmail] : null;
@@ -372,17 +449,12 @@ function DealRow({ deal, onOpen }) {
 
   const t = deal.tracking || {};
   const proposalSent = (deal.proposalCount || 0) > 0;
-  const emailSent = !!deal.lastEmailAt;
   const spent = formatDuration(t.totalSeconds);
   const propLines = [
     t.proposalOpens > 0 ? `${t.proposalOpens} view${t.proposalOpens === 1 ? '' : 's'}` : null,
     t.lastProposalOpenAt ? `Last opened ${formatRelativeTime(t.lastProposalOpenAt)}` : null,
     (t.locations || []).length ? t.locations.slice(0, 3).join(', ') : null,
     spent ? `Time spent ${spent}` : null,
-  ].filter(Boolean);
-  const emailLines = [
-    t.emailOpens > 0 ? `${t.emailOpens} open${t.emailOpens === 1 ? '' : 's'}` : null,
-    t.lastEmailOpenAt ? `Last opened ${formatRelativeTime(t.lastEmailOpenAt)}` : null,
   ].filter(Boolean);
 
   const due = deal.nextTask?.dueAt ? new Date(deal.nextTask.dueAt) : null;
@@ -424,23 +496,14 @@ function DealRow({ deal, onOpen }) {
                   {due && <span style={{ flexShrink: 0 }}>· {shortDate(due)}</span>}
                 </span>
               )}
-              {lastEmail && (
-                <span
-                  title={`Last email ${shortDate(lastEmail)}`}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0, color: '#475569', background: '#F1F5F9', border: '1px solid ' + BRAND.border }}
-                >
-                  <Mail size={12} style={{ flexShrink: 0 }} />
-                  <span style={{ color: BRAND.muted, fontWeight: 500 }}>Last email</span>
-                  {shortDate(lastEmail)}
-                </span>
-              )}
+              {/* Single combined email pill (last email date + open tracking). */}
+              <EmailMetaPill lastEmailAt={deal.lastEmailAt} opens={t.emailOpens || 0} lastOpenedAt={t.lastEmailOpenAt} />
             </span>
           )}
         </div>
-        {/* Tracking eyes (proposal + email) sit on the right, next to the figure. */}
+        {/* Proposal engagement eye sits on the right, next to the figure. */}
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <TrackingEyeChip icon={FileText} channel="Proposal" sent={proposalSent} opened={t.proposalOpens > 0} lastOpenedAt={t.lastProposalOpenAt} lines={propLines} />
-          <TrackingEyeChip icon={Mail} channel="Emails" sent={emailSent} opened={t.emailOpens > 0} lastOpenedAt={t.lastEmailOpenAt} lines={emailLines} />
         </span>
         <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, fontVariantNumeric: 'tabular-nums', flexShrink: 0, minWidth: 64, textAlign: 'right' }}>
           {deal.value != null ? formatGBP(deal.value) : <span style={{ color: BRAND.muted, fontWeight: 400 }}>—</span>}
