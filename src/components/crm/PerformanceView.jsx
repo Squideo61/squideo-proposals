@@ -263,10 +263,11 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
         />
       )}
 
-      {/* Current position. The per-target ahead/behind pace cards were removed —
-          "Remaining to make targets" below covers target progress. */}
+      {/* Pace strip: current position, plus (Sales only) each target's expected
+          pace. The per-target pace cards were dropped from Income performance —
+          "Remaining to make targets" below covers target progress there. */}
       {!isComparison && !isCashflow && (<>
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${isSales ? targets.length + 1 : 1}, 1fr)`, gap: 12, marginBottom: 16 }}>
         <PaceCard
           title={model.status === 'future' ? 'Upcoming period' : `Working day ${model.lastActualIdx} of ${model.N}`}
           big={formatGBP(model.netSoFar)}
@@ -275,6 +276,22 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
             : (model.status === 'complete' ? `${isSales ? 'Signed' : 'Net banked'} (final)` : `No ${isSales ? 'sales' : 'cash'} yet`)}
           color={BRAND.blue}
         />
+        {isSales && targets.map((t) => {
+          const target = (Number(t.amount) || 0) * model.spanMonths;
+          const expected = target * (model.lastActualIdx / model.N);
+          const delta = model.netSoFar - expected;
+          const ahead = delta >= 0;
+          return (
+            <PaceCard
+              key={t.key}
+              title={`${t.label} · ${formatGBP(target)}`}
+              big={(ahead ? '+' : '−') + formatGBP(Math.abs(delta))}
+              sub={`${ahead ? 'ahead of' : 'behind'} pace · expected ${formatGBP(expected)}`}
+              color={ahead ? '#10B981' : '#EF4444'}
+              accent={t.color}
+            />
+          );
+        })}
       </div>
 
       {/* What's left to hit each target, and the daily run-rate needed for the
