@@ -10,6 +10,7 @@ import { useStore } from '../../store.jsx';
 import { formatGBP, formatProposalNumber, useIsMobile } from '../../utils.js';
 import { PerformancePanel } from './PerformanceView.jsx';
 import { CreateXeroInvoiceModal } from './CreateXeroInvoiceModal.jsx';
+import { MarkInvoicePaidModal } from './MarkInvoicePaidModal.jsx';
 import { Modal } from '../ui.jsx';
 
 const VAT_COLOR = '#F59E0B';
@@ -759,6 +760,7 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
                 onOpenDeal={onOpenDeal}
                 onOpenCompany={onOpenCompany}
                 onRemove={() => remove(r)}
+                onChanged={onChanged}
               />
             ))}
           </div>
@@ -786,8 +788,9 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
   );
 }
 
-function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onPaid, onInvoice, onUninvoice, onLink, onLinkCompany, companies, onOpenDeal, onOpenCompany, onRemove }) {
+function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onPaid, onInvoice, onUninvoice, onLink, onLinkCompany, companies, onOpenDeal, onOpenCompany, onRemove, onChanged }) {
   const [linkOpen, setLinkOpen] = useState(false);
+  const [payingInvoice, setPayingInvoice] = useState(false);
   const isInvoicedGroup = variant === 'invoiced';
   const isCompanyInvoice = r.kind === 'company-invoice';
   const linkedDeal = !!r.dealId;
@@ -802,8 +805,13 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
     if (linkedDeal && onOpenDeal) onOpenDeal(r.dealId);
     else if (linkedCompany && onOpenCompany) onOpenCompany(r.companyId);
   };
-  // Shared ⋮ menu actions — company invoices (not linked to a deal) carry none.
-  const rowActions = isCompanyInvoice ? [] : [
+  // Shared ⋮ menu actions. A company invoice is a real Xero/manual invoice (not
+  // an imported sheet row) — it marks paid through the invoice's own flow
+  // (records the payment in Xero), not the imported-payment toggle.
+  const rowActions = isCompanyInvoice ? [
+    { label: 'Mark paid…', icon: Check, onClick: () => setPayingInvoice(true) },
+    canOpen && { label: 'Open customer', icon: ExternalLink, onClick: openLinked },
+  ] : [
     isInvoicedGroup
       ? { label: 'Move back to pending', icon: RotateCcw, onClick: onUninvoice }
       : { label: 'Mark invoiced', icon: FileText, onClick: onInvoice },
@@ -864,6 +872,15 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
         onPickDeal={(dealId) => { setLinkOpen(false); onLink(dealId); }}
         onPickCompany={(companyId) => { setLinkOpen(false); onLinkCompany && onLinkCompany(companyId); }}
         onClose={() => setLinkOpen(false)}
+      />
+    )}
+    {payingInvoice && (
+      <MarkInvoicePaidModal
+        invoiceId={r.id}
+        invoiceNumber={r.description || undefined}
+        amount={(Number(r.amountExVat) || 0) + (Number(r.vat) || 0)}
+        onClose={() => setPayingInvoice(false)}
+        onMarked={() => { setPayingInvoice(false); if (onChanged) onChanged(); }}
       />
     )}
     </>
