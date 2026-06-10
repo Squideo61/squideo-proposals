@@ -98,8 +98,16 @@ export const NOTIFICATIONS = [
   },
   {
     key: 'task.reminder',
-    label: 'Task reminders',
-    description: 'Daily 9am summary of tasks assigned to you that are due.',
+    label: 'Task reminders (at due time)',
+    description: 'A reminder the moment a task assigned to you reaches its due time.',
+    audience: 'assignee',
+    group: 'CRM',
+    channel: 'general',
+  },
+  {
+    key: 'task.digest',
+    label: 'Daily task digest',
+    description: 'A morning summary of the tasks assigned to you that are due today.',
     audience: 'assignee',
     group: 'CRM',
     channel: 'general',

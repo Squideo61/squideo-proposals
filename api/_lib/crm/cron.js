@@ -28,6 +28,7 @@ export async function cronHandler(req, res, action) {
 
   switch (action) {
     case 'task-reminders':    return cronTaskReminders(res);
+    case 'task-digest':       return cronTaskDigest(res);
     case 'gmail-watch-renew': return cronGmailWatchRenew(res);
     case 'prune-views':       return cronPruneViews(res);
     case 'quote-partials':    return cronQuotePartials(res);
@@ -428,6 +429,106 @@ export async function cronTaskReminders(res) {
   }
 
   return res.status(200).json({ ok: true, found: due.length, sent });
+}
+
+// Morning digest — runs once a day (vercel.json) as the heads-up counterpart to
+// the at-due task.reminder ping. Emails each assignee a summary of the tasks
+// they have due today (or already overdue and not yet digested), and mirrors it
+// to the bell + a desktop push. digest_sent_at gates it to once per task, so a
+// task appears in exactly one morning digest — the morning of its due date.
+// Self-heals the column and seeds the role default (copying each role's
+// task.reminder setting) so it works pre-migration.
+export async function cronTaskDigest(res) {
+  await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS digest_sent_at TIMESTAMPTZ`;
+  await sql`
+    UPDATE roles
+       SET notification_defaults = jsonb_set(
+         notification_defaults, '{task.digest}',
+         COALESCE(notification_defaults->'task.reminder', 'false'::jsonb), true)
+     WHERE NOT (notification_defaults ? 'task.digest')`;
+
+  const rows = await sql`
+    SELECT t.id, t.title, t.due_at, t.deal_id, t.notes, t.assignee_email,
+           d.title AS deal_title,
+           (SELECT COALESCE(ARRAY_AGG(ta.user_email), '{}')
+            FROM task_assignees ta WHERE ta.task_id = t.id) AS assignees
+    FROM tasks t
+    LEFT JOIN deals d ON d.id = t.deal_id
+    WHERE t.done_at IS NULL
+      AND t.digest_sent_at IS NULL
+      AND t.due_at IS NOT NULL
+      AND t.due_at < date_trunc('day', NOW()) + INTERVAL '1 day'
+    ORDER BY t.due_at ASC
+    LIMIT 500
+  `;
+
+  if (!rows.length) return res.status(200).json({ ok: true, found: 0, sent: 0 });
+
+  // Fan tasks out per assignee so each person gets their own list.
+  const byUser = new Map();
+  for (const t of rows) {
+    const joined = Array.isArray(t.assignees) ? t.assignees.filter(Boolean) : [];
+    const recipients = joined.length ? joined : (t.assignee_email ? [t.assignee_email] : []);
+    for (const e of recipients) {
+      const key = e.toLowerCase();
+      if (!byUser.has(key)) byUser.set(key, []);
+      byUser.get(key).push(t);
+    }
+  }
+
+  const baseRoot = APP_URL.replace(/\/$/, '');
+  const tasksUrl = `${baseRoot}/#/tasks`;
+  let sent = 0;
+  for (const [email, tasks] of byUser) {
+    const subject = tasks.length === 1
+      ? `Task due today: ${tasks[0].title}`
+      : `${tasks.length} tasks due today`;
+    const summary = tasks.slice(0, 3).map(t => t.title).join(', ')
+      + (tasks.length > 3 ? ` +${tasks.length - 3} more` : '');
+    try {
+      // sendNotification filters by the recipient's task.digest pref, then emails
+      // + persists in-app + pushes in one call.
+      const r = await sendNotification('task.digest', {
+        assigneeEmails: [email],
+        subject,
+        html: buildDigestEmail(tasks, tasksUrl),
+        text: `Due today:\n${tasks.map(t => `• ${t.title} — ${new Date(t.due_at).toLocaleString('en-GB', { timeStyle: 'short' })}${t.deal_title ? ' (' + t.deal_title + ')' : ''}`).join('\n')}\n\n${tasksUrl}`,
+        inApp: {
+          title: subject,
+          body: summary,
+          link: '#/tasks',
+          tag: `task-digest-${new Date().toISOString().slice(0, 10)}`,
+        },
+      });
+      if (r.sent) sent++;
+    } catch (err) {
+      console.error('[cron task-digest] send failed', { email, err: err.message });
+    }
+  }
+
+  // Stamp every picked task so it's never digested twice, regardless of whether
+  // an individual assignee had the digest pref on.
+  const ids = rows.map(r => r.id);
+  await sql`UPDATE tasks SET digest_sent_at = NOW() WHERE id = ANY(${ids})`;
+
+  return res.status(200).json({ ok: true, found: rows.length, recipients: byUser.size, sent });
+}
+
+function buildDigestEmail(tasks, tasksUrl) {
+  const items = tasks.map((t) => {
+    const due = new Date(t.due_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+    const deal = t.deal_title ? ` <span style="color:#6B7785;">· ${escapeHtml(t.deal_title)}</span>` : '';
+    return `<li style="margin:0 0 10px;font-size:14px;line-height:1.5;">
+      <strong>${escapeHtml(t.title)}</strong>${deal}<br/>
+      <span style="font-size:12px;color:#6B7785;">Due ${escapeHtml(due)}</span>
+    </li>`;
+  }).join('');
+  return `
+    <h2 style="margin:0 0 4px;font-size:18px;font-weight:700;">Your tasks due today</h2>
+    <p style="margin:0 0 16px;color:#6B7785;font-size:13px;">${tasks.length} task${tasks.length === 1 ? '' : 's'} on your plate.</p>
+    <ul style="margin:0 0 20px;padding-left:18px;">${items}</ul>
+    <p style="margin:16px 0 0;"><a href="${tasksUrl}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open your tasks</a></p>
+  `;
 }
 
 // Daily Gmail housekeeping: (1) renew watches within 24h of expiring (Gmail
