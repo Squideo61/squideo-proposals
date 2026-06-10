@@ -6,7 +6,8 @@
 // Geo comes from Vercel's edge headers (x-vercel-ip-*), so no external lookup.
 import sql from '../_lib/db.js';
 import { APP_URL } from '../_lib/email.js';
-import { TRANSPARENT_GIF } from '../_lib/crm/tracking.js';
+import { TRANSPARENT_GIF, ensureOpenNotifiedColumn } from '../_lib/crm/tracking.js';
+import { sendNotification, ensureTrackingNotificationDefaults } from '../_lib/notifications.js';
 
 function viewer(req) {
   const h = req.headers;
@@ -31,6 +32,52 @@ async function recordEvent(token, kind, linkUrl, req) {
   `;
 }
 
+// Fire the owner's "email opened" tracking-bell alert the first time a real
+// open lands. Opens within 5s of send are Gmail's delivery-time image prefetch,
+// not a human read, so they don't count. open_notified_at is claimed race-safely
+// so concurrent opens only notify once. Best-effort — never throws to the pixel.
+const OPEN_PREFETCH_MS = 5000;
+async function notifyFirstOpen(token, geo) {
+  try {
+    await ensureOpenNotifiedColumn();
+    const rows = await sql`
+      SELECT id, user_email, subject, gmail_thread_id, recipients, sent_at, open_notified_at
+        FROM email_tracking WHERE token = ${token}`;
+    const t = rows[0];
+    if (!t || !t.user_email || t.open_notified_at) return;
+    // Skip the delivery-time prefetch; a later genuine open will notify.
+    if (Date.now() < new Date(t.sent_at).getTime() + OPEN_PREFETCH_MS) return;
+
+    // Race-safe claim: only the first qualifying open flips the flag.
+    const claim = await sql`
+      UPDATE email_tracking SET open_notified_at = NOW()
+       WHERE token = ${token} AND open_notified_at IS NULL
+       RETURNING id`;
+    if (!claim.length) return;
+
+    await ensureTrackingNotificationDefaults();
+    const dealRows = await sql`
+      SELECT deal_id FROM email_thread_deals WHERE gmail_thread_id = ${t.gmail_thread_id} LIMIT 1`;
+    const dealId = dealRows[0]?.deal_id || null;
+    const recipient = Array.isArray(t.recipients) && t.recipients[0] ? t.recipients[0] : 'A recipient';
+    const where = geo.city || geo.country || null;
+    const subject = t.subject || '(no subject)';
+    await sendNotification('tracking.email_opened', {
+      ownerEmail: t.user_email,
+      inAppOnly: true,
+      subject: `Email opened: ${subject}`,
+      inApp: {
+        title: `Email opened: ${subject}`,
+        body: `${recipient} just opened it${where ? ' · ' + where : ''}`,
+        link: dealId ? `#/deal/${dealId}` : null,
+        tag: `email-open-${t.id}`,
+      },
+    });
+  } catch (err) {
+    console.error('[track] notifyFirstOpen failed', err.message);
+  }
+}
+
 export default async function handler(req, res) {
   const action = req.query.action;
   const token = typeof req.query.t === 'string' ? req.query.t : null;
@@ -39,7 +86,10 @@ export default async function handler(req, res) {
     // Always return the pixel, even on bad/missing token, so we never break
     // the rendering of the recipient's email.
     if (token) {
-      try { await recordEvent(token, 'open', null, req); }
+      try {
+        await recordEvent(token, 'open', null, req);
+        await notifyFirstOpen(token, viewer(req));
+      }
       catch (err) { console.error('[track] open failed', err.message); }
     }
     res.setHeader('Content-Type', 'image/gif');

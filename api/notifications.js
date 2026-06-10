@@ -15,7 +15,7 @@
 // rows (scoped by session email), so this needs auth but no special permission.
 import sql from './_lib/db.js';
 import { cors, requireAuth } from './_lib/middleware.js';
-import { channelForKey, FINANCE_CHANNEL_KEYS } from './_lib/notificationsCatalog.js';
+import { channelForKey, FINANCE_CHANNEL_KEYS, TRACKING_CHANNEL_KEYS } from './_lib/notificationsCatalog.js';
 
 const FEED_LIMIT = 30;
 
@@ -41,9 +41,15 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
       // Pull the latest rows per channel independently (rather than the latest
-      // 30 overall) so a busy finance feed can't crowd the general bell — or
-      // vice versa — out of its own newest items.
-      const [financeRows, generalRows, financeUnread, generalUnread] = await Promise.all([
+      // 30 overall) so a busy channel can't crowd another bell out of its own
+      // newest items. General = anything not routed to finance or tracking.
+      const [trackingRows, financeRows, generalRows, trackingUnread, financeUnread, generalUnread] = await Promise.all([
+        sql`
+          SELECT id, notification_key, title, body, link, created_at, read_at
+            FROM in_app_notifications
+           WHERE user_email = ${email} AND notification_key = ANY(${TRACKING_CHANNEL_KEYS})
+           ORDER BY created_at DESC
+           LIMIT ${FEED_LIMIT}`,
         sql`
           SELECT id, notification_key, title, body, link, created_at, read_at
             FROM in_app_notifications
@@ -53,9 +59,15 @@ export default async function handler(req, res) {
         sql`
           SELECT id, notification_key, title, body, link, created_at, read_at
             FROM in_app_notifications
-           WHERE user_email = ${email} AND NOT (notification_key = ANY(${FINANCE_CHANNEL_KEYS}))
+           WHERE user_email = ${email}
+             AND NOT (notification_key = ANY(${FINANCE_CHANNEL_KEYS}))
+             AND NOT (notification_key = ANY(${TRACKING_CHANNEL_KEYS}))
            ORDER BY created_at DESC
            LIMIT ${FEED_LIMIT}`,
+        sql`
+          SELECT COUNT(*)::int AS n FROM in_app_notifications
+           WHERE user_email = ${email} AND read_at IS NULL
+             AND notification_key = ANY(${TRACKING_CHANNEL_KEYS})`,
         sql`
           SELECT COUNT(*)::int AS n FROM in_app_notifications
            WHERE user_email = ${email} AND read_at IS NULL
@@ -63,30 +75,37 @@ export default async function handler(req, res) {
         sql`
           SELECT COUNT(*)::int AS n FROM in_app_notifications
            WHERE user_email = ${email} AND read_at IS NULL
-             AND NOT (notification_key = ANY(${FINANCE_CHANNEL_KEYS}))`,
+             AND NOT (notification_key = ANY(${FINANCE_CHANNEL_KEYS}))
+             AND NOT (notification_key = ANY(${TRACKING_CHANNEL_KEYS}))`,
       ]);
 
+      const tracking = { items: trackingRows.map(mapRow), unread: trackingUnread[0]?.n || 0 };
       const finance = { items: financeRows.map(mapRow), unread: financeUnread[0]?.n || 0 };
       const general = { items: generalRows.map(mapRow), unread: generalUnread[0]?.n || 0 };
       // `items`/`unread` kept for any legacy reader = the general bell's feed.
       return res.status(200).json({
         items: general.items,
         unread: general.unread,
-        channels: { finance, general },
+        channels: { tracking, finance, general },
       });
     }
 
     if (req.method === 'POST') {
       const { ids, all, channel } = req.body || {};
       if (all) {
-        if (channel === 'finance') {
+        if (channel === 'tracking') {
+          await sql`UPDATE in_app_notifications SET read_at = NOW()
+                     WHERE user_email = ${email} AND read_at IS NULL
+                       AND notification_key = ANY(${TRACKING_CHANNEL_KEYS})`;
+        } else if (channel === 'finance') {
           await sql`UPDATE in_app_notifications SET read_at = NOW()
                      WHERE user_email = ${email} AND read_at IS NULL
                        AND notification_key = ANY(${FINANCE_CHANNEL_KEYS})`;
         } else if (channel === 'general') {
           await sql`UPDATE in_app_notifications SET read_at = NOW()
                      WHERE user_email = ${email} AND read_at IS NULL
-                       AND NOT (notification_key = ANY(${FINANCE_CHANNEL_KEYS}))`;
+                       AND NOT (notification_key = ANY(${FINANCE_CHANNEL_KEYS}))
+                       AND NOT (notification_key = ANY(${TRACKING_CHANNEL_KEYS}))`;
         } else {
           await sql`UPDATE in_app_notifications SET read_at = NOW()
                      WHERE user_email = ${email} AND read_at IS NULL`;
@@ -105,12 +124,16 @@ export default async function handler(req, res) {
       const channel = req.query?.channel;
       if (Number.isFinite(id)) {
         await sql`DELETE FROM in_app_notifications WHERE user_email = ${email} AND id = ${id}`;
+      } else if (channel === 'tracking') {
+        await sql`DELETE FROM in_app_notifications WHERE user_email = ${email}
+                   AND notification_key = ANY(${TRACKING_CHANNEL_KEYS})`;
       } else if (channel === 'finance') {
         await sql`DELETE FROM in_app_notifications WHERE user_email = ${email}
                    AND notification_key = ANY(${FINANCE_CHANNEL_KEYS})`;
       } else if (channel === 'general') {
         await sql`DELETE FROM in_app_notifications WHERE user_email = ${email}
-                   AND NOT (notification_key = ANY(${FINANCE_CHANNEL_KEYS}))`;
+                   AND NOT (notification_key = ANY(${FINANCE_CHANNEL_KEYS}))
+                   AND NOT (notification_key = ANY(${TRACKING_CHANNEL_KEYS}))`;
       } else {
         await sql`DELETE FROM in_app_notifications WHERE user_email = ${email}`;
       }

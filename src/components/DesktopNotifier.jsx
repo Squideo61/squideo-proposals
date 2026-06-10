@@ -27,7 +27,7 @@ export function DesktopNotifier({ onOpenLink }) {
   useEffect(() => {
     const channels = state.notificationsByChannel || {};
     const allItems = [];
-    for (const ch of ['general', 'finance']) {
+    for (const ch of ['general', 'finance', 'tracking']) {
       for (const n of (channels[ch]?.items || [])) allItems.push(n);
     }
 

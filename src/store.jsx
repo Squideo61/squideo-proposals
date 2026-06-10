@@ -34,6 +34,7 @@ function normalizeNotificationChannels(r) {
   const ch = r?.channels;
   const norm = (c) => ({ items: Array.isArray(c?.items) ? c.items : [], unread: c?.unread || 0 });
   return {
+    tracking: norm(ch?.tracking),
     finance: norm(ch?.finance),
     general: norm(ch?.general || { items: r?.items, unread: r?.unread }),
   };
@@ -120,7 +121,7 @@ function emptyStore() {
     // In-app notification feed (the bells). The feed is split into two channels
     // — 'finance' (the £ bell) and 'general' (the standard bell). Each holds a
     // newest-first `items` list + server-reported `unread` count.
-    notificationsByChannel: { finance: { items: [], unread: 0 }, general: { items: [], unread: 0 } },
+    notificationsByChannel: { tracking: { items: [], unread: 0 }, finance: { items: [], unread: 0 }, general: { items: [], unread: 0 } },
     session: null,
     loading: true,
     composerContext: loadLocal(COMPOSER_CONTEXT_KEY, null),

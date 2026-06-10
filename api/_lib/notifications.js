@@ -100,6 +100,28 @@ export async function resolveDealTeamEmails(dealId, fallbackEmail = null) {
   return Array.from(out);
 }
 
+// Self-heal role defaults for the tracking-bell keys so the feature works
+// before its migration is applied. Defaults each ON wherever the role already
+// gets proposal.first_view (i.e. sales-facing roles). Guarded to run at most
+// once per warm instance — callers fire it best-effort before notifying.
+let trackingDefaultsReady = false;
+export async function ensureTrackingNotificationDefaults() {
+  if (trackingDefaultsReady) return;
+  try {
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{tracking.email_opened}',
+      COALESCE(notification_defaults->'proposal.first_view', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'tracking.email_opened')`;
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{tracking.proposal_opened}',
+      COALESCE(notification_defaults->'proposal.first_view', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'tracking.proposal_opened')`;
+    trackingDefaultsReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureTrackingNotificationDefaults failed', err.message);
+  }
+}
+
 // Read the effective state of a single (user, key) — role default merged with
 // per-user override. Returns boolean. Unknown users → false.
 export async function isEnabledForUser(email, key) {

@@ -3,7 +3,7 @@
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendMail, firstViewHtml, APP_URL } from '../_lib/email.js';
-import { sendNotification } from '../_lib/notifications.js';
+import { sendNotification, ensureTrackingNotificationDefaults } from '../_lib/notifications.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 
 export default async function handler(req, res) {
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
     }
     const ua = h['user-agent'] || null;
 
-    await sql`
+    const upsert = await sql`
       INSERT INTO proposal_views
         (proposal_id, session_id, opened_at, last_active_at, duration_seconds,
          ip_address, country, region, city, user_agent)
@@ -46,7 +46,13 @@ export default async function handler(req, res) {
       ON CONFLICT (proposal_id, session_id) DO UPDATE SET
         last_active_at   = NOW(),
         duration_seconds = GREATEST(proposal_views.duration_seconds, EXCLUDED.duration_seconds)
+      RETURNING opened_at, last_active_at
     `;
+    // A fresh insert has opened_at == last_active_at (both NOW()); an update to
+    // an existing session keeps the original opened_at, so they differ. This is
+    // how we recognise a brand-new viewer for the "proposal opened" alert.
+    const isNewViewer = upsert.length > 0
+      && new Date(upsert[0].opened_at).getTime() === new Date(upsert[0].last_active_at).getTime();
 
     // Race-safe claim: only one caller can flip first_view_emailed_at from
     // NULL to NOW(). Concurrent POSTs that lose the race get 0 rows back and
@@ -60,14 +66,14 @@ export default async function handler(req, res) {
     `;
     const isFirstEver = claim.length > 0;
 
-    if (isFirstEver) {
+    if (isFirstEver || isNewViewer) {
       try {
         const rows = await sql`SELECT data FROM proposals WHERE id = ${id}`;
         if (rows.length) {
           const data = rows[0].data || {};
           const ownerEmail = data.preparedByEmail || null;
-          if (ownerEmail) {
-            const title = data.proposalTitle || data.clientName || 'Your proposal';
+          const title = data.proposalTitle || data.clientName || 'Your proposal';
+          if (ownerEmail && isFirstEver) {
             const link = `${APP_URL}/?proposal=${id}`;
             await sendNotification('proposal.first_view', {
               ownerEmail,
@@ -76,9 +82,27 @@ export default async function handler(req, res) {
               text: `${data.clientName || 'A client'} opened ${title}. ${link}`,
             });
           }
+          // Engagement feed: a tracking-bell alert (in-app + desktop push, no
+          // email) for every new viewer — including the first. Owner-scoped.
+          if (ownerEmail && isNewViewer) {
+            const where = city || country || null;
+            const dealId = await dealIdForProposal(id).catch(() => null);
+            await ensureTrackingNotificationDefaults();
+            await sendNotification('tracking.proposal_opened', {
+              ownerEmail,
+              inAppOnly: true,
+              subject: `Proposal opened: ${title}`,
+              inApp: {
+                title: `Proposal opened: ${title}`,
+                body: `${data.clientName || 'Someone'} opened it${where ? ' · ' + where : ''}`,
+                link: dealId ? `#/deal/${dealId}` : null,
+                tag: `proposal-open-${id}-${sessionId}`,
+              },
+            });
+          }
         }
       } catch (err) {
-        console.error('[views] first-view email failed', err);
+        console.error('[views] view notification failed', err);
       }
     }
 

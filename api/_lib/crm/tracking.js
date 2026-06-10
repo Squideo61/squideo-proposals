@@ -6,6 +6,16 @@ import sql from '../db.js';
 
 export { instrumentHtml, newTrackingToken, TRANSPARENT_GIF } from './trackingHtml.js';
 
+// One-time self-heal: the column that gates the "first open" tracking-bell
+// notification to fire once per email. Guarded so it runs at most once per warm
+// instance. A matching migration also adds it for the record.
+let openNotifiedColumnReady = false;
+export async function ensureOpenNotifiedColumn() {
+  if (openNotifiedColumnReady) return;
+  await sql`ALTER TABLE email_tracking ADD COLUMN IF NOT EXISTS open_notified_at TIMESTAMPTZ`;
+  openNotifiedColumnReady = true;
+}
+
 // Persist a tracking row + its rewritten links after a successful send. Never
 // throws — tracking is best-effort and must not fail the send.
 export async function recordTrackedSend({ token, userEmail, messageId, threadId, subject, recipients, links, source = 'crm' }) {

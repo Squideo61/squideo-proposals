@@ -248,6 +248,10 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
           );
         })}
 
+        {/* Eye bell (engagement tracking) sits left of the £ bell. Its contents
+            are owner-scoped, so it's shown to everyone — empty for anyone who
+            hasn't sent tracked emails / owns no proposals. */}
+        <NotificationBell onOpenLink={onOpenLink} inline channel="tracking" />
         {canFinanceBell && <NotificationBell onOpenLink={onOpenLink} inline channel="finance" />}
         <NotificationBell onOpenLink={onOpenLink} inline />
 
