@@ -447,11 +447,18 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           )}
         </Card>
 
+        {detail?.purchaseOrder?.isPo && (
+          <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+            <PurchaseOrderCard dealId={dealId} po={detail.purchaseOrder} isMobile={isMobile} />
+          </div>
+        )}
+
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <InvoicesPaymentsCard
             dealId={dealId}
             proposals={proposals}
             contactName={company?.name || contact?.name || deal.title}
+            poNumber={detail?.purchaseOrder?.number || null}
             onChanged={() => setOrderRefresh((n) => n + 1)}
           />
         </div>
@@ -1414,6 +1421,126 @@ function FileTypeTag({ mimeType }) {
   if (mimeType.includes('word') || mimeType.includes('document'))
     return <span style={{ fontSize: 10, fontWeight: 700, color: '#2563EB' }}>DOC</span>;
   return <FileText size={14} color={BRAND.muted} />;
+}
+
+// Purchase-order card for PO-route deals. Records/edits the received PO number
+// (which becomes the invoice reference) and stores the uploaded PO documents
+// (multiple files, Blob-backed). Sits above the Invoices card.
+function PurchaseOrderCard({ dealId, po, isMobile }) {
+  const { actions, showMsg } = useStore();
+  const received = !!po.receivedAt;
+  const [editing, setEditing] = useState(false);
+  const [poNumber, setPoNumber] = useState(po.number || '');
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const inputRef = useRef(null);
+  const files = po.files || [];
+
+  useEffect(() => { setPoNumber(po.number || ''); }, [po.number]);
+
+  const save = async () => {
+    const num = poNumber.trim();
+    if (!num) return;
+    setSaving(true);
+    try {
+      await actions.markDealPoReceived(dealId, num);
+      showMsg(received ? 'PO number updated' : 'PO marked received');
+      setEditing(false);
+    } catch (e) { showMsg(e.message || 'Could not save PO number'); }
+    finally { setSaving(false); }
+  };
+  const clear = async () => {
+    if (!window.confirm('Clear the PO number (mark this PO as not received)?')) return;
+    try { await actions.clearDealPo(dealId); setEditing(false); showMsg('PO cleared'); }
+    catch (e) { showMsg(e.message || 'Could not clear PO'); }
+  };
+  const handleFiles = async (fileList) => {
+    const list = Array.from(fileList || []);
+    if (!list.length) return;
+    const tooBig = list.find(f => f.size > 20 * 1024 * 1024);
+    if (tooBig) { showMsg(`"${tooBig.name}" is too large (max 20 MB)`); return; }
+    setUploading(true);
+    try {
+      for (const f of list) await actions.uploadDealPoFile(dealId, f);
+      showMsg(list.length === 1 ? 'PO uploaded' : `${list.length} files uploaded`);
+    } catch (e) { showMsg(e.message || 'Upload failed'); }
+    finally { setUploading(false); if (inputRef.current) inputRef.current.value = ''; }
+  };
+  const download = async (fileId) => {
+    try { const { downloadUrl } = await actions.getPoFileDownloadUrl(dealId, fileId); window.open(downloadUrl, '_blank', 'noopener,noreferrer'); }
+    catch { showMsg('Could not generate download link'); }
+  };
+  const remove = async (fileId, filename) => {
+    if (!window.confirm(`Delete "${filename}"?`)) return;
+    try { await actions.deleteDealPoFile(dealId, fileId); showMsg('File deleted'); }
+    catch (e) { showMsg(e.message || 'Could not delete file'); }
+  };
+
+  return (
+    <Card title="Purchase order" count={files.length}>
+      {/* Status + number. Awaiting (amber) until received, then green with the number. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '4px 0 12px' }}>
+        {!editing ? (
+          <>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, color: received ? '#15803D' : '#B45309', background: received ? '#ECFDF3' : '#FFFBEB', padding: '3px 8px', borderRadius: 5 }}>
+              {received ? 'Received' : 'Awaiting PO'}
+            </span>
+            {received && <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>PO {po.number}</span>}
+            <span style={{ flex: 1 }} />
+            <button onClick={() => setEditing(true)} className="btn-ghost" style={{ fontSize: 12 }}>
+              <Edit2 size={12} /> {received ? 'Edit number' : 'Mark received'}
+            </button>
+          </>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', width: '100%' }}>
+            <input
+              type="text"
+              value={poNumber}
+              autoFocus
+              onChange={(e) => setPoNumber(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { setEditing(false); setPoNumber(po.number || ''); } }}
+              className="input"
+              placeholder="PO number (e.g. 4500012345)"
+              style={{ flex: 1, minWidth: 160 }}
+            />
+            <button onClick={save} className="btn-primary" disabled={saving || !poNumber.trim()} style={{ fontSize: 12 }}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button onClick={() => { setEditing(false); setPoNumber(po.number || ''); }} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+            {received && <button onClick={clear} className="btn-ghost" style={{ fontSize: 12, color: '#B91C1C' }}>Clear</button>}
+          </div>
+        )}
+      </div>
+
+      {/* Upload zone — accepts multiple files (clients sometimes raise more than one PO). */}
+      <input ref={inputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => handleFiles(e.target.files)} />
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!uploading) handleFiles(e.dataTransfer.files); }}
+        onClick={() => { if (!uploading) inputRef.current?.click(); }}
+        style={{ border: '1px dashed ' + (dragOver ? BRAND.blue : BRAND.border), borderRadius: 8, padding: '12px 14px', textAlign: 'center', fontSize: 12, color: BRAND.muted, cursor: uploading ? 'not-allowed' : 'pointer', background: dragOver ? '#F0F9FF' : BRAND.paper }}
+      >
+        {uploading ? 'Uploading…' : 'Drop PO documents here or click to upload (PDF/images, multiple allowed, max 20 MB each)'}
+      </div>
+
+      <div style={{ marginTop: 8 }}>
+        {files.length === 0 ? (
+          <Empty text="No PO documents uploaded yet" />
+        ) : files.map((f) => (
+          <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', borderTop: '1px solid ' + BRAND.border }}>
+            <FileText size={15} style={{ color: BRAND.muted, flexShrink: 0 }} />
+            <button onClick={() => download(f.id)} title="Download" style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {f.filename}
+            </button>
+            <button onClick={() => download(f.id)} className="btn-icon" title="Download"><Download size={14} /></button>
+            <button onClick={() => remove(f.id, f.filename)} className="btn-icon" title="Delete"><Trash2 size={14} /></button>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
 }
 
 export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {

@@ -458,7 +458,7 @@ export async function invoicesRoute(req, res, id, action, user) {
   // CRM body parser will have already parsed into req.body.
   if (!id && req.method === 'POST' && (req.headers['content-type'] || '').startsWith('application/json')) {
     const body = req.body || {};
-    const { dealId, proposalId, companyId, contactName, lineItems, invoiceNumber, issuedAt, dueAt, extraIds } = body;
+    const { dealId, proposalId, companyId, contactName, lineItems, invoiceNumber, reference, issuedAt, dueAt, extraIds } = body;
 
     if (!Array.isArray(lineItems) || !lineItems.length) {
       return res.status(400).json({ error: 'At least one line item required' });
@@ -519,6 +519,8 @@ export async function invoicesRoute(req, res, id, action, user) {
       contactId: xeroContactId,
       lineItems: xeroLineItems,
       invoiceNumber: invoiceNumber?.trim() || undefined,
+      // PO-route deals pass the PO number here so it prints as the Xero Reference.
+      reference: reference?.trim() || undefined,
       issueDate: issuedAt || undefined,
       dueDate: dueAt || undefined,
     });

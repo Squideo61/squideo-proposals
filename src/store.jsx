@@ -2447,6 +2447,64 @@ export function StoreProvider({ children }) {
       return api.get('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/' + encodeURIComponent(fileId));
     },
 
+    // ---------- Purchase orders (PO-route deals) ----------
+    // Record the received PO number (requires a non-empty number — the server
+    // 400s on blank). Updates the deal-detail PO slice when it's loaded.
+    markDealPoReceived(dealId, poNumber) {
+      return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/po', { poNumber }).then((r) => {
+        setState(s => {
+          const detail = s.dealDetail[dealId];
+          if (!detail) return s;
+          const po = { ...(detail.purchaseOrder || {}), number: r.poNumber, receivedAt: r.poReceivedAt };
+          return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, purchaseOrder: po } } };
+        });
+        return r;
+      });
+    },
+    clearDealPo(dealId) {
+      return api.delete('/api/crm/deals/' + encodeURIComponent(dealId) + '/po').then((r) => {
+        setState(s => {
+          const detail = s.dealDetail[dealId];
+          if (!detail) return s;
+          const po = { ...(detail.purchaseOrder || {}), number: null, receivedAt: null };
+          return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, purchaseOrder: po } } };
+        });
+        return r;
+      });
+    },
+    // Upload a PO document (raw binary, like the Blob fallback in uploadDealFile).
+    async uploadDealPoFile(dealId, file) {
+      const mime = file.type || 'application/octet-stream';
+      const res = await fetch('/api/crm/deals/' + encodeURIComponent(dealId) + '/po-files', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': mime, 'X-Filename': encodeURIComponent(file.name) },
+        body: file,
+      });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
+      const newFile = await res.json();
+      setState(s => {
+        const detail = s.dealDetail[dealId];
+        if (!detail) return s;
+        const po = detail.purchaseOrder || {};
+        return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, purchaseOrder: { ...po, files: [newFile, ...(po.files || [])] } } } };
+      });
+      return newFile;
+    },
+    deleteDealPoFile(dealId, fileId) {
+      setState(s => {
+        const detail = s.dealDetail[dealId];
+        if (!detail) return s;
+        const po = detail.purchaseOrder || {};
+        return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, purchaseOrder: { ...po, files: (po.files || []).filter(f => f.id !== fileId) } } } };
+      });
+      return api.delete('/api/crm/deals/' + encodeURIComponent(dealId) + '/po-files/' + encodeURIComponent(fileId))
+        .catch(() => actions.loadDealDetail(dealId));
+    },
+    getPoFileDownloadUrl(dealId, fileId) {
+      return api.get('/api/crm/deals/' + encodeURIComponent(dealId) + '/po-files/' + encodeURIComponent(fileId));
+    },
+
     // Lay down the standard production subfolder template in the deal's Drive
     // folder (idempotent). Re-pulls the deal so any newly-created folders show.
     setupDealFolders(dealId) {

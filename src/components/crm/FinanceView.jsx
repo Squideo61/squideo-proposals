@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown } from 'lucide-react';
+import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -9,6 +9,7 @@ import { useStore } from '../../store.jsx';
 import { formatGBP, formatProposalNumber, useIsMobile } from '../../utils.js';
 import { PerformancePanel } from './PerformanceView.jsx';
 import { CreateXeroInvoiceModal } from './CreateXeroInvoiceModal.jsx';
+import { Modal } from '../ui.jsx';
 
 const VAT_COLOR = '#F59E0B';
 const CT_COLOR = '#0E7490';
@@ -410,6 +411,8 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
   // The deal + portion to invoice when an INV button is clicked (opens the
   // shared Xero create-invoice modal, pre-filled with the deal's suggested lines).
   const [invTarget, setInvTarget] = useState(null);
+  // The PO-route deal whose PO number we're recording (opens MarkPoReceivedModal).
+  const [poTarget, setPoTarget] = useState(null);
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 20 }}>
       <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -459,6 +462,7 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
             onOpenDeal={onOpenDeal}
             onOpenCompany={onOpenCompany}
             onCreateInvoice={setInvTarget}
+            onMarkPoReceived={setPoTarget}
             companies={companies}
             isMobile={isMobile}
           />
@@ -494,12 +498,70 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
           dealId={invTarget.companyId ? undefined : invTarget.dealId}
           deals={invTarget.companyId ? [{ id: invTarget.dealId, title: invTarget.title, stage: invTarget.stage || 'signed', company_id: invTarget.companyId }] : undefined}
           initialDealId={invTarget.dealId}
+          initialReference={invTarget.reference || undefined}
           mode={invTarget.mode}
           onClose={() => setInvTarget(null)}
           onCreated={() => { setInvTarget(null); onChanged && onChanged(); }}
         />
       )}
+      {poTarget && (
+        <MarkPoReceivedModal
+          target={poTarget}
+          actions={actions}
+          onClose={() => setPoTarget(null)}
+          onSaved={() => { setPoTarget(null); onChanged && onChanged(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// Small modal to record (or edit) a PO-route deal's received PO number. The
+// number is required; on save it records the PO and refreshes the pending list.
+function MarkPoReceivedModal({ target, actions, onClose, onSaved }) {
+  const [poNumber, setPoNumber] = useState(target.poNumber || '');
+  const [saving, setSaving] = useState(false);
+  const { showMsg } = useStore();
+  const editing = !!target.poNumber;
+  const save = async () => {
+    const num = poNumber.trim();
+    if (!num) return;
+    setSaving(true);
+    try {
+      await actions.markDealPoReceived(target.dealId, num);
+      showMsg?.(editing ? 'PO number updated' : 'PO marked received', 'success');
+      onSaved();
+    } catch (err) {
+      showMsg?.(err.message || 'Could not save the PO number', 'error');
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal onClose={onClose} maxWidth={420}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>{editing ? 'Edit PO number' : 'Mark PO received'}</h2>
+        <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
+      </div>
+      <p style={{ margin: '0 0 12px', fontSize: 13, color: BRAND.muted }}>
+        {target.title || target.company || 'This deal'} — enter the purchase order number. It becomes the reference on the invoice you raise for this organisation.
+      </p>
+      <input
+        type="text"
+        value={poNumber}
+        autoFocus
+        onChange={(e) => setPoNumber(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
+        className="input"
+        placeholder="PO number (e.g. 4500012345)"
+        style={{ width: '100%', boxSizing: 'border-box' }}
+      />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+        <button onClick={onClose} className="btn-ghost" disabled={saving}>Cancel</button>
+        <button onClick={save} className="btn-primary" disabled={saving || !poNumber.trim()}>
+          {saving ? 'Saving…' : (editing ? 'Save' : 'Mark received')}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -1108,7 +1170,7 @@ function PendingImportPanel({ actions, count, isMobile, kind = 'pp' }) {
 // click-through to the deal) with imported Live Sales Sheet POs (manual rows with
 // invoice/paid/remove actions + the sheet import panel). A single header carries
 // the combined grand total; each row type keeps its own behaviour.
-function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChanged, onOpenDeal, onOpenCompany, onCreateInvoice, companies, isMobile }) {
+function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChanged, onOpenDeal, onOpenCompany, onCreateInvoice, onMarkPoReceived, companies, isMobile }) {
   const importedNet = importedRows.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
   const grand = (Number(crmTotal) || 0) + importedNet;
   const count = crmRows.length + importedRows.length;
@@ -1122,7 +1184,7 @@ function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChang
         <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Paid regardless of project stage · signed deals + imported sheet · {count} {count === 1 ? 'item' : 'items'} · Inv marks invoiced, ✓ marks paid (→ income), ✕ removes</div>
       </div>
       {crmRows.map((d) => (
-        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} />
+        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isPo onMarkPoReceived={onMarkPoReceived} />
       ))}
       <ManualPendingGroup
         bare
@@ -1387,6 +1449,72 @@ function NotInvoicedTag() {
   );
 }
 
+// PO status pill: amber "Pending PO" until the PO is received, then a green
+// "PO <number>" once recorded. Shown only on PO-route deal rows.
+function PoStatusPill({ d }) {
+  const received = !!d.poReceivedAt;
+  const color = received ? '#15803D' : '#B45309';
+  const bg = received ? '#ECFDF3' : '#FFFBEB';
+  return (
+    <span style={{ fontSize: 9, fontWeight: 700, color, background: bg, padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+      {received ? `PO ${d.poNumber || ''}`.trim() : 'Pending PO'}
+    </span>
+  );
+}
+
+// Per-row kebab menu for PO deals: Mark/Edit PO received, Create invoice (for the
+// first invoiceable line, passing the PO number as the Xero reference), Open deal.
+function PoActionsMenu({ d, invoiceableLine, onCreateInvoice, onMarkPoReceived, onOpenDeal }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+  const received = !!d.poReceivedAt;
+  const items = [
+    { label: received ? 'Edit PO number' : 'Mark PO received', icon: Check, go: () => onMarkPoReceived({ dealId: d.dealId, title: d.title, company: d.company, poNumber: d.poNumber || '' }) },
+    ...(invoiceableLine ? [{ label: 'Create invoice', icon: FileText, go: () => onCreateInvoice({ dealId: d.dealId, companyId: d.companyId, title: d.title || d.company, stage: d.stage, mode: invoiceableLine.type === 'final' ? 'final' : undefined, reference: d.poNumber || undefined }) }] : []),
+    ...(onOpenDeal ? [{ label: 'Open deal', icon: ExternalLink, go: () => onOpenDeal(d.dealId || d.companyId) }] : []),
+  ];
+  return (
+    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        title="Actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid ' + BRAND.border, background: open ? BRAND.paper : 'white', cursor: 'pointer', color: BRAND.ink }}
+      >
+        <MoreVertical size={15} />
+      </button>
+      {open && (
+        <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 30, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 8px 24px rgba(15,42,61,0.14)', minWidth: 176, padding: 4 }}>
+          {items.map((it) => {
+            const Icon = it.icon;
+            return (
+              <button
+                key={it.label}
+                role="menuitem"
+                onClick={(e) => { e.stopPropagation(); setOpen(false); it.go(); }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, color: BRAND.ink, borderRadius: 6 }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              >
+                <Icon size={14} /> {it.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // A small INV button that raises an invoice for one outstanding line. Stops the
 // row's open-deal click. Maps the line type to the create-invoice mode: a 50%
 // final needs mode:'final'; deposit / full / PO use the default suggested lines.
@@ -1402,7 +1530,7 @@ function InvButton({ d, line, onCreateInvoice }) {
   );
 }
 
-function PendingRow({ d, onOpenDeal, onCreateInvoice }) {
+function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoReceived }) {
   const name = d.company || d.title || 'Untitled deal';
   // Only keep the deal title as a second line when it adds something beyond the
   // company name (avoids showing e.g. "Beyond PR" twice).
@@ -1415,6 +1543,9 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice }) {
   // INV button shows on a not-yet-invoiced line of a real deal (not extras, which
   // ride on the final invoice; not company-level invoice rows with no dealId).
   const canInvoice = (l) => !!(onCreateInvoice && d.dealId && l.invoiced === false && l.type !== 'extra');
+  // PO rows consolidate their actions into a kebab menu (Mark PO received /
+  // Create invoice / Open deal); the first invoiceable line drives "Create invoice".
+  const invoiceableLine = isPo ? lines.find((l) => canInvoice(l)) : null;
   // Deal rows open the deal; company-level invoice rows (no dealId) open the company.
   const open = () => onOpenDeal && onOpenDeal(d.dealId || d.companyId);
   return (
@@ -1434,6 +1565,7 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice }) {
           </span>
           {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
           {single && <PaymentBadge type={single0.type} />}
+          {isPo && <PoStatusPill d={d} />}
           {single && single0.invoiced === false && <NotInvoicedTag />}
           {single && single0.label && (
             <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
@@ -1441,11 +1573,14 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice }) {
             </span>
           )}
         </div>
-        {single && single0 && canInvoice(single0) && <InvButton d={d} line={single0} onCreateInvoice={onCreateInvoice} />}
+        {!isPo && single && single0 && canInvoice(single0) && <InvButton d={d} line={single0} onCreateInvoice={onCreateInvoice} />}
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(d.outstanding)}</div>
           {showCommitted && <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>}
         </div>
+        {isPo && onMarkPoReceived && (
+          <PoActionsMenu d={d} invoiceableLine={invoiceableLine} onCreateInvoice={onCreateInvoice} onMarkPoReceived={onMarkPoReceived} onOpenDeal={onOpenDeal} />
+        )}
       </div>
       {subtitle && (
         <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1466,7 +1601,7 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice }) {
                 )}
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                {canInvoice(l) && <InvButton d={d} line={l} onCreateInvoice={onCreateInvoice} />}
+                {!isPo && canInvoice(l) && <InvButton d={d} line={l} onCreateInvoice={onCreateInvoice} />}
                 <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{formatGBP(l.amount)}</span>
               </span>
             </div>

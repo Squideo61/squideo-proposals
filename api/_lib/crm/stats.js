@@ -7,6 +7,7 @@ import { outstandingExtrasByDeal, ensureDealExtrasTable } from './extras.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
 import { archiveRecord } from './recycleBin.js';
 import { sendNotification } from '../notifications.js';
+import { ensureDealPo } from './deals.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
 // five paid-money sources as companies.js (allCompanyBalances /
@@ -968,8 +969,10 @@ async function pendingPaymentsReport() {
   const extrasByDeal = await outstandingExtrasByDeal();
 
   const dealIds = [...new Set([...committed.keys(), ...extrasByDeal.keys()])];
+  await ensureDealPo();
   const infoRows = await sql`
-    SELECT d.id, d.title, d.stage, d.company_id, c.name AS company_name
+    SELECT d.id, d.title, d.stage, d.company_id, c.name AS company_name,
+           d.po_number, d.po_received_at
       FROM deals d LEFT JOIN companies c ON c.id = d.company_id
      WHERE d.id = ANY(${dealIds})
   `;
@@ -1038,6 +1041,10 @@ async function pendingPaymentsReport() {
       paid: net(paidInc),
       outstanding: round2(outstandingNet + extrasNet),
       lines,
+      // PO tracking — only meaningful on PO-route deals; the UI shows a
+      // "Pending PO" pill until poReceivedAt is set, then "PO <number>".
+      poNumber: isPo ? (inf.po_number || null) : null,
+      poReceivedAt: isPo ? (inf.po_received_at || null) : null,
     };
     (isPo ? po : normal).push(item);
   }

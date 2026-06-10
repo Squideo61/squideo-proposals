@@ -28,6 +28,34 @@ export function ensureDealFileDriveColumns() {
   return dealFileDriveEnsured;
 }
 
+// Self-heal for db/migrations/20260610_deal_purchase_orders.sql — Purchase-Order
+// tracking on PO-route deals: a received PO number/date on the deal, plus a
+// dedicated Blob-backed file table for uploaded PO documents. Kept separate from
+// deal_files because the Drive mirror (reconcileDealDriveFiles) deletes
+// deal_files rows not present in Drive, which would wipe Blob-only PO docs.
+let dealPoEnsured = null;
+export function ensureDealPo() {
+  if (dealPoEnsured) return dealPoEnsured;
+  dealPoEnsured = (async () => {
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS po_number TEXT`;
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS po_received_at TIMESTAMPTZ`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS deal_po_files (
+        id            TEXT        PRIMARY KEY,
+        deal_id       TEXT        NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+        filename      TEXT        NOT NULL,
+        mime_type     TEXT,
+        size_bytes    BIGINT,
+        blob_url      TEXT,
+        blob_pathname TEXT,
+        uploaded_by   TEXT,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`CREATE INDEX IF NOT EXISTS deal_po_files_deal_idx ON deal_po_files (deal_id)`;
+  })().catch((err) => { dealPoEnsured = null; throw err; });
+  return dealPoEnsured;
+}
+
 // Turn a Drive API error into an actionable message for the user.
 export function driveErrorHint(err) {
   const msg = err?.message || '';
@@ -272,6 +300,79 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       actorEmail: r.actor_email || null,
       occurredAt: r.occurred_at,
     })));
+  }
+
+  // /deals/:id/po — record (POST) or clear (DELETE) the received purchase order
+  // for a PO-route deal. Marking received requires a non-empty PO number; that
+  // number becomes the reference on the deal's Xero invoice.
+  if (action === 'po' && !subaction) {
+    await ensureDealPo();
+    if (req.method === 'POST') {
+      const poNumber = trimOrNull((req.body || {}).poNumber);
+      if (!poNumber) return res.status(400).json({ error: 'PO number is required' });
+      await sql`UPDATE deals SET po_number = ${poNumber}, po_received_at = NOW(), updated_at = NOW() WHERE id = ${id}`;
+      await sql`
+        INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+        VALUES (${id}, 'po_received', ${JSON.stringify({ poNumber })}, ${user.email || null})`;
+      const [d] = await sql`SELECT po_number, po_received_at FROM deals WHERE id = ${id}`;
+      return res.status(200).json({ ok: true, poNumber: d?.po_number || null, poReceivedAt: d?.po_received_at || null });
+    }
+    if (req.method === 'DELETE') {
+      await sql`UPDATE deals SET po_number = NULL, po_received_at = NULL, updated_at = NOW() WHERE id = ${id}`;
+      await sql`
+        INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+        VALUES (${id}, 'po_cleared', ${JSON.stringify({})}, ${user.email || null})`;
+      return res.status(200).json({ ok: true, poNumber: null, poReceivedAt: null });
+    }
+    return res.status(405).end();
+  }
+
+  // /deals/:id/po-files — upload a PO document (POST, raw binary like the Blob
+  // file upload), or download (GET /:fileId) / delete (DELETE /:fileId) one.
+  // Blob-only by design (see ensureDealPo).
+  if (action === 'po-files' && !subaction && req.method === 'POST') {
+    if (!process.env.BLOB_READ_WRITE_TOKEN) return res.status(503).json({ error: 'File storage not configured' });
+    await ensureDealPo();
+    const filename = decodeURIComponent(req.headers['x-filename'] || 'purchase-order');
+    const mimeType = req.headers['content-type'] || 'application/octet-stream';
+    let fileBuffer = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : null;
+    if (!fileBuffer) {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      fileBuffer = Buffer.concat(chunks);
+    }
+    if (!fileBuffer || fileBuffer.length === 0) return res.status(400).json({ error: 'No file data received' });
+    if (fileBuffer.length > 20 * 1024 * 1024) return res.status(413).json({ error: 'File too large (max 20 MB)' });
+    const fileId = crypto.randomUUID();
+    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blob = await put(`deal-po-files/${id}/${fileId}/${safeName}`, fileBuffer, { access: 'private', contentType: mimeType });
+    await sql`
+      INSERT INTO deal_po_files (id, deal_id, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by)
+      VALUES (${fileId}, ${id}, ${filename}, ${mimeType}, ${fileBuffer.length}, ${blob.url}, ${blob.pathname}, ${user.email})`;
+    return res.status(201).json({
+      id: fileId, filename, mimeType, sizeBytes: fileBuffer.length,
+      uploadedBy: user.email, createdAt: new Date().toISOString(),
+    });
+  }
+
+  if (action === 'po-files' && subaction && req.method === 'GET') {
+    await ensureDealPo();
+    const [f] = await sql`SELECT blob_url, filename FROM deal_po_files WHERE id = ${subaction} AND deal_id = ${id}`;
+    if (!f) return res.status(404).json({ error: 'File not found' });
+    const downloadUrl = await getDownloadUrl(f.blob_url);
+    return res.status(200).json({ downloadUrl, filename: f.filename });
+  }
+
+  if (action === 'po-files' && subaction && req.method === 'DELETE') {
+    await ensureDealPo();
+    const [f] = await sql`SELECT blob_url, uploaded_by FROM deal_po_files WHERE id = ${subaction} AND deal_id = ${id}`;
+    if (!f) return res.status(404).json({ error: 'File not found' });
+    if (f.uploaded_by !== user.email && !hasPermission(await getRole(user.role), 'deals.manage_all')) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (f.blob_url) { try { await del(f.blob_url); } catch (err) { console.error('[deal po-files] blob delete failed', err.message); } }
+    await sql`DELETE FROM deal_po_files WHERE id = ${subaction} AND deal_id = ${id}`;
+    return res.status(200).json({ ok: true });
   }
 
   // Used by the in-Gmail Boxes RouteView — every thread attached to this deal.
@@ -800,7 +901,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     // a manual migration — self-heal so workspaces that skipped it still load
     // deals without 'relation does not exist'. Likewise deal_contacts and the
     // deal-file Drive columns (so the files query can select drive_file_id).
-    await Promise.all([ensureMessageDealsTable(), ensureDealContactsTable(), ensureDealFileDriveColumns()]);
+    await Promise.all([ensureMessageDealsTable(), ensureDealContactsTable(), ensureDealFileDriveColumns(), ensureDealPo()]);
 
     // Mirror the deal's Drive folder into deal_files (handles files deleted or
     // added directly in Drive) before we read the list below. Best-effort.
@@ -811,7 +912,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         console.warn('[deal files] drive reconcile skipped', err.message);
       }
     }
-    const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows] = await Promise.all([
+    const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows, poFileRows] = await Promise.all([
       sql`
         SELECT p.id, p.data, p.number_year, p.number_seq, p.created_at,
                s.data AS signature_data
@@ -883,6 +984,8 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
         FROM contacts WHERE id = ${deal.primaryContactId}
       ` : Promise.resolve([]),
+      sql`SELECT id, filename, mime_type, size_bytes, uploaded_by, created_at
+            FROM deal_po_files WHERE deal_id = ${id} ORDER BY created_at DESC`,
     ]);
 
     // Load reactions for all comments in one query and merge into comments.
@@ -1010,6 +1113,18 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         addedBy: r.added_by || null,
       })),
       primaryContact: primaryContactRows[0] ? serialiseContact(primaryContactRows[0]) : null,
+      // Purchase-order tracking. isPo = any signed proposal took the PO route.
+      // number/receivedAt come from the deal; files are the uploaded PO docs.
+      purchaseOrder: {
+        isPo: proposals.some(p => p.signature_data && p.signature_data.paymentOption === 'po'),
+        number: rows[0].po_number || null,
+        receivedAt: rows[0].po_received_at || null,
+        files: poFileRows.map(f => ({
+          id: f.id, filename: f.filename, mimeType: f.mime_type || null,
+          sizeBytes: f.size_bytes != null ? Number(f.size_bytes) : null,
+          uploadedBy: f.uploaded_by || null, createdAt: f.created_at,
+        })),
+      },
     });
   }
 

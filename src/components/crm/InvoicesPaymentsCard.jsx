@@ -30,7 +30,7 @@ const STATUS_COLOR = {
   void: '#DC2626',
 };
 
-export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals, vatRate, onChanged, openCreateSignal, preselectDealId }) {
+export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals, vatRate, poNumber, onChanged, openCreateSignal, preselectDealId }) {
   const { showMsg } = useStore();
   // Figures are stored inc-VAT; show them ex-VAT with "+VAT" to match invoices.
   const vr = Number(vatRate) || 0;
@@ -255,6 +255,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
           companyId={companyId}
           deals={deals}
           initialDealId={createDealId || preselectDealId}
+          initialReference={poNumber || undefined}
           mode={createMode}
           contactName={contactName}
           onClose={() => setCreatingXero(false)}

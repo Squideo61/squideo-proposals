@@ -11,10 +11,12 @@ function makeLineItem() {
   return { _key: ++_lineItemKey, description: '', quantity: 1, unitAmount: '', vatRate: 20 };
 }
 
-export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId, mode, proposalId, contactName: contactNameProp, onClose, onCreated }) {
+export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId, mode, proposalId, contactName: contactNameProp, initialReference, onClose, onCreated }) {
   const { showMsg } = useStore();
   const [contactName, setContactName] = useState(contactNameProp || '');
   const [invoiceNumber, setInvoiceNumber] = useState('');
+  // Xero invoice Reference — prefilled with the deal's PO number on PO-route deals.
+  const [reference, setReference] = useState(initialReference || '');
   const [issuedAt, setIssuedAt] = useState(new Date().toISOString().slice(0, 10));
   const [dueAt, setDueAt] = useState(new Date().toISOString().slice(0, 10));
   const [lineItems, setLineItems] = useState([makeLineItem()]);
@@ -121,6 +123,7 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
         proposalId: scopeProposalId,
         contactName: contactName.trim(),
         invoiceNumber: invoiceNumber.trim() || undefined,
+        reference: reference.trim() || undefined,
         issuedAt,
         dueAt: dueAt || undefined,
         lineItems: validLines.map(li => ({
@@ -174,6 +177,18 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
             />
           </Field>
         </div>
+
+        {/* Reference (prints on the Xero invoice). Prefilled with the PO number
+            for PO-route deals so it lands as the customer's PO reference. */}
+        <Field label="Reference">
+          <input
+            type="text"
+            value={reference}
+            onChange={e => setReference(e.target.value)}
+            className="input"
+            placeholder="e.g. the customer's PO number"
+          />
+        </Field>
 
         {/* Deal association (company page only) */}
         {companyMode && (
