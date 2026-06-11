@@ -721,6 +721,12 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
 function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onDragStart, onDragOver, onDrop, onDragEnd }) {
   const fileRef = useRef(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [desc, setDesc] = useState(e.description);
+  const [amt, setAmt] = useState(String(e.amount));
+  const [date, setDate] = useState(e.spentOn || todayKey());
+  const [vat, setVat] = useState(!!e.vattable);
+  const [rec, setRec] = useState(!!e.recurring);
 
   const onPick = async (file) => {
     if (!file) return;
@@ -737,6 +743,41 @@ function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onD
   const remove = () => actions.deleteDirectorExpense(e.id).then(reload);
   // Stop a recurring expense from this month onward — keep prior months' history.
   const stopRecurring = () => actions.updateDirectorExpense(e.id, { effectiveTo: prevMonthKey(month) }).then(reload);
+
+  const startEdit = () => { setDesc(e.description); setAmt(String(e.amount)); setDate(e.spentOn || todayKey()); setVat(!!e.vattable); setRec(!!e.recurring); setEditing(true); };
+  const saveEdit = () => {
+    if (!desc.trim()) return;
+    actions.updateDirectorExpense(e.id, { description: desc.trim(), amount: parseFloat(amt) || 0, spentOn: date, vattable: vat, recurring: rec })
+      .then(() => { setEditing(false); reload(); });
+  };
+
+  if (editing) {
+    return (
+      <div style={{ borderTop: '1px solid ' + BRAND.border, padding: '6px 0' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input autoFocus value={desc} onChange={(ev) => setDesc(ev.target.value)}
+            onKeyDown={(ev) => { if (ev.key === 'Enter') saveEdit(); if (ev.key === 'Escape') setEditing(false); }}
+            style={{ flex: 1, minWidth: 130, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+          <span style={{ color: BRAND.muted }}>£</span>
+          <input type="number" step="0.01" value={amt} onChange={(ev) => setAmt(ev.target.value)}
+            onKeyDown={(ev) => { if (ev.key === 'Enter') saveEdit(); }}
+            style={{ width: 90, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+          <input type="date" value={date} onChange={(ev) => setDate(ev.target.value)}
+            style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
+            <input type="checkbox" checked={vat} onChange={(ev) => setVat(ev.target.checked)} /> Vattable
+          </label>
+          <label title="Repeats automatically every month from this one onward" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
+            <input type="checkbox" checked={rec} onChange={(ev) => setRec(ev.target.checked)} /> Recurring
+          </label>
+          <button className="btn-ghost" style={{ padding: '4px 8px', marginLeft: 'auto' }} onClick={() => setEditing(false)}><X size={13} /> Cancel</button>
+          <button className="btn" style={{ padding: '5px 10px' }} onClick={saveEdit} disabled={!desc.trim()}><Check size={13} /> Save</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -772,6 +813,7 @@ function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onD
           <Paperclip size={13} />
         </button>
       )}
+      <button className="btn-icon" title="Edit expense" onClick={startEdit} style={{ padding: 3 }}><Pencil size={12} /></button>
       {e.recurring && (
         <button className="btn-icon" title="Stop this recurring expense from this month onward (keeps earlier months)" onClick={stopRecurring} style={{ padding: 3, color: '#B45309' }}><Ban size={12} /></button>
       )}
