@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Square, Trash2, User, Video, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, Square, Trash2, User, Video, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -1331,12 +1331,29 @@ export function EmailViewerModal({ gmailMessageId, dealId, onClose }) {
   }, [data?.bodyHtml]);
 
   const inbound = data?.direction === 'inbound';
-  const gmailLink = data?.gmailThreadId
-    ? `https://mail.google.com/mail/u/0/#all/${data.gmailThreadId}`
-    : null;
+
+  // Reply opens the shared composer (mounted at App level) prefilled with the
+  // recipient, "Re:" subject, the original quoted underneath, and the gmail
+  // thread id so the reply stays in the same conversation. Then close the viewer.
+  const reply = () => {
+    if (!data) return;
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const to = inbound ? (data.fromEmail || '') : (data.toEmails?.[0] || data.fromEmail || '');
+    const subject = /^re:/i.test(data.subject || '') ? data.subject : 'Re: ' + (data.subject || '(no subject)');
+    const dateLabel = data.sentAt ? new Date(data.sentAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    const quotedInner = sanitized || (data.bodyText ? esc(data.bodyText).replace(/\n/g, '<br>') : '');
+    const body = quotedInner
+      ? `<br><br><div style="border-left:2px solid #ccc;padding-left:12px;color:#555;">On ${esc(dateLabel)}, ${esc(data.fromEmail || '')} wrote:<br>${quotedInner}</div>`
+      : '';
+    actions.openComposer({
+      dealId: dealId || null,
+      initialDraft: { to, cc: '', subject, body, gmailThreadId: data.gmailThreadId || null },
+    });
+    onClose?.();
+  };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} maxWidth={900}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
           <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, wordBreak: 'break-word', flex: 1 }}>
@@ -1381,7 +1398,7 @@ export function EmailViewerModal({ gmailMessageId, dealId, onClose }) {
               )
               : data.bodyText
                 ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{data.bodyText}</pre>
-                : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body stored — open in Gmail to read)</div>
+                : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body stored)</div>
           )}
         </div>
         {data?.attachments?.length > 0 && (
@@ -1394,11 +1411,8 @@ export function EmailViewerModal({ gmailMessageId, dealId, onClose }) {
             ))}
           </div>
         )}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid ' + BRAND.border, paddingTop: 12 }}>
-          {gmailLink
-            ? <a href={gmailLink} target="_blank" rel="noopener noreferrer" className="btn-ghost" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}><ExternalLink size={12} /> Open in Gmail</a>
-            : <span />}
-          <button onClick={onClose} className="btn">Close</button>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', borderTop: '1px solid ' + BRAND.border, paddingTop: 12 }}>
+          <button onClick={reply} className="btn" disabled={!data}><Reply size={14} /> Reply</button>
         </div>
       </div>
     </Modal>

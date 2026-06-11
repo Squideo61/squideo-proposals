@@ -120,6 +120,14 @@ body {
   animation: partner-confirm-in 300ms ease both;
 }
 
+/* ---------- Email body (deal viewer modal) ---------- */
+/* Keep wide senders (big images / tables) inside the modal so it doesn't scroll
+   sideways. The Emails-view viewer renders inside its own iframe, so this only
+   needs to cover the direct-render deal modal. */
+.email-body { overflow-wrap: anywhere; }
+.email-body img { max-width: 100%; height: auto; }
+.email-body table { max-width: 100%; }
+
 /* ---------- Proposal cards ---------- */
 .proposal-card {
   transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
