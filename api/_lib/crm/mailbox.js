@@ -195,7 +195,12 @@ async function listFolder(req, res, accessToken, user) {
   });
 }
 
-// Gmail-faithful Sent list: order by your most recent send, one row per thread.
+// Gmail-faithful Sent list: each row is one of YOUR sent messages, newest send
+// first, exactly like Gmail's Sent. We list sent messages (messages.list is
+// reverse-chronological by send time) and read each message directly — NOT its
+// whole thread. Fetching the thread was unreliable: reply-heavy conversations
+// (your recent, replied-to sends) failed the per-thread metadata fetch and got
+// dropped, which is why the list skipped straight to old reply-less cold mail.
 async function listSent(req, res, accessToken, user, { pageToken, unreadOnly }) {
   if (req.method !== 'GET') return res.status(405).end();
   const params = new URLSearchParams();
@@ -204,31 +209,36 @@ async function listSent(req, res, accessToken, user, { pageToken, unreadOnly }) 
   if (unreadOnly) params.append('labelIds', 'UNREAD');
   if (pageToken) params.set('pageToken', pageToken);
 
-  const listJson = await (await gmailFetch(accessToken, '/messages?' + params.toString())).json();
-  // messages.list returns your sends newest-first. Collapse to unique threads,
-  // preserving that order, so a chatty thread shows once at its newest send.
-  const orderedThreadIds = [];
-  const seen = new Set();
-  for (const m of (listJson.messages || [])) {
-    if (m.threadId && !seen.has(m.threadId)) { seen.add(m.threadId); orderedThreadIds.push(m.threadId); }
-  }
+  const listJson = await (await withRetry(() => gmailFetch(accessToken, '/messages?' + params.toString()))).json();
+  const msgIds = (listJson.messages || []).map(m => m.id);
 
-  // Per-thread metadata, tolerant of individual failures (Promise.allSettled
-  // preserves input order, so the rows stay newest-send-first).
-  const settled = await Promise.allSettled(orderedThreadIds.map(async (tid) => {
-    const t = await (await gmailFetch(
+  // Per-message metadata, with retry on transient errors. allSettled preserves
+  // input order, so rows stay newest-send-first.
+  const settled = await Promise.allSettled(msgIds.map(async (mid) => {
+    const m = await (await withRetry(() => gmailFetch(
       accessToken,
-      `/threads/${encodeURIComponent(tid)}?format=metadata`
+      `/messages/${encodeURIComponent(mid)}?format=metadata`
         + '&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date'
         + '&metadataHeaders=Content-Type',
-    )).json();
-    return summariseSentThread(t);
+    ))).json();
+    return summariseSentMessage(m);
   }));
   const failed = settled.filter(s => s.status === 'rejected');
   if (failed.length) {
-    console.warn(`[mailbox] ${failed.length}/${orderedThreadIds.length} sent-thread fetches failed:`, failed[0].reason?.message);
+    console.warn(`[mailbox] ${failed.length}/${msgIds.length} sent-message fetches failed:`, failed[0].reason?.message);
   }
-  const rows = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
+
+  // One row per conversation (the newest send wins, since the list is
+  // newest-first), so a chatty thread doesn't repeat down the page.
+  const seenThreads = new Set();
+  const rows = [];
+  for (const s of settled) {
+    if (s.status !== 'fulfilled') continue;
+    const row = s.value;
+    if (seenThreads.has(row.id)) continue;
+    seenThreads.add(row.id);
+    rows.push(row);
+  }
 
   if (user?.email && rows.length) {
     const tracking = await trackingForThreads(user.email, rows.map(r => r.id));
@@ -238,37 +248,28 @@ async function listSent(req, res, accessToken, user, { pageToken, unreadOnly }) 
   return res.status(200).json({ rows, nextPageToken: listJson.nextPageToken || null });
 }
 
-// Row for the Sent view: subject/date/recipients come from YOUR most recent
-// message in the thread (the last one carrying the SENT label), while count,
-// attachments and flags reflect the whole conversation.
-function summariseSentThread(t) {
-  const msgs = t.messages || [];
-  let sent = null;
-  for (const m of msgs) if ((m.labelIds || []).includes('SENT')) sent = m; // last send wins
-  const rep = sent || msgs[msgs.length - 1] || {};
-  const repH = parseHeaders(rep.payload?.headers || []);
-  const labelIds = new Set();
-  let hasAttachments = false;
-  for (const m of msgs) {
-    for (const l of (m.labelIds || [])) labelIds.add(l);
-    if (!hasAttachments && messageHasAttachment(m)) hasAttachments = true;
-  }
+// Row for the Sent view, built from a single sent message's metadata. id is the
+// thread id so opening/star/trash still act on the whole conversation.
+function summariseSentMessage(m) {
+  const h = parseHeaders(m.payload?.headers || []);
+  const labelIds = m.labelIds || [];
   return {
-    id: t.id,
-    threadId: t.id,
-    subject: repH.subject || null,
-    from: repH.from || null,
-    fromEmail: extractEmail(repH.from),
-    to: parseAddressList(repH.to),
-    participants: recipientNames(repH.to, repH.cc),
+    id: m.threadId,
+    threadId: m.threadId,
+    messageId: m.id,
+    subject: h.subject || null,
+    from: h.from || null,
+    fromEmail: extractEmail(h.from),
+    to: parseAddressList(h.to),
+    participants: recipientNames(h.to, h.cc),
     outbound: true,
-    snippet: decodeEntities(rep.snippet || t.snippet || ''),
-    date: headerDate(repH.date, rep.internalDate),
-    messageCount: msgs.length,
-    hasAttachments,
-    unread: msgs.some(m => (m.labelIds || []).includes('UNREAD')),
-    starred: msgs.some(m => (m.labelIds || []).includes('STARRED')),
-    labelIds: Array.from(labelIds),
+    snippet: decodeEntities(m.snippet || ''),
+    date: headerDate(h.date, m.internalDate),
+    messageCount: 1,
+    hasAttachments: messageHasAttachment(m),
+    unread: labelIds.includes('UNREAD'),
+    starred: labelIds.includes('STARRED'),
+    labelIds,
   };
 }
 
