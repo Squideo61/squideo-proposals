@@ -16,7 +16,9 @@ import { BRAND } from '../../theme.js';
 export function TaskFormModal({ task, defaults, onClose, onSaved, submitLabel }) {
   const { state, actions } = useStore();
   const editing = !!task;
-  const [title, setTitle] = useState(task?.title || defaults?.title || '');
+  // New tasks pre-fill "Follow up" (the common case) — overwrite it if the task
+  // is something else. Editing keeps the task's own title; explicit defaults win.
+  const [title, setTitle] = useState(task?.title || defaults?.title || (editing ? '' : 'Follow up'));
   const [notes, setNotes] = useState(task?.notes || '');
   const [dueAt, setDueAt] = useState(
     task?.dueAt ? isoToLocalInput(task.dueAt)
