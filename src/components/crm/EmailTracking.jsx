@@ -1,7 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Eye, MousePointerClick } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { formatRelativeTime } from '../../utils.js';
+
+const CARD_WIDTH = 240;
 
 // Streak-style open/click tracking UI, shared by the Gmail inbox (EmailsView)
 // and the deal/project Emails section (DealDetailView). Driven by the tracking
@@ -10,16 +13,45 @@ import { formatRelativeTime } from '../../utils.js';
 
 // Compact indicator + hover card. Green eye once opened; faint hollow eye while
 // sent-but-unopened. Renders nothing for untracked / inbound emails.
+//
+// The hover card is rendered in a portal with fixed positioning (anchored to the
+// eye) so it floats above the page and is never clipped by an `overflow:hidden`
+// ancestor (e.g. the deal Emails row). A short close delay bridges the gap so
+// you can move the mouse onto the card to read it.
 export function TrackingEye({ tracking }) {
-  const [hover, setHover] = useState(false);
+  const [pos, setPos] = useState(null);
+  const anchorRef = useRef(null);
+  const closeTimer = useRef(null);
+
   if (!tracking?.tracked) return null;
   const opened = tracking.opens > 0;
   const colour = opened ? '#16A34A' : BRAND.muted;
+
+  const open = () => {
+    clearTimeout(closeTimer.current);
+    const el = anchorRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    // Right-align the card to the eye, then clamp inside the viewport.
+    const left = Math.min(Math.max(8, r.right - CARD_WIDTH), window.innerWidth - CARD_WIDTH - 8);
+    // Prefer below the eye; flip above if there isn't room.
+    const estHeight = 150;
+    const top = (r.bottom + 6 + estHeight > window.innerHeight)
+      ? Math.max(8, r.top - 6 - estHeight)
+      : r.bottom + 6;
+    setPos({ left, top });
+  };
+  const scheduleClose = () => {
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setPos(null), 120);
+  };
+
   return (
     <span
+      ref={anchorRef}
       style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onMouseEnter={open}
+      onMouseLeave={scheduleClose}
     >
       <Eye size={14} color={colour} fill={opened ? colour + '22' : 'none'} />
       {opened && (
@@ -27,20 +59,32 @@ export function TrackingEye({ tracking }) {
           {formatRelativeTime(tracking.lastOpenedAt).replace(' ago', '')}
         </span>
       )}
-      {hover && <TrackingCard tracking={tracking} />}
+      {pos && createPortal(
+        <TrackingCard
+          tracking={tracking}
+          style={{ position: 'fixed', left: pos.left, top: pos.top, right: 'auto', marginTop: 0, zIndex: 3000 }}
+          onMouseEnter={() => clearTimeout(closeTimer.current)}
+          onMouseLeave={scheduleClose}
+        />,
+        document.body,
+      )}
     </span>
   );
 }
 
-export function TrackingCard({ tracking }) {
+export function TrackingCard({ tracking, style, onMouseEnter, onMouseLeave }) {
   const opened = tracking.opens > 0;
   return (
-    <div style={{
-      position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 50,
-      width: 240, padding: '10px 12px', background: 'white', textAlign: 'left',
-      border: '1px solid ' + BRAND.border, borderRadius: 8,
-      boxShadow: '0 6px 24px rgba(0,0,0,0.14)', cursor: 'default', whiteSpace: 'normal',
-    }}>
+    <div
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      style={{
+        position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 50,
+        width: CARD_WIDTH, padding: '10px 12px', background: 'white', textAlign: 'left',
+        border: '1px solid ' + BRAND.border, borderRadius: 8,
+        boxShadow: '0 6px 24px rgba(0,0,0,0.14)', cursor: 'default', whiteSpace: 'normal',
+        ...style,
+      }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 12.5, color: opened ? '#16A34A' : BRAND.ink }}>
         <Eye size={14} />
         {opened ? `${tracking.opens} view${tracking.opens === 1 ? '' : 's'}` : 'Sent · not opened yet'}
