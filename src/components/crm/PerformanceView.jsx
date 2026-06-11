@@ -674,7 +674,9 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
 
       {/* Balancing amount — granted EXTRA spend, separate from the £250. Its own
           tally so it's clear how much of the grant is left when someone overspends
-          (overspending the £250 draws it down, never below zero). */}
+          (overspending the £250 draws it down, never below zero). Collapsed behind a
+          "+ Balance" button until an amount is set (or the user is mid-edit). */}
+      {(grant > 0 || editingBal) ? (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 10, padding: '8px 10px', background: BRAND.paper, border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${grantUsedUp ? '#B45309' : DIRECTOR_ACCENT}`, borderRadius: 8 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Balancing amount</div>
@@ -707,6 +709,9 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
           </div>
         )}
       </div>
+      ) : (
+        <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12, marginTop: 10 }} onClick={() => { setBal(''); setEditingBal(true); }}><Plus size={13} /> Balance</button>
+      )}
 
       {/* Expenses. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 4 }}>
