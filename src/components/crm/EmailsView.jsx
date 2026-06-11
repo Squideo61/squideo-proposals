@@ -800,6 +800,8 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
   const chips = state.threadDeals?.[row.id] || [];
   const who = (row.participants && row.participants.length ? row.participants.join(', ') : null)
     || displayName(row.from) || row.fromEmail || '(unknown)';
+  // Sent rows read like Gmail's Sent: "To: <recipient>" rather than the sender.
+  const whoLabel = folder === 'sent' ? 'To: ' + who : who;
   return (
     <div
       onMouseEnter={() => setHover(true)}
@@ -839,7 +841,7 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
         style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 10, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0 }}
       >
         <span style={{ width: 170, flexShrink: 0, display: 'flex', alignItems: 'baseline', gap: 5, fontSize: 14, fontWeight: row.unread ? 700 : 400, color: BRAND.ink, overflow: 'hidden' }}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{whoLabel}</span>
           <CountPill n={row.messageCount} />
         </span>
         <span style={{ flex: 1, minWidth: 0, fontSize: 14, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

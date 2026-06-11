@@ -130,6 +130,16 @@ async function listFolder(req, res, accessToken, user) {
   const q = qp(req, 'q');
   const unreadOnly = qp(req, 'unread') === '1';
 
+  // Sent is a MESSAGE-level view, like Gmail's own Sent: each row is dated and
+  // ordered by when YOU sent it (not by the thread's latest message, which is
+  // often a later reply). Listing messages.list?labelIds=SENT gives your sends
+  // newest-first directly; we then dedupe to one row per conversation (keeping
+  // the newest send) so the list reads exactly like Gmail's. Searches keep the
+  // thread-level whole-mailbox path below.
+  if (folder === 'sent' && !q) {
+    return await listSent(req, res, accessToken, user, { pageToken, unreadOnly });
+  }
+
   const params = new URLSearchParams();
   params.set('maxResults', String(PAGE_SIZE));
   // A search query behaves like Gmail's own search box: it spans the whole
@@ -183,6 +193,100 @@ async function listFolder(req, res, accessToken, user) {
     rows,
     nextPageToken: listJson.nextPageToken || null,
   });
+}
+
+// Gmail-faithful Sent list: order by your most recent send, one row per thread.
+async function listSent(req, res, accessToken, user, { pageToken, unreadOnly }) {
+  if (req.method !== 'GET') return res.status(405).end();
+  const params = new URLSearchParams();
+  params.set('maxResults', String(PAGE_SIZE));
+  params.append('labelIds', 'SENT');
+  if (unreadOnly) params.append('labelIds', 'UNREAD');
+  if (pageToken) params.set('pageToken', pageToken);
+
+  const listJson = await (await gmailFetch(accessToken, '/messages?' + params.toString())).json();
+  // messages.list returns your sends newest-first. Collapse to unique threads,
+  // preserving that order, so a chatty thread shows once at its newest send.
+  const orderedThreadIds = [];
+  const seen = new Set();
+  for (const m of (listJson.messages || [])) {
+    if (m.threadId && !seen.has(m.threadId)) { seen.add(m.threadId); orderedThreadIds.push(m.threadId); }
+  }
+
+  // Per-thread metadata, tolerant of individual failures (Promise.allSettled
+  // preserves input order, so the rows stay newest-send-first).
+  const settled = await Promise.allSettled(orderedThreadIds.map(async (tid) => {
+    const t = await (await gmailFetch(
+      accessToken,
+      `/threads/${encodeURIComponent(tid)}?format=metadata`
+        + '&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date'
+        + '&metadataHeaders=Content-Type',
+    )).json();
+    return summariseSentThread(t);
+  }));
+  const failed = settled.filter(s => s.status === 'rejected');
+  if (failed.length) {
+    console.warn(`[mailbox] ${failed.length}/${orderedThreadIds.length} sent-thread fetches failed:`, failed[0].reason?.message);
+  }
+  const rows = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
+
+  if (user?.email && rows.length) {
+    const tracking = await trackingForThreads(user.email, rows.map(r => r.id));
+    for (const r of rows) if (tracking[r.id]) r.tracking = tracking[r.id];
+  }
+
+  return res.status(200).json({ rows, nextPageToken: listJson.nextPageToken || null });
+}
+
+// Row for the Sent view: subject/date/recipients come from YOUR most recent
+// message in the thread (the last one carrying the SENT label), while count,
+// attachments and flags reflect the whole conversation.
+function summariseSentThread(t) {
+  const msgs = t.messages || [];
+  let sent = null;
+  for (const m of msgs) if ((m.labelIds || []).includes('SENT')) sent = m; // last send wins
+  const rep = sent || msgs[msgs.length - 1] || {};
+  const repH = parseHeaders(rep.payload?.headers || []);
+  const labelIds = new Set();
+  let hasAttachments = false;
+  for (const m of msgs) {
+    for (const l of (m.labelIds || [])) labelIds.add(l);
+    if (!hasAttachments && messageHasAttachment(m)) hasAttachments = true;
+  }
+  return {
+    id: t.id,
+    threadId: t.id,
+    subject: repH.subject || null,
+    from: repH.from || null,
+    fromEmail: extractEmail(repH.from),
+    to: parseAddressList(repH.to),
+    participants: recipientNames(repH.to, repH.cc),
+    outbound: true,
+    snippet: decodeEntities(rep.snippet || t.snippet || ''),
+    date: headerDate(repH.date, rep.internalDate),
+    messageCount: msgs.length,
+    hasAttachments,
+    unread: msgs.some(m => (m.labelIds || []).includes('UNREAD')),
+    starred: msgs.some(m => (m.labelIds || []).includes('STARRED')),
+    labelIds: Array.from(labelIds),
+  };
+}
+
+// Recipient display names for a Sent row's "To:" column — names where present,
+// otherwise the address local-part (so "christian@volume.tech" reads
+// "christian", matching Gmail). De-duplicated, To then Cc.
+function recipientNames(toHeader, ccHeader) {
+  const names = [];
+  for (const seg of [toHeader, ccHeader]) {
+    if (!seg) continue;
+    for (const part of String(seg).split(',')) {
+      const raw = displayNameOrEmail(part.trim());
+      if (!raw) continue;
+      const name = (raw.includes('@') && !raw.includes(' ')) ? raw.split('@')[0] : raw;
+      if (name && !names.includes(name)) names.push(name);
+    }
+  }
+  return names;
 }
 
 // Build a conversation-summary row from a metadata threads.get response.
