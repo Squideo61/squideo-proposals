@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Trash2, X, Plus, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Modal } from '../ui.jsx';
 import { Avatar } from '../Avatar.jsx';
@@ -246,21 +247,52 @@ function formatDTDisplay(value) {
 
 function DateTimePicker({ value, onChange, defaultHour = 8 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const [pos, setPos] = useState(null); // { left, top } for the portalled popover
+  const ref = useRef(null);     // the trigger (anchor)
+  const popRef = useRef(null);  // the floating calendar
   const parsed = parseLocalDT(value);
   const now = new Date();
   const [viewY, setViewY] = useState(parsed ? parsed.y : now.getFullYear());
   const [viewMo, setViewMo] = useState(parsed ? parsed.mo : now.getMonth());
   const pad = (n) => String(n).padStart(2, '0');
 
+  // Anchor the calendar to the field with fixed positioning so it floats above
+  // the (scroll-clipped, max-height) modal instead of being cut off inside it.
+  // Flip above when there isn't room below; clamp inside the viewport.
+  const POP_W = 268, POP_H = 380;
+  const measure = () => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - POP_W - 8));
+    let top = r.bottom + 4;
+    if (top + POP_H > window.innerHeight - 8) {
+      const above = r.top - 4 - POP_H;
+      top = above > 8 ? above : Math.max(8, window.innerHeight - POP_H - 8);
+    }
+    setPos({ left, top });
+  };
+
   useEffect(() => {
     if (!open) return undefined;
     if (parsed) { setViewY(parsed.y); setViewMo(parsed.mo); }
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    measure();
+    const onDown = (e) => {
+      if (ref.current?.contains(e.target) || popRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const reflow = () => measure();
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onEsc);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+    window.addEventListener('resize', reflow);
+    window.addEventListener('scroll', reflow, true); // capture: catch modal/ancestor scroll
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+      window.removeEventListener('resize', reflow);
+      window.removeEventListener('scroll', reflow, true);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -300,9 +332,10 @@ function DateTimePicker({ value, onChange, defaultHour = 8 }) {
         <Calendar size={15} color={BRAND.muted} />
         <span style={{ flex: 1, color: value ? BRAND.ink : BRAND.muted }}>{value ? formatDTDisplay(value) : 'No date set'}</span>
       </button>
-      {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 60, width: 268,
+      {open && pos && createPortal(
+        <div ref={popRef} style={{
+          position: 'fixed', top: pos.top, left: pos.left, zIndex: 4000, width: POP_W,
+          maxHeight: 'calc(100vh - 16px)', overflowY: 'auto',
           background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10,
           boxShadow: '0 10px 30px rgba(15,42,61,0.18)', padding: 10,
         }}>
@@ -349,7 +382,8 @@ function DateTimePicker({ value, onChange, defaultHour = 8 }) {
             </div>
             <button type="button" onClick={() => setOpen(false)} className="btn" style={{ fontSize: 12 }}>Done</button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
