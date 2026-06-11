@@ -85,6 +85,10 @@ function emptyStore() {
     // conversations keyed by thread id → { subject, messages }; mailboxLabels
     // holds unread/total counts for the sidebar badges.
     mailbox: {},
+    // Gmail (whole-word, whole-mailbox) search results, kept separate from the
+    // folder slices so searching never wipes the open folder's loaded rows.
+    // { q, rows, next, loading, error }.
+    mailboxSearch: {},
     threadCache: {},
     mailboxLabels: {},
     // Deal association per email thread (extension-style chips + right panel),
@@ -2237,6 +2241,33 @@ export function StoreProvider({ children }) {
         })
         .catch((err) => {
           setState(s => ({ ...s, mailbox: { ...s.mailbox, [folder]: { ...(s.mailbox?.[folder] || {}), loading: false, loaded: true, error: err?.message || 'Failed to load' } } }));
+        });
+    },
+    // Gmail server search (whole words, whole mailbox), stored apart from the
+    // folder slices so the open folder's rows survive. The UI also filters the
+    // loaded folder client-side for instant partial-word matches.
+    loadMailboxSearch(folder, { pageToken = null, q = '', unread = false } = {}) {
+      const append = pageToken != null;
+      setState(s => ({ ...s, mailboxSearch: { ...(s.mailboxSearch || {}), q, loading: true, error: null } }));
+      const params = new URLSearchParams({ label: folder });
+      if (pageToken) params.set('pageToken', pageToken);
+      if (q) params.set('q', q);
+      if (unread) params.set('unread', '1');
+      return api.get('/api/crm/gmail/folder?' + params.toString())
+        .then((data) => {
+          const incoming = Array.isArray(data?.rows) ? data.rows : [];
+          setState(s => {
+            // Ignore a stale response whose query no longer matches the box.
+            if ((s.mailboxSearch?.q ?? '') !== q) return s;
+            const prev = s.mailboxSearch || {};
+            const rows = append ? [...(prev.rows || []), ...incoming] : incoming;
+            return { ...s, mailboxSearch: { q, rows, next: data?.nextPageToken ?? null, loading: false, error: null } };
+          });
+          return data;
+        })
+        .catch((err) => {
+          setState(s => ((s.mailboxSearch?.q ?? '') !== q ? s
+            : { ...s, mailboxSearch: { ...(s.mailboxSearch || {}), loading: false, error: err?.message || 'Search failed' } }));
         });
     },
     // Full conversation for a live Gmail thread → { id, subject, messages[] }.

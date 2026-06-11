@@ -162,15 +162,17 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     }
   }, [active, connected]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Live search: search the mailbox as the user types (Gmail folders), debounced
-  // so we don't hit Gmail on every keystroke. Enter still triggers immediately.
+  // Live search: filter the loaded folder client-side instantly (so partial
+  // words match what's on screen), and — debounced, for 2+ chars — fire a Gmail
+  // server search (whole words, whole mailbox) into the separate mailboxSearch
+  // slice so the open folder's rows are never wiped. Enter triggers immediately.
   useEffect(() => {
     if (def.kind !== 'gmail' || !connected) return;
     const q = search.trim();
     if (q === appliedQuery) return;
     const t = setTimeout(() => {
       setAppliedQuery(q);
-      actions.loadMailboxFolder(active, { q, unread: unreadOnly });
+      if (q.length >= 2) actions.loadMailboxSearch(active, { q, unread: unreadOnly });
     }, 350);
     return () => clearTimeout(t);
   }, [search, active, connected, def.kind, appliedQuery, unreadOnly]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -193,17 +195,36 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     if (items.length) actions.resolveThreadDeals(items);
   }, [rawRowsForResolve, active]); // eslint-disable-line react-hooks/exhaustive-deps
   const rawRows = def.kind === 'triage' ? (state.triage || []) : (slice.rows || []);
+  const searchSlice = state.mailboxSearch || {};
+  const searchActive = def.kind === 'gmail' && search.trim().length > 0;
 
-  // deals/triage search filters in memory; Gmail folders search server-side.
+  // deals/triage search filters in memory. Gmail folders: while searching, show
+  // instant client-side substring matches from the loaded folder (so partial
+  // words work) merged with the Gmail server results (whole words, whole
+  // mailbox), de-duplicated by thread id.
   const rows = useMemo(() => {
-    if (def.kind === 'gmail') return rawRows;
     const q = search.trim().toLowerCase();
+    if (def.kind === 'gmail') {
+      if (!q) return rawRows;
+      const matchRow = (r) => [r.subject, r.snippet, r.from, r.fromEmail, ...(r.participants || [])]
+        .filter(Boolean).join(' ').toLowerCase().includes(q);
+      const clientMatches = rawRows.filter(matchRow);
+      const serverRows = (searchSlice.q === appliedQuery && appliedQuery) ? (searchSlice.rows || []) : [];
+      const seen = new Set();
+      const out = [];
+      for (const r of [...clientMatches, ...serverRows]) {
+        if (!r || seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r);
+      }
+      return out;
+    }
     if (!q) return rawRows;
     return rawRows.filter((r) => {
       const hay = [r.subject, r.snippet, r.lastSnippet, r.lastFrom, r.fromEmail, ...(r.toEmails || [])].join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [rawRows, search, def.kind]);
+  }, [rawRows, search, def.kind, searchSlice, appliedQuery]);
 
   // The search box also finds CRM deals (by deal title, company, contact), not
   // just emails — matched client-side from the store and shown above the email
@@ -229,7 +250,7 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     if (def.kind !== 'gmail' || !connected) return;
     const q = search.trim();
     setAppliedQuery(q);
-    actions.loadMailboxFolder(active, { q, unread: unreadOnly });
+    if (q) actions.loadMailboxSearch(active, { q, unread: unreadOnly });
   };
 
   const toggleUnreadOnly = () => {
@@ -237,18 +258,28 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     const next = !unreadOnly;
     setUnreadOnly(next);
     try { localStorage.setItem(UNREAD_ONLY_KEY, next ? '1' : '0'); } catch { /* ignore */ }
-    actions.loadMailboxFolder(active, { q: appliedQuery, unread: next });
+    actions.loadMailboxFolder(active, { unread: next });
+    if (appliedQuery) actions.loadMailboxSearch(active, { q: appliedQuery, unread: next });
   };
 
   const refresh = () => {
     if (def.kind === 'deals') actions.loadDealEmails();
     else if (def.kind === 'triage') actions.refreshTriage();
-    else if (connected) actions.loadMailboxFolder(active, { q: appliedQuery, unread: unreadOnly });
+    else if (connected) {
+      actions.loadMailboxFolder(active, { unread: unreadOnly });
+      if (appliedQuery) actions.loadMailboxSearch(active, { q: appliedQuery, unread: unreadOnly });
+    }
     if (connected) actions.loadMailboxLabels();
   };
 
   // Returns the load promise so the list can await it and re-arm auto-loading.
+  // While a Gmail search is active, paginate the search results; otherwise the
+  // folder.
   const loadMore = () => {
+    if (searchActive && appliedQuery && searchSlice.q === appliedQuery) {
+      if (searchSlice.loading || searchSlice.next == null) return undefined;
+      return actions.loadMailboxSearch(active, { pageToken: searchSlice.next, q: appliedQuery, unread: unreadOnly });
+    }
     if (slice.loading || slice.next == null) return undefined;
     if (def.kind === 'deals') return actions.loadDealEmails(slice.next);
     if (def.kind === 'gmail') return actions.loadMailboxFolder(active, { pageToken: slice.next, q: appliedQuery, unread: unreadOnly });
@@ -397,7 +428,7 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               />
               {search && (
                 <button
-                  onClick={() => { setSearch(''); if (def.kind === 'gmail' && appliedQuery) { setAppliedQuery(''); actions.loadMailboxFolder(active, { unread: unreadOnly }); } }}
+                  onClick={() => { setSearch(''); setAppliedQuery(''); }}
                   aria-label="Clear search"
                   style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: BRAND.muted }}
                 >
@@ -429,10 +460,11 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               def={def}
               rows={rows}
               density={density}
-              loading={!!slice.loading}
-              error={slice.error}
+              searchQuery={searchActive ? search.trim() : ''}
+              loading={searchActive ? !!searchSlice.loading : !!slice.loading}
+              error={searchActive ? searchSlice.error : slice.error}
               onRetry={refresh}
-              hasMore={slice.next != null}
+              hasMore={searchActive ? (!!appliedQuery && searchSlice.q === appliedQuery && searchSlice.next != null) : (slice.next != null)}
               onLoadMore={loadMore}
               onOpen={(row) => onOpenThread?.(active, def.kind === 'gmail' ? row.id : row.gmailThreadId)}
               onDismiss={(row) => { if (window.confirm('Dismiss this conversation? It stays archived but leaves Triage.')) { actions.triageDismiss(row.gmailThreadId); showMsg('Dismissed'); } }}
@@ -525,7 +557,7 @@ function DensitySettings({ density, onChange, variant = 'icon', dropUp = false }
   );
 }
 
-function Body({ def, rows, density = 'default', loading, error, onRetry, hasMore, onLoadMore, onOpen, onDismiss, onAction }) {
+function Body({ def, rows, density = 'default', searchQuery = '', loading, error, onRetry, hasMore, onLoadMore, onOpen, onDismiss, onAction }) {
   // Infinite scroll: auto-load the next page as the bottom of the list nears the
   // viewport. We use BOTH a window scroll/resize listener and an
   // IntersectionObserver on a sentinel — the listener is the dependable path
@@ -600,7 +632,11 @@ function Body({ def, rows, density = 'default', loading, error, onRetry, hasMore
   if (rows.length === 0) {
     return (
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
-        {def.kind === 'triage' ? 'Nothing to triage.' : def.kind === 'deals' ? 'No conversations linked to active deals yet.' : 'This folder is empty.'}
+        {searchQuery
+          ? (loading ? `Searching for “${searchQuery}”…` : `No emails matching “${searchQuery}”.`)
+          : def.kind === 'triage' ? 'Nothing to triage.'
+            : def.kind === 'deals' ? 'No conversations linked to active deals yet.'
+              : 'This folder is empty.'}
       </div>
     );
   }
