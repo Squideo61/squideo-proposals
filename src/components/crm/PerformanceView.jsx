@@ -576,8 +576,9 @@ function DirectorsView({ isMobile }) {
 
   const anyInvoices = data.directors.some((d) => d.expenses.some((e) => e.hasInvoice));
   const [a, b] = data.directors;
-  const leader = data.difference >= 0 ? a : b;
-  const diffAbs = Math.abs(data.difference);
+  // Who has spent more this month, and by how much.
+  const spender = (a?.spent || 0) >= (b?.spent || 0) ? a : b;
+  const spendDiff = Math.abs((a?.spent || 0) - (b?.spent || 0));
 
   return (
     <>
@@ -603,9 +604,9 @@ function DirectorsView({ isMobile }) {
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${DIRECTOR_ACCENT}`, borderRadius: 10, padding: isMobile ? 14 : '12px 18px', marginBottom: 16, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Difference</span>
           <span style={{ fontSize: 13, color: BRAND.muted }}>
-            {diffAbs < 0.005
-              ? 'Both directors are level this month.'
-              : <>{a.name} {formatGBP(a.remaining)} vs {b.name} {formatGBP(b.remaining)} left · <strong style={{ color: BRAND.ink }}>{formatGBP(diffAbs)}</strong> more headroom for {leader.name}</>}
+            {spendDiff < 0.005
+              ? 'Both directors have spent the same this month.'
+              : <><strong style={{ color: BRAND.ink }}>{spender.name}</strong> has spent <strong style={{ color: BRAND.ink }}>{formatGBP(spendDiff)}</strong> more</>}
           </span>
         </div>
       )}
