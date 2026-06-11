@@ -356,7 +356,7 @@ function AppShell() {
             card's conversation panel works in the producer shell too. */}
         {state.composerContext && (
           <Suspense fallback={null}>
-            <EmailComposerHost />
+            <EmailComposerHost onViewThread={(threadId) => navigate('email', 'inbox~' + threadId)} />
           </Suspense>
         )}
         {modal && modal.type === 'account' && (
@@ -570,7 +570,7 @@ function AppShell() {
           email is being composed. */}
       {state.composerContext && (
         <Suspense fallback={null}>
-          <EmailComposerHost />
+          <EmailComposerHost onViewThread={(threadId) => navigate('email', 'inbox~' + threadId)} />
         </Suspense>
       )}
       {/* The top bar hosts the bell on CRM views; on the focused editor /

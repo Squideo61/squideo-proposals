@@ -1332,22 +1332,17 @@ export function EmailViewerModal({ gmailMessageId, dealId, onClose }) {
 
   const inbound = data?.direction === 'inbound';
 
-  // Reply opens the shared composer (mounted at App level) prefilled with the
-  // recipient, "Re:" subject, the original quoted underneath, and the gmail
-  // thread id so the reply stays in the same conversation. Then close the viewer.
+  // Reply opens the shared composer prefilled with the recipient, "Re:" subject
+  // and the gmail thread id (so it stays in the same conversation). The original
+  // message is NOT quoted into the body — the composer stays clean, and the
+  // composer's "View thread" button reopens the full conversation if needed.
   const reply = () => {
     if (!data) return;
-    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const to = inbound ? (data.fromEmail || '') : (data.toEmails?.[0] || data.fromEmail || '');
     const subject = /^re:/i.test(data.subject || '') ? data.subject : 'Re: ' + (data.subject || '(no subject)');
-    const dateLabel = data.sentAt ? new Date(data.sentAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '';
-    const quotedInner = sanitized || (data.bodyText ? esc(data.bodyText).replace(/\n/g, '<br>') : '');
-    const body = quotedInner
-      ? `<br><br><div style="border-left:2px solid #ccc;padding-left:12px;color:#555;">On ${esc(dateLabel)}, ${esc(data.fromEmail || '')} wrote:<br>${quotedInner}</div>`
-      : '';
     actions.openComposer({
       dealId: dealId || null,
-      initialDraft: { to, cc: '', subject, body, gmailThreadId: data.gmailThreadId || null },
+      initialDraft: { to, cc: '', subject, body: '', gmailThreadId: data.gmailThreadId || null },
     });
     onClose?.();
   };
@@ -2752,7 +2747,7 @@ function DealScheduledCard({ scheduled, onCancel }) {
   );
 }
 
-export function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSent, inline = false }) {
+export function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSent, onViewThread, inline = false }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const gmailConnected = state.gmailAccount && state.gmailAccount.connected;
@@ -2836,6 +2831,24 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // Autosave as the user types, so navigating away or refreshing never loses
+  // the draft. Debounced, and persisted into composerContext (which survives a
+  // reload) without changing sessionId, so the live editor isn't remounted.
+  // Only the persistent dock composer is backed by composerContext — the inline
+  // reply composer is ephemeral by design, so it opts out.
+  useEffect(() => {
+    if (inline) return undefined;
+    const t = setTimeout(() => {
+      actions.autosaveComposerDraft({
+        to, cc, bcc, subject, body,
+        gmailThreadId: replyThreadId || null,
+        extraDeals,
+        attachments: attachments.filter(a => a.blobUrl && !a.uploading),
+      });
+    }, 500);
+    return () => clearTimeout(t);
+  }, [inline, to, cc, bcc, subject, body, extraDeals, attachments]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!gmailConnected) { setSignature(''); return; }
@@ -3405,6 +3418,21 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
               background: 'white',
             }}
           >
+            {/* View thread: replies don't quote the conversation in the body
+                (it's kept clean between message and signature), so this opens
+                the full thread in the Emails section. The composer dock stays
+                open with the draft intact, so the user can keep writing there. */}
+            {!inline && replyThreadId && onViewThread && (
+              <button
+                type="button"
+                onClick={() => onViewThread(replyThreadId)}
+                className="btn-ghost"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                title="Open the full conversation in the Emails section — your draft stays open"
+              >
+                <Mail size={14} /> View thread
+              </button>
+            )}
             {/* Templates menu, pushed to the left so it reads as a separate
                 control from the Discard/Save/Send actions. */}
             <button
@@ -4175,7 +4203,7 @@ function RichTextToolbar({ editorRef, onChange, onAttach }) {
 // `actions.openComposer`) and renders the same EmailComposerModal that
 // used to live inside DealDetailView. Returns null when the composer is
 // closed — the host stays cheap.
-export function EmailComposerHost() {
+export function EmailComposerHost({ onViewThread }) {
   const { state, actions } = useStore();
   const ctx = state.composerContext;
   if (!ctx) return null;
@@ -4199,6 +4227,7 @@ export function EmailComposerHost() {
       deal={deal}
       contact={contact}
       initialDraft={ctx.initialDraft || null}
+      onViewThread={onViewThread}
       onClose={() => actions.closeComposer()}
       onSent={() => {
         actions.closeComposer();

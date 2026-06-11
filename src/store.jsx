@@ -2057,6 +2057,21 @@ export function StoreProvider({ children }) {
       });
     },
 
+    // Continuously persist the open composer's live fields into its context, so
+    // a refresh or accidental close restores the in-progress draft. Preserves
+    // sessionId so the open composer is NOT remounted (no lost focus/caret).
+    autosaveComposerDraft(patch) {
+      setState((s) => {
+        if (!s.composerContext) return s;
+        const ctx = {
+          ...s.composerContext,
+          initialDraft: { ...(s.composerContext.initialDraft || {}), ...patch },
+        };
+        saveLocal(COMPOSER_CONTEXT_KEY, ctx);
+        return { ...s, composerContext: ctx };
+      });
+    },
+
     // ---------- Triage (unmatched email messages) ----------
     refreshTriage() {
       return api.get('/api/crm/triage').then((rows) => {

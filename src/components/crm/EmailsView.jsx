@@ -918,11 +918,6 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
   }, [latest, myEmail]);
   const canReplyAll = otherParticipants.size > 1;
 
-  const quotedReply = () =>
-    `<br><br><div style="border-left:2px solid #ccc;padding-left:12px;color:#555;">`
-    + `On ${formatDateLabel(latest.date)}, ${escapeText(latest.from || latest.fromEmail || '')} wrote:<br>`
-    + (quoteSourceHtml(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : '')) + '</div>';
-
   // Build the seed draft for the inline composer for each mode.
   const draftFor = (mode) => {
     if (!latest) return null;
@@ -944,11 +939,13 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
         if (l && !seen.has(l)) { seen.add(l); ccList.push(e); }
       }
     }
+    // The thread is shown above the inline composer, so don't quote it into the
+    // reply body — keep the editor clean (message + signature only).
     return {
       to: primary,
       cc: ccList.join(', '),
       subject: /^re:/i.test(subject) ? subject : 'Re: ' + subject,
-      body: quotedReply(),
+      body: '',
       gmailThreadId: openRef.threadId,
     };
   };
