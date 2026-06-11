@@ -213,9 +213,13 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
         </div>
         {!isComparison && !isCashflow && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={() => setEditing((v) => !v)} className="btn-ghost" title="Edit targets">
-              <Pencil size={14} /> Targets
-            </button>
+            {/* Income targets are derived automatically from Cash Flow & Targets,
+                so the editor is only offered for the (manual) sales targets. */}
+            {isSales && (
+              <button onClick={() => setEditing((v) => !v)} className="btn-ghost" title="Edit sales targets">
+                <Pencil size={14} /> Targets
+              </button>
+            )}
             <Segmented
               value={mode}
               onChange={setMode}
@@ -252,13 +256,12 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
         <CashFlowView isMobile={isMobile} />
       )}
 
-      {!isComparison && !isCashflow && editing && (
+      {isSales && editing && (
         <TargetEditor
           key={section}
-          heading={isSales ? 'Monthly sales targets' : 'Monthly income targets'}
+          heading="Monthly sales targets"
           targets={targets}
-          amountsLocked={!isSales && !!cfTargets}
-          onSave={(list) => { (isSales ? actions.saveSalesTargets(list) : actions.saveFinanceTargets(list)); setEditing(false); }}
+          onSave={(list) => { actions.saveSalesTargets(list); setEditing(false); }}
           onCancel={() => setEditing(false)}
         />
       )}
