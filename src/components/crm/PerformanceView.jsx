@@ -713,8 +713,9 @@ function DirExpenseRow({ e, actions, reload, showMsg }) {
         <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {e.description}
           {e.vattable && <span title="Marked vattable" style={{ fontSize: 10, fontWeight: 700, color: '#7C3AED', background: '#F3E8FF', border: '1px solid #E9D5FF', padding: '1px 5px', borderRadius: 999, marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 }}>VAT</span>}
+          {e.recurring && <span title="Repeats every month" style={{ fontSize: 10, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', border: '1px solid #A5F3FC', padding: '1px 5px', borderRadius: 999, marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 }}>Recurring</span>}
         </div>
-        {e.spentOn && <div style={{ fontSize: 11, color: BRAND.muted }}>{e.spentOn}</div>}
+        {e.recurring ? <div style={{ fontSize: 11, color: BRAND.muted }}>Every month</div> : (e.spentOn && <div style={{ fontSize: 11, color: BRAND.muted }}>{e.spentOn}</div>)}
       </div>
       <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 60, textAlign: 'right' }}>{formatGBP(e.amount)}</span>
       <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={(ev) => { onPick(ev.target.files?.[0]); ev.target.value = ''; }} />
@@ -738,12 +739,13 @@ function DirExpenseForm({ directorEmail, actions, onDone, onCancel }) {
   const [amount, setAmount] = useState('');
   const [spentOn, setSpentOn] = useState(() => todayKey());
   const [vattable, setVattable] = useState(false);
+  const [recurring, setRecurring] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const submit = () => {
     if (!description.trim() || busy) return;
     setBusy(true);
-    actions.addDirectorExpense({ director_email: directorEmail, description: description.trim(), amount: parseFloat(amount) || 0, spentOn, vattable })
+    actions.addDirectorExpense({ director_email: directorEmail, description: description.trim(), amount: parseFloat(amount) || 0, spentOn, vattable, recurring })
       .then(onDone)
       .finally(() => setBusy(false));
   };
@@ -764,6 +766,9 @@ function DirExpenseForm({ directorEmail, actions, onDone, onCancel }) {
           style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
           <input type="checkbox" checked={vattable} onChange={(e) => setVattable(e.target.checked)} /> Vattable
+        </label>
+        <label title="Repeats automatically every month from this one onward" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
+          <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} /> Recurring
         </label>
         <button className="btn-ghost" style={{ padding: '4px 8px', marginLeft: 'auto' }} onClick={onCancel}><X size={13} /></button>
         <button className="btn" style={{ padding: '5px 10px' }} onClick={submit} disabled={!description.trim() || busy}><Check size={13} /> {busy ? 'Adding…' : 'Add'}</button>

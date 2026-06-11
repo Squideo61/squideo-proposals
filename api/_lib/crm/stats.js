@@ -2079,6 +2079,10 @@ function ensureDirectorExpenses() {
       )`;
     await sql`CREATE INDEX IF NOT EXISTS idx_director_expenses_month ON director_expenses (month)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_director_expenses_email ON director_expenses (director_email)`;
+    // Recurring expenses: a row that repeats every month from `month` onward
+    // (until `effective_to`, if set). One-offs have recurring = false.
+    await sql`ALTER TABLE director_expenses ADD COLUMN IF NOT EXISTS recurring BOOLEAN NOT NULL DEFAULT false`;
+    await sql`ALTER TABLE director_expenses ADD COLUMN IF NOT EXISTS effective_to TEXT`;
     await sql`
       CREATE TABLE IF NOT EXISTS director_settings (
         director_email TEXT PRIMARY KEY,
@@ -2101,18 +2105,24 @@ function monthsBetween(fromKey, toKey) {
   return out;
 }
 
-// Fold the rollover pot for one director up to `month`. Only underspend rolls:
-//   pot(first) = 250 ; pot(m) = 250 + max(0, pot(m-1) − spent(m-1)).
-// The balancing adjustment is standing headroom and is NOT folded in, so it
-// never compounds. Returns the carried-in underspend at `month`.
-function carriedInFor(spentByMonth, month) {
-  const keys = Object.keys(spentByMonth).filter((k) => k < month).sort();
-  if (keys.length === 0) return 0;
-  let pot = DIRECTOR_ALLOWANCE; // start of the earliest active month
-  const span = monthsBetween(keys[0], month);
+// Is a row counted in month `mk`? One-offs apply only in their own month; a
+// recurring row applies every month from its start `month` up to `effective_to`
+// (inclusive) if set, else indefinitely.
+function expenseActiveInMonth(r, mk) {
+  if (r.recurring) return r.month <= mk && (!r.effective_to || mk <= r.effective_to);
+  return r.month === mk;
+}
+
+// Fold the rollover pot for one director from `earliest` up to `month`. Only
+// underspend rolls: pot(first) = 250 ; pot(m) = 250 + max(0, pot(m-1) − spent(m-1)).
+// `spentIn(mk)` returns that month's total spend (recurring-aware). The balancing
+// adjustment is standing headroom and is NOT folded in, so it never compounds.
+function carriedInFold(spentIn, earliest, month) {
+  if (!earliest || earliest >= month) return 0;
+  let pot = DIRECTOR_ALLOWANCE;
+  const span = monthsBetween(earliest, month);
   for (let i = 0; i < span.length - 1; i++) {
-    const spent = Number(spentByMonth[span[i]] || 0);
-    pot = DIRECTOR_ALLOWANCE + Math.max(0, pot - spent);
+    pot = DIRECTOR_ALLOWANCE + Math.max(0, pot - spentIn(span[i]));
   }
   return Math.max(0, pot - DIRECTOR_ALLOWANCE);
 }
@@ -2136,25 +2146,30 @@ async function directorExpensesReport(month) {
 
   const directors = [...DIRECTOR_EMAILS].map((email) => {
     const mine = rows.filter((r) => r.director_email.toLowerCase() === email);
-    const spentByMonth = {};
-    for (const r of mine) spentByMonth[r.month] = (spentByMonth[r.month] || 0) + (Number(r.amount) || 0);
+    const spentIn = (mk) => mine.reduce((s, r) => s + (expenseActiveInMonth(r, mk) ? (Number(r.amount) || 0) : 0), 0);
+    const earliest = mine.map((r) => r.month).filter(Boolean).sort()[0] || m;
 
-    const carriedIn = carriedInFor(spentByMonth, m);
+    const carriedIn = carriedInFold(spentIn, earliest, m);
     const balanceAdjust = balByEmail.get(email) || 0;
     const available = DIRECTOR_ALLOWANCE + carriedIn + balanceAdjust;
-    const spent = Number(spentByMonth[m] || 0);
+    const spent = spentIn(m);
     const remaining = available - spent;
 
-    const expenses = mine.filter((r) => r.month === m).map((r) => ({
+    const expenses = mine.filter((r) => expenseActiveInMonth(r, m)).map((r) => ({
       id: r.id,
       description: r.description,
       amount: Number(r.amount) || 0,
       vattable: !!r.vattable,
+      recurring: !!r.recurring,
       spentOn: dateKey(r.spent_on),
       hasInvoice: !!r.blob_url,
       filename: r.filename || null,
       createdBy: r.created_by || null,
-    })).sort((a, b) => (a.spentOn || '') < (b.spentOn || '') ? 1 : -1);
+    })).sort((a, b) => {
+      // Recurring items first, then by date (newest first).
+      if (a.recurring !== b.recurring) return a.recurring ? -1 : 1;
+      return (a.spentOn || '') < (b.spentOn || '') ? 1 : -1;
+    });
 
     return { email, name: nameFor(email), allowance: DIRECTOR_ALLOWANCE, carriedIn, balanceAdjust, available, spent, remaining, expenses };
   });
@@ -2181,12 +2196,13 @@ async function directorExpensesRoute(req, res, action, user) {
     if (!isDirector(email)) email = actor; // default to the logged-in director
     const amount = Number(body.amount) || 0;
     const vattable = body.vattable === true;
+    const recurring = body.recurring === true;
     const spentOn = trimOrNull(body.spentOn) || null;
     const month = (spentOn && /^\d{4}-\d{2}/.test(spentOn)) ? spentOn.slice(0, 7) : curMonthKey();
     const id = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : makeId('de');
     await sql`
-      INSERT INTO director_expenses (id, director_email, description, amount, vattable, spent_on, month, created_by)
-      VALUES (${id}, ${email}, ${description}, ${amount}, ${vattable}, ${spentOn}, ${month}, ${actor})
+      INSERT INTO director_expenses (id, director_email, description, amount, vattable, recurring, spent_on, month, created_by)
+      VALUES (${id}, ${email}, ${description}, ${amount}, ${vattable}, ${recurring}, ${spentOn}, ${month}, ${actor})
       ON CONFLICT (id) DO NOTHING`;
     return res.status(200).json({ ok: true, id });
   }
@@ -2199,11 +2215,12 @@ async function directorExpensesRoute(req, res, action, user) {
     const description = body.description !== undefined ? (trimOrNull(body.description) || existing.description) : existing.description;
     const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
     const vattable = body.vattable !== undefined ? (body.vattable === true) : existing.vattable;
+    const recurring = body.recurring !== undefined ? (body.recurring === true) : existing.recurring;
     const spentOn = body.spentOn !== undefined ? (trimOrNull(body.spentOn) || null) : dateKey(existing.spent_on);
     const month = (spentOn && /^\d{4}-\d{2}/.test(spentOn)) ? spentOn.slice(0, 7) : existing.month;
     await sql`
       UPDATE director_expenses
-         SET description = ${description}, amount = ${amount}, vattable = ${vattable}, spent_on = ${spentOn}, month = ${month}, updated_at = NOW()
+         SET description = ${description}, amount = ${amount}, vattable = ${vattable}, recurring = ${recurring}, spent_on = ${spentOn}, month = ${month}, updated_at = NOW()
        WHERE id = ${action}`;
     return res.status(200).json({ ok: true });
   }
@@ -2273,7 +2290,10 @@ async function directorZipRoute(req, res, action) {
   await ensureDirectorExpenses();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const month = /^\d{4}-\d{2}$/.test(action || '') ? action : curMonthKey();
-  const rows = await sql`SELECT * FROM director_expenses WHERE month = ${month} AND blob_url IS NOT NULL ORDER BY director_email, spent_on NULLS LAST`;
+  // Recurring-aware: include any expense active in this month (its own month, or a
+  // recurring row spanning it) that has an invoice attached.
+  const all = await sql`SELECT * FROM director_expenses WHERE blob_url IS NOT NULL ORDER BY director_email, spent_on NULLS LAST`;
+  const rows = all.filter((r) => expenseActiveInMonth(r, month));
   if (rows.length === 0) return res.status(404).json({ error: 'No invoices for this month' });
 
   const userRows = await sql`SELECT email, name FROM users`;
