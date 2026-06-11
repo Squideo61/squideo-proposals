@@ -3,6 +3,7 @@ import { ExternalLink, Plus, X, Search } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
+import { TaskFormModal } from './TaskFormModal.jsx';
 
 const STAGE_LABEL = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s.label]));
 
@@ -125,6 +126,8 @@ function UnlinkedView({ gmailThreadId, counterpartyEmail }) {
 // ---- Deal detail (when linked) ----
 
 function DealDetailBlock({ detail, gmailThreadId, onOpenDeal }) {
+  const { actions } = useStore();
+  const [editingTask, setEditingTask] = useState(null);
   const openTasks = (detail.tasks || []).filter(t => !t.doneAt).slice(0, 3);
   const timeline = useMemo(() => {
     const events = (detail.events || []).map(e => ({ kind: 'event', when: e.occurredAt, data: e }));
@@ -178,17 +181,35 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal }) {
       <div style={{ margin: '6px 0 6px', display: 'flex', flexDirection: 'column', gap: 6 }}>
         {openTasks.length === 0 ? <Muted>No open tasks.</Muted> : openTasks.map(t => (
           <div key={t.id} style={{ display: 'flex', gap: 6, fontSize: 12.5 }}>
-            <span style={{ flexShrink: 0, width: 12, height: 12, marginTop: 2, border: '1.5px solid ' + BRAND.muted, borderRadius: 3 }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <button
+              onClick={() => actions.toggleTask(t.id)}
+              title="Mark done"
+              aria-label="Mark done"
+              style={{ flexShrink: 0, width: 14, height: 14, marginTop: 1, padding: 0, border: '1.5px solid ' + BRAND.muted, borderRadius: 3, background: 'white', cursor: 'pointer' }}
+            />
+            <button
+              onClick={() => setEditingTask(t)}
+              title="Edit task — change the due date to postpone"
+              style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, color: BRAND.ink }}
+            >
               <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</div>
               {t.dueAt && <div style={{ fontSize: 11, color: BRAND.muted }}>Due {new Date(t.dueAt).toLocaleDateString('en-GB')}</div>}
-            </div>
+            </button>
           </div>
         ))}
       </div>
       <div style={{ marginBottom: 14 }}>
         <AddTaskForm dealId={detail.id} />
       </div>
+
+      {editingTask && (
+        <TaskFormModal
+          task={editingTask}
+          defaults={{ dealId: detail.id }}
+          onClose={() => setEditingTask(null)}
+          onSaved={() => setEditingTask(null)}
+        />
+      )}
 
       {timeline.length > 0 && (
         <>
