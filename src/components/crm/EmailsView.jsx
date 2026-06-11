@@ -1079,7 +1079,9 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
           <DealContextPanel
             gmailThreadId={openRef.threadId}
             counterpartyEmail={counterparty}
-            onOpenDeal={(id) => { onBack(); onOpenDeal?.(id); }}
+            // Navigate straight to the deal. (Don't call onBack first — it now
+            // triggers history.back(), which races the navigate and cancels it.)
+            onOpenDeal={onOpenDeal}
           />
         </div>
       </div>
