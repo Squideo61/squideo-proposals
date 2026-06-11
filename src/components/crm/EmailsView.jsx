@@ -200,6 +200,26 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     });
   }, [rawRows, search, def.kind]);
 
+  // The search box also finds CRM deals (by deal title, company, contact), not
+  // just emails — matched client-side from the store and shown above the email
+  // results. Newest activity first.
+  const dealResults = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const matches = [];
+    for (const d of Object.values(state.deals || {})) {
+      if (!d) continue;
+      const company = d.companyId ? state.companies?.[d.companyId] : null;
+      const contact = d.primaryContactId ? state.contacts?.[d.primaryContactId] : null;
+      const hay = [d.title, company?.name, company?.website, contact?.name, contact?.email]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (hay.includes(q)) matches.push(d);
+    }
+    return matches
+      .sort((a, b) => new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0))
+      .slice(0, 6);
+  }, [search, state.deals, state.companies, state.contacts]);
+
   const runGmailSearch = () => {
     if (def.kind !== 'gmail' || !connected) return;
     const q = search.trim();
@@ -390,6 +410,10 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
             <p style={{ fontSize: 12.5, color: BRAND.muted, margin: '0 0 12px' }}>
               Emails that didn't match any deal automatically. Open one to read it and attach it to a deal, or dismiss if it's personal/spam.
             </p>
+          )}
+
+          {dealResults.length > 0 && (
+            <DealResults deals={dealResults} onOpenDeal={onOpenDeal} />
           )}
 
           {def.kind === 'gmail' && !connected ? (
@@ -605,6 +629,38 @@ function StagePill({ stage }) {
     <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, background: c.bg, color: c.fg, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
       {STAGE_LABEL[stage] || stage}
     </span>
+  );
+}
+
+// Matching CRM deals for the current search query, shown above the email
+// results so the search box finds deals as well as mail. Clicking opens the deal.
+function DealResults({ deals, onOpenDeal }) {
+  const { state } = useStore();
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden', marginBottom: 12 }}>
+      <div style={{ padding: '7px 14px', fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: BRAND.muted, background: BRAND.paper, borderBottom: '1px solid ' + BRAND.border, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Briefcase size={13} color={BRAND.muted} /> Deals
+      </div>
+      {deals.map((d, i) => {
+        const company = d.companyId ? state.companies?.[d.companyId] : null;
+        const contact = d.primaryContactId ? state.contacts?.[d.primaryContactId] : null;
+        const name = company?.name || d.title || 'Untitled deal';
+        const sub = contact?.name || (company && d.title && d.title !== company.name ? d.title : '');
+        return (
+          <button
+            key={d.id}
+            onClick={() => onOpenDeal?.(d.id)}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 14px', border: 'none', borderTop: i === 0 ? 'none' : '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+          >
+            <Briefcase size={15} color={BRAND.blue} style={{ flexShrink: 0 }} />
+            <span style={{ fontWeight: 600, fontSize: 14, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0, maxWidth: '45%' }}>{name}</span>
+            {sub && <span style={{ fontSize: 12.5, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</span>}
+            <span style={{ flex: 1 }} />
+            {d.stage && <StagePill stage={d.stage} />}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
