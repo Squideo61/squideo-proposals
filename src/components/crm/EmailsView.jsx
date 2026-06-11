@@ -424,6 +424,8 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               rows={rows}
               density={density}
               loading={!!slice.loading}
+              error={slice.error}
+              onRetry={refresh}
               hasMore={slice.next != null}
               onLoadMore={loadMore}
               onOpen={(row) => onOpenThread?.(active, def.kind === 'gmail' ? row.id : row.gmailThreadId)}
@@ -517,7 +519,7 @@ function DensitySettings({ density, onChange, variant = 'icon', dropUp = false }
   );
 }
 
-function Body({ def, rows, density = 'default', loading, hasMore, onLoadMore, onOpen, onDismiss, onAction }) {
+function Body({ def, rows, density = 'default', loading, error, onRetry, hasMore, onLoadMore, onOpen, onDismiss, onAction }) {
   // Infinite scroll: auto-load the next page as the bottom of the list nears the
   // viewport. We use BOTH a window scroll/resize listener and an
   // IntersectionObserver on a sentinel — the listener is the dependable path
@@ -580,6 +582,14 @@ function Body({ def, rows, density = 'default', loading, hasMore, onLoadMore, on
 
   if (loading && rows.length === 0) {
     return <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>Loading…</div>;
+  }
+  if (rows.length === 0 && error) {
+    return (
+      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
+        <div style={{ marginBottom: 12 }}>Couldn't load this folder. {error}</div>
+        {onRetry && <button onClick={onRetry} className="btn-ghost"><RefreshCw size={14} /> Try again</button>}
+      </div>
+    );
   }
   if (rows.length === 0) {
     return (

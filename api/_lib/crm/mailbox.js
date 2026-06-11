@@ -24,7 +24,7 @@ import {
 } from '../gmailSync.js';
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
-const PAGE_SIZE = 40;
+const PAGE_SIZE = 25;
 
 // Folder id (from the UI) → Gmail label. 'all' (All Mail) applies no label
 // filter; 'deals' and 'triage' are DB-backed and never reach this module.
@@ -153,7 +153,11 @@ async function listFolder(req, res, accessToken, user) {
   const listJson = await (await gmailFetch(accessToken, '/threads?' + params.toString())).json();
   const ids = (listJson.threads || []).map(t => t.id);
 
-  const rows = await Promise.all(ids.map(async (tid) => {
+  // Fetch each thread's metadata independently and tolerate per-thread failures
+  // (a 429 rate-limit, a thread deleted between list and get, a transient 5xx).
+  // Promise.all would reject the whole page if any single thread failed, leaving
+  // the folder looking empty; allSettled keeps every thread that did load.
+  const settled = await Promise.allSettled(ids.map(async (tid) => {
     const t = await (await gmailFetch(
       accessToken,
       `/threads/${encodeURIComponent(tid)}?format=metadata`
@@ -162,6 +166,11 @@ async function listFolder(req, res, accessToken, user) {
     )).json();
     return summariseThread(t);
   }));
+  const failed = settled.filter(s => s.status === 'rejected');
+  if (failed.length) {
+    console.warn(`[mailbox] ${failed.length}/${ids.length} thread fetches failed in ${folder}:`, failed[0].reason?.message);
+  }
+  const rows = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
 
   // Attach Streak-style open/click tracking for any of these threads the user
   // sent through us. Best-effort — failures degrade to no tracking.
