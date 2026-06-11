@@ -447,9 +447,10 @@ function AppShell() {
           onOpenDeal={(id) => navigate('deal', id)}
         />
       )}
-      {(view === 'emails' || view === 'triage') && (
+      {(view === 'emails' || view === 'triage' || view === 'email') && (
         <EmailsView
-          folder={view === 'triage' ? 'triage' : (activeId || 'inbox')}
+          folder={view === 'triage' ? 'triage' : (view === 'email' ? 'inbox' : (activeId || 'inbox'))}
+          openThreadId={view === 'email' ? activeId : null}
           onBack={() => navigate('list')}
           onOpenDeal={(id) => navigate('deal', id)}
           onSelectFolder={(f) => navigate('emails', f)}

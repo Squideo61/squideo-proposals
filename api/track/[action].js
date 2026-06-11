@@ -62,11 +62,11 @@ async function notifyFirstOpen(token, geo) {
     const recipient = Array.isArray(t.recipients) && t.recipients[0] ? t.recipients[0] : 'A recipient';
     const where = geo.city || geo.country || null;
     const subject = t.subject || '(no subject)';
-    // "Go to" target: the actual email thread in Gmail (works whether or not the
-    // thread is linked to a deal). Falls back to the deal page if we somehow have
-    // no thread id. Absolute URL — the client opens it in a new tab.
+    // "Go to" target: open the email thread inside the CRM's own Emails view
+    // (works whether or not the thread is linked to a deal). Falls back to the
+    // deal page only if we somehow have no thread id.
     const emailLink = t.gmail_thread_id
-      ? `https://mail.google.com/mail/u/0/#all/${t.gmail_thread_id}`
+      ? `#/email/${encodeURIComponent(t.gmail_thread_id)}`
       : (dealId ? `#/deal/${dealId}` : null);
     await sendNotification('tracking.email_opened', {
       ownerEmail: t.user_email,

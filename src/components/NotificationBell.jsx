@@ -182,7 +182,7 @@ export function NotificationBell({ onOpenLink, inline = false, channel = 'genera
                     {channel === 'tracking' && n.link && (
                       <button
                         onClick={(e) => { e.stopPropagation(); onItemClick(n); }}
-                        title={/^https?:/i.test(n.link) ? 'Open the email' : 'Go to'}
+                        title={n.link.startsWith('#/email/') ? 'Open the email' : 'Go to'}
                         style={{
                           fontSize: 11, fontWeight: 600, color: meta.accent, background: 'transparent',
                           border: '1px solid ' + BRAND.border, borderRadius: 6, padding: '2px 8px',
@@ -191,7 +191,7 @@ export function NotificationBell({ onOpenLink, inline = false, channel = 'genera
                         onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
                         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                       >
-                        {/^https?:/i.test(n.link) ? 'Open email →' : 'Go to →'}
+                        {n.link.startsWith('#/email/') ? 'Open email →' : 'Go to →'}
                       </button>
                     )}
                   </div>

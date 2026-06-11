@@ -99,7 +99,7 @@ const FRAME_SANITIZE = {
   FORBID_ATTR: ['onerror', 'onload', 'onclick'],
 };
 
-export function EmailsView({ folder = 'inbox', onBack, onOpenDeal, onSelectFolder }) {
+export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOpenDeal, onSelectFolder }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const active = FOLDER_BY_ID[folder] ? folder : 'inbox';
@@ -129,6 +129,13 @@ export function EmailsView({ folder = 'inbox', onBack, onOpenDeal, onSelectFolde
   };
 
   useEffect(() => { setSearch(''); setAppliedQuery(''); setOpenRef(null); }, [active]);
+
+  // Deep-link: open a specific Gmail thread straight away (e.g. from a tracking-
+  // bell "Open email" link). Declared after the reset above so it isn't cleared
+  // on mount; the conversation view loads the thread by id regardless of folder.
+  useEffect(() => {
+    if (openThreadId) setOpenRef({ kind: 'gmail', threadId: openThreadId, unread: false });
+  }, [openThreadId]);
 
   useEffect(() => {
     if (def.kind === 'deals') {
