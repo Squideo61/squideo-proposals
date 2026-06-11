@@ -366,7 +366,7 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               <def.icon size={16} color={BRAND.blue} /> {def.label}
             </h2>
             <button onClick={refresh} className="btn-icon" title="Refresh" aria-label="Refresh"><RefreshCw size={15} /></button>
-            {def.kind === 'gmail' && active !== 'unread' && (
+            {def.kind === 'gmail' && active !== 'unread' && active !== 'sent' && active !== 'drafts' && (
               <button
                 onClick={toggleUnreadOnly}
                 title="Show only unread"

@@ -135,9 +135,10 @@ async function listFolder(req, res, accessToken, user) {
   // often a later reply). Listing messages.list?labelIds=SENT gives your sends
   // newest-first directly; we then dedupe to one row per conversation (keeping
   // the newest send) so the list reads exactly like Gmail's. Searches keep the
-  // thread-level whole-mailbox path below.
+  // thread-level whole-mailbox path below. "Unread only" is meaningless for
+  // your own sent mail, so it's never applied here.
   if (folder === 'sent' && !q) {
-    return await listSent(req, res, accessToken, user, { pageToken, unreadOnly });
+    return await listSent(req, res, accessToken, user, { pageToken });
   }
 
   const params = new URLSearchParams();
@@ -201,12 +202,11 @@ async function listFolder(req, res, accessToken, user) {
 // whole thread. Fetching the thread was unreliable: reply-heavy conversations
 // (your recent, replied-to sends) failed the per-thread metadata fetch and got
 // dropped, which is why the list skipped straight to old reply-less cold mail.
-async function listSent(req, res, accessToken, user, { pageToken, unreadOnly }) {
+async function listSent(req, res, accessToken, user, { pageToken }) {
   if (req.method !== 'GET') return res.status(405).end();
   const params = new URLSearchParams();
   params.set('maxResults', String(PAGE_SIZE));
   params.append('labelIds', 'SENT');
-  if (unreadOnly) params.append('labelIds', 'UNREAD');
   if (pageToken) params.set('pageToken', pageToken);
 
   const listJson = await (await withRetry(() => gmailFetch(accessToken, '/messages?' + params.toString()))).json();
