@@ -8,6 +8,7 @@ import sql from '../_lib/db.js';
 import { APP_URL } from '../_lib/email.js';
 import { TRANSPARENT_GIF, ensureOpenNotifiedColumn } from '../_lib/crm/tracking.js';
 import { sendNotification, ensureTrackingNotificationDefaults } from '../_lib/notifications.js';
+import { optionalAuth } from '../_lib/middleware.js';
 
 function viewer(req) {
   const h = req.headers;
@@ -88,10 +89,17 @@ export default async function handler(req, res) {
   const action = req.query.action;
   const token = typeof req.query.t === 'string' ? req.query.t : null;
 
+  // A logged-in team member viewing the email inside the CRM (e.g. their own
+  // Sent copy, or any thread in the Emails view) loads the pixel/links from the
+  // same origin, so their session cookie rides along. Recognise that and skip
+  // recording — only genuine recipients (no session) should register opens and
+  // clicks. Mirrors the self-view guard on public proposal tracking.
+  const internalViewer = await optionalAuth(req).catch(() => null);
+
   if (action === 'open') {
     // Always return the pixel, even on bad/missing token, so we never break
     // the rendering of the recipient's email.
-    if (token) {
+    if (token && !internalViewer) {
       try {
         await recordEvent(token, 'open', null, req);
         await notifyFirstOpen(token, viewer(req));
@@ -117,7 +125,8 @@ export default async function handler(req, res) {
         `;
         if (rows[0]?.url) {
           dest = rows[0].url;
-          await recordEvent(token, 'click', dest, req);
+          // Still redirect internal viewers to the real link, just don't log it.
+          if (!internalViewer) await recordEvent(token, 'click', dest, req);
         }
       } catch (err) {
         console.error('[track] click failed', err.message);
