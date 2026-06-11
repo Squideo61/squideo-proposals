@@ -238,8 +238,8 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
   };
 
   return (
-    <div style={{ padding: isMobile ? '14px 10px' : '28px 24px' }}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+    <div style={{ padding: isMobile ? '10px 10px' : '12px 24px' }}>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           <Mail size={22} color={BRAND.blue} /> Emails
