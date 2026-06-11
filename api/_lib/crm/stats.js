@@ -2179,10 +2179,12 @@ async function directorExpensesReport(month) {
     // Monthly pot = £250 + carried underspend (the balance is a SEPARATE buffer).
     const baseAvailable = round2(DIRECTOR_ALLOWANCE + carriedIn);
     const monthlyRemaining = round2(baseAvailable - spent);
-    // Overspend beyond the monthly pot draws down the balancing amount; show how
-    // much of the balance is left (can go negative = over even after the buffer).
+    // The balancing amount is GRANTED EXTRA spend — wholly separate from the £250.
+    // Overspending the monthly pot draws the grant down, but only to zero: a grant
+    // of nil (or going over with no grant) never shows as a negative balance.
     const monthlyOver = Math.max(0, round2(spent - baseAvailable));
-    const balanceLeft = round2(balanceAdjust - monthlyOver);
+    const balanceUsed = balanceAdjust > 0 ? round2(Math.min(balanceAdjust, monthlyOver)) : 0;
+    const balanceLeft = balanceAdjust > 0 ? round2(balanceAdjust - balanceUsed) : round2(balanceAdjust);
     // Overall position (monthly pot + balance − spend), kept for completeness.
     const available = round2(baseAvailable + balanceAdjust);
     const remaining = round2(available - spent);
@@ -2200,7 +2202,7 @@ async function directorExpensesReport(month) {
       createdBy: r.created_by || null,
     }));
 
-    return { email, name: nameFor(email), allowance: DIRECTOR_ALLOWANCE, carriedIn, baseAvailable, balanceAdjust, balanceLeft, monthlyOver, monthlyRemaining, available, spent, remaining, expenses };
+    return { email, name: nameFor(email), allowance: DIRECTOR_ALLOWANCE, carriedIn, baseAvailable, balanceAdjust, balanceLeft, balanceUsed, monthlyOver, monthlyRemaining, available, spent, remaining, expenses };
   });
 
   // "Difference" mirrors the sheet: first director's remaining minus the second.

@@ -633,9 +633,10 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
   const [bal, setBal] = useState(String(d.balanceAdjust || 0));
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
-  const overspent = d.monthlyRemaining < 0; // over the monthly £250 + carryover
-  const balanceLow = d.balanceLeft < 0;      // overspent even after the balance buffer
-  const balanceUsed = d.monthlyOver > 0.005; // the balance absorbed some overspend
+  const overspent = d.monthlyRemaining < 0;        // over the monthly £250 + carryover
+  const grant = d.balanceAdjust || 0;              // granted extra spend (separate pot)
+  const used = d.balanceUsed || 0;                 // how much of the grant the overspend drew
+  const grantUsedUp = grant > 0.005 && d.balanceLeft <= 0.005; // grant fully spent
 
   const saveBal = () => {
     actions.setDirectorBalance(d.email, parseFloat(bal) || 0).then(() => { setEditingBal(false); reload(); });
@@ -671,15 +672,18 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
         <span style={{ color: BRAND.muted }}> · {formatGBP(d.allowance)} monthly{d.carriedIn > 0.005 ? ` + ${formatGBP(d.carriedIn)} carried over` : ''}</span>
       </div>
 
-      {/* Balancing amount — its own tally so it's clear how much is left when one
-          of you overspends the monthly pot (the overspend draws this down). */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 10, padding: '8px 10px', background: BRAND.paper, border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${balanceLow ? PROFIT_NEG : DIRECTOR_ACCENT}`, borderRadius: 8 }}>
+      {/* Balancing amount — granted EXTRA spend, separate from the £250. Its own
+          tally so it's clear how much of the grant is left when someone overspends
+          (overspending the £250 draws it down, never below zero). */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 10, padding: '8px 10px', background: BRAND.paper, border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${grantUsedUp ? '#B45309' : DIRECTOR_ACCENT}`, borderRadius: 8 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Balancing amount</div>
           <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>
-            {balanceUsed
-              ? <>{formatGBP(d.monthlyOver)} used this month{d.balanceAdjust !== 0 ? ` · ${formatGBP(d.balanceAdjust)} set` : ''}</>
-              : (d.balanceAdjust === 0 ? 'None set' : `${formatGBP(d.balanceAdjust)} set · untouched`)}
+            {grant <= 0
+              ? 'Granted extra spend — none set'
+              : used > 0.005
+                ? <>{formatGBP(used)} used this month · {formatGBP(grant)} granted</>
+                : `${formatGBP(grant)} granted · untouched`}
           </div>
         </div>
         {editingBal ? (
@@ -696,10 +700,10 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 16, fontWeight: 800, color: balanceLow ? PROFIT_NEG : (d.balanceLeft > 0.005 ? PROFIT_POS : BRAND.ink), lineHeight: 1.1 }}>{formatGBP(d.balanceLeft)}</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: grant <= 0 ? BRAND.muted : (grantUsedUp ? '#B45309' : PROFIT_POS), lineHeight: 1.1 }}>{formatGBP(d.balanceLeft)}</div>
               <div style={{ fontSize: 10, color: BRAND.muted }}>left</div>
             </div>
-            <button className="btn-icon" title="Adjust the balancing amount" onClick={() => setEditingBal(true)} style={{ padding: 2 }}><Pencil size={12} /></button>
+            <button className="btn-icon" title="Adjust the granted extra spend" onClick={() => setEditingBal(true)} style={{ padding: 2 }}><Pencil size={12} /></button>
           </div>
         )}
       </div>
