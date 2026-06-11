@@ -2780,6 +2780,8 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
   const editorRef = useRef(null);
   // Scheduled-send popover state.
   const [showSchedule, setShowSchedule] = useState(false);
+  // "Send & create follow-up" task-box state.
+  const [showFollowUp, setShowFollowUp] = useState(false);
   const [scheduleAt, setScheduleAt] = useState('');
   const [scheduling, setScheduling] = useState(false);
   // Templates popover state.
@@ -2994,9 +2996,10 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
       .map(a => ({ blobUrl: a.blobUrl, blobPathname: a.blobPathname, filename: a.filename, mimeType: a.mimeType, sizeBytes: a.sizeBytes })),
   });
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!to.trim() || !subject.trim() || bodyEmpty || sending || anyUploading) return;
+  // Core send, returns true on success. Shared by the Send button and the
+  // "send & create follow-up" flow.
+  const doSend = async () => {
+    if (!to.trim() || !subject.trim() || bodyEmpty || sending || anyUploading) return false;
     setError('');
     setSending(true);
     try {
@@ -3004,6 +3007,7 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
       if (!resp?.ok) throw new Error('Send failed');
       showMsg('Email sent');
       onSent?.();
+      return true;
     } catch (err) {
       const msg = err?.message || 'Failed to send';
       if (msg.toLowerCase().includes('not connected') || msg.toLowerCase().includes('reauth') || msg.toLowerCase().includes('expired')) {
@@ -3011,9 +3015,21 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
       } else {
         setError(msg);
       }
+      return false;
     } finally {
       setSending(false);
     }
+  };
+
+  const submit = (e) => { e.preventDefault(); doSend(); };
+
+  // "Send & create follow-up": open the task box (prefilled for this deal, a few
+  // days out) to set the follow-up; once the task is created we send the email.
+  const canSend = gmailConnected && !sending && !anyUploading && !!to.trim() && !!subject.trim() && !bodyEmpty;
+  const openFollowUp = () => { if (canSend) setShowFollowUp(true); };
+  const onFollowUpSaved = async () => {
+    setShowFollowUp(false);
+    await doSend();
   };
 
   const handleSchedule = async () => {
@@ -3431,10 +3447,21 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
               <button
                 type="submit"
                 className="btn"
-                disabled={!gmailConnected || sending || anyUploading || !to.trim() || !subject.trim() || bodyEmpty}
+                disabled={!canSend}
                 style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
               >
                 {sending ? 'Sending…' : 'Send'}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={openFollowUp}
+                disabled={!canSend}
+                aria-label="Send and create follow-up"
+                title="Send & create follow-up task"
+                style={{ borderRadius: 0, borderLeft: '1px solid rgba(255,255,255,0.35)', padding: '0 8px', display: 'inline-flex', alignItems: 'center' }}
+              >
+                <CheckSquare size={14} />
               </button>
               <button
                 type="button"
@@ -3445,7 +3472,7 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
                     return !v;
                   });
                 }}
-                disabled={!gmailConnected || sending || anyUploading || !to.trim() || !subject.trim() || bodyEmpty}
+                disabled={!canSend}
                 aria-label="Schedule send"
                 title="Schedule send"
                 style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: '1px solid rgba(255,255,255,0.35)', padding: '0 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }}
@@ -3602,6 +3629,19 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
             }
             setCreatingExtraDeal(false);
           }}
+        />
+      )}
+      {showFollowUp && (
+        <TaskFormModal
+          defaults={{
+            dealId: deal?.id || null,
+            title: 'Follow up' + (subject ? ': ' + subject.replace(/^(re|fwd?):\s*/i, '').trim() : ''),
+            // Default the follow-up a few working days out; the user adjusts it.
+            dueAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+          }}
+          onClose={() => setShowFollowUp(false)}
+          onSaved={onFollowUpSaved}
+          submitLabel="Create & send"
         />
       )}
     </div>

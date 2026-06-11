@@ -12,12 +12,16 @@ import { BRAND } from '../../theme.js';
 //   - Pass nothing to create with a deal picker.
 // Calls onSaved(task) after either path. The modal does NOT close itself —
 // the caller decides (so it can also refresh related views).
-export function TaskFormModal({ task, defaults, onClose, onSaved }) {
+export function TaskFormModal({ task, defaults, onClose, onSaved, submitLabel }) {
   const { state, actions } = useStore();
   const editing = !!task;
   const [title, setTitle] = useState(task?.title || defaults?.title || '');
   const [notes, setNotes] = useState(task?.notes || '');
-  const [dueAt, setDueAt] = useState(task?.dueAt ? isoToLocalInput(task.dueAt) : localTomorrow());
+  const [dueAt, setDueAt] = useState(
+    task?.dueAt ? isoToLocalInput(task.dueAt)
+      : defaults?.dueAt ? isoToLocalInput(defaults.dueAt)
+      : localTomorrow()
+  );
   const initialAssignees = useMemo(() => {
     if (Array.isArray(task?.assigneeEmails) && task.assigneeEmails.length) return task.assigneeEmails;
     if (task?.assigneeEmail) return [task.assigneeEmail];
@@ -98,7 +102,7 @@ export function TaskFormModal({ task, defaults, onClose, onSaved }) {
           <div style={{ display: 'flex', gap: 8 }}>
             <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
             <button type="submit" className="btn" disabled={!title.trim() || submitting}>
-              {submitting ? 'Saving…' : (editing ? 'Save' : 'Create')}
+              {submitting ? 'Saving…' : (submitLabel || (editing ? 'Save' : 'Create'))}
             </button>
           </div>
         </div>
