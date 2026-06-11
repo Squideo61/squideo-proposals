@@ -24,7 +24,7 @@ import {
 } from '../gmailSync.js';
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 40;
 
 // Folder id (from the UI) → Gmail label. 'all' (All Mail) applies no label
 // filter; 'deals' and 'triage' are DB-backed and never reach this module.

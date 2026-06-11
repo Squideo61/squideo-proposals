@@ -39,7 +39,13 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   // Notification counts — lifted verbatim from the old ListView header.
   // Badge only counts tasks that have fired: due time reached (triggered) or past (overdue).
   const openTasksDue = (state.tasks || []).filter(t => !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= Date.now()).length;
-  const triageCount = (state.triage || []).length;
+  // The Emails badge mirrors Gmail's inbox unread count (matches the Inbox
+  // folder badge inside the Emails view). Needs the mailbox labels loaded, so we
+  // fetch them once the account is connected (the Emails view also refreshes
+  // them on open).
+  const gmailConnected = !!state.gmailAccount?.connected;
+  const inboxUnread = state.mailboxLabels?.INBOX?.threadsUnread || 0;
+  useEffect(() => { if (gmailConnected) actions.loadMailboxLabels(); }, [gmailConnected]); // eslint-disable-line react-hooks/exhaustive-deps
   const newQuoteRequestsCount = (state.quoteRequests || []).filter(q => q.status === 'new').length;
 
   const canRevisions = permissionsInclude(perms, 'revisions.access');
@@ -233,7 +239,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         {[
           { label: 'Tasks', icon: CheckSquare, views: ['tasks'], go: () => navigate('tasks'), count: openTasksDue },
           // Emails inbox view doesn't exist in the producer shell.
-          ...(producer ? [] : [{ label: 'Emails', icon: Mail, views: ['emails', 'triage'], go: () => navigate('emails'), count: triageCount }]),
+          ...(producer ? [] : [{ label: 'Emails', icon: Mail, views: ['emails', 'triage', 'email'], go: () => navigate('emails'), count: inboxUnread }]),
         ].map((item) => {
           const Icon = item.icon;
           const active = item.views.includes(view);

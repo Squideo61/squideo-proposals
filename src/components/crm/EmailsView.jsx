@@ -18,7 +18,6 @@ import { STAGE_COLOURS, STAGE_LABEL } from '../../lib/stages.js';
 // via /api/crm/gmail/folder. kind drives which store action loads each folder.
 const FOLDERS = [
   { id: 'deals',   label: 'Deals',    icon: Briefcase,   kind: 'deals'  },
-  { id: 'triage',  label: 'Triage',   icon: Inbox,       kind: 'triage' },
   { id: 'inbox',   label: 'Inbox',    icon: Mail,        kind: 'gmail'  },
   { id: 'unread',  label: 'Unread',   icon: CircleDot,   kind: 'gmail'  },
   { id: 'sent',    label: 'Sent',     icon: Send,        kind: 'gmail'  },
@@ -49,6 +48,10 @@ const DENSITY_OPTIONS = [
 ];
 const ROW_VPAD = { comfortable: '14px', default: '7px', compact: '2px' };
 const vpad = (d) => ROW_VPAD[d] || ROW_VPAD.default;
+
+// Slim version of .btn-icon used for the per-row quick actions, so the action
+// icons don't set the row height and rows stay tight (Gmail-style).
+const SLIM_ROW_BTN = { padding: 4 };
 
 // DOMPurify config mirrors the deal-detail email viewer: permissive enough to
 // render real mail (images, links, tables) but strips scripts/inline handlers.
@@ -237,21 +240,27 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     return null;
   };
 
+  // Back + title row. On desktop it lives at the top of the main column (so the
+  // folder sidebar can start at the very top and keep Settings pinned in view);
+  // on mobile it sits above everything and also carries Compose + settings,
+  // since the sidebar there is a horizontal strip.
+  const headerEl = (
+    <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+      <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
+      <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Mail size={22} color={BRAND.blue} /> Emails
+      </h1>
+      {isMobile && <div style={{ flex: 1 }} />}
+      {isMobile && <DensitySettings density={density} onChange={changeDensity} variant="icon" />}
+      {isMobile && (
+        <button onClick={compose} className="btn"><PenSquare size={14} /> Compose</button>
+      )}
+    </header>
+  );
+
   return (
     <div style={{ padding: isMobile ? '10px 10px' : '12px 24px' }}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
-        <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
-        <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Mail size={22} color={BRAND.blue} /> Emails
-        </h1>
-        {isMobile && <div style={{ flex: 1 }} />}
-        {/* On mobile the sidebar is a horizontal strip, so Compose + display
-            settings live in the header instead of the sidebar. */}
-        {isMobile && <DensitySettings density={density} onChange={changeDensity} variant="icon" />}
-        {isMobile && (
-          <button onClick={compose} className="btn"><PenSquare size={14} /> Compose</button>
-        )}
-      </header>
+      {isMobile && headerEl}
 
       <div style={{ display: 'flex', gap: isMobile ? 0 : 18, alignItems: 'flex-start', flexDirection: isMobile ? 'column' : 'row' }}>
         {/* Folder sidebar — Gmail-style: Compose pinned at the top, folder list,
@@ -261,13 +270,13 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
           display: 'flex', flexDirection: isMobile ? 'row' : 'column',
           gap: 2, overflowX: isMobile ? 'auto' : 'visible',
           marginBottom: isMobile ? 12 : 0,
-          ...(isMobile ? {} : { position: 'sticky', top: 72, alignSelf: 'flex-start', height: 'calc(100vh - 88px)', overflowY: 'auto' }),
+          ...(isMobile ? {} : { position: 'sticky', top: 68, alignSelf: 'flex-start', height: 'calc(100vh - 80px)', overflowY: 'auto' }),
         }}>
           {!isMobile && (
             <button
               onClick={compose}
               className="btn"
-              style={{ width: '100%', justifyContent: 'flex-start', padding: '12px 18px', borderRadius: 16, marginBottom: 10, boxShadow: '0 1px 3px rgba(15,42,61,0.18)', flexShrink: 0 }}
+              style={{ alignSelf: 'flex-start', padding: '9px 20px', borderRadius: 16, marginBottom: 10, boxShadow: '0 1px 3px rgba(15,42,61,0.18)', flexShrink: 0 }}
             >
               <PenSquare size={16} /> Compose
             </button>
@@ -312,6 +321,7 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
 
         {/* Main pane */}
         <div style={{ flex: 1, minWidth: 0, width: '100%' }}>
+          {!isMobile && headerEl}
           {openRef ? (
             // Open the conversation full-width in the main area (like Gmail),
             // not a pop-up. The folder sidebar stays put; Back returns to list.
@@ -550,7 +560,7 @@ function Body({ def, rows, density = 'default', loading, hasMore, onLoadMore, on
         <>
           <div ref={sentinelRef} aria-hidden style={{ height: 1 }} />
           <div style={{ textAlign: 'center', marginTop: 12 }}>
-            <button onClick={onLoadMore} className="btn-ghost" disabled={loading}>{loading ? 'Loading…' : 'Load more'}</button>
+            <button onClick={onLoadMore} className="btn-ghost" disabled={loading}>{loading ? 'Loading…' : 'Load older emails'}</button>
           </div>
         </>
       )}
@@ -748,14 +758,14 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
       <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: BRAND.muted, width: 78, textAlign: 'right' }}>{formatMailDate(row.date)}</span>
       <div style={{ flexShrink: 0, display: 'flex', gap: 2 }}>
         {row.unread && (
-          <button onClick={() => onAction('markRead', row.id)} className="btn-icon" title="Mark read" aria-label="Mark read"><MailOpen size={14} /></button>
+          <button onClick={() => onAction('markRead', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Mark read" aria-label="Mark read"><MailOpen size={14} /></button>
         )}
         {folder !== 'trash' && folder !== 'spam' && folder !== 'sent' && folder !== 'drafts' && (
-          <button onClick={() => onAction('archive', row.id)} className="btn-icon" title="Archive" aria-label="Archive"><Archive size={14} /></button>
+          <button onClick={() => onAction('archive', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Archive" aria-label="Archive"><Archive size={14} /></button>
         )}
         {folder === 'trash'
-          ? <button onClick={() => onAction('untrash', row.id)} className="btn-icon" title="Restore" aria-label="Restore"><RefreshCw size={14} /></button>
-          : <button onClick={() => onAction('trash', row.id)} className="btn-icon" title="Delete" aria-label="Delete"><Trash2 size={14} /></button>}
+          ? <button onClick={() => onAction('untrash', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Restore" aria-label="Restore"><RefreshCw size={14} /></button>
+          : <button onClick={() => onAction('trash', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Delete" aria-label="Delete"><Trash2 size={14} /></button>}
       </div>
     </div>
   );
