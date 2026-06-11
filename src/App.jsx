@@ -462,6 +462,7 @@ function AppShell() {
             openThreadId={view === 'email' ? emailThread : null}
             onBack={() => navigate('list')}
             onOpenDeal={(id) => navigate('deal', id)}
+            onOpenProposal={(id, signed) => navigate(signed ? 'client' : 'builder', id)}
             onSelectFolder={(f) => navigate('emails', f)}
             onOpenThread={(folder, threadId) => navigate('email', folder + '~' + threadId)}
             onCloseThread={() => goBack('emails')}

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Plus, X, Search } from 'lucide-react';
+import { ExternalLink, Plus, X, Search, FileText } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
@@ -11,7 +11,7 @@ const STAGE_LABEL = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s.label])
 // in-app twin of the Chrome extension's Gmail sidebar. Tells you which deal(s)
 // a thread is on (or suggests/lets you attach one) and surfaces the deal's
 // stage, value, owner, open tasks and recent activity.
-export function DealContextPanel({ gmailThreadId, counterpartyEmail, onOpenDeal }) {
+export function DealContextPanel({ gmailThreadId, counterpartyEmail, onOpenDeal, onOpenProposal }) {
   const { state, actions } = useStore();
   const links = state.threadDeals?.[gmailThreadId]; // undefined = not resolved yet
 
@@ -29,7 +29,7 @@ export function DealContextPanel({ gmailThreadId, counterpartyEmail, onOpenDeal 
   const suggested = links.filter(l => l.source === 'contact');  // sender matches a deal contact
 
   if (linked.length) {
-    return <LinkedView linked={linked} gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} onOpenDeal={onOpenDeal} />;
+    return <LinkedView linked={linked} gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} onOpenDeal={onOpenDeal} onOpenProposal={onOpenProposal} />;
   }
   if (suggested.length) {
     return <SuggestedView suggested={suggested} gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} onOpenDeal={onOpenDeal} />;
@@ -37,7 +37,7 @@ export function DealContextPanel({ gmailThreadId, counterpartyEmail, onOpenDeal 
   return <UnlinkedView gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} />;
 }
 
-function LinkedView({ linked, gmailThreadId, counterpartyEmail, onOpenDeal }) {
+function LinkedView({ linked, gmailThreadId, counterpartyEmail, onOpenDeal, onOpenProposal }) {
   const { state, actions, showMsg } = useStore();
   const [busy, setBusy] = useState(false);
   const primary = linked[0];
@@ -63,7 +63,7 @@ function LinkedView({ linked, gmailThreadId, counterpartyEmail, onOpenDeal }) {
         ))}
       </div>
 
-      {detail && <DealDetailBlock detail={detail} gmailThreadId={gmailThreadId} onOpenDeal={onOpenDeal} />}
+      {detail && <DealDetailBlock detail={detail} gmailThreadId={gmailThreadId} onOpenDeal={onOpenDeal} onOpenProposal={onOpenProposal} />}
 
       <AttachPicker
         gmailThreadId={gmailThreadId}
@@ -125,10 +125,32 @@ function UnlinkedView({ gmailThreadId, counterpartyEmail }) {
 
 // ---- Deal detail (when linked) ----
 
-function DealDetailBlock({ detail, gmailThreadId, onOpenDeal }) {
+function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) {
   const { actions } = useStore();
   const [editingTask, setEditingTask] = useState(null);
   const openTasks = (detail.tasks || []).filter(t => !t.doneAt).slice(0, 3);
+
+  // Quick deal summary that tracks reality: a signed proposal's total is the
+  // actual sale value (incl. extras) and wins, so the figure — and the "Signed"
+  // marker — update the moment the client signs. Otherwise fall back to a manual
+  // deal value, then the latest proposed value. Mirrors the deal page's logic.
+  const allProposals = detail.proposals || [];
+  const newestProposal = (list) => list.reduce((best, p) => (best && (best.number || 0) >= (p.number || 0) ? best : p), null);
+  const valueInfo = useMemo(() => {
+    const priced = allProposals.filter(p => (p.totalExVat ?? p.basePrice) != null);
+    const signed = newestProposal(priced.filter(p => p.signed));
+    if (signed) return { value: signed.totalExVat ?? signed.basePrice, signed: true };
+    if (detail.value != null) return { value: detail.value, signed: false };
+    const latest = newestProposal(priced);
+    if (latest) return { value: latest.totalExVat ?? latest.basePrice, signed: false };
+    return { value: null, signed: false };
+  }, [allProposals, detail.value]);
+  // The proposal the "View proposal" button opens: the signed one if there is
+  // one (newest), else the newest proposal overall.
+  const viewProposal = useMemo(
+    () => newestProposal(allProposals.filter(p => p.signed)) || newestProposal(allProposals),
+    [allProposals],
+  );
   const timeline = useMemo(() => {
     const events = (detail.events || []).map(e => ({ kind: 'event', when: e.occurredAt, data: e }));
     const emails = (detail.emails || []).map(em => ({ kind: 'email', when: em.sentAt, data: em }));
@@ -160,17 +182,30 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal }) {
     return out;
   }, [detail, gmailThreadId]);
 
-  const proposals = (detail.proposals || []).slice(0, 3);
-
   return (
     <>
       <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12, marginBottom: 14 }}>
         <Row><DealMetaKey>Stage</DealMetaKey><StageBadge stage={detail.stage} /></Row>
-        {detail.value != null && <Row><DealMetaKey>Value</DealMetaKey><span style={{ fontSize: 13, fontWeight: 600 }}>£{Number(detail.value).toLocaleString('en-GB')}</span></Row>}
+        {valueInfo.value != null && (
+          <Row>
+            <DealMetaKey>Value</DealMetaKey>
+            <span style={{ fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              £{Number(valueInfo.value).toLocaleString('en-GB')}
+              {valueInfo.signed && <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: '#16A34A' }}>SIGNED</span>}
+            </span>
+          </Row>
+        )}
         {detail.ownerEmail && <Row><DealMetaKey>Owner</DealMetaKey><span style={{ fontSize: 12 }}>{detail.ownerEmail}</span></Row>}
-        <button onClick={() => onOpenDeal?.(detail.id)} className="btn" style={{ marginTop: 10, fontSize: 12 }}>
-          Open deal <ExternalLink size={13} />
-        </button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+          <button onClick={() => onOpenDeal?.(detail.id)} className="btn" style={{ fontSize: 12 }}>
+            Open deal <ExternalLink size={13} />
+          </button>
+          {viewProposal && (
+            <button onClick={() => onOpenProposal?.(viewProposal.id, viewProposal.signed)} className="btn-ghost" style={{ fontSize: 12 }}>
+              <FileText size={13} /> View proposal
+            </button>
+          )}
+        </div>
       </div>
 
       {unknownCcs.length > 0 && (
@@ -218,20 +253,6 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal }) {
             {timeline.map((item, i) => item.kind === 'email'
               ? <TimelineEmail key={'em' + i} email={item.data} />
               : <TimelineEvent key={'ev' + i} event={item.data} />)}
-          </div>
-        </>
-      )}
-
-      {proposals.length > 0 && (
-        <>
-          <Label>Linked proposals</Label>
-          <div style={{ margin: '6px 0 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {proposals.map(p => (
-              <div key={p.id} style={{ fontSize: 12 }}>
-                {p.contactBusinessName || p.clientName || '(untitled)'}
-                {p.basePrice != null && <span style={{ color: BRAND.muted }}> — £{Number(p.basePrice).toLocaleString('en-GB')}</span>}
-              </div>
-            ))}
           </div>
         </>
       )}

@@ -102,7 +102,7 @@ const FRAME_SANITIZE = {
   FORBID_ATTR: ['onerror', 'onload', 'onclick'],
 };
 
-export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOpenDeal, onSelectFolder, onOpenThread, onCloseThread }) {
+export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOpenDeal, onOpenProposal, onSelectFolder, onOpenThread, onCloseThread }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const active = FOLDER_BY_ID[folder] ? folder : 'inbox';
@@ -1089,6 +1089,7 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
             // Navigate straight to the deal. (Don't call onBack first — it now
             // triggers history.back(), which races the navigate and cancels it.)
             onOpenDeal={onOpenDeal}
+            onOpenProposal={onOpenProposal}
           />
         </div>
       </div>
