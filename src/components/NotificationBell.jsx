@@ -163,20 +163,38 @@ export function NotificationBell({ onOpenLink, inline = false, channel = 'genera
                       </div>
                     </div>
                   </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); actions.dismissNotification(n.id, channel); }}
-                    aria-label="Dismiss notification"
-                    title="Dismiss"
-                    style={{
-                      flexShrink: 0, alignSelf: 'flex-start', margin: '8px 8px 0 0', padding: 4,
-                      background: 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer',
-                      color: BRAND.muted, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = BRAND.ink; e.currentTarget.style.background = BRAND.paper; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    <X size={13} />
-                  </button>
+                  <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, padding: '8px 8px 0 0' }}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); actions.dismissNotification(n.id, channel); }}
+                      aria-label="Dismiss notification"
+                      title="Dismiss"
+                      style={{
+                        padding: 4, background: 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer',
+                        color: BRAND.muted, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = BRAND.ink; e.currentTarget.style.background = BRAND.paper; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <X size={13} />
+                    </button>
+                    {/* A "go to" affordance on tracking alerts — opens the email
+                        (or the proposal's deal) the alert is about. */}
+                    {channel === 'tracking' && n.link && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onItemClick(n); }}
+                        title={/^https?:/i.test(n.link) ? 'Open the email' : 'Go to'}
+                        style={{
+                          fontSize: 11, fontWeight: 600, color: meta.accent, background: 'transparent',
+                          border: '1px solid ' + BRAND.border, borderRadius: 6, padding: '2px 8px',
+                          cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      >
+                        {/^https?:/i.test(n.link) ? 'Open email →' : 'Go to →'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))
             )}

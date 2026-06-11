@@ -135,6 +135,12 @@ function AppShell() {
   // '#/deal/<id>'). Mirrors parseHash but works off the supplied string.
   const openLink = useCallback((link) => {
     if (!link) return;
+    // Absolute links (e.g. a tracking notification's Gmail thread URL) open in a
+    // new tab rather than routing inside the SPA.
+    if (/^https?:\/\//i.test(String(link))) {
+      window.open(String(link), '_blank', 'noopener');
+      return;
+    }
     const raw = String(link).replace(/^#?\/?/, '');
     if (!raw) { navigate('list'); return; }
     const sep = raw.indexOf('/');

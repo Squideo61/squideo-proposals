@@ -62,6 +62,12 @@ async function notifyFirstOpen(token, geo) {
     const recipient = Array.isArray(t.recipients) && t.recipients[0] ? t.recipients[0] : 'A recipient';
     const where = geo.city || geo.country || null;
     const subject = t.subject || '(no subject)';
+    // "Go to" target: the actual email thread in Gmail (works whether or not the
+    // thread is linked to a deal). Falls back to the deal page if we somehow have
+    // no thread id. Absolute URL — the client opens it in a new tab.
+    const emailLink = t.gmail_thread_id
+      ? `https://mail.google.com/mail/u/0/#all/${t.gmail_thread_id}`
+      : (dealId ? `#/deal/${dealId}` : null);
     await sendNotification('tracking.email_opened', {
       ownerEmail: t.user_email,
       inAppOnly: true,
@@ -69,7 +75,7 @@ async function notifyFirstOpen(token, geo) {
       inApp: {
         title: `Email opened: ${subject}`,
         body: `${recipient} just opened it${where ? ' · ' + where : ''}`,
-        link: dealId ? `#/deal/${dealId}` : null,
+        link: emailLink,
         tag: `email-open-${t.id}`,
       },
     });
