@@ -47,7 +47,7 @@ const DENSITY_OPTIONS = [
   { id: 'default',     label: 'Default'     },
   { id: 'compact',     label: 'Compact'     },
 ];
-const ROW_VPAD = { comfortable: '14px', default: '9px', compact: '2px' };
+const ROW_VPAD = { comfortable: '14px', default: '7px', compact: '2px' };
 const vpad = (d) => ROW_VPAD[d] || ROW_VPAD.default;
 
 // DOMPurify config mirrors the deal-detail email viewer: permissive enough to
@@ -99,7 +99,7 @@ const FRAME_SANITIZE = {
   FORBID_ATTR: ['onerror', 'onload', 'onclick'],
 };
 
-export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOpenDeal, onSelectFolder }) {
+export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOpenDeal, onSelectFolder, onOpenThread, onCloseThread }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const active = FOLDER_BY_ID[folder] ? folder : 'inbox';
@@ -122,20 +122,27 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
   const [density, setDensity] = useState(() => {
     try { return localStorage.getItem(DENSITY_KEY) || 'default'; } catch { return 'default'; }
   });
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const changeDensity = (d) => {
     setDensity(d);
     try { localStorage.setItem(DENSITY_KEY, d); } catch { /* ignore */ }
   };
 
-  useEffect(() => { setSearch(''); setAppliedQuery(''); setOpenRef(null); }, [active]);
+  useEffect(() => { setSearch(''); setAppliedQuery(''); }, [active]);
 
-  // Deep-link: open a specific Gmail thread straight away (e.g. from a tracking-
-  // bell "Open email" link). Declared after the reset above so it isn't cleared
-  // on mount; the conversation view loads the thread by id regardless of folder.
+  // The open conversation is driven entirely by the URL (openThreadId), so the
+  // browser Back button returns to the folder list instead of leaving Emails.
+  // The thread's kind is implied by its folder: Gmail folders carry live thread
+  // ids; the Deals/Triage folders carry DB-backed gmailThreadIds. unread comes
+  // from the loaded row (so opening marks it read) — unknown for a cold deep
+  // link, which is fine.
   useEffect(() => {
-    if (openThreadId) setOpenRef({ kind: 'gmail', threadId: openThreadId, unread: false });
-  }, [openThreadId]);
+    if (!openThreadId) { setOpenRef(null); return; }
+    const kind = def.kind === 'gmail' ? 'gmail' : 'db';
+    const unread = kind === 'gmail'
+      ? !!(state.mailbox?.[active]?.rows || []).find((r) => r.id === openThreadId)?.unread
+      : false;
+    setOpenRef({ kind, threadId: openThreadId, unread });
+  }, [openThreadId, active]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (def.kind === 'deals') {
@@ -232,46 +239,39 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
 
   return (
     <div style={{ padding: isMobile ? '14px 10px' : '28px 24px' }}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           <Mail size={22} color={BRAND.blue} /> Emails
         </h1>
-        <div style={{ flex: 1 }} />
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setSettingsOpen(o => !o)}
-            className="btn-icon"
-            title="Display settings"
-            aria-label="Display settings"
-            aria-expanded={settingsOpen}
-          ><Settings size={16} /></button>
-          {settingsOpen && (
-            <>
-              <div onClick={() => setSettingsOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
-              <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 6, zIndex: 31, width: 220, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.14)', padding: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: BRAND.muted, marginBottom: 8 }}>Density</div>
-                {DENSITY_OPTIONS.map(opt => (
-                  <label key={opt.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', fontSize: 13, cursor: 'pointer' }}>
-                    <input type="radio" name="email-density" checked={density === opt.id} onChange={() => changeDensity(opt.id)} />
-                    {opt.label}
-                  </label>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-        <button onClick={compose} className="btn"><PenSquare size={14} /> Compose</button>
+        {isMobile && <div style={{ flex: 1 }} />}
+        {/* On mobile the sidebar is a horizontal strip, so Compose + display
+            settings live in the header instead of the sidebar. */}
+        {isMobile && <DensitySettings density={density} onChange={changeDensity} variant="icon" />}
+        {isMobile && (
+          <button onClick={compose} className="btn"><PenSquare size={14} /> Compose</button>
+        )}
       </header>
 
       <div style={{ display: 'flex', gap: isMobile ? 0 : 18, alignItems: 'flex-start', flexDirection: isMobile ? 'column' : 'row' }}>
-        {/* Folder sidebar */}
+        {/* Folder sidebar — Gmail-style: Compose pinned at the top, folder list,
+            then display settings pinned to the bottom of the panel. */}
         <nav style={{
           width: isMobile ? '100%' : 200, flexShrink: 0,
           display: 'flex', flexDirection: isMobile ? 'row' : 'column',
           gap: 2, overflowX: isMobile ? 'auto' : 'visible',
           marginBottom: isMobile ? 12 : 0,
+          ...(isMobile ? {} : { position: 'sticky', top: 72, alignSelf: 'flex-start', height: 'calc(100vh - 88px)', overflowY: 'auto' }),
         }}>
+          {!isMobile && (
+            <button
+              onClick={compose}
+              className="btn"
+              style={{ width: '100%', justifyContent: 'flex-start', padding: '12px 18px', borderRadius: 16, marginBottom: 10, boxShadow: '0 1px 3px rgba(15,42,61,0.18)', flexShrink: 0 }}
+            >
+              <PenSquare size={16} /> Compose
+            </button>
+          )}
           {folders.map((f) => {
             const isActive = f.id === active;
             const badge = badgeFor(f);
@@ -302,6 +302,12 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               </button>
             );
           })}
+          {!isMobile && (
+            <>
+              <div style={{ flex: 1, minHeight: 12 }} />
+              <DensitySettings density={density} onChange={changeDensity} variant="bar" dropUp />
+            </>
+          )}
         </nav>
 
         {/* Main pane */}
@@ -313,7 +319,7 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               openRef={openRef}
               folder={active}
               connected={connected}
-              onBack={() => { setOpenRef(null); if (active === 'triage') actions.refreshTriage(); }}
+              onBack={() => { if (active === 'triage') actions.refreshTriage(); onCloseThread?.(); }}
               onOpenDeal={onOpenDeal}
             />
           ) : (
@@ -384,7 +390,7 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               loading={!!slice.loading}
               hasMore={slice.next != null}
               onLoadMore={loadMore}
-              onOpen={(row) => setOpenRef(toOpenRef(def, row))}
+              onOpen={(row) => onOpenThread?.(active, def.kind === 'gmail' ? row.id : row.gmailThreadId)}
               onDismiss={(row) => { if (window.confirm('Dismiss this conversation? It stays archived but leaves Triage.')) { actions.triageDismiss(row.gmailThreadId); showMsg('Dismissed'); } }}
               onAction={(action, id) => doAction(actions, active, action, id, showMsg)}
             />
@@ -395,12 +401,6 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
       </div>
     </div>
   );
-}
-
-// Normalise a list row into the reference the conversation modal loads from.
-function toOpenRef(def, row) {
-  if (def.kind === 'gmail') return { kind: 'gmail', threadId: row.id, unread: row.unread };
-  return { kind: 'db', threadId: row.gmailThreadId, unread: false };
 }
 
 function doAction(actions, folder, action, threadId, showMsg) {
@@ -423,6 +423,60 @@ function NotConnected({ onConnect }) {
         The Deals and Triage folders work from your CRM data, but the live mailbox folders need your Gmail connected.
       </p>
       <button onClick={onConnect} className="btn"><Mail size={14} /> Connect Gmail</button>
+    </div>
+  );
+}
+
+// Display-density picker. Rendered as a bottom-of-sidebar "Settings" bar on
+// desktop (opens upward) and as a header icon on mobile.
+function DensitySettings({ density, onChange, variant = 'icon', dropUp = false }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      {variant === 'bar' ? (
+        <button
+          onClick={() => setOpen(o => !o)}
+          title="Display settings"
+          aria-label="Display settings"
+          aria-expanded={open}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+            padding: '8px 12px', borderRadius: 8, cursor: 'pointer', border: 'none',
+            background: open ? BRAND.blue + '14' : 'transparent', color: BRAND.muted,
+            fontWeight: 500, fontSize: 13, fontFamily: 'inherit', textAlign: 'left',
+          }}
+        >
+          <Settings size={15} color={BRAND.muted} />
+          <span style={{ flex: 1 }}>Settings</span>
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="btn-icon"
+          title="Display settings"
+          aria-label="Display settings"
+          aria-expanded={open}
+        ><Settings size={16} /></button>
+      )}
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
+          <div style={{
+            position: 'absolute', left: 0, zIndex: 31, width: 220,
+            ...(dropUp ? { bottom: '100%', marginBottom: 6 } : { top: '100%', marginTop: 6 }),
+            background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10,
+            boxShadow: '0 10px 30px rgba(0,0,0,0.14)', padding: 12,
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: BRAND.muted, marginBottom: 8 }}>Density</div>
+            {DENSITY_OPTIONS.map(opt => (
+              <label key={opt.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', fontSize: 13, cursor: 'pointer' }}>
+                <input type="radio" name="email-density" checked={density === opt.id} onChange={() => { onChange(opt.id); setOpen(false); }} />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -674,12 +728,12 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
         onClick={onOpen}
         style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 10, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0 }}
       >
-        <span style={{ width: 170, flexShrink: 0, display: 'flex', alignItems: 'baseline', gap: 5, fontSize: 13, fontWeight: row.unread ? 700 : 500, color: BRAND.ink, overflow: 'hidden' }}>
+        <span style={{ width: 170, flexShrink: 0, display: 'flex', alignItems: 'baseline', gap: 5, fontSize: 14, fontWeight: row.unread ? 700 : 400, color: BRAND.ink, overflow: 'hidden' }}>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
           <CountPill n={row.messageCount} />
         </span>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          <span style={{ fontWeight: row.unread ? 700 : 500 }}>{row.subject || '(no subject)'}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 14, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ fontWeight: row.unread ? 700 : 400 }}>{row.subject || '(no subject)'}</span>
           {row.snippet && <span style={{ color: BRAND.muted, fontWeight: 400 }}> — {row.snippet}</span>}
         </span>
       </button>

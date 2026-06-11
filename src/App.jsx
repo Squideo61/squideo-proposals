@@ -447,15 +447,27 @@ function AppShell() {
           onOpenDeal={(id) => navigate('deal', id)}
         />
       )}
-      {(view === 'emails' || view === 'triage' || view === 'email') && (
-        <EmailsView
-          folder={view === 'triage' ? 'triage' : (view === 'email' ? 'inbox' : (activeId || 'inbox'))}
-          openThreadId={view === 'email' ? activeId : null}
-          onBack={() => navigate('list')}
-          onOpenDeal={(id) => navigate('deal', id)}
-          onSelectFolder={(f) => navigate('emails', f)}
-        />
-      )}
+      {(view === 'emails' || view === 'triage' || view === 'email') && (() => {
+        // An open conversation is its own route (view 'email'), so the browser
+        // Back button returns to the folder list instead of leaving Emails. The
+        // id encodes the source folder + thread as "<folder>~<threadId>" so Back
+        // lands on the right folder; legacy deep links pass just the gmail thread
+        // id (no '~'), which falls back to the inbox folder.
+        const emailParts = view === 'email' && activeId ? activeId.split('~') : null;
+        const emailFolder = emailParts && emailParts.length > 1 ? emailParts[0] : 'inbox';
+        const emailThread = emailParts ? emailParts[emailParts.length - 1] : null;
+        return (
+          <EmailsView
+            folder={view === 'triage' ? 'triage' : (view === 'email' ? emailFolder : (activeId || 'inbox'))}
+            openThreadId={view === 'email' ? emailThread : null}
+            onBack={() => navigate('list')}
+            onOpenDeal={(id) => navigate('deal', id)}
+            onSelectFolder={(f) => navigate('emails', f)}
+            onOpenThread={(folder, threadId) => navigate('email', folder + '~' + threadId)}
+            onCloseThread={() => goBack('emails')}
+          />
+        );
+      })()}
       {view === 'quote-requests' && (
         <QuoteRequestsView
           onBack={() => navigate('list')}
