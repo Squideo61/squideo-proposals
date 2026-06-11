@@ -195,7 +195,9 @@ function OwnerOption({ label, selected, onClick }) {
 function StageRow({ stage, deals, onDrop, onOpenDeal }) {
   const [hover, setHover] = useState(false);
   const [collapsed, setCollapsed] = useState(stage.defaultCollapsed ?? false);
-  const total = deals.reduce((s, d) => s + (Number(d.value) || 0), 0);
+  // Column total mirrors the cards: prefer the proposal-derived (signed/proposed)
+  // value, falling back to a manual deal value.
+  const total = deals.reduce((s, d) => s + (Number(d.effectiveValue ?? d.value) || 0), 0);
   return (
     <div
       onDragOver={(e) => { e.preventDefault(); setHover(true); }}
@@ -446,6 +448,19 @@ function DealRow({ deal, onOpen }) {
   const company = deal.companyId ? state.companies[deal.companyId] : null;
   const name = company?.name || deal.title || 'Untitled deal';
   const ageDays = daysSince(deal.stageChangedAt);
+  // Value shown: signed/proposed value derived by the backend, else the manual
+  // value. So a deal with a proposal shows a figure even before it's signed.
+  const shownValue = deal.effectiveValue != null ? deal.effectiveValue : deal.value;
+  // Next task derived live from the loaded task list (which holds every open
+  // task across deals), so a just-created follow-up shows immediately without a
+  // deals reload. Falls back to the backend snapshot if tasks aren't loaded.
+  const nextTask = useMemo(() => {
+    const open = (state.tasks || []).filter(t => t.dealId === deal.id && !t.doneAt);
+    if (!open.length) return deal.nextTask || null;
+    const dueMs = (t) => (t.dueAt ? new Date(t.dueAt).getTime() : Infinity);
+    const best = open.reduce((b, t) => (b && dueMs(b) <= dueMs(t) ? b : t), null);
+    return best ? { title: best.title, dueAt: best.dueAt || null } : (deal.nextTask || null);
+  }, [state.tasks, deal.id, deal.nextTask]);
 
   const t = deal.tracking || {};
   const proposalSent = (deal.proposalCount || 0) > 0;
@@ -457,7 +472,7 @@ function DealRow({ deal, onOpen }) {
     spent ? `Time spent ${spent}` : null,
   ].filter(Boolean);
 
-  const due = deal.nextTask?.dueAt ? new Date(deal.nextTask.dueAt) : null;
+  const due = nextTask?.dueAt ? new Date(nextTask.dueAt) : null;
   const overdue = due && due.getTime() < Date.now();
   const lastEmail = deal.lastEmailAt ? new Date(deal.lastEmailAt) : null;
 
@@ -481,11 +496,11 @@ function DealRow({ deal, onOpen }) {
           <SaleStatusPills deal={deal} />
           {/* Next due task + last-email date inline with the title, each as its own
               distinct chip so it's obvious what they are and where one ends. */}
-          {(deal.nextTask || lastEmail) && (
+          {(nextTask || lastEmail) && (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 2, minWidth: 0 }}>
-              {deal.nextTask && (
+              {nextTask && (
                 <span
-                  title={`Next due task: ${deal.nextTask.title}${due ? ' · ' + shortDate(due) : ''}`}
+                  title={`Next due task: ${nextTask.title}${due ? ' · ' + shortDate(due) : ''}`}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
                     color: overdue ? '#B91C1C' : '#475569',
                     background: overdue ? '#FEF2F2' : '#F1F5F9',
@@ -506,7 +521,7 @@ function DealRow({ deal, onOpen }) {
           <TrackingEyeChip icon={FileText} channel="Proposal" sent={proposalSent} opened={t.proposalOpens > 0} lastOpenedAt={t.lastProposalOpenAt} lines={propLines} />
         </span>
         <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, fontVariantNumeric: 'tabular-nums', flexShrink: 0, minWidth: 64, textAlign: 'right' }}>
-          {deal.value != null ? formatGBP(deal.value) : <span style={{ color: BRAND.muted, fontWeight: 400 }}>—</span>}
+          {shownValue != null ? formatGBP(shownValue) : <span style={{ color: BRAND.muted, fontWeight: 400 }}>—</span>}
         </span>
         {ageDays != null && (
           <span style={{ fontSize: 10, color: ageDays > 14 ? '#92400E' : BRAND.muted, flexShrink: 0, minWidth: 22, textAlign: 'right' }} title={`${ageDays} days in stage`}>

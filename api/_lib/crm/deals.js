@@ -252,9 +252,45 @@ export async function annotateDeals(rows) {
     lastEmailMap = new Map(emRows.map(r => [r.deal_id, r.last_at]));
   } catch (_) { /* email tables not present */ }
 
+  // Proposal-derived value per deal. The signed proposal's total is the actual
+  // sale value (incl. selected extras), otherwise the latest proposal's total.
+  // Lets the pipeline show a figure for a deal that has a proposal but no manual
+  // value, and reflect the real signed amount once signed.
+  let valueByDeal = new Map();
+  try {
+    const propRows = await sql`
+      SELECT p.deal_id AS did, p.data, p.created_at, s.data AS signature_data
+        FROM proposals p
+        LEFT JOIN signatures s ON s.proposal_id = p.id
+       WHERE p.deal_id = ANY(${ids})`;
+    const byDeal = new Map();
+    for (const pr of propRows) {
+      if (!byDeal.has(pr.did)) byDeal.set(pr.did, []);
+      byDeal.get(pr.did).push(pr);
+    }
+    const newest = (list) => list.reduce((b, p) => (b && new Date(b.created_at) >= new Date(p.created_at) ? b : p), null);
+    for (const [did, props] of byDeal) {
+      const signed = newest(props.filter(p => p.signature_data));
+      const latest = newest(props);
+      valueByDeal.set(did, {
+        signedValue: signed ? computeProposalTotalExVat(signed.data, signed.signature_data) : null,
+        latestValue: latest ? computeProposalTotalExVat(latest.data, latest.signature_data) : null,
+      });
+    }
+  } catch (_) { /* proposals/signatures not present */ }
+
   return rows.map(r => {
     const pv = propViewMap.get(r.id);
     const eo = emailOpenMap.get(r.id);
+    // Effective value: signed sale value wins, then a manual deal value, then
+    // the latest proposed value.
+    const vinfo = valueByDeal.get(r.id) || {};
+    const manualVal = r.value != null ? Number(r.value) : null;
+    let effectiveValue = null;
+    let valueSource = null;
+    if (vinfo.signedValue != null) { effectiveValue = vinfo.signedValue; valueSource = 'signed'; }
+    else if (manualVal != null) { effectiveValue = manualVal; valueSource = 'manual'; }
+    else if (vinfo.latestValue != null) { effectiveValue = vinfo.latestValue; valueSource = 'proposal'; }
     const proposalOpens = pv ? Number(pv.opens) || 0 : 0;
     const emailOpens = eo ? Number(eo.opens) || 0 : 0;
     const lastProposalOpenAt = pv?.last_at || null;
@@ -266,6 +302,8 @@ export async function annotateDeals(rows) {
     const lastOpenedAt = ts.length ? new Date(Math.max(...ts)).toISOString() : null;
     return {
       ...serialiseDeal(r),
+      effectiveValue,
+      valueSource,
       proposalCount: propMap.get(r.id) || 0,
       videoCount: vidMap.get(r.id) || 0,
       nextTask: nextTaskMap.get(r.id) || null,
