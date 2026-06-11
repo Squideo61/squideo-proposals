@@ -462,7 +462,9 @@ function AppShell() {
             openThreadId={view === 'email' ? emailThread : null}
             onBack={() => navigate('list')}
             onOpenDeal={(id) => navigate('deal', id)}
-            onOpenProposal={(id, signed) => navigate(signed ? 'client' : 'builder', id)}
+            // "View proposal" opens the client-facing preview (what the client
+            // sees), not the editor — for signed and unsigned alike.
+            onOpenProposal={(id) => navigate('client', id)}
             onSelectFolder={(f) => navigate('emails', f)}
             onOpenThread={(folder, threadId) => navigate('email', folder + '~' + threadId)}
             onCloseThread={() => goBack('emails')}
