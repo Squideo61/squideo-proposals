@@ -126,6 +126,21 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   }
 
   const proposals = detail?.proposals || [];
+  // Value shown on the deal card. A signed proposal's total is the *actual* sale
+  // value (incl. selected extras), so it wins — the figure updates to reality
+  // once signed even if it differs from what was proposed or manually entered.
+  // Otherwise: a manually-set deal value, then the latest proposed value — so a
+  // deal that has a proposal always shows a number instead of a dash.
+  const dealValueInfo = useMemo(() => {
+    const priced = proposals.filter(p => (p.totalExVat ?? p.basePrice) != null);
+    const newest = (list) => list.reduce((best, p) => (best && (best.number || 0) >= (p.number || 0) ? best : p), null);
+    const signed = newest(priced.filter(p => p.signed));
+    if (signed) return { value: signed.totalExVat ?? signed.basePrice, source: 'signed' };
+    if (deal.value != null) return { value: deal.value, source: 'manual' };
+    const latest = newest(priced);
+    if (latest) return { value: latest.totalExVat ?? latest.basePrice, source: 'proposal' };
+    return { value: null, source: null };
+  }, [proposals, deal.value]);
   const projectVideos = detail?.videos || [];
   const projectPhase = useMemo(() => aggregateProjectPhase(projectVideos), [projectVideos]);
   const events = detail?.events || [];
@@ -273,7 +288,13 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           <Field icon={User} label="Primary contact">
             {contact ? <>{contact.name || contact.email}{contact.email && contact.name ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {contact.email}</span> : null}</> : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
-          <Field label="Value (ex VAT)">{deal.value != null ? <strong>{formatGBP(deal.value)}</strong> : <span style={{ color: BRAND.muted }}>—</span>}</Field>
+          <Field label="Value (ex VAT)">
+            {dealValueInfo.value != null
+              ? <strong title={dealValueInfo.source === 'signed' ? 'Signed sale value (incl. extras)'
+                  : dealValueInfo.source === 'proposal' ? 'From the latest proposal (not yet signed)'
+                  : 'Set manually'}>{formatGBP(dealValueInfo.value)}</strong>
+              : <span style={{ color: BRAND.muted }}>—</span>}
+          </Field>
           {!productionOnly && <Field icon={User} label="Owner">{owner?.name || deal.ownerEmail || <span style={{ color: BRAND.muted }}>—</span>}</Field>}
           {!productionOnly && <Field icon={Calendar} label="Expected close">{deal.expectedCloseAt || <span style={{ color: BRAND.muted }}>—</span>}</Field>}
           {!productionOnly && <Field label="Last activity">{formatRelativeTime(deal.lastActivityAt)}</Field>}
