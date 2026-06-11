@@ -313,6 +313,26 @@ function DateTimePicker({ value, onChange, defaultHour = 8 }) {
   const prevMonth = () => { const d = new Date(viewY, viewMo - 1, 1); setViewY(d.getFullYear()); setViewMo(d.getMonth()); };
   const nextMonth = () => { const d = new Date(viewY, viewMo + 1, 1); setViewY(d.getFullYear()); setViewMo(d.getMonth()); };
 
+  // Quick presets. Commit the resulting datetime and move the calendar to it.
+  const commit = (d) => {
+    onChange(fmtLocalDT({ y: d.getFullYear(), mo: d.getMonth(), d: d.getDate(), h: d.getHours(), mi: d.getMinutes() }));
+    setViewY(d.getFullYear()); setViewMo(d.getMonth());
+  };
+  const inOneHour = () => commit(new Date(Date.now() + 60 * 60 * 1000));
+  const inWorkingDays = (n) => {
+    const d = new Date();
+    d.setHours(time.h, time.mi, 0, 0);
+    let added = 0;
+    while (added < n) { d.setDate(d.getDate() + 1); const dow = d.getDay(); if (dow !== 0 && dow !== 6) added++; }
+    commit(d);
+  };
+  const inDays = (n) => {
+    const d = new Date();
+    d.setHours(time.h, time.mi, 0, 0);
+    d.setDate(d.getDate() + n);
+    commit(d);
+  };
+
   const firstWeekday = (new Date(viewY, viewMo, 1).getDay() + 6) % 7; // 0 = Monday
   const daysInMonth = new Date(viewY, viewMo + 1, 0).getDate();
   const cells = [];
@@ -375,6 +395,11 @@ function DateTimePicker({ value, onChange, defaultHour = 8 }) {
               style={{ width: 'auto', flex: 1, padding: '6px 8px', fontSize: 13 }}
             />
           </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            <QuickPreset label="1 hr" onClick={inOneHour} />
+            <QuickPreset label="3 days" onClick={() => inWorkingDays(3)} />
+            <QuickPreset label="1 week" onClick={() => inDays(7)} />
+          </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
             <div style={{ display: 'flex', gap: 6 }}>
               <button type="button" onClick={() => onChange('')} className="btn-ghost" style={{ fontSize: 12 }}>Clear</button>
@@ -386,6 +411,27 @@ function DateTimePicker({ value, onChange, defaultHour = 8 }) {
         document.body,
       )}
     </div>
+  );
+}
+
+// Compact quick-schedule chip for the date picker (1 hr / 3 days / 1 week).
+function QuickPreset({ label, onClick }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        flex: 1, padding: '5px 4px', borderRadius: 999, cursor: 'pointer',
+        fontFamily: 'inherit', fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap',
+        border: '1px solid ' + (hover ? BRAND.blue : BRAND.border),
+        background: hover ? BRAND.blue : BRAND.paper,
+        color: hover ? 'white' : BRAND.ink,
+        transition: 'background 100ms ease, border-color 100ms ease, color 100ms ease',
+      }}
+    >{label}</button>
   );
 }
 
