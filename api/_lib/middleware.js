@@ -65,6 +65,21 @@ function readSessionCookie(cookieHeader) {
   return null;
 }
 
+// Best-effort auth for public endpoints that want to *recognise* a logged-in
+// team member without requiring it (e.g. to skip self/internal tracking on a
+// public proposal view). Cookie-only — the web app sends the HttpOnly session
+// cookie same-origin. Returns the JWT payload or null; never sends a response.
+export async function optionalAuth(req) {
+  const token = readSessionCookie(req.headers.cookie);
+  if (!token) return null;
+  try {
+    const payload = await verifyToken(token);
+    return payload || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function requireAuth(req, res) {
   // Prefer the HttpOnly session cookie set on web login. The Chrome extension
   // runs cross-origin and cannot read or send our cookie, so it continues to

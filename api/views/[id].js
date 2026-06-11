@@ -1,7 +1,7 @@
 // POST  /api/views/[id]   body: { sessionId, durationSeconds? }   public
 // GET   /api/views/[id]                                            requires auth
 import sql from '../_lib/db.js';
-import { cors, requireAuth } from '../_lib/middleware.js';
+import { cors, requireAuth, optionalAuth } from '../_lib/middleware.js';
 import { sendMail, firstViewHtml, APP_URL } from '../_lib/email.js';
 import { sendNotification, ensureTrackingNotificationDefaults } from '../_lib/notifications.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
@@ -21,6 +21,13 @@ export default async function handler(req, res) {
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId.slice(0, 64) : null;
     const durationSeconds = Math.max(0, Math.min(86400, Number(body.durationSeconds) || 0));
     if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+
+    // A logged-in team member previewing the proposal (same-origin cookie) is not
+    // a client — don't record the view, alert, or advance the deal. This is why
+    // "Catherine Major opened it" fired for an internal reviewer. Clients have no
+    // CRM account so they're never authenticated here.
+    const internalViewer = await optionalAuth(req).catch(() => null);
+    if (internalViewer) return res.status(200).json({ ok: true, internal: true });
 
     const h = req.headers;
     const ip =

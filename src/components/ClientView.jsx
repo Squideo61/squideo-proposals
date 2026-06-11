@@ -201,9 +201,19 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
   // first-view notification email.
   useEffect(() => {
     if (!data || !useRealStripe) return;
-    const sessionId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+    // Reuse one session id per proposal+browser so a reload/return visit isn't
+    // counted as a brand-new viewer (which would re-fire the "opened" alert every
+    // time). A genuinely different device/browser still gets its own session.
+    const makeSession = () => ((typeof crypto !== 'undefined' && crypto.randomUUID)
       ? crypto.randomUUID()
-      : 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+      : 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10));
+    const storageKey = 'sq_view_session_' + id;
+    let sessionId = null;
+    try { sessionId = localStorage.getItem(storageKey); } catch { /* ignore */ }
+    if (!sessionId) {
+      sessionId = makeSession();
+      try { localStorage.setItem(storageKey, sessionId); } catch { /* ignore */ }
+    }
     let active = 0;
     let lastTick = Date.now();
 
