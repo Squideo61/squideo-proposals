@@ -295,7 +295,16 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   : 'Set manually'}>{formatGBP(dealValueInfo.value)}</strong>
               : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
-          {!productionOnly && <Field icon={User} label="Owner">{owner?.name || deal.ownerEmail || <span style={{ color: BRAND.muted }}>—</span>}</Field>}
+          {!productionOnly && (
+            <Field icon={User} label="Owner">
+              {deal.ownerEmail ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                  <Avatar email={deal.ownerEmail} size={22} />
+                  <span>{owner?.name || deal.ownerEmail}</span>
+                </span>
+              ) : <span style={{ color: BRAND.muted }}>—</span>}
+            </Field>
+          )}
           {!productionOnly && <Field icon={Calendar} label="Expected close">{deal.expectedCloseAt || <span style={{ color: BRAND.muted }}>—</span>}</Field>}
           {!productionOnly && <Field label="Last activity">{formatRelativeTime(deal.lastActivityAt)}</Field>}
         </div>
