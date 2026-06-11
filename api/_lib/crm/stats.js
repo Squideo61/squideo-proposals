@@ -1870,7 +1870,10 @@ async function cashflowReport(action) {
   const opHistory = keys.map((mk) => {
     const c = opCostsForMonth(mk);
     const cashIn = round2(cashByMonth[mk] || 0);
-    return { month: mk, c, cashIn, opProfit: round2(cashIn - c.total), taxProfit: round2(cashIn - deductibleCostTotalForMonth(costRows, mk) - dirSpend(mk)) };
+    // Director expenses are NOT treated as CT-deductible here on purpose — we'd
+    // rather over-reserve Corporation Tax and let the accountant decide later, so
+    // they're excluded from the taxable-profit base (but still in operating costs).
+    return { month: mk, c, cashIn, opProfit: round2(cashIn - c.total), taxProfit: round2(cashIn - deductibleCostTotalForMonth(costRows, mk)) };
   });
 
   // Corporation Tax per month on TAXABLE profit (cash − the CT-deductible cost
