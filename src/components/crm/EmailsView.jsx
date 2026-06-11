@@ -222,10 +222,12 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     if (connected) actions.loadMailboxLabels();
   };
 
+  // Returns the load promise so the list can await it and re-arm auto-loading.
   const loadMore = () => {
-    if (slice.loading || slice.next == null) return;
-    if (def.kind === 'deals') actions.loadDealEmails(slice.next);
-    else if (def.kind === 'gmail') actions.loadMailboxFolder(active, { pageToken: slice.next, q: appliedQuery, unread: unreadOnly });
+    if (slice.loading || slice.next == null) return undefined;
+    if (def.kind === 'deals') return actions.loadDealEmails(slice.next);
+    if (def.kind === 'gmail') return actions.loadMailboxFolder(active, { pageToken: slice.next, q: appliedQuery, unread: unreadOnly });
+    return undefined;
   };
 
   const compose = () => actions.openComposer({});
@@ -492,11 +494,15 @@ function DensitySettings({ density, onChange, variant = 'icon', dropUp = false }
 }
 
 function Body({ def, rows, density = 'default', loading, hasMore, onLoadMore, onOpen, onDismiss, onAction }) {
-  // Infinite scroll: a sentinel near the list's end auto-loads the next page
-  // when it scrolls into view. The "Load more" button stays as a fallback.
+  // Infinite scroll: auto-load the next page as the bottom of the list nears the
+  // viewport. We use BOTH a window scroll/resize listener and an
+  // IntersectionObserver on a sentinel — the listener is the dependable path
+  // (the observer alone proved unreliable in this layout). A busy ref + the
+  // returned load promise prevent duplicate page fetches mid-flight.
   const sentinelRef = useRef(null);
   const loadMoreRef = useRef(onLoadMore);
   loadMoreRef.current = onLoadMore;
+  const busyRef = useRef(false);
 
   // Gmail-style multi-select (Gmail folders only). Selection is by thread id and
   // resets when the folder changes. mailboxAction already takes an array of ids,
@@ -515,14 +521,37 @@ function Body({ def, rows, density = 'default', loading, hasMore, onLoadMore, on
   const bulk = (action) => { if (!selectedIds.length) return; onAction(action, selectedIds); setSelected(new Set()); };
 
   useEffect(() => {
-    if (!hasMore || loading) return undefined;
-    const el = sentinelRef.current;
-    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
-    const obs = new IntersectionObserver((entries) => {
-      if (entries.some(e => e.isIntersecting)) loadMoreRef.current?.();
-    }, { rootMargin: '400px' });
-    obs.observe(el);
-    return () => obs.disconnect();
+    if (!hasMore) return undefined;
+    const triggerLoad = () => {
+      if (busyRef.current || loading) return;
+      const scrollEl = document.scrollingElement || document.documentElement;
+      const nearBottom = scrollEl
+        && (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) < 700;
+      const s = sentinelRef.current;
+      const sentinelNear = s && (s.getBoundingClientRect().top - window.innerHeight) < 700;
+      if (!nearBottom && !sentinelNear) return;
+      const p = loadMoreRef.current?.();
+      if (p && typeof p.then === 'function') {
+        busyRef.current = true;
+        Promise.resolve(p).catch(() => {}).then(() => { busyRef.current = false; });
+      }
+    };
+    window.addEventListener('scroll', triggerLoad, { passive: true });
+    window.addEventListener('resize', triggerLoad);
+    let obs;
+    if (sentinelRef.current && typeof IntersectionObserver !== 'undefined') {
+      obs = new IntersectionObserver((entries) => {
+        if (entries.some(e => e.isIntersecting)) triggerLoad();
+      }, { rootMargin: '600px' });
+      obs.observe(sentinelRef.current);
+    }
+    // The freshly loaded page may still be short enough to need another.
+    triggerLoad();
+    return () => {
+      window.removeEventListener('scroll', triggerLoad);
+      window.removeEventListener('resize', triggerLoad);
+      if (obs) obs.disconnect();
+    };
   }, [hasMore, loading, rows.length]);
 
   if (loading && rows.length === 0) {
