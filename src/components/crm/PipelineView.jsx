@@ -36,9 +36,14 @@ export function PipelineView({ onBack, onOpenDeal }) {
     [allDeals, ownerFilter],
   );
 
-  const memberOptions = useMemo(() => Object.entries(state.users || {})
-    .map(([email, u]) => ({ email, name: u.name || email }))
-    .sort((a, b) => a.name.localeCompare(b.name)), [state.users]);
+  // Only people who actually own a deal appear in the filter — producers and
+  // other team members without deals are left out (nothing to filter to).
+  const memberOptions = useMemo(() => {
+    const owners = new Set(allDeals.map(d => d.ownerEmail).filter(Boolean));
+    return Array.from(owners)
+      .map(email => ({ email, name: state.users?.[email]?.name || email }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [allDeals, state.users]);
 
   const grouped = useMemo(() => {
     const out = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, []]));
