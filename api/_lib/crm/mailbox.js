@@ -381,11 +381,19 @@ function displayNameOrEmail(fromHeader) {
   return extractEmail(fromHeader) || String(fromHeader).trim() || null;
 }
 
+// Prefer Gmail's authoritative internalDate over the message's `Date:` header.
+// Gmail lists threads in internalDate order, so dating rows by the (clock-skewed
+// or forgeable) Date header made the list look out of order — e.g. a thread
+// shown as "3 Jun" sitting above one shown as "5 Jun". Falling back to the Date
+// header only when internalDate is missing keeps both consistent.
 function headerDate(dateHeader, internalDate) {
+  if (internalDate) {
+    const n = Number(internalDate);
+    if (Number.isFinite(n)) return new Date(n).toISOString();
+  }
   if (dateHeader) {
     const t = new Date(dateHeader);
     if (!isNaN(t.getTime())) return t.toISOString();
   }
-  if (internalDate) return new Date(Number(internalDate)).toISOString();
   return null;
 }

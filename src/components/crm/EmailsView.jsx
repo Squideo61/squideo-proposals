@@ -153,7 +153,12 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     } else if (def.kind === 'triage') {
       actions.refreshTriage();
     } else if (def.kind === 'gmail' && connected) {
-      if (!state.mailbox?.[active]?.loaded) actions.loadMailboxFolder(active, { unread: unreadOnly });
+      // Always (re)load on entering a folder so freshly sent/received mail shows
+      // without a manual refresh. A cold folder shows a spinner; an already-
+      // loaded one keeps its cached rows on screen and silently swaps them for
+      // the live page when it arrives (Body only spins when rows is empty), so
+      // revisiting Sent never shows a days-old snapshot.
+      actions.loadMailboxFolder(active, { unread: unreadOnly });
     }
   }, [active, connected]); // eslint-disable-line react-hooks/exhaustive-deps
 

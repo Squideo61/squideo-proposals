@@ -43,7 +43,7 @@ export default async function handler(req, res) {
     }
     const ua = h['user-agent'] || null;
 
-    const upsert = await sql`
+    await sql`
       INSERT INTO proposal_views
         (proposal_id, session_id, opened_at, last_active_at, duration_seconds,
          ip_address, country, region, city, user_agent)
@@ -53,18 +53,15 @@ export default async function handler(req, res) {
       ON CONFLICT (proposal_id, session_id) DO UPDATE SET
         last_active_at   = NOW(),
         duration_seconds = GREATEST(proposal_views.duration_seconds, EXCLUDED.duration_seconds)
-      RETURNING opened_at, last_active_at
     `;
-    // A fresh insert has opened_at == last_active_at (both NOW()); an update to
-    // an existing session keeps the original opened_at, so they differ. This is
-    // how we recognise a brand-new viewer for the "proposal opened" alert.
-    const isNewViewer = upsert.length > 0
-      && new Date(upsert[0].opened_at).getTime() === new Date(upsert[0].last_active_at).getTime();
 
     // Race-safe claim: only one caller can flip first_view_emailed_at from
-    // NULL to NOW(). Concurrent POSTs that lose the race get 0 rows back and
-    // skip the email. Old proposals with the column NULL still get a single
-    // email on the next view; that's acceptable.
+    // NULL to NOW(). Concurrent POSTs (and the per-15s heartbeats) that lose the
+    // race get 0 rows back and skip the alert, so the owner is notified exactly
+    // ONCE per proposal — not once per viewer session. A client whose browser
+    // doesn't persist localStorage (mail in-app webviews, privacy mode) churns
+    // through fresh session ids and would otherwise re-fire the alert on every
+    // remount; the single atomic claim makes that impossible.
     const claim = await sql`
       UPDATE proposals
       SET first_view_emailed_at = NOW()
@@ -73,14 +70,14 @@ export default async function handler(req, res) {
     `;
     const isFirstEver = claim.length > 0;
 
-    if (isFirstEver || isNewViewer) {
+    if (isFirstEver) {
       try {
         const rows = await sql`SELECT data FROM proposals WHERE id = ${id}`;
         if (rows.length) {
           const data = rows[0].data || {};
           const ownerEmail = data.preparedByEmail || null;
           const title = data.proposalTitle || data.clientName || 'Your proposal';
-          if (ownerEmail && isFirstEver) {
+          if (ownerEmail) {
             const link = `${APP_URL}/?proposal=${id}`;
             await sendNotification('proposal.first_view', {
               ownerEmail,
@@ -89,9 +86,9 @@ export default async function handler(req, res) {
               text: `${data.clientName || 'A client'} opened ${title}. ${link}`,
             });
           }
-          // Engagement feed: a tracking-bell alert (in-app + desktop push, no
-          // email) for every new viewer — including the first. Owner-scoped.
-          if (ownerEmail && isNewViewer) {
+          // Engagement feed: one tracking-bell alert (in-app + desktop push, no
+          // email) the first time the proposal is opened. Owner-scoped.
+          if (ownerEmail) {
             const where = city || country || null;
             const dealId = await dealIdForProposal(id).catch(() => null);
             await ensureTrackingNotificationDefaults();
@@ -103,7 +100,7 @@ export default async function handler(req, res) {
                 title: `Proposal opened: ${title}`,
                 body: `${data.clientName || 'Someone'} opened it${where ? ' · ' + where : ''}`,
                 link: dealId ? `#/deal/${dealId}` : null,
-                tag: `proposal-open-${id}-${sessionId}`,
+                tag: `proposal-open-${id}`,
               },
             });
           }
