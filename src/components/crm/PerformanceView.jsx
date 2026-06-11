@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -10,6 +10,9 @@ import { formatGBP, useIsMobile, workingDaysBetween, ukBankHolidays, todayKey, f
 
 const PPS_COLOR = '#F59E0B';
 const PREDICT_COLOR = '#7C3AED';
+// The two company directors — the Directors tab (and its API) is limited to these
+// two email addresses. Mirrors DIRECTOR_EMAILS in api/_lib/crm/stats.js.
+const DIRECTOR_EMAILS = new Set(['adam@squideo.co.uk', 'ben@squideo.co.uk']);
 // 'YYYY-MM' → "Jun '24" (the trailing window spans up to 3 years).
 const monthShortYear = (key) => {
   const [y, m] = key.split('-').map(Number);
@@ -104,6 +107,8 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
   const isSales = section === 'sales';
   const isComparison = section === 'salesvspp';
   const isCashflow = section === 'cashflow';
+  const isDirectors = section === 'directors';
+  const canDirectors = DIRECTOR_EMAILS.has((state.session?.email || '').toLowerCase());
 
   useEffect(() => {
     if (!state.bankHolidays) actions.loadBankHolidays();
@@ -112,13 +117,13 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
   // Reload when the period/section changes OR when finance data changes elsewhere
   // (e.g. a PP marked paid bumps state.financeRefresh) so the pace chart stays live.
   useEffect(() => {
-    if (isComparison || isCashflow) { setLoading(false); return; } // pacing stats not needed here
+    if (isComparison || isCashflow || isDirectors) { setLoading(false); return; } // pacing stats not needed here
     let active = true;
     setLoading(true);
     const load = isSales ? actions.loadSalesStats(period) : actions.loadPerformanceStats(period);
     load.finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [actions, period, isSales, isComparison, isCashflow, state.financeRefresh]);
+  }, [actions, period, isSales, isComparison, isCashflow, isDirectors, state.financeRefresh]);
 
   // Sales vs PP's needs the rolling 36-month trend + (for the importer) history.
   // Refetch the trend too when finance data changes. Partner credits feed the
@@ -201,7 +206,9 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Performance</h2>
             <p style={{ fontSize: 13, color: BRAND.muted, margin: '2px 0 0' }}>
-              {isCashflow
+              {isDirectors
+                ? 'Director expenses — each director’s £250/month allowance with carried-over underspend and an ongoing balancing adjustment. Log spend, attach an invoice, and download the month’s invoices for Hubdoc.'
+                : isCashflow
                 ? 'Company costs vs cash received — each month’s profit, the Corporation Tax to set aside (HMRC marginal relief), and the monthly revenue targets that fund your wages.'
                 : isComparison
                   ? "Cash received each month vs new money owed created that month (ex-VAT), over the last 36 months. The latest owed point previews all outstanding cash still to collect (invoiced or not)."
@@ -211,7 +218,7 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
             </p>
           </div>
         </div>
-        {!isComparison && !isCashflow && (
+        {!isComparison && !isCashflow && !isDirectors && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             {/* Income targets are derived automatically from Cash Flow & Targets,
                 so the editor is only offered for the (manual) sales targets. */}
@@ -244,7 +251,13 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
           big
           value={section}
           onChange={setSection}
-          options={[{ value: 'income', label: 'Income performance' }, { value: 'sales', label: 'Sales performance' }, { value: 'salesvspp', label: "Sales vs PP's" }, { value: 'cashflow', label: 'Cash Flow & Targets' }]}
+          options={[
+            { value: 'income', label: 'Income performance' },
+            { value: 'sales', label: 'Sales performance' },
+            { value: 'salesvspp', label: "Sales vs PP's" },
+            { value: 'cashflow', label: 'Cash Flow & Targets' },
+            ...(canDirectors ? [{ value: 'directors', label: 'Directors' }] : []),
+          ]}
         />
       </div>
 
@@ -254,6 +267,10 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
 
       {isCashflow && (
         <CashFlowView isMobile={isMobile} />
+      )}
+
+      {isDirectors && canDirectors && (
+        <DirectorsView isMobile={isMobile} />
       )}
 
       {isSales && editing && (
@@ -269,7 +286,7 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
       {/* Pace strip: current position, plus (Sales only) each target's expected
           pace. The per-target pace cards were dropped from Income performance —
           "Remaining to make targets" below covers target progress there. */}
-      {!isComparison && !isCashflow && (<>
+      {!isComparison && !isCashflow && !isDirectors && (<>
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${isSales ? targets.length + 1 : 1}, 1fr)`, gap: 12, marginBottom: 16 }}>
         <PaceCard
           title={model.status === 'future' ? 'Upcoming period' : `Working day ${model.lastActualIdx} of ${model.N}`}
@@ -516,6 +533,241 @@ function CashFlowView({ isMobile }) {
         )}
       </div>
     </>
+  );
+}
+
+// ── Directors expenses ──────────────────────────────────────────────────────
+// Directors-only tab: each director's £250/month allowance with carried-over
+// underspend (only underspend rolls) and an ongoing balancing adjustment, the
+// live difference between the two, per-expense invoice uploads and a one-click
+// ZIP of the month's invoices for Hubdoc. Mirrors the CashFlowView layout idioms.
+const DIRECTOR_ACCENT = '#CA8A04';
+
+function DirectorsView({ isMobile }) {
+  const { state, actions, showMsg } = useStore();
+  const [month, setMonth] = useState(() => todayKey().slice(0, 7));
+
+  useEffect(() => { actions.loadDirectorExpenses(month); }, [actions, month, state.financeRefresh]);
+
+  const data = state.directorExpenses && state.directorExpenses.month === month ? state.directorExpenses : null;
+  const monthLabel = monthOptionLabel(month);
+  const reload = () => actions.loadDirectorExpenses(month);
+
+  const downloadZip = async () => {
+    try {
+      const res = await fetch('/api/crm/stats/director-zip/' + month, { credentials: 'include' });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); showMsg?.(j.error || 'No invoices to download', 'error'); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `director-expenses-${month}.zip`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch { showMsg?.('Download failed', 'error'); }
+  };
+
+  if (!data) {
+    return (
+      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 40, textAlign: 'center', color: BRAND.muted, fontSize: 14 }}>
+        Loading director expenses…
+      </div>
+    );
+  }
+
+  const anyInvoices = data.directors.some((d) => d.expenses.some((e) => e.hasInvoice));
+  const [a, b] = data.directors;
+  const leader = data.difference >= 0 ? a : b;
+  const diffAbs = Math.abs(data.difference);
+
+  return (
+    <>
+      {/* Month picker + bulk invoice download. */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <span style={{ fontSize: 13, color: BRAND.muted }}>Director expenses for <strong style={{ color: BRAND.ink }}>{monthLabel}</strong></span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={downloadZip} disabled={!anyInvoices} className="btn-ghost" title={anyInvoices ? 'Download every invoice for this month as a ZIP' : 'No invoices attached this month'} style={{ opacity: anyInvoices ? 1 : 0.5, cursor: anyInvoices ? 'pointer' : 'not-allowed' }}>
+            <Download size={14} /> Download all invoices
+          </button>
+          <select
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
+          >
+            {recentMonths(24).map((k) => <option key={k} value={k}>{monthOptionLabel(k)}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Difference between the two directors — mirrors the sheet's Difference row. */}
+      {a && b && (
+        <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${DIRECTOR_ACCENT}`, borderRadius: 10, padding: isMobile ? 14 : '12px 18px', marginBottom: 16, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Difference</span>
+          <span style={{ fontSize: 13, color: BRAND.muted }}>
+            {diffAbs < 0.005
+              ? 'Both directors are level this month.'
+              : <>{a.name} {formatGBP(a.remaining)} vs {b.name} {formatGBP(b.remaining)} left · <strong style={{ color: BRAND.ink }}>{formatGBP(diffAbs)}</strong> more headroom for {leader.name}</>}
+          </span>
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12 }}>
+        {data.directors.map((d) => (
+          <DirectorColumn key={d.email} d={d} actions={actions} reload={reload} showMsg={showMsg} />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function DirectorColumn({ d, actions, reload, showMsg }) {
+  const [adding, setAdding] = useState(false);
+  const [editingBal, setEditingBal] = useState(false);
+  const [bal, setBal] = useState(String(d.balanceAdjust || 0));
+  const overspent = d.remaining < 0;
+
+  const saveBal = () => {
+    actions.setDirectorBalance(d.email, parseFloat(bal) || 0).then(() => { setEditingBal(false); reload(); });
+  };
+  const cancelBal = () => { setEditingBal(false); setBal(String(d.balanceAdjust || 0)); };
+
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${DIRECTOR_ACCENT}`, borderRadius: 12, padding: '14px 18px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <Crown size={16} color={DIRECTOR_ACCENT} />
+        <span style={{ fontSize: 15, fontWeight: 700, color: BRAND.ink }}>{d.name}</span>
+      </div>
+
+      {/* Remaining headroom — the headline figure, coloured by under/over. */}
+      <div style={{ fontSize: 26, fontWeight: 800, color: overspent ? PROFIT_NEG : PROFIT_POS, lineHeight: 1.1 }}>
+        {overspent ? `Over by ${formatGBP(-d.remaining)}` : `${formatGBP(d.remaining)} left`}
+      </div>
+      <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
+        {formatGBP(d.spent)} spent of {formatGBP(d.available)} available
+      </div>
+
+      {/* Allowance breakdown: base + carried underspend ± standing balance. */}
+      <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8, lineHeight: 1.5 }}>
+        {formatGBP(d.allowance)} monthly
+        {d.carriedIn > 0.005 && <> + {formatGBP(d.carriedIn)} carried over</>}
+        {' '}
+        {editingBal ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            · balance £
+            <input
+              type="number" step="0.01" value={bal} autoFocus
+              onChange={(e) => setBal(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveBal(); if (e.key === 'Escape') cancelBal(); }}
+              style={{ width: 80, padding: '2px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12 }}
+            />
+            <button className="btn-icon" title="Save" onClick={saveBal} style={{ padding: 2 }}><Check size={12} /></button>
+            <button className="btn-icon" title="Cancel" onClick={cancelBal} style={{ padding: 2 }}><X size={12} /></button>
+          </span>
+        ) : (
+          <span>
+            · balance {d.balanceAdjust >= 0 ? '+' : '−'}{formatGBP(Math.abs(d.balanceAdjust))}
+            <button className="btn-icon" title="Adjust the standing balancing amount" onClick={() => setEditingBal(true)} style={{ padding: 2, marginLeft: 2, verticalAlign: 'middle' }}><Pencil size={11} /></button>
+          </span>
+        )}
+        {' = '}<strong style={{ color: BRAND.ink }}>{formatGBP(d.available)}</strong>
+      </div>
+
+      {/* Expenses. */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 4 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Expenses</span>
+        <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={13} /> Add</button>
+      </div>
+
+      {adding && <DirExpenseForm directorEmail={d.email} actions={actions} onDone={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} />}
+
+      {d.expenses.length === 0 && !adding ? (
+        <div style={{ color: BRAND.muted, fontSize: 13, padding: '4px 0' }}>No expenses logged this month.</div>
+      ) : (
+        d.expenses.map((e) => <DirExpenseRow key={e.id} e={e} actions={actions} reload={reload} showMsg={showMsg} />)
+      )}
+    </div>
+  );
+}
+
+function DirExpenseRow({ e, actions, reload, showMsg }) {
+  const fileRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+
+  const onPick = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    try { await actions.uploadDirectorInvoice(e.id, file); reload(); }
+    catch (err) { showMsg?.(err.message || 'Upload failed', 'error'); }
+    finally { setBusy(false); }
+  };
+  const download = async () => {
+    try { const r = await actions.getDirectorInvoiceUrl(e.id); if (r?.downloadUrl) window.open(r.downloadUrl, '_blank'); }
+    catch { showMsg?.('Could not open invoice', 'error'); }
+  };
+  const removeFile = () => actions.deleteDirectorInvoice(e.id).then(reload);
+  const remove = () => actions.deleteDirectorExpense(e.id).then(reload);
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderTop: '1px solid ' + BRAND.border }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {e.description}
+          {e.vattable && <span title="Marked vattable" style={{ fontSize: 10, fontWeight: 700, color: '#7C3AED', background: '#F3E8FF', border: '1px solid #E9D5FF', padding: '1px 5px', borderRadius: 999, marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 }}>VAT</span>}
+        </div>
+        {e.spentOn && <div style={{ fontSize: 11, color: BRAND.muted }}>{e.spentOn}</div>}
+      </div>
+      <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 60, textAlign: 'right' }}>{formatGBP(e.amount)}</span>
+      <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={(ev) => { onPick(ev.target.files?.[0]); ev.target.value = ''; }} />
+      {e.hasInvoice ? (
+        <>
+          <button className="btn-icon" title={`Download ${e.filename || 'invoice'}`} onClick={download} style={{ padding: 3, color: '#15803D' }}><Paperclip size={13} /></button>
+          <button className="btn-icon" title="Remove invoice" onClick={removeFile} style={{ padding: 3 }}><X size={12} /></button>
+        </>
+      ) : (
+        <button className="btn-icon" title="Attach invoice / receipt" onClick={() => fileRef.current?.click()} disabled={busy} style={{ padding: 3, color: BRAND.muted }}>
+          <Paperclip size={13} />
+        </button>
+      )}
+      <button className="btn-icon" title="Delete expense" onClick={remove} style={{ padding: 3 }}><Trash2 size={12} /></button>
+    </div>
+  );
+}
+
+function DirExpenseForm({ directorEmail, actions, onDone, onCancel }) {
+  const [description, setDescription] = useState('');
+  const [amount, setAmount] = useState('');
+  const [spentOn, setSpentOn] = useState(() => todayKey());
+  const [vattable, setVattable] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = () => {
+    if (!description.trim() || busy) return;
+    setBusy(true);
+    actions.addDirectorExpense({ director_email: directorEmail, description: description.trim(), amount: parseFloat(amount) || 0, spentOn, vattable })
+      .then(onDone)
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, margin: '4px 0 8px' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input autoFocus placeholder="What was it? (e.g. Fuel, Parking)" value={description} onChange={(e) => setDescription(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          style={{ flex: 1, minWidth: 140, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+        <span style={{ color: BRAND.muted }}>£</span>
+        <input type="number" step="0.01" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          style={{ width: 96, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+        <input type="date" value={spentOn} onChange={(e) => setSpentOn(e.target.value)}
+          style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
+          <input type="checkbox" checked={vattable} onChange={(e) => setVattable(e.target.checked)} /> Vattable
+        </label>
+        <button className="btn-ghost" style={{ padding: '4px 8px', marginLeft: 'auto' }} onClick={onCancel}><X size={13} /></button>
+        <button className="btn" style={{ padding: '5px 10px' }} onClick={submit} disabled={!description.trim() || busy}><Check size={13} /> {busy ? 'Adding…' : 'Add'}</button>
+      </div>
+    </div>
   );
 }
 

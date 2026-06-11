@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import { put, del, getDownloadUrl, get as blobGet } from '@vercel/blob';
 import sql from '../db.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
@@ -8,6 +10,7 @@ import { reconcileProposalBillingPaid } from './invoices.js';
 import { archiveRecord } from './recycleBin.js';
 import { sendNotification } from '../notifications.js';
 import { ensureDealPo } from './deals.js';
+import { zipStore } from '../zip.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
 // five paid-money sources as companies.js (allCompanyBalances /
@@ -2037,6 +2040,285 @@ async function cashflowRoute(req, res, action, user) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Directors expenses (Finance → Performance → Directors). Visible only to the two
+// company directors — gated purely on email (other finance.manage users are
+// excluded). Each director logs ad-hoc spend against a £250/month allowance, with
+// only underspend rolling into the next month, an ongoing balancing adjustment,
+// and one attachable invoice/receipt file per expense (bundled to a ZIP for Hubdoc).
+// ────────────────────────────────────────────────────────────────────────────
+
+const DIRECTOR_EMAILS = new Set(['adam@squideo.co.uk', 'ben@squideo.co.uk']);
+const DIRECTOR_ALLOWANCE = 250; // £/month base, refreshed each month
+const isDirector = (email) => DIRECTOR_EMAILS.has(String(email || '').toLowerCase());
+// A DATE column comes back as either a 'YYYY-MM-DD' string or a Date depending on
+// the driver's type parser — normalise to 'YYYY-MM-DD' (or null) for both.
+const dateKey = (v) => (v == null ? null : (typeof v === 'string' ? v.slice(0, 10) : v.toISOString().slice(0, 10)));
+
+let directorEnsured = null;
+function ensureDirectorExpenses() {
+  if (directorEnsured) return directorEnsured;
+  directorEnsured = (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS director_expenses (
+        id             TEXT PRIMARY KEY,
+        director_email TEXT NOT NULL,
+        description    TEXT NOT NULL,
+        amount         NUMERIC(12,2) NOT NULL DEFAULT 0,
+        vattable       BOOLEAN NOT NULL DEFAULT false,
+        spent_on       DATE,
+        month          TEXT NOT NULL,
+        blob_url       TEXT,
+        blob_pathname  TEXT,
+        filename       TEXT,
+        mime_type      TEXT,
+        size_bytes     INTEGER,
+        created_by     TEXT,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_director_expenses_month ON director_expenses (month)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_director_expenses_email ON director_expenses (director_email)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS director_settings (
+        director_email TEXT PRIMARY KEY,
+        balance_adjust NUMERIC(12,2) NOT NULL DEFAULT 0,
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+  })().catch((err) => { directorEnsured = null; throw err; });
+  return directorEnsured;
+}
+
+// Step from 'YYYY-MM' a-to-b inclusive, yielding each calendar month key.
+function monthsBetween(fromKey, toKey) {
+  const out = [];
+  let [y, m] = fromKey.split('-').map(Number);
+  const [ty, tm] = toKey.split('-').map(Number);
+  while (y < ty || (y === ty && m <= tm)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    m += 1; if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
+}
+
+// Fold the rollover pot for one director up to `month`. Only underspend rolls:
+//   pot(first) = 250 ; pot(m) = 250 + max(0, pot(m-1) − spent(m-1)).
+// The balancing adjustment is standing headroom and is NOT folded in, so it
+// never compounds. Returns the carried-in underspend at `month`.
+function carriedInFor(spentByMonth, month) {
+  const keys = Object.keys(spentByMonth).filter((k) => k < month).sort();
+  if (keys.length === 0) return 0;
+  let pot = DIRECTOR_ALLOWANCE; // start of the earliest active month
+  const span = monthsBetween(keys[0], month);
+  for (let i = 0; i < span.length - 1; i++) {
+    const spent = Number(spentByMonth[span[i]] || 0);
+    pot = DIRECTOR_ALLOWANCE + Math.max(0, pot - spent);
+  }
+  return Math.max(0, pot - DIRECTOR_ALLOWANCE);
+}
+
+async function directorExpensesReport(month) {
+  await ensureDirectorExpenses();
+  const m = /^\d{4}-\d{2}$/.test(month || '') ? month : curMonthKey();
+
+  const rows = await sql`SELECT * FROM director_expenses ORDER BY spent_on DESC NULLS LAST, created_at DESC`;
+  const settings = await sql`SELECT director_email, balance_adjust FROM director_settings`;
+  const balByEmail = new Map(settings.map((s) => [s.director_email.toLowerCase(), Number(s.balance_adjust) || 0]));
+
+  const userRows = await sql`SELECT email, name, avatar FROM users`;
+  const userByEmail = new Map(userRows.map((u) => [u.email.toLowerCase(), u]));
+  const nameFor = (email) => {
+    const u = userByEmail.get(email.toLowerCase());
+    if (u && u.name) return u.name;
+    const local = email.split('@')[0];
+    return local.charAt(0).toUpperCase() + local.slice(1);
+  };
+
+  const directors = [...DIRECTOR_EMAILS].map((email) => {
+    const mine = rows.filter((r) => r.director_email.toLowerCase() === email);
+    const spentByMonth = {};
+    for (const r of mine) spentByMonth[r.month] = (spentByMonth[r.month] || 0) + (Number(r.amount) || 0);
+
+    const carriedIn = carriedInFor(spentByMonth, m);
+    const balanceAdjust = balByEmail.get(email) || 0;
+    const available = DIRECTOR_ALLOWANCE + carriedIn + balanceAdjust;
+    const spent = Number(spentByMonth[m] || 0);
+    const remaining = available - spent;
+
+    const expenses = mine.filter((r) => r.month === m).map((r) => ({
+      id: r.id,
+      description: r.description,
+      amount: Number(r.amount) || 0,
+      vattable: !!r.vattable,
+      spentOn: dateKey(r.spent_on),
+      hasInvoice: !!r.blob_url,
+      filename: r.filename || null,
+      createdBy: r.created_by || null,
+    })).sort((a, b) => (a.spentOn || '') < (b.spentOn || '') ? 1 : -1);
+
+    return { email, name: nameFor(email), allowance: DIRECTOR_ALLOWANCE, carriedIn, balanceAdjust, available, spent, remaining, expenses };
+  });
+
+  // "Difference" mirrors the sheet: first director's remaining minus the second.
+  const difference = (directors[0]?.remaining || 0) - (directors[1]?.remaining || 0);
+  return { month: m, allowance: DIRECTOR_ALLOWANCE, directors, difference };
+}
+
+// GET /director-expenses[/<YYYY-MM>] · POST add · PATCH /:id · DELETE /:id
+async function directorExpensesRoute(req, res, action, user) {
+  await ensureDirectorExpenses();
+  const actor = (user?.email || '').toLowerCase();
+
+  if (req.method === 'GET') {
+    return res.status(200).json(await directorExpensesReport(action));
+  }
+
+  if (req.method === 'POST') {
+    const body = req.body || {};
+    const description = trimOrNull(body.description);
+    if (!description) return res.status(400).json({ error: 'description required' });
+    let email = String(body.director_email || body.directorEmail || '').toLowerCase();
+    if (!isDirector(email)) email = actor; // default to the logged-in director
+    const amount = Number(body.amount) || 0;
+    const vattable = body.vattable === true;
+    const spentOn = trimOrNull(body.spentOn) || null;
+    const month = (spentOn && /^\d{4}-\d{2}/.test(spentOn)) ? spentOn.slice(0, 7) : curMonthKey();
+    const id = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : makeId('de');
+    await sql`
+      INSERT INTO director_expenses (id, director_email, description, amount, vattable, spent_on, month, created_by)
+      VALUES (${id}, ${email}, ${description}, ${amount}, ${vattable}, ${spentOn}, ${month}, ${actor})
+      ON CONFLICT (id) DO NOTHING`;
+    return res.status(200).json({ ok: true, id });
+  }
+
+  if (req.method === 'PATCH') {
+    if (!action) return res.status(400).json({ error: 'id required' });
+    const [existing] = await sql`SELECT * FROM director_expenses WHERE id = ${action}`;
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const body = req.body || {};
+    const description = body.description !== undefined ? (trimOrNull(body.description) || existing.description) : existing.description;
+    const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
+    const vattable = body.vattable !== undefined ? (body.vattable === true) : existing.vattable;
+    const spentOn = body.spentOn !== undefined ? (trimOrNull(body.spentOn) || null) : dateKey(existing.spent_on);
+    const month = (spentOn && /^\d{4}-\d{2}/.test(spentOn)) ? spentOn.slice(0, 7) : existing.month;
+    await sql`
+      UPDATE director_expenses
+         SET description = ${description}, amount = ${amount}, vattable = ${vattable}, spent_on = ${spentOn}, month = ${month}, updated_at = NOW()
+       WHERE id = ${action}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  if (req.method === 'DELETE') {
+    if (!action) return res.status(400).json({ error: 'id required' });
+    const [existing] = await sql`SELECT blob_url FROM director_expenses WHERE id = ${action}`;
+    if (existing?.blob_url) { try { await del(existing.blob_url); } catch (err) { console.error('[director-expenses] blob delete failed', err.message); } }
+    await sql`DELETE FROM director_expenses WHERE id = ${action}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// POST /director-invoice/<expenseId>  (raw binary, x-filename header) · GET → download url · DELETE
+async function directorInvoiceRoute(req, res, action, user) {
+  await ensureDirectorExpenses();
+  if (!action) return res.status(400).json({ error: 'expense id required' });
+  const [row] = await sql`SELECT * FROM director_expenses WHERE id = ${action}`;
+  if (!row) return res.status(404).json({ error: 'Expense not found' });
+
+  if (req.method === 'POST') {
+    if (!process.env.BLOB_READ_WRITE_TOKEN) return res.status(503).json({ error: 'File storage not configured' });
+    const filename = decodeURIComponent(req.headers['x-filename'] || 'invoice');
+    const mimeType = req.headers['content-type'] || 'application/octet-stream';
+    let fileBuffer = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : null;
+    if (!fileBuffer) {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      fileBuffer = Buffer.concat(chunks);
+    }
+    if (!fileBuffer || fileBuffer.length === 0) return res.status(400).json({ error: 'No file data received' });
+    if (fileBuffer.length > 20 * 1024 * 1024) return res.status(413).json({ error: 'File too large (max 20 MB)' });
+    // Replace any existing invoice on this expense.
+    if (row.blob_url) { try { await del(row.blob_url); } catch (err) { console.error('[director-invoice] old blob delete failed', err.message); } }
+    const fileId = crypto.randomUUID();
+    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blob = await put(`director-invoices/${action}/${fileId}/${safeName}`, fileBuffer, { access: 'private', contentType: mimeType });
+    await sql`
+      UPDATE director_expenses
+         SET blob_url = ${blob.url}, blob_pathname = ${blob.pathname}, filename = ${filename}, mime_type = ${mimeType}, size_bytes = ${fileBuffer.length}, updated_at = NOW()
+       WHERE id = ${action}`;
+    return res.status(201).json({ ok: true, filename, hasInvoice: true });
+  }
+
+  if (req.method === 'GET') {
+    if (!row.blob_url) return res.status(404).json({ error: 'No invoice attached' });
+    const downloadUrl = await getDownloadUrl(row.blob_url);
+    return res.status(200).json({ downloadUrl, filename: row.filename || 'invoice' });
+  }
+
+  if (req.method === 'DELETE') {
+    if (row.blob_url) { try { await del(row.blob_url); } catch (err) { console.error('[director-invoice] blob delete failed', err.message); } }
+    await sql`
+      UPDATE director_expenses
+         SET blob_url = NULL, blob_pathname = NULL, filename = NULL, mime_type = NULL, size_bytes = NULL, updated_at = NOW()
+       WHERE id = ${action}`;
+    return res.status(200).json({ ok: true, hasInvoice: false });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// GET /director-zip/<YYYY-MM> — bundle every invoice for the month into one ZIP.
+async function directorZipRoute(req, res, action) {
+  await ensureDirectorExpenses();
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  const month = /^\d{4}-\d{2}$/.test(action || '') ? action : curMonthKey();
+  const rows = await sql`SELECT * FROM director_expenses WHERE month = ${month} AND blob_url IS NOT NULL ORDER BY director_email, spent_on NULLS LAST`;
+  if (rows.length === 0) return res.status(404).json({ error: 'No invoices for this month' });
+
+  const userRows = await sql`SELECT email, name FROM users`;
+  const nameByEmail = new Map(userRows.map((u) => [u.email.toLowerCase(), u.name]));
+  const dirName = (email) => (nameByEmail.get(email.toLowerCase()) || email.split('@')[0]).replace(/[^a-zA-Z0-9]+/g, '');
+
+  const files = [];
+  for (const r of rows) {
+    try {
+      const result = await blobGet(r.blob_url || r.blob_pathname, { access: 'private' });
+      if (!result || !result.stream) continue;
+      const data = Buffer.from(await new Response(result.stream).arrayBuffer());
+      const orig = r.filename || 'invoice';
+      const dot = orig.lastIndexOf('.');
+      const ext = dot > 0 ? orig.slice(dot) : '';
+      const desc = String(r.description || 'expense').replace(/[^a-zA-Z0-9]+/g, '_').slice(0, 40);
+      files.push({ name: `${dirName(r.director_email)}_${desc}_${r.id}${ext}`, data });
+    } catch (err) {
+      console.error('[director-zip] failed to read blob', r.id, err.message);
+    }
+  }
+  if (files.length === 0) return res.status(502).json({ error: 'Could not read any invoices' });
+
+  const zip = zipStore(files);
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="director-expenses-${month}.zip"`);
+  res.setHeader('Content-Length', String(zip.length));
+  return res.status(200).end(zip);
+}
+
+// POST /director-balance  { email, balanceAdjust } — upsert the standing adjustment.
+async function directorBalanceRoute(req, res) {
+  await ensureDirectorExpenses();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const body = req.body || {};
+  const email = String(body.email || '').toLowerCase();
+  if (!isDirector(email)) return res.status(400).json({ error: 'Unknown director' });
+  const balanceAdjust = Number(body.balanceAdjust) || 0;
+  await sql`
+    INSERT INTO director_settings (director_email, balance_adjust, updated_at)
+    VALUES (${email}, ${balanceAdjust}, NOW())
+    ON CONFLICT (director_email) DO UPDATE SET balance_adjust = ${balanceAdjust}, updated_at = NOW()`;
+  return res.status(200).json({ ok: true });
+}
+
 export async function statsRoute(req, res, id, action, user) {
   // Live financial figures — never let a browser/edge serve a stale copy (e.g.
   // showing an extra that's since been deleted, or yesterday's cash position).
@@ -2046,6 +2328,16 @@ export async function statsRoute(req, res, id, action, user) {
   if (id === 'bank-holidays') {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
     return res.status(200).json({ dates: await bankHolidaysEW() });
+  }
+
+  // Directors expenses — gated purely on identity (the two company directors).
+  // Sits before the finance.manage check so other finance users are excluded.
+  if (id === 'director-expenses' || id === 'director-invoice' || id === 'director-zip' || id === 'director-balance') {
+    if (!isDirector(user.email)) return res.status(403).json({ error: 'Directors only' });
+    if (id === 'director-expenses') return directorExpensesRoute(req, res, action, user);
+    if (id === 'director-invoice') return directorInvoiceRoute(req, res, action, user);
+    if (id === 'director-zip') return directorZipRoute(req, res, action);
+    return directorBalanceRoute(req, res);
   }
 
   // Whole-business finances — Admin + Director (anyone with finance.manage).

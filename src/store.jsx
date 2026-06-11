@@ -1028,6 +1028,50 @@ export function StoreProvider({ children }) {
     reorderCashflowCosts(ids) {
       return api.post('/api/crm/stats/cashflow-cost', { reorder: ids });
     },
+
+    // ── Directors expenses (Finance → Performance → Directors) — directors only.
+    // Each director's £250/mo allowance with carried-over underspend, an ongoing
+    // balancing adjustment, attachable invoices and a month-ZIP for Hubdoc.
+    loadDirectorExpenses(month) {
+      const path = '/api/crm/stats/director-expenses' + (month ? '/' + month : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, directorExpenses: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    addDirectorExpense(payload) {
+      const id = 'de_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      return api.post('/api/crm/stats/director-expenses', { ...payload, id }).then(() => id);
+    },
+    updateDirectorExpense(id, patch) {
+      return api.patch('/api/crm/stats/director-expenses/' + id, patch);
+    },
+    deleteDirectorExpense(id) {
+      return api.delete('/api/crm/stats/director-expenses/' + id);
+    },
+    // Upload (or replace) the invoice/receipt on an expense — raw binary, like
+    // uploadDealPoFile.
+    async uploadDirectorInvoice(id, file) {
+      const mime = file.type || 'application/octet-stream';
+      const res = await fetch('/api/crm/stats/director-invoice/' + encodeURIComponent(id), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': mime, 'X-Filename': encodeURIComponent(file.name) },
+        body: file,
+      });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
+      return res.json();
+    },
+    getDirectorInvoiceUrl(id) {
+      return api.get('/api/crm/stats/director-invoice/' + encodeURIComponent(id));
+    },
+    deleteDirectorInvoice(id) {
+      return api.delete('/api/crm/stats/director-invoice/' + encodeURIComponent(id));
+    },
+    setDirectorBalance(email, balanceAdjust) {
+      return api.post('/api/crm/stats/director-balance', { email, balanceAdjust });
+    },
+
     // Business → Finance: outstanding balance per signed deal (PO vs normal) +
     // the imported manual pending payments group.
     loadPendingPayments() {
