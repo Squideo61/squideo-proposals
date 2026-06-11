@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { Trash2, X, Plus } from 'lucide-react';
+import { Trash2, X, Plus, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Modal } from '../ui.jsx';
 import { Avatar } from '../Avatar.jsx';
 import { useStore } from '../../store.jsx';
@@ -32,7 +32,17 @@ export function TaskFormModal({ task, defaults, onClose, onSaved, submitLabel })
   const [dealId, setDealId] = useState(task?.dealId || defaults?.dealId || '');
   const [submitting, setSubmitting] = useState(false);
 
-  const allUsers = Object.values(state.users || {});
+  // Always include the signed-in user in the pickable list, so a new task that
+  // defaults to "assigned to me" actually shows the chip even if the team
+  // directory (state.users) hasn't loaded the current user's own record.
+  const allUsers = useMemo(() => {
+    const list = Object.values(state.users || {});
+    const me = state.session;
+    if (me?.email && !list.some(u => (u.email || '').toLowerCase() === me.email.toLowerCase())) {
+      return [{ email: me.email, name: me.name, avatar: me.avatar }, ...list];
+    }
+    return list;
+  }, [state.users, state.session]);
   const deals = Object.values(state.deals || {});
   const showDealPicker = !(defaults?.dealId);
 
@@ -75,7 +85,7 @@ export function TaskFormModal({ task, defaults, onClose, onSaved, submitLabel })
           <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Call Sarah" autoFocus required />
         </Row>
         <Row label="Due">
-          <input className="input" type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} />
+          <DateTimePicker value={dueAt} onChange={setDueAt} />
         </Row>
         <Row label="Assignees">
           <AssigneePicker
@@ -205,6 +215,140 @@ export function AssigneePicker({ users, selected, onToggle, emptyLabel = 'No one
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name || u.email}</span>
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Self-contained date + time picker with an explicit Done button, replacing the
+// native <input type="datetime-local"> (whose popup the browser owns — no Done,
+// fiddly to dismiss). Value/onChange use the same local "YYYY-MM-DDTHH:mm"
+// string the rest of the form already speaks. New dates default to 08:00.
+const DTP_WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+const DTP_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+function parseLocalDT(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value || '');
+  if (!m) return null;
+  return { y: +m[1], mo: +m[2] - 1, d: +m[3], h: +m[4], mi: +m[5] };
+}
+function fmtLocalDT({ y, mo, d, h, mi }) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${y}-${pad(mo + 1)}-${pad(d)}T${pad(h)}:${pad(mi)}`;
+}
+function formatDTDisplay(value) {
+  const p = parseLocalDT(value);
+  if (!p) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(p.d)}/${pad(p.mo + 1)}/${p.y} ${pad(p.h)}:${pad(p.mi)}`;
+}
+
+function DateTimePicker({ value, onChange, defaultHour = 8 }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const parsed = parseLocalDT(value);
+  const now = new Date();
+  const [viewY, setViewY] = useState(parsed ? parsed.y : now.getFullYear());
+  const [viewMo, setViewMo] = useState(parsed ? parsed.mo : now.getMonth());
+  const pad = (n) => String(n).padStart(2, '0');
+
+  useEffect(() => {
+    if (!open) return undefined;
+    if (parsed) { setViewY(parsed.y); setViewMo(parsed.mo); }
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const time = parsed ? { h: parsed.h, mi: parsed.mi } : { h: defaultHour, mi: 0 };
+
+  const pickDay = (day) => onChange(fmtLocalDT({ y: viewY, mo: viewMo, d: day, h: time.h, mi: time.mi }));
+  const pickTime = (hhmm) => {
+    const m = /^(\d{2}):(\d{2})$/.exec(hhmm);
+    if (!m) return;
+    const base = parsed || { y: viewY, mo: viewMo, d: now.getDate() };
+    onChange(fmtLocalDT({ y: base.y, mo: base.mo, d: base.d, h: +m[1], mi: +m[2] }));
+  };
+  const goToday = () => {
+    const t = new Date();
+    setViewY(t.getFullYear()); setViewMo(t.getMonth());
+    onChange(fmtLocalDT({ y: t.getFullYear(), mo: t.getMonth(), d: t.getDate(), h: time.h, mi: time.mi }));
+  };
+  const prevMonth = () => { const d = new Date(viewY, viewMo - 1, 1); setViewY(d.getFullYear()); setViewMo(d.getMonth()); };
+  const nextMonth = () => { const d = new Date(viewY, viewMo + 1, 1); setViewY(d.getFullYear()); setViewMo(d.getMonth()); };
+
+  const firstWeekday = (new Date(viewY, viewMo, 1).getDay() + 6) % 7; // 0 = Monday
+  const daysInMonth = new Date(viewY, viewMo + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  const isSelected = (day) => parsed && parsed.y === viewY && parsed.mo === viewMo && parsed.d === day;
+  const isToday = (day) => now.getFullYear() === viewY && now.getMonth() === viewMo && now.getDate() === day;
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="input"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+      >
+        <Calendar size={15} color={BRAND.muted} />
+        <span style={{ flex: 1, color: value ? BRAND.ink : BRAND.muted }}>{value ? formatDTDisplay(value) : 'No date set'}</span>
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 60, width: 268,
+          background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10,
+          boxShadow: '0 10px 30px rgba(15,42,61,0.18)', padding: 10,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <button type="button" onClick={prevMonth} className="btn-icon" style={{ padding: 4 }} aria-label="Previous month"><ChevronLeft size={16} /></button>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>{DTP_MONTHS[viewMo]} {viewY}</span>
+            <button type="button" onClick={nextMonth} className="btn-icon" style={{ padding: 4 }} aria-label="Next month"><ChevronRight size={16} /></button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 2 }}>
+            {DTP_WEEKDAYS.map(w => <div key={w} style={{ textAlign: 'center', fontSize: 10, fontWeight: 700, color: BRAND.muted }}>{w}</div>)}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+            {cells.map((day, i) => day == null
+              ? <div key={'b' + i} />
+              : (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => pickDay(day)}
+                  style={{
+                    height: 30, borderRadius: 6, cursor: 'pointer', fontSize: 12.5,
+                    border: isToday(day) && !isSelected(day) ? '1px solid ' + BRAND.blue : '1px solid transparent',
+                    background: isSelected(day) ? BRAND.blue : 'transparent',
+                    color: isSelected(day) ? 'white' : BRAND.ink,
+                    fontWeight: isSelected(day) ? 700 : 400,
+                  }}
+                >{day}</button>
+              ))}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, paddingTop: 10, borderTop: '1px solid ' + BRAND.border }}>
+            <span style={{ fontSize: 12, color: BRAND.muted }}>Time</span>
+            <input
+              type="time"
+              value={`${pad(time.h)}:${pad(time.mi)}`}
+              onChange={(e) => pickTime(e.target.value)}
+              className="input"
+              style={{ width: 'auto', flex: 1, padding: '6px 8px', fontSize: 13 }}
+            />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type="button" onClick={() => onChange('')} className="btn-ghost" style={{ fontSize: 12 }}>Clear</button>
+              <button type="button" onClick={goToday} className="btn-ghost" style={{ fontSize: 12 }}>Today</button>
+            </div>
+            <button type="button" onClick={() => setOpen(false)} className="btn" style={{ fontSize: 12 }}>Done</button>
+          </div>
         </div>
       )}
     </div>

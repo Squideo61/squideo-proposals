@@ -3657,8 +3657,8 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
           defaults={{
             dealId: deal?.id || null,
             title: 'Follow up' + (subject ? ': ' + subject.replace(/^(re|fwd?):\s*/i, '').trim() : ''),
-            // Default the follow-up a few working days out; the user adjusts it.
-            dueAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+            // Default the follow-up 3 days out at 08:00 (matches the task default).
+            dueAt: (() => { const d = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); d.setHours(8, 0, 0, 0); return d.toISOString(); })(),
           }}
           onClose={() => setShowFollowUp(false)}
           onSaved={onFollowUpSaved}
