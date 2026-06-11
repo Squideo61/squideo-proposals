@@ -36,12 +36,21 @@ export function PipelineView({ onBack, onOpenDeal }) {
     [allDeals, ownerFilter],
   );
 
-  // Only people who actually own a deal appear in the filter — producers and
-  // other team members without deals are left out (nothing to filter to).
+  // Who can the pipeline be filtered by: anyone who can own a deal (sales,
+  // directors, admins, members) — i.e. everyone except the production-only
+  // roles (producers/copywriters), who never own deals. Plus anyone who
+  // actually owns a deal, regardless of role, so no owner is ever hidden.
   const memberOptions = useMemo(() => {
-    const owners = new Set(allDeals.map(d => d.ownerEmail).filter(Boolean));
-    return Array.from(owners)
-      .map(email => ({ email, name: state.users?.[email]?.name || email }))
+    const PRODUCTION_ROLES = new Set(['producer', 'copywriter']);
+    const map = new Map();
+    for (const [email, u] of Object.entries(state.users || {})) {
+      if (!PRODUCTION_ROLES.has(u.role)) map.set(email, u.name || email);
+    }
+    for (const d of allDeals) {
+      const email = d.ownerEmail;
+      if (email && !map.has(email)) map.set(email, state.users?.[email]?.name || email);
+    }
+    return Array.from(map, ([email, name]) => ({ email, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [allDeals, state.users]);
 
