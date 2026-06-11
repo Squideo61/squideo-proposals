@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, Square, Trash2, User, Video, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -3992,14 +3992,34 @@ function defaultScheduleValueNow() { return toDatetimeLocal(new Date()); }
 // RichTextToolbar (rendered separately, below the signature) and act on this
 // same editorRef.
 function RichTextEditor({ editorRef, initialHtml, onChange }) {
+  // Streak-style link bubble: hovering a link shows a small bar to visit/change/
+  // remove it. Anchored to the link via a fixed-position portal so it isn't
+  // clipped by the editor's scroll box. `el` is the live <a> node so edits write
+  // straight back into the contentEditable.
+  const [bubble, setBubble] = useState(null); // { el, href, left, top }
+  const hideTimer = useRef(null);
+
   useEffect(() => {
     if (editorRef.current) editorRef.current.innerHTML = initialHtml || '';
     // Seed once on mount; remounts (new draft) come with a fresh key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const emit = () => { if (editorRef.current) onChange(editorRef.current.innerHTML); };
+
+  const showBubbleFor = (a) => {
+    clearTimeout(hideTimer.current);
+    const r = a.getBoundingClientRect();
+    const href = a.getAttribute('href') || a.href || '';
+    setBubble({ el: a, href, left: Math.max(8, Math.min(r.left, window.innerWidth - 320)), top: r.bottom + 6 });
+  };
+  const scheduleHide = () => {
+    clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setBubble(null), 200);
+  };
+
   // In a contentEditable, clicking a link just moves the caret. Mirror Gmail/
-  // word processors: Ctrl/Cmd+click opens it in a new tab. The title hint is set
-  // on hover so users discover the shortcut.
+  // word processors: Ctrl/Cmd+click opens it in a new tab.
   const onEditorClick = (e) => {
     const a = e.target.closest && e.target.closest('a[href]');
     if (!a) return;
@@ -4010,27 +4030,93 @@ function RichTextEditor({ editorRef, initialHtml, onChange }) {
   };
   const onEditorOver = (e) => {
     const a = e.target.closest && e.target.closest('a[href]');
-    if (a && !a.title) a.title = `${a.href}\n(Ctrl/Cmd+click to open)`;
+    if (!a) return;
+    a.style.cursor = 'pointer';
+    if (!a.title) a.title = `${a.href}\n(Ctrl/Cmd+click to open)`;
+    if (!bubble || bubble.el !== a) showBubbleFor(a);
   };
+  const onEditorOut = (e) => {
+    if (e.target.closest && e.target.closest('a[href]')) scheduleHide();
+  };
+
+  const visitLink = () => { if (bubble?.href) window.open(bubble.href, '_blank', 'noopener,noreferrer'); };
+  const changeLink = () => {
+    if (!bubble?.el) return;
+    const next = window.prompt('Link URL (include https://):', bubble.href || 'https://');
+    if (next == null) return;
+    const url = next.trim();
+    if (!url) return;
+    bubble.el.setAttribute('href', url);
+    emit();
+    setBubble((b) => (b ? { ...b, href: url } : b));
+  };
+  const removeLink = () => {
+    if (!bubble?.el) return;
+    const a = bubble.el;
+    const parent = a.parentNode;
+    if (parent) {
+      while (a.firstChild) parent.insertBefore(a.firstChild, a);
+      parent.removeChild(a);
+      emit();
+    }
+    setBubble(null);
+  };
+
+  const bubbleBtn = {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    background: 'transparent', border: 'none', cursor: 'pointer', color: BRAND.muted,
+    padding: 4, borderRadius: 4,
+  };
+
   return (
-    <div
-      ref={editorRef}
-      contentEditable
-      suppressContentEditableWarning
-      onInput={() => editorRef.current && onChange(editorRef.current.innerHTML)}
-      onClick={onEditorClick}
-      onMouseOver={onEditorOver}
-      className="email-body"
-      style={{
-        // Match the To/Subject inputs: same font stack and normal weight.
-        // Without an explicit weight the editor inherits the FormRow <label>'s
-        // font-weight:500, which made typed text look bold.
-        outline: 'none', padding: '10px 12px 4px',
-        fontFamily: '-apple-system, system-ui, sans-serif', fontSize: 14, fontWeight: 400,
-        lineHeight: 1.5, minHeight: 72, maxHeight: 280, overflowY: 'auto',
-        color: BRAND.ink, background: 'transparent',
-      }}
-    />
+    <>
+      <div
+        ref={editorRef}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={() => editorRef.current && onChange(editorRef.current.innerHTML)}
+        onClick={onEditorClick}
+        onMouseOver={onEditorOver}
+        onMouseOut={onEditorOut}
+        className="email-body"
+        style={{
+          // Match the To/Subject inputs: same font stack and normal weight.
+          // Without an explicit weight the editor inherits the FormRow <label>'s
+          // font-weight:500, which made typed text look bold.
+          outline: 'none', padding: '10px 12px 4px',
+          fontFamily: '-apple-system, system-ui, sans-serif', fontSize: 14, fontWeight: 400,
+          lineHeight: 1.5, minHeight: 72, maxHeight: 280, overflowY: 'auto',
+          color: BRAND.ink, background: 'transparent',
+        }}
+      />
+      {bubble && createPortal(
+        <div
+          onMouseEnter={() => clearTimeout(hideTimer.current)}
+          onMouseLeave={scheduleHide}
+          style={{
+            position: 'fixed', left: bubble.left, top: bubble.top, zIndex: 3000,
+            display: 'flex', alignItems: 'center', gap: 4, maxWidth: 320,
+            background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
+            boxShadow: '0 6px 24px rgba(15,42,61,0.18)', padding: '4px 6px', fontSize: 12.5,
+          }}
+        >
+          <a
+            href={bubble.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={bubble.href}
+            style={{ color: BRAND.blue, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}
+          >
+            {bubble.href}
+          </a>
+          <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '0 2px' }} />
+          <button type="button" title="Visit link" onMouseDown={(e) => e.preventDefault()} onClick={visitLink} style={bubbleBtn}><ExternalLink size={14} /></button>
+          <button type="button" title="Change link" onMouseDown={(e) => e.preventDefault()} onClick={changeLink} style={bubbleBtn}><Edit2 size={14} /></button>
+          <button type="button" title="Remove link" onMouseDown={(e) => e.preventDefault()} onClick={removeLink} style={bubbleBtn}><Unlink size={14} /></button>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
