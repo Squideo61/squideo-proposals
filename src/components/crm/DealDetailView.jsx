@@ -2771,7 +2771,6 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
   // RichTextEditor seeds its contentEditable from it either way.
   const [body, setBody] = useState(initialDraft?.body ?? '');
   const [sending, setSending] = useState(false);
-  const [savingDraft, setSavingDraft] = useState(false);
   // Attachment refs uploaded to the temporary email-attachments blob store.
   // Each: { id, filename, mimeType, sizeBytes, blobUrl?, blobPathname?, uploading?, error? }.
   const [attachments, setAttachments] = useState(initialDraft?.attachments ?? []);
@@ -2803,26 +2802,6 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
   // Set when the composer is opened as a reply from the Emails section — keeps
   // the send inside the existing Gmail conversation. null for fresh compose.
   const replyThreadId = initialDraft?.gmailThreadId || null;
-
-  const handleSaveDraft = () => {
-    if (savingDraft) return;
-    setSavingDraft(true);
-    actions.saveDraft({
-      dealId: deal?.id || null,
-      dealTitle: deal?.title || null,
-      contactEmail: contact?.email || null,
-      gmailThreadId: replyThreadId || null,
-      to, cc, bcc, showCc, showBcc, subject, body, extraDeals,
-      // Persist only fully-uploaded attachment refs so a resumed draft can
-      // still send them (the blobs live until the email is sent/cancelled).
-      attachments: attachments.filter(a => a.blobUrl && !a.uploading),
-    });
-    showMsg('Draft saved');
-    // The store action already closes the composer (clears composerContext);
-    // calling onClose too is redundant but harmless if the host happens to
-    // be a non-store-driven caller.
-    onClose?.();
-  };
 
   // Esc closes the composer — preserves the Modal-era keyboard affordance
   // even though we no longer render through Modal.
@@ -3244,7 +3223,7 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
               >
                 <RichTextEditor editorRef={editorRef} initialHtml={body} onChange={setBody} />
                 {gmailConnected && (
-                  <div style={{ padding: '8px 12px 12px', borderTop: '1px dashed ' + BRAND.border, fontSize: 13 }}>
+                  <div style={{ padding: '2px 12px 10px', fontSize: 13 }}>
                     {signature === null && (
                       <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 12 }}>Loading signature…</div>
                     )}
@@ -3427,7 +3406,7 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
                 type="button"
                 onClick={() => onViewThread(replyThreadId)}
                 className="btn-ghost"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
                 title="Open the full conversation in the Emails section — your draft stays open"
               >
                 <Mail size={14} /> View thread
@@ -3445,16 +3424,7 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
             >
               <FileText size={14} /> Templates
             </button>
-            <button type="button" onClick={onClose} className="btn-ghost">Discard</button>
-            <button
-              type="button"
-              onClick={handleSaveDraft}
-              className="btn-ghost"
-              disabled={savingDraft || (!to.trim() && !subject.trim() && bodyEmpty)}
-              title="Stash this email in the drafts list and close the composer"
-            >
-              Save as draft
-            </button>
+            <button type="button" onClick={onClose} className="btn-ghost" style={{ whiteSpace: 'nowrap' }}>Discard</button>
             {/* Split Send button: the main half sends now, the ▾ half opens a
                 popover to schedule the send for later. */}
             <div style={{ display: 'flex' }}>
@@ -4055,9 +4025,9 @@ function RichTextEditor({ editorRef, initialHtml, onChange }) {
         // Match the To/Subject inputs: same font stack and normal weight.
         // Without an explicit weight the editor inherits the FormRow <label>'s
         // font-weight:500, which made typed text look bold.
-        outline: 'none', padding: '10px 12px',
+        outline: 'none', padding: '10px 12px 4px',
         fontFamily: '-apple-system, system-ui, sans-serif', fontSize: 14, fontWeight: 400,
-        lineHeight: 1.5, minHeight: 120, maxHeight: 280, overflowY: 'auto',
+        lineHeight: 1.5, minHeight: 72, maxHeight: 280, overflowY: 'auto',
         color: BRAND.ink, background: 'transparent',
       }}
     />

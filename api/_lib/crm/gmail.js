@@ -795,8 +795,8 @@ export async function performGmailSend(user, payload) {
   let htmlOut = html || '';
   let textOut = text || '';
   if (signatureHtml) {
-    if (htmlOut) htmlOut = htmlOut + '<br><br>' + signatureHtml;
-    if (textOut) textOut = textOut + '\n\n' + signatureHtml.replace(/<[^>]+>/g, '').replace(/\s+\n/g, '\n').trim();
+    if (htmlOut) htmlOut = htmlOut + '<br>' + signatureHtml;
+    if (textOut) textOut = textOut + '\n' + signatureHtml.replace(/<[^>]+>/g, '').replace(/\s+\n/g, '\n').trim();
   }
 
   // Email tracking: instrument the HTML body with an open pixel + click-tracked
