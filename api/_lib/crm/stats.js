@@ -2175,9 +2175,17 @@ async function directorExpensesReport(month) {
 
     const carriedIn = carriedInFold(spentIn, earliest, m);
     const balanceAdjust = balByEmail.get(email) || 0;
-    const available = DIRECTOR_ALLOWANCE + carriedIn + balanceAdjust;
     const spent = spentIn(m);
-    const remaining = available - spent;
+    // Monthly pot = £250 + carried underspend (the balance is a SEPARATE buffer).
+    const baseAvailable = round2(DIRECTOR_ALLOWANCE + carriedIn);
+    const monthlyRemaining = round2(baseAvailable - spent);
+    // Overspend beyond the monthly pot draws down the balancing amount; show how
+    // much of the balance is left (can go negative = over even after the buffer).
+    const monthlyOver = Math.max(0, round2(spent - baseAvailable));
+    const balanceLeft = round2(balanceAdjust - monthlyOver);
+    // Overall position (monthly pot + balance − spend), kept for completeness.
+    const available = round2(baseAvailable + balanceAdjust);
+    const remaining = round2(available - spent);
 
     // Honour the manual drag order (rows already sorted by sort_order above).
     const expenses = mine.filter((r) => expenseActiveInMonth(r, m)).map((r) => ({
@@ -2192,7 +2200,7 @@ async function directorExpensesReport(month) {
       createdBy: r.created_by || null,
     }));
 
-    return { email, name: nameFor(email), allowance: DIRECTOR_ALLOWANCE, carriedIn, balanceAdjust, available, spent, remaining, expenses };
+    return { email, name: nameFor(email), allowance: DIRECTOR_ALLOWANCE, carriedIn, baseAvailable, balanceAdjust, balanceLeft, monthlyOver, monthlyRemaining, available, spent, remaining, expenses };
   });
 
   // "Difference" mirrors the sheet: first director's remaining minus the second.

@@ -633,7 +633,9 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
   const [bal, setBal] = useState(String(d.balanceAdjust || 0));
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
-  const overspent = d.remaining < 0;
+  const overspent = d.monthlyRemaining < 0; // over the monthly £250 + carryover
+  const balanceLow = d.balanceLeft < 0;      // overspent even after the balance buffer
+  const balanceUsed = d.monthlyOver > 0.005; // the balance absorbed some overspend
 
   const saveBal = () => {
     actions.setDirectorBalance(d.email, parseFloat(bal) || 0).then(() => { setEditingBal(false); reload(); });
@@ -660,38 +662,46 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
         <span style={{ fontSize: 15, fontWeight: 700, color: BRAND.ink }}>{d.name}</span>
       </div>
 
-      {/* Remaining headroom — the headline figure, coloured by under/over. */}
+      {/* Monthly position — the headline, coloured by under/over the £250 pot. */}
       <div style={{ fontSize: 26, fontWeight: 800, color: overspent ? PROFIT_NEG : PROFIT_POS, lineHeight: 1.1 }}>
-        {overspent ? `Over by ${formatGBP(-d.remaining)}` : `${formatGBP(d.remaining)} left`}
+        {overspent ? `Over by ${formatGBP(-d.monthlyRemaining)}` : `${formatGBP(d.monthlyRemaining)} left`}
       </div>
       <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
-        {formatGBP(d.spent)} spent of {formatGBP(d.available)} available
+        {formatGBP(d.spent)} spent of {formatGBP(d.baseAvailable)} this month
+        <span style={{ color: BRAND.muted }}> · {formatGBP(d.allowance)} monthly{d.carriedIn > 0.005 ? ` + ${formatGBP(d.carriedIn)} carried over` : ''}</span>
       </div>
 
-      {/* Allowance breakdown: base + carried underspend ± standing balance. */}
-      <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8, lineHeight: 1.5 }}>
-        {formatGBP(d.allowance)} monthly
-        {d.carriedIn > 0.005 && <> + {formatGBP(d.carriedIn)} carried over</>}
-        {' '}
+      {/* Balancing amount — its own tally so it's clear how much is left when one
+          of you overspends the monthly pot (the overspend draws this down). */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 10, padding: '8px 10px', background: BRAND.paper, border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${balanceLow ? PROFIT_NEG : DIRECTOR_ACCENT}`, borderRadius: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Balancing amount</div>
+          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>
+            {balanceUsed
+              ? <>{formatGBP(d.monthlyOver)} used this month{d.balanceAdjust !== 0 ? ` · ${formatGBP(d.balanceAdjust)} set` : ''}</>
+              : (d.balanceAdjust === 0 ? 'None set' : `${formatGBP(d.balanceAdjust)} set · untouched`)}
+          </div>
+        </div>
         {editingBal ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            · balance £
-            <input
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            £<input
               type="number" step="0.01" value={bal} autoFocus
               onChange={(e) => setBal(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') saveBal(); if (e.key === 'Escape') cancelBal(); }}
-              style={{ width: 80, padding: '2px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12 }}
+              style={{ width: 80, padding: '3px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }}
             />
-            <button className="btn-icon" title="Save" onClick={saveBal} style={{ padding: 2 }}><Check size={12} /></button>
-            <button className="btn-icon" title="Cancel" onClick={cancelBal} style={{ padding: 2 }}><X size={12} /></button>
+            <button className="btn-icon" title="Save" onClick={saveBal} style={{ padding: 2 }}><Check size={13} /></button>
+            <button className="btn-icon" title="Cancel" onClick={cancelBal} style={{ padding: 2 }}><X size={13} /></button>
           </span>
         ) : (
-          <span>
-            · balance {d.balanceAdjust >= 0 ? '+' : '−'}{formatGBP(Math.abs(d.balanceAdjust))}
-            <button className="btn-icon" title="Adjust the standing balancing amount" onClick={() => setEditingBal(true)} style={{ padding: 2, marginLeft: 2, verticalAlign: 'middle' }}><Pencil size={11} /></button>
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: balanceLow ? PROFIT_NEG : (d.balanceLeft > 0.005 ? PROFIT_POS : BRAND.ink), lineHeight: 1.1 }}>{formatGBP(d.balanceLeft)}</div>
+              <div style={{ fontSize: 10, color: BRAND.muted }}>left</div>
+            </div>
+            <button className="btn-icon" title="Adjust the balancing amount" onClick={() => setEditingBal(true)} style={{ padding: 2 }}><Pencil size={12} /></button>
+          </div>
         )}
-        {' = '}<strong style={{ color: BRAND.ink }}>{formatGBP(d.available)}</strong>
       </div>
 
       {/* Expenses. */}
