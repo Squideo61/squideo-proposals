@@ -2136,8 +2136,14 @@ export function StoreProvider({ children }) {
               const nextContacts = resp.contact
                 ? { ...s.contacts, [resp.contact.id]: resp.contact }
                 : s.contacts;
-              const nextDeals = resp.deal
-                ? { ...s.deals, [resp.deal.id]: resp.deal }
+              // The qualifier owns the new deal. The server already sets this,
+              // but stamp it from the session too so the card never shows
+              // "unassigned" even if the response omits the owner.
+              const dealWithOwner = resp.deal
+                ? { ...resp.deal, ownerEmail: resp.deal.ownerEmail || s.session?.email || null }
+                : null;
+              const nextDeals = dealWithOwner
+                ? { ...s.deals, [dealWithOwner.id]: dealWithOwner }
                 : s.deals;
               const nextCompanies = resp.company
                 ? { ...s.companies, [resp.company.id]: resp.company }
