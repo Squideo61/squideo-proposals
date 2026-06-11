@@ -106,6 +106,14 @@ async function main() {
       return;
     }
 
+    // As early as possible: tell the backend we're viewing this thread, so the
+    // open pixel in one of our own tracked sends (which Gmail's image proxy
+    // fetches as we read) isn't logged as the recipient opening it. Fire-and-
+    // forget; no-op server-side for untracked threads or when disconnected.
+    if (status.connected) {
+      api.post('/api/crm/tracking/self-view', { gmailThreadId }).catch(() => {});
+    }
+
     // Pick a counterparty email: first sender that isn't the current user.
     let counterpartyEmail = null;
     try {

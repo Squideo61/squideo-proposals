@@ -6,7 +6,7 @@
 // Geo comes from Vercel's edge headers (x-vercel-ip-*), so no external lookup.
 import sql from '../_lib/db.js';
 import { APP_URL } from '../_lib/email.js';
-import { TRANSPARENT_GIF, ensureOpenNotifiedColumn } from '../_lib/crm/tracking.js';
+import { TRANSPARENT_GIF, ensureOpenNotifiedColumn, openIsInternalSelfView } from '../_lib/crm/tracking.js';
 import { sendNotification, ensureTrackingNotificationDefaults } from '../_lib/notifications.js';
 import { optionalAuth } from '../_lib/middleware.js';
 
@@ -97,12 +97,19 @@ export default async function handler(req, res) {
   const internalViewer = await optionalAuth(req).catch(() => null);
 
   if (action === 'open') {
-    // Always return the pixel, even on bad/missing token, so we never break
-    // the rendering of the recipient's email.
+    // Skip opens fired by a team member reading their own tracked thread in
+    // Gmail (the extension flags it via /tracking/self-view); Gmail's image
+    // proxy otherwise makes those look like a genuine recipient open. The pixel
+    // is invisible, so we can afford a short grace delay first — that lets the
+    // extension's self-view ping win the race even when Gmail fetches the pixel
+    // a beat before the ping lands.
     if (token && !internalViewer) {
       try {
-        await recordEvent(token, 'open', null, req);
-        await notifyFirstOpen(token, viewer(req));
+        await new Promise((r) => setTimeout(r, 2000));
+        if (!(await openIsInternalSelfView(token).catch(() => false))) {
+          await recordEvent(token, 'open', null, req);
+          await notifyFirstOpen(token, viewer(req));
+        }
       }
       catch (err) { console.error('[track] open failed', err.message); }
     }

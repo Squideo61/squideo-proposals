@@ -16,6 +16,64 @@ export async function ensureOpenNotifiedColumn() {
   openNotifiedColumnReady = true;
 }
 
+// Self-view suppression. When a team member opens one of their own tracked
+// threads in Gmail, Gmail's image proxy fetches the open pixel server-side —
+// indistinguishable from the recipient opening it (no session cookie, US IP).
+// The browser extension, which runs inside Gmail and knows it's them, pings
+// recordSelfView when they open a thread; an open that lands within the window
+// afterwards is treated as that internal view, not a real recipient open.
+let selfViewTableReady = false;
+export async function ensureSelfViewTable() {
+  if (selfViewTableReady) return;
+  await sql`
+    CREATE TABLE IF NOT EXISTS email_self_views (
+      gmail_thread_id TEXT PRIMARY KEY,
+      viewed_at TIMESTAMPTZ NOT NULL,
+      viewed_by TEXT
+    )`;
+  selfViewTableReady = true;
+}
+
+// Record that a team member is viewing this Gmail thread right now. No-op for
+// threads we aren't tracking, so the table only ever holds tracked threads.
+export async function recordSelfView(gmailThreadId, viewedBy) {
+  if (!gmailThreadId) return;
+  try {
+    await ensureSelfViewTable();
+    const tracked = await sql`SELECT 1 FROM email_tracking WHERE gmail_thread_id = ${gmailThreadId} LIMIT 1`;
+    if (!tracked.length) return;
+    await sql`
+      INSERT INTO email_self_views (gmail_thread_id, viewed_at, viewed_by)
+      VALUES (${gmailThreadId}, NOW(), ${viewedBy || null})
+      ON CONFLICT (gmail_thread_id)
+      DO UPDATE SET viewed_at = NOW(), viewed_by = ${viewedBy || null}
+    `;
+  } catch (err) {
+    console.error('[tracking] recordSelfView failed', err.message);
+  }
+}
+
+// True if the tracked thread behind `token` was self-viewed within the window,
+// so the incoming open is almost certainly that internal Gmail view (via the
+// image proxy) rather than the recipient. Best-effort — false on any error.
+const SELF_VIEW_WINDOW_MS = 3 * 60 * 1000;
+export async function openIsInternalSelfView(token) {
+  if (!token) return false;
+  try {
+    await ensureSelfViewTable();
+    const rows = await sql`
+      SELECT v.viewed_at
+        FROM email_tracking t
+        JOIN email_self_views v ON v.gmail_thread_id = t.gmail_thread_id
+       WHERE t.token = ${token}`;
+    const viewedAt = rows[0]?.viewed_at;
+    if (!viewedAt) return false;
+    return (Date.now() - new Date(viewedAt).getTime()) < SELF_VIEW_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
+
 // Persist a tracking row + its rewritten links after a successful send. Never
 // throws — tracking is best-effort and must not fail the send.
 export async function recordTrackedSend({ token, userEmail, messageId, threadId, subject, recipients, links, source = 'crm' }) {

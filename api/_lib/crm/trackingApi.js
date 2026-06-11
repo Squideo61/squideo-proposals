@@ -7,9 +7,20 @@
 //     — called on 'sent', once Gmail emits the ids, so the CRM inbox eye can
 //       attach to the thread.
 import sql from '../db.js';
-import { recordTrackedSend } from './tracking.js';
+import { recordTrackedSend, recordSelfView } from './tracking.js';
 
 export async function trackingRoute(req, res, id, action, user) {
+  // The extension pings this when the user opens a thread in Gmail, so an open
+  // pixel that fires moments later (them reading their own tracked send) isn't
+  // counted as the recipient opening it. See openIsInternalSelfView.
+  if (id === 'self-view') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const body = req.body || {};
+    if (!body.gmailThreadId) return res.status(400).json({ error: 'gmailThreadId required' });
+    await recordSelfView(body.gmailThreadId, user.email);
+    return res.status(200).json({ ok: true });
+  }
+
   if (id === 'register') {
     if (req.method !== 'POST') return res.status(405).end();
     const body = req.body || {};
