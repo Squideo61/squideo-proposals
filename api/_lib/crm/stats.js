@@ -1833,6 +1833,13 @@ async function cashflowReport(action) {
   // Costs (resolved per month from the recurring + one-off rows).
   const costRows = await sql`SELECT * FROM cashflow_costs ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
 
+  // Director expenses (from the Directors tab) feed the cost base too — the
+  // combined monthly spend lands in the 'director' bucket and is CT-deductible.
+  // Recurring-aware via expenseActiveInMonth (hoisted; defined below).
+  await ensureDirectorExpenses();
+  const dirExpRows = await sql`SELECT amount, month, recurring, effective_to FROM director_expenses`;
+  const dirSpend = (mk) => round2(dirExpRows.reduce((s, r) => s + (expenseActiveInMonth(r, mk) ? (Number(r.amount) || 0) : 0), 0));
+
   // Auto director personal-tax saving: income tax + employee NI on each tax_basis
   // director's drawings (annualised), summed back to a monthly figure. Recomputes
   // whenever the underlying figures change. The amount stored on the row is ignored.
@@ -1856,13 +1863,14 @@ async function cashflowReport(action) {
       else if (cat === 'allowance') allowance += amt;
       else expenses += amt;
     }
+    director += dirSpend(mk); // combined director-tab spend for the month
     return { wages: round2(wages), expenses: round2(expenses), freelancers: round2(freelancers), marketing: round2(marketing), director: round2(director), allowance: round2(allowance), total: round2(wages + expenses + freelancers + marketing + director + allowance) };
   };
 
   const opHistory = keys.map((mk) => {
     const c = opCostsForMonth(mk);
     const cashIn = round2(cashByMonth[mk] || 0);
-    return { month: mk, c, cashIn, opProfit: round2(cashIn - c.total), taxProfit: round2(cashIn - deductibleCostTotalForMonth(costRows, mk)) };
+    return { month: mk, c, cashIn, opProfit: round2(cashIn - c.total), taxProfit: round2(cashIn - deductibleCostTotalForMonth(costRows, mk) - dirSpend(mk)) };
   });
 
   // Corporation Tax per month on TAXABLE profit (cash − the CT-deductible cost
@@ -1933,6 +1941,17 @@ async function cashflowReport(action) {
     note: null, autoType: 'corp_tax', taxBasis: false,
     recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
   });
+  // Combined director-tab expenses for the month — shown read-only under Directors
+  // so the costs reconcile with the figure that's already counted in the totals.
+  const dirSel = dirSpend(month);
+  if (dirSel > 0.005) {
+    lines.push({
+      id: 'cfdirectorexp', label: 'Director expenses (Adam + Ben)', category: 'director',
+      amount: dirSel, frequency: 'monthly', monthlyAmount: dirSel,
+      note: 'Combined spend from the Directors tab', autoType: 'director_expenses', taxBasis: false,
+      recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
+    });
+  }
   const activityRows = await sql`SELECT id, actor_email, action, summary, created_at FROM cashflow_activity ORDER BY created_at DESC LIMIT 40`;
 
   return {
@@ -2083,6 +2102,8 @@ function ensureDirectorExpenses() {
     // (until `effective_to`, if set). One-offs have recurring = false.
     await sql`ALTER TABLE director_expenses ADD COLUMN IF NOT EXISTS recurring BOOLEAN NOT NULL DEFAULT false`;
     await sql`ALTER TABLE director_expenses ADD COLUMN IF NOT EXISTS effective_to TEXT`;
+    // Manual drag-ordering within a director's list.
+    await sql`ALTER TABLE director_expenses ADD COLUMN IF NOT EXISTS sort_order INT`;
     await sql`
       CREATE TABLE IF NOT EXISTS director_settings (
         director_email TEXT PRIMARY KEY,
@@ -2131,7 +2152,7 @@ async function directorExpensesReport(month) {
   await ensureDirectorExpenses();
   const m = /^\d{4}-\d{2}$/.test(month || '') ? month : curMonthKey();
 
-  const rows = await sql`SELECT * FROM director_expenses ORDER BY spent_on DESC NULLS LAST, created_at DESC`;
+  const rows = await sql`SELECT * FROM director_expenses ORDER BY sort_order ASC NULLS LAST, spent_on DESC NULLS LAST, created_at DESC`;
   const settings = await sql`SELECT director_email, balance_adjust FROM director_settings`;
   const balByEmail = new Map(settings.map((s) => [s.director_email.toLowerCase(), Number(s.balance_adjust) || 0]));
 
@@ -2155,6 +2176,7 @@ async function directorExpensesReport(month) {
     const spent = spentIn(m);
     const remaining = available - spent;
 
+    // Honour the manual drag order (rows already sorted by sort_order above).
     const expenses = mine.filter((r) => expenseActiveInMonth(r, m)).map((r) => ({
       id: r.id,
       description: r.description,
@@ -2165,11 +2187,7 @@ async function directorExpensesReport(month) {
       hasInvoice: !!r.blob_url,
       filename: r.filename || null,
       createdBy: r.created_by || null,
-    })).sort((a, b) => {
-      // Recurring items first, then by date (newest first).
-      if (a.recurring !== b.recurring) return a.recurring ? -1 : 1;
-      return (a.spentOn || '') < (b.spentOn || '') ? 1 : -1;
-    });
+    }));
 
     return { email, name: nameFor(email), allowance: DIRECTOR_ALLOWANCE, carriedIn, balanceAdjust, available, spent, remaining, expenses };
   });
@@ -2190,6 +2208,16 @@ async function directorExpensesRoute(req, res, action, user) {
 
   if (req.method === 'POST') {
     const body = req.body || {};
+    // Drag-reorder: persist the given ids in their new order (sort_order = index).
+    if (Array.isArray(body.reorder)) {
+      let i = 0;
+      for (const rid of body.reorder) {
+        if (typeof rid !== 'string') continue;
+        await sql`UPDATE director_expenses SET sort_order = ${i}, updated_at = NOW() WHERE id = ${rid}`;
+        i += 1;
+      }
+      return res.status(200).json({ ok: true });
+    }
     const description = trimOrNull(body.description);
     if (!description) return res.status(400).json({ error: 'description required' });
     let email = String(body.director_email || body.directorEmail || '').toLowerCase();
@@ -2200,9 +2228,11 @@ async function directorExpensesRoute(req, res, action, user) {
     const spentOn = trimOrNull(body.spentOn) || null;
     const month = (spentOn && /^\d{4}-\d{2}/.test(spentOn)) ? spentOn.slice(0, 7) : curMonthKey();
     const id = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : makeId('de');
+    // New rows append to this director's list.
+    const [{ m: maxOrder }] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM director_expenses WHERE director_email = ${email}`;
     await sql`
-      INSERT INTO director_expenses (id, director_email, description, amount, vattable, recurring, spent_on, month, created_by)
-      VALUES (${id}, ${email}, ${description}, ${amount}, ${vattable}, ${recurring}, ${spentOn}, ${month}, ${actor})
+      INSERT INTO director_expenses (id, director_email, description, amount, vattable, recurring, spent_on, month, sort_order, created_by)
+      VALUES (${id}, ${email}, ${description}, ${amount}, ${vattable}, ${recurring}, ${spentOn}, ${month}, ${maxOrder + 1}, ${actor})
       ON CONFLICT (id) DO NOTHING`;
     return res.status(200).json({ ok: true, id });
   }
@@ -2216,11 +2246,13 @@ async function directorExpensesRoute(req, res, action, user) {
     const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
     const vattable = body.vattable !== undefined ? (body.vattable === true) : existing.vattable;
     const recurring = body.recurring !== undefined ? (body.recurring === true) : existing.recurring;
+    // effectiveTo ends a recurring expense from a given month (or null to clear).
+    const effectiveTo = body.effectiveTo !== undefined ? (/^\d{4}-\d{2}$/.test(body.effectiveTo || '') ? body.effectiveTo : null) : existing.effective_to;
     const spentOn = body.spentOn !== undefined ? (trimOrNull(body.spentOn) || null) : dateKey(existing.spent_on);
     const month = (spentOn && /^\d{4}-\d{2}/.test(spentOn)) ? spentOn.slice(0, 7) : existing.month;
     await sql`
       UPDATE director_expenses
-         SET description = ${description}, amount = ${amount}, vattable = ${vattable}, recurring = ${recurring}, spent_on = ${spentOn}, month = ${month}, updated_at = NOW()
+         SET description = ${description}, amount = ${amount}, vattable = ${vattable}, recurring = ${recurring}, effective_to = ${effectiveTo}, spent_on = ${spentOn}, month = ${month}, updated_at = NOW()
        WHERE id = ${action}`;
     return res.status(200).json({ ok: true });
   }

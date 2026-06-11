@@ -1049,6 +1049,10 @@ export function StoreProvider({ children }) {
     deleteDirectorExpense(id) {
       return api.delete('/api/crm/stats/director-expenses/' + id);
     },
+    // Persist a drag-reordered list of expense ids (sort_order = position).
+    reorderDirectorExpenses(ids) {
+      return api.post('/api/crm/stats/director-expenses', { reorder: ids });
+    },
     // Upload (or replace) the invoice/receipt on an expense — raw binary, like
     // uploadDealPoFile.
     async uploadDirectorInvoice(id, file) {

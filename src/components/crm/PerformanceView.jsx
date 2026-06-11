@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download, Ban, Camera } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -613,23 +613,45 @@ function DirectorsView({ isMobile }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12 }}>
         {data.directors.map((d) => (
-          <DirectorColumn key={d.email} d={d} actions={actions} reload={reload} showMsg={showMsg} />
+          <DirectorColumn key={d.email} d={d} month={month} actions={actions} reload={reload} showMsg={showMsg} />
         ))}
       </div>
     </>
   );
 }
 
-function DirectorColumn({ d, actions, reload, showMsg }) {
+// 'YYYY-MM' → the previous month's key (for ending a recurring expense).
+function prevMonthKey(mk) {
+  let [y, m] = mk.split('-').map(Number);
+  m -= 1; if (m < 1) { m = 12; y -= 1; }
+  return `${y}-${String(m).padStart(2, '0')}`;
+}
+
+function DirectorColumn({ d, month, actions, reload, showMsg }) {
   const [adding, setAdding] = useState(false);
   const [editingBal, setEditingBal] = useState(false);
   const [bal, setBal] = useState(String(d.balanceAdjust || 0));
+  const [dragId, setDragId] = useState(null);
+  const [overId, setOverId] = useState(null);
   const overspent = d.remaining < 0;
 
   const saveBal = () => {
     actions.setDirectorBalance(d.email, parseFloat(bal) || 0).then(() => { setEditingBal(false); reload(); });
   };
   const cancelBal = () => { setEditingBal(false); setBal(String(d.balanceAdjust || 0)); };
+
+  const onDrop = () => {
+    if (dragId && overId && dragId !== overId) {
+      const ids = d.expenses.map((e) => e.id);
+      const from = ids.indexOf(dragId);
+      const to = ids.indexOf(overId);
+      if (from >= 0 && to >= 0) {
+        ids.splice(to, 0, ids.splice(from, 1)[0]);
+        actions.reorderDirectorExpenses(ids).then(reload);
+      }
+    }
+    setDragId(null); setOverId(null);
+  };
 
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${DIRECTOR_ACCENT}`, borderRadius: 12, padding: '14px 18px' }}>
@@ -678,18 +700,25 @@ function DirectorColumn({ d, actions, reload, showMsg }) {
         <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={13} /> Add</button>
       </div>
 
-      {adding && <DirExpenseForm directorEmail={d.email} actions={actions} onDone={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} />}
+      {adding && <DirExpenseForm directorEmail={d.email} actions={actions} showMsg={showMsg} onDone={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} />}
 
       {d.expenses.length === 0 && !adding ? (
         <div style={{ color: BRAND.muted, fontSize: 13, padding: '4px 0' }}>No expenses logged this month.</div>
       ) : (
-        d.expenses.map((e) => <DirExpenseRow key={e.id} e={e} actions={actions} reload={reload} showMsg={showMsg} />)
+        d.expenses.map((e) => (
+          <DirExpenseRow
+            key={e.id} e={e} month={month} actions={actions} reload={reload} showMsg={showMsg}
+            dragging={dragId === e.id} over={overId === e.id && dragId !== e.id}
+            onDragStart={() => setDragId(e.id)} onDragOver={() => setOverId(e.id)}
+            onDrop={onDrop} onDragEnd={() => { setDragId(null); setOverId(null); }}
+          />
+        ))
       )}
     </div>
   );
 }
 
-function DirExpenseRow({ e, actions, reload, showMsg }) {
+function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onDragStart, onDragOver, onDrop, onDragEnd }) {
   const fileRef = useRef(null);
   const [busy, setBusy] = useState(false);
 
@@ -706,9 +735,23 @@ function DirExpenseRow({ e, actions, reload, showMsg }) {
   };
   const removeFile = () => actions.deleteDirectorInvoice(e.id).then(reload);
   const remove = () => actions.deleteDirectorExpense(e.id).then(reload);
+  // Stop a recurring expense from this month onward — keep prior months' history.
+  const stopRecurring = () => actions.updateDirectorExpense(e.id, { effectiveTo: prevMonthKey(month) }).then(reload);
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderTop: '1px solid ' + BRAND.border }}>
+    <div
+      draggable
+      onDragStart={(ev) => { ev.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
+      onDragOver={(ev) => { ev.preventDefault(); onDragOver(); }}
+      onDrop={(ev) => { ev.preventDefault(); onDrop(); }}
+      onDragEnd={onDragEnd}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '5px 0',
+        borderTop: over ? '2px solid ' + BRAND.blue : '1px solid ' + BRAND.border,
+        background: over ? '#F4FBFE' : 'transparent', opacity: dragging ? 0.4 : 1,
+      }}
+    >
+      <span title="Drag to reorder" style={{ flexShrink: 0, cursor: 'grab', color: BRAND.muted, display: 'flex', lineHeight: 0 }}><GripVertical size={14} /></span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {e.description}
@@ -717,8 +760,8 @@ function DirExpenseRow({ e, actions, reload, showMsg }) {
         </div>
         {e.recurring ? <div style={{ fontSize: 11, color: BRAND.muted }}>Every month</div> : (e.spentOn && <div style={{ fontSize: 11, color: BRAND.muted }}>{e.spentOn}</div>)}
       </div>
-      <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 60, textAlign: 'right' }}>{formatGBP(e.amount)}</span>
-      <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={(ev) => { onPick(ev.target.files?.[0]); ev.target.value = ''; }} />
+      <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 56, textAlign: 'right' }}>{formatGBP(e.amount)}</span>
+      <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={(ev) => { onPick(ev.target.files?.[0]); ev.target.value = ''; }} />
       {e.hasInvoice ? (
         <>
           <button className="btn-icon" title={`Download ${e.filename || 'invoice'}`} onClick={download} style={{ padding: 3, color: '#15803D' }}><Paperclip size={13} /></button>
@@ -729,25 +772,37 @@ function DirExpenseRow({ e, actions, reload, showMsg }) {
           <Paperclip size={13} />
         </button>
       )}
-      <button className="btn-icon" title="Delete expense" onClick={remove} style={{ padding: 3 }}><Trash2 size={12} /></button>
+      {e.recurring && (
+        <button className="btn-icon" title="Stop this recurring expense from this month onward (keeps earlier months)" onClick={stopRecurring} style={{ padding: 3, color: '#B45309' }}><Ban size={12} /></button>
+      )}
+      <button className="btn-icon" title={e.recurring ? 'Delete entirely (all months)' : 'Delete expense'} onClick={remove} style={{ padding: 3 }}><Trash2 size={12} /></button>
     </div>
   );
 }
 
-function DirExpenseForm({ directorEmail, actions, onDone, onCancel }) {
+function DirExpenseForm({ directorEmail, actions, showMsg, onDone, onCancel }) {
+  const isMobile = useIsMobile();
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [spentOn, setSpentOn] = useState(() => todayKey());
   const [vattable, setVattable] = useState(false);
   const [recurring, setRecurring] = useState(false);
+  const [file, setFile] = useState(null); // receipt chosen before saving
   const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+  const cameraRef = useRef(null);
 
-  const submit = () => {
+  const submit = async () => {
     if (!description.trim() || busy) return;
     setBusy(true);
-    actions.addDirectorExpense({ director_email: directorEmail, description: description.trim(), amount: parseFloat(amount) || 0, spentOn, vattable, recurring })
-      .then(onDone)
-      .finally(() => setBusy(false));
+    try {
+      const id = await actions.addDirectorExpense({ director_email: directorEmail, description: description.trim(), amount: parseFloat(amount) || 0, spentOn, vattable, recurring });
+      if (file && id) {
+        try { await actions.uploadDirectorInvoice(id, file); }
+        catch (err) { showMsg?.(err.message || 'Expense saved, but the receipt upload failed', 'error'); }
+      }
+      onDone();
+    } finally { setBusy(false); }
   };
 
   return (
@@ -770,8 +825,24 @@ function DirExpenseForm({ directorEmail, actions, onDone, onCancel }) {
         <label title="Repeats automatically every month from this one onward" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
           <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} /> Recurring
         </label>
+      </div>
+
+      {/* Receipt — attach a file (or, on mobile, snap a photo) before saving. */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+        <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={(e) => { if (e.target.files?.[0]) setFile(e.target.files[0]); }} />
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={(e) => { if (e.target.files?.[0]) setFile(e.target.files[0]); }} />
+        <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => fileRef.current?.click()}><Paperclip size={13} /> {file ? 'Change receipt' : 'Attach receipt'}</button>
+        {isMobile && (
+          <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => cameraRef.current?.click()}><Camera size={13} /> Photo</button>
+        )}
+        {file && (
+          <span style={{ fontSize: 12, color: BRAND.muted, display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {file.name}
+            <button className="btn-icon" title="Remove receipt" onClick={() => setFile(null)} style={{ padding: 1 }}><X size={11} /></button>
+          </span>
+        )}
         <button className="btn-ghost" style={{ padding: '4px 8px', marginLeft: 'auto' }} onClick={onCancel}><X size={13} /></button>
-        <button className="btn" style={{ padding: '5px 10px' }} onClick={submit} disabled={!description.trim() || busy}><Check size={13} /> {busy ? 'Adding…' : 'Add'}</button>
+        <button className="btn" style={{ padding: '5px 10px' }} onClick={submit} disabled={!description.trim() || busy}><Check size={13} /> {busy ? 'Saving…' : 'Add'}</button>
       </div>
     </div>
   );
@@ -932,6 +1003,8 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
 
   const isAuto = !!row.autoType;
   const isCorpTax = row.autoType === 'corp_tax';
+  const isDirExp = row.autoType === 'director_expenses'; // synthetic Directors-tab total
+  const isReadOnly = isCorpTax || isDirExp; // no drag / edit / remove
 
   const save = () => {
     const before = { label: row.label, amount: Number(row.amount) || 0, frequency: row.frequency || 'monthly', category: row.category || 'expense', note: row.note || '', taxBasis: !!row.taxBasis };
@@ -976,11 +1049,11 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
 
   return (
     <div
-      draggable={!isCorpTax}
-      onDragStart={isCorpTax ? undefined : (e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
-      onDragOver={isCorpTax ? undefined : (e) => { e.preventDefault(); onDragOver(); }}
-      onDrop={isCorpTax ? undefined : (e) => { e.preventDefault(); onDrop(); }}
-      onDragEnd={isCorpTax ? undefined : onDragEnd}
+      draggable={!isReadOnly}
+      onDragStart={isReadOnly ? undefined : (e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
+      onDragOver={isReadOnly ? undefined : (e) => { e.preventDefault(); onDragOver(); }}
+      onDrop={isReadOnly ? undefined : (e) => { e.preventDefault(); onDrop(); }}
+      onDragEnd={isReadOnly ? undefined : onDragEnd}
       style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: isCorpTax ? '5px 8px' : '3px 0',
         borderTop: over ? '2px solid ' + BRAND.blue : '1px solid ' + BRAND.border,
@@ -991,7 +1064,9 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
     >
       {isCorpTax
         ? <span style={{ flexShrink: 0, color: VAT_COLOR_CF, display: 'flex', lineHeight: 0 }}><PiggyBank size={14} /></span>
-        : <span title="Drag to reorder" style={{ flexShrink: 0, cursor: 'grab', color: BRAND.muted, display: 'flex', lineHeight: 0 }}><GripVertical size={14} /></span>}
+        : isDirExp
+          ? <span style={{ flexShrink: 0, color: '#CA8A04', display: 'flex', lineHeight: 0 }}><Crown size={14} /></span>
+          : <span title="Drag to reorder" style={{ flexShrink: 0, cursor: 'grab', color: BRAND.muted, display: 'flex', lineHeight: 0 }}><GripVertical size={14} /></span>}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: isCorpTax ? 700 : 400, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {row.label}
@@ -1000,7 +1075,9 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
         </div>
         {isCorpTax
           ? <div title="HMRC marginal-relief Corporation Tax on this month’s operating profit (19% up to £50k, 25% over £250k, tapered). Also shown as the headline card above; included here so the targets cover it. A loss month sets aside nothing." style={{ fontSize: 11, color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — to set aside on this month’s profit (HMRC marginal relief); counted in the targets</div>
-          : isAuto
+          : isDirExp
+            ? <div title="Combined director expenses logged on the Directors tab for this month — counted in the costs and targets." style={{ fontSize: 11, color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — combined spend from the Directors tab; counted in the totals</div>
+            : isAuto
             ? <div title="Income tax + employee NI on each director's drawings marked “feeds director tax” (2025/26 rates), treating the figure as gross salary" style={{ fontSize: 11, color: '#CA8A04', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — income tax + NI on the director pay marked “feeds director tax” (current rates){row.note ? ` · ${row.note}` : ''}</div>
             : (row.note && <div title={row.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.note}</div>)}
       </div>
@@ -1009,7 +1086,7 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
         : <CfFreqTag row={row} />}
       {row.frequency === 'annual' && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(row.amount)}/yr</span>}
       <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 64, textAlign: 'right' }}>{formatGBP(row.monthlyAmount ?? row.amount)}</span>
-      {isCorpTax ? (
+      {isReadOnly ? (
         <span style={{ flexShrink: 0, width: 48 }} />
       ) : (
         <>
