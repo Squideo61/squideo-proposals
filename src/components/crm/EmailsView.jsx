@@ -358,6 +358,7 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               connected={connected}
               onBack={() => { if (active === 'triage') actions.refreshTriage(); onCloseThread?.(); }}
               onOpenDeal={onOpenDeal}
+              onOpenProposal={onOpenProposal}
             />
           ) : (
           <>
@@ -876,7 +877,7 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
 // Full conversation modal: loads the thread (live Gmail or DB) and renders
 // every message stacked, newest expanded and older ones collapsible.
 // Tracking summary (TrackingBanner) shown at the top of a tracked conversation.
-function ConversationView({ openRef, folder, connected, onBack, onOpenDeal }) {
+function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOpenProposal }) {
   const { state, actions, showMsg } = useStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
