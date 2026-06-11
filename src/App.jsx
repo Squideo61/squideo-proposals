@@ -555,6 +555,7 @@ function AppShell() {
         <ClientView
           id={activeId}
           onBack={() => navigate('list')}
+          onEdit={() => navigate('builder', activeId)}
         />
       )}
       </Suspense>

@@ -172,7 +172,7 @@ function validityLabel(dateStr, days, expiryDateISO) {
   return expiry.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
+export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned }) {
   const { state, actions, showMsg } = useStore();
   const data = state.proposals[id];
   const isPreview = !useRealStripe;
@@ -559,6 +559,11 @@ export function ClientView({ id, onBack, useRealStripe = false, onSigned }) {
             PREVIEW MODE
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
+            {onEdit && (
+              <button onClick={onEdit} className="btn-ghost" style={{ fontSize: 13 }} title="Edit this proposal in the builder">
+                <PenLine size={14} /> Edit
+              </button>
+            )}
             <button
               onClick={() => {
                 const url = 'https://app.squideo.com/?proposal=' + id;
