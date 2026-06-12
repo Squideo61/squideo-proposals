@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArchiveRestore, BarChart3, Check, ChevronDown, Clock, Copy, Download, ExternalLink, Eye, FileText, Inbox, LayoutTemplate, Link2, MoreVertical, Plus, Receipt, Search, Trash2, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
@@ -31,9 +31,22 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
     .map(([id, d]) => ({ id, ...d }))
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-  const memberOptions = Object.entries(state.users || {})
-    .map(([email, u]) => ({ email, name: u.name || email }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // Filter options: everyone who can own a proposal (sales, directors, admins,
+  // members) — i.e. all but the production-only roles (producers/copywriters),
+  // who never prepare proposals. Plus anyone who actually prepared one,
+  // regardless of role, so no owner is hidden.
+  const memberOptions = useMemo(() => {
+    const PRODUCTION_ROLES = new Set(['producer', 'copywriter']);
+    const map = new Map();
+    for (const [email, u] of Object.entries(state.users || {})) {
+      if (!PRODUCTION_ROLES.has(u.role)) map.set(email, u.name || email);
+    }
+    for (const p of proposals) {
+      const email = p.preparedByEmail;
+      if (email && !map.has(email)) map.set(email, state.users?.[email]?.name || email);
+    }
+    return Array.from(map, ([email, name]) => ({ email, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [state.users, proposals]);
 
   const afterMember = memberFilter
     ? proposals.filter((p) => p.preparedByEmail === memberFilter)
