@@ -12,6 +12,7 @@
 // All routes are reached via the existing `gmail` resource (e.g.
 // /api/crm/gmail/folder) — gmailRoute delegates here — so they inherit the
 // proven 2-segment routing and the dispatcher's requireAuth.
+import sql from '../db.js';
 import { getFreshAccessToken } from './gmail.js';
 import { actionToLabels } from './mailboxLabels.js';
 import { trackingForThreads } from './tracking.js';
@@ -366,12 +367,28 @@ async function getThread(req, res, accessToken, user) {
     const map = await trackingForThreads(user.email, [t.id]);
     tracking = map[t.id] || null;
   }
+
+  // Deals this thread is linked to, so the viewer can jump straight to the deal.
+  let deals = [];
+  try {
+    const rows = await sql`
+      SELECT d.id, d.title
+        FROM email_thread_deals etd
+        JOIN deals d ON d.id = etd.deal_id
+       WHERE etd.gmail_thread_id = ${t.id}
+    `;
+    deals = rows.map((r) => ({ dealId: r.id, title: r.title }));
+  } catch (err) {
+    console.warn('[mailbox] thread deals lookup failed', err.message);
+  }
+
   return res.status(200).json({
     id: t.id,
     threadId: t.id,
     subject: messages[0]?.subject || null,
     messages,
     tracking,
+    deals,
   });
 }
 

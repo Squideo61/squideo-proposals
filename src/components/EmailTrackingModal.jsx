@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import DOMPurify from 'dompurify';
-import { X, Eye, MousePointerClick, ArrowUpRight } from 'lucide-react';
+import { X, Eye, MousePointerClick, ArrowUpRight, CheckSquare } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatRelativeTime } from '../utils.js';
@@ -27,7 +27,7 @@ const sanitize = (html) => (html ? DOMPurify.sanitize(html, VIEW_SANITIZE) : nul
 // the specific email the recipient opened — the last message WE sent (it carries
 // the tracking pixel) — alongside its full open/click tracking, so there's no
 // scrolling a long thread to find the relevant message.
-export function EmailTrackingModal({ threadId, onClose }) {
+export function EmailTrackingModal({ threadId, onClose, onOpenDeal }) {
   const { state, actions } = useStore();
   const [thread, setThread] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -59,6 +59,19 @@ export function EmailTrackingModal({ threadId, onClose }) {
   const tracking = thread?.tracking || null;
   const bodyHtml = tracked ? sanitize(tracked.html) : null;
 
+  // The deal this email thread is linked to (if any), plus its next open task.
+  const deal = (thread?.deals && thread.deals[0]) || null;
+  const nextTask = useMemo(() => {
+    if (!deal) return null;
+    const open = (state.tasks || []).filter((t) => t.dealId === deal.dealId && !t.doneAt);
+    open.sort((a, b) => {
+      if (!a.dueAt) return b.dueAt ? 1 : 0;
+      if (!b.dueAt) return -1;
+      return new Date(a.dueAt) - new Date(b.dueAt);
+    });
+    return open[0] || null;
+  }, [deal, state.tasks]);
+
   return createPortal(
     <div onMouseDown={onClose} style={OVERLAY}>
       <div onMouseDown={(e) => e.stopPropagation()} style={PANEL} role="dialog" aria-modal="true">
@@ -69,7 +82,14 @@ export function EmailTrackingModal({ threadId, onClose }) {
               {thread?.subject || tracked?.subject || 'Email tracking'}
             </strong>
           </span>
-          <button onClick={onClose} aria-label="Close" className="btn-icon" style={{ flexShrink: 0 }}><X size={16} /></button>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            {deal && onOpenDeal && (
+              <button onClick={() => { onOpenDeal(deal.dealId); onClose(); }} className="btn">
+                Go to Deal <ArrowUpRight size={14} />
+              </button>
+            )}
+            <button onClick={onClose} aria-label="Close" className="btn-icon"><X size={16} /></button>
+          </span>
         </div>
 
         <div style={SCROLL}>
@@ -79,6 +99,21 @@ export function EmailTrackingModal({ threadId, onClose }) {
             <div style={{ ...CENTER, color: BRAND.muted }}>{error}</div>
           ) : (
             <>
+              {nextTask && (
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', marginBottom: 12, border: '1px solid ' + BRAND.border, borderRadius: 8, background: '#FAFBFC' }}>
+                  <CheckSquare size={15} color={BRAND.blue} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Next task</div>
+                    <div style={{ fontSize: 13, color: BRAND.ink, marginTop: 2 }}>{nextTask.title}</div>
+                    {nextTask.dueAt && (
+                      <div style={{ fontSize: 11.5, color: new Date(nextTask.dueAt) < new Date() ? '#DC2626' : BRAND.muted, marginTop: 1 }}>
+                        Due {new Date(nextTask.dueAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {tracking?.tracked
                 ? <TrackingDetails tracking={tracking} />
                 : <div style={{ fontSize: 12.5, color: BRAND.muted, padding: '8px 0' }}>No tracking recorded for this email.</div>}

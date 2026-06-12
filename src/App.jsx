@@ -588,7 +588,7 @@ function AppShell() {
       )}
       {modal && modal.type === 'emailTracking' && (
         <Suspense fallback={null}>
-          <EmailTrackingModal threadId={modal.threadId} onClose={() => setModal(null)} />
+          <EmailTrackingModal threadId={modal.threadId} onClose={() => setModal(null)} onOpenDeal={(id) => navigate('deal', id)} />
         </Suspense>
       )}
       {/* The composer dock is mounted at the App root so it stays open
