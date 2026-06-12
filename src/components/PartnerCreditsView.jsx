@@ -46,7 +46,7 @@ export function PartnerCreditsView({ onBack, onOpen }) {
           <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Coins size={22} color={BRAND.blue} />
-            <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Partner Programme Credits</h1>
+            <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Partners &amp; Credits</h1>
           </div>
         </div>
         <button onClick={() => setShowAddModal(true)} className="btn">

@@ -90,7 +90,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         ...(canProduction ? [{ label: 'Production board', icon: KanbanSquare, go: () => navigate('production') }] : []),
         ...(canRevisions ? [{ label: 'Storyboard Revisions', icon: Images, go: () => navigate('storyboards') }] : []),
         ...(canRevisions ? [{ label: 'Video Revisions', icon: Clapperboard, go: () => navigate('revisions') }] : []),
-        { label: 'Partner Credits', icon: Coins, go: () => navigate('partner-credits') },
+        { label: 'Partners & Credits', icon: Coins, go: () => navigate('partner-credits') },
       ],
     },
   ].filter(s => s.items.length > 0);
