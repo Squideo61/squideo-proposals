@@ -4,6 +4,7 @@ import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { useIsMobile } from '../utils.js';
 import { Modal } from './ui.jsx';
+import { PartnerMeetingsButton } from './PartnerMeetingsButton.jsx';
 
 function fmtCredits(n) {
   const v = Number(n) || 0;
@@ -118,12 +119,13 @@ export function PartnerCreditsView({ onBack, onOpen }) {
                   <Th align="center">This month</Th>
                   {!isMobile && <Th>Usage</Th>}
                   {!isMobile && <Th>Last payment</Th>}
+                  <Th align="center">Meeting</Th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={isMobile ? 8 : 10} style={{ padding: 40, textAlign: 'center', color: BRAND.muted }}>
+                    <td colSpan={isMobile ? 9 : 11} style={{ padding: 40, textAlign: 'center', color: BRAND.muted }}>
                       No clients in this view.
                     </td>
                   </tr>
@@ -191,6 +193,9 @@ export function PartnerCreditsView({ onBack, onOpen }) {
                         </td>
                       )}
                       {!isMobile && <td style={{ padding: '12px 8px', color: BRAND.muted }}>{fmtDate(row.lastPaymentAt)}</td>}
+                      <td style={{ padding: '12px 8px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                        <PartnerMeetingsButton clientKey={row.clientKey} clientName={row.clientName || row.clientKey} />
+                      </td>
                     </tr>
                   );
                 })}

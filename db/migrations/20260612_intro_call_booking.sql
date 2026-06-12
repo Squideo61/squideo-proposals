@@ -29,21 +29,31 @@ CREATE TABLE IF NOT EXISTS staff_availability (
 --     timezone:'Europe/London' }
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS intro_call_rules JSONB;
 
--- One shareable booking link per deal (regenerate = revoke + create).
+-- One shareable booking link per deal (regenerate = revoke + create). A link is
+-- either deal-scoped (deal_id set, attendees = the deal team) or partner-scoped
+-- (client_key + client_name + host_emails set, no deal).
 CREATE TABLE IF NOT EXISTS intro_call_links (
   token       TEXT PRIMARY KEY,
-  deal_id     TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+  deal_id     TEXT REFERENCES deals(id) ON DELETE CASCADE,
   created_by  TEXT,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  revoked_at  TIMESTAMPTZ
+  revoked_at  TIMESTAMPTZ,
+  client_key  TEXT,
+  client_name TEXT,
+  host_emails TEXT[]
 );
+ALTER TABLE intro_call_links ALTER COLUMN deal_id DROP NOT NULL;
+ALTER TABLE intro_call_links ADD COLUMN IF NOT EXISTS client_key TEXT;
+ALTER TABLE intro_call_links ADD COLUMN IF NOT EXISTS client_name TEXT;
+ALTER TABLE intro_call_links ADD COLUMN IF NOT EXISTS host_emails TEXT[];
 CREATE INDEX IF NOT EXISTS intro_call_links_deal_idx ON intro_call_links(deal_id);
+CREATE INDEX IF NOT EXISTS intro_call_links_client_idx ON intro_call_links(client_key);
 
 -- Confirmed bookings. attendee_emails snapshots the team at booking time;
 -- starts_at/ends_at are absolute UTC instants.
 CREATE TABLE IF NOT EXISTS intro_call_bookings (
   id              TEXT PRIMARY KEY,
-  deal_id         TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+  deal_id         TEXT REFERENCES deals(id) ON DELETE CASCADE,
   link_token      TEXT REFERENCES intro_call_links(token) ON DELETE SET NULL,
   client_name     TEXT NOT NULL,
   client_email    TEXT NOT NULL,
@@ -54,6 +64,7 @@ CREATE TABLE IF NOT EXISTS intro_call_bookings (
   google_event_id TEXT,
   meet_url        TEXT,
   status          TEXT NOT NULL DEFAULT 'confirmed',  -- confirmed | cancelled
+  client_key      TEXT,                               -- partner-client bookings (no deal)
   client_timezone TEXT,                               -- IANA tz captured from the client's browser
   reminder_sent_at TIMESTAMPTZ,                       -- client day-of email (9am client-local) sent
   team_task_created_at TIMESTAMPTZ,                   -- team day-of task (9am UK) created
@@ -61,3 +72,11 @@ CREATE TABLE IF NOT EXISTS intro_call_bookings (
 );
 CREATE INDEX IF NOT EXISTS intro_call_bookings_deal_idx ON intro_call_bookings(deal_id);
 CREATE INDEX IF NOT EXISTS intro_call_bookings_slot_idx ON intro_call_bookings(organizer_email, starts_at);
+
+-- If you already ran an earlier version of this migration, these add the newer
+-- columns idempotently:
+ALTER TABLE intro_call_bookings ALTER COLUMN deal_id DROP NOT NULL;
+ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS client_key TEXT;
+ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS client_timezone TEXT;
+ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ;
+ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS team_task_created_at TIMESTAMPTZ;

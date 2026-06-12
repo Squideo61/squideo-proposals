@@ -49,15 +49,22 @@ export function ensureIntroCallTables() {
     )`;
     await sql`CREATE TABLE IF NOT EXISTS intro_call_links (
       token       TEXT PRIMARY KEY,
-      deal_id     TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      deal_id     TEXT REFERENCES deals(id) ON DELETE CASCADE,
       created_by  TEXT,
       created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       revoked_at  TIMESTAMPTZ
     )`;
+    // Partner-client links have no deal: they carry an explicit host list + a
+    // display name and key instead.
+    await sql`ALTER TABLE intro_call_links ALTER COLUMN deal_id DROP NOT NULL`;
+    await sql`ALTER TABLE intro_call_links ADD COLUMN IF NOT EXISTS client_key TEXT`;
+    await sql`ALTER TABLE intro_call_links ADD COLUMN IF NOT EXISTS client_name TEXT`;
+    await sql`ALTER TABLE intro_call_links ADD COLUMN IF NOT EXISTS host_emails TEXT[]`;
     await sql`CREATE INDEX IF NOT EXISTS intro_call_links_deal_idx ON intro_call_links(deal_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS intro_call_links_client_idx ON intro_call_links(client_key)`;
     await sql`CREATE TABLE IF NOT EXISTS intro_call_bookings (
       id              TEXT PRIMARY KEY,
-      deal_id         TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      deal_id         TEXT REFERENCES deals(id) ON DELETE CASCADE,
       link_token      TEXT REFERENCES intro_call_links(token) ON DELETE SET NULL,
       client_name     TEXT NOT NULL,
       client_email    TEXT NOT NULL,
@@ -73,6 +80,8 @@ export function ensureIntroCallTables() {
       team_task_created_at TIMESTAMPTZ,
       created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`;
+    await sql`ALTER TABLE intro_call_bookings ALTER COLUMN deal_id DROP NOT NULL`;
+    await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS client_key TEXT`;
     await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS client_timezone TEXT`;
     await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ`;
     await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS team_task_created_at TIMESTAMPTZ`;
@@ -171,14 +180,26 @@ function overlaps(aStart, aEnd, bStart, bEnd) {
   return aStart < bEnd && aEnd > bStart;
 }
 
-// Compute bookable slots for a deal.
+// Compute bookable slots for a deal (attendees = its production team).
+export async function computeSlots(dealId, rules) {
+  const { organizer, attendees } = await getDealAttendees(dealId);
+  return computeSlotsForAttendees(organizer, attendees, rules);
+}
+
+// Compute bookable slots for an explicit host list (e.g. a partner-client
+// booking, where there's no deal team). organizer = the first host.
+export async function computeSlotsForHosts(hostEmails, rules) {
+  const hosts = Array.from(new Set((hostEmails || []).filter(Boolean).map((e) => String(e).toLowerCase())));
+  return computeSlotsForAttendees(hosts[0] || null, hosts, rules);
+}
+
+// Core slot engine shared by deal + host-list bookings.
 // Returns { organizer, attendees, slots: [{start, end}] (ISO UTC), blocked: [{email, reason}] }.
 // If any attendee can't be checked (not connected / missing Calendar scope),
 // slots is empty and blocked lists who needs attention.
-export async function computeSlots(dealId, rules) {
+export async function computeSlotsForAttendees(organizer, attendees, rules) {
   const r = mergeRules(rules);
-  const { organizer, attendees } = await getDealAttendees(dealId);
-  if (!attendees.length) {
+  if (!attendees || !attendees.length) {
     return { organizer: null, attendees: [], slots: [], blocked: [{ email: null, reason: 'no_team' }] };
   }
 

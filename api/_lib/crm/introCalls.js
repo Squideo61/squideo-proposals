@@ -19,7 +19,7 @@ import { getFreshAccessToken } from './gmail.js';
 import { deleteEvent } from '../googleCalendar.js';
 import {
   ensureIntroCallTables, mergeRules, DEFAULT_RULES,
-  computeSlots, getDealAttendees,
+  computeSlots, computeSlotsForHosts, getDealAttendees,
 } from './introCallSlots.js';
 
 const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6]; // 0=Mon … 6=Sun
@@ -95,6 +95,11 @@ export async function introCallsRoute(req, res, id, action, user) {
     return res.status(405).end();
   }
 
+  // ── Partner-client links (no deal — an explicit host list) ──────────────────
+  if (id === 'partner') {
+    return partnerRoute(req, res, action, user);
+  }
+
   // ── Per-deal link ──────────────────────────────────────────────────────────
   if (!id) return res.status(404).json({ error: 'Deal id required' });
 
@@ -131,28 +136,7 @@ export async function introCallsRoute(req, res, id, action, user) {
 
   if (action === 'cancel') {
     if (req.method !== 'POST') return res.status(405).end();
-    const bookingId = trimOrNull(req.body?.bookingId);
-    if (!bookingId) return res.status(400).json({ error: 'bookingId required' });
-    const b = (await sql`
-      SELECT id, organizer_email, google_event_id, status
-        FROM intro_call_bookings WHERE id = ${bookingId} AND deal_id = ${id}
-    `)[0];
-    if (!b) return res.status(404).json({ error: 'Booking not found' });
-    if (b.status === 'cancelled') return res.status(200).json({ ok: true });
-    // Remove the Google event (sendUpdates=all notifies the client + team).
-    // Best-effort: a calendar hiccup shouldn't block freeing the slot.
-    try {
-      const tok = await getFreshAccessToken(b.organizer_email);
-      await deleteEvent(tok, b.google_event_id);
-    } catch (err) {
-      console.warn('[intro-calls] event delete failed', err.message);
-    }
-    await sql`UPDATE intro_call_bookings SET status = 'cancelled' WHERE id = ${bookingId}`;
-    await sql`
-      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
-      VALUES (${id}, 'intro_call_cancelled', ${JSON.stringify({ bookingId })}, ${user.email || null})
-    `;
-    return res.status(200).json({ ok: true });
+    return cancelBookingById(req, res, user);
   }
 
   // GET /api/crm/intro-calls/:dealId — status for the deal-page card.
@@ -195,6 +179,118 @@ export async function introCallsRoute(req, res, id, action, user) {
     return res.status(200).json({
       link: link ? { token: link.token, url: `${APP_URL}/?introCall=${link.token}`, createdAt: link.created_at } : null,
       attendees,
+      blocked,
+      slotsAvailable,
+      bookings: bookings.map(serialiseBooking),
+    });
+  }
+
+  return res.status(405).end();
+}
+
+// Cancel a booking by id (works for deal + partner bookings). Any authed CRM
+// user may cancel; we delete the Google event and free the slot.
+async function cancelBookingById(req, res, user) {
+  const bookingId = trimOrNull(req.body?.bookingId);
+  if (!bookingId) return res.status(400).json({ error: 'bookingId required' });
+  const b = (await sql`
+    SELECT id, deal_id, organizer_email, google_event_id, status
+      FROM intro_call_bookings WHERE id = ${bookingId}
+  `)[0];
+  if (!b) return res.status(404).json({ error: 'Booking not found' });
+  if (b.status === 'cancelled') return res.status(200).json({ ok: true });
+  try {
+    const tok = await getFreshAccessToken(b.organizer_email);
+    await deleteEvent(tok, b.google_event_id);
+  } catch (err) {
+    console.warn('[intro-calls] event delete failed', err.message);
+  }
+  await sql`UPDATE intro_call_bookings SET status = 'cancelled' WHERE id = ${bookingId}`;
+  if (b.deal_id) {
+    await sql`
+      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+      VALUES (${b.deal_id}, 'intro_call_cancelled', ${JSON.stringify({ bookingId })}, ${user.email || null})
+    `;
+  }
+  return res.status(200).json({ ok: true });
+}
+
+// Partner-client links carry an explicit host list (chosen team) rather than a
+// deal team. Routes:
+//   POST   /api/crm/intro-calls/partner/link    { clientKey, clientName, hostEmails }
+//   DELETE /api/crm/intro-calls/partner/link?clientKey=…
+//   POST   /api/crm/intro-calls/partner/cancel  { bookingId }
+//   GET    /api/crm/intro-calls/partner?clientKey=…[&compute=1]
+async function partnerRoute(req, res, action, user) {
+  const clientKey = trimOrNull(req.body?.clientKey) || trimOrNull(req.query?.clientKey);
+
+  if (action === 'cancel') {
+    if (req.method !== 'POST') return res.status(405).end();
+    return cancelBookingById(req, res, user);
+  }
+
+  if (action === 'link') {
+    if (!clientKey) return res.status(400).json({ error: 'clientKey required' });
+    if (req.method === 'POST') {
+      const clientName = trimOrNull(req.body?.clientName) || clientKey;
+      let hosts = Array.isArray(req.body?.hostEmails)
+        ? req.body.hostEmails.map(trimOrNull).filter(Boolean).map((e) => e.toLowerCase())
+        : [];
+      hosts = Array.from(new Set(hosts));
+      if (!hosts.length && user.email) hosts = [String(user.email).toLowerCase()];
+      if (!hosts.length) return res.status(400).json({ error: 'At least one host is required' });
+      const existing = (await sql`
+        SELECT token FROM intro_call_links
+         WHERE client_key = ${clientKey} AND revoked_at IS NULL
+         ORDER BY created_at DESC LIMIT 1
+      `)[0];
+      let token = existing?.token;
+      if (token) {
+        await sql`UPDATE intro_call_links SET host_emails = ${hosts}::text[], client_name = ${clientName} WHERE token = ${token}`;
+      } else {
+        token = crypto.randomBytes(24).toString('base64url');
+        await sql`
+          INSERT INTO intro_call_links (token, client_key, client_name, host_emails, created_by)
+          VALUES (${token}, ${clientKey}, ${clientName}, ${hosts}::text[], ${user.email || null})
+        `;
+      }
+      return res.status(200).json({ token, url: `${APP_URL}/?introCall=${token}`, hostEmails: hosts });
+    }
+    if (req.method === 'DELETE') {
+      await sql`UPDATE intro_call_links SET revoked_at = NOW() WHERE client_key = ${clientKey} AND revoked_at IS NULL`;
+      return res.status(200).json({ ok: true });
+    }
+    return res.status(405).end();
+  }
+
+  // GET status for a partner client.
+  if (req.method === 'GET') {
+    if (!clientKey) return res.status(400).json({ error: 'clientKey required' });
+    const link = (await sql`
+      SELECT token, host_emails, created_at FROM intro_call_links
+       WHERE client_key = ${clientKey} AND revoked_at IS NULL
+       ORDER BY created_at DESC LIMIT 1
+    `)[0] || null;
+    const bookings = await sql`
+      SELECT id, client_name, client_email, starts_at, ends_at, meet_url, status
+        FROM intro_call_bookings WHERE client_key = ${clientKey}
+       ORDER BY starts_at DESC LIMIT 10
+    `;
+    const hosts = (link && link.host_emails) || [];
+    let blocked = null;
+    let slotsAvailable = null;
+    if (req.query.compute && hosts.length) {
+      try {
+        const result = await computeSlotsForHosts(hosts, await loadRules());
+        blocked = result.blocked;
+        slotsAvailable = result.slots.length;
+      } catch (err) {
+        console.warn('[intro-calls partner] readiness failed', err.message);
+      }
+    }
+    return res.status(200).json({
+      link: link ? { token: link.token, url: `${APP_URL}/?introCall=${link.token}`, hostEmails: hosts, createdAt: link.created_at } : null,
+      hostEmails: hosts,
       blocked,
       slotsAvailable,
       bookings: bookings.map(serialiseBooking),

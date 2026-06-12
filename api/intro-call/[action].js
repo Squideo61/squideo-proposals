@@ -12,7 +12,7 @@ import { sendNotification, resolveDealTeamEmails, ensureIntroCallNotificationDef
 import { getFreshAccessToken } from '../_lib/crm/gmail.js';
 import { createEventWithMeet } from '../_lib/googleCalendar.js';
 import {
-  ensureIntroCallTables, mergeRules, computeSlots, getDealAttendees,
+  ensureIntroCallTables, mergeRules, computeSlots, computeSlotsForHosts, getDealAttendees,
 } from '../_lib/crm/introCallSlots.js';
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -36,14 +36,15 @@ async function loadRules() {
   return mergeRules(rows[0] && rows[0].intro_call_rules);
 }
 
-// Resolve a live token to its deal + a client-safe display name. Returns null
-// for missing/revoked tokens.
+// Resolve a live token to its deal OR partner client + a client-safe display
+// name. Returns null for missing/revoked tokens.
 async function resolveToken(token) {
   if (!token) return null;
   const rows = await sql`
-    SELECT l.token, l.deal_id, d.title AS deal_title, c.name AS company_name
+    SELECT l.token, l.deal_id, l.client_key, l.client_name, l.host_emails,
+           d.title AS deal_title, c.name AS company_name
       FROM intro_call_links l
-      JOIN deals d ON d.id = l.deal_id
+      LEFT JOIN deals d ON d.id = l.deal_id
       LEFT JOIN companies c ON c.id = d.company_id
      WHERE l.token = ${token} AND l.revoked_at IS NULL
      LIMIT 1
@@ -52,8 +53,10 @@ async function resolveToken(token) {
   const r = rows[0];
   return {
     token: r.token,
-    dealId: r.deal_id,
-    projectName: r.company_name || r.deal_title || 'your project',
+    dealId: r.deal_id || null,
+    clientKey: r.client_key || null,
+    hostEmails: Array.isArray(r.host_emails) ? r.host_emails : [],
+    projectName: r.company_name || r.deal_title || r.client_name || 'your project',
   };
 }
 
@@ -85,7 +88,9 @@ async function publicSlots(req, res) {
   if (!ctx) return res.status(404).json({ error: 'This booking link is no longer active.' });
 
   const rules = await loadRules();
-  const result = await computeSlots(ctx.dealId, rules);
+  const result = ctx.dealId
+    ? await computeSlots(ctx.dealId, rules)
+    : await computeSlotsForHosts(ctx.hostEmails, rules);
 
   // Client-safe shape only: project name, duration and free slots. We don't
   // expose the assigned host (the team can change) or any attendee emails/busy
@@ -125,7 +130,9 @@ async function book(req, res) {
   // Server is authoritative: re-compute slots and confirm the chosen start is
   // still on offer (and learn the duration/attendees/organizer).
   const rules = await loadRules();
-  const result = await computeSlots(ctx.dealId, rules);
+  const result = ctx.dealId
+    ? await computeSlots(ctx.dealId, rules)
+    : await computeSlotsForHosts(ctx.hostEmails, rules);
   if (result.blocked.length) {
     return res.status(409).json({ error: 'Booking is temporarily unavailable. Please try again later.' });
   }
@@ -147,9 +154,9 @@ async function book(req, res) {
   // free/busy alone can't, since Google's view lags).
   await sql`
     INSERT INTO intro_call_bookings
-      (id, deal_id, link_token, client_name, client_email, starts_at, ends_at,
+      (id, deal_id, client_key, link_token, client_name, client_email, starts_at, ends_at,
        attendee_emails, organizer_email, status, client_timezone)
-    VALUES (${bookingId}, ${ctx.dealId}, ${ctx.token}, ${name}, ${email},
+    VALUES (${bookingId}, ${ctx.dealId}, ${ctx.clientKey}, ${ctx.token}, ${name}, ${email},
        ${startUTC.toISOString()}, ${endUTC.toISOString()},
        ${attendees}::text[], ${organizer}, 'confirmed', ${clientTz})
   `;
@@ -188,21 +195,26 @@ async function book(req, res) {
     return res.status(502).json({ error: 'We could not confirm the booking with our calendar. Please try again.' });
   }
 
-  // Log a deal event + notify the team in-app/email (best-effort).
-  try {
-    await sql`
-      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
-      VALUES (${ctx.dealId}, 'intro_call_booked',
-        ${JSON.stringify({ clientName: name, clientEmail: email, startsAt: startUTC.toISOString() })}, NULL)
-    `;
-  } catch (err) { console.warn('[intro-call] deal_event failed', err.message); }
+  // Log a deal event (deal bookings only) + notify the team in-app/email.
+  if (ctx.dealId) {
+    try {
+      await sql`
+        INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+        VALUES (${ctx.dealId}, 'intro_call_booked',
+          ${JSON.stringify({ clientName: name, clientEmail: email, startsAt: startUTC.toISOString() })}, NULL)
+      `;
+    } catch (err) { console.warn('[intro-call] deal_event failed', err.message); }
+  }
 
   try {
     const when = startUTC.toLocaleString('en-GB', {
       dateStyle: 'full', timeStyle: 'short', timeZone: rules.timezone,
     });
     await ensureIntroCallNotificationDefault();
-    const teamEmails = await resolveDealTeamEmails(ctx.dealId, organizer);
+    // Deal bookings notify the deal team; partner bookings notify the chosen hosts.
+    const teamEmails = ctx.dealId
+      ? await resolveDealTeamEmails(ctx.dealId, organizer)
+      : attendees;
     await sendNotification('intro_call.booked', {
       assigneeEmails: teamEmails,
       subject: `Intro call booked — ${ctx.projectName}`,

@@ -714,10 +714,11 @@ async function cronIntroCallReminders(req, res) {
     SELECT b.id, b.deal_id, b.client_name, b.client_email, b.starts_at, b.meet_url,
            b.organizer_email, b.google_event_id, b.attendee_emails, b.client_timezone,
            b.reminder_sent_at, b.team_task_created_at,
-           COALESCE(c.name, d.title, 'your project') AS project_name
+           COALESCE(c.name, d.title, l.client_name, 'your project') AS project_name
       FROM intro_call_bookings b
-      JOIN deals d ON d.id = b.deal_id
+      LEFT JOIN deals d ON d.id = b.deal_id
       LEFT JOIN companies c ON c.id = d.company_id
+      LEFT JOIN intro_call_links l ON l.token = b.link_token
      WHERE b.status = 'confirmed'
        AND b.starts_at > NOW()
        AND b.starts_at < NOW() + INTERVAL '36 hours'
@@ -784,10 +785,12 @@ async function cronIntroCallReminders(req, res) {
             INSERT INTO task_assignees (task_id, user_email)
             SELECT ${taskId}, unnest(${internal}::text[]) ON CONFLICT DO NOTHING
           `;
-          await sql`
-            INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
-            VALUES (${b.deal_id}, 'task_created', ${JSON.stringify({ taskId, title, source: 'intro_call_reminder' })}, NULL)
-          `;
+          if (b.deal_id) {
+            await sql`
+              INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+              VALUES (${b.deal_id}, 'task_created', ${JSON.stringify({ taskId, title, source: 'intro_call_reminder' })}, NULL)
+            `;
+          }
           tasksCreated++;
         } catch (err) {
           console.error('[cron intro-call-reminders] task create failed', b.id, err.message);

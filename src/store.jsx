@@ -1366,6 +1366,20 @@ export function StoreProvider({ children }) {
     cancelIntroCallBooking(dealId, bookingId) {
       return api.post('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/cancel', { bookingId });
     },
+    // Partner-client meeting links (no deal — an explicit chosen host list).
+    loadPartnerIntroCall(clientKey, compute) {
+      const qs = '?clientKey=' + encodeURIComponent(clientKey) + (compute ? '&compute=1' : '');
+      return api.get('/api/crm/intro-calls/partner' + qs).catch(() => null);
+    },
+    savePartnerIntroCallLink(clientKey, clientName, hostEmails) {
+      return api.post('/api/crm/intro-calls/partner/link', { clientKey, clientName, hostEmails });
+    },
+    revokePartnerIntroCallLink(clientKey) {
+      return api.delete('/api/crm/intro-calls/partner/link?clientKey=' + encodeURIComponent(clientKey));
+    },
+    cancelPartnerIntroCallBooking(bookingId) {
+      return api.post('/api/crm/intro-calls/partner/cancel', { bookingId });
+    },
     loadIntroCallAvailability() {
       return api.get('/api/crm/intro-calls/availability').catch(() => null);
     },
