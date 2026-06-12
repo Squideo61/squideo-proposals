@@ -1351,8 +1351,11 @@ export function StoreProvider({ children }) {
       });
     },
     // ── Intro Call booking (Google Calendar/Meet) ──────────────────────────
-    loadIntroCall(dealId) {
-      return api.get('/api/crm/intro-calls/' + encodeURIComponent(dealId)).catch(() => null);
+    loadIntroCall(dealId, compute) {
+      // compute=true re-runs the (expensive) Google free/busy availability check;
+      // the default cheap load just returns the link + bookings from the DB.
+      const qs = compute ? '?compute=1' : '';
+      return api.get('/api/crm/intro-calls/' + encodeURIComponent(dealId) + qs).catch(() => null);
     },
     generateIntroCallLink(dealId) {
       return api.post('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/link', {});

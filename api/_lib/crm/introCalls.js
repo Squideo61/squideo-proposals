@@ -170,21 +170,26 @@ export async function introCallsRoute(req, res, id, action, user) {
        ORDER BY starts_at DESC LIMIT 10
     `;
 
-    // Readiness: who's on the team and is anyone unable to be booked. computeSlots
-    // does the free/busy + connection checks; we only surface counts + blockers.
+    // Readiness (free/busy + Calendar-connection checks) is EXPENSIVE — it hits
+    // Google once per attendee — so it only runs when explicitly requested with
+    // ?compute=1 (the "refresh availability" button). A plain open of the
+    // Meetings dropdown stays cheap: just the link + bookings from the DB.
     let attendees = [];
-    let blocked = [];
-    let slotsAvailable = 0;
-    try {
-      const rules = await loadRules();
-      const result = await computeSlots(id, rules);
-      attendees = result.attendees;
-      blocked = result.blocked;
-      slotsAvailable = result.slots.length;
-    } catch (err) {
-      console.warn('[intro-calls] readiness check failed', err.message);
-      const t = await getDealAttendees(id);
-      attendees = t.attendees;
+    let blocked = null;        // null = not computed this request
+    let slotsAvailable = null;
+    if (req.query.compute) {
+      try {
+        const rules = await loadRules();
+        const result = await computeSlots(id, rules);
+        attendees = result.attendees;
+        blocked = result.blocked;
+        slotsAvailable = result.slots.length;
+      } catch (err) {
+        console.warn('[intro-calls] readiness check failed', err.message);
+        attendees = (await getDealAttendees(id)).attendees;
+      }
+    } else {
+      attendees = (await getDealAttendees(id)).attendees; // cheap, DB only
     }
 
     return res.status(200).json({

@@ -25,10 +25,12 @@ export function IntroCallButton({ dealId }) {
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [open]);
 
-  const load = () => actions.loadIntroCall(dealId).then((s) => setStatus(s && !s.error ? s : null));
+  // Cheap load (no Google compute): just the link + bookings. `compute` re-runs
+  // the availability check (one Google call per attendee) on demand.
+  const load = (compute) => actions.loadIntroCall(dealId, compute).then((s) => setStatus(s && !s.error ? s : null));
 
-  // Clicking the button just opens the popover and loads status — it does NOT
-  // create a link. The PM generates one explicitly via the in-popover button.
+  // Clicking the button just opens the popover and does a CHEAP load — it does
+  // NOT create a link or hit Google. The PM acts explicitly via the buttons.
   const onClick = () => {
     if (open) { setOpen(false); return; }
     setOpen(true);
@@ -36,26 +38,27 @@ export function IntroCallButton({ dealId }) {
     load();
   };
 
-  const generate = () => {
+  // "New Meeting" — create the shareable booking link. If one already exists,
+  // confirm before replacing it (the old link stops working).
+  const newMeeting = () => {
+    if (link && !window.confirm('Generate a new link? The current link will stop working.')) return;
     setBusy(true);
-    actions.generateIntroCallLink(dealId)
-      .then(() => load())
-      .finally(() => setBusy(false));
+    const make = link
+      ? actions.revokeIntroCallLink(dealId).then(() => actions.generateIntroCallLink(dealId))
+      : actions.generateIntroCallLink(dealId);
+    make.then(() => load()).finally(() => setBusy(false));
+  };
+
+  // Refresh availability — the expensive recompute, only when the user asks.
+  const refreshAvailability = () => {
+    setBusy(true);
+    load(true).finally(() => setBusy(false));
   };
 
   const cancelBooking = (booking) => {
     if (!window.confirm(`Cancel the meeting with ${booking.clientName}? They'll be notified by Google.`)) return;
     setBusy(true);
     actions.cancelIntroCallBooking(dealId, booking.id)
-      .then(() => load())
-      .finally(() => setBusy(false));
-  };
-
-  const regenerate = () => {
-    if (!window.confirm('Generate a new link? The current link will stop working.')) return;
-    setBusy(true);
-    actions.revokeIntroCallLink(dealId)
-      .then(() => actions.generateIntroCallLink(dealId))
       .then(() => load())
       .finally(() => setBusy(false));
   };
@@ -123,21 +126,26 @@ export function IntroCallButton({ dealId }) {
                 </button>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 8 }}>
-                {blocked.length === 0 ? (
-                  <span style={{ fontSize: 12, color: BRAND.muted }}>
-                    {status.slotsAvailable > 0
+                <span style={{ fontSize: 12, color: BRAND.muted }}>
+                  {status.slotsAvailable == null
+                    ? 'Refresh to check live availability.'
+                    : status.slotsAvailable > 0
                       ? `${status.slotsAvailable} slot${status.slotsAvailable === 1 ? '' : 's'} available over the next two weeks.`
                       : 'No slots currently available — check working hours & calendars.'}
-                  </span>
-                ) : <span />}
-                <button onClick={regenerate} disabled={busy} className="btn-ghost" style={{ flexShrink: 0, fontSize: 12 }} title="Generate a fresh link">
-                  <RefreshCw size={12} /> New link
-                </button>
+                </span>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <button onClick={newMeeting} disabled={busy} className="btn-ghost" style={{ fontSize: 12 }} title="Replace with a fresh booking link">
+                    <CalendarClock size={12} /> New Meeting
+                  </button>
+                  <button onClick={refreshAvailability} disabled={busy} className="btn-ghost" style={{ fontSize: 12 }} title="Re-check availability" aria-label="Refresh availability">
+                    <RefreshCw size={12} />
+                  </button>
+                </div>
               </div>
             </>
           ) : (
-            <button onClick={generate} disabled={busy} className="btn" style={{ alignSelf: 'flex-start' }}>
-              <CalendarClock size={14} /> {busy ? 'Generating…' : 'Generate call link'}
+            <button onClick={newMeeting} disabled={busy} className="btn" style={{ alignSelf: 'flex-start' }}>
+              <CalendarClock size={14} /> {busy ? 'Generating…' : 'New Meeting'}
             </button>
           )}
 
