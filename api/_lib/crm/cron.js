@@ -37,6 +37,7 @@ export async function cronHandler(req, res, action) {
     case 'scheduled-emails':  return cronScheduledEmails(res);
     case 'invoice-reminders': return cronInvoiceReminders(res);
     case 'quarterly-tax-summary': return cronQuarterlyTaxSummary(res);
+    case 'director-tax-reminders': return cronDirectorTaxReminders(res);
     case 'intro-call-reminders': return cronIntroCallReminders(req, res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
@@ -346,6 +347,105 @@ export async function cronQuarterlyTaxSummary(res) {
     console.error('[cron quarterly-tax-summary] failed', { quarter: quarterKey, err: err.message });
     return res.status(500).json({ ok: false, quarter: quarterKey, error: err.message });
   }
+}
+
+// Both company directors get every tax-payment reminder (email + finance bell).
+const DIRECTOR_TAX_RECIPIENTS = ['adam@squideo.co.uk', 'ben@squideo.co.uk'];
+
+// Upcoming tax payments (Directors tab) drive a two-step transfer reminder that
+// mirrors how the money actually moves: funds clear out of the Shawbrook savings
+// account first, then transfer from the current account to HMRC once landed.
+//   • 7 days before due → transfer 1 (Shawbrook → current account, so it clears)
+//   • 6 days before due → transfer 2 (current account → HMRC, quoting the reference)
+// No on-the-day reminder — by then it's already been paid. Runs daily; two guard
+// columns make each step fire exactly once. Editing a payment's date/amount nulls
+// the guards (see directorTaxRoute) so the reminders re-arm.
+export async function cronDirectorTaxReminders(res) {
+  // Self-heal the table in case the migration hasn't been applied yet.
+  await sql`
+    CREATE TABLE IF NOT EXISTS director_tax_payments (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, kind TEXT, due_date DATE NOT NULL,
+      amount NUMERIC(12,2) NOT NULL DEFAULT 0, reference TEXT, note TEXT,
+      reminded_transfer1_at TIMESTAMPTZ, reminded_transfer2_at TIMESTAMPTZ, sort_order INT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+
+  // Both directors always get the reminder (email + finance bell + push), sent
+  // directly rather than via the preference resolver — these are not optional.
+  const notifyBoth = async (subject, html, text, inApp) => {
+    await sendMail({ to: DIRECTOR_TAX_RECIPIENTS, subject, html, text });
+    await persistInApp('finance.tax_payment_due', DIRECTOR_TAX_RECIPIENTS, { subject, text, inApp });
+  };
+
+  // Anything within the 7-day window that still has a reminder pending.
+  const due = await sql`
+    SELECT id, title, kind, due_date, amount, reference, note, reminded_transfer1_at, reminded_transfer2_at
+      FROM director_tax_payments
+     WHERE due_date >= CURRENT_DATE
+       AND due_date <= CURRENT_DATE + INTERVAL '7 days'
+       AND (reminded_transfer1_at IS NULL OR reminded_transfer2_at IS NULL)
+     ORDER BY due_date ASC`;
+
+  const root = APP_URL.replace(/\/$/, '');
+  const link = `${root}/#/finance`;
+  const gbp = (n) => '£' + (Number(n) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // A DATE column arrives as 'YYYY-MM-DD' (string) or a Date — normalise to the key.
+  const ymd = (d) => (typeof d === 'string' ? d.slice(0, 10) : new Date(d).toISOString().slice(0, 10));
+  const dueLabel = (d) => new Date(ymd(d) + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const now = new Date();
+  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const daysUntil = (d) => Math.round((new Date(ymd(d) + 'T00:00:00Z').getTime() - todayUTC) / 86400000);
+
+  let sent = 0;
+  for (const p of due) {
+    const amt = gbp(p.amount);
+    const when = dueLabel(p.due_date);
+    const left = daysUntil(p.due_date); // whole days from today to the due date
+
+    // Transfer 1 — fire once we're within 7 days and it hasn't gone yet.
+    if (!p.reminded_transfer1_at && left <= 7) {
+      const subject = `Move ${amt} for ${p.title} out of Shawbrook (${left}d to ${when})`;
+      const html = `
+        <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Step 1 — move the money so it clears</h2>
+        <p style="margin:0 0 16px;color:#6B7785;">${escapeHtml(p.title)} is due <strong>${escapeHtml(when)}</strong> (${left} day${left === 1 ? '' : 's'} away). Transfer it out of the Shawbrook savings account into the current account now so the funds clear in time.</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:420px;">
+          <tr><td style="padding:8px 0;font-size:14px;">Amount to move</td><td style="padding:8px 0;font-size:16px;font-weight:700;text-align:right;">${amt}</td></tr>
+          <tr><td style="padding:8px 0;font-size:14px;border-top:1px solid #E5E9EE;">Due date</td><td style="padding:8px 0;font-size:14px;text-align:right;border-top:1px solid #E5E9EE;">${escapeHtml(when)}</td></tr>
+        </table>
+        <p style="margin:20px 0 0;"><a href="${link}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open Finance → Directors</a></p>`;
+      const text = `Step 1: move ${amt} for ${p.title} out of Shawbrook into the current account so it clears. Due ${when}. ${link}`;
+      try {
+        await notifyBoth(subject, html, text, { title: subject, body: `Move ${amt} out of Shawbrook for ${p.title}, due ${when}.`, link: '#/finance' });
+        await sql`UPDATE director_tax_payments SET reminded_transfer1_at = NOW(), updated_at = NOW() WHERE id = ${p.id}`;
+        sent++;
+      } catch (err) {
+        console.error('[cron director-tax-reminders] transfer1 failed', { id: p.id, err: err.message });
+      }
+    }
+
+    // Transfer 2 — the next day (6 days before due), once the money has landed.
+    if (!p.reminded_transfer2_at && left <= 6) {
+      const ref = p.reference ? `, reference ${p.reference}` : '';
+      const subject = `Pay HMRC ${amt} for ${p.title} (due ${when})`;
+      const html = `
+        <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Step 2 — pay HMRC now it's cleared</h2>
+        <p style="margin:0 0 16px;color:#6B7785;">The funds for ${escapeHtml(p.title)} should have landed in the current account. Transfer ${amt} to HMRC${p.reference ? ' quoting the reference below' : ''}. Due <strong>${escapeHtml(when)}</strong>.</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:420px;">
+          <tr><td style="padding:8px 0;font-size:14px;">Amount to pay</td><td style="padding:8px 0;font-size:16px;font-weight:700;text-align:right;">${amt}</td></tr>
+          ${p.reference ? `<tr><td style="padding:8px 0;font-size:14px;border-top:1px solid #E5E9EE;">Reference</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;border-top:1px solid #E5E9EE;">${escapeHtml(p.reference)}</td></tr>` : ''}
+          <tr><td style="padding:8px 0;font-size:14px;border-top:1px solid #E5E9EE;">Due date</td><td style="padding:8px 0;font-size:14px;text-align:right;border-top:1px solid #E5E9EE;">${escapeHtml(when)}</td></tr>
+        </table>
+        <p style="margin:20px 0 0;"><a href="${link}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open Finance → Directors</a></p>`;
+      const text = `Step 2: pay HMRC ${amt} for ${p.title}${ref}. Due ${when}. ${link}`;
+      try {
+        await notifyBoth(subject, html, text, { title: subject, body: `Pay HMRC ${amt} for ${p.title}${ref}, due ${when}.`, link: '#/finance' });
+        await sql`UPDATE director_tax_payments SET reminded_transfer2_at = NOW(), updated_at = NOW() WHERE id = ${p.id}`;
+        sent++;
+      } catch (err) {
+        console.error('[cron director-tax-reminders] transfer2 failed', { id: p.id, err: err.message });
+      }
+    }
+  }
+  return res.status(200).json({ ok: true, found: due.length, sent });
 }
 
 export async function cronTaskReminders(res) {

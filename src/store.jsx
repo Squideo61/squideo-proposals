@@ -1076,6 +1076,58 @@ export function StoreProvider({ children }) {
       return api.post('/api/crm/stats/director-balance', { email, balanceAdjust });
     },
 
+    // Savings & balances: named bank accounts (each with an actual cleared
+    // balance) holding earmarked "pots" of what's saved for what.
+    loadDirectorSavings() {
+      return api.get('/api/crm/stats/director-savings').then((data) => {
+        setState(s => ({ ...s, directorSavings: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    addSavingsAccount(name, balance) {
+      return api.post('/api/crm/stats/director-savings', { type: 'account', name, balance });
+    },
+    updateSavingsAccount(id, patch) {
+      return api.patch('/api/crm/stats/director-savings/' + id, { type: 'account', ...patch });
+    },
+    deleteSavingsAccount(id) {
+      return api.delete('/api/crm/stats/director-savings/' + id + '?type=account');
+    },
+    addSavingsPot(accountId, payload) {
+      return api.post('/api/crm/stats/director-savings', { type: 'pot', accountId, ...payload });
+    },
+    updateSavingsPot(id, patch) {
+      return api.patch('/api/crm/stats/director-savings/' + id, { type: 'pot', ...patch });
+    },
+    deleteSavingsPot(id) {
+      return api.delete('/api/crm/stats/director-savings/' + id + '?type=pot');
+    },
+    // Persist a drag-reordered list of account or pot ids (sort_order = position).
+    reorderSavings(type, ids) {
+      return api.post('/api/crm/stats/director-savings', { reorder: ids, type });
+    },
+
+    // Tax pay dates: upcoming Personal / VAT / Corp Tax payments with due date,
+    // amount and HMRC transfer reference. Drives the director-tax-reminders cron.
+    loadDirectorTaxPayments() {
+      return api.get('/api/crm/stats/director-tax').then((data) => {
+        setState(s => ({ ...s, directorTaxPayments: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    addTaxPayment(payload) {
+      return api.post('/api/crm/stats/director-tax', payload);
+    },
+    updateTaxPayment(id, patch) {
+      return api.patch('/api/crm/stats/director-tax/' + id, patch);
+    },
+    deleteTaxPayment(id) {
+      return api.delete('/api/crm/stats/director-tax/' + id);
+    },
+    reorderTaxPayments(ids) {
+      return api.post('/api/crm/stats/director-tax', { reorder: ids });
+    },
+
     // Business → Finance: outstanding balance per signed deal (PO vs normal) +
     // the imported manual pending payments group.
     loadPendingPayments() {

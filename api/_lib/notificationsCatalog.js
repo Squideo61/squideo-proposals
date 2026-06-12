@@ -194,6 +194,14 @@ export const NOTIFICATIONS = [
     group: 'Finance',
     channel: 'finance',
   },
+  {
+    key: 'finance.tax_payment_due',
+    label: 'Tax payment due (directors)',
+    description: 'Reminders before a logged tax payment is due: move the funds out of savings so they clear, then pay HMRC.',
+    audience: 'owner',
+    group: 'Finance',
+    channel: 'finance',
+  },
 ];
 
 const KEYS = new Set(NOTIFICATIONS.map(n => n.key));

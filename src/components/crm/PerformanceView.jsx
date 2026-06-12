@@ -616,6 +616,10 @@ function DirectorsView({ isMobile }) {
           <DirectorColumn key={d.email} d={d} month={month} actions={actions} reload={reload} showMsg={showMsg} />
         ))}
       </div>
+
+      {/* Not month-scoped: current savings position + upcoming tax payments. */}
+      <SavingsSection isMobile={isMobile} />
+      <TaxPaymentsSection isMobile={isMobile} />
     </>
   );
 }
@@ -910,6 +914,363 @@ function DirExpenseForm({ directorEmail, actions, showMsg, onDone, onCancel }) {
         )}
         <button className="btn-ghost" style={{ padding: '4px 8px', marginLeft: 'auto' }} onClick={onCancel}><X size={13} /></button>
         <button className="btn" style={{ padding: '5px 10px' }} onClick={submit} disabled={!description.trim() || busy}><Check size={13} /> {busy ? 'Saving…' : 'Add'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Savings & balances (Directors tab) ─────────────────────────────────────
+// Named bank accounts, each holding a real cleared balance plus earmarked "pots"
+// of what's saved for what (Corp Tax from Q4, VAT from prev quarter, etc.). Per
+// account we show allocated vs balance so any unallocated remainder is obvious.
+function SavingsSection({ isMobile }) {
+  const { state, actions, showMsg } = useStore();
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState('');
+  const [bal, setBal] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { actions.loadDirectorSavings(); }, [actions, state.financeRefresh]);
+  const data = state.directorSavings;
+  const reload = () => actions.loadDirectorSavings();
+
+  const addAccount = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    try { await actions.addSavingsAccount(name.trim(), parseFloat(bal) || 0); setName(''); setBal(''); setAdding(false); reload(); }
+    catch (err) { showMsg?.(err.message || 'Could not add account', 'error'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${DIRECTOR_ACCENT}`, borderRadius: 12, padding: isMobile ? 14 : '14px 18px', marginTop: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 700, color: BRAND.ink }}>
+          <PiggyBank size={16} color={DIRECTOR_ACCENT} /> Savings &amp; balances
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {data && data.accounts.length > 0 && (
+            <span style={{ fontSize: 13, color: BRAND.muted }}>Total held <strong style={{ color: BRAND.ink, fontSize: 16 }}>{formatGBP(data.grandTotal)}</strong></span>
+          )}
+          <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={13} /> Add account</button>
+        </div>
+      </div>
+
+      {adding && (
+        <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, margin: '8px 0', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input autoFocus placeholder="Account name (e.g. Shawbrook Savings)" value={name} onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') addAccount(); if (e.key === 'Escape') setAdding(false); }}
+            style={{ flex: 1, minWidth: 180, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+          <span style={{ color: BRAND.muted }}>£</span>
+          <input type="number" step="0.01" placeholder="Balance" value={bal} onChange={(e) => setBal(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') addAccount(); }}
+            style={{ width: 120, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+          <button className="btn-ghost" style={{ padding: '4px 8px' }} onClick={() => setAdding(false)}><X size={13} /></button>
+          <button className="btn" style={{ padding: '5px 10px' }} onClick={addAccount} disabled={!name.trim() || busy}><Check size={13} /> Add</button>
+        </div>
+      )}
+
+      {!data ? (
+        <div style={{ color: BRAND.muted, fontSize: 13, padding: '8px 0' }}>Loading…</div>
+      ) : data.accounts.length === 0 && !adding ? (
+        <div style={{ color: BRAND.muted, fontSize: 13, padding: '8px 0' }}>No accounts yet. Add one to start tracking what's saved for what.</div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12, marginTop: 8 }}>
+          {data.accounts.map((a) => (
+            <SavingsAccountCard key={a.id} account={a} actions={actions} reload={reload} showMsg={showMsg} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SavingsAccountCard({ account, actions, reload, showMsg }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(account.name);
+  const [bal, setBal] = useState(String(account.balance));
+  const [adding, setAdding] = useState(false);
+  const [pLabel, setPLabel] = useState('');
+  const [pAmt, setPAmt] = useState('');
+  const [pNote, setPNote] = useState('');
+  const [dragId, setDragId] = useState(null);
+  const [overId, setOverId] = useState(null);
+
+  const saveAccount = () => {
+    if (!name.trim()) return;
+    actions.updateSavingsAccount(account.id, { name: name.trim(), balance: parseFloat(bal) || 0 }).then(() => { setEditing(false); reload(); });
+  };
+  const removeAccount = () => {
+    if (!window.confirm(`Delete "${account.name}" and all its pots?`)) return;
+    actions.deleteSavingsAccount(account.id).then(reload);
+  };
+  const addPot = () => {
+    if (!pLabel.trim()) return;
+    actions.addSavingsPot(account.id, { label: pLabel.trim(), amount: parseFloat(pAmt) || 0, note: pNote.trim() || null })
+      .then(() => { setPLabel(''); setPAmt(''); setPNote(''); setAdding(false); reload(); })
+      .catch((err) => showMsg?.(err.message || 'Could not add pot', 'error'));
+  };
+  const onDrop = () => {
+    if (dragId && overId && dragId !== overId) {
+      const ids = account.pots.map((p) => p.id);
+      const from = ids.indexOf(dragId), to = ids.indexOf(overId);
+      if (from >= 0 && to >= 0) { ids.splice(to, 0, ids.splice(from, 1)[0]); actions.reorderSavings('pot', ids).then(reload); }
+    }
+    setDragId(null); setOverId(null);
+  };
+
+  const overAllocated = account.unallocated < -0.005; // pots add up to more than the balance
+
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '12px 14px', background: BRAND.paper }}>
+      {editing ? (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveAccount(); if (e.key === 'Escape') setEditing(false); }}
+            style={{ flex: 1, minWidth: 120, padding: '5px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+          <span style={{ color: BRAND.muted }}>£</span>
+          <input type="number" step="0.01" value={bal} onChange={(e) => setBal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveAccount(); }}
+            style={{ width: 100, padding: '5px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+          <button className="btn-icon" title="Save" onClick={saveAccount} style={{ padding: 2 }}><Check size={13} /></button>
+          <button className="btn-icon" title="Cancel" onClick={() => { setEditing(false); setName(account.name); setBal(String(account.balance)); }} style={{ padding: 2 }}><X size={13} /></button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 700, color: BRAND.ink, minWidth: 0 }}>
+            <Landmark size={14} color={BRAND.muted} /> <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{account.name}</span>
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            <span style={{ fontSize: 18, fontWeight: 800, color: BRAND.ink }}>{formatGBP(account.balance)}</span>
+            <button className="btn-icon" title="Edit account" onClick={() => setEditing(true)} style={{ padding: 2 }}><Pencil size={12} /></button>
+            <button className="btn-icon" title="Delete account" onClick={removeAccount} style={{ padding: 2 }}><Trash2 size={12} /></button>
+          </span>
+        </div>
+      )}
+
+      {account.pots.map((p) => (
+        <PotRow key={p.id} pot={p} actions={actions} reload={reload}
+          dragging={dragId === p.id} over={overId === p.id && dragId !== p.id}
+          onDragStart={() => setDragId(p.id)} onDragOver={() => setOverId(p.id)} onDrop={onDrop} onDragEnd={() => { setDragId(null); setOverId(null); }} />
+      ))}
+
+      {adding && (
+        <div style={{ borderTop: '1px solid ' + BRAND.border, padding: '8px 0 4px' }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input autoFocus placeholder="What's it for? (e.g. Corp Tax — Q4)" value={pLabel} onChange={(e) => setPLabel(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addPot(); if (e.key === 'Escape') setAdding(false); }}
+              style={{ flex: 1, minWidth: 130, padding: '5px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+            <span style={{ color: BRAND.muted }}>£</span>
+            <input type="number" step="0.01" placeholder="0.00" value={pAmt} onChange={(e) => setPAmt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addPot(); }}
+              style={{ width: 90, padding: '5px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+            <input placeholder="Note (optional)" value={pNote} onChange={(e) => setPNote(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addPot(); }}
+              style={{ flex: 1, minWidth: 130, padding: '5px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12 }} />
+            <button className="btn-ghost" style={{ padding: '3px 8px' }} onClick={() => setAdding(false)}><X size={13} /></button>
+            <button className="btn" style={{ padding: '4px 9px' }} onClick={addPot} disabled={!pLabel.trim()}><Check size={13} /> Add</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 8, paddingTop: 8, borderTop: '1px solid ' + BRAND.border }}>
+        <button className="btn-ghost" style={{ padding: '3px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={12} /> Add pot</button>
+        <span style={{ fontSize: 11, color: overAllocated ? PROFIT_NEG : BRAND.muted, textAlign: 'right' }}>
+          {formatGBP(account.allocated)} allocated
+          {Math.abs(account.unallocated) > 0.005 && (
+            <> · <strong style={{ color: overAllocated ? PROFIT_NEG : BRAND.ink }}>{formatGBP(Math.abs(account.unallocated))}</strong> {overAllocated ? 'over-allocated' : 'unallocated'}</>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PotRow({ pot, actions, reload, dragging, over, onDragStart, onDragOver, onDrop, onDragEnd }) {
+  const [editing, setEditing] = useState(false);
+  const [label, setLabel] = useState(pot.label);
+  const [amt, setAmt] = useState(String(pot.amount));
+  const [note, setNote] = useState(pot.note || '');
+
+  const save = () => {
+    if (!label.trim()) return;
+    actions.updateSavingsPot(pot.id, { label: label.trim(), amount: parseFloat(amt) || 0, note: note.trim() || null }).then(() => { setEditing(false); reload(); });
+  };
+  const startEdit = () => { setLabel(pot.label); setAmt(String(pot.amount)); setNote(pot.note || ''); setEditing(true); };
+  const remove = () => actions.deleteSavingsPot(pot.id).then(reload);
+
+  if (editing) {
+    return (
+      <div style={{ borderTop: '1px solid ' + BRAND.border, padding: '6px 0' }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input autoFocus value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
+            style={{ flex: 1, minWidth: 120, padding: '5px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+          <span style={{ color: BRAND.muted }}>£</span>
+          <input type="number" step="0.01" value={amt} onChange={(e) => setAmt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
+            style={{ width: 90, padding: '5px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+          <input placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
+            style={{ flex: 1, minWidth: 120, padding: '5px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12 }} />
+          <button className="btn-ghost" style={{ padding: '3px 8px' }} onClick={() => setEditing(false)}><X size={13} /></button>
+          <button className="btn" style={{ padding: '4px 9px' }} onClick={save} disabled={!label.trim()}><Check size={13} /> Save</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div draggable
+      onDragStart={(ev) => { ev.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
+      onDragOver={(ev) => { ev.preventDefault(); onDragOver(); }}
+      onDrop={(ev) => { ev.preventDefault(); onDrop(); }}
+      onDragEnd={onDragEnd}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 0', borderTop: over ? '2px solid ' + BRAND.blue : '1px solid ' + BRAND.border, background: over ? '#F4FBFE' : 'transparent', opacity: dragging ? 0.4 : 1 }}>
+      <span title="Drag to reorder" style={{ flexShrink: 0, cursor: 'grab', color: BRAND.muted, display: 'flex', lineHeight: 0 }}><GripVertical size={13} /></span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pot.label}</div>
+        {pot.note && <div style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pot.note}</div>}
+      </div>
+      <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 56, textAlign: 'right' }}>{formatGBP(pot.amount)}</span>
+      <button className="btn-icon" title="Edit pot" onClick={startEdit} style={{ padding: 3 }}><Pencil size={12} /></button>
+      <button className="btn-icon" title="Delete pot" onClick={remove} style={{ padding: 3 }}><Trash2 size={12} /></button>
+    </div>
+  );
+}
+
+// ── Tax pay dates (Directors tab) ──────────────────────────────────────────
+// Upcoming Personal / VAT / Corp Tax payments with due date, amount and HMRC
+// transfer reference. Automatic reminders (both directors) fire 7 days before
+// (move it out of Shawbrook so it clears) and again the next day (pay HMRC).
+const TAX_KIND_META = {
+  vat:           { label: 'VAT',           color: '#7C3AED', bg: '#F3E8FF', border: '#E9D5FF' },
+  corp_tax:      { label: 'Corp Tax',      color: '#0E7490', bg: '#ECFEFF', border: '#A5F3FC' },
+  personal_tax:  { label: 'Personal Tax',  color: '#B45309', bg: '#FEF3C7', border: '#FDE68A' },
+  other:         { label: 'Other',         color: '#475569', bg: '#F1F5F9', border: '#E2E8F0' },
+};
+
+function TaxPaymentsSection({ isMobile }) {
+  const { state, actions, showMsg } = useStore();
+  const [adding, setAdding] = useState(false);
+
+  useEffect(() => { actions.loadDirectorTaxPayments(); }, [actions, state.financeRefresh]);
+  const data = state.directorTaxPayments;
+  const reload = () => actions.loadDirectorTaxPayments();
+
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${DIRECTOR_ACCENT}`, borderRadius: 12, padding: isMobile ? 14 : '14px 18px', marginTop: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 700, color: BRAND.ink }}>
+          <Coins size={16} color={DIRECTOR_ACCENT} /> Tax pay dates
+        </span>
+        <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={13} /> Add payment</button>
+      </div>
+      <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 8 }}>
+        Reminders email you and Ben 7 days before (move it out of Shawbrook so it clears) and again the next day (pay HMRC, with the reference).
+      </div>
+
+      {adding && <TaxPaymentForm actions={actions} showMsg={showMsg} onDone={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} />}
+
+      {!data ? (
+        <div style={{ color: BRAND.muted, fontSize: 13, padding: '8px 0' }}>Loading…</div>
+      ) : data.payments.length === 0 && !adding ? (
+        <div style={{ color: BRAND.muted, fontSize: 13, padding: '8px 0' }}>No tax payments logged. Add one to get reminders before it's due.</div>
+      ) : (
+        data.payments.map((p) => <TaxPaymentRow key={p.id} payment={p} actions={actions} reload={reload} />)
+      )}
+    </div>
+  );
+}
+
+// 'YYYY-MM-DD' → "31 July 2026" and whole days from today (UTC date arithmetic).
+function fmtDueDate(d) {
+  if (!d) return '';
+  return new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+function daysUntilDate(d) {
+  if (!d) return null;
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.round((new Date(d + 'T00:00:00Z').getTime() - today) / 86400000);
+}
+
+function TaxPaymentRow({ payment, actions, reload }) {
+  const [editing, setEditing] = useState(false);
+  const meta = TAX_KIND_META[payment.kind] || TAX_KIND_META.other;
+  const left = daysUntilDate(payment.dueDate);
+  const remove = () => { if (window.confirm(`Delete "${payment.title}"?`)) actions.deleteTaxPayment(payment.id).then(reload); };
+
+  if (editing) {
+    return <TaxPaymentForm payment={payment} actions={actions} onDone={() => { setEditing(false); reload(); }} onCancel={() => setEditing(false)} />;
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid ' + BRAND.border, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, background: meta.bg, border: '1px solid ' + meta.border, padding: '1px 7px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: 0.3, flexShrink: 0 }}>{meta.label}</span>
+      <div style={{ flex: 1, minWidth: 140 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink }}>{payment.title}</div>
+        <div style={{ fontSize: 12, color: BRAND.muted }}>
+          Due {fmtDueDate(payment.dueDate)}
+          {left != null && (left < 0 ? ' · overdue' : left === 0 ? ' · today' : ` · in ${left} day${left === 1 ? '' : 's'}`)}
+          {payment.reference && <> · ref <strong style={{ color: BRAND.ink }}>{payment.reference}</strong></>}
+        </div>
+        {payment.note && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{payment.note}</div>}
+      </div>
+      <span style={{ fontSize: 15, fontWeight: 800, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(payment.amount)}</span>
+      <button className="btn-icon" title="Edit payment" onClick={() => setEditing(true)} style={{ padding: 3 }}><Pencil size={13} /></button>
+      <button className="btn-icon" title="Delete payment" onClick={remove} style={{ padding: 3 }}><Trash2 size={13} /></button>
+    </div>
+  );
+}
+
+function TaxPaymentForm({ payment, actions, showMsg, onDone, onCancel }) {
+  const editing = !!payment;
+  const [title, setTitle] = useState(payment?.title || '');
+  const [kind, setKind] = useState(payment?.kind || 'vat');
+  const [dueDate, setDueDate] = useState(payment?.dueDate || todayKey());
+  const [amount, setAmount] = useState(payment ? String(payment.amount) : '');
+  const [reference, setReference] = useState(payment?.reference || '');
+  const [note, setNote] = useState(payment?.note || '');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!title.trim() || !dueDate || busy) return;
+    setBusy(true);
+    const body = { title: title.trim(), kind, dueDate, amount: parseFloat(amount) || 0, reference: reference.trim() || null, note: note.trim() || null };
+    try {
+      if (editing) await actions.updateTaxPayment(payment.id, body);
+      else await actions.addTaxPayment(body);
+      onDone();
+    } catch (err) { showMsg?.(err.message || 'Could not save payment', 'error'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, margin: '8px 0' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input autoFocus placeholder="Title (e.g. 2026 Q1 VAT, Personal Tax — Ben)" value={title} onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          style={{ flex: 1, minWidth: 180, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+        <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13, background: 'white', color: BRAND.ink }}>
+          {Object.entries(TAX_KIND_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
+        </select>
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+        <label style={{ fontSize: 12, color: BRAND.muted, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          Due <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
+            style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+        </label>
+        <span style={{ color: BRAND.muted }}>£</span>
+        <input type="number" step="0.01" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          style={{ width: 110, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+        <input placeholder="HMRC reference" value={reference} onChange={(e) => setReference(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          style={{ flex: 1, minWidth: 140, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+        <input placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          style={{ flex: 1, minWidth: 160, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12 }} />
+        <button className="btn-ghost" style={{ padding: '4px 8px', marginLeft: 'auto' }} onClick={onCancel}><X size={13} /></button>
+        <button className="btn" style={{ padding: '5px 10px' }} onClick={submit} disabled={!title.trim() || !dueDate || busy}><Check size={13} /> {busy ? 'Saving…' : (editing ? 'Save' : 'Add')}</button>
       </div>
     </div>
   );

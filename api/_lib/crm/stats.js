@@ -2384,6 +2384,222 @@ async function directorBalanceRoute(req, res) {
   return res.status(200).json({ ok: true });
 }
 
+// ── Savings & balances + tax pay dates (Directors tab, below the expenses) ──
+let directorFinanceEnsured = null;
+function ensureDirectorFinance() {
+  if (directorFinanceEnsured) return directorFinanceEnsured;
+  directorFinanceEnsured = (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS director_savings_accounts (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        balance     NUMERIC(12,2) NOT NULL DEFAULT 0,
+        sort_order  INT,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS director_savings_pots (
+        id          TEXT PRIMARY KEY,
+        account_id  TEXT NOT NULL REFERENCES director_savings_accounts(id) ON DELETE CASCADE,
+        label       TEXT NOT NULL,
+        amount      NUMERIC(12,2) NOT NULL DEFAULT 0,
+        note        TEXT,
+        sort_order  INT,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_savings_pots_account ON director_savings_pots (account_id)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS director_tax_payments (
+        id                    TEXT PRIMARY KEY,
+        title                 TEXT NOT NULL,
+        kind                  TEXT,
+        due_date              DATE NOT NULL,
+        amount                NUMERIC(12,2) NOT NULL DEFAULT 0,
+        reference             TEXT,
+        note                  TEXT,
+        reminded_transfer1_at TIMESTAMPTZ,
+        reminded_transfer2_at TIMESTAMPTZ,
+        sort_order            INT,
+        created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_tax_payments_due ON director_tax_payments (due_date)`;
+  })().catch((err) => { directorFinanceEnsured = null; throw err; });
+  return directorFinanceEnsured;
+}
+
+// GET → accounts (each with nested pots, allocated subtotal + grand total).
+// POST {type:'account'|'pot', …} add · {reorder,type} drag-order · PATCH/:id · DELETE/:id
+async function directorSavingsRoute(req, res, action) {
+  await ensureDirectorFinance();
+
+  if (req.method === 'GET') {
+    const accounts = await sql`SELECT * FROM director_savings_accounts ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
+    const pots = await sql`SELECT * FROM director_savings_pots ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
+    let grandTotal = 0;
+    const out = accounts.map((a) => {
+      const mine = pots.filter((p) => p.account_id === a.id).map((p) => ({
+        id: p.id, label: p.label, amount: Number(p.amount) || 0, note: p.note || null,
+      }));
+      const allocated = round2(mine.reduce((s, p) => s + p.amount, 0));
+      const balance = Number(a.balance) || 0;
+      grandTotal = round2(grandTotal + balance);
+      return { id: a.id, name: a.name, balance, pots: mine, allocated, unallocated: round2(balance - allocated) };
+    });
+    return res.status(200).json({ accounts: out, grandTotal });
+  }
+
+  if (req.method === 'POST') {
+    const body = req.body || {};
+    const type = body.type;
+    // Drag-reorder accounts or pots: persist the given ids in their new order.
+    if (Array.isArray(body.reorder)) {
+      const table = type === 'pot' ? 'director_savings_pots' : 'director_savings_accounts';
+      let i = 0;
+      for (const rid of body.reorder) {
+        if (typeof rid !== 'string') continue;
+        if (table === 'director_savings_pots') await sql`UPDATE director_savings_pots SET sort_order = ${i}, updated_at = NOW() WHERE id = ${rid}`;
+        else await sql`UPDATE director_savings_accounts SET sort_order = ${i}, updated_at = NOW() WHERE id = ${rid}`;
+        i += 1;
+      }
+      return res.status(200).json({ ok: true });
+    }
+    if (type === 'account') {
+      const name = trimOrNull(body.name);
+      if (!name) return res.status(400).json({ error: 'name required' });
+      const balance = Number(body.balance) || 0;
+      const id = makeId('sav');
+      const [{ m: maxOrder }] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM director_savings_accounts`;
+      await sql`INSERT INTO director_savings_accounts (id, name, balance, sort_order) VALUES (${id}, ${name}, ${balance}, ${maxOrder + 1})`;
+      return res.status(200).json({ ok: true, id });
+    }
+    if (type === 'pot') {
+      const accountId = trimOrNull(body.accountId);
+      const label = trimOrNull(body.label);
+      if (!accountId || !label) return res.status(400).json({ error: 'accountId and label required' });
+      const [acct] = await sql`SELECT id FROM director_savings_accounts WHERE id = ${accountId}`;
+      if (!acct) return res.status(404).json({ error: 'Account not found' });
+      const amount = Number(body.amount) || 0;
+      const note = trimOrNull(body.note) || null;
+      const id = makeId('pot');
+      const [{ m: maxOrder }] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM director_savings_pots WHERE account_id = ${accountId}`;
+      await sql`INSERT INTO director_savings_pots (id, account_id, label, amount, note, sort_order) VALUES (${id}, ${accountId}, ${label}, ${amount}, ${note}, ${maxOrder + 1})`;
+      return res.status(200).json({ ok: true, id });
+    }
+    return res.status(400).json({ error: 'Unknown type' });
+  }
+
+  if (req.method === 'PATCH') {
+    if (!action) return res.status(400).json({ error: 'id required' });
+    const body = req.body || {};
+    if (body.type === 'pot') {
+      const [existing] = await sql`SELECT * FROM director_savings_pots WHERE id = ${action}`;
+      if (!existing) return res.status(404).json({ error: 'Not found' });
+      const label = body.label !== undefined ? (trimOrNull(body.label) || existing.label) : existing.label;
+      const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
+      const note = body.note !== undefined ? (trimOrNull(body.note) || null) : existing.note;
+      await sql`UPDATE director_savings_pots SET label = ${label}, amount = ${amount}, note = ${note}, updated_at = NOW() WHERE id = ${action}`;
+      return res.status(200).json({ ok: true });
+    }
+    const [existing] = await sql`SELECT * FROM director_savings_accounts WHERE id = ${action}`;
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const name = body.name !== undefined ? (trimOrNull(body.name) || existing.name) : existing.name;
+    const balance = body.balance !== undefined ? (Number(body.balance) || 0) : existing.balance;
+    await sql`UPDATE director_savings_accounts SET name = ${name}, balance = ${balance}, updated_at = NOW() WHERE id = ${action}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  if (req.method === 'DELETE') {
+    if (!action) return res.status(400).json({ error: 'id required' });
+    const type = (req.query && req.query.type) || (req.body || {}).type;
+    if (type === 'pot') await sql`DELETE FROM director_savings_pots WHERE id = ${action}`;
+    else await sql`DELETE FROM director_savings_accounts WHERE id = ${action}`; // cascades to pots
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// GET → upcoming tax payments (sorted by due date). POST add · {reorder} · PATCH/:id · DELETE/:id
+const TAX_KINDS = new Set(['vat', 'corp_tax', 'personal_tax', 'other']);
+async function directorTaxRoute(req, res, action) {
+  await ensureDirectorFinance();
+
+  if (req.method === 'GET') {
+    const rows = await sql`SELECT * FROM director_tax_payments ORDER BY due_date ASC, sort_order ASC NULLS LAST, created_at ASC`;
+    const payments = rows.map((r) => ({
+      id: r.id, title: r.title, kind: r.kind || 'other', dueDate: dateKey(r.due_date),
+      amount: Number(r.amount) || 0, reference: r.reference || null, note: r.note || null,
+    }));
+    return res.status(200).json({ payments });
+  }
+
+  if (req.method === 'POST') {
+    const body = req.body || {};
+    if (Array.isArray(body.reorder)) {
+      let i = 0;
+      for (const rid of body.reorder) {
+        if (typeof rid !== 'string') continue;
+        await sql`UPDATE director_tax_payments SET sort_order = ${i}, updated_at = NOW() WHERE id = ${rid}`;
+        i += 1;
+      }
+      return res.status(200).json({ ok: true });
+    }
+    const title = trimOrNull(body.title);
+    const dueDate = trimOrNull(body.dueDate);
+    if (!title) return res.status(400).json({ error: 'title required' });
+    if (!dueDate || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return res.status(400).json({ error: 'valid dueDate required' });
+    const kind = TAX_KINDS.has(body.kind) ? body.kind : 'other';
+    const amount = Number(body.amount) || 0;
+    const reference = trimOrNull(body.reference) || null;
+    const note = trimOrNull(body.note) || null;
+    const id = makeId('tax');
+    const [{ m: maxOrder }] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM director_tax_payments`;
+    await sql`
+      INSERT INTO director_tax_payments (id, title, kind, due_date, amount, reference, note, sort_order)
+      VALUES (${id}, ${title}, ${kind}, ${dueDate}, ${amount}, ${reference}, ${note}, ${maxOrder + 1})`;
+    return res.status(200).json({ ok: true, id });
+  }
+
+  if (req.method === 'PATCH') {
+    if (!action) return res.status(400).json({ error: 'id required' });
+    const [existing] = await sql`SELECT * FROM director_tax_payments WHERE id = ${action}`;
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const body = req.body || {};
+    const title = body.title !== undefined ? (trimOrNull(body.title) || existing.title) : existing.title;
+    const kind = body.kind !== undefined ? (TAX_KINDS.has(body.kind) ? body.kind : 'other') : existing.kind;
+    const dueDate = body.dueDate !== undefined ? (/^\d{4}-\d{2}-\d{2}$/.test(body.dueDate || '') ? body.dueDate : dateKey(existing.due_date)) : dateKey(existing.due_date);
+    const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
+    const reference = body.reference !== undefined ? (trimOrNull(body.reference) || null) : existing.reference;
+    const note = body.note !== undefined ? (trimOrNull(body.note) || null) : existing.note;
+    // Re-arm reminders if the schedule or amount moved, so they fire afresh for the new figures.
+    const reschedule = dueDate !== dateKey(existing.due_date) || (Number(amount) !== Number(existing.amount));
+    if (reschedule) {
+      await sql`
+        UPDATE director_tax_payments
+           SET title = ${title}, kind = ${kind}, due_date = ${dueDate}, amount = ${amount}, reference = ${reference}, note = ${note},
+               reminded_transfer1_at = NULL, reminded_transfer2_at = NULL, updated_at = NOW()
+         WHERE id = ${action}`;
+    } else {
+      await sql`
+        UPDATE director_tax_payments
+           SET title = ${title}, kind = ${kind}, due_date = ${dueDate}, amount = ${amount}, reference = ${reference}, note = ${note}, updated_at = NOW()
+         WHERE id = ${action}`;
+    }
+    return res.status(200).json({ ok: true });
+  }
+
+  if (req.method === 'DELETE') {
+    if (!action) return res.status(400).json({ error: 'id required' });
+    await sql`DELETE FROM director_tax_payments WHERE id = ${action}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
 export async function statsRoute(req, res, id, action, user) {
   // Live financial figures — never let a browser/edge serve a stale copy (e.g.
   // showing an extra that's since been deleted, or yesterday's cash position).
@@ -2397,11 +2613,13 @@ export async function statsRoute(req, res, id, action, user) {
 
   // Directors expenses — gated purely on identity (the two company directors).
   // Sits before the finance.manage check so other finance users are excluded.
-  if (id === 'director-expenses' || id === 'director-invoice' || id === 'director-zip' || id === 'director-balance') {
+  if (id === 'director-expenses' || id === 'director-invoice' || id === 'director-zip' || id === 'director-balance' || id === 'director-savings' || id === 'director-tax') {
     if (!isDirector(user.email)) return res.status(403).json({ error: 'Directors only' });
     if (id === 'director-expenses') return directorExpensesRoute(req, res, action, user);
     if (id === 'director-invoice') return directorInvoiceRoute(req, res, action, user);
     if (id === 'director-zip') return directorZipRoute(req, res, action);
+    if (id === 'director-savings') return directorSavingsRoute(req, res, action);
+    if (id === 'director-tax') return directorTaxRoute(req, res, action);
     return directorBalanceRoute(req, res);
   }
 
