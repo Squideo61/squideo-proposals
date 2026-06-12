@@ -19,6 +19,41 @@ import { channelForKey, FINANCE_CHANNEL_KEYS, TRACKING_CHANNEL_KEYS } from './_l
 
 const FEED_LIMIT = 30;
 
+// One-off repair: `tracking.email_opened` alerts created before the clickable
+// link shipped (06-11) were persisted with link = NULL, so clicking them did
+// nothing. The notification's created_at is essentially simultaneous with the
+// email_tracking row's open_notified_at (both written inside notifyFirstOpen),
+// so we can recover each alert's thread id by nearest-timestamp match for the
+// same user and write back `#/email/<thread>`. Scoped to one user, only touches
+// null-link rows, so it self-heals the backlog on the next poll and then no-ops.
+// Returns a Map of notificationId -> new link for the rows it fixed.
+async function backfillEmailOpenLinks(email) {
+  try {
+    const rows = await sql`
+      UPDATE in_app_notifications n
+         SET link = '#/email/' || sub.gmail_thread_id
+        FROM (
+          SELECT DISTINCT ON (n2.id) n2.id AS notif_id, et.gmail_thread_id
+            FROM in_app_notifications n2
+            JOIN email_tracking et
+              ON et.user_email = n2.user_email
+             AND et.gmail_thread_id IS NOT NULL
+             AND et.open_notified_at IS NOT NULL
+           WHERE n2.user_email = ${email}
+             AND n2.notification_key = 'tracking.email_opened'
+             AND n2.link IS NULL
+             AND ABS(EXTRACT(EPOCH FROM (n2.created_at - et.open_notified_at))) < 120
+           ORDER BY n2.id, ABS(EXTRACT(EPOCH FROM (n2.created_at - et.open_notified_at))) ASC
+        ) sub
+       WHERE n.id = sub.notif_id
+      RETURNING n.id, n.link`;
+    return new Map(rows.map((r) => [String(r.id), r.link]));
+  } catch {
+    // email_tracking / open_notified_at may not exist on a fresh workspace.
+    return new Map();
+  }
+}
+
 const mapRow = (r) => ({
   id: String(r.id),
   key: r.notification_key,
@@ -80,6 +115,15 @@ export default async function handler(req, res) {
       ]);
 
       const tracking = { items: trackingRows.map(mapRow), unread: trackingUnread[0]?.n || 0 };
+      // Repair any pre-link email-open alerts still in the feed (no-op once the
+      // backlog is healed), then patch the fixed links into this response so the
+      // user can click straight through without waiting for the next poll.
+      if (tracking.items.some((it) => it.key === 'tracking.email_opened' && !it.link)) {
+        const fixed = await backfillEmailOpenLinks(email);
+        if (fixed.size) {
+          tracking.items = tracking.items.map((it) => (fixed.has(it.id) ? { ...it, link: fixed.get(it.id) } : it));
+        }
+      }
       const finance = { items: financeRows.map(mapRow), unread: financeUnread[0]?.n || 0 };
       const general = { items: generalRows.map(mapRow), unread: generalUnread[0]?.n || 0 };
       // `items`/`unread` kept for any legacy reader = the general bell's feed.
