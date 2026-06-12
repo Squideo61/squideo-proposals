@@ -33,9 +33,13 @@ const FEED_LIMIT = 30;
 async function backfillEmailOpenLinks(email) {
   const fixed = new Map();
   try {
+    // Pick up both never-linked alerts and ones earlier passes parked on the
+    // Sent-folder fallback, so an improved resolver can upgrade them to a real
+    // thread link.
     const notifs = await sql`
       SELECT id, created_at FROM in_app_notifications
-       WHERE user_email = ${email} AND notification_key = 'tracking.email_opened' AND link IS NULL`;
+       WHERE user_email = ${email} AND notification_key = 'tracking.email_opened'
+         AND (link IS NULL OR link = '#/emails/sent')`;
     if (!notifs.length) return fixed;
     const tracks = await sql`
       SELECT subject, recipients, sent_at, open_notified_at, gmail_thread_id
@@ -51,8 +55,18 @@ async function backfillEmailOpenLinks(email) {
       if (!best || bestDiff > 120000) continue; // no confident match — leave for now
       const threadId = best.gmail_thread_id
         || await resolveSentThreadId({ userEmail: email, subject: best.subject, recipients: best.recipients, sentAt: best.sent_at });
-      const link = threadId ? '#/email/' + encodeURIComponent(threadId) : '#/emails/sent';
-      await sql`UPDATE in_app_notifications SET link = ${link} WHERE id = ${n.id} AND link IS NULL`;
+      let link;
+      if (threadId) {
+        link = '#/email/' + encodeURIComponent(threadId);
+      } else if (Date.now() - new Date(n.created_at).getTime() > 86400000) {
+        // Old and still unresolvable (the sent copy never synced) — settle on the
+        // Sent folder so it stops re-triggering this pass on every poll.
+        link = '#/emails/sent';
+      } else {
+        continue; // recent: give Gmail sync time to land, retry next poll
+      }
+      await sql`UPDATE in_app_notifications SET link = ${link}
+                 WHERE id = ${n.id} AND (link IS NULL OR link = '#/emails/sent')`;
       fixed.set(String(n.id), link);
     }
   } catch {
@@ -125,7 +139,7 @@ export default async function handler(req, res) {
       // Repair any pre-link email-open alerts still in the feed (no-op once the
       // backlog is healed), then patch the fixed links into this response so the
       // user can click straight through without waiting for the next poll.
-      if (tracking.items.some((it) => it.key === 'tracking.email_opened' && !it.link)) {
+      if (tracking.items.some((it) => it.key === 'tracking.email_opened' && (!it.link || it.link === '#/emails/sent'))) {
         const fixed = await backfillEmailOpenLinks(email);
         if (fixed.size) {
           tracking.items = tracking.items.map((it) => (fixed.has(it.id) ? { ...it, link: fixed.get(it.id) } : it));

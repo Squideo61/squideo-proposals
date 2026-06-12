@@ -110,18 +110,27 @@ export async function recordTrackedSend({ token, userEmail, messageId, threadId,
 // email_messages (via Pub/Sub) with the real thread id, so we match it back by
 // recipient + subject + nearest send time. Returns the thread id or null.
 export async function resolveSentThreadId({ userEmail, subject, recipients, sentAt }) {
-  const recips = (recipients || []).filter(Boolean);
-  if (!userEmail || !subject || !recips.length) return null;
+  // Lowercase the recipients: gmail_sync stores addresses with original casing
+  // and array overlap is case-sensitive, so match on LOWER() of each.
+  const recips = (recipients || []).filter(Boolean).map((r) => String(r).toLowerCase());
+  if (!userEmail || !recips.length) return null;
+  const when = sentAt ? new Date(sentAt) : new Date();
   try {
     const rows = await sql`
       SELECT gmail_thread_id
         FROM email_messages
-       WHERE user_email = ${userEmail}
-         AND direction = 'outgoing'
+       WHERE LOWER(user_email) = LOWER(${userEmail})
+         -- two send conventions live here: 'outgoing' (CRM composer) and
+         -- 'outbound' (Pub/Sub sync of Gmail-composed mail).
+         AND direction IN ('outgoing', 'outbound')
          AND gmail_thread_id IS NOT NULL
-         AND to_emails && ${recips}::text[]
-         AND LOWER(subject) = LOWER(${subject})
-       ORDER BY ABS(EXTRACT(EPOCH FROM (sent_at - ${sentAt || new Date()}))) ASC NULLS LAST
+         AND EXISTS (SELECT 1 FROM unnest(to_emails) AS e WHERE LOWER(e) = ANY(${recips}::text[]))
+         -- the tracked send and its synced copy are the same email (≈ same
+         -- instant); a day's window safely excludes unrelated mail to the same
+         -- recipient while tolerating clock/header skew.
+         AND ABS(EXTRACT(EPOCH FROM (sent_at - ${when}))) < 86400
+       ORDER BY (LOWER(COALESCE(subject, '')) = LOWER(${subject || ''})) DESC,
+                ABS(EXTRACT(EPOCH FROM (sent_at - ${when}))) ASC
        LIMIT 1`;
     return rows[0]?.gmail_thread_id || null;
   } catch (err) {
