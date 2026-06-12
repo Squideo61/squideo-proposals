@@ -99,6 +99,28 @@ export async function createEventWithMeet(accessToken, {
   return { eventId: json.id, meetUrl, htmlLink: json.htmlLink || null };
 }
 
+// Fetch a booked event so we can read its CURRENT attendees (the team invited
+// at our side may have changed since booking). Returns { attendees: [emails],
+// organizerEmail } or null if the event is gone.
+export async function getEventAttendees(accessToken, eventId) {
+  if (!eventId) return null;
+  try {
+    const json = await calFetch(
+      accessToken,
+      `${CAL_API}/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    ).then((r) => r.json());
+    const attendees = Array.isArray(json.attendees)
+      ? json.attendees.map((a) => String(a.email || '').toLowerCase()).filter(Boolean)
+      : [];
+    const organizerEmail = json.organizer && json.organizer.email
+      ? String(json.organizer.email).toLowerCase() : null;
+    return { attendees, organizerEmail, status: json.status || null };
+  } catch (err) {
+    if (err.status === 404 || err.status === 410) return null;
+    throw err;
+  }
+}
+
 // Best-effort delete of a booked event (used when a booking is cancelled).
 export async function deleteEvent(accessToken, eventId) {
   if (!eventId) return;

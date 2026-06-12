@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS intro_call_bookings (
   google_event_id TEXT,
   meet_url        TEXT,
   status          TEXT NOT NULL DEFAULT 'confirmed',  -- confirmed | cancelled
+  reminder_sent_at TIMESTAMPTZ,                       -- day-of reminder + team task done
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS intro_call_bookings_deal_idx ON intro_call_bookings(deal_id);

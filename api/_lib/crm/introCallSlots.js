@@ -68,8 +68,10 @@ export function ensureIntroCallTables() {
       google_event_id TEXT,
       meet_url        TEXT,
       status          TEXT NOT NULL DEFAULT 'confirmed',
+      reminder_sent_at TIMESTAMPTZ,
       created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`;
+    await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ`;
     await sql`CREATE INDEX IF NOT EXISTS intro_call_bookings_deal_idx ON intro_call_bookings(deal_id)`;
     await sql`CREATE INDEX IF NOT EXISTS intro_call_bookings_slot_idx ON intro_call_bookings(organizer_email, starts_at)`;
   })().catch((err) => { introCallTablesEnsured = null; throw err; });
