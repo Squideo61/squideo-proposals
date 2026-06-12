@@ -1,21 +1,50 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, CheckSquare, Pencil, Plus, Square, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, CheckSquare, ChevronDown, Pencil, Plus, Square, Trash2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { AvatarGroup } from '../Avatar.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 
+const TASK_FILTER_STORAGE_KEY = 'tasks_team_filter';
+
+// A task's assignees — the multi-assignee array, falling back to the legacy
+// single field.
+function taskAssignees(t) {
+  return Array.isArray(t.assigneeEmails) && t.assigneeEmails.length
+    ? t.assigneeEmails
+    : (t.assigneeEmail ? [t.assigneeEmail] : []);
+}
+
 export function TasksView({ onBack, onOpenDeal }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const [creating, setCreating] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  // Defaults to the current user ("My tasks"); '' = everyone. Persisted.
+  const [memberFilter, setMemberFilter] = useState(() => {
+    try {
+      const stored = localStorage.getItem(TASK_FILTER_STORAGE_KEY);
+      if (stored !== null) return stored;
+    } catch {}
+    return state.session?.email || '';
+  });
+  useEffect(() => {
+    try { localStorage.setItem(TASK_FILTER_STORAGE_KEY, memberFilter); } catch {}
+  }, [memberFilter]);
 
   useEffect(() => { actions.refreshTasks('all'); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const tasks = state.tasks || [];
-  const buckets = useMemo(() => bucketTasks(tasks), [tasks]);
+  const visibleTasks = useMemo(
+    () => (memberFilter ? tasks.filter((t) => taskAssignees(t).includes(memberFilter)) : tasks),
+    [tasks, memberFilter],
+  );
+  const buckets = useMemo(() => bucketTasks(visibleTasks), [visibleTasks]);
+
+  const memberOptions = Object.entries(state.users || {})
+    .map(([email, u]) => ({ email, name: u.name || email }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
@@ -36,10 +65,28 @@ export function TasksView({ onBack, onOpenDeal }) {
         </div>
       ) : (
         <>
-          <Bucket title="Overdue" tasks={buckets.overdue} accent="#D32F2F" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
-          <Bucket title="To-do" tasks={buckets.todo} accent={BRAND.blue} actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
-          <Bucket title="Upcoming" tasks={buckets.upcoming} accent="#7C3AED" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
-          <Bucket title="Completed" tasks={buckets.done} accent="#16A34A" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} collapsed />
+          <div style={{ marginBottom: 12 }}>
+            <TaskScopeFilter
+              memberFilter={memberFilter}
+              setMemberFilter={setMemberFilter}
+              memberOptions={memberOptions}
+              sessionEmail={state.session?.email}
+              filteredCount={visibleTasks.length}
+              totalCount={tasks.length}
+            />
+          </div>
+          {visibleTasks.length === 0 ? (
+            <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 32, textAlign: 'center', color: BRAND.muted }}>
+              No tasks in this view.
+            </div>
+          ) : (
+            <>
+              <Bucket title="Overdue" tasks={buckets.overdue} accent="#D32F2F" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
+              <Bucket title="To-do" tasks={buckets.todo} accent={BRAND.blue} actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
+              <Bucket title="Upcoming" tasks={buckets.upcoming} accent="#7C3AED" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
+              <Bucket title="Completed" tasks={buckets.done} accent="#16A34A" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} collapsed />
+            </>
+          )}
         </>
       )}
 
@@ -57,6 +104,94 @@ export function TasksView({ onBack, onOpenDeal }) {
         />
       )}
     </div>
+  );
+}
+
+// "My tasks" dropdown — defaults to the current user, opens a popover to pick
+// another team member or all tasks. Mirrors the proposals list filter.
+function TaskScopeFilter({ memberFilter, setMemberFilter, memberOptions, sessionEmail, filteredCount, totalCount }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+
+  const selfName = memberOptions.find((m) => m.email === memberFilter)?.name || '';
+  const heading = !memberFilter
+    ? 'All tasks'
+    : memberFilter === sessionEmail
+    ? 'My tasks'
+    : `${selfName.split(' ')[0] || 'Their'}'s tasks`;
+
+  const choose = (email) => { setMemberFilter(email); setOpen(false); };
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          background: 'transparent', border: 'none', padding: '4px 8px', margin: '-4px -8px',
+          borderRadius: 6, cursor: 'pointer', font: 'inherit',
+          fontSize: 13, fontWeight: 700, color: BRAND.ink, textTransform: 'uppercase', letterSpacing: 0.5,
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+      >
+        <span>{heading}</span>
+        <ChevronDown size={14} style={{ opacity: 0.6 }} />
+        {memberFilter && (
+          <span style={{ color: BRAND.blue, textTransform: 'none', letterSpacing: 0, fontWeight: 500, marginLeft: 4 }}>
+            · {filteredCount} of {totalCount}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div role="listbox" style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, background: 'white',
+          border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)',
+          minWidth: 220, padding: 4, zIndex: 50, maxHeight: 320, overflowY: 'auto',
+        }}>
+          <ScopeOption label="All tasks" selected={!memberFilter} onClick={() => choose('')} />
+          {memberOptions.map((m) => (
+            <ScopeOption
+              key={m.email}
+              label={m.email === sessionEmail ? `${m.name} (me)` : m.name}
+              selected={memberFilter === m.email}
+              onClick={() => choose(m.email)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScopeOption({ label, selected, onClick }) {
+  return (
+    <button
+      role="option"
+      aria-selected={selected}
+      onClick={onClick}
+      style={{
+        display: 'block', width: '100%', padding: '8px 10px',
+        background: selected ? '#F1F5F9' : 'transparent', border: 'none', borderRadius: 6,
+        cursor: 'pointer', font: 'inherit', fontSize: 13, color: BRAND.ink, textAlign: 'left',
+      }}
+      onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = '#F8FAFC'; }}
+      onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = 'transparent'; }}
+    >
+      {label}
+    </button>
   );
 }
 
