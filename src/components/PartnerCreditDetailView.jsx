@@ -99,7 +99,7 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <PartnerMeetingsButton clientKey={clientKey} clientName={clientName || clientKey} />
+          <PartnerMeetingsButton clientKey={clientKey} clientName={clientName || clientKey} primary />
           <button onClick={() => actions.openComposer({ contactEmail: clientContactEmail })} className="btn">
             <Mail size={14} /> Send email
           </button>

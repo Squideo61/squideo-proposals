@@ -8,7 +8,7 @@ import { Modal } from './ui.jsx';
 // where the team member picks who hosts the call — defaulting to themselves —
 // then generates a shareable booking link and shows availability + upcoming
 // calls. Booked calls land on the chosen hosts' Google Calendars.
-export function PartnerMeetingsButton({ clientKey, clientName }) {
+export function PartnerMeetingsButton({ clientKey, clientName, primary = false }) {
   const { state, actions } = useStore();
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState(null);
@@ -75,8 +75,8 @@ export function PartnerMeetingsButton({ clientKey, clientName }) {
     <>
       <button
         onClick={(e) => { e.stopPropagation(); openModal(); }}
-        className="btn-ghost"
-        style={{ fontSize: 12, padding: '4px 10px' }}
+        className={primary ? 'btn' : 'btn-ghost'}
+        style={primary ? undefined : { fontSize: 12, padding: '4px 10px' }}
         title="Generate a booking link for this client"
       >
         <CalendarClock size={14} /> Meetings
