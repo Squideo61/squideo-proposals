@@ -426,7 +426,7 @@ export async function gmailCallback(req, res) {
     return res.status(200).end(`<!doctype html>
 <html><head><meta charset="utf-8"><title>${title}</title>
 <style>body{font-family:-apple-system,system-ui,sans-serif;background:#FAFBFC;color:#0F2A3D;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}main{background:#fff;border:1px solid #E5E9EE;border-radius:12px;padding:32px;max-width:440px;text-align:center;box-shadow:0 4px 20px rgba(15,42,61,0.06)}h1{font-size:18px;margin:0 0 12px}p{color:#6B7785;font-size:14px;margin:0 0 18px;line-height:1.5}a{display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-size:14px}</style></head>
-<body><main>${body}<p style="margin-top:18px"><a href="${APP_URL}/">Back to Squideo</a></p></main></body></html>`);
+<body><main>${body}<p style="margin-top:18px"><a href="${APP_URL}/" onclick="if(window.opener){window.close();return false;}">Back to Squideo</a></p></main></body></html>`);
   };
 
   if (error) {
