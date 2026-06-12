@@ -79,11 +79,21 @@ async function publicSlots(req, res) {
 
   const rules = await loadRules();
   const result = await computeSlots(ctx.dealId, rules);
-  // Never leak attendee emails or busy detail — only the project name, duration
-  // and free slots. `ready` tells the page whether to show the picker or a
-  // "team finishing setup" message.
+
+  // The host is the organizer (the PM whose calendar holds the call). We expose
+  // only their display name + avatar — the public face of the booking, like
+  // Google's appointment page — never the wider team's emails or busy detail.
+  let host = null;
+  if (result.organizer) {
+    const u = (await sql`SELECT name, avatar FROM users WHERE email = ${result.organizer}`)[0];
+    if (u) host = { name: u.name || null, avatar: u.avatar || null };
+  }
+
+  // `ready` tells the page whether to show the picker or a "team finishing
+  // setup" message.
   return res.status(200).json({
     projectName: ctx.projectName,
+    host,
     durationMinutes: rules.durationMinutes,
     timezone: rules.timezone,
     ready: result.blocked.length === 0,
@@ -98,6 +108,7 @@ async function book(req, res) {
   const body = parseBody(req);
   const name = String(body.name || '').trim();
   const email = String(body.email || '').trim();
+  const company = String(body.company || '').trim();
   const start = String(body.start || '').trim();
   if (!name) return res.status(400).json({ error: 'Please enter your name.' });
   if (!EMAIL_RX.test(email)) return res.status(400).json({ error: 'Please enter a valid email.' });
@@ -159,7 +170,7 @@ async function book(req, res) {
     const token = await getFreshAccessToken(organizer);
     const event = await createEventWithMeet(token, {
       summary: `Intro call — ${ctx.projectName}`,
-      description: `Intro call booked by ${name} (${email}) for ${ctx.projectName}.`,
+      description: `Intro call booked by ${name} (${email})${company ? ` from ${company}` : ''} for ${ctx.projectName}.`,
       start: startUTC,
       end: endUTC,
       attendees: [email, ...attendees],
@@ -195,8 +206,8 @@ async function book(req, res) {
     await sendNotification('intro_call.booked', {
       assigneeEmails: teamEmails,
       subject: `Intro call booked — ${ctx.projectName}`,
-      html: introCallBookedHtml({ projectName: ctx.projectName, name, email, when, meetUrl }),
-      text: `${name} (${email}) booked an intro call for ${ctx.projectName} on ${when}.`,
+      html: introCallBookedHtml({ projectName: ctx.projectName, name: company ? `${name} (${company})` : name, email, when, meetUrl }),
+      text: `${name}${company ? ` (${company})` : ''} (${email}) booked an intro call for ${ctx.projectName} on ${when}.`,
       inApp: {
         title: `Intro call booked — ${ctx.projectName}`,
         body: `${name} · ${when}`,
