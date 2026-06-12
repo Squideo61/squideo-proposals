@@ -38,6 +38,7 @@ const ContactDetailView = lazyNamed(() => import('./components/crm/ContactDetail
 const CompanyDetailView = lazyNamed(() => import('./components/crm/CompanyDetailView.jsx'), 'CompanyDetailView');
 const TasksView = lazyNamed(() => import('./components/crm/TasksView.jsx'), 'TasksView');
 const EmailsView = lazyNamed(() => import('./components/crm/EmailsView.jsx'), 'EmailsView');
+const EmailTrackingModal = lazyNamed(() => import('./components/EmailTrackingModal.jsx'), 'EmailTrackingModal');
 const QuoteRequestsView = lazyNamed(() => import('./components/crm/QuoteRequestsView.jsx'), 'QuoteRequestsView');
 const XeroDuplicatesView = lazyNamed(() => import('./components/crm/XeroDuplicatesView.jsx'), 'XeroDuplicatesView');
 const RevisionsView = lazyNamed(() => import('./components/crm/RevisionsView.jsx'), 'RevisionsView');
@@ -144,9 +145,25 @@ function AppShell() {
     const raw = String(link).replace(/^#?\/?/, '');
     if (!raw) { navigate('list'); return; }
     const sep = raw.indexOf('/');
+    // Tracking email-open alerts open a focused modal (the sent email + its
+    // open/click tracking) rather than navigating into a long thread.
+    if (sep !== -1 && raw.slice(0, sep) === 'email-open') {
+      setModal({ type: 'emailTracking', threadId: decodeURIComponent(raw.slice(sep + 1)) });
+      return;
+    }
     if (sep === -1) navigate(raw);
     else navigate(raw.slice(0, sep), decodeURIComponent(raw.slice(sep + 1)) || null);
   }, [navigate]);
+
+  // A direct load / refresh on an email-open deep link: open the modal over the
+  // list rather than rendering a blank, unknown route.
+  useEffect(() => {
+    if (view === 'email-open' && activeId) {
+      setModal({ type: 'emailTracking', threadId: activeId });
+      setView('list');
+      setActiveId(null);
+    }
+  }, [view, activeId]);
 
   if (state.loading) {
     return (
@@ -566,6 +583,11 @@ function AppShell() {
       {modal && modal.type === 'account' && (
         <Suspense fallback={null}>
           <AccountSettings onClose={() => setModal(null)} onLogout={logout} />
+        </Suspense>
+      )}
+      {modal && modal.type === 'emailTracking' && (
+        <Suspense fallback={null}>
+          <EmailTrackingModal threadId={modal.threadId} onClose={() => setModal(null)} />
         </Suspense>
       )}
       {/* The composer dock is mounted at the App root so it stays open

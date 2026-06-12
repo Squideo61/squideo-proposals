@@ -78,8 +78,10 @@ async function notifyFirstOpen(token, geo) {
     // "Go to" target: open the email thread inside the CRM's own Emails view
     // (works whether or not the thread is linked to a deal). Falls back to the
     // deal page only if we somehow have no thread id.
+    // `#/email-open/<thread>` opens a focused tracking modal (the sent email +
+    // its open/click detail), not the full thread. Falls back to the deal page.
     const emailLink = threadId
-      ? `#/email/${encodeURIComponent(threadId)}`
+      ? `#/email-open/${encodeURIComponent(threadId)}`
       : (dealId ? `#/deal/${dealId}` : null);
     await sendNotification('tracking.email_opened', {
       ownerEmail: t.user_email,
