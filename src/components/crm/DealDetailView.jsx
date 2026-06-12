@@ -298,7 +298,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
           {!productionOnly && (
-            <Field icon={User} label="Owner">
+            <Field icon={User} label="Deal Owner">
               {deal.ownerEmail ? (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
                   <Avatar email={deal.ownerEmail} size={22} />
@@ -311,7 +311,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           {!productionOnly && <Field label="Last activity">{formatRelativeTime(deal.lastActivityAt)}</Field>}
         </div>
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Producers</div>
+          <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Team</div>
           <AssigneePicker
             users={Object.entries(state.users || {}).map(([email, u]) => ({ email, ...u }))}
             selected={deal.producerEmails || (deal.producerEmail ? [deal.producerEmail] : [])}
@@ -2476,7 +2476,7 @@ function EditDealModal({ deal, onClose }) {
             {contacts.map(c => <option key={c.id} value={c.id}>{c.name || c.email}</option>)}
           </select>
         </FormRow>
-        <FormRow label="Owner">
+        <FormRow label="Deal Owner">
           <select className="input" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)}>
             <option value="">—</option>
             {users.map(u => <option key={u.email} value={u.email}>{u.name || u.email}</option>)}
