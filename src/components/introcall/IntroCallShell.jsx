@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Clock, Video, ChevronLeft, ChevronRight } from 'lucide-react';
 import { BRAND } from '../../theme.js';
+import { Logo } from '../ui.jsx';
 
 // Public, unauthenticated booking page (/?introCall=<token>), mirroring Google
 // Calendar's appointment-scheduling layout: host on the left, a week-column
@@ -51,14 +52,13 @@ export function IntroCallShell({ token }) {
       <Centered>
         <div style={{ textAlign: 'center', maxWidth: 460 }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>✅</div>
-          <h2 style={{ margin: '0 0 8px', fontSize: 20, color: BRAND.ink }}>You're booked in</h2>
+          <h2 style={{ margin: '0 0 8px', fontSize: 20, color: BRAND.ink }}>Thanks for booking</h2>
           <p style={{ margin: '0 0 6px', color: BRAND.ink }}>
             {new Date(confirmed.start).toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' })}
           </p>
-          <p style={{ margin: '0 0 16px', color: BRAND.muted, fontSize: 14 }}>A calendar invite is on its way to you.</p>
-          {confirmed.meetUrl && (
-            <a href={confirmed.meetUrl} target="_blank" rel="noreferrer" style={primaryBtn}>Join Google Meet</a>
-          )}
+          <p style={{ margin: 0, color: BRAND.muted, fontSize: 14, lineHeight: 1.5 }}>
+            Please check your email for a calendar invite. Accept the invite to finalise your booking.
+          </p>
         </div>
       </Centered>
     );
@@ -72,13 +72,11 @@ export function IntroCallShell({ token }) {
   return (
     <div style={{ minHeight: '100vh', background: 'white', color: BRAND.ink, padding: '28px 24px' }}>
       <div style={{ maxWidth: 1180, margin: '0 auto' }}>
-        {/* Header: host on the left, meeting info on the right */}
+        {/* Header: Squideo branding on the left, meeting info on the right.
+            We deliberately don't name the assigned host — the team can change. */}
         <div style={{ display: 'flex', gap: 40, flexWrap: 'wrap', marginBottom: 24 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 200 }}>
-            {data.host?.avatar
-              ? <img src={data.host.avatar} alt="" style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover' }} />
-              : <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#E5E9EE' }} />}
-            <div style={{ fontSize: 18, fontWeight: 500 }}>{data.host?.name || 'Squideo'}</div>
+          <div style={{ display: 'flex', alignItems: 'center', minWidth: 200 }}>
+            <Logo size={32} />
           </div>
           <div style={{ flex: 1, minWidth: 260 }}>
             <h1 style={{ margin: '0 0 14px', fontSize: 22, fontWeight: 500 }}>{data.projectName}</h1>
@@ -179,7 +177,6 @@ function BookingModal({ token, slot, data, onClose, onBooked, onSlotTaken }) {
   const [firstName, setFirstName] = useState('');
   const [surname, setSurname] = useState('');
   const [email, setEmail] = useState('');
-  const [company, setCompany] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -197,7 +194,6 @@ function BookingModal({ token, slot, data, onClose, onBooked, onSlotTaken }) {
       body: JSON.stringify({
         name: `${firstName.trim()} ${surname.trim()}`.trim(),
         email: email.trim(),
-        company: company.trim(),
         start: slot.start,
       }),
     })
@@ -231,7 +227,6 @@ function BookingModal({ token, slot, data, onClose, onBooked, onSlotTaken }) {
         <Labeled label="First name"><input value={firstName} onChange={(e) => setFirstName(e.target.value)} style={modalInput} autoFocus /></Labeled>
         <Labeled label="Surname"><input value={surname} onChange={(e) => setSurname(e.target.value)} style={modalInput} /></Labeled>
         <Labeled label="Email address"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={modalInput} /></Labeled>
-        <Labeled label="Company/Business Name"><input value={company} onChange={(e) => setCompany(e.target.value)} style={modalInput} /></Labeled>
 
         {error && <div style={{ color: '#DC2626', fontSize: 13, marginTop: 4 }}>{error}</div>}
 

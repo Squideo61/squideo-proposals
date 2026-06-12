@@ -80,20 +80,12 @@ async function publicSlots(req, res) {
   const rules = await loadRules();
   const result = await computeSlots(ctx.dealId, rules);
 
-  // The host is the organizer (the PM whose calendar holds the call). We expose
-  // only their display name + avatar — the public face of the booking, like
-  // Google's appointment page — never the wider team's emails or busy detail.
-  let host = null;
-  if (result.organizer) {
-    const u = (await sql`SELECT name, avatar FROM users WHERE email = ${result.organizer}`)[0];
-    if (u) host = { name: u.name || null, avatar: u.avatar || null };
-  }
-
-  // `ready` tells the page whether to show the picker or a "team finishing
-  // setup" message.
+  // Client-safe shape only: project name, duration and free slots. We don't
+  // expose the assigned host (the team can change) or any attendee emails/busy
+  // detail. `ready` tells the page whether to show the picker or a "team
+  // finishing setup" message.
   return res.status(200).json({
     projectName: ctx.projectName,
-    host,
     durationMinutes: rules.durationMinutes,
     timezone: rules.timezone,
     ready: result.blocked.length === 0,
