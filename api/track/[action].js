@@ -6,7 +6,7 @@
 // Geo comes from Vercel's edge headers (x-vercel-ip-*), so no external lookup.
 import sql from '../_lib/db.js';
 import { APP_URL } from '../_lib/email.js';
-import { TRANSPARENT_GIF, ensureOpenNotifiedColumn, openIsInternalSelfView } from '../_lib/crm/tracking.js';
+import { TRANSPARENT_GIF, ensureOpenNotifiedColumn, openIsInternalSelfView, resolveSentThreadId } from '../_lib/crm/tracking.js';
 import { sendNotification, ensureTrackingNotificationDefaults } from '../_lib/notifications.js';
 import { optionalAuth } from '../_lib/middleware.js';
 
@@ -57,8 +57,20 @@ async function notifyFirstOpen(token, geo) {
     if (!claim.length) return;
 
     await ensureTrackingNotificationDefaults();
-    const dealRows = await sql`
-      SELECT deal_id FROM email_thread_deals WHERE gmail_thread_id = ${t.gmail_thread_id} LIMIT 1`;
+    // Extension-composed sends can lack a thread id (the /link step didn't land);
+    // recover it from the synced sent message so the alert is still deep-linkable,
+    // and heal the tracking row so the CRM inbox eye attaches too.
+    let threadId = t.gmail_thread_id;
+    if (!threadId) {
+      threadId = await resolveSentThreadId({ userEmail: t.user_email, subject: t.subject, recipients: t.recipients, sentAt: t.sent_at });
+      if (threadId) {
+        try { await sql`UPDATE email_tracking SET gmail_thread_id = ${threadId} WHERE token = ${token} AND gmail_thread_id IS NULL`; }
+        catch { /* best-effort heal */ }
+      }
+    }
+    const dealRows = threadId
+      ? await sql`SELECT deal_id FROM email_thread_deals WHERE gmail_thread_id = ${threadId} LIMIT 1`
+      : [];
     const dealId = dealRows[0]?.deal_id || null;
     const recipient = Array.isArray(t.recipients) && t.recipients[0] ? t.recipients[0] : 'A recipient';
     const where = geo.city || geo.country || null;
@@ -66,8 +78,8 @@ async function notifyFirstOpen(token, geo) {
     // "Go to" target: open the email thread inside the CRM's own Emails view
     // (works whether or not the thread is linked to a deal). Falls back to the
     // deal page only if we somehow have no thread id.
-    const emailLink = t.gmail_thread_id
-      ? `#/email/${encodeURIComponent(t.gmail_thread_id)}`
+    const emailLink = threadId
+      ? `#/email/${encodeURIComponent(threadId)}`
       : (dealId ? `#/deal/${dealId}` : null);
     await sendNotification('tracking.email_opened', {
       ownerEmail: t.user_email,

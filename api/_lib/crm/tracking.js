@@ -102,6 +102,34 @@ export async function recordTrackedSend({ token, userEmail, messageId, threadId,
   }
 }
 
+// Recover the Gmail thread id for a tracked send that never got one. Extension
+// (Gmail-composed) sends register their tracking row BEFORE Gmail assigns ids
+// and rely on a follow-up /link call to fill gmail_thread_id in; when that step
+// doesn't land the row is left thread-less, so its "email opened" alert has no
+// thread to deep-link to. But the sent message itself is synced into
+// email_messages (via Pub/Sub) with the real thread id, so we match it back by
+// recipient + subject + nearest send time. Returns the thread id or null.
+export async function resolveSentThreadId({ userEmail, subject, recipients, sentAt }) {
+  const recips = (recipients || []).filter(Boolean);
+  if (!userEmail || !subject || !recips.length) return null;
+  try {
+    const rows = await sql`
+      SELECT gmail_thread_id
+        FROM email_messages
+       WHERE user_email = ${userEmail}
+         AND direction = 'outgoing'
+         AND gmail_thread_id IS NOT NULL
+         AND to_emails && ${recips}::text[]
+         AND LOWER(subject) = LOWER(${subject})
+       ORDER BY ABS(EXTRACT(EPOCH FROM (sent_at - ${sentAt || new Date()}))) ASC NULLS LAST
+       LIMIT 1`;
+    return rows[0]?.gmail_thread_id || null;
+  } catch (err) {
+    console.error('[tracking] resolveSentThreadId failed', err.message);
+    return null;
+  }
+}
+
 // Aggregate tracking state for a set of Gmail thread ids, for the current user.
 // Opens within 5s of send are treated as Gmail's delivery-time image prefetch
 // (not a real read) and excluded. Returns a map: threadId -> summary.

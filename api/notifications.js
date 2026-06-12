@@ -16,42 +16,49 @@
 import sql from './_lib/db.js';
 import { cors, requireAuth } from './_lib/middleware.js';
 import { channelForKey, FINANCE_CHANNEL_KEYS, TRACKING_CHANNEL_KEYS } from './_lib/notificationsCatalog.js';
+import { resolveSentThreadId } from './_lib/crm/tracking.js';
 
 const FEED_LIMIT = 30;
 
-// One-off repair: `tracking.email_opened` alerts created before the clickable
-// link shipped (06-11) were persisted with link = NULL, so clicking them did
-// nothing. The notification's created_at is essentially simultaneous with the
-// email_tracking row's open_notified_at (both written inside notifyFirstOpen),
-// so we can recover each alert's thread id by nearest-timestamp match for the
-// same user and write back `#/email/<thread>`. Scoped to one user, only touches
-// null-link rows, so it self-heals the backlog on the next poll and then no-ops.
+// Repair `tracking.email_opened` alerts persisted with link = NULL — either
+// created before the clickable link shipped (06-11), or whose tracking row never
+// got a thread id (extension sends whose /link step didn't land). The alert's
+// created_at is essentially simultaneous with the email_tracking row's
+// open_notified_at (both written inside notifyFirstOpen), so we match each alert
+// to its tracking row by nearest timestamp, then take the thread id directly or
+// recover it from the synced sent message (resolveSentThreadId). Truly
+// unrecoverable alerts fall back to the Sent folder so they stop re-triggering
+// this pass. Scoped to one user; self-heals the backlog then no-ops.
 // Returns a Map of notificationId -> new link for the rows it fixed.
 async function backfillEmailOpenLinks(email) {
+  const fixed = new Map();
   try {
-    const rows = await sql`
-      UPDATE in_app_notifications n
-         SET link = '#/email/' || sub.gmail_thread_id
-        FROM (
-          SELECT DISTINCT ON (n2.id) n2.id AS notif_id, et.gmail_thread_id
-            FROM in_app_notifications n2
-            JOIN email_tracking et
-              ON et.user_email = n2.user_email
-             AND et.gmail_thread_id IS NOT NULL
-             AND et.open_notified_at IS NOT NULL
-           WHERE n2.user_email = ${email}
-             AND n2.notification_key = 'tracking.email_opened'
-             AND n2.link IS NULL
-             AND ABS(EXTRACT(EPOCH FROM (n2.created_at - et.open_notified_at))) < 120
-           ORDER BY n2.id, ABS(EXTRACT(EPOCH FROM (n2.created_at - et.open_notified_at))) ASC
-        ) sub
-       WHERE n.id = sub.notif_id
-      RETURNING n.id, n.link`;
-    return new Map(rows.map((r) => [String(r.id), r.link]));
+    const notifs = await sql`
+      SELECT id, created_at FROM in_app_notifications
+       WHERE user_email = ${email} AND notification_key = 'tracking.email_opened' AND link IS NULL`;
+    if (!notifs.length) return fixed;
+    const tracks = await sql`
+      SELECT subject, recipients, sent_at, open_notified_at, gmail_thread_id
+        FROM email_tracking
+       WHERE user_email = ${email} AND open_notified_at IS NOT NULL`;
+    for (const n of notifs) {
+      // Nearest tracking row by open-notify time (≈ the alert's created_at).
+      let best = null, bestDiff = Infinity;
+      for (const tr of tracks) {
+        const diff = Math.abs(new Date(n.created_at) - new Date(tr.open_notified_at));
+        if (diff < bestDiff) { bestDiff = diff; best = tr; }
+      }
+      if (!best || bestDiff > 120000) continue; // no confident match — leave for now
+      const threadId = best.gmail_thread_id
+        || await resolveSentThreadId({ userEmail: email, subject: best.subject, recipients: best.recipients, sentAt: best.sent_at });
+      const link = threadId ? '#/email/' + encodeURIComponent(threadId) : '#/emails/sent';
+      await sql`UPDATE in_app_notifications SET link = ${link} WHERE id = ${n.id} AND link IS NULL`;
+      fixed.set(String(n.id), link);
+    }
   } catch {
-    // email_tracking / open_notified_at may not exist on a fresh workspace.
-    return new Map();
+    // email_tracking / email_messages may not exist on a fresh workspace.
   }
+  return fixed;
 }
 
 const mapRow = (r) => ({
