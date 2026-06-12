@@ -14,7 +14,7 @@ import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { OrderSummaryCard } from './OrderSummaryCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
-import { IntroCallCard } from './IntroCallCard.jsx';
+import { IntroCallButton } from './IntroCallCard.jsx';
 import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
 import { TrackingEye } from './EmailTracking.jsx';
 
@@ -240,6 +240,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> {productionOnly ? 'Production' : 'Pipeline'}</button>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <IntroCallButton dealId={dealId} />
           {!productionOnly && (
             <>
               {proposals.length === 0 && (
@@ -547,10 +548,6 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <FilesCard dealId={dealId} files={detail?.files || []} driveEnabled={!!detail?.driveFiles} driveFolderId={detail?.driveFolderId || null} />
-        </div>
-
-        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <IntroCallCard dealId={dealId} />
         </div>
 
         <Card title="Activity" count={timeline.length}>
