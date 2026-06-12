@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { CalendarClock, Copy, Check, RefreshCw, Video, AlertTriangle } from 'lucide-react';
+import { CalendarClock, Copy, Check, RefreshCw, Video, AlertTriangle, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 
@@ -27,13 +27,26 @@ export function IntroCallButton({ dealId }) {
 
   const load = () => actions.loadIntroCall(dealId).then((s) => setStatus(s && !s.error ? s : null));
 
-  // Clicking the button opens the popover and ensures a link exists (the POST is
-  // idempotent — it returns the existing active link if there is one).
+  // Clicking the button just opens the popover and loads status — it does NOT
+  // create a link. The PM generates one explicitly via the in-popover button.
   const onClick = () => {
     if (open) { setOpen(false); return; }
     setOpen(true);
+    setStatus(null);
+    load();
+  };
+
+  const generate = () => {
     setBusy(true);
     actions.generateIntroCallLink(dealId)
+      .then(() => load())
+      .finally(() => setBusy(false));
+  };
+
+  const cancelBooking = (booking) => {
+    if (!window.confirm(`Cancel the call with ${booking.clientName}? They'll be notified by Google.`)) return;
+    setBusy(true);
+    actions.cancelIntroCallBooking(dealId, booking.id)
       .then(() => load())
       .finally(() => setBusy(false));
   };
@@ -61,7 +74,7 @@ export function IntroCallButton({ dealId }) {
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      <button onClick={onClick} className="btn"><CalendarClock size={14} /> Generate Call Link</button>
+      <button onClick={onClick} className="btn"><CalendarClock size={14} /> Meetings</button>
 
       {open && (
         <div style={{
@@ -94,7 +107,9 @@ export function IntroCallButton({ dealId }) {
             </div>
           )}
 
-          {link ? (
+          {status === null ? (
+            <div style={{ fontSize: 13, color: BRAND.muted }}>Loading…</div>
+          ) : link ? (
             <>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <input
@@ -121,7 +136,9 @@ export function IntroCallButton({ dealId }) {
               </div>
             </>
           ) : (
-            <div style={{ fontSize: 13, color: BRAND.muted }}>{busy ? 'Generating link…' : 'Loading…'}</div>
+            <button onClick={generate} disabled={busy} className="btn" style={{ alignSelf: 'flex-start' }}>
+              <CalendarClock size={14} /> {busy ? 'Generating…' : 'Generate call link'}
+            </button>
           )}
 
           {upcoming.length > 0 && (
@@ -133,13 +150,23 @@ export function IntroCallButton({ dealId }) {
                 {upcoming.map(b => (
                   <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                     <Video size={14} color={BRAND.blue} style={{ flexShrink: 0 }} />
-                    <span style={{ fontWeight: 500 }}>{b.clientName}</span>
-                    <span style={{ color: BRAND.muted }}>
-                      {new Date(b.startsAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
-                    </span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.clientName}</div>
+                      <div style={{ color: BRAND.muted, fontSize: 12 }}>
+                        {new Date(b.startsAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
+                      </div>
+                    </div>
                     {b.meetUrl && (
-                      <a href={b.meetUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.blue, marginLeft: 'auto' }}>Join</a>
+                      <a href={b.meetUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.blue, flexShrink: 0 }}>Join</a>
                     )}
+                    <button
+                      onClick={() => cancelBooking(b)}
+                      disabled={busy}
+                      title="Cancel this call"
+                      style={{ flexShrink: 0, background: 'none', border: 'none', color: '#DC2626', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, padding: 2, display: 'flex', alignItems: 'center' }}
+                    >
+                      <X size={14} />
+                    </button>
                   </div>
                 ))}
               </div>

@@ -1360,6 +1360,9 @@ export function StoreProvider({ children }) {
     revokeIntroCallLink(dealId) {
       return api.delete('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/link');
     },
+    cancelIntroCallBooking(dealId, bookingId) {
+      return api.post('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/cancel', { bookingId });
+    },
     loadIntroCallAvailability() {
       return api.get('/api/crm/intro-calls/availability').catch(() => null);
     },

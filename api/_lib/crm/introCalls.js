@@ -4,6 +4,7 @@
 //   GET    /api/crm/intro-calls/:dealId         — link status + readiness + recent bookings
 //   POST   /api/crm/intro-calls/:dealId/link    — generate (or return active) share link
 //   DELETE /api/crm/intro-calls/:dealId/link    — revoke the active link
+//   POST   /api/crm/intro-calls/:dealId/cancel  — cancel a booked call (body: { bookingId })
 //   GET    /api/crm/intro-calls/availability    — current user's working days/hours
 //   PUT    /api/crm/intro-calls/availability    — replace current user's availability
 //   GET    /api/crm/intro-calls/rules           — global booking rules
@@ -13,6 +14,9 @@ import sql from '../db.js';
 import { APP_URL } from '../email.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { trimOrNull } from './shared.js';
+import { getFreshAccessToken } from './gmail.js';
+import { deleteEvent } from '../googleCalendar.js';
 import {
   ensureIntroCallTables, mergeRules, DEFAULT_RULES,
   computeSlots, getDealAttendees,
@@ -123,6 +127,32 @@ export async function introCallsRoute(req, res, id, action, user) {
       return res.status(200).json({ ok: true });
     }
     return res.status(405).end();
+  }
+
+  if (action === 'cancel') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const bookingId = trimOrNull(req.body?.bookingId);
+    if (!bookingId) return res.status(400).json({ error: 'bookingId required' });
+    const b = (await sql`
+      SELECT id, organizer_email, google_event_id, status
+        FROM intro_call_bookings WHERE id = ${bookingId} AND deal_id = ${id}
+    `)[0];
+    if (!b) return res.status(404).json({ error: 'Booking not found' });
+    if (b.status === 'cancelled') return res.status(200).json({ ok: true });
+    // Remove the Google event (sendUpdates=all notifies the client + team).
+    // Best-effort: a calendar hiccup shouldn't block freeing the slot.
+    try {
+      const tok = await getFreshAccessToken(b.organizer_email);
+      await deleteEvent(tok, b.google_event_id);
+    } catch (err) {
+      console.warn('[intro-calls] event delete failed', err.message);
+    }
+    await sql`UPDATE intro_call_bookings SET status = 'cancelled' WHERE id = ${bookingId}`;
+    await sql`
+      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+      VALUES (${id}, 'intro_call_cancelled', ${JSON.stringify({ bookingId })}, ${user.email || null})
+    `;
+    return res.status(200).json({ ok: true });
   }
 
   // GET /api/crm/intro-calls/:dealId — status for the deal-page card.
