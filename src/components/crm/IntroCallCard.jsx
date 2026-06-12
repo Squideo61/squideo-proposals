@@ -44,7 +44,7 @@ export function IntroCallButton({ dealId }) {
   };
 
   const cancelBooking = (booking) => {
-    if (!window.confirm(`Cancel the call with ${booking.clientName}? They'll be notified by Google.`)) return;
+    if (!window.confirm(`Cancel the meeting with ${booking.clientName}? They'll be notified by Google.`)) return;
     setBusy(true);
     actions.cancelIntroCallBooking(dealId, booking.id)
       .then(() => load())
@@ -162,7 +162,7 @@ export function IntroCallButton({ dealId }) {
                     <button
                       onClick={() => cancelBooking(b)}
                       disabled={busy}
-                      title="Cancel this call"
+                      title="Cancel this meeting"
                       style={{ flexShrink: 0, background: 'none', border: 'none', color: '#DC2626', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, padding: 2, display: 'flex', alignItems: 'center' }}
                     >
                       <X size={14} />
