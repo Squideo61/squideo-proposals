@@ -38,6 +38,7 @@ export function TasksView({ onBack, onOpenDeal }) {
         <>
           <Bucket title="Overdue" tasks={buckets.overdue} accent="#D32F2F" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
           <Bucket title="To-do" tasks={buckets.todo} accent={BRAND.blue} actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
+          <Bucket title="Upcoming" tasks={buckets.upcoming} accent="#7C3AED" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} />
           <Bucket title="Completed" tasks={buckets.done} accent="#16A34A" actions={actions} state={state} onOpenDeal={onOpenDeal} onEdit={setEditingTask} collapsed />
         </>
       )}
@@ -153,17 +154,25 @@ function TaskRow({ task, actions, state, onOpenDeal, onEdit }) {
 
 function bucketTasks(tasks) {
   const now = Date.now();
+  // End of today (local) — tasks due after this are "Upcoming" rather than
+  // due today.
+  const endOfToday = new Date();
+  endOfToday.setHours(23, 59, 59, 999);
+  const endOfTodayMs = endOfToday.getTime();
 
-  // Three buckets: everything still open is either Overdue (due time passed) or
-  // To-do; finished tasks go to Completed.
-  const out = { overdue: [], todo: [], done: [] };
+  // Open tasks split three ways: Overdue (due time passed), To-do (due today or
+  // undated) and Upcoming (due after today). Finished tasks go to Completed.
+  const out = { overdue: [], todo: [], upcoming: [], done: [] };
   for (const t of tasks) {
     if (t.doneAt) { out.done.push(t); continue; }
-    if (t.dueAt && new Date(t.dueAt).getTime() < now) out.overdue.push(t);
+    const dueMs = t.dueAt ? new Date(t.dueAt).getTime() : null;
+    if (dueMs != null && dueMs < now) out.overdue.push(t);
+    else if (dueMs != null && dueMs > endOfTodayMs) out.upcoming.push(t);
     else out.todo.push(t);
   }
-  // Overdue oldest-first; to-do soonest-first (undated tasks sink to the bottom).
+  // Soonest-first for dated buckets; undated to-dos sink to the bottom.
   out.overdue.sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt));
+  out.upcoming.sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt));
   out.todo.sort((a, b) => {
     if (!a.dueAt) return b.dueAt ? 1 : 0;
     if (!b.dueAt) return -1;
