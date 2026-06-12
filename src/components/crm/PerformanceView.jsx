@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download, Ban, Camera } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download, Upload, Ban, Camera } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -817,6 +817,12 @@ function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onD
           {e.description}
           {e.vattable && <span title="Marked vattable" style={{ fontSize: 10, fontWeight: 700, color: '#7C3AED', background: '#F3E8FF', border: '1px solid #E9D5FF', padding: '1px 5px', borderRadius: 999, marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 }}>VAT</span>}
           {e.recurring && <span title="Repeats every month" style={{ fontSize: 10, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', border: '1px solid #A5F3FC', padding: '1px 5px', borderRadius: 999, marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 }}>Recurring</span>}
+          {e.hasInvoice && (
+            <button type="button" title={`Invoice attached — ${e.filename || 'click to download'}`} onClick={download}
+              style={{ fontSize: 10, fontWeight: 700, color: '#15803D', background: '#DCFCE7', border: '1px solid #86EFAC', padding: '1px 6px 1px 4px', borderRadius: 999, marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3, verticalAlign: 'middle' }}>
+              <Paperclip size={9} /> Invoice
+            </button>
+          )}
         </div>
         {e.recurring ? <div style={{ fontSize: 11, color: BRAND.muted }}>Every month</div> : (e.spentOn && <div style={{ fontSize: 11, color: BRAND.muted }}>{e.spentOn}</div>)}
       </div>
@@ -824,7 +830,7 @@ function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onD
       <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={(ev) => { onPick(ev.target.files?.[0]); ev.target.value = ''; }} />
       {e.hasInvoice ? (
         <>
-          <button className="btn-icon" title={`Download ${e.filename || 'invoice'}`} onClick={download} style={{ padding: 3, color: '#15803D' }}><Paperclip size={13} /></button>
+          <button className="btn-icon" title="Replace invoice / receipt" onClick={() => fileRef.current?.click()} disabled={busy} style={{ padding: 3, color: BRAND.muted }}><Upload size={12} /></button>
           <button className="btn-icon" title="Remove invoice" onClick={removeFile} style={{ padding: 3 }}><X size={12} /></button>
         </>
       ) : (
