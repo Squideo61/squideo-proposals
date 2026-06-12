@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Ban, Banknote, Coins, Link2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Ban, Banknote, Coins, Link2, Mail, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 import { permissionsInclude } from '../lib/permissions.js';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, useIsMobile } from '../utils.js';
 import { Modal } from './ui.jsx';
+import { PartnerMeetingsButton } from './PartnerMeetingsButton.jsx';
 
 function fmtCredits(n) {
   const v = Number(n) || 0;
@@ -69,6 +70,15 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
   const { clientName, subscriptions, payments, allocations, totals } = detail;
   const clientStatus = detail.status
     || (subscriptions.some(s => s.status === 'active') ? 'active' : 'inactive');
+  // Best-effort recipient for "Send email" — pull the client's address from a
+  // linked proposal if it's loaded; otherwise the composer opens blank.
+  const clientContactEmail = (() => {
+    for (const s of subscriptions) {
+      const p = s.proposalId ? state.proposals?.[s.proposalId] : null;
+      if (p && (p.clientEmail || p.email)) return p.clientEmail || p.email;
+    }
+    return null;
+  })();
   const proposalOptions = subscriptions
     .filter(s => s.proposalId)
     .map(s => ({ id: s.proposalId, label: s.proposalTitle || s.proposalNumber || s.proposalId }));
@@ -87,6 +97,12 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
               {subscriptions.length} subscription{subscriptions.length === 1 ? '' : 's'} on file
             </span>
           </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <PartnerMeetingsButton clientKey={clientKey} clientName={clientName || clientKey} />
+          <button onClick={() => actions.openComposer({ contactEmail: clientContactEmail })} className="btn">
+            <Mail size={14} /> Send email
+          </button>
         </div>
       </div>
 
