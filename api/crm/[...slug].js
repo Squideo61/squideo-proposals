@@ -26,6 +26,7 @@ import { trackingRoute } from '../_lib/crm/trackingApi.js';
 import { addressLookupRoute } from '../_lib/crm/addressLookup.js';
 import { statsRoute } from '../_lib/crm/stats.js';
 import { restoreRoute } from '../_lib/crm/recycleBin.js';
+import { introCallsRoute } from '../_lib/crm/introCalls.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -111,6 +112,7 @@ export default async function handler(req, res) {
       case 'tracking':  return await trackingRoute(req, res, id, action, user);
       case 'stats':     return await statsRoute(req, res, id, action, user);
       case 'restore':   return await restoreRoute(req, res, id, user);
+      case 'intro-calls': return await introCallsRoute(req, res, id, action, user);
       default:           return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {

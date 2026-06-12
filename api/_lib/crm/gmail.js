@@ -18,6 +18,7 @@ import { syncHistory } from '../gmailSync.js';
 import {
   GMAIL_SCOPES,
   googleScopes,
+  scopesCoverCalendar,
   gmailRedirectUri,
   escapeHtml,
   trimOrNull,
@@ -111,6 +112,9 @@ export async function gmailRoute(req, res, id, action, user) {
       connected: true,
       gmailAddress: row.gmail_address,
       scopes: row.scopes,
+      // True when this (possibly long-connected) account predates the Calendar
+      // scopes — the Intro Call booking UI prompts them to reconnect.
+      needsCalendar: !scopesCoverCalendar(row.scopes),
       connectedAt: row.connected_at,
       backfillStartedAt: row.backfill_started_at || null,
       backfillCompletedAt: row.backfill_completed_at || null,

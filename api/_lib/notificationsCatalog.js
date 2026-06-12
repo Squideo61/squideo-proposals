@@ -179,6 +179,14 @@ export const NOTIFICATIONS = [
     channel: 'tracking',
   },
   {
+    key: 'intro_call.booked',
+    label: 'Intro call booked',
+    description: 'A client books an intro call via a project booking link.',
+    audience: 'assignee',
+    group: 'CRM',
+    channel: 'general',
+  },
+  {
     key: 'finance.quarter_summary',
     label: 'Quarterly VAT & Corp Tax summary',
     description: 'At the end of each calendar quarter, a summary of the VAT and Corporation Tax you should have set aside.',

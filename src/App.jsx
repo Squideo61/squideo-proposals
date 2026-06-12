@@ -45,6 +45,7 @@ const RevisionsView = lazyNamed(() => import('./components/crm/RevisionsView.jsx
 const StoryboardsView = lazyNamed(() => import('./components/crm/StoryboardsView.jsx'), 'StoryboardsView');
 // Lazy so pdf.js (~300 kB) only loads when a storyboard is actually opened.
 const StoryboardShell = lazyNamed(() => import('./components/storyboard/StoryboardShell.jsx'), 'StoryboardShell');
+const IntroCallShell = lazyNamed(() => import('./components/introcall/IntroCallShell.jsx'), 'IntroCallShell');
 const ProductionView = lazyNamed(() => import('./components/crm/ProductionView.jsx'), 'ProductionView');
 const VideoDetailView = lazyNamed(() => import('./components/crm/VideoDetailView.jsx'), 'VideoDetailView');
 const ProjectsOverviewView = lazyNamed(() => import('./components/crm/ProjectsOverviewView.jsx'), 'ProjectsOverviewView');
@@ -629,6 +630,18 @@ export default function App() {
         <StoreProvider>
           <RevisionShell token={revisionToken} />
         </StoreProvider>
+      </ErrorBoundary>
+    );
+  }
+
+  // ?introCall= is the public link for booking an intro call with the team.
+  const introCallToken = params.get('introCall');
+  if (introCallToken) {
+    return (
+      <ErrorBoundary>
+        <Suspense fallback={<ViewFallback />}>
+          <IntroCallShell token={introCallToken} />
+        </Suspense>
       </ErrorBoundary>
     );
   }

@@ -1350,6 +1350,28 @@ export function StoreProvider({ children }) {
         return deal;
       });
     },
+    // ── Intro Call booking (Google Calendar/Meet) ──────────────────────────
+    loadIntroCall(dealId) {
+      return api.get('/api/crm/intro-calls/' + encodeURIComponent(dealId)).catch(() => null);
+    },
+    generateIntroCallLink(dealId) {
+      return api.post('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/link', {});
+    },
+    revokeIntroCallLink(dealId) {
+      return api.delete('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/link');
+    },
+    loadIntroCallAvailability() {
+      return api.get('/api/crm/intro-calls/availability').catch(() => null);
+    },
+    saveIntroCallAvailability(days) {
+      return api.put('/api/crm/intro-calls/availability', { days });
+    },
+    loadIntroCallRules() {
+      return api.get('/api/crm/intro-calls/rules').catch(() => null);
+    },
+    saveIntroCallRules(rules) {
+      return api.put('/api/crm/intro-calls/rules', { rules });
+    },
     saveDeal(dealId, patch) {
       return mutate(
         { kind: 'deal', id: dealId, patch, errorMsg: 'Failed to save deal' },

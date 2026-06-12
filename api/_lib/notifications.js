@@ -122,6 +122,24 @@ export async function ensureTrackingNotificationDefaults() {
   }
 }
 
+// Self-heal the role default for the intro_call.booked key so the booking
+// notification works before its migration/seed lands. Defaults each role's
+// value to whatever it gets for revision.feedback_submitted (the closest
+// project-team alert), else off. Guarded to run once per warm instance.
+let introCallDefaultReady = false;
+export async function ensureIntroCallNotificationDefault() {
+  if (introCallDefaultReady) return;
+  try {
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{intro_call.booked}',
+      COALESCE(notification_defaults->'revision.feedback_submitted', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'intro_call.booked')`;
+    introCallDefaultReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureIntroCallNotificationDefault failed', err.message);
+  }
+}
+
 // Read the effective state of a single (user, key) — role default merged with
 // per-user override. Returns boolean. Unknown users → false.
 export async function isEnabledForUser(email, key) {

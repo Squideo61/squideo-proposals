@@ -72,14 +72,32 @@ export const GMAIL_SCOPES = [
 // scope, so existing Gmail-only consent is untouched.
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
 
+// Calendar scopes power the Intro Call booking feature: freeBusy reads each
+// staff member's availability, calendar.events creates the booked call (with a
+// Meet link) on the PM's calendar. Always requested now, so newly-connected
+// users grant them — existing Gmail-only users keep working but must reconnect
+// to gain Calendar (the UI flags `needsCalendar` by comparing stored scopes).
+export const CALENDAR_SCOPES = [
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/calendar.freebusy',
+];
+
 export function driveFilesEnabled() {
   return !!process.env.DEAL_DRIVE_ROOT_ID;
 }
 
-// The Google scopes to request on connect — Gmail always, plus Drive when
-// Drive-backed files are enabled.
+// True when a stored scope string already covers Calendar — used by the gmail
+// status endpoint so the UI can prompt long-connected users to reconnect.
+export function scopesCoverCalendar(scopeStr) {
+  const have = String(scopeStr || '').split(/\s+/).filter(Boolean);
+  return CALENDAR_SCOPES.every(s => have.includes(s));
+}
+
+// The Google scopes to request on connect — Gmail + Calendar always, plus
+// Drive when Drive-backed files are enabled.
 export function googleScopes() {
-  return driveFilesEnabled() ? [...GMAIL_SCOPES, DRIVE_SCOPE] : [...GMAIL_SCOPES];
+  const base = [...GMAIL_SCOPES, ...CALENDAR_SCOPES];
+  return driveFilesEnabled() ? [...base, DRIVE_SCOPE] : base;
 }
 
 export function gmailRedirectUri(req) {

@@ -136,6 +136,11 @@ export function AccountSettings({ onClose, onLogout }) {
 
       <div style={{ borderTop: '1px solid ' + BRAND.border, marginBottom: 24 }} />
 
+      {/* Intro-call booking availability */}
+      <AvailabilitySection />
+
+      <div style={{ borderTop: '1px solid ' + BRAND.border, marginBottom: 24 }} />
+
       {/* Change password */}
       <div>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: BRAND.ink }}>Change password</div>
@@ -486,12 +491,99 @@ function GmailConnectSection() {
             </button>
           </div>
         )}
+        {connected && account.needsCalendar && (
+          <div style={{ marginTop: 10, background: '#FFF7ED', border: '1px solid #FED7AA', color: '#9A3412', fontSize: 12, padding: '8px 10px', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span>Reconnect to grant Google Calendar access — needed for client intro-call bookings.</span>
+            <button onClick={connect} disabled={busy} className="btn-ghost" style={{ fontSize: 12, padding: '2px 8px' }}>
+              {busy ? '…' : 'Reconnect for Calendar'}
+            </button>
+          </div>
+        )}
         {error && (
           <div style={{ marginTop: 10, background: '#FEE2E2', color: '#991B1B', fontSize: 13, padding: '8px 10px', borderRadius: 6 }}>
             {error}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+const WEEKDAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+const minutesToHHMM = (m) => {
+  const h = Math.floor(m / 60), mi = m % 60;
+  return String(h).padStart(2, '0') + ':' + String(mi).padStart(2, '0');
+};
+const hhmmToMinutes = (s) => {
+  const [h, mi] = String(s).split(':').map(Number);
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(mi) ? mi : 0);
+};
+
+// Per-user working days/hours that drive intro-call slot availability. A slot is
+// only offered when every team member on a deal is working and free.
+function AvailabilitySection() {
+  const { actions, showMsg } = useStore();
+  const [days, setDays] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    actions.loadIntroCallAvailability().then((d) => {
+      if (d && Array.isArray(d.days)) setDays(d.days);
+    });
+  }, [actions]);
+
+  const update = (weekday, patch) => {
+    setDays((ds) => ds.map((d) => (d.weekday === weekday ? { ...d, ...patch } : d)));
+  };
+
+  const save = () => {
+    setSaving(true);
+    actions.saveIntroCallAvailability(days)
+      .then(() => showMsg('Working hours saved'))
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: BRAND.ink }}>Booking availability</div>
+      <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 12 }}>
+        Your working days and hours for client intro-call bookings. Calls are only offered when you're working and free.
+      </div>
+      {!days ? (
+        <div style={{ fontSize: 13, color: BRAND.muted }}>Loading…</div>
+      ) : (
+        <div style={{ background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 14 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {days.map((d) => (
+              <div key={d.weekday} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, width: 130, fontSize: 13 }}>
+                  <input type="checkbox" checked={d.isWorking} onChange={(e) => update(d.weekday, { isWorking: e.target.checked })} />
+                  {WEEKDAY_LABELS[d.weekday]}
+                </label>
+                <input
+                  type="time"
+                  value={minutesToHHMM(d.startMinute)}
+                  disabled={!d.isWorking}
+                  onChange={(e) => update(d.weekday, { startMinute: hhmmToMinutes(e.target.value) })}
+                  style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13, opacity: d.isWorking ? 1 : 0.5 }}
+                />
+                <span style={{ color: BRAND.muted, fontSize: 13 }}>to</span>
+                <input
+                  type="time"
+                  value={minutesToHHMM(d.endMinute)}
+                  disabled={!d.isWorking}
+                  onChange={(e) => update(d.weekday, { endMinute: hhmmToMinutes(e.target.value) })}
+                  style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13, opacity: d.isWorking ? 1 : 0.5 }}
+                />
+              </div>
+            ))}
+          </div>
+          <button onClick={save} disabled={saving} className="btn" style={{ marginTop: 14 }}>
+            {saving ? 'Saving…' : 'Save working hours'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

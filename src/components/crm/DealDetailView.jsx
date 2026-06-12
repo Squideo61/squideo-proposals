@@ -14,6 +14,7 @@ import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { OrderSummaryCard } from './OrderSummaryCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
+import { IntroCallCard } from './IntroCallCard.jsx';
 import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
 import { TrackingEye } from './EmailTracking.jsx';
 
@@ -546,6 +547,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <FilesCard dealId={dealId} files={detail?.files || []} driveEnabled={!!detail?.driveFiles} driveFolderId={detail?.driveFolderId || null} />
+        </div>
+
+        <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+          <IntroCallCard dealId={dealId} />
         </div>
 
         <Card title="Activity" count={timeline.length}>
