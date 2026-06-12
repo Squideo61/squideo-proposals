@@ -18,6 +18,13 @@ import {
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const makeBookingId = () => 'icb_' + Date.now() + '_' + crypto.randomBytes(6).toString('hex');
 
+// Validate a client-supplied IANA timezone against Intl before storing it, so a
+// junk value can never break later timezone maths. Returns the tz or null.
+function validTimezone(tz) {
+  if (!tz || typeof tz !== 'string' || tz.length > 64) return null;
+  try { new Intl.DateTimeFormat('en-GB', { timeZone: tz }); return tz; } catch { return null; }
+}
+
 function parseBody(req) {
   let body = req.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
@@ -133,6 +140,7 @@ async function book(req, res) {
   const startUTC = new Date(slot.start);
   const endUTC = new Date(slot.end);
   const bookingId = makeBookingId();
+  const clientTz = validTimezone(body.timezone);
 
   // Insert first as the double-booking lock, then verify no other confirmed
   // booking overlaps for this organizer (closes the concurrent-request race that
@@ -140,10 +148,10 @@ async function book(req, res) {
   await sql`
     INSERT INTO intro_call_bookings
       (id, deal_id, link_token, client_name, client_email, starts_at, ends_at,
-       attendee_emails, organizer_email, status)
+       attendee_emails, organizer_email, status, client_timezone)
     VALUES (${bookingId}, ${ctx.dealId}, ${ctx.token}, ${name}, ${email},
        ${startUTC.toISOString()}, ${endUTC.toISOString()},
-       ${attendees}::text[], ${organizer}, 'confirmed')
+       ${attendees}::text[], ${organizer}, 'confirmed', ${clientTz})
   `;
   const clash = await sql`
     SELECT COUNT(*)::int AS n FROM intro_call_bookings

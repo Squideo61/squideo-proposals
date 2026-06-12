@@ -195,6 +195,8 @@ function BookingModal({ token, slot, data, onClose, onBooked, onSlotTaken }) {
         name: `${firstName.trim()} ${surname.trim()}`.trim(),
         email: email.trim(),
         start: slot.start,
+        // The client's own timezone, so their day-of reminder fires at 9am local.
+        timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return null; } })(),
       }),
     })
       .then(async (r) => {

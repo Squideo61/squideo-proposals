@@ -655,15 +655,31 @@ export async function cronGmailWatchRenew(res) {
 }
 
 // ── Intro-call day-of reminders ───────────────────────────────────────────────
-// Runs hourly; only acts at 09:00 Europe/London. For every confirmed booking
-// still to come TODAY (London day), emails the client a reminder and adds a CRM
-// task for the team members invited at our side. The team is re-read from the
-// live Google Calendar event (it may have changed since booking), falling back
-// to the snapshot stored at booking time.
-function londonHour(date = new Date()) {
-  const s = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', hour12: false }).format(date);
-  const n = parseInt(s, 10);
-  return n === 24 ? 0 : n;
+// Runs hourly. Two independent, separately-flagged jobs per confirmed booking
+// still to come today:
+//   • Client reminder email — at 09:00 in the CLIENT's own timezone, on the
+//     meeting's client-local day.
+//   • Team task — at 09:00 Europe/London on the meeting's London day, assigned to
+//     the team members CURRENTLY invited at our side (re-read live from the
+//     Google event; falls back to the booking snapshot).
+// Local hour + Y-M-D for an instant in a given IANA timezone (Intl-based, so a
+// stored tz that passed validation here is always safe).
+function tzParts(date, timeZone) {
+  const dtf = new Intl.DateTimeFormat('en-GB', {
+    timeZone, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit',
+  });
+  const p = {};
+  for (const x of dtf.formatToParts(date)) p[x.type] = x.value;
+  return { hour: p.hour === '24' ? 0 : parseInt(p.hour, 10), date: `${p.year}-${p.month}-${p.day}` };
+}
+function safeTz(tz) {
+  try { new Intl.DateTimeFormat('en-GB', { timeZone: tz }); return tz; } catch { return 'Europe/London'; }
+}
+// True when `now` is 9am on the meeting's local day, in the given timezone.
+function isNineAmOnMeetingDay(now, start, timeZone) {
+  const np = tzParts(now, timeZone);
+  const mp = tzParts(start, timeZone);
+  return np.hour === 9 && np.date === mp.date;
 }
 
 function introCallReminderHtml({ clientName, projectName, whenLabel, meetUrl }) {
@@ -682,99 +698,104 @@ function introCallReminderHtml({ clientName, projectName, whenLabel, meetUrl }) 
 }
 
 async function cronIntroCallReminders(req, res) {
-  // Self-heal the reminder column so this works before the migration is applied.
-  try { await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ`; }
-  catch (err) { console.warn('[cron intro-call-reminders] ensure column failed', err.message); }
+  // Self-heal the columns so this works before the migration is applied.
+  try {
+    await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS client_timezone TEXT`;
+    await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS team_task_created_at TIMESTAMPTZ`;
+  } catch (err) { console.warn('[cron intro-call-reminders] ensure columns failed', err.message); }
 
-  // Only act at 9am London. `?force=1` bypasses the gate for manual testing.
   const force = String(req.query?.force || '') === '1';
-  if (!force && londonHour() !== 9) {
-    return res.status(200).json({ ok: true, skipped: 'not 9am London', londonHour: londonHour() });
-  }
+  const now = new Date();
 
-  // Confirmed bookings still upcoming today (London calendar day), not yet reminded.
+  // Candidates: confirmed, still upcoming, within ~36h (covers "today" in any
+  // timezone), with at least one of the two day-of jobs outstanding.
   const bookings = await sql`
     SELECT b.id, b.deal_id, b.client_name, b.client_email, b.starts_at, b.meet_url,
-           b.organizer_email, b.google_event_id, b.attendee_emails,
+           b.organizer_email, b.google_event_id, b.attendee_emails, b.client_timezone,
+           b.reminder_sent_at, b.team_task_created_at,
            COALESCE(c.name, d.title, 'your project') AS project_name
       FROM intro_call_bookings b
       JOIN deals d ON d.id = b.deal_id
       LEFT JOIN companies c ON c.id = d.company_id
      WHERE b.status = 'confirmed'
-       AND b.reminder_sent_at IS NULL
        AND b.starts_at > NOW()
-       AND (b.starts_at AT TIME ZONE 'Europe/London')::date = (NOW() AT TIME ZONE 'Europe/London')::date
+       AND b.starts_at < NOW() + INTERVAL '36 hours'
+       AND (b.reminder_sent_at IS NULL OR b.team_task_created_at IS NULL)
   `;
 
   let emailed = 0;
   let tasksCreated = 0;
   for (const b of bookings) {
-    const whenLabel = new Date(b.starts_at).toLocaleString('en-GB', {
-      weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
-      timeZone: 'Europe/London',
-    }) + ' (UK time)';
+    const start = new Date(b.starts_at);
+    const clientTz = safeTz(b.client_timezone || 'Europe/London');
 
-    // 1) Resolve the CURRENT team invited at our side. Prefer the live Google
-    // event's attendees; fall back to the snapshot taken at booking. Keep only
-    // those who are CRM users (the client and any external guests drop out).
-    let candidates = Array.isArray(b.attendee_emails) ? b.attendee_emails.map((e) => String(e).toLowerCase()) : [];
-    if (b.organizer_email) candidates.push(String(b.organizer_email).toLowerCase());
-    try {
-      const tok = await getFreshAccessToken(b.organizer_email);
-      const live = await getEventAttendees(tok, b.google_event_id);
-      if (live) {
-        candidates = [...live.attendees];
-        if (live.organizerEmail) candidates.push(live.organizerEmail);
-      }
-    } catch (err) {
-      console.warn('[cron intro-call-reminders] live attendees failed, using snapshot', b.id, err.message);
-    }
-    candidates = Array.from(new Set(candidates.filter(Boolean)));
-    let internal = [];
-    if (candidates.length) {
-      const rows = await sql`SELECT email FROM users WHERE LOWER(email) = ANY(${candidates})`;
-      internal = rows.map((r) => String(r.email).toLowerCase());
-    }
-
-    // 2) One task for the deal, assigned to the internal participants, due at the
-    // meeting time so it also fires a task reminder then.
-    if (internal.length) {
-      try {
-        const taskId = makeId('task');
-        const title = `Intro call with ${b.client_name} at ${new Date(b.starts_at).toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' })}`;
-        await sql`
-          INSERT INTO tasks (id, deal_id, title, due_at, assignee_email, created_by)
-          VALUES (${taskId}, ${b.deal_id}, ${title}, ${new Date(b.starts_at).toISOString()}, ${internal[0]}, NULL)
-        `;
-        await sql`
-          INSERT INTO task_assignees (task_id, user_email)
-          SELECT ${taskId}, unnest(${internal}::text[]) ON CONFLICT DO NOTHING
-        `;
-        await sql`
-          INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
-          VALUES (${b.deal_id}, 'task_created', ${JSON.stringify({ taskId, title, source: 'intro_call_reminder' })}, NULL)
-        `;
-        tasksCreated++;
-      } catch (err) {
-        console.error('[cron intro-call-reminders] task create failed', b.id, err.message);
-      }
-    }
-
-    // 3) Reminder email to the client.
-    try {
-      await sendMail({
-        to: b.client_email,
-        subject: `Reminder: your call with Squideo today — ${b.project_name}`,
-        html: introCallReminderHtml({ clientName: b.client_name, projectName: b.project_name, whenLabel, meetUrl: b.meet_url }),
-        text: `Reminder of your call about ${b.project_name} today: ${whenLabel}.${b.meet_url ? ' Join: ' + b.meet_url : ''}`,
+    // 1) Client reminder — 9am in the client's own timezone, meeting that day.
+    if (!b.reminder_sent_at && (force || isNineAmOnMeetingDay(now, start, clientTz))) {
+      const whenLabel = start.toLocaleString('en-GB', {
+        weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+        timeZone: clientTz, timeZoneName: 'short',
       });
-      emailed++;
-    } catch (err) {
-      console.error('[cron intro-call-reminders] email failed', b.id, err.message);
+      try {
+        await sendMail({
+          to: b.client_email,
+          subject: `Reminder: your call with Squideo today — ${b.project_name}`,
+          html: introCallReminderHtml({ clientName: b.client_name, projectName: b.project_name, whenLabel, meetUrl: b.meet_url }),
+          text: `Reminder of your call about ${b.project_name} today: ${whenLabel}.${b.meet_url ? ' Join: ' + b.meet_url : ''}`,
+        });
+        emailed++;
+      } catch (err) {
+        console.error('[cron intro-call-reminders] email failed', b.id, err.message);
+      }
+      await sql`UPDATE intro_call_bookings SET reminder_sent_at = NOW() WHERE id = ${b.id}`;
     }
 
-    await sql`UPDATE intro_call_bookings SET reminder_sent_at = NOW() WHERE id = ${b.id}`;
+    // 2) Team task — 9am Europe/London on the meeting's London day. Re-read the
+    // CURRENT team invited at our side from the live Google event (it may have
+    // changed since booking); fall back to the snapshot. Keep only CRM users.
+    if (!b.team_task_created_at && (force || isNineAmOnMeetingDay(now, start, 'Europe/London'))) {
+      let candidates = Array.isArray(b.attendee_emails) ? b.attendee_emails.map((e) => String(e).toLowerCase()) : [];
+      if (b.organizer_email) candidates.push(String(b.organizer_email).toLowerCase());
+      try {
+        const tok = await getFreshAccessToken(b.organizer_email);
+        const live = await getEventAttendees(tok, b.google_event_id);
+        if (live) {
+          candidates = [...live.attendees];
+          if (live.organizerEmail) candidates.push(live.organizerEmail);
+        }
+      } catch (err) {
+        console.warn('[cron intro-call-reminders] live attendees failed, using snapshot', b.id, err.message);
+      }
+      candidates = Array.from(new Set(candidates.filter(Boolean)));
+      let internal = [];
+      if (candidates.length) {
+        const rows = await sql`SELECT email FROM users WHERE LOWER(email) = ANY(${candidates})`;
+        internal = rows.map((r) => String(r.email).toLowerCase());
+      }
+      if (internal.length) {
+        try {
+          const taskId = makeId('task');
+          const title = `Intro call with ${b.client_name} at ${start.toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' })}`;
+          await sql`
+            INSERT INTO tasks (id, deal_id, title, due_at, assignee_email, created_by)
+            VALUES (${taskId}, ${b.deal_id}, ${title}, ${start.toISOString()}, ${internal[0]}, NULL)
+          `;
+          await sql`
+            INSERT INTO task_assignees (task_id, user_email)
+            SELECT ${taskId}, unnest(${internal}::text[]) ON CONFLICT DO NOTHING
+          `;
+          await sql`
+            INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+            VALUES (${b.deal_id}, 'task_created', ${JSON.stringify({ taskId, title, source: 'intro_call_reminder' })}, NULL)
+          `;
+          tasksCreated++;
+        } catch (err) {
+          console.error('[cron intro-call-reminders] task create failed', b.id, err.message);
+        }
+      }
+      await sql`UPDATE intro_call_bookings SET team_task_created_at = NOW() WHERE id = ${b.id}`;
+    }
   }
 
-  return res.status(200).json({ ok: true, bookings: bookings.length, emailed, tasksCreated });
+  return res.status(200).json({ ok: true, candidates: bookings.length, emailed, tasksCreated });
 }
