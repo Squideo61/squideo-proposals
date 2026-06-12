@@ -403,6 +403,8 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
           onOpenDeal={onOpenDeal}
           onOpenCompany={onOpenCompany}
           onOpenPartner={onOpenPartner}
+          actions={actions}
+          onChanged={refreshFinance}
           isMobile={isMobile}
         />
       )}
@@ -557,13 +559,25 @@ function PredictedRowBadges({ item }) {
 // active partners — so a predicted item that's since been paid simply drops off
 // (and is already counted in the banked figure). Projects the month-end position
 // as banked-so-far + everything still predicted to land. All figures ex-VAT (net).
-function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, bankedNet, targets, onUnpredict, onOpenDeal, onOpenCompany, onOpenPartner, isMobile }) {
+function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, bankedNet, targets, onUnpredict, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
   const items = useMemo(() => collectPredicted(pending, partners, predictKeys).map((it) => ({
     ...it,
     open: it.dealId && onOpenDeal ? () => onOpenDeal(it.dealId)
       : it.companyId && onOpenCompany ? () => onOpenCompany(it.companyId)
         : it.clientKey && onOpenPartner ? () => onOpenPartner(it.clientKey) : null,
   })), [pending, partners, predictKeys, onOpenDeal, onOpenCompany, onOpenPartner]);
+
+  // Bank a predicted payment without leaving the tab. Imported PP/PO rows mark
+  // paid via the pending-payment toggle (Stripe/BACS); active partners record
+  // this month's fee. Signed deals go through their own invoice flow, so there
+  // they stay "Open deal" only. After any change, refresh the finance figures.
+  const markPaid = (it, method) => {
+    if (!actions) return;
+    let p = null;
+    if (it.type === 'manual') p = actions.markPendingPaymentPaid(it.row.id, true, method);
+    else if (it.type === 'partner') p = actions.markPartnerFeePaid(it.clientKey, true);
+    if (p) Promise.resolve(p).then(() => onChanged && onChanged());
+  };
 
   const predictedTotal = items.reduce((s, it) => s + it.amount, 0);
   const projected = (Number(bankedNet) || 0) + predictedTotal;
@@ -614,7 +628,7 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
           Predicted {monthName} Payments
         </h3>
         <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
-          Pending payments you expect to land this month. Flag any row from Pending Payments using its <strong>⋮</strong> menu → <strong>Predict this month</strong>; a flagged item drops off here automatically once it's paid. Shown ex-VAT (net).
+          Pending payments you expect to land this month. Flag any row from Pending Payments using its <strong>⋮</strong> menu → <strong>Predict this month</strong>. When one lands, use a row's <strong>⋮</strong> menu here to <strong>mark it paid</strong> (it then banks and drops off automatically). Shown ex-VAT (net).
         </p>
         {!pending ? (
           <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
@@ -650,20 +664,13 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
                   </div>
                   <span style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, background: BRAND.paper, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{it.source}</span>
                   <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 70, textAlign: 'right' }}>{formatGBP(it.amount)}{perMo ? '/mo' : ''}</span>
-                  {it.auto ? (
-                    <span title="Always predicted while the partner is active" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, color: PREDICT_COLOR }}>
-                      <CalendarCheck size={14} />
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      title="Remove from predicted"
-                      onClick={(e) => { e.stopPropagation(); onUnpredict(it.key); }}
-                      style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, border: '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer', color: BRAND.muted }}
-                    >
-                      <X size={14} />
-                    </button>
-                  )}
+                  <RowActionsMenu items={[
+                    it.type === 'manual' && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
+                    it.type === 'manual' && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => markPaid(it, 'bacs') },
+                    it.type === 'partner' && { label: 'Mark paid this month', icon: Check, onClick: () => markPaid(it) },
+                    it.open && { label: it.dealId ? 'Open deal' : it.companyId ? 'Open customer' : 'Open partner', icon: ExternalLink, onClick: it.open },
+                    !it.auto && { label: 'Remove from predicted', icon: X, onClick: () => onUnpredict(it.key) },
+                  ]} />
                 </div>
               );
             })}
