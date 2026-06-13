@@ -282,6 +282,69 @@ function ensureManualPendingPayments() {
   return manualPpEnsured;
 }
 
+// "Other" recurring revenue — small ongoing monthly income outside CRM deals and
+// the Partner Programme (e.g. web hosting). [label, note, amountExVat, vat].
+// Seeded once into an empty table; after that the in-app add/edit/remove is the
+// source of truth. Each is a flat monthly net + VAT, like a Partner subscription.
+const RECURRING_OTHER_SEED = [
+  ['Dip-san - McAllen Innovations', 'Website Hosting + Shopify', 50.00, 10.00],
+  ['Anderson 121withtom', 'Website hosting', 12.99, 2.60],
+];
+
+let recurringOtherEnsured = null;
+function ensureRecurringOther() {
+  if (recurringOtherEnsured) return recurringOtherEnsured;
+  recurringOtherEnsured = (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS recurring_other_revenue (
+        id             TEXT PRIMARY KEY,
+        label          TEXT NOT NULL,
+        note           TEXT,
+        amount_ex_vat  NUMERIC NOT NULL DEFAULT 0,
+        vat            NUMERIC NOT NULL DEFAULT 0,
+        sort_order     INT,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    // Seed deterministic ids + ON CONFLICT DO NOTHING so a concurrent re-seed can
+    // never duplicate (the second insert hits the same PK).
+    const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM recurring_other_revenue`;
+    if (count === 0) {
+      let i = 0;
+      for (const [label, note, amount, vat] of RECURRING_OTHER_SEED) {
+        await sql`
+          INSERT INTO recurring_other_revenue (id, label, note, amount_ex_vat, vat, sort_order)
+          VALUES (${'seedother' + i}, ${label}, ${note || null}, ${amount}, ${vat}, ${i})
+          ON CONFLICT (id) DO NOTHING`;
+        i += 1;
+      }
+    }
+  })().catch((err) => { recurringOtherEnsured = null; throw err; });
+  return recurringOtherEnsured;
+}
+
+function serialiseOther(r) {
+  return {
+    id: r.id,
+    label: r.label || null,
+    note: r.note || null,
+    amountExVat: Number(r.amount_ex_vat) || 0,
+    vat: Number(r.vat) || 0,
+  };
+}
+
+// Recurring "Other" revenue rows (robust to a missing table → []).
+async function fetchRecurringOther() {
+  try {
+    await ensureRecurringOther();
+    const rows = await sql`
+      SELECT * FROM recurring_other_revenue
+       ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
+    return rows.map(serialiseOther);
+  } catch {
+    return [];
+  }
+}
+
 function serialiseManualPP(r) {
   return {
     id: r.id,
@@ -897,13 +960,15 @@ async function pendingPaymentsReport() {
   `;
   if (!sigRows.length) {
     const manual = await fetchManualPending();
+    const other = await fetchRecurringOther();
+    const otherTotal = round2(other.reduce((s, x) => s + (Number(x.amountExVat) || 0), 0));
     const manualTotal = round2(manual.reduce((s, x) => s + (Number(x.amountExVat) || 0), 0));
     const manualInvoiced = round2(
       manual.filter((x) => x.status === 'invoiced').reduce((s, x) => s + (Number(x.amountExVat) || 0), 0),
     );
     // No signed CRM deals, so "not invoiced" is just the un-invoiced imports.
     const notInvoiced = round2(manualTotal - manualInvoiced);
-    return { normal: [], po: [], manual, totals: { normal: 0, po: 0, manual: manualTotal, manualInvoiced, invoiced: manualInvoiced, notInvoiced } };
+    return { normal: [], po: [], manual, other, totals: { normal: 0, po: 0, manual: manualTotal, manualInvoiced, other: otherTotal, invoiced: manualInvoiced, notInvoiced } };
   }
 
   const committed = new Map(); // did -> inc-VAT signed total
@@ -1113,9 +1178,14 @@ async function pendingPaymentsReport() {
   const invoiced = round2(sumLinesByStatus(po, true) + sumLinesByStatus(normal, true) + companyInvoicedNet + manualInvoiced);
   const notInvoiced = round2(sumLinesByStatus(po, false) + sumLinesByStatus(normal, false) + (manualTotal - manualInvoiced));
 
+  // Recurring "Other" revenue (web hosting etc.) — sits alongside Partners as
+  // ongoing monthly income, kept out of the invoiced/not-invoiced split.
+  const other = await fetchRecurringOther();
+  const otherTotal = round2(other.reduce((s, x) => s + (Number(x.amountExVat) || 0), 0));
+
   return {
-    normal, po, manual, companyInvoices,
-    totals: { normal: sum(normal), po: sum(po), manual: manualTotal, manualInvoiced, companyInvoices: companyInvoicedNet, invoiced, notInvoiced },
+    normal, po, manual, companyInvoices, other,
+    totals: { normal: sum(normal), po: sum(po), manual: manualTotal, manualInvoiced, companyInvoices: companyInvoicedNet, other: otherTotal, invoiced, notInvoiced },
   };
 }
 
@@ -2062,6 +2132,72 @@ async function cashflowRoute(req, res, action, user) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
+// Writes for the "Other" recurring-revenue group in Pending Payments. `action`
+// carries the row id for PATCH/DELETE. Returns the refreshed list each time.
+//   POST  { label, note?, amountExVat, vat? }  → add a row
+//   PATCH/<id> { label?, note?, amountExVat?, vat? }  → edit a row
+//   DELETE/<id>                                → remove a row (archived for undo)
+async function recurringOtherRoute(req, res, action, user) {
+  await ensureRecurringOther();
+  const actor = (user?.email || '').toLowerCase();
+
+  if (req.method === 'POST' || req.method === 'PUT') {
+    const body = req.body || {};
+    // Drag-reorder: persist the given ids in their new order.
+    if (Array.isArray(body.reorder)) {
+      let i = 0;
+      for (const rid of body.reorder) {
+        if (typeof rid !== 'string') continue;
+        await sql`UPDATE recurring_other_revenue SET sort_order = ${i} WHERE id = ${rid}`;
+        i += 1;
+      }
+      return res.status(200).json({ ok: true, rows: await fetchRecurringOther() });
+    }
+    const label = trimOrNull(body.label);
+    if (!label) return res.status(400).json({ error: 'label required' });
+    const amount = numberOrNull(body.amountExVat) || 0;
+    const vat = numberOrNull(body.vat) || 0;
+    const note = trimOrNull(body.note);
+    // Accept a client-supplied id so undo/redo can re-add the same row.
+    const id = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : makeId('other');
+    const [{ m }] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM recurring_other_revenue`;
+    await sql`
+      INSERT INTO recurring_other_revenue (id, label, note, amount_ex_vat, vat, sort_order)
+      VALUES (${id}, ${label}, ${note}, ${amount}, ${vat}, ${m + 1})
+      ON CONFLICT (id) DO NOTHING`;
+    return res.status(200).json({ ok: true, id, rows: await fetchRecurringOther() });
+  }
+
+  if (req.method === 'PATCH') {
+    if (!action) return res.status(400).json({ error: 'id required' });
+    const body = req.body || {};
+    const [existing] = await sql`SELECT * FROM recurring_other_revenue WHERE id = ${action}`;
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const label = body.label !== undefined ? (trimOrNull(body.label) || existing.label) : existing.label;
+    const note = body.note !== undefined ? trimOrNull(body.note) : existing.note;
+    const amount = body.amountExVat !== undefined ? (numberOrNull(body.amountExVat) || 0) : existing.amount_ex_vat;
+    const vat = body.vat !== undefined ? (numberOrNull(body.vat) || 0) : existing.vat;
+    await sql`
+      UPDATE recurring_other_revenue
+         SET label = ${label}, note = ${note}, amount_ex_vat = ${amount}, vat = ${vat}
+       WHERE id = ${action}`;
+    return res.status(200).json({ ok: true, rows: await fetchRecurringOther() });
+  }
+
+  if (req.method === 'DELETE') {
+    if (!action) return res.status(400).json({ error: 'id required' });
+    // Archive the full row first so the CRM undo/redo can restore it (same id).
+    const [existing] = await sql`SELECT * FROM recurring_other_revenue WHERE id = ${action}`;
+    if (existing) {
+      await archiveRecord('recurring_other', action, [{ table: 'recurring_other_revenue', row: existing }], actor);
+      await sql`DELETE FROM recurring_other_revenue WHERE id = ${action}`;
+    }
+    return res.status(200).json({ ok: true, rows: await fetchRecurringOther() });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Directors expenses (Finance → Performance → Directors). Visible only to the two
 // company directors — gated purely on email (other finance.manage users are
@@ -2647,6 +2783,9 @@ export async function statsRoute(req, res, id, action, user) {
   }
   if (id === 'cashflow-cost') {
     return cashflowRoute(req, res, action, user);
+  }
+  if (id === 'recurring-other') {
+    return recurringOtherRoute(req, res, action, user);
   }
 
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

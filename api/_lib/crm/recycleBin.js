@@ -20,10 +20,11 @@ import { hasPermission } from '../permissions.js';
 // gated by an ownership check (tasks: creator / assignee / tasks.manage_all)
 // additionally allow the original deleter to undo — see restoreRoute.
 const RESTORE_PERMISSION = {
-  task:          'tasks.manage_all',
-  manual_pp:     'finance.manage',
-  cashflow_cost: 'finance.manage',
-  project_video: 'production.access',
+  task:            'tasks.manage_all',
+  manual_pp:       'finance.manage',
+  cashflow_cost:   'finance.manage',
+  recurring_other: 'finance.manage',
+  project_video:   'production.access',
 };
 // Entities whose delete allowed the row's owner (not just a permission holder).
 // For these, the original deleter may always restore their own deletion.
@@ -32,7 +33,7 @@ const OWNER_RESTORABLE = new Set(['task']);
 // Tables we allow restoring into. The table name can't be parameterised in the
 // json_populate_record call, so it must come from this fixed allowlist.
 const RESTORABLE_TABLES = new Set([
-  'tasks', 'task_assignees', 'manual_pending_payments', 'cashflow_costs',
+  'tasks', 'task_assignees', 'manual_pending_payments', 'cashflow_costs', 'recurring_other_revenue',
   // Production video + its cascade children (re-inserted parent-first on restore).
   'project_videos', 'video_milestones', 'video_milestone_assets', 'video_scripts', 'video_assignees',
 ]);
@@ -86,6 +87,8 @@ export async function restoreRecord(recordId) {
       await sql`INSERT INTO manual_pending_payments SELECT * FROM json_populate_record(NULL::manual_pending_payments, ${json}::json) ON CONFLICT (id) DO NOTHING`;
     } else if (table === 'cashflow_costs') {
       await sql`INSERT INTO cashflow_costs SELECT * FROM json_populate_record(NULL::cashflow_costs, ${json}::json) ON CONFLICT (id) DO NOTHING`;
+    } else if (table === 'recurring_other_revenue') {
+      await sql`INSERT INTO recurring_other_revenue SELECT * FROM json_populate_record(NULL::recurring_other_revenue, ${json}::json) ON CONFLICT (id) DO NOTHING`;
     } else if (table === 'project_videos') {
       await sql`INSERT INTO project_videos SELECT * FROM json_populate_record(NULL::project_videos, ${json}::json) ON CONFLICT (id) DO NOTHING`;
     } else if (table === 'video_milestones') {

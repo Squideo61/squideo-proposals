@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote, CalendarCheck, TrendingUp } from 'lucide-react';
+import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote, CalendarCheck, TrendingUp, Plus, Pencil } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -61,6 +61,9 @@ function collectPredicted(pending, partners, predictKeys) {
   // Active partners ride along automatically (subscription = next month's fee,
   // credits-only = remaining-credit value) — no manual flag needed.
   for (const pt of (partners || [])) if (pt.clientKey) add(predictKeyForPartner(pt.clientKey), { name: pt.clientName || 'Partner', amount: Number(pt.outstanding) || 0, source: 'Partner', clientKey: pt.clientKey, auto: true, type: 'partner', row: pt });
+  // "Other" recurring revenue (web hosting etc.) also rides along automatically —
+  // it recurs every month, so it's predicted by default like a partner fee.
+  for (const r of (p.other || [])) if (r.id) add(`other:${r.id}`, { name: r.label || 'Other', amount: Number(r.amountExVat) || 0, source: 'Other', auto: true, type: 'other', row: r });
   return out.sort((a, b) => b.amount - a.amount);
 }
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
@@ -483,7 +486,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
             <StatCard icon={PoundSterling} accent={BRAND.ink} label="Total Invoiced" value={formatGBP(pending?.totals?.invoiced || 0)} sub="Invoiced & awaiting — CRM + imports · ex-VAT (net)" />
             <StatCard icon={PoundSterling} accent="#0E7490" label="Not yet invoiced" value={formatGBP(pending?.totals?.notInvoiced || 0)} sub="Everything still to bill — signed work + imports · ex-VAT (net)" />
-            <StatCard icon={PoundSterling} accent={BRAND.blue} label="Total pending payments" value={formatGBP((pending?.totals?.invoiced || 0) + (pending?.totals?.notInvoiced || 0) + partnerTotal)} sub="Invoiced + not yet invoiced + partners — all outstanding · ex-VAT (net)" />
+            <StatCard icon={PoundSterling} accent={BRAND.blue} label="Total pending payments" value={formatGBP((pending?.totals?.invoiced || 0) + (pending?.totals?.notInvoiced || 0) + partnerTotal + (pending?.totals?.other || 0))} sub="Invoiced + not yet invoiced + partners + other — all outstanding · ex-VAT (net)" />
           </div>
           {/* Pending Payments — outstanding signed deals, split PO vs normal, plus
               the imported Live Sales Sheet group and active partners. */}
@@ -516,6 +519,7 @@ function predictedSubtitle(item) {
     const credits = Number(r.creditsRemaining) || 0;
     return (r.status === 'credits_only' && credits > 0) ? `${credits % 1 === 0 ? credits : credits.toFixed(1)} credits left` : null;
   }
+  if (item.type === 'other') return r.note || null;
   return null;
 }
 
@@ -550,6 +554,9 @@ function PredictedRowBadges({ item }) {
   if (item.type === 'partner') {
     const meta = PARTNER_STATUS_META[r.status] || PARTNER_STATUS_META.active;
     return <span style={{ fontSize: 9, fontWeight: 700, color: meta.color, background: meta.bg, padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{meta.label}</span>;
+  }
+  if (item.type === 'other') {
+    return <span style={{ fontSize: 9, fontWeight: 700, color: OTHER_ACCENT, background: '#FFF7ED', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>Recurring</span>;
   }
   return null;
 }
@@ -586,7 +593,7 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
     <>
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
         <StatCard icon={Wallet} accent={BRAND.blue} label={`Banked so far — ${monthName}`} value={formatGBP(bankedNet || 0)} sub="Cash already received this month · ex-VAT (net)" />
-        <StatCard icon={CalendarCheck} accent={PREDICT_COLOR} label="Predicted still to come" value={formatGBP(predictedTotal)} sub={`${items.length} ${items.length === 1 ? 'payment' : 'payments'} predicted this month (partners auto-included) · ex-VAT (net)`} />
+        <StatCard icon={CalendarCheck} accent={PREDICT_COLOR} label="Predicted still to come" value={formatGBP(predictedTotal)} sub={`${items.length} ${items.length === 1 ? 'payment' : 'payments'} predicted this month (partners & other auto-included) · ex-VAT (net)`} />
         <StatCard icon={TrendingUp} accent={BRAND.ink} label={`Projected ${monthName} month-end`} value={formatGBP(projected)} sub="Banked + everything predicted, if all predicted payers pay · ex-VAT (net)" />
       </div>
 
@@ -764,6 +771,7 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
             />
           )}
           <PartnersPanel partners={partners} total={partnerTotal} onOpenPartner={onOpenPartner} isMobile={isMobile} />
+          <OtherPanel rows={pending.other || []} total={pending.totals?.other || 0} actions={actions} onChanged={onChanged} isMobile={isMobile} />
         </div>
         );
       })()}
@@ -970,6 +978,131 @@ function PartnersPanel({ partners, total, onOpenPartner, isMobile }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// "Other" recurring revenue — small ongoing monthly income outside CRM deals and
+// the Partner Programme (e.g. web hosting). Behaves like the Partners group: each
+// row is a flat monthly net + VAT that's auto-included in Predicted (it recurs).
+// Add / edit / remove inline; "Other" because it can be made up of anything.
+const OTHER_ACCENT = '#C2410C';
+
+// One editable row's form: label, optional note, net + VAT. Typing Net auto-fills
+// VAT at the 20% standard rate until the user edits VAT themselves.
+function OtherRowForm({ initial, onSave, onCancel, isMobile }) {
+  const [label, setLabel] = useState(initial?.label || '');
+  const [note, setNote] = useState(initial?.note || '');
+  const [net, setNet] = useState(initial ? String(initial.amountExVat ?? '') : '');
+  const [vat, setVat] = useState(initial ? String(initial.vat ?? '') : '');
+  const [vatTouched, setVatTouched] = useState(!!(initial && Number(initial.vat)));
+  const [saving, setSaving] = useState(false);
+
+  const onNet = (v) => {
+    setNet(v);
+    if (!vatTouched) {
+      const n = parseFloat(v);
+      setVat(Number.isFinite(n) ? (Math.round(n * 0.2 * 100) / 100).toString() : '');
+    }
+  };
+  const canSave = label.trim() && parseFloat(net) >= 0 && Number.isFinite(parseFloat(net));
+  const submit = async () => {
+    if (!canSave || saving) return;
+    setSaving(true);
+    try {
+      await onSave({ label: label.trim(), note: note.trim() || null, amountExVat: parseFloat(net) || 0, vat: parseFloat(vat) || 0 });
+    } finally { setSaving(false); }
+  };
+  const inputStyle = { padding: '7px 9px', borderRadius: 7, border: '1px solid ' + BRAND.border, fontSize: 13, color: BRAND.ink, width: '100%', boxSizing: 'border-box' };
+
+  return (
+    <div style={{ padding: '10px 14px', borderTop: '1px solid ' + BRAND.border, background: '#FFFBF7' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1.4fr 90px 90px', gap: 8 }}>
+        <input style={inputStyle} placeholder="Customer / item" value={label} autoFocus onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }} />
+        <input style={inputStyle} placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }} />
+        <input style={{ ...inputStyle, textAlign: 'right' }} placeholder="Net £" inputMode="decimal" value={net} onChange={(e) => onNet(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }} />
+        <input style={{ ...inputStyle, textAlign: 'right' }} placeholder="VAT £" inputMode="decimal" value={vat} onChange={(e) => { setVatTouched(true); setVat(e.target.value); }} onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+        <button onClick={onCancel} className="btn-ghost" disabled={saving}>Cancel</button>
+        <button onClick={submit} className="btn-primary" disabled={!canSave || saving}>{saving ? 'Saving…' : 'Save'}</button>
+      </div>
+    </div>
+  );
+}
+
+function OtherPanel({ rows, total, actions, onChanged, isMobile }) {
+  const [adding, setAdding] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const list = rows || [];
+  const vatTotal = list.reduce((s, r) => s + (Number(r.vat) || 0), 0);
+
+  const save = async (vals, existing) => {
+    if (!actions) return;
+    if (existing) {
+      const before = { label: existing.label, note: existing.note, amountExVat: existing.amountExVat, vat: existing.vat };
+      await actions.updateRecurringOther(existing.id, vals, before);
+    } else {
+      await actions.addRecurringOther(vals);
+    }
+    setAdding(false); setEditId(null);
+    if (onChanged) onChanged();
+  };
+  const remove = (r) => {
+    if (!actions) return;
+    if (window.confirm(`Remove "${r.label || 'this item'}" from Other recurring revenue?\n\nIt drops off the outstanding total and stops being predicted.`)) {
+      actions.deleteRecurringOther(r.id, r).then(() => onChanged && onChanged());
+    }
+  };
+
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '3px solid ' + OTHER_ACCENT }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Other</span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
+        </div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Recurring revenue from elsewhere (e.g. web hosting) · {list.length} {list.length === 1 ? 'item' : 'items'} · recurs monthly, so auto-included in Predicted · ex-VAT</div>
+      </div>
+      {list.map((r) => (
+        editId === r.id ? (
+          <OtherRowForm key={r.id} initial={r} isMobile={isMobile} onSave={(vals) => save(vals, r)} onCancel={() => setEditId(null)} />
+        ) : (
+          <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderTop: '1px solid ' + BRAND.border }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{r.label || 'Other'}</span>
+                <PredictedTag auto />
+              </div>
+              {r.note && <div title={r.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>{r.note}</div>}
+            </div>
+            <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 64, textAlign: 'right' }}>{formatGBP(r.amountExVat)}/mo</span>
+            <RowActionsMenu items={[
+              { label: 'Edit', icon: Pencil, onClick: () => { setAdding(false); setEditId(r.id); } },
+              { label: 'Remove', icon: Trash2, onClick: () => remove(r) },
+            ]} />
+          </div>
+        )
+      ))}
+      {adding ? (
+        <OtherRowForm isMobile={isMobile} onSave={(vals) => save(vals)} onCancel={() => setAdding(false)} />
+      ) : (
+        <button
+          onClick={() => { setEditId(null); setAdding(true); }}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '9px 14px', borderTop: '1px solid ' + BRAND.border, background: 'white', border: 'none', borderTopColor: BRAND.border, cursor: 'pointer', fontSize: 13, fontWeight: 600, color: OTHER_ACCENT }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
+        >
+          <Plus size={14} /> Add other recurring revenue
+        </button>
+      )}
+      {list.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 12, padding: '8px 14px', borderTop: '2px solid ' + BRAND.border, fontSize: 13, fontWeight: 700, color: BRAND.ink }}>
+          <span>Total</span>
+          <span style={{ color: VAT_COLOR }}>VAT {formatGBP(vatTotal)}</span>
+          <span style={{ minWidth: 64, textAlign: 'right' }}>{formatGBP(total)}</span>
+        </div>
+      )}
     </div>
   );
 }

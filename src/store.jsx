@@ -1194,6 +1194,47 @@ export function StoreProvider({ children }) {
     linkPendingPaymentCompany(id, companyId) {
       return api.patch('/api/crm/stats/pending-manual/' + id, { companyId: companyId || null });
     },
+    // ── "Other" recurring revenue (Pending Payments → Other). Small ongoing
+    // monthly income outside deals/partners (e.g. web hosting); auto-predicted.
+    // Mint the id client-side so add is reversible (undo deletes that row, redo
+    // re-inserts the SAME id). Each write reloads the pending list.
+    addRecurringOther(payload) {
+      const id = 'other_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      const full = { ...payload, id };
+      const promise = api.post('/api/crm/stats/recurring-other', full).then((d) => { actions.loadPendingPayments(); return d; });
+      if (!suppressUndoRef.current) {
+        recordUndo({
+          label: `Add “${(payload.label || 'item').trim()}”`,
+          undo: () => api.delete('/api/crm/stats/recurring-other/' + id).then(() => actions.loadPendingPayments()),
+          redo: () => api.post('/api/crm/stats/recurring-other', full).then(() => actions.loadPendingPayments()),
+        });
+      }
+      return promise;
+    },
+    // Edit an Other row. Pass `before` (its pre-edit values for the patched keys)
+    // to make the edit undoable.
+    updateRecurringOther(id, patch, before) {
+      const promise = api.patch('/api/crm/stats/recurring-other/' + id, patch).then((d) => { actions.loadPendingPayments(); return d; });
+      if (before && !suppressUndoRef.current) {
+        const entry = buildEditUndo(before, patch, `Edit “${before.label || ''}”`, (vals) =>
+          api.patch('/api/crm/stats/recurring-other/' + id, vals).then(() => actions.loadPendingPayments()));
+        if (entry) recordUndo(entry);
+      }
+      return promise;
+    },
+    // Remove an Other row. Pass the full `row` so the delete is undoable: the
+    // server archives the row (recycle bin) and undo restores it with the same id.
+    deleteRecurringOther(id, row) {
+      const promise = api.delete('/api/crm/stats/recurring-other/' + id).then((d) => { actions.loadPendingPayments(); return d; });
+      if (row && !suppressUndoRef.current) {
+        recordUndo({
+          label: `Delete “${row.label || ''}”`,
+          undo: () => api.post('/api/crm/restore/' + encodeURIComponent(id)).then(() => actions.loadPendingPayments()),
+          redo: () => api.delete('/api/crm/stats/recurring-other/' + id).then(() => actions.loadPendingPayments()),
+        });
+      }
+      return promise;
+    },
     // Signed CRM deals for the "link to deal" picker. [{ dealId, company, title, number, net }].
     loadLinkableDeals() {
       return api.get('/api/crm/stats/linkable-deals')
