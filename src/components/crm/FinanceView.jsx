@@ -567,6 +567,7 @@ function PredictedRowBadges({ item }) {
 // (and is already counted in the banked figure). Projects the month-end position
 // as banked-so-far + everything still predicted to land. All figures ex-VAT (net).
 function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, bankedNet, targets, onUnpredict, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
+  const [editOther, setEditOther] = useState(null); // the "Other" row being edited
   const items = useMemo(() => collectPredicted(pending, partners, predictKeys).map((it) => ({
     ...it,
     open: it.dealId && onOpenDeal ? () => onOpenDeal(it.dealId)
@@ -584,6 +585,14 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
     if (it.type === 'manual') p = actions.markPendingPaymentPaid(it.row.id, true, method);
     else if (it.type === 'partner') p = actions.markPartnerFeePaid(it.clientKey, true);
     if (p) Promise.resolve(p).then(() => onChanged && onChanged());
+  };
+
+  // Remove an "Other" recurring item outright (it also drops off Pending Payments).
+  const removeOther = (row) => {
+    if (!actions || !row) return;
+    if (window.confirm(`Remove "${row.label || 'this item'}" from Other recurring revenue?\n\nIt drops off the outstanding total and stops being predicted.`)) {
+      Promise.resolve(actions.deleteRecurringOther(row.id, row)).then(() => onChanged && onChanged());
+    }
   };
 
   const predictedTotal = items.reduce((s, it) => s + it.amount, 0);
@@ -675,6 +684,8 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
                     it.type === 'manual' && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
                     it.type === 'manual' && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => markPaid(it, 'bacs') },
                     it.type === 'partner' && { label: 'Mark paid this month', icon: Check, onClick: () => markPaid(it) },
+                    it.type === 'other' && { label: 'Edit', icon: Pencil, onClick: () => setEditOther(it.row) },
+                    it.type === 'other' && { label: 'Remove', icon: Trash2, onClick: () => removeOther(it.row) },
                     it.open && { label: it.dealId ? 'Open deal' : it.companyId ? 'Open customer' : 'Open partner', icon: ExternalLink, onClick: it.open },
                     !it.auto && { label: 'Remove from predicted', icon: X, onClick: () => onUnpredict(it.key) },
                   ]} />
@@ -688,6 +699,15 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
           </div>
         )}
       </div>
+      {editOther && (
+        <EditOtherModal
+          row={editOther}
+          actions={actions}
+          isMobile={isMobile}
+          onClose={() => setEditOther(null)}
+          onSaved={() => { setEditOther(null); onChanged && onChanged(); }}
+        />
+      )}
     </>
   );
 }
@@ -990,7 +1010,7 @@ const OTHER_ACCENT = '#C2410C';
 
 // One editable row's form: label, optional note, net + VAT. Typing Net auto-fills
 // VAT at the 20% standard rate until the user edits VAT themselves.
-function OtherRowForm({ initial, onSave, onCancel, isMobile }) {
+function OtherRowForm({ initial, onSave, onCancel, isMobile, bare = false }) {
   const [label, setLabel] = useState(initial?.label || '');
   const [note, setNote] = useState(initial?.note || '');
   const [net, setNet] = useState(initial ? String(initial.amountExVat ?? '') : '');
@@ -1016,7 +1036,7 @@ function OtherRowForm({ initial, onSave, onCancel, isMobile }) {
   const inputStyle = { padding: '7px 9px', borderRadius: 7, border: '1px solid ' + BRAND.border, fontSize: 13, color: BRAND.ink, width: '100%', boxSizing: 'border-box' };
 
   return (
-    <div style={{ padding: '10px 14px', borderTop: '1px solid ' + BRAND.border, background: '#FFFBF7' }}>
+    <div style={{ padding: bare ? 0 : '10px 14px', borderTop: bare ? undefined : '1px solid ' + BRAND.border, background: bare ? undefined : '#FFFBF7' }}>
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1.4fr 90px 90px', gap: 8 }}>
         <input style={inputStyle} placeholder="Customer / item" value={label} autoFocus onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }} />
         <input style={inputStyle} placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }} />
@@ -1104,6 +1124,26 @@ function OtherPanel({ rows, total, actions, onChanged, isMobile }) {
         </div>
       )}
     </div>
+  );
+}
+
+// Edit an "Other" recurring-revenue row in a modal — used from the Predicted tab
+// (the Pending Payments panel edits inline instead).
+function EditOtherModal({ row, actions, onClose, onSaved, isMobile }) {
+  const save = async (vals) => {
+    if (!actions) return;
+    const before = { label: row.label, note: row.note, amountExVat: row.amountExVat, vat: row.vat };
+    await actions.updateRecurringOther(row.id, vals, before);
+    onSaved();
+  };
+  return (
+    <Modal onClose={onClose} maxWidth={540}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Edit recurring revenue</h2>
+        <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
+      </div>
+      <OtherRowForm initial={row} isMobile={isMobile} bare onSave={save} onCancel={onClose} />
+    </Modal>
   );
 }
 
