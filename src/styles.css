@@ -173,3 +173,13 @@ body {
 }
 .celebrate-pop  { animation: squideo-pop 600ms cubic-bezier(.34,1.56,.64,1) both; }
 .celebrate-rise { animation: squideo-slide-up 500ms ease-out both; animation-delay: 120ms; }
+
+/* ---------- Business Overview (mission control) entrance ---------- */
+@keyframes bo-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes bo-sheen {
+  from { transform: translateX(-120%) skewX(-18deg); }
+  to   { transform: translateX(260%) skewX(-18deg); }
+}

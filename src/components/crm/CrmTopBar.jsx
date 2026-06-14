@@ -62,9 +62,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     {
       key: 'business',
       label: 'Business',
-      views: ['finance', 'performance'],
+      views: ['overview', 'finance', 'performance'],
       items: [
-        { label: 'Overview', icon: LayoutDashboard, go: () => {}, soon: true },
+        { label: 'Overview', icon: LayoutDashboard, go: () => navigate('overview') },
         ...(canBusiness ? [
           { label: 'Finance', icon: PoundSterling, go: () => navigate('finance') },
         ] : []),

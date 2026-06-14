@@ -3,6 +3,7 @@ import { BRAND, APP_MAX_WIDTH } from './theme.js';
 import { DEFAULT_PROPOSAL } from './defaults.js';
 import { StoreProvider, useStore } from './store.jsx';
 import { makeId } from './utils.js';
+import { permissionsInclude } from './lib/permissions.js';
 import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 import { Toast } from './components/ui.jsx';
 import { AuthScreen } from './components/AuthScreen.jsx';
@@ -50,6 +51,7 @@ const ProductionView = lazyNamed(() => import('./components/crm/ProductionView.j
 const VideoDetailView = lazyNamed(() => import('./components/crm/VideoDetailView.jsx'), 'VideoDetailView');
 const ProjectsOverviewView = lazyNamed(() => import('./components/crm/ProjectsOverviewView.jsx'), 'ProjectsOverviewView');
 const FinanceView = lazyNamed(() => import('./components/crm/FinanceView.jsx'), 'FinanceView');
+const BusinessOverviewView = lazyNamed(() => import('./components/crm/BusinessOverviewView.jsx'), 'BusinessOverviewView');
 
 function ViewFallback() {
   return (
@@ -87,6 +89,27 @@ function AppShell() {
   // through real history (returning wherever the user came from) and only fall
   // back to an explicit target when there's no in-app history (e.g. a deep link).
   const navDepthRef = useRef(0);
+
+  // True when the app was opened at the bare root (no hash) — used once to land
+  // finance/director users on the mission-control dashboard instead of the
+  // proposals list. Captured at module-eval of the component so a later in-app
+  // navigation to the list never re-triggers the redirect.
+  const landedAtRootRef = useRef(!window.location.hash || window.location.hash === '#/');
+  const didDefaultLandRef = useRef(false);
+
+  // Redirect a fresh root load to the dashboard for users who can see business
+  // finances. Replaces (not pushes) history so Back doesn't bounce to the list,
+  // and only fires for the full CRM shell (never producers / deep links).
+  useEffect(() => {
+    if (didDefaultLandRef.current || !landedAtRootRef.current) return;
+    if (!user || producerOnly) return;
+    didDefaultLandRef.current = true;
+    if (permissionsInclude(user.permissions, 'finance.manage')) {
+      window.history.replaceState(null, '', buildHash('overview', null));
+      setView('overview');
+      setActiveId(null);
+    }
+  }, [user, producerOnly]);
 
   useEffect(() => {
     const onPop = () => {
@@ -527,6 +550,20 @@ function AppShell() {
         <LeaderboardView onBack={() => navigate('list')} />
       )}
       {/* Performance is now folded into Finance; keep the old route as an alias. */}
+      {view === 'overview' && (
+        <BusinessOverviewView
+          onOpenFinance={() => navigate('finance')}
+          onOpenPipeline={() => navigate('pipeline')}
+          onOpenProduction={() => navigate('production')}
+          onOpenProjects={() => navigate('projects')}
+          onOpenTasks={() => navigate('tasks')}
+          onOpenQuoteRequests={() => navigate('quote-requests')}
+          onOpenPartners={() => navigate('partner-credits')}
+          onOpenDeal={(id) => navigate('deal', id)}
+          onOpenVideo={(id) => navigate('video', id)}
+          onOpenPartner={(key) => navigate('partner-credit-detail', key)}
+        />
+      )}
       {(view === 'finance' || view === 'performance') && (
         <FinanceView onBack={() => navigate('list')} onOpenDeal={(id) => navigate('deal', id)} onOpenCompany={(id) => navigate('company', id)} onOpenPartner={(key) => navigate('partner-credit-detail', key)} />
       )}
