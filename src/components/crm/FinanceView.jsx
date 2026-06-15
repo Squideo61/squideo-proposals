@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote, CalendarCheck, TrendingUp, Plus, Pencil } from 'lucide-react';
+import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote, CalendarCheck, TrendingUp, Plus, Pencil, StickyNote } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -402,6 +402,8 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
           monthName={currentMonthName}
           bankedNet={predicted?.bankedNet || 0}
           targets={incomeTargets}
+          notes={predicted?.notes || {}}
+          onSaveNote={(key, note) => actions.setPredictedPaymentNote(currentMonthKey, key, note)}
           onUnpredict={(key) => actions.togglePredictedPayment(currentMonthKey, key, false)}
           onOpenDeal={onOpenDeal}
           onOpenCompany={onOpenCompany}
@@ -566,8 +568,9 @@ function PredictedRowBadges({ item }) {
 // active partners — so a predicted item that's since been paid simply drops off
 // (and is already counted in the banked figure). Projects the month-end position
 // as banked-so-far + everything still predicted to land. All figures ex-VAT (net).
-function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, bankedNet, targets, onUnpredict, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
+function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, bankedNet, targets, notes = {}, onSaveNote, onUnpredict, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
   const [editOther, setEditOther] = useState(null); // the "Other" row being edited
+  const [noteTarget, setNoteTarget] = useState(null); // { key, name, note } being edited
   const items = useMemo(() => collectPredicted(pending, partners, predictKeys).map((it) => ({
     ...it,
     open: it.dealId && onOpenDeal ? () => onOpenDeal(it.dealId)
@@ -658,6 +661,7 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
               const clickable = !!it.open;
               const subtitle = predictedSubtitle(it);
               const perMo = it.type === 'partner' && it.row?.status === 'active';
+              const note = notes[it.key] || '';
               return (
                 <div
                   key={it.key}
@@ -667,28 +671,41 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
                   onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); it.open(); } } : undefined}
                   onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: clickable ? 'pointer' : 'default' }}
+                  style={{ padding: '9px 14px', borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: clickable ? 'pointer' : 'default' }}
                 >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: clickable ? BRAND.blue : BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{it.name}</span>
-                      <PredictedRowBadges item={it} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: clickable ? BRAND.blue : BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{it.name}</span>
+                        <PredictedRowBadges item={it} />
+                      </div>
+                      {subtitle && (
+                        <div title={subtitle} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>{subtitle}</div>
+                      )}
                     </div>
-                    {subtitle && (
-                      <div title={subtitle} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>{subtitle}</div>
-                    )}
+                    <span style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, background: BRAND.paper, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{it.source}</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 70, textAlign: 'right' }}>{formatGBP(it.amount)}{perMo ? '/mo' : ''}</span>
+                    <RowActionsMenu items={[
+                      it.type === 'manual' && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
+                      it.type === 'manual' && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => markPaid(it, 'bacs') },
+                      it.type === 'partner' && { label: 'Mark paid this month', icon: Check, onClick: () => markPaid(it) },
+                      it.type === 'other' && { label: 'Edit', icon: Pencil, onClick: () => setEditOther(it.row) },
+                      { label: note ? 'Edit note' : 'Add note', icon: StickyNote, onClick: () => setNoteTarget({ key: it.key, name: it.name, note }) },
+                      it.type === 'other' && { label: 'Remove', icon: Trash2, onClick: () => removeOther(it.row) },
+                      it.open && { label: it.dealId ? 'Open deal' : it.companyId ? 'Open customer' : 'Open partner', icon: ExternalLink, onClick: it.open },
+                      !it.auto && { label: 'Remove from predicted', icon: X, onClick: () => onUnpredict(it.key) },
+                    ]} />
                   </div>
-                  <span style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, background: BRAND.paper, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{it.source}</span>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 70, textAlign: 'right' }}>{formatGBP(it.amount)}{perMo ? '/mo' : ''}</span>
-                  <RowActionsMenu items={[
-                    it.type === 'manual' && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
-                    it.type === 'manual' && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => markPaid(it, 'bacs') },
-                    it.type === 'partner' && { label: 'Mark paid this month', icon: Check, onClick: () => markPaid(it) },
-                    it.type === 'other' && { label: 'Edit', icon: Pencil, onClick: () => setEditOther(it.row) },
-                    it.type === 'other' && { label: 'Remove', icon: Trash2, onClick: () => removeOther(it.row) },
-                    it.open && { label: it.dealId ? 'Open deal' : it.companyId ? 'Open customer' : 'Open partner', icon: ExternalLink, onClick: it.open },
-                    !it.auto && { label: 'Remove from predicted', icon: X, onClick: () => onUnpredict(it.key) },
-                  ]} />
+                  {note && (
+                    <div
+                      onClick={(e) => { e.stopPropagation(); setNoteTarget({ key: it.key, name: it.name, note }); }}
+                      title="Edit note"
+                      style={{ display: 'flex', gap: 6, marginTop: 7, padding: '6px 8px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6, cursor: 'pointer' }}
+                    >
+                      <StickyNote size={13} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
+                      <span style={{ fontSize: 12, color: '#92400E', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{note}</span>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -708,7 +725,49 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
           onSaved={() => { setEditOther(null); onChanged && onChanged(); }}
         />
       )}
+      {noteTarget && (
+        <PredictedNoteModal
+          target={noteTarget}
+          onClose={() => setNoteTarget(null)}
+          onSave={(text) => { onSaveNote && onSaveNote(noteTarget.key, text); setNoteTarget(null); }}
+        />
+      )}
     </>
+  );
+}
+
+// Small modal to add / edit / clear a predicted-payment progress note (used at
+// the regular catch-up meetings about how each deal/project is progressing).
+function PredictedNoteModal({ target, onClose, onSave }) {
+  const [text, setText] = useState(target.note || '');
+  const editing = !!target.note;
+  return (
+    <Modal onClose={onClose} maxWidth={460}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>{editing ? 'Edit note' : 'Add note'}</h2>
+        <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
+      </div>
+      <p style={{ margin: '0 0 10px', fontSize: 13, color: BRAND.muted }}>
+        {target.name} — note how the deal / project is progressing. Shown on the predicted list for your catch-up meetings.
+      </p>
+      <textarea
+        value={text}
+        autoFocus
+        onChange={(e) => setText(e.target.value)}
+        rows={5}
+        placeholder="e.g. Awaiting sign-off on V2; client said payment due end of month."
+        style={{ width: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13, fontFamily: 'inherit', resize: 'vertical' }}
+      />
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 16 }}>
+        {editing
+          ? <button onClick={() => onSave('')} className="btn-ghost" style={{ color: '#B91C1C' }}><Trash2 size={14} /> Remove note</button>
+          : <span />}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onClose} className="btn-ghost">Cancel</button>
+          <button onClick={() => onSave(text)} className="btn-primary">Save note</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

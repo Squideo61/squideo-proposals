@@ -1345,14 +1345,36 @@ function serverMonthKey() {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
-// GET  /stats/predicted-payments/:month   → { month, keys, items, bankedNet }
+// Progress notes for predicted payments — keyed by the item's stable key (NOT
+// month) so a "how this project/deal is progressing" note carries across months
+// and covers auto-included partners / other recurring items too. Edited at the
+// regular catch-up meetings about the predicted list.
+let predictedNotesReady = null;
+function ensurePredictedPaymentNotes() {
+  if (predictedNotesReady) return predictedNotesReady;
+  predictedNotesReady = sql`
+    CREATE TABLE IF NOT EXISTS predicted_payment_notes (
+      item_key text PRIMARY KEY,
+      note text,
+      updated_by text,
+      updated_at timestamptz DEFAULT now()
+    )
+  `.then(() => true).catch((err) => { predictedNotesReady = null; throw err; });
+  return predictedNotesReady;
+}
+
+// GET  /stats/predicted-payments/:month   → { month, keys, items, bankedNet, notes }
 // POST /stats/predicted-payments/:month     { itemKey, predicted, label, amountExVat }
+//                                       OR  { itemKey, note }  (upsert/clear a note)
 async function predictedPaymentsRoute(req, res, action, user) {
-  await ensurePredictedPayments();
+  await Promise.all([ensurePredictedPayments(), ensurePredictedPaymentNotes()]);
   const month = /^\d{4}-\d{2}$/.test(action || '') ? action : serverMonthKey();
 
   const snapshot = async () => {
     const rows = await sql`SELECT item_key, label, amount_ex_vat FROM predicted_payments WHERE month = ${month}`;
+    const noteRows = await sql`SELECT item_key, note FROM predicted_payment_notes`;
+    const notes = {};
+    for (const r of noteRows) if (r.note) notes[r.item_key] = r.note;
     // The cash already banked this calendar month — the base the predicted
     // total is added to for the projected month-end figure.
     let bankedNet = 0;
@@ -1362,6 +1384,7 @@ async function predictedPaymentsRoute(req, res, action, user) {
       bankedNet,
       keys: rows.map((r) => r.item_key),
       items: rows.map((r) => ({ key: r.item_key, label: r.label || null, amount: Number(r.amount_ex_vat) || 0 })),
+      notes,
     };
   };
 
@@ -1373,6 +1396,21 @@ async function predictedPaymentsRoute(req, res, action, user) {
     const body = req.body || {};
     const itemKey = trimOrNull(body.itemKey);
     if (!itemKey) return res.status(400).json({ error: 'itemKey required' });
+    // Note upsert/clear — distinct from the predicted toggle (no `predicted`).
+    if ('note' in body) {
+      const note = typeof body.note === 'string' ? body.note.trim() : '';
+      const actor = user?.name || user?.email || null;
+      if (note) {
+        await sql`
+          INSERT INTO predicted_payment_notes (item_key, note, updated_by, updated_at)
+          VALUES (${itemKey}, ${note}, ${actor}, NOW())
+          ON CONFLICT (item_key)
+          DO UPDATE SET note = EXCLUDED.note, updated_by = EXCLUDED.updated_by, updated_at = NOW()`;
+      } else {
+        await sql`DELETE FROM predicted_payment_notes WHERE item_key = ${itemKey}`;
+      }
+      return res.status(200).json(await snapshot());
+    }
     const predicted = body.predicted !== false; // default → mark predicted
     if (predicted) {
       const label = trimOrNull(body.label);

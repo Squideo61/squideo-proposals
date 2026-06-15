@@ -1226,6 +1226,20 @@ export function StoreProvider({ children }) {
         .then((data) => { if (data) setState(s => ({ ...s, predictedPayments: data })); return data; })
         .catch(() => {});
     },
+    // Add / edit / clear a progress note on a predicted payment (catch-up notes).
+    // Notes are keyed by item, not month, so they persist. Optimistic.
+    setPredictedPaymentNote(month, itemKey, note) {
+      const clean = typeof note === 'string' ? note.trim() : '';
+      setState(s => {
+        const cur = s.predictedPayments || { month, keys: [], items: [], notes: {}, bankedNet: 0 };
+        const notes = { ...(cur.notes || {}) };
+        if (clean) notes[itemKey] = clean; else delete notes[itemKey];
+        return { ...s, predictedPayments: { ...cur, notes } };
+      });
+      return api.post('/api/crm/stats/predicted-payments/' + month, { itemKey, note: clean })
+        .then((data) => { if (data) setState(s => ({ ...s, predictedPayments: data })); return data; })
+        .catch(() => {});
+    },
     // Import manual pending payments / POs (Live Sales Sheet); refresh after.
     importPendingPayments(rows, mode = 'replace', kind = 'pp') {
       return api.post('/api/crm/stats/pending-manual', { rows, mode, kind }).then((data) => {
