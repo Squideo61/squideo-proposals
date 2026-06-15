@@ -2570,8 +2570,11 @@ function EditDealModal({ deal, onClose }) {
             </>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, background: BRAND.paper }}>
-              <input className="input" autoFocus placeholder="Name" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} />
-              <input className="input" type="email" placeholder="Email" value={newContactEmail} onChange={(e) => setNewContactEmail(e.target.value)} />
+              {/* autoComplete off + a non-standard name: stop Edge/Chrome autofill
+                  from clobbering the typed value (it would replace a full name
+                  with a single profile token on blur). */}
+              <input className="input" autoFocus placeholder="Name" name="squideo-contact-name" autoComplete="off" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} />
+              <input className="input" type="email" placeholder="Email" name="squideo-contact-email" autoComplete="off" value={newContactEmail} onChange={(e) => setNewContactEmail(e.target.value)} />
               <label style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, display: 'flex', flexDirection: 'column', gap: 3 }}>
                 <span>Company</span>
                 <select className="input" value={newContactCompanyId} onChange={(e) => setNewContactCompanyId(e.target.value)}>
@@ -2581,7 +2584,7 @@ function EditDealModal({ deal, onClose }) {
                 </select>
               </label>
               {newContactCompanyId === '__new__' && (
-                <input className="input" autoFocus placeholder="New company name" value={newCompanyName} onChange={(e) => setNewCompanyName(e.target.value)} />
+                <input className="input" autoFocus placeholder="New company name" name="squideo-new-company" autoComplete="off" value={newCompanyName} onChange={(e) => setNewCompanyName(e.target.value)} />
               )}
               {contactErr && <div style={{ color: '#DC2626', fontSize: 12 }}>{contactErr}</div>}
               <div style={{ display: 'flex', gap: 6 }}>
