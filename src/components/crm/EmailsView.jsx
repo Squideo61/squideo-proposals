@@ -102,6 +102,136 @@ const FRAME_SANITIZE = {
   FORBID_ATTR: ['onerror', 'onload', 'onclick'],
 };
 
+// ── Quoted-reply clipping (Gmail's "•••") ──────────────────────────────────
+// Each message in a thread typically carries the entire quoted history below
+// the new content. Like Gmail, we split that off so only the new bit shows,
+// with a toggle to reveal the rest. Detection is marker-based: the wrappers the
+// major clients put around quoted text.
+const QUOTE_SELECTORS = [
+  '.gmail_quote',            // Gmail
+  'blockquote[type="cite"]', // Apple Mail / generic
+  '.moz-cite-prefix',        // Thunderbird
+  '.protonmail_quote',       // Proton Mail
+  '.yahoo_quoted',           // Yahoo
+  '.zmail_extra',            // Zoho
+  '#appendonsend',           // Outlook (web)
+  '#divRplyFwdMsg',          // Outlook (desktop) reply/forward header
+].join(',');
+
+// Remove the boundary node, its following siblings, and the following siblings
+// of every ancestor up to <body> — leaving only the content that came before.
+function trimBeforeBoundary(boundary, bodyEl) {
+  const dropAfter = (node) => {
+    let sib = node.nextSibling;
+    while (sib) { const next = sib.nextSibling; sib.remove(); sib = next; }
+  };
+  dropAfter(boundary);
+  let cur = boundary.parentNode;
+  boundary.remove();
+  while (cur && cur !== bodyEl) {
+    dropAfter(cur);
+    cur = cur.parentNode;
+  }
+}
+
+// Mirror of the above: keep the boundary and everything after it, drop the rest.
+function trimAfterBoundary(boundary, bodyEl) {
+  const dropBefore = (node) => {
+    let sib = node.previousSibling;
+    while (sib) { const prev = sib.previousSibling; sib.remove(); sib = prev; }
+  };
+  dropBefore(boundary);
+  let cur = boundary.parentNode;
+  while (cur && cur !== bodyEl) {
+    dropBefore(cur);
+    cur = cur.parentNode;
+  }
+}
+
+const headStyles = (doc) =>
+  Array.from(doc.head?.querySelectorAll('style') || []).map((s) => s.outerHTML).join('');
+
+// Split an HTML body into { main, quoted } at the first quote marker. Head
+// <style> blocks are carried into both halves so the email styles the same
+// whichever part is shown. Returns hasQuote:false (and the original html as
+// main) when there's no marker, or when everything before it is empty.
+function splitQuotedHtml(html) {
+  if (!html) return { main: html, quoted: '', hasQuote: false };
+  let doc;
+  try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch { return { main: html, quoted: '', hasQuote: false }; }
+  if (!doc.body) return { main: html, quoted: '', hasQuote: false };
+  let boundary = doc.body.querySelector(QUOTE_SELECTORS);
+  if (!boundary) return { main: html, quoted: '', hasQuote: false };
+  // Outlook precedes its reply header with an <hr> — fold that into the quote.
+  if (boundary.id === 'divRplyFwdMsg') {
+    const prev = boundary.previousElementSibling;
+    if (prev && prev.tagName === 'HR') boundary = prev;
+  }
+  const styles = headStyles(doc);
+
+  trimBeforeBoundary(boundary, doc.body);
+  const main = doc.body.innerHTML;
+  // Whole message is quoted (e.g. a bare forward) — don't clip.
+  if (!doc.body.textContent.trim() && !doc.body.querySelector('img')) {
+    return { main: html, quoted: '', hasQuote: false };
+  }
+
+  // Re-parse to build the quoted half (the first parse was mutated).
+  let qdoc;
+  try { qdoc = new DOMParser().parseFromString(html, 'text/html'); } catch { return { main: styles + main, quoted: '', hasQuote: false }; }
+  let qBoundary = qdoc.body.querySelector(QUOTE_SELECTORS);
+  if (qBoundary && qBoundary.id === 'divRplyFwdMsg') {
+    const prev = qBoundary.previousElementSibling;
+    if (prev && prev.tagName === 'HR') qBoundary = prev;
+  }
+  if (qBoundary) trimAfterBoundary(qBoundary, qdoc.body);
+  const quoted = qBoundary ? qdoc.body.innerHTML : '';
+
+  return { main: styles + main, quoted: styles + quoted, hasQuote: true };
+}
+
+// Plain-text equivalent: clip at the first quote preamble / "On … wrote:" line /
+// leading ">" block / forwarded-message separator.
+function splitQuotedText(text) {
+  if (!text) return { main: text, quoted: '', hasQuote: false };
+  const lines = text.split(/\r?\n/);
+  let idx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].trim();
+    const next = (lines[i + 1] || '').trim();
+    if (/^On\b.*\bwrote:\s*$/.test(l)) { idx = i; break; }
+    if (/^On\b.*,$/.test(l) && /\bwrote:\s*$/.test(next)) { idx = i; break; }
+    if (/^-{2,}\s*Original Message\s*-{2,}/i.test(l)) { idx = i; break; }
+    if (/^-{2,}\s*Forwarded message\s*-{2,}/i.test(l)) { idx = i; break; }
+    if (/^_{5,}$/.test(l)) { idx = i; break; }
+    if (/^From:\s.+/.test(l) && /^(Sent|Date|To):/.test(next)) { idx = i; break; }
+    if (/^>/.test(lines[i])) { idx = i; break; }
+  }
+  if (idx <= 0) return { main: text, quoted: '', hasQuote: false };
+  const main = lines.slice(0, idx).join('\n').replace(/\s+$/, '');
+  if (!main.trim()) return { main: text, quoted: '', hasQuote: false };
+  return { main, quoted: lines.slice(idx).join('\n'), hasQuote: true };
+}
+
+// Gmail's grey "•••" pill that toggles the quoted history.
+function QuoteToggle({ shown, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={shown ? 'Hide quoted text' : 'Show quoted text'}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        height: 18, padding: '0 8px', margin: '6px 0', borderRadius: 9,
+        background: shown ? '#DAE0E5' : '#E8EBED', border: 'none', cursor: 'pointer',
+        color: BRAND.muted, lineHeight: 1, letterSpacing: 1,
+      }}
+    >
+      <span style={{ fontSize: 14, fontWeight: 700, transform: 'translateY(-3px)' }}>…</span>
+    </button>
+  );
+}
+
 export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOpenDeal, onOpenProposal, onSelectFolder, onOpenThread, onCloseThread }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
@@ -1142,9 +1272,16 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOp
 // to expand the full sanitised body + attachments.
 function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
   const [open, setOpen] = useState(!!defaultExpanded);
+  const [showQuoted, setShowQuoted] = useState(false);
   const outbound = message.outbound || (message.fromEmail && message.fromEmail.toLowerCase() === myEmail);
   const hasHtml = !!(message.html && message.html.trim());
   const who = displayName(message.from) || message.fromEmail || (outbound ? 'me' : '—');
+
+  // Clip the quoted reply history (Gmail-style) so only the new content shows.
+  const { main, quoted, hasQuote } = useMemo(
+    () => (hasHtml ? splitQuotedHtml(message.html) : splitQuotedText(message.text)),
+    [hasHtml, message.html, message.text]
+  );
 
   return (
     <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden', background: 'white' }}>
@@ -1173,10 +1310,16 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
           </div>
           <div className="email-body" style={{ fontSize: 13.5, lineHeight: 1.6, wordBreak: 'break-word' }}>
             {hasHtml
-              ? <EmailFrame html={message.html} />
+              ? <EmailFrame html={main} />
               : message.text
-                ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{message.text}</pre>
+                ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{main}</pre>
                 : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body)</div>}
+            {hasQuote && <QuoteToggle shown={showQuoted} onToggle={() => setShowQuoted(s => !s)} />}
+            {hasQuote && showQuoted && (
+              hasHtml
+                ? <EmailFrame html={quoted} />
+                : <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0, color: BRAND.muted }}>{quoted}</pre>
+            )}
           </div>
           {message.attachments?.length > 0 && (
             <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
