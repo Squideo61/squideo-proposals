@@ -87,17 +87,6 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       ],
     },
     {
-      key: 'sales',
-      label: 'Sales',
-      views: ['list', 'pipeline', 'deal', 'quote-requests', 'templates', 'leaderboard'],
-      items: [
-        { label: 'Quote Requests', icon: MailQuestion, go: () => navigate('quote-requests'), count: newQuoteRequestsCount },
-        { label: 'Proposals', icon: FileText, go: () => navigate('list') },
-        { label: 'Sales Pipeline', icon: KanbanSquare, go: () => navigate('pipeline') },
-        { label: 'Leaderboard', icon: Trophy, go: () => navigate('leaderboard') },
-      ],
-    },
-    {
       key: 'marketing',
       label: 'Marketing',
       views: ['marketing'],
@@ -107,6 +96,17 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         { label: 'Leads', icon: MailQuestion, go: () => navigate('marketing', 'leads') },
         { label: 'Settings', icon: Megaphone, go: () => navigate('marketing', 'settings') },
       ] : [],
+    },
+    {
+      key: 'sales',
+      label: 'Sales',
+      views: ['list', 'pipeline', 'deal', 'quote-requests', 'templates', 'leaderboard'],
+      items: [
+        { label: 'Quote Requests', icon: MailQuestion, go: () => navigate('quote-requests'), count: newQuoteRequestsCount },
+        { label: 'Proposals', icon: FileText, go: () => navigate('list') },
+        { label: 'Sales Pipeline', icon: KanbanSquare, go: () => navigate('pipeline') },
+        { label: 'Leaderboard', icon: Trophy, go: () => navigate('leaderboard') },
+      ],
     },
     {
       key: 'projects',
