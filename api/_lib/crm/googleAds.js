@@ -10,7 +10,10 @@
 // attribution needs none of this.
 import sql from '../db.js';
 
-const API_VERSION = 'v17';
+// Google Ads API versions are sunset ~12 months after release, which 404s the
+// request path. Default to a current version; overridable via env var so a
+// future sunset can be handled without a code change.
+const API_VERSION = process.env.GOOGLE_ADS_API_VERSION || 'v24';
 const ENV = [
   'GOOGLE_ADS_DEVELOPER_TOKEN',
   'GOOGLE_ADS_CLIENT_ID',
