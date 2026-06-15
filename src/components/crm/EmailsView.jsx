@@ -130,7 +130,12 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     try { localStorage.setItem(DENSITY_KEY, d); } catch { /* ignore */ }
   };
 
-  useEffect(() => { setSearch(''); setAppliedQuery(''); }, [active]);
+  // Deliberately DON'T clear the search when the folder changes — the query
+  // carries over so switching Inbox⇄Sent⇄… keeps filtering without re-typing.
+  // A Gmail search already spans the whole mailbox (see listFolder: the label is
+  // dropped when q is present), so the existing results stay valid in the new
+  // folder; the folder's own rows just re-supply the instant client-side matches.
+  // Use the ✕ in the box to clear and return to plain folder browsing.
 
   // The open conversation is driven entirely by the URL (openThreadId), so the
   // browser Back button returns to the folder list instead of leaving Emails.
