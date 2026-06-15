@@ -100,6 +100,9 @@ function emptyStore() {
     extrasBank: [],
     inclusionsBank: [],
     leaderboard: null,
+    // Marketing → lead attribution reports.
+    marketingReports: null,
+    marketingLeads: null,
     // Business → Finance / Performance pages.
     financeStats: null,
     performanceStats: null,
@@ -882,6 +885,35 @@ export function StoreProvider({ children }) {
         setState(s => ({ ...s, leaderboard: board }));
         return board;
       }).catch(() => ({ totals: [], createdTrend: [], signedTrend: [], range: r, grain: 'day', periodLabel: '' }));
+    },
+    // Marketing → aggregated lead-attribution report grouped by source / medium /
+    // campaign / keyword / channel over an optional date range (YYYY-MM-DD).
+    loadMarketingReports(groupBy, from, to) {
+      const qs = new URLSearchParams();
+      if (from) qs.set('from', from);
+      if (to) qs.set('to', to);
+      const q = qs.toString();
+      const path = '/api/crm/analytics/reports/' + (groupBy || 'campaign') + (q ? '?' + q : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, marketingReports: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    // Marketing → the per-lead log with attribution + linked deal + revenue.
+    loadMarketingLeads(from, to) {
+      const qs = new URLSearchParams();
+      if (from) qs.set('from', from);
+      if (to) qs.set('to', to);
+      const q = qs.toString();
+      const path = '/api/crm/analytics/leads' + (q ? '?' + q : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, marketingLeads: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    // Marketing → setup snippet + Google Ads tracking template (Settings tab).
+    loadMarketingSnippet() {
+      return api.get('/api/crm/analytics/snippet').catch(() => null);
     },
     // Business → Finance: all-customer monthly net / VAT-to-save / gross for a year.
     loadFinanceStats(year) {

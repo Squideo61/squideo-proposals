@@ -10,6 +10,7 @@ import { del } from '@vercel/blob';
 import { buildResumeEmail } from '../quoteResumeEmail.js';
 import { signTaskActionToken } from '../auth.js';
 import { quarterTaxSummary } from './stats.js';
+import { cronAdSpendSync } from './googleAds.js';
 import { timingSafeEqualStr } from '../middleware.js';
 
 export async function cronHandler(req, res, action) {
@@ -39,6 +40,7 @@ export async function cronHandler(req, res, action) {
     case 'quarterly-tax-summary': return cronQuarterlyTaxSummary(res);
     case 'director-tax-reminders': return cronDirectorTaxReminders(res);
     case 'intro-call-reminders': return cronIntroCallReminders(req, res);
+    case 'ad-spend-sync':     return cronAdSpendSync(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }

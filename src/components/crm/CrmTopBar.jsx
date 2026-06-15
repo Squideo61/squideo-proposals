@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, PoundSterling, Settings, Trophy, Undo2, Redo2, UserCog } from 'lucide-react';
+import { BarChart3, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, PoundSterling, Settings, Trophy, Undo2, Redo2, UserCog } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -69,6 +69,8 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     || permissionsInclude(perms, 'settings.manage');
   // Whole-business finances — anyone with finance.manage (owner/admin + Director).
   const canBusiness = permissionsInclude(perms, 'finance.manage');
+  // Marketing (lead attribution + ad ROAS) — Admin / whoever's granted it.
+  const canMarketing = permissionsInclude(perms, 'marketing.access');
   // The £ (sales & finance) notifications bell — Admin, Directors, Project Managers.
   const canFinanceBell = permissionsInclude(perms, 'finance.notifications');
 
@@ -94,6 +96,17 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         { label: 'Sales Pipeline', icon: KanbanSquare, go: () => navigate('pipeline') },
         { label: 'Leaderboard', icon: Trophy, go: () => navigate('leaderboard') },
       ],
+    },
+    {
+      key: 'marketing',
+      label: 'Marketing',
+      views: ['marketing'],
+      items: canMarketing ? [
+        { label: 'Dashboard', icon: LayoutDashboard, go: () => navigate('marketing', 'overview') },
+        { label: 'Reports', icon: BarChart3, go: () => navigate('marketing', 'reports') },
+        { label: 'Leads', icon: MailQuestion, go: () => navigate('marketing', 'leads') },
+        { label: 'Settings', icon: Megaphone, go: () => navigate('marketing', 'settings') },
+      ] : [],
     },
     {
       key: 'projects',
