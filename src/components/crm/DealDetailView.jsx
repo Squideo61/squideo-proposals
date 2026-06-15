@@ -1096,10 +1096,11 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
       )}
       {expanded && isMulti && (
         <div style={{ marginTop: 8, marginLeft: 22, paddingLeft: 12, borderLeft: '2px solid ' + BRAND.border, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {messages.map((m) => (
+          {messages.map((m, i) => (
             <ExpandedMessage
               key={m.gmailMessageId}
               email={m}
+              defaultOpen={i === messages.length - 1}
               onOpenFull={() => onOpenMessage(m.gmailMessageId)}
             />
           ))}
@@ -1117,21 +1118,27 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
 // One message inside an expanded thread. Loads its body on mount (cached in
 // the store so re-opens are free), sanitises HTML, and falls back to plain
 // text. Click the header to open the standalone modal.
-function ExpandedMessage({ email, onOpenFull }) {
+function ExpandedMessage({ email, defaultOpen = false, onOpenFull }) {
   const { state, actions } = useStore();
   const cached = state.emailBodies?.[email.gmailMessageId] || null;
+  // Collapsed by default for every message except the latest, so opening a
+  // thread shows only the newest email's body (older ones are one click away).
+  const [open, setOpen] = useState(defaultOpen);
   const [data, setData] = useState(cached);
-  const [loading, setLoading] = useState(!cached);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Lazy-load the body the first time the message is opened (and not before),
+  // so collapsed messages cost nothing.
   useEffect(() => {
-    if (cached) return;
+    if (!open || data) return;
     let cancelled = false;
+    setLoading(true);
     actions.loadEmailBody(email.gmailMessageId)
       .then((res) => { if (!cancelled) { setData(res); setLoading(false); } })
       .catch((err) => { if (!cancelled) { setError(err?.message || 'Failed to load'); setLoading(false); } });
     return () => { cancelled = true; };
-  }, [email.gmailMessageId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, email.gmailMessageId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sanitized = useMemo(() => {
     if (!data?.bodyHtml) return null;
@@ -1148,39 +1155,59 @@ function ExpandedMessage({ email, onOpenFull }) {
 
   return (
     <div style={{ background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12 }}>
-      <button
-        type="button"
-        onClick={onOpenFull}
-        title="Open full message"
-        style={{
-          width: '100%', background: 'transparent', border: 'none', padding: 0,
-          textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', color: 'inherit',
-          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
-        }}
-      >
-        <span style={{
-          display: 'inline-block', padding: '1px 5px', borderRadius: 3,
-          background: accent + '22', color: accent,
-          fontSize: 10, fontWeight: 700, flexShrink: 0,
-        }}>{inbound ? 'IN' : 'OUT'}</span>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {inbound ? 'From' : 'To'} <strong>{counterparty || '—'}</strong>
-        </span>
-        <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>
-          {formatRelativeTime(email.sentAt)}
-        </span>
-      </button>
-      <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8, fontSize: 13, lineHeight: 1.5, maxHeight: 320, overflowY: 'auto', wordBreak: 'break-word' }}>
-        {loading && <div style={{ color: BRAND.muted, fontSize: 12 }}>Loading…</div>}
-        {error && <div style={{ color: '#DC2626', fontSize: 12 }}>{error}</div>}
-        {!loading && !error && data && (
-          sanitized
-            ? <div className="email-body" dangerouslySetInnerHTML={{ __html: sanitized }} />
-            : data.bodyText
-              ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{data.bodyText}</pre>
-              : <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 12 }}>(no body stored — open in Gmail to read)</div>
-        )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: open ? 8 : 0 }}>
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          title={open ? 'Collapse message' : 'Expand message'}
+          aria-expanded={open}
+          style={{
+            flex: 1, minWidth: 0, background: 'transparent', border: 'none', padding: 0,
+            textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', color: 'inherit',
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}
+        >
+          <span style={{
+            display: 'inline-block', padding: '1px 5px', borderRadius: 3,
+            background: accent + '22', color: accent,
+            fontSize: 10, fontWeight: 700, flexShrink: 0,
+          }}>{inbound ? 'IN' : 'OUT'}</span>
+          <span style={{ flexShrink: 0, fontSize: 12, color: BRAND.ink }}>
+            {inbound ? 'From' : 'To'} <strong>{counterparty || '—'}</strong>
+          </span>
+          {!open && email.snippet && (
+            <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {email.snippet}
+            </span>
+          )}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>
+            {formatRelativeTime(email.sentAt)}
+          </span>
+          <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
+        </button>
+        <button
+          type="button"
+          onClick={onOpenFull}
+          title="Open full message"
+          aria-label="Open full message"
+          style={{ flexShrink: 0, background: 'transparent', border: 'none', padding: 2, cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
+        >
+          <ExternalLink size={13} />
+        </button>
       </div>
+      {open && (
+        <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8, fontSize: 13, lineHeight: 1.5, maxHeight: 320, overflowY: 'auto', wordBreak: 'break-word' }}>
+          {loading && <div style={{ color: BRAND.muted, fontSize: 12 }}>Loading…</div>}
+          {error && <div style={{ color: '#DC2626', fontSize: 12 }}>{error}</div>}
+          {!loading && !error && data && (
+            sanitized
+              ? <div className="email-body" dangerouslySetInnerHTML={{ __html: sanitized }} />
+              : data.bodyText
+                ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{data.bodyText}</pre>
+                : <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 12 }}>(no body stored — open in Gmail to read)</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
