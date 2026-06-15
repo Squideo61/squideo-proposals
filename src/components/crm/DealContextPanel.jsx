@@ -100,8 +100,6 @@ function SuggestedView({ suggested, gmailThreadId, counterpartyEmail, onOpenDeal
           </div>
         ))}
       </div>
-      <NewDealButton gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} />
-      <Hr />
       <AttachPicker gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} excludeDealIds={suggested.map(d => d.dealId)} label="Or pick a different deal" alwaysOpen />
     </Wrap>
   );
@@ -116,8 +114,6 @@ function UnlinkedView({ gmailThreadId, counterpartyEmail }) {
           ? <>No match for <strong style={{ color: BRAND.ink }}>{counterpartyEmail}</strong>. Attach this conversation to a deal or create one.</>
           : 'Attach this conversation to a deal or create one.'}
       </Muted>
-      <NewDealButton gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} />
-      <Hr />
       <AttachPicker gmailThreadId={gmailThreadId} counterpartyEmail={counterpartyEmail} label="Add to deal" alwaysOpen />
     </Wrap>
   );
@@ -377,49 +373,47 @@ function TimelineEmail({ email }) {
 
 // ---- Actions ----
 
-function NewDealButton({ gmailThreadId, counterpartyEmail }) {
-  const { actions, showMsg } = useStore();
-  const [busy, setBusy] = useState(false);
-  const create = async () => {
-    setBusy(true);
-    try {
-      let title = 'New deal';
-      if (counterpartyEmail) {
-        const local = counterpartyEmail.split('@')[0].replace(/[._-]+/g, ' ');
-        title = local.charAt(0).toUpperCase() + local.slice(1);
-      }
-      const deal = await actions.createDeal({ title });
-      if (deal?.id) await actions.attachThreadToDeal({ gmailThreadId, counterpartyEmail, dealId: deal.id });
-      showMsg('Deal created');
-    } catch (e) { showMsg(e?.message || 'Could not create deal'); }
-    finally { setBusy(false); }
-  };
-  return (
-    <button onClick={create} disabled={busy} className="btn" style={{ width: '100%', justifyContent: 'center' }}>
-      <Plus size={14} /> {busy ? 'Creating…' : 'New deal from this thread'}
-    </button>
-  );
-}
-
-function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], label, collapsedLabel, alwaysOpen = false }) {
+function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], label, collapsedLabel, alwaysOpen = false, allowCreate = true }) {
   const { state, actions, showMsg } = useStore();
   const [open, setOpen] = useState(alwaysOpen);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const q = query.trim();
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const needle = q.toLowerCase();
     const exclude = new Set(excludeDealIds);
     return Object.values(state.deals || {})
       .filter(d => d && !exclude.has(d.id) && d.stage !== 'lost')
-      .filter(d => !q || (d.title || '').toLowerCase().includes(q))
+      .filter(d => !needle || (d.title || '').toLowerCase().includes(needle))
       .sort((a, b) => new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0))
       .slice(0, 8);
-  }, [state.deals, query, excludeDealIds]);
+  }, [state.deals, q, excludeDealIds]);
+
+  // Offer "create" when there's something typed and no deal already has that
+  // exact title — so you can spin up a new deal named after what you typed,
+  // rather than via a separate button.
+  const exactExists = useMemo(
+    () => !!q && Object.values(state.deals || {}).some(d => d && (d.title || '').toLowerCase() === q.toLowerCase()),
+    [state.deals, q]
+  );
+  const canCreate = allowCreate && !!q && !exactExists;
 
   const attach = async (dealId) => {
     setBusy(true);
     try { await actions.attachThreadToDeal({ gmailThreadId, counterpartyEmail, dealId }); showMsg('Attached to deal'); }
+    finally { setBusy(false); }
+  };
+
+  const createAndAttach = async () => {
+    if (!q) return;
+    setBusy(true);
+    try {
+      const deal = await actions.createDeal({ title: q });
+      if (deal?.id) await actions.attachThreadToDeal({ gmailThreadId, counterpartyEmail, dealId: deal.id });
+      showMsg('Deal created');
+      setQuery('');
+    } catch (e) { showMsg(e?.message || 'Could not create deal'); }
     finally { setBusy(false); }
   };
 
@@ -432,14 +426,30 @@ function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], l
       <Label>{label}</Label>
       <div style={{ position: 'relative', margin: '6px 0' }}>
         <Search size={13} color={BRAND.muted} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
-        <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search deals…" style={{ paddingLeft: 30, fontSize: 12 }} />
+        <input
+          className="input"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && canCreate) { e.preventDefault(); createAndAttach(); } }}
+          placeholder={allowCreate ? 'Search or type a new deal name…' : 'Search deals…'}
+          style={{ paddingLeft: 30, fontSize: 12 }}
+        />
       </div>
-      {filtered.length === 0 ? <Muted>No matching deals.</Muted> : filtered.map(d => (
+      {filtered.map(d => (
         <button key={d.id} onClick={() => attach(d.id)} disabled={busy} style={pickerRow}>
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title}</span>
           <StageBadge stage={d.stage} compact />
         </button>
       ))}
+      {filtered.length === 0 && !canCreate && <Muted>{q ? 'No matching deals.' : 'No deals yet.'}</Muted>}
+      {canCreate && (
+        <button onClick={createAndAttach} disabled={busy} style={createRow} title="Create a new deal with this name and attach the thread">
+          <Plus size={13} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {busy ? 'Creating…' : <>Create new deal “<strong>{q}</strong>”</>}
+          </span>
+        </button>
+      )}
     </div>
   );
 }
@@ -506,12 +516,15 @@ const Label = ({ children }) => <div style={{ fontSize: 11, fontWeight: 700, col
 const Muted = ({ children, style }) => <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.4, ...(style || {}) }}>{children}</div>;
 const Row = ({ children }) => <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>{children}</div>;
 const DealMetaKey = ({ children }) => <span style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{children}</span>;
-const Hr = () => <div style={{ borderTop: '1px solid ' + BRAND.border, margin: '12px 0' }} />;
 
 const pickerRow = {
   display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', marginTop: 4, width: '100%',
   background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, fontSize: 12,
   cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', color: BRAND.ink,
+};
+const createRow = {
+  ...pickerRow,
+  background: BRAND.blue + '12', border: '1px solid ' + BRAND.blue + '55', color: BRAND.blue, fontWeight: 600,
 };
 const ccRow = {
   display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px',
