@@ -64,6 +64,10 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
 
   const canRevisions = permissionsInclude(perms, 'revisions.access');
   const canProduction = permissionsInclude(perms, 'production.access');
+  // Quote Requests page is API-gated by quote_requests.manage; hide the nav item
+  // for roles without it (e.g. producers, copywriters) so they don't land on a
+  // page that 403s and looks empty/broken.
+  const canQuoteRequests = permissionsInclude(perms, 'quote_requests.manage');
   const canAdmin = permissionsInclude(perms, 'users.manage')
     || permissionsInclude(perms, 'roles.manage')
     || permissionsInclude(perms, 'settings.manage');
@@ -102,7 +106,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       label: 'Sales',
       views: ['list', 'pipeline', 'deal', 'quote-requests', 'templates', 'leaderboard'],
       items: [
-        { label: 'Quote Requests', icon: MailQuestion, go: () => navigate('quote-requests'), count: newQuoteRequestsCount },
+        ...(canQuoteRequests ? [{ label: 'Quote Requests', icon: MailQuestion, go: () => navigate('quote-requests'), count: newQuoteRequestsCount }] : []),
         { label: 'Proposals', icon: FileText, go: () => navigate('list') },
         { label: 'Sales Pipeline', icon: KanbanSquare, go: () => navigate('pipeline') },
         { label: 'Leaderboard', icon: Trophy, go: () => navigate('leaderboard') },

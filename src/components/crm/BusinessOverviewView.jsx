@@ -221,6 +221,7 @@ export function BusinessOverviewView({
   const perms = state.session?.permissions;
   const canBusiness = permissionsInclude(perms, 'finance.manage');
   const canProduction = permissionsInclude(perms, 'production.access');
+  const canQuoteRequests = permissionsInclude(perms, 'quote_requests.manage');
 
   // The operational sales + tasks tiles reflect the viewing user's own work
   // (their deals / their tasks), regardless of role. Recent activity and
@@ -510,9 +511,11 @@ export function BusinessOverviewView({
       {/* ── Tasks / Quote requests / Partners / Recent activity ── */}
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: sectionGap, marginTop: sectionGap }}>
         <Panel title="Today's workload" icon={CheckSquare} delay={11}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <ActionTile icon={CheckSquare} label="Tasks due" value={tasksDue} accent={tasksDue > 0 ? AMBER : GREEN} onClick={onOpenTasks} />
-            <ActionTile icon={MailQuestion} label="New quote requests" value={newQuotes} accent={newQuotes > 0 ? BRAND.blue : BRAND.muted} onClick={onOpenQuoteRequests} />
+          <div style={{ display: 'grid', gridTemplateColumns: canQuoteRequests ? '1fr 1fr' : '1fr', gap: 12 }}>
+            <ActionTile icon={CheckSquare} label="Tasks due" value={tasksDue} accent={tasksDue > 0 ? AMBER : GREEN} onClick={onOpenTasks} wide={!canQuoteRequests} />
+            {canQuoteRequests && (
+              <ActionTile icon={MailQuestion} label="New quote requests" value={newQuotes} accent={newQuotes > 0 ? BRAND.blue : BRAND.muted} onClick={onOpenQuoteRequests} />
+            )}
           </div>
           {(canProduction) && (
             <div style={{ marginTop: 12 }}>
