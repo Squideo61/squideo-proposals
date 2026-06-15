@@ -305,6 +305,7 @@ export function QuoteRequestForm(props = {}) {
       timeline: form.timeline || null,
       budget: form.budget.trim() || null,
       sourceUrl: window.location.href,
+      attribution: cfg.getAttribution?.() || null,
       lastStep: typeof step === 'number' ? step : null,
     };
     const fingerprint = JSON.stringify(payload);
@@ -618,6 +619,7 @@ export function QuoteRequestForm(props = {}) {
         budget: form.budget.trim() || null,
         optIn: !!form.optIn,
         sourceUrl: window.location.href,
+        attribution: cfg.getAttribution?.() || null,
         files: uploaded,
       };
 

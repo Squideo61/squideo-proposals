@@ -13,6 +13,7 @@ export const PERMISSIONS = [
   { slug: 'settings.manage',      group: 'Workspace',  label: 'Edit workspace settings' },
   { slug: 'finance.manage',       group: 'Workspace',  label: 'View + edit business finance (Cash Flow, Performance, Storage costs)' },
   { slug: 'finance.notifications',group: 'Workspace',  label: 'See the sales & finance notifications bell (£)' },
+  { slug: 'marketing.access',     group: 'Workspace',  label: 'View Marketing (lead attribution + ad ROAS)' },
 
   { slug: 'proposals.manage_all', group: 'Proposals',  label: 'Edit / delete any proposal' },
   { slug: 'signatures.manage_all',group: 'Proposals',  label: 'Edit / delete any signature record' },

@@ -2,13 +2,74 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { QuoteRequestForm } from './components/QuoteRequestForm.jsx';
 
+// Marketing attribution lives outside React (it arrives asynchronously from the
+// parent page and the form just reads the latest value at submit time).
+let attribution = null;
+const getAttribution = () => attribution;
+
+const inIframe = window.parent !== window;
+
+if (inIframe) {
+  // Ask the embedding page (squideo.com, running /track.js) for the first-touch
+  // attribution it captured on the landing page. Retried a few times because
+  // track.js may load after us. The reply is handled below.
+  const requestAttribution = () => {
+    try {
+      window.parent.postMessage({ type: 'squideo-quote-form:attr-request' }, '*');
+    } catch { /* parent may reject — not critical */ }
+  };
+  window.addEventListener('message', (event) => {
+    const data = event.data;
+    // Accept only our attribution message. The payload is non-sensitive
+    // (marketing source data, no auth), and event.origin here is the embedding
+    // marketing site which is not a fixed value (squideo.com / a Duda preview),
+    // so we gate on the message type rather than a strict origin allowlist.
+    if (!data || data.type !== 'squideo-quote-form:attr') return;
+    if (data.attribution && typeof data.attribution === 'object') {
+      attribution = data.attribution;
+    }
+  });
+  requestAttribution();
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries += 1;
+    if (attribution || tries > 10) { clearInterval(timer); return; }
+    requestAttribution();
+  }, 300);
+} else {
+  // Direct visit / local QA: no embedding page to hand us attribution, so parse
+  // it from our own URL (e.g. /quote?gclid=...&utm_source=...&campaignid=...).
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const map = {
+      gclid: 'gclid', gbraid: 'gbraid', wbraid: 'wbraid', fbclid: 'fbclid', msclkid: 'msclkid',
+      utm_source: 'source', utm_medium: 'medium', utm_campaign: 'campaign',
+      utm_term: 'term', utm_content: 'content',
+      campaignid: 'campaignId', adgroupid: 'adgroupId', keyword: 'keyword',
+      matchtype: 'matchtype', network: 'network', device: 'device',
+    };
+    const a = {};
+    let any = false;
+    for (const [k, field] of Object.entries(map)) {
+      const v = p.get(k);
+      if (v) { a[field] = v; any = true; }
+    }
+    if (any) {
+      a.referrer = document.referrer || null;
+      a.landingUrl = window.location.href;
+      a.firstSeenAt = Date.now();
+      attribution = a;
+    }
+  } catch { /* ignore */ }
+}
+
 const container = document.getElementById('quote-root');
-createRoot(container).render(<QuoteRequestForm />);
+createRoot(container).render(<QuoteRequestForm getAttribution={getAttribution} />);
 
 // Auto-resize: post the rendered height to the embedding page so the
 // iframe can adjust. The parent can listen for window message events
 // where data.type === 'squideo-quote-form:height'.
-if (window.parent !== window) {
+if (inIframe) {
   let lastHeight = 0;
   const sendHeight = () => {
     const h = document.documentElement.scrollHeight;

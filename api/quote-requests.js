@@ -8,6 +8,7 @@ import { signQuoteRequestActionToken, verifyQuoteRequestActionToken } from './_l
 import { qualifyQuoteRequest, disqualifyQuoteRequest } from './_lib/quoteRequestActions.js';
 import { getRoleForUser } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
+import { pickAttribution, ensureLeadAttribution } from './_lib/leadAttribution.js';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const NOTIFY_TO = process.env.QUOTE_REQUEST_NOTIFY_TO || 'adam@squideo.co.uk';
@@ -358,16 +359,25 @@ export default async function handler(req, res) {
           req.socket?.remoteAddress
       );
       const lastStep = Number.isFinite(Number(body.lastStep)) ? Math.max(1, Math.min(4, Math.floor(Number(body.lastStep)))) : null;
+      // First-touch attribution on the partial too, so an abandoned-then-resumed
+      // lead keeps its original source. COALESCE keeps the first value seen.
+      await ensureLeadAttribution().catch((e) => console.warn('[quote-requests] attr ensure failed', e?.message));
+      const pAttr = pickAttribution(body) || {};
       await sql`
         INSERT INTO quote_request_partials (
           form_session_id, name, email, phone, country_code, country_name,
           company, project_details, timeline, budget, source_url, user_agent,
-          ip_address, last_step, last_activity_at
+          ip_address, last_step, last_activity_at,
+          attr_channel, attr_source, attr_medium, attr_campaign,
+          attr_campaign_id, attr_keyword, attr_gclid
         ) VALUES (
           ${formSessionId}, ${trimOrNull(body.name)}, ${trimOrNull(body.email)},
           ${trimOrNull(body.phone)}, ${trimOrNull(body.countryCode)}, ${trimOrNull(body.countryName)},
           ${trimOrNull(body.company)}, ${projectDetails}, ${trimOrNull(body.timeline)},
-          ${trimOrNull(body.budget)}, ${sourceUrl}, ${userAgent}, ${ip}, ${lastStep}, NOW()
+          ${trimOrNull(body.budget)}, ${sourceUrl}, ${userAgent}, ${ip}, ${lastStep}, NOW(),
+          ${pAttr.attr_channel ?? null}, ${pAttr.attr_source ?? null}, ${pAttr.attr_medium ?? null},
+          ${pAttr.attr_campaign ?? null}, ${pAttr.attr_campaign_id ?? null},
+          ${pAttr.attr_keyword ?? null}, ${pAttr.attr_gclid ?? null}
         )
         ON CONFLICT (form_session_id) DO UPDATE SET
           name = EXCLUDED.name,
@@ -382,6 +392,13 @@ export default async function handler(req, res) {
           source_url = COALESCE(quote_request_partials.source_url, EXCLUDED.source_url),
           user_agent = COALESCE(quote_request_partials.user_agent, EXCLUDED.user_agent),
           ip_address = COALESCE(quote_request_partials.ip_address, EXCLUDED.ip_address),
+          attr_channel = COALESCE(quote_request_partials.attr_channel, EXCLUDED.attr_channel),
+          attr_source = COALESCE(quote_request_partials.attr_source, EXCLUDED.attr_source),
+          attr_medium = COALESCE(quote_request_partials.attr_medium, EXCLUDED.attr_medium),
+          attr_campaign = COALESCE(quote_request_partials.attr_campaign, EXCLUDED.attr_campaign),
+          attr_campaign_id = COALESCE(quote_request_partials.attr_campaign_id, EXCLUDED.attr_campaign_id),
+          attr_keyword = COALESCE(quote_request_partials.attr_keyword, EXCLUDED.attr_keyword),
+          attr_gclid = COALESCE(quote_request_partials.attr_gclid, EXCLUDED.attr_gclid),
           last_step = EXCLUDED.last_step,
           last_activity_at = NOW()
         WHERE quote_request_partials.completed_at IS NULL
@@ -435,6 +452,12 @@ export default async function handler(req, res) {
         req.socket?.remoteAddress
     );
 
+    // First-touch marketing attribution (gclid/UTM/ValueTrack), captured on the
+    // squideo.com landing page by /track.js and posted into the form iframe.
+    // Self-heal the columns so the first attributed lead can't hit a missing one.
+    await ensureLeadAttribution().catch((e) => console.warn('[quote-requests] attr ensure failed', e?.message));
+    const attr = pickAttribution(body) || {};
+
     const qr = {
       id,
       form_session_id: trimOrNull(body.formSessionId),
@@ -458,12 +481,23 @@ export default async function handler(req, res) {
       INSERT INTO quote_requests (
         id, form_session_id, name, email, phone, country_code, country_name,
         company, project_details, timeline, budget, opt_in,
-        source_url, user_agent, ip_address, created_at
+        source_url, user_agent, ip_address, created_at,
+        attr_channel, attr_source, attr_medium, attr_campaign, attr_term, attr_content,
+        attr_gclid, attr_gbraid, attr_wbraid, attr_fbclid, attr_msclkid,
+        attr_campaign_id, attr_adgroup_id, attr_keyword, attr_matchtype, attr_network,
+        attr_device, attr_landing_url, attr_referrer, attr_first_seen_at
       ) VALUES (
         ${qr.id}, ${qr.form_session_id}, ${qr.name}, ${qr.email}, ${qr.phone},
         ${qr.country_code}, ${qr.country_name}, ${qr.company}, ${qr.project_details},
         ${qr.timeline}, ${qr.budget}, ${qr.opt_in}, ${qr.source_url},
-        ${qr.user_agent}, ${qr.ip_address}, ${qr.created_at}
+        ${qr.user_agent}, ${qr.ip_address}, ${qr.created_at},
+        ${attr.attr_channel ?? null}, ${attr.attr_source ?? null}, ${attr.attr_medium ?? null},
+        ${attr.attr_campaign ?? null}, ${attr.attr_term ?? null}, ${attr.attr_content ?? null},
+        ${attr.attr_gclid ?? null}, ${attr.attr_gbraid ?? null}, ${attr.attr_wbraid ?? null},
+        ${attr.attr_fbclid ?? null}, ${attr.attr_msclkid ?? null},
+        ${attr.attr_campaign_id ?? null}, ${attr.attr_adgroup_id ?? null}, ${attr.attr_keyword ?? null},
+        ${attr.attr_matchtype ?? null}, ${attr.attr_network ?? null}, ${attr.attr_device ?? null},
+        ${attr.attr_landing_url ?? null}, ${attr.attr_referrer ?? null}, ${attr.attr_first_seen_at ?? null}
       )
     `;
 
