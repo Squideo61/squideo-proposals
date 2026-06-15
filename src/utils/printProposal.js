@@ -159,7 +159,12 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       </div>
     </div>`).join('');
 
-  const extrasRows = data.optionalExtras.map(e => {
+  // On a signed copy, only the extras the client actually selected are shown.
+  // On the blank/signable copy we still list every extra so it can be ticked.
+  const extrasToShow = signable
+    ? data.optionalExtras
+    : data.optionalExtras.filter(e => selectedExtras[e.id]);
+  const extrasRows = extrasToShow.map(e => {
     const checked = !!selectedExtras[e.id];
     const box = signable
       ? `<input type="checkbox" ${checked ? 'checked' : ''} style="margin-top:2px;flex-shrink:0;" />`
@@ -438,10 +443,11 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   ${partnerBlock}
 
   <!-- Optional extras -->
-  <h2 class="page-title">Optional Extras</h2>
+  ${(signable || extrasToShow.length > 0) ? `
+  <h2 class="page-title">${signable ? 'Optional Extras' : 'Selected Optional Extras'}</h2>
   <div style="border:1px solid #E5E9EE;border-radius:10px;padding:4px 16px;margin-bottom:16px;">
     ${extrasRows}
-  </div>
+  </div>` : ''}
 
   <!-- Total summary (when extras selected or partner discount applies) -->
   ${(extrasTotal > 0 || partnerSelected) ? `
