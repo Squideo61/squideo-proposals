@@ -2948,6 +2948,12 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
   // RichTextEditor seeds its contentEditable from it either way.
   const [body, setBody] = useState(initialDraft?.body ?? '');
   const [sending, setSending] = useState(false);
+  // Undo-send: hitting Send starts an 8s countdown before the email actually
+  // goes out, with an Undo to call it off. null = not counting down.
+  const SEND_DELAY_SECONDS = 8;
+  const [countdown, setCountdown] = useState(null);
+  const sendTimeoutRef = useRef(null);
+  const sendIntervalRef = useRef(null);
   // Attachment refs uploaded to the temporary email-attachments blob store.
   // Each: { id, filename, mimeType, sizeBytes, blobUrl?, blobPathname?, uploading?, error? }.
   const [attachments, setAttachments] = useState(initialDraft?.attachments ?? []);
@@ -3198,7 +3204,37 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
     }
   };
 
-  const submit = (e) => { e.preventDefault(); doSend(); };
+  const clearSendTimers = () => {
+    if (sendTimeoutRef.current) { clearTimeout(sendTimeoutRef.current); sendTimeoutRef.current = null; }
+    if (sendIntervalRef.current) { clearInterval(sendIntervalRef.current); sendIntervalRef.current = null; }
+  };
+
+  // Start the undo window: count down from 8s, then actually send. doSend's
+  // success path closes/refreshes; on failure the composer stays open.
+  const beginSend = () => {
+    if (!canSend || countdown != null) return;
+    setError('');
+    setCountdown(SEND_DELAY_SECONDS);
+    sendIntervalRef.current = setInterval(() => {
+      setCountdown((c) => (c != null && c > 1 ? c - 1 : c));
+    }, 1000);
+    sendTimeoutRef.current = setTimeout(async () => {
+      clearSendTimers();
+      setCountdown(null);
+      await doSend();
+    }, SEND_DELAY_SECONDS * 1000);
+  };
+
+  const undoSend = () => {
+    clearSendTimers();
+    setCountdown(null);
+  };
+
+  // Cancel a pending send if the composer unmounts (closed/navigated away) so a
+  // half-counted email never fires after the UI is gone.
+  useEffect(() => clearSendTimers, []);
+
+  const submit = (e) => { e.preventDefault(); beginSend(); };
 
   // "Send & create follow-up": open the task box (prefilled for this deal, a few
   // days out) to set the follow-up; once the task is created we send the email.
@@ -3617,46 +3653,60 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
             >
               <FileText size={14} /> Templates
             </button>
-            <button type="button" onClick={onClose} className="btn-ghost" style={{ whiteSpace: 'nowrap' }}>Discard</button>
-            {/* Split Send button: the main half sends now, the ▾ half opens a
-                popover to schedule the send for later. */}
-            <div style={{ display: 'flex' }}>
-              <button
-                type="submit"
-                className="btn"
-                disabled={!canSend}
-                style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
-              >
-                {sending ? 'Sending…' : 'Send'}
-              </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={openFollowUp}
-                disabled={!canSend}
-                aria-label="Send and create follow-up"
-                title="Send & create follow-up task"
-                style={{ borderRadius: 0, borderLeft: '1px solid rgba(255,255,255,0.35)', padding: '0 8px', display: 'inline-flex', alignItems: 'center' }}
-              >
-                <CheckSquare size={14} />
-              </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  setShowSchedule((v) => {
-                    if (!v && !scheduleAt) setScheduleAt(defaultScheduleValue());
-                    return !v;
-                  });
-                }}
-                disabled={!canSend}
-                aria-label="Schedule send"
-                title="Schedule send"
-                style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: '1px solid rgba(255,255,255,0.35)', padding: '0 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }}
-              >
-                <Clock size={14} /> ▾
-              </button>
-            </div>
+            {countdown != null ? (
+              // Undo window: the email is on its way in N seconds unless cancelled.
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 13, color: BRAND.muted, whiteSpace: 'nowrap' }}>
+                  Sending in {countdown}s…
+                </span>
+                <button type="button" onClick={undoSend} className="btn" autoFocus style={{ whiteSpace: 'nowrap' }}>
+                  Undo send
+                </button>
+              </div>
+            ) : (
+              <>
+                <button type="button" onClick={onClose} className="btn-ghost" style={{ whiteSpace: 'nowrap' }}>Discard</button>
+                {/* Split Send button: the main half sends now (after the undo
+                    window), the ▾ half opens a popover to schedule for later. */}
+                <div style={{ display: 'flex' }}>
+                  <button
+                    type="submit"
+                    className="btn"
+                    disabled={!canSend}
+                    style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+                  >
+                    {sending ? 'Sending…' : 'Send'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={openFollowUp}
+                    disabled={!canSend}
+                    aria-label="Send and create follow-up"
+                    title="Send & create follow-up task"
+                    style={{ borderRadius: 0, borderLeft: '1px solid rgba(255,255,255,0.35)', padding: '0 8px', display: 'inline-flex', alignItems: 'center' }}
+                  >
+                    <CheckSquare size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      setShowSchedule((v) => {
+                        if (!v && !scheduleAt) setScheduleAt(defaultScheduleValue());
+                        return !v;
+                      });
+                    }}
+                    disabled={!canSend}
+                    aria-label="Schedule send"
+                    title="Schedule send"
+                    style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: '1px solid rgba(255,255,255,0.35)', padding: '0 8px', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                  >
+                    <Clock size={14} /> ▾
+                  </button>
+                </div>
+              </>
+            )}
             {showSchedule && (
               <div
                 style={{
