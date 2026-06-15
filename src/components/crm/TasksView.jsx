@@ -3,6 +3,7 @@ import { ArrowLeft, CheckSquare, ChevronDown, Pencil, Plus, Square, Trash2 } fro
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
+import { permissionsInclude } from '../../lib/permissions.js';
 import { AvatarGroup } from '../Avatar.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 
@@ -21,6 +22,9 @@ export function TasksView({ onBack, onOpenDeal }) {
   const isMobile = useIsMobile();
   const [creating, setCreating] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  // Only users who can manage every task (Admin) may browse other people's
+  // tasks; everyone else is server-scoped to their own and gets no team filter.
+  const canSeeAllTasks = permissionsInclude(state.session?.permissions, 'tasks.manage_all');
   // Defaults to the current user ("My tasks"); '' = everyone. Persisted.
   const [memberFilter, setMemberFilter] = useState(() => {
     try {
@@ -37,8 +41,10 @@ export function TasksView({ onBack, onOpenDeal }) {
 
   const tasks = state.tasks || [];
   const visibleTasks = useMemo(
-    () => (memberFilter ? tasks.filter((t) => taskAssignees(t).includes(memberFilter)) : tasks),
-    [tasks, memberFilter],
+    // Non-admins only have their own tasks loaded, so ignore the (hidden) member
+    // filter entirely and show them all. Admins filter the workspace-wide list.
+    () => (canSeeAllTasks && memberFilter ? tasks.filter((t) => taskAssignees(t).includes(memberFilter)) : tasks),
+    [tasks, memberFilter, canSeeAllTasks],
   );
   const buckets = useMemo(() => bucketTasks(visibleTasks), [visibleTasks]);
 
@@ -65,16 +71,18 @@ export function TasksView({ onBack, onOpenDeal }) {
         </div>
       ) : (
         <>
-          <div style={{ marginBottom: 12 }}>
-            <TaskScopeFilter
-              memberFilter={memberFilter}
-              setMemberFilter={setMemberFilter}
-              memberOptions={memberOptions}
-              sessionEmail={state.session?.email}
-              filteredCount={visibleTasks.length}
-              totalCount={tasks.length}
-            />
-          </div>
+          {canSeeAllTasks && (
+            <div style={{ marginBottom: 12 }}>
+              <TaskScopeFilter
+                memberFilter={memberFilter}
+                setMemberFilter={setMemberFilter}
+                memberOptions={memberOptions}
+                sessionEmail={state.session?.email}
+                filteredCount={visibleTasks.length}
+                totalCount={tasks.length}
+              />
+            </div>
+          )}
           {visibleTasks.length === 0 ? (
             <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 32, textAlign: 'center', color: BRAND.muted }}>
               No tasks in this view.

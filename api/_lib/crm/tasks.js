@@ -46,6 +46,13 @@ export async function tasksRoute(req, res, id, action, user) {
   if (!id) {
     if (req.method === 'GET') {
       const scope = String(req.query.scope || 'open');
+      // Visibility: by default a user only sees tasks they're involved in —
+      // assigned to them (join table or legacy column) or that they created.
+      // `tasks.manage_all` (Admin) lifts the scope to the whole workspace so the
+      // Tasks view's team filter can show everyone. The same `${canSeeAll}` flag
+      // short-circuits the predicate in every scope variant below.
+      const canSeeAll = hasPermission(await getRole(user.role), 'tasks.manage_all');
+      const email = (user.email || '').toLowerCase();
       // Same correlated subquery in every variant so the serialiser sees
       // assignee_emails consistently.
       const rows = scope === 'all'
@@ -54,6 +61,10 @@ export async function tasksRoute(req, res, id, action, user) {
               (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')
                FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
             FROM tasks t
+            WHERE (${canSeeAll}
+                   OR LOWER(t.created_by) = ${email}
+                   OR LOWER(t.assignee_email) = ${email}
+                   OR EXISTS (SELECT 1 FROM task_assignees tm WHERE tm.task_id = t.id AND LOWER(tm.user_email) = ${email}))
             ORDER BY done_at NULLS FIRST, due_at ASC NULLS LAST
             LIMIT 500
           `
@@ -64,6 +75,10 @@ export async function tasksRoute(req, res, id, action, user) {
                FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
             FROM tasks t
             WHERE done_at IS NULL AND due_at IS NOT NULL AND due_at < NOW()
+              AND (${canSeeAll}
+                   OR LOWER(t.created_by) = ${email}
+                   OR LOWER(t.assignee_email) = ${email}
+                   OR EXISTS (SELECT 1 FROM task_assignees tm WHERE tm.task_id = t.id AND LOWER(tm.user_email) = ${email}))
             ORDER BY due_at ASC
           `
         : scope === 'today'
@@ -73,6 +88,10 @@ export async function tasksRoute(req, res, id, action, user) {
                FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
             FROM tasks t
             WHERE done_at IS NULL AND due_at::date = CURRENT_DATE
+              AND (${canSeeAll}
+                   OR LOWER(t.created_by) = ${email}
+                   OR LOWER(t.assignee_email) = ${email}
+                   OR EXISTS (SELECT 1 FROM task_assignees tm WHERE tm.task_id = t.id AND LOWER(tm.user_email) = ${email}))
             ORDER BY due_at ASC
           `
         : await sql`
@@ -81,6 +100,10 @@ export async function tasksRoute(req, res, id, action, user) {
                FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
             FROM tasks t
             WHERE done_at IS NULL
+              AND (${canSeeAll}
+                   OR LOWER(t.created_by) = ${email}
+                   OR LOWER(t.assignee_email) = ${email}
+                   OR EXISTS (SELECT 1 FROM task_assignees tm WHERE tm.task_id = t.id AND LOWER(tm.user_email) = ${email}))
             ORDER BY due_at ASC NULLS LAST
             LIMIT 500
           `;

@@ -37,8 +37,18 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   const perms = user.permissions;
 
   // Notification counts — lifted verbatim from the old ListView header.
-  // Badge only counts tasks that have fired: due time reached (triggered) or past (overdue).
-  const openTasksDue = (state.tasks || []).filter(t => !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= Date.now()).length;
+  // Badge only counts tasks that have fired: due time reached (triggered) or past
+  // (overdue). Scoped to the signed-in user's own tasks — Admins load the whole
+  // workspace's tasks into state.tasks, but the pill should still only reflect
+  // tasks assigned to them, not everyone's.
+  const myEmail = (sessionUser?.email || '').toLowerCase();
+  const isMyTask = (t) => {
+    const emails = Array.isArray(t.assigneeEmails) && t.assigneeEmails.length
+      ? t.assigneeEmails
+      : (t.assigneeEmail ? [t.assigneeEmail] : []);
+    return emails.some(e => String(e).toLowerCase() === myEmail);
+  };
+  const openTasksDue = (state.tasks || []).filter(t => isMyTask(t) && !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= Date.now()).length;
   // The Emails badge mirrors Gmail's inbox unread count (matches the Inbox
   // folder badge inside the Emails view). Needs the mailbox labels loaded, so we
   // fetch them once the account is connected (the Emails view also refreshes
