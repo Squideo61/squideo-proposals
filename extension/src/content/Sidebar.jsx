@@ -167,12 +167,6 @@ function SuggestedView({ suggestions, gmailThreadId, counterpartyEmail, onChange
         </div>
       </Section>
 
-      <NewDealButton
-        gmailThreadId={gmailThreadId}
-        counterpartyEmail={counterpartyEmail}
-        onCreated={onChanged}
-      />
-      <Hr />
       <DealPicker
         gmailThreadId={gmailThreadId}
         counterpartyEmail={counterpartyEmail}
@@ -196,12 +190,6 @@ function UnlinkedView({ gmailThreadId, counterpartyEmail, onChanged }) {
         </Muted>
       </Section>
 
-      <NewDealButton
-        gmailThreadId={gmailThreadId}
-        counterpartyEmail={counterpartyEmail}
-        onCreated={onChanged}
-      />
-      <Hr />
       <DealPicker
         gmailThreadId={gmailThreadId}
         counterpartyEmail={counterpartyEmail}
@@ -441,40 +429,6 @@ function TimelineEmail({ email }) {
 
 // -------------------- Action UI --------------------
 
-function NewDealButton({ gmailThreadId, counterpartyEmail, onCreated }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
-
-  const create = async () => {
-    setBusy(true);
-    setErr('');
-    try {
-      // Default deal title to the counterparty email's local-part capitalised.
-      let title = 'New deal';
-      if (counterpartyEmail) {
-        const local = counterpartyEmail.split('@')[0].replace(/[._-]+/g, ' ');
-        title = local.charAt(0).toUpperCase() + local.slice(1);
-      }
-      const deal = await api.post('/api/crm/deals', { title });
-      await api.post('/api/crm/threads', buildSnapshot({ gmailThreadId, counterpartyEmail, dealId: deal.id }));
-      onCreated();
-    } catch (e) {
-      setErr(e.message || 'Could not create deal');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Section>
-      <button onClick={create} disabled={busy} style={primaryBtn}>
-        {busy ? 'Creating…' : '+ New deal from this thread'}
-      </button>
-      {err && <Err msg={err} />}
-    </Section>
-  );
-}
-
 function AddAnotherDeal({ gmailThreadId, counterpartyEmail, excludeDealIds, onAttached }) {
   const [open, setOpen] = useState(false);
   if (!open) {
@@ -509,15 +463,22 @@ function DealPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], onA
     return () => { cancelled = true; };
   }, []);
 
+  const q = query.trim();
   const filtered = useMemo(() => {
     if (!deals) return [];
-    const q = query.trim().toLowerCase();
+    const needle = q.toLowerCase();
     const exclude = new Set(excludeDealIds);
     return deals
       .filter(d => !exclude.has(d.id) && d.stage !== 'lost')
-      .filter(d => !q || (d.title || '').toLowerCase().includes(q))
+      .filter(d => !needle || (d.title || '').toLowerCase().includes(needle))
       .slice(0, 8);
-  }, [deals, query, excludeDealIds]);
+  }, [deals, q, excludeDealIds]);
+
+  // Offer "create" when something's typed and no deal already has that exact
+  // title — so a new deal can be named after what you typed, replacing the old
+  // dedicated "New deal from this thread" button.
+  const exactExists = !!deals && !!q && deals.some(d => (d.title || '').toLowerCase() === q.toLowerCase());
+  const canCreate = !!deals && !!q && !exactExists;
 
   const attach = async (dealId) => {
     setBusy(true);
@@ -532,17 +493,32 @@ function DealPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], onA
     }
   };
 
+  const createAndAttach = async () => {
+    if (!q) return;
+    setBusy(true);
+    setErr('');
+    try {
+      const deal = await api.post('/api/crm/deals', { title: q });
+      await api.post('/api/crm/threads', buildSnapshot({ gmailThreadId, counterpartyEmail, dealId: deal.id }));
+      onAttached();
+    } catch (e) {
+      setErr(e.message || 'Could not create deal');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Section>
       <Label>{label}</Label>
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search deals…"
+        onKeyDown={(e) => { if (e.key === 'Enter' && canCreate) { e.preventDefault(); createAndAttach(); } }}
+        placeholder="Search or type a new deal name…"
         style={input}
       />
       {!deals && <Muted>Loading deals…</Muted>}
-      {deals && filtered.length === 0 && <Muted>No matching deals.</Muted>}
       {filtered.map(d => (
         <button
           key={d.id}
@@ -554,6 +530,15 @@ function DealPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], onA
           <StageBadge stage={d.stage} compact />
         </button>
       ))}
+      {deals && filtered.length === 0 && !canCreate && <Muted>{q ? 'No matching deals.' : 'No deals yet.'}</Muted>}
+      {canCreate && (
+        <button onClick={createAndAttach} disabled={busy} style={createRow} title="Create a new deal with this name and attach the thread">
+          <span style={{ flexShrink: 0, fontWeight: 700 }}>+</span>
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {busy ? 'Creating…' : <>Create new deal “<strong>{q}</strong>”</>}
+          </span>
+        </button>
+      )}
       {err && <Err msg={err} />}
     </Section>
   );
@@ -634,7 +619,6 @@ const Muted = ({ children, style }) => (
   <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.4, ...(style || {}) }}>{children}</div>
 );
 
-const Hr = () => <div style={{ borderTop: '1px solid ' + BRAND.border, margin: '12px 0' }} />;
 
 const Err = ({ msg }) => (
   <div style={{ marginTop: 8, background: '#FEE2E2', color: '#991B1B', fontSize: 12, padding: '6px 8px', borderRadius: 6 }}>{msg}</div>
@@ -771,6 +755,12 @@ const pickerRow = {
   background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6,
   fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
   textAlign: 'left', color: BRAND.ink,
+};
+
+const createRow = {
+  ...pickerRow,
+  background: BRAND.blue + '12', border: '1px solid ' + BRAND.blue + '55',
+  color: BRAND.blue, fontWeight: 600,
 };
 
 // -------------------- Snapshot / event helpers --------------------
