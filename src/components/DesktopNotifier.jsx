@@ -55,8 +55,20 @@ export function DesktopNotifier({ onOpenLink }) {
   // ---- Task reminders (crossing their due time) ----
   const notifiedTaskIds = useRef(null); // Set<id>; null until first seed
   useEffect(() => {
+    // `state.tasks` is the whole workspace's open tasks (the API doesn't scope
+    // by assignee), so only pop for tasks the signed-in user is assigned to —
+    // otherwise everyone gets a popup for everyone else's due tasks.
+    const me = (state.session?.email || '').toLowerCase();
+    const isMine = (t) => {
+      if (!me) return false;
+      const emails = Array.isArray(t.assigneeEmails) && t.assigneeEmails.length
+        ? t.assigneeEmails
+        : (t.assigneeEmail ? [t.assigneeEmail] : []);
+      return emails.some((e) => String(e).toLowerCase() === me);
+    };
+
     const check = () => {
-      const tasks = state.tasks || [];
+      const tasks = (state.tasks || []).filter(isMine);
       const now = Date.now();
       const deals = state.deals || {};
 
@@ -97,7 +109,7 @@ export function DesktopNotifier({ onOpenLink }) {
     // Tasks can cross their due time between 60s polls, so also tick locally.
     const interval = setInterval(check, 30_000);
     return () => clearInterval(interval);
-  }, [state.tasks, state.deals]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state.tasks, state.deals, state.session?.email]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Service worker click routing (Tier 2) ----
   useEffect(() => {
