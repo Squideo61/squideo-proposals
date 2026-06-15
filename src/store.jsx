@@ -915,6 +915,10 @@ export function StoreProvider({ children }) {
     loadMarketingSnippet() {
       return api.get('/api/crm/analytics/snippet').catch(() => null);
     },
+    // Marketing → trigger the Google Ads spend sync on demand ("Sync now").
+    syncAdSpend() {
+      return api.post('/api/crm/analytics/sync', {}).catch((e) => ({ ok: false, error: e?.message || 'Sync failed' }));
+    },
     // Business → Finance: all-customer monthly net / VAT-to-save / gross for a year.
     loadFinanceStats(year) {
       const path = '/api/crm/stats/finance' + (year ? '/' + year : '');

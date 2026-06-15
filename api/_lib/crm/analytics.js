@@ -13,7 +13,7 @@ import { hasPermission } from '../permissions.js';
 import { APP_URL } from '../email.js';
 import { annotateDeals } from './deals.js';
 import { ensureLeadAttribution } from '../leadAttribution.js';
-import { adsConfigured, ensureAdSpend } from './googleAds.js';
+import { adsConfigured, ensureAdSpend, runAdSpendSync } from './googleAds.js';
 
 const WON_STAGES = new Set(['signed', 'paid']);
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
@@ -229,6 +229,22 @@ export async function analyticsRoute(req, res, id, action, user) {
   if (!hasPermission(role, 'marketing.access')) {
     return res.status(403).json({ error: 'You do not have permission to view Marketing' });
   }
+
+  // Manual "Sync now" (POST /api/crm/analytics/sync) — pull Google Ads spend on
+  // demand using the same logic as the daily cron, with the result returned to
+  // the UI so the user gets immediate success/error feedback.
+  if (req.method === 'POST' && id === 'sync') {
+    if (!adsConfigured()) {
+      return res.status(400).json({ ok: false, error: 'Google Ads is not connected yet — add the GOOGLE_ADS_* environment variables.' });
+    }
+    try {
+      return res.status(200).json(await runAdSpendSync());
+    } catch (err) {
+      console.error('[analytics sync]', err?.message);
+      return res.status(200).json({ ok: false, error: err?.message || 'Sync failed' });
+    }
+  }
+
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   await ensureLeadAttribution();
 

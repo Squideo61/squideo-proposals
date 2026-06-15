@@ -156,20 +156,25 @@ const CAMPAIGN_QUERY = `
   FROM campaign
   WHERE segments.date DURING LAST_14_DAYS`;
 
-// Cron entry: re-pull a trailing window (so late cost/conversion adjustments
-// reconcile) and upsert. Returns a small status object for the cron log.
+// Core sync: re-pull a trailing window (so late cost/conversion adjustments
+// reconcile) and upsert. Returns a small status object. Shared by the daily
+// cron and the "Sync now" button in Marketing → Settings.
+export async function runAdSpendSync() {
+  if (!adsConfigured()) return { ok: false, skipped: 'not_configured' };
+  await ensureAdSpend();
+  const customerId = digits(process.env.GOOGLE_ADS_CUSTOMER_ID);
+  const keywordRows = await runGaql(KEYWORD_QUERY);
+  for (const r of keywordRows) { const q = upsertRow(customerId, r, false); if (q) await q; }
+  const campaignRows = await runGaql(CAMPAIGN_QUERY);
+  for (const r of campaignRows) { const q = upsertRow(customerId, r, true); if (q) await q; }
+  return { ok: true, keywordRows: keywordRows.length, campaignRows: campaignRows.length };
+}
+
+// Cron entry: wraps runAdSpendSync and always returns 200 so a failure doesn't
+// trip Vercel's cron-failure alerting (the detail is in the body + logs).
 export async function cronAdSpendSync(res) {
-  if (!adsConfigured()) {
-    return res.status(200).json({ ok: true, skipped: 'not_configured' });
-  }
   try {
-    await ensureAdSpend();
-    const customerId = digits(process.env.GOOGLE_ADS_CUSTOMER_ID);
-    const keywordRows = await runGaql(KEYWORD_QUERY);
-    for (const r of keywordRows) { const q = upsertRow(customerId, r, false); if (q) await q; }
-    const campaignRows = await runGaql(CAMPAIGN_QUERY);
-    for (const r of campaignRows) { const q = upsertRow(customerId, r, true); if (q) await q; }
-    return res.status(200).json({ ok: true, keywordRows: keywordRows.length, campaignRows: campaignRows.length });
+    return res.status(200).json(await runAdSpendSync());
   } catch (err) {
     console.error('[cron ad-spend-sync]', err?.message);
     return res.status(200).json({ ok: false, error: err?.message || 'sync failed' });

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
-import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp } from 'lucide-react';
+import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
@@ -168,7 +168,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
         />
       )}
       {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} />}
-      {section === 'settings' && <SettingsTab snippet={snippet} />}
+      {section === 'settings' && <SettingsTab snippet={snippet} onSync={() => actions.syncAdSpend()} />}
     </div>
   );
 }
@@ -404,8 +404,16 @@ function LeadsTab({ data, loading, onOpenDeal }) {
 
 // ---- Settings ------------------------------------------------------------
 
-function SettingsTab({ snippet }) {
+function SettingsTab({ snippet, onSync }) {
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
   if (!snippet) return <Loading />;
+  const runSync = async () => {
+    setSyncing(true); setSyncResult(null);
+    const r = await onSync();
+    setSyncing(false);
+    setSyncResult(r || { ok: false, error: 'No response' });
+  };
   return (
     <div style={{ maxWidth: 760 }}>
       <p style={{ fontSize: 14, color: BRAND.ink, lineHeight: 1.6, marginTop: 0 }}>
@@ -444,13 +452,42 @@ function SettingsTab({ snippet }) {
             {snippet.adsConfigured ? 'Connected' : 'Not connected'}
           </span>
         </div>
-        <p style={{ fontSize: 13, color: BRAND.muted, margin: 0 }}>
+        <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 14px' }}>
           Spend, cost-per-lead and ROAS appear automatically once the Google Ads API credentials are
           set as environment variables (<code>GOOGLE_ADS_DEVELOPER_TOKEN</code>,{' '}
           <code>GOOGLE_ADS_CLIENT_ID/SECRET</code>, <code>GOOGLE_ADS_REFRESH_TOKEN</code>,{' '}
           <code>GOOGLE_ADS_CUSTOMER_ID</code>, <code>GOOGLE_ADS_LOGIN_CUSTOMER_ID</code>). A daily
           job then syncs the previous days' spend. Lead and revenue attribution work without it.
         </p>
+
+        {snippet.adsConfigured && (
+          <div>
+            <button
+              onClick={runSync}
+              disabled={syncing}
+              className="btn"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, opacity: syncing ? 0.6 : 1 }}
+            >
+              <RefreshCw size={15} style={syncing ? { animation: 'spin 1s linear infinite' } : undefined} />
+              {syncing ? 'Syncing…' : 'Sync now'}
+            </button>
+            <span style={{ fontSize: 12, color: BRAND.muted, marginLeft: 10 }}>
+              Pulls the last 14 days of spend from Google Ads.
+            </span>
+            {syncResult && (
+              <div style={{
+                marginTop: 12, padding: '10px 14px', borderRadius: 8, fontSize: 13,
+                background: syncResult.ok ? '#DCFCE7' : '#FEE2E2',
+                border: '1px solid ' + (syncResult.ok ? '#86EFAC' : '#FCA5A5'),
+                color: syncResult.ok ? '#166534' : '#991B1B',
+              }}>
+                {syncResult.ok
+                  ? `Synced ✓ — pulled ${syncResult.keywordRows ?? 0} keyword rows and ${syncResult.campaignRows ?? 0} campaign rows. Open Reports to see spend & ROAS.`
+                  : `Sync failed: ${syncResult.error || 'unknown error'}`}
+              </div>
+            )}
+          </div>
+        )}
       </Step>
     </div>
   );
