@@ -37,11 +37,11 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   const perms = user.permissions;
 
   // Notification counts — lifted verbatim from the old ListView header.
-  // Badge counts only the user's own tasks that are due TODAY (anywhere in the
-  // calendar day, including earlier today) — not future tasks, and not overdue
-  // ones rolled over from previous days. Scoped to the signed-in user's own
-  // tasks: Admins load the whole workspace's tasks into state.tasks, but the
-  // pill should still only reflect tasks assigned to them, not everyone's.
+  // Badge counts the user's own open tasks that are due today OR overdue — i.e.
+  // anything whose due time is at/before the end of today, so it both reflects
+  // today's workload and nags about a stale backlog. Future tasks don't count.
+  // Scoped to the signed-in user's own tasks: Admins load the whole workspace's
+  // tasks into state.tasks, but the pill should only reflect their own.
   const myEmail = (sessionUser?.email || '').toLowerCase();
   const isMyTask = (t) => {
     const emails = Array.isArray(t.assigneeEmails) && t.assigneeEmails.length
@@ -49,13 +49,10 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       : (t.assigneeEmail ? [t.assigneeEmail] : []);
     return emails.some(e => String(e).toLowerCase() === myEmail);
   };
-  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
   const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999);
-  const openTasksDue = (state.tasks || []).filter((t) => {
-    if (!isMyTask(t) || t.doneAt || !t.dueAt) return false;
-    const due = new Date(t.dueAt).getTime();
-    return due >= startOfToday.getTime() && due <= endOfToday.getTime();
-  }).length;
+  const openTasksDue = (state.tasks || []).filter((t) => (
+    isMyTask(t) && !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= endOfToday.getTime()
+  )).length;
   // The Emails badge mirrors Gmail's inbox unread count (matches the Inbox
   // folder badge inside the Emails view). Needs the mailbox labels loaded, so we
   // fetch them once the account is connected (the Emails view also refreshes
