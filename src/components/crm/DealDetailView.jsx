@@ -2484,6 +2484,7 @@ function EditDealModal({ deal, onClose }) {
   const [addingContact, setAddingContact] = useState(false);
   const [newContactName, setNewContactName] = useState('');
   const [newContactEmail, setNewContactEmail] = useState('');
+  const [newContactCompanyId, setNewContactCompanyId] = useState(deal.companyId || '');
   const [creatingContact, setCreatingContact] = useState(false);
   const [contactErr, setContactErr] = useState('');
 
@@ -2498,8 +2499,10 @@ function EditDealModal({ deal, onClose }) {
     setCreatingContact(true);
     setContactErr('');
     try {
-      // Link the new contact to the company chosen above (if any).
-      const c = await actions.createContact({ name: name || null, email: email || null, companyId: companyId || null });
+      // Always link the new contact to the company explicitly chosen in the
+      // add-contact form ('' = None). Contacts are never created unlinked by
+      // accident — the choice is deliberate.
+      const c = await actions.createContact({ name: name || null, email: email || null, companyId: newContactCompanyId || null });
       if (c?.id) {
         setPrimaryContactId(c.id);
         setAddingContact(false);
@@ -2551,12 +2554,19 @@ function EditDealModal({ deal, onClose }) {
                 <option value="">—</option>
                 {contacts.map(c => <option key={c.id} value={c.id}>{c.name || c.email}</option>)}
               </select>
-              <button type="button" onClick={() => { setAddingContact(true); setContactErr(''); }} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ New contact</button>
+              <button type="button" onClick={() => { setAddingContact(true); setNewContactCompanyId(companyId || ''); setContactErr(''); }} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ New contact</button>
             </>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, background: BRAND.paper }}>
               <input className="input" autoFocus placeholder="Name" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} />
               <input className="input" type="email" placeholder="Email" value={newContactEmail} onChange={(e) => setNewContactEmail(e.target.value)} />
+              <label style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <span>Company</span>
+                <select className="input" value={newContactCompanyId} onChange={(e) => setNewContactCompanyId(e.target.value)}>
+                  <option value="">None</option>
+                  {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </label>
               {contactErr && <div style={{ color: '#DC2626', fontSize: 12 }}>{contactErr}</div>}
               <div style={{ display: 'flex', gap: 6 }}>
                 <button type="button" onClick={createContact} disabled={creatingContact || (!newContactName.trim() && !newContactEmail.trim())} className="btn" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}>{creatingContact ? 'Adding…' : 'Add contact'}</button>
