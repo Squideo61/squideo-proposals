@@ -2479,9 +2479,39 @@ function EditDealModal({ deal, onClose }) {
   const [notes, setNotes] = useState(deal.notes || '');
   const [submitting, setSubmitting] = useState(false);
 
+  // Inline "create a contact" within the Primary-contact field, so a new lead
+  // doesn't have to be added on the Contacts page first.
+  const [addingContact, setAddingContact] = useState(false);
+  const [newContactName, setNewContactName] = useState('');
+  const [newContactEmail, setNewContactEmail] = useState('');
+  const [creatingContact, setCreatingContact] = useState(false);
+  const [contactErr, setContactErr] = useState('');
+
   const companies = Object.values(state.companies || {});
   const contacts = Object.values(state.contacts || {});
   const users = Object.values(state.users || {});
+
+  const createContact = async () => {
+    const name = newContactName.trim();
+    const email = newContactEmail.trim();
+    if (!name && !email) return;
+    setCreatingContact(true);
+    setContactErr('');
+    try {
+      // Link the new contact to the company chosen above (if any).
+      const c = await actions.createContact({ name: name || null, email: email || null, companyId: companyId || null });
+      if (c?.id) {
+        setPrimaryContactId(c.id);
+        setAddingContact(false);
+        setNewContactName('');
+        setNewContactEmail('');
+      }
+    } catch (e) {
+      setContactErr(e?.message || 'Could not create contact');
+    } finally {
+      setCreatingContact(false);
+    }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -2511,12 +2541,30 @@ function EditDealModal({ deal, onClose }) {
             {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </FormRow>
-        <FormRow label="Primary contact">
-          <select className="input" value={primaryContactId} onChange={(e) => setPrimaryContactId(e.target.value)}>
-            <option value="">—</option>
-            {contacts.map(c => <option key={c.id} value={c.id}>{c.name || c.email}</option>)}
-          </select>
-        </FormRow>
+        {/* Rendered as a div (not FormRow's <label>) so the nested inputs/buttons
+            of the inline add-contact form don't fight the label association. */}
+        <div style={{ fontSize: 13, fontWeight: 500, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span>Primary contact</span>
+          {!addingContact ? (
+            <>
+              <select className="input" value={primaryContactId} onChange={(e) => setPrimaryContactId(e.target.value)}>
+                <option value="">—</option>
+                {contacts.map(c => <option key={c.id} value={c.id}>{c.name || c.email}</option>)}
+              </select>
+              <button type="button" onClick={() => { setAddingContact(true); setContactErr(''); }} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ New contact</button>
+            </>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, background: BRAND.paper }}>
+              <input className="input" autoFocus placeholder="Name" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} />
+              <input className="input" type="email" placeholder="Email" value={newContactEmail} onChange={(e) => setNewContactEmail(e.target.value)} />
+              {contactErr && <div style={{ color: '#DC2626', fontSize: 12 }}>{contactErr}</div>}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" onClick={createContact} disabled={creatingContact || (!newContactName.trim() && !newContactEmail.trim())} className="btn" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}>{creatingContact ? 'Adding…' : 'Add contact'}</button>
+                <button type="button" onClick={() => { setAddingContact(false); setNewContactName(''); setNewContactEmail(''); setContactErr(''); }} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
         <FormRow label="Deal Owner">
           <select className="input" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)}>
             <option value="">—</option>
