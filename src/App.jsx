@@ -82,6 +82,9 @@ function AppShell() {
   // the production board, the project (deal) pages they work on, and the
   // Revisions section — no sales/admin nav.
   const producerOnly = user?.role === 'producer' || user?.role === 'copywriter';
+  // "Marketing" accounts are scoped to the Marketing section only — no sales,
+  // finance, projects or admin nav.
+  const marketingOnly = user?.role === 'marketing';
   const [view, setView] = useState(() => parseHash().view);
   const [activeId, setActiveId] = useState(() => parseHash().activeId);
   const [modal, setModal] = useState(null);
@@ -105,12 +108,17 @@ function AppShell() {
     if (didDefaultLandRef.current || !landedAtRootRef.current) return;
     if (!user || producerOnly) return;
     didDefaultLandRef.current = true;
-    if (permissionsInclude(user.permissions, 'finance.manage')) {
+    if (marketingOnly) {
+      // Marketing accounts land on the Marketing dashboard.
+      window.history.replaceState(null, '', buildHash('marketing', 'overview'));
+      setView('marketing');
+      setActiveId('overview');
+    } else if (permissionsInclude(user.permissions, 'finance.manage')) {
       window.history.replaceState(null, '', buildHash('overview', null));
       setView('overview');
       setActiveId(null);
     }
-  }, [user, producerOnly]);
+  }, [user, producerOnly, marketingOnly]);
 
   useEffect(() => {
     const onPop = () => {
@@ -401,6 +409,34 @@ function AppShell() {
             <EmailComposerHost onViewThread={(threadId) => navigate('email', 'inbox~' + threadId)} />
           </Suspense>
         )}
+        {modal && modal.type === 'account' && (
+          <Suspense fallback={null}>
+            <AccountSettings onClose={() => setModal(null)} onLogout={logout} />
+          </Suspense>
+        )}
+        <Toast msg={toast} />
+      </div>
+    );
+  }
+
+  // Marketing accounts get a stripped shell: just the Marketing section. Any
+  // other route falls through to the Marketing dashboard (deep links / stale
+  // hashes can't escape the scope).
+  if (marketingOnly) {
+    const section = view === 'marketing' && activeId ? activeId : 'overview';
+    return (
+      <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
+        <DesktopNotifier onOpenLink={openLink} />
+        <CrmTopBar
+          marketing
+          view={view}
+          navigate={navigate}
+          onManageAccount={() => setModal({ type: 'account' })}
+          onOpenLink={openLink}
+        />
+        <Suspense fallback={<ViewFallback />}>
+          <MarketingView section={section} onBack={null} onOpenDeal={null} onOpenCompany={null} />
+        </Suspense>
         {modal && modal.type === 'account' && (
           <Suspense fallback={null}>
             <AccountSettings onClose={() => setModal(null)} onLogout={logout} />

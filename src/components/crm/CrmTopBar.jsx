@@ -16,7 +16,7 @@ const BADGE = '#FB923C';
 // Tasks + notification bells + Account, with no Sales/Business/Projects nav or
 // Emails (those views don't exist in that shell). Gives producers the header and
 // notification bells they'd otherwise be missing entirely.
-export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLink, producer = false }) {
+export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLink, producer = false, marketing = false }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const undoStack = state.undoStack || [];
@@ -145,7 +145,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'white', borderBottom: '1px solid ' + BRAND.border }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: isMobile ? '0 12px' : '0 24px', height: 56, maxWidth: fullWidth ? 'none' : APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <button
-          onClick={() => navigate(producer ? 'production' : 'list')}
+          onClick={() => navigate(producer ? 'production' : marketing ? 'marketing' : 'list')}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginRight: 6, color: BRAND.ink }}
         >
           <Logo size={28} />
@@ -154,7 +154,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
 
         {!producer && (
         <nav ref={navRef} style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-          {sections.map((s) => {
+          {(marketing ? sections.filter((s) => s.key === 'marketing') : sections).map((s) => {
             const isActive = activeSection === s.key;
             const isOpen = openMenu === s.key;
             const hasBadge = s.items.some(i => i.count > 0);
@@ -222,6 +222,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
               </div>
             );
           })}
+          {!marketing && (
           <button
             type="button"
             onClick={() => navigate('contacts')}
@@ -234,12 +235,14 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
           >
             Contacts
           </button>
+          )}
         </nav>
         )}
 
         <div style={{ flex: 1 }} />
 
         {/* CRM-wide undo / redo. Tooltips name the next reversible action. */}
+        {!marketing && (
         <div style={{ display: 'inline-flex', alignItems: 'center' }}>
           <button
             type="button"
@@ -262,8 +265,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
             <Redo2 size={16} />
           </button>
         </div>
+        )}
 
-        {[
+        {!marketing && [
           { label: 'Tasks', icon: CheckSquare, views: ['tasks'], go: () => navigate('tasks'), count: openTasksDue },
           // Emails inbox view doesn't exist in the producer shell.
           ...(producer ? [] : [{ label: 'Emails', icon: Mail, views: ['emails', 'triage', 'email'], go: () => navigate('emails'), count: inboxUnread }]),
@@ -291,9 +295,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         {/* Eye bell (engagement tracking) sits left of the £ bell. Its contents
             are owner-scoped, so it's shown to everyone — empty for anyone who
             hasn't sent tracked emails / owns no proposals. */}
-        <NotificationBell onOpenLink={onOpenLink} inline channel="tracking" />
-        {canFinanceBell && <NotificationBell onOpenLink={onOpenLink} inline channel="finance" />}
-        <NotificationBell onOpenLink={onOpenLink} inline />
+        {!marketing && <NotificationBell onOpenLink={onOpenLink} inline channel="tracking" />}
+        {!marketing && canFinanceBell && <NotificationBell onOpenLink={onOpenLink} inline channel="finance" />}
+        {!marketing && <NotificationBell onOpenLink={onOpenLink} inline />}
 
         <div ref={accountRef} style={{ position: 'relative' }}>
           <button

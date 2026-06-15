@@ -121,9 +121,11 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
   return (
     <div style={{ padding: isMobile ? '20px 16px' : '32px 24px', maxWidth: APP_MAX_WIDTH, margin: '0 auto' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
-        <button onClick={onBack} className="btn-ghost" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 8px' }}>
-          <ArrowLeft size={16} /> Back
-        </button>
+        {onBack && (
+          <button onClick={onBack} className="btn-ghost" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 8px' }}>
+            <ArrowLeft size={16} /> Back
+          </button>
+        )}
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Marketing</h1>
         <div style={{ flex: 1 }} />
         {section !== 'settings' && (
@@ -376,7 +378,7 @@ function LeadsTab({ data, loading, onOpenDeal }) {
         <tbody>
           {leads.map((l) => {
             const st = STATUS_STYLE[l.status] || STATUS_STYLE.new;
-            const clickable = !!l.dealId;
+            const clickable = !!l.dealId && !!onOpenDeal;
             return (
               <tr
                 key={l.id}
