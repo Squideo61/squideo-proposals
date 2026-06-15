@@ -222,6 +222,17 @@ export function BusinessOverviewView({
   const canBusiness = permissionsInclude(perms, 'finance.manage');
   const canProduction = permissionsInclude(perms, 'production.access');
 
+  // The operational sales + tasks tiles reflect the viewing user's own work
+  // (their deals / their tasks), regardless of role. Recent activity and
+  // production are deliberately NOT scoped this way — see below.
+  const myEmail = (state.session?.email || '').toLowerCase();
+  const isMyTask = (t) => {
+    const emails = Array.isArray(t.assigneeEmails) && t.assigneeEmails.length
+      ? t.assigneeEmails
+      : (t.assigneeEmail ? [t.assigneeEmail] : []);
+    return emails.some((e) => String(e).toLowerCase() === myEmail);
+  };
+
   const now = new Date();
   const year = now.getFullYear();
   const monthKey = `${year}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -283,13 +294,19 @@ export function BusinessOverviewView({
   const partnerTotal = activePartners.reduce((s, p) => s + (Number(p.outstanding) || 0), 0);
   const recurringMonthly = partnerTotal + (canBusiness ? Number(pending?.totals?.other || 0) : 0);
 
-  // ── Pipeline (everyone — derived from in-state deals). ──
+  // ── Pipeline (the viewing user's own deals — what *they* are selling). ──
+  // dealList stays the full set so Recent activity below can monitor the whole
+  // business (who's paid); myDeals is the owner-scoped slice the pipeline uses.
   const dealList = useMemo(() => Object.values(state.deals || {}), [state.deals]);
+  const myDeals = useMemo(
+    () => dealList.filter((d) => String(d.ownerEmail || '').toLowerCase() === myEmail),
+    [dealList, myEmail],
+  );
   const pipeline = useMemo(() => {
     const open = PIPELINE_STAGES.filter((s) => s.id !== 'paid' && s.id !== 'lost');
     const counts = Object.fromEntries(PIPELINE_STAGES.map((s) => [s.id, 0]));
     let openCount = 0; let openValue = 0;
-    for (const d of dealList) {
+    for (const d of myDeals) {
       const stage = counts[d.stage] != null ? d.stage : 'lead';
       counts[stage] += 1;
       if (stage !== 'paid' && stage !== 'lost') {
@@ -301,7 +318,7 @@ export function BusinessOverviewView({
       items: open.map((s) => ({ id: s.id, label: s.label, color: s.color, count: counts[s.id] })),
       openCount, openValue,
     };
-  }, [dealList]);
+  }, [myDeals]);
 
   // ── Production (production.access — derived from in-state videos). ──
   const production = useMemo(() => {
@@ -313,11 +330,14 @@ export function BusinessOverviewView({
     return { items, liveCount, total: vids.length };
   }, [state.productionVideos]);
 
-  // ── Tasks & quote requests (everyone — formulas mirror CrmTopBar). ──
-  const tasksDue = (state.tasks || []).filter((t) => !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= Date.now()).length;
+  // ── Tasks & quote requests. Tasks are scoped to the user's own (matches the
+  // top-bar pill); quote requests stay workspace-wide. ──
+  const tasksDue = (state.tasks || []).filter((t) => isMyTask(t) && !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= Date.now()).length;
   const newQuotes = (state.quoteRequests || []).filter((q) => q.status === 'new').length;
 
-  // ── Recent activity — recently moved/signed deals + completed tasks. ──
+  // ── Recent activity — deliberately workspace-wide (not owner-scoped): the
+  // team needs to see who's signed/paid across the whole business, not just
+  // their own deals. Uses the full dealList + completed tasks. ──
   const recent = useMemo(() => {
     const fromDeals = dealList
       .filter((d) => d.stageChangedAt && (d.stage === 'signed' || d.stage === 'paid'))
