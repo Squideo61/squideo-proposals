@@ -309,7 +309,6 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
   // since the sidebar there is a horizontal strip.
   const headerEl = (
     <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
-      <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
       <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
         <Mail size={22} color={BRAND.blue} /> Emails
       </h1>

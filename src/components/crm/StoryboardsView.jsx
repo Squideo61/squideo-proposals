@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Images, Copy, MessageSquare, Plus, Trash2, Upload, FileText, FileDown, CheckCircle2, CalendarClock, ChevronDown, ChevronRight, MapPin, BarChart3, Link2, Check } from 'lucide-react';
+import { ArrowLeft, Images, Copy, MessageSquare, Plus, Trash2, Upload, FileText, FileDown, CheckCircle2, ChevronDown, ChevronRight, MapPin, BarChart3, Link2, Check } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
-import { permissionsInclude } from '../../lib/permissions.js';
 import { Modal } from '../ui.jsx';
 import { PdfThumb } from '../storyboard/PdfThumb.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
@@ -73,8 +72,6 @@ export function StoryboardsView({ onBack }) {
         <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New project</button>
       </header>
 
-      {permissionsInclude(state.session?.permissions, 'settings.manage') && <BookingLinkEditor />}
-
       {projects.length === 0 ? (
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
           {loaded
@@ -139,34 +136,6 @@ function CopyLinkButton({ token, showMsg }) {
     <button
       onClick={() => navigator.clipboard.writeText(url).then(() => showMsg('Storyboard link copied')).catch(() => {})}
       className="btn-ghost" title={url}><Copy size={14} /> Copy link</button>
-  );
-}
-
-// Team-wide booking link for the client "Schedule Review Call" button. Shares
-// the same revision_call_url used by Video Revisions.
-function BookingLinkEditor() {
-  const { state, actions, showMsg } = useStore();
-  const [url, setUrl] = useState(state.revisionCallUrl || '');
-  const [saving, setSaving] = useState(false);
-  const dirty = url !== (state.revisionCallUrl || '');
-
-  const save = async () => {
-    setSaving(true);
-    try { await actions.saveRevisionCallUrl(url.trim()); showMsg('Booking link saved'); }
-    catch (e) { showMsg(e.message || 'Could not save'); }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, padding: '10px 14px',
-      background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, flexWrap: 'wrap' }}>
-      <CalendarClock size={16} color={BRAND.blue} />
-      <label style={{ fontSize: 13, color: BRAND.muted }}>Review-call booking link</label>
-      <input value={url} onChange={e => setUrl(e.target.value)}
-        placeholder="https://calendly.com/your-team/review-call"
-        style={{ flex: 1, minWidth: 220, padding: 8, borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
-      <button onClick={save} disabled={!dirty || saving} className="btn">{saving ? 'Saving…' : 'Save'}</button>
-    </div>
   );
 }
 
