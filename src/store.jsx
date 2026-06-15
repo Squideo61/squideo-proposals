@@ -275,7 +275,29 @@ function applyOne(state, p) {
       if (p.delete) {
         if (!state.contacts[p.id]) return state;
         const contacts = { ...state.contacts }; delete contacts[p.id];
-        return { ...state, contacts };
+        // Scrub references so the deleted contact can't linger as a deal's
+        // primary contact in local state (the server nulls primary_contact_id
+        // too). Without this, opening + saving such a deal would re-send a now
+        // dead contact id.
+        let deals = state.deals;
+        if (Object.values(state.deals || {}).some(d => d && d.primaryContactId === p.id)) {
+          deals = Object.fromEntries(Object.entries(state.deals).map(([id, d]) =>
+            [id, d && d.primaryContactId === p.id ? { ...d, primaryContactId: null } : d]));
+        }
+        let dealDetail = state.dealDetail;
+        if (state.dealDetail && Object.values(state.dealDetail).some(dt => dt &&
+            (dt.primaryContact?.id === p.id || dt.primaryContactId === p.id || (dt.secondaryContacts || []).some(c => c.id === p.id)))) {
+          dealDetail = Object.fromEntries(Object.entries(state.dealDetail).map(([id, dt]) => {
+            if (!dt) return [id, dt];
+            return [id, {
+              ...dt,
+              primaryContact: dt.primaryContact?.id === p.id ? null : dt.primaryContact,
+              primaryContactId: dt.primaryContactId === p.id ? null : dt.primaryContactId,
+              secondaryContacts: (dt.secondaryContacts || []).filter(c => c.id !== p.id),
+            }];
+          }));
+        }
+        return { ...state, contacts, deals, dealDetail };
       }
       const cur = state.contacts[p.id];
       if (!cur) return state;

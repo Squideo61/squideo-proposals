@@ -127,6 +127,12 @@ export async function contactsRoute(req, res, id, action, user) {
     if (!hasPermission(await getRole(user.role), 'contacts.manage_all')) {
       return res.status(403).json({ error: 'You do not have permission to delete contacts' });
     }
+    // Unlink from any deal that has this as its primary contact first. The
+    // deals.primary_contact_id FK would otherwise block the delete (or leave a
+    // deal pointing at a ghost contact). Other references — deal_contacts,
+    // quote_requests, project_retainers — already cascade / set-null on their
+    // own FKs, so they need no explicit cleanup here.
+    await sql`UPDATE deals SET primary_contact_id = NULL WHERE primary_contact_id = ${id}`;
     await sql`DELETE FROM contacts WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }
