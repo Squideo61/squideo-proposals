@@ -589,7 +589,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     if (req.method !== 'GET') return res.status(405).end();
     const rows = await sql`
       SELECT et.gmail_thread_id, et.subject, et.last_message_at, et.participant_emails,
-             (SELECT COUNT(*) FROM email_messages em WHERE em.gmail_thread_id = et.gmail_thread_id)::int AS message_count
+             (SELECT COUNT(*) FROM email_messages em WHERE em.gmail_thread_id = et.gmail_thread_id AND em.gmail_message_id NOT LIKE '%-stub')::int AS message_count
       FROM email_threads et
       JOIN email_thread_deals etd ON etd.gmail_thread_id = et.gmail_thread_id
       WHERE etd.deal_id = ${id}
@@ -1162,6 +1162,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
                ON emd.gmail_message_id = em.gmail_message_id AND emd.deal_id = ${id}
         WHERE (etd.deal_id IS NOT NULL OR emd.deal_id IS NOT NULL)
           AND em.internal_only = FALSE
+          -- Exclude the bodyless link placeholder rows that attachThreadToDeal
+          -- writes (<threadId>:panel-stub); they aren't real emails and would
+          -- otherwise show as a "Not found" message in the thread. Mirrors the
+          -- filter the other email queries already apply.
+          AND em.gmail_message_id NOT LIKE '%-stub'
         GROUP BY em.gmail_message_id, em.gmail_thread_id, em.from_email,
                  em.to_emails, em.cc_emails, em.subject, em.snippet,
                  em.direction, em.sent_at, em.user_email
