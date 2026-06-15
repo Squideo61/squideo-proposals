@@ -2485,6 +2485,7 @@ function EditDealModal({ deal, onClose }) {
   const [newContactName, setNewContactName] = useState('');
   const [newContactEmail, setNewContactEmail] = useState('');
   const [newContactCompanyId, setNewContactCompanyId] = useState(deal.companyId || '');
+  const [newCompanyName, setNewCompanyName] = useState('');
   const [creatingContact, setCreatingContact] = useState(false);
   const [contactErr, setContactErr] = useState('');
 
@@ -2499,15 +2500,26 @@ function EditDealModal({ deal, onClose }) {
     setCreatingContact(true);
     setContactErr('');
     try {
-      // Always link the new contact to the company explicitly chosen in the
-      // add-contact form ('' = None). Contacts are never created unlinked by
-      // accident — the choice is deliberate.
-      const c = await actions.createContact({ name: name || null, email: email || null, companyId: newContactCompanyId || null });
+      // Resolve the company link. '' = None; '__new__' = create a company from
+      // the typed name first, then link the contact (and the deal, if it has no
+      // company yet) to it. Otherwise link to the chosen existing company.
+      let linkCompanyId = newContactCompanyId;
+      if (newContactCompanyId === '__new__') {
+        const cn = newCompanyName.trim();
+        if (!cn) { setContactErr('Enter a company name'); setCreatingContact(false); return; }
+        const co = await actions.createCompany({ name: cn });
+        if (!co?.id) throw new Error('Could not create company');
+        linkCompanyId = co.id;
+      }
+      const c = await actions.createContact({ name: name || null, email: email || null, companyId: linkCompanyId || null });
       if (c?.id) {
         setPrimaryContactId(c.id);
+        // If we created a company and the deal has none, link the deal to it too.
+        if (linkCompanyId && !companyId) setCompanyId(linkCompanyId);
         setAddingContact(false);
         setNewContactName('');
         setNewContactEmail('');
+        setNewCompanyName('');
       }
     } catch (e) {
       setContactErr(e?.message || 'Could not create contact');
@@ -2554,7 +2566,7 @@ function EditDealModal({ deal, onClose }) {
                 <option value="">—</option>
                 {contacts.map(c => <option key={c.id} value={c.id}>{c.name || c.email}</option>)}
               </select>
-              <button type="button" onClick={() => { setAddingContact(true); setNewContactCompanyId(companyId || ''); setContactErr(''); }} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ New contact</button>
+              <button type="button" onClick={() => { setAddingContact(true); setNewContactCompanyId(companyId || ''); setNewCompanyName(''); setContactErr(''); }} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ New contact</button>
             </>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, background: BRAND.paper }}>
@@ -2565,12 +2577,16 @@ function EditDealModal({ deal, onClose }) {
                 <select className="input" value={newContactCompanyId} onChange={(e) => setNewContactCompanyId(e.target.value)}>
                   <option value="">None</option>
                   {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  <option value="__new__">+ New company…</option>
                 </select>
               </label>
+              {newContactCompanyId === '__new__' && (
+                <input className="input" autoFocus placeholder="New company name" value={newCompanyName} onChange={(e) => setNewCompanyName(e.target.value)} />
+              )}
               {contactErr && <div style={{ color: '#DC2626', fontSize: 12 }}>{contactErr}</div>}
               <div style={{ display: 'flex', gap: 6 }}>
-                <button type="button" onClick={createContact} disabled={creatingContact || (!newContactName.trim() && !newContactEmail.trim())} className="btn" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}>{creatingContact ? 'Adding…' : 'Add contact'}</button>
-                <button type="button" onClick={() => { setAddingContact(false); setNewContactName(''); setNewContactEmail(''); setContactErr(''); }} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+                <button type="button" onClick={createContact} disabled={creatingContact || (!newContactName.trim() && !newContactEmail.trim()) || (newContactCompanyId === '__new__' && !newCompanyName.trim())} className="btn" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}>{creatingContact ? 'Adding…' : 'Add contact'}</button>
+                <button type="button" onClick={() => { setAddingContact(false); setNewContactName(''); setNewContactEmail(''); setNewCompanyName(''); setContactErr(''); }} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
               </div>
             </div>
           )}
