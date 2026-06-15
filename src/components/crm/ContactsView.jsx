@@ -351,7 +351,7 @@ function ContactModal({ contact, onClose }) {
         <Row label="Title"><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} /></Row>
         <Row label="Company">
           <select className="input" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-            <option value="">—</option>
+            <option value="">None</option>
             {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </Row>
