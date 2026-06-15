@@ -208,6 +208,8 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
         </div>
       </div>
 
+      {detail.leadSource && <LeadSourceMini src={detail.leadSource} />}
+
       {unknownCcs.length > 0 && (
         <CcSuggestions dealId={detail.id} addresses={unknownCcs} defaultCompanyId={detail.companyId || null} />
       )}
@@ -437,6 +439,38 @@ function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], l
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title}</span>
           <StageBadge stage={d.stage} compact />
         </button>
+      ))}
+    </div>
+  );
+}
+
+// ---- Lead source (marketing attribution) ----
+
+const CHANNEL_LABELS = { paid_search: 'Paid search', organic: 'Organic', social: 'Social', referral: 'Referral', direct: 'Direct' };
+
+function LeadSourceMini({ src }) {
+  const rows = [
+    ['Channel', CHANNEL_LABELS[src.channel] || src.channel],
+    ['Campaign', src.campaign],
+    ['Keyword', src.keyword],
+    ['Source', src.source && src.medium ? `${src.source} / ${src.medium}` : (src.source || src.medium)],
+  ].filter(([, v]) => v);
+  return (
+    <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12, marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: rows.length ? 6 : 0 }}>
+        <Label>Lead source</Label>
+        <span style={{
+          fontSize: 10, fontWeight: 800, letterSpacing: 0.4, padding: '2px 6px', borderRadius: 4,
+          background: src.returningClient ? '#FEF3C7' : '#DCFCE7', color: src.returningClient ? '#92400E' : '#166534',
+        }}>
+          {src.returningClient ? 'RETURNING CLIENT' : 'NEW LEAD'}
+        </span>
+      </div>
+      {rows.map(([k, v]) => (
+        <Row key={k}>
+          <DealMetaKey>{k}</DealMetaKey>
+          <span style={{ fontSize: 12, textAlign: 'right', maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={v}>{v}</span>
+        </Row>
       ))}
     </div>
   );

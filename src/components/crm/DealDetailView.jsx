@@ -341,6 +341,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             Lost — {deal.lostReason}
           </div>
         )}
+        {!productionOnly && deal.leadSource && <LeadSourceCard src={deal.leadSource} />}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
@@ -2392,6 +2393,46 @@ function describeEvent(e) {
 
 function labelForStage(id) {
   return PIPELINE_STAGES.find(s => s.id === id)?.label || id || '—';
+}
+
+// Marketing attribution summary for the lead that became this deal.
+const LEAD_CHANNEL_LABELS = { paid_search: 'Paid search', organic: 'Organic', social: 'Social', referral: 'Referral', direct: 'Direct' };
+function LeadSourceCard({ src }) {
+  const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : null);
+  const fields = [
+    ['Channel', LEAD_CHANNEL_LABELS[src.channel] || src.channel],
+    ['Campaign', src.campaign],
+    ['Keyword', src.keyword],
+    ['Source / Medium', src.source && src.medium ? `${src.source} / ${src.medium}` : (src.source || src.medium)],
+    ['Submitted', fmtDate(src.submittedAt)],
+  ].filter(([, v]) => v);
+  return (
+    <div style={{ marginTop: 16, border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Lead source</h3>
+        <span style={{
+          fontSize: 10, fontWeight: 800, letterSpacing: 0.4, padding: '2px 8px', borderRadius: 999,
+          background: src.returningClient ? '#FEF3C7' : '#DCFCE7', color: src.returningClient ? '#92400E' : '#166534',
+        }}>
+          {src.returningClient ? 'RETURNING CLIENT' : 'NEW LEAD'}
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px 20px' }}>
+        {fields.map(([k, v]) => (
+          <div key={k}>
+            <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 2 }}>{k}</div>
+            <div style={{ fontSize: 13, color: BRAND.ink, wordBreak: 'break-word' }}>{v}</div>
+          </div>
+        ))}
+      </div>
+      {src.landingUrl && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 2 }}>Landing page</div>
+          <a href={src.landingUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: BRAND.blue, wordBreak: 'break-all' }}>{src.landingUrl}</a>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function StagePicker({ stage, onChange }) {

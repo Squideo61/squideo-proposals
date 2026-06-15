@@ -325,6 +325,62 @@ export async function annotateDeals(rows) {
   });
 }
 
+// Lead-source summary for a deal: the first-touch marketing attribution from the
+// quote request that became this deal (channel / campaign / keyword / landing
+// page), plus a `returningClient` flag — true when the deal's company already
+// has another signed/paid deal (an existing client re-enquiring via the form).
+// Returns null for deals that didn't come from a quote request.
+export async function dealLeadSource(deal) {
+  if (!deal?.id) return null;
+  let qr;
+  try {
+    const rows = await sql`
+      SELECT attr_channel, attr_source, attr_medium, attr_campaign, attr_campaign_id,
+             attr_keyword, attr_term, attr_landing_url, attr_referrer, attr_gclid,
+             attr_first_seen_at, created_at
+        FROM quote_requests
+       WHERE deal_id = ${deal.id}
+       ORDER BY created_at ASC LIMIT 1`;
+    qr = rows[0];
+  } catch (_) { return null; /* attribution columns not present */ }
+  if (!qr) return null;
+
+  let campaignName = null;
+  if (qr.attr_campaign_id) {
+    try {
+      const n = await sql`SELECT name FROM ad_campaigns WHERE campaign_id = ${qr.attr_campaign_id} LIMIT 1`;
+      campaignName = n[0]?.name || null;
+    } catch (_) { /* ad_campaigns not present */ }
+  }
+
+  let returningClient = false;
+  if (deal.companyId) {
+    try {
+      const w = await sql`
+        SELECT 1 FROM deals
+         WHERE company_id = ${deal.companyId} AND stage IN ('signed','paid') AND id <> ${deal.id}
+         LIMIT 1`;
+      returningClient = w.length > 0;
+    } catch (_) { /* ignore */ }
+  }
+
+  const nonNumeric = (v) => (v && !/^\d+$/.test(v) ? v : null);
+  return {
+    channel: qr.attr_channel || null,
+    source: qr.attr_source || null,
+    medium: qr.attr_medium || null,
+    campaign: campaignName || nonNumeric(qr.attr_campaign) || qr.attr_campaign || null,
+    campaignId: qr.attr_campaign_id || null,
+    keyword: qr.attr_keyword || qr.attr_term || null,
+    landingUrl: qr.attr_landing_url || null,
+    referrer: qr.attr_referrer || null,
+    gclid: qr.attr_gclid || null,
+    firstSeenAt: qr.attr_first_seen_at || null,
+    submittedAt: qr.created_at || null,
+    returningClient,
+  };
+}
+
 export async function dealsRoute(req, res, id, action, user, subaction = null) {
   if (!id) {
     if (req.method === 'GET') {
@@ -1200,8 +1256,13 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       Array.from(new Set(emails.map(e => e.gmail_thread_id).filter(Boolean)))
     );
 
+    const leadSource = await dealLeadSource(deal);
+
     return res.status(200).json({
       ...deal,
+      // First-touch marketing attribution for the lead that became this deal
+      // (null if it didn't come from the quote form), incl. a returning-client flag.
+      leadSource,
       // Whether deal files are Drive-backed (drives the client upload path/cap),
       // and the deal's Drive folder id once one's been created (for an "open
       // folder" link). The folder is created lazily on first upload.
