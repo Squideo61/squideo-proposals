@@ -307,7 +307,14 @@ function applyOne(state, p) {
       if (p.delete) {
         if (!state.companies[p.id]) return state;
         const companies = { ...state.companies }; delete companies[p.id];
-        return { ...state, companies };
+        // Scrub the company off deals in local state (server nulls company_id
+        // too) so a deleted company can't be re-saved onto a deal.
+        let deals = state.deals;
+        if (Object.values(state.deals || {}).some(d => d && d.companyId === p.id)) {
+          deals = Object.fromEntries(Object.entries(state.deals).map(([id, d]) =>
+            [id, d && d.companyId === p.id ? { ...d, companyId: null } : d]));
+        }
+        return { ...state, companies, deals };
       }
       const cur = state.companies[p.id];
       if (!cur) return state;

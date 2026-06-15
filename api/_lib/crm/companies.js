@@ -123,6 +123,7 @@ export async function companiesRoute(req, res, id, action, user) {
                xc.city          AS xero_city,
                xc.postcode      AS xero_postcode,
                xc.country       AS xero_country,
+               (SELECT COUNT(*)::int FROM deals d WHERE d.company_id = c.id) AS deal_count,
                EXISTS(
                  SELECT 1
                    FROM signatures s
@@ -401,6 +402,9 @@ export async function companiesRoute(req, res, id, action, user) {
     if (!hasPermission(await getRole(user.role), 'companies.manage_all')) {
       return res.status(403).json({ error: 'You do not have permission to delete companies' });
     }
+    // Unlink deals from this company first so the delete can't be blocked by a
+    // FK (and no deal is left pointing at a ghost company). The deals stay.
+    await sql`UPDATE deals SET company_id = NULL WHERE company_id = ${id}`;
     await sql`DELETE FROM companies WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }
@@ -769,6 +773,8 @@ export function serialiseCompany(r) {
     // because the SPA refreshes companies on the next interaction anyway.
     hasSignedProposal: r.has_signed_proposal !== undefined ? hasSigned : null,
     isCustomer: !!verifiedAt || hasSigned,
+    // Linked-deal count (list query only) so the UI can warn before deleting.
+    dealCount: r.deal_count !== undefined ? Number(r.deal_count) : null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

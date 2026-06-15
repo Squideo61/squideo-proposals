@@ -1,13 +1,22 @@
 import sql from '../db.js';
-import { makeId, trimOrNull, lowerOrNull } from './shared.js';
+import { makeId, trimOrNull, lowerOrNull, ensureDealContactsTable } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
 export async function contactsRoute(req, res, id, action, user) {
   if (!id) {
     if (req.method === 'GET') {
+      // Count linked deals per contact — both where they're the primary contact
+      // and where they're a secondary contact (deal_contacts) — so the UI can
+      // show "N deals" and warn before deleting. Ensure deal_contacts exists
+      // first (lazily created) so the correlated subquery can't 500.
+      await ensureDealContactsTable().catch(() => {});
       const rows = await sql`
-        SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
+        SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at,
+               (SELECT COUNT(DISTINCT d.id)::int FROM deals d
+                  WHERE d.primary_contact_id = contacts.id
+                     OR EXISTS (SELECT 1 FROM deal_contacts dc WHERE dc.contact_id = contacts.id AND dc.deal_id = d.id)
+               ) AS deal_count
         FROM contacts
         WHERE provisional = FALSE
         ORDER BY name ASC NULLS LAST, email ASC
@@ -150,6 +159,8 @@ export function serialiseContact(r) {
     notes: r.notes || null,
     provisional: r.provisional === true,
     source: r.source || null,
+    // Linked-deal count (list query only) so the UI can warn before deleting.
+    dealCount: r.deal_count !== undefined ? Number(r.deal_count) : null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

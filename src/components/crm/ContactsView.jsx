@@ -213,6 +213,7 @@ function ContactRow({ contact, onOpen, onEdit }) {
           </div>
         </div>
       </button>
+      <DealCountBadge count={contact.dealCount} />
       <button
         onClick={onEdit}
         title="Edit contact"
@@ -259,6 +260,7 @@ function CompanyRow({ company, owed = 0, onOpen, onEdit, onToggleCustomer }) {
           {formatGBP(owed)} owed
         </div>
       )}
+      <DealCountBadge count={company.dealCount} />
       <button
         onClick={onToggleCustomer}
         title={isVerified ? 'Unmark as customer' : 'Mark as customer'}
@@ -275,6 +277,23 @@ function CompanyRow({ company, owed = 0, onOpen, onEdit, onToggleCustomer }) {
       >
         <Edit2 size={14} />
       </button>
+    </div>
+  );
+}
+
+// Linked-deal count pill. Shown when the contact/company is on ≥1 deal so it's
+// clear at a glance not to delete a record that's in use. Hidden at 0.
+function DealCountBadge({ count }) {
+  if (!count || count < 1) return null;
+  return (
+    <div
+      title={`Linked to ${count} deal${count === 1 ? '' : 's'} — deleting will unlink it`}
+      style={{
+        display: 'flex', alignItems: 'center', padding: '0 12px', whiteSpace: 'nowrap',
+        fontSize: 12, fontWeight: 600, color: BRAND.blue,
+      }}
+    >
+      {count} {count === 1 ? 'deal' : 'deals'}
     </div>
   );
 }
@@ -336,7 +355,11 @@ function ContactModal({ contact, onClose }) {
 
   const handleDelete = () => {
     if (!editing) return;
-    if (!window.confirm('Delete this contact?')) return;
+    const n = contact?.dealCount || 0;
+    const msg = n > 0
+      ? `This contact is linked to ${n} deal${n === 1 ? '' : 's'}. Deleting will unlink it — the deal${n === 1 ? '' : 's'} will stay. Delete anyway?`
+      : 'Delete this contact?';
+    if (!window.confirm(msg)) return;
     actions.deleteContact(contact.id);
     onClose();
   };
@@ -448,7 +471,11 @@ export function CompanyModal({ company, onClose }) {
 
   const handleDelete = () => {
     if (!editing) return;
-    if (!window.confirm('Delete this company? Contacts will keep existing but lose the company link.')) return;
+    const n = company?.dealCount || 0;
+    const dealsLine = n > 0
+      ? ` It's linked to ${n} deal${n === 1 ? '' : 's'}, which will stay but lose the company link.`
+      : '';
+    if (!window.confirm(`Delete this company? Contacts will keep existing but lose the company link.${dealsLine}`)) return;
     actions.deleteCompany(company.id);
     onClose();
   };
