@@ -54,6 +54,16 @@ export function ensureAdSpend() {
       )`;
     await sql`CREATE INDEX IF NOT EXISTS ad_spend_daily_campaign_idx ON ad_spend_daily(campaign_id)`;
     await sql`CREATE INDEX IF NOT EXISTS ad_spend_daily_day_idx      ON ad_spend_daily(day)`;
+    // Friendly campaign id -> name, for every campaign (not just those with
+    // recent spend), so the reports can label numeric campaign ids.
+    await sql`
+      CREATE TABLE IF NOT EXISTS ad_campaigns (
+        campaign_id TEXT PRIMARY KEY,
+        customer_id TEXT,
+        name        TEXT,
+        status      TEXT,
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
   })().catch((err) => { ensured = null; throw err; });
   return ensured;
 }
@@ -159,6 +169,26 @@ const CAMPAIGN_QUERY = `
   FROM campaign
   WHERE segments.date DURING LAST_14_DAYS`;
 
+// Every campaign in the account (no date/metrics filter) so we can label numeric
+// campaign ids with their names even when a campaign had no spend in range.
+const CAMPAIGN_NAMES_QUERY = `
+  SELECT campaign.id, campaign.name, campaign.status
+  FROM campaign`;
+
+async function syncCampaignNames(customerId) {
+  const rows = await runGaql(CAMPAIGN_NAMES_QUERY);
+  for (const r of rows) {
+    const id = String(r.campaign?.id ?? '');
+    if (!id) continue;
+    await sql`
+      INSERT INTO ad_campaigns (campaign_id, customer_id, name, status, updated_at)
+      VALUES (${id}, ${customerId}, ${r.campaign?.name ?? null}, ${r.campaign?.status ?? null}, NOW())
+      ON CONFLICT (campaign_id) DO UPDATE SET
+        name = EXCLUDED.name, status = EXCLUDED.status, updated_at = NOW()`;
+  }
+  return rows.length;
+}
+
 // Core sync: re-pull a trailing window (so late cost/conversion adjustments
 // reconcile) and upsert. Returns a small status object. Shared by the daily
 // cron and the "Sync now" button in Marketing → Settings.
@@ -170,7 +200,8 @@ export async function runAdSpendSync() {
   for (const r of keywordRows) { const q = upsertRow(customerId, r, false); if (q) await q; }
   const campaignRows = await runGaql(CAMPAIGN_QUERY);
   for (const r of campaignRows) { const q = upsertRow(customerId, r, true); if (q) await q; }
-  return { ok: true, keywordRows: keywordRows.length, campaignRows: campaignRows.length };
+  const namedCampaigns = await syncCampaignNames(customerId);
+  return { ok: true, keywordRows: keywordRows.length, campaignRows: campaignRows.length, namedCampaigns };
 }
 
 // Cron entry: wraps runAdSpendSync and always returns 200 so a failure doesn't

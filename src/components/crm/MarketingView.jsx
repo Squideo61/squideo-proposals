@@ -322,7 +322,17 @@ function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.key} style={{ borderTop: '1px solid ' + BRAND.border }}>
-                  <Td title={r.label}>{groupBy === 'channel' ? prettyChannel(r.key) : (r.label || '—')}</Td>
+                  <Td title={r.label}>
+                    {groupBy === 'channel' ? prettyChannel(r.key)
+                      : groupBy === 'campaign' ? (
+                        <div>
+                          <div>{r.label || '—'}</div>
+                          {r.campaignId && r.label !== r.campaignId && (
+                            <div style={{ fontSize: 11, color: BRAND.muted }}>{r.campaignId}</div>
+                          )}
+                        </div>
+                      ) : (r.label || '—')}
+                  </Td>
                   <Td right>{r.leads}</Td>
                   <Td right>{r.qualified}</Td>
                   <Td right>{r.won}</Td>

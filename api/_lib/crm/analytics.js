@@ -87,6 +87,22 @@ async function spendBuckets(fromStr, toStr) {
   return { byCampaign, byKeyword, total };
 }
 
+// Friendly campaign id -> name (synced from Google Ads). Robust to a missing
+// table (returns an empty map). Lets the reports show campaign names rather than
+// the numeric ids the ValueTrack {campaignid} captures.
+async function campaignNameMap() {
+  const map = new Map();
+  try {
+    const rows = await sql`SELECT campaign_id, name FROM ad_campaigns WHERE name IS NOT NULL`;
+    for (const r of rows) map.set(String(r.campaign_id), r.name);
+  } catch { /* table not present yet */ }
+  return map;
+}
+
+// A campaign value that isn't just the numeric id (utm_campaign is set to
+// {campaignid} by our tracking suffix, so it's usually numeric).
+const nonNumeric = (v) => (v && !/^\d+$/.test(v) ? v : null);
+
 // GET /api/crm/analytics/leads — one row per lead with attribution + the deal it
 // became + the revenue it generated.
 async function leadsLog(req) {
@@ -102,6 +118,7 @@ async function leadsLog(req) {
      WHERE qr.created_at >= ${fromDate} AND qr.created_at < ${toExcl}
      ORDER BY qr.created_at DESC`;
   const values = await dealValueMap(rows.map((r) => r.deal_id));
+  const names = await campaignNameMap();
   const leads = rows.map((r) => {
     const dv = r.deal_id ? values.get(r.deal_id) : null;
     const won = !!(dv && dv.won);
@@ -114,7 +131,7 @@ async function leadsLog(req) {
       channel: r.attr_channel || null,
       source: r.attr_source || null,
       medium: r.attr_medium || null,
-      campaign: r.attr_campaign || null,
+      campaign: (r.attr_campaign_id && names.get(r.attr_campaign_id)) || nonNumeric(r.attr_campaign) || r.attr_campaign || null,
       campaignId: r.attr_campaign_id || null,
       keyword: r.attr_keyword || r.attr_term || null,
       landingUrl: r.attr_landing_url || null,
@@ -143,18 +160,19 @@ async function reports(req, groupBy) {
      WHERE qr.created_at >= ${fromDate} AND qr.created_at < ${toExcl}`;
   const values = await dealValueMap(rows.map((r) => r.deal_id));
   const { byCampaign, byKeyword, total: totalSpend } = await spendBuckets(fromStr, toStr);
+  const names = dim === 'campaign' ? await campaignNameMap() : null;
 
   // Bucket leads by the chosen dimension. For campaign we key by campaign id but
-  // keep a friendly label (utm_campaign or the Google Ads name).
+  // label it with the friendly Google Ads name (falling back to the id).
   const groups = new Map();
   const keyFor = (r) => {
     if (dim === 'source') return { key: r.attr_source || '(none)', label: r.attr_source || '(none)' };
     if (dim === 'medium') return { key: r.attr_medium || '(none)', label: r.attr_medium || '(none)' };
     if (dim === 'channel') return { key: r.attr_channel || 'direct', label: r.attr_channel || 'direct' };
     if (dim === 'keyword') { const k = r.attr_keyword || r.attr_term; return { key: (k || '(none)').toLowerCase(), label: k || '(none)' }; }
-    // campaign
+    // campaign — prefer the friendly name, then a non-numeric utm_campaign, then the id.
     const id = r.attr_campaign_id || null;
-    const label = r.attr_campaign || (id && byCampaign.get(id)?.name) || id || '(none)';
+    const label = (id && names.get(id)) || nonNumeric(r.attr_campaign) || id || '(none)';
     return { key: id || r.attr_campaign || '(none)', label, campaignId: id };
   };
 
@@ -181,6 +199,7 @@ async function reports(req, groupBy) {
     return {
       key: g.key,
       label: g.label,
+      campaignId: g.campaignId,
       leads: g.leads,
       qualified: g.qualified,
       won: g.won,
