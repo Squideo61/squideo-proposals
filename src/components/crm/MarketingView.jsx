@@ -230,7 +230,7 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings }) {
       <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 12px' }}>By channel</h2>
       {channels.length === 0 ? <Empty>No leads in this period yet.</Empty> : (
         <>
-          <div style={{ height: 240, marginBottom: 16 }}>
+          <div style={{ height: 240, marginBottom: 16, maxWidth: 560 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" vertical={false} />
