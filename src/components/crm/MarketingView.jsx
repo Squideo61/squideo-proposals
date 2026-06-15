@@ -237,7 +237,7 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings }) {
                 <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
                 <Tooltip formatter={(v, n) => (n === 'revenue' ? formatGBP(v) : v)} />
-                <Bar dataKey="leads" name="Leads" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="leads" name="Leads" radius={[4, 4, 0, 0]} maxBarSize={72}>
                   {chartData.map((d) => <Cell key={d.key} fill={CHANNEL_COLORS[d.key] || BRAND.blue} />)}
                 </Bar>
               </BarChart>
@@ -484,7 +484,7 @@ function SettingsTab({ snippet, onSync }) {
               {syncing ? 'Syncing…' : 'Sync now'}
             </button>
             <span style={{ fontSize: 12, color: BRAND.muted, marginLeft: 10 }}>
-              Pulls the last 14 days of spend from Google Ads.
+              Pulls the last 14 days of spend. Syncs automatically every day at 6am.
             </span>
             {syncResult && (
               <div style={{
