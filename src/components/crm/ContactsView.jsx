@@ -345,10 +345,12 @@ function ContactModal({ contact, onClose }) {
     <Modal onClose={onClose}>
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>{editing ? 'Edit contact' : 'New contact'}</h2>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Row label="Name"><input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Row>
-        <Row label="Email"><input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Row>
-        <Row label="Phone"><input className="input" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} /></Row>
-        <Row label="Title"><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} /></Row>
+        {/* autoComplete off + non-standard names: stop Edge/Chrome autofill
+            replacing a typed full name with a single profile token on blur. */}
+        <Row label="Name"><input className="input" name="squideo-contact-name" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Row>
+        <Row label="Email"><input className="input" type="email" name="squideo-contact-email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} /></Row>
+        <Row label="Phone"><input className="input" type="tel" name="squideo-contact-phone" autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value)} /></Row>
+        <Row label="Title"><input className="input" name="squideo-contact-title" autoComplete="off" value={title} onChange={(e) => setTitle(e.target.value)} /></Row>
         <Row label="Company">
           <select className="input" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
             <option value="">None</option>

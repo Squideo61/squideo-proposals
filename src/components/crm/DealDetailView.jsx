@@ -4725,17 +4725,19 @@ function CreateContactModal({ dealId, defaultCompanyId, prefill, onClose, onCrea
     <Modal onClose={onClose} maxWidth={460}>
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Add new contact</h2>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* autoComplete off + non-standard names: stop Edge/Chrome autofill
+            replacing a typed full name with a single profile token on blur. */}
         <label style={{ fontSize: 12, color: BRAND.muted }}>
           Email
-          <input value={email} onChange={(e) => setEmail(e.target.value)} required className="input" style={{ width: '100%', marginTop: 4 }} />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} required name="squideo-contact-email" autoComplete="off" className="input" style={{ width: '100%', marginTop: 4 }} />
         </label>
         <label style={{ fontSize: 12, color: BRAND.muted }}>
           Name
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Optional" className="input" style={{ width: '100%', marginTop: 4 }} />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Optional" name="squideo-contact-name" autoComplete="off" className="input" style={{ width: '100%', marginTop: 4 }} />
         </label>
         <label style={{ fontSize: 12, color: BRAND.muted }}>
           Job title
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Optional" className="input" style={{ width: '100%', marginTop: 4 }} />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Optional" name="squideo-contact-title" autoComplete="off" className="input" style={{ width: '100%', marginTop: 4 }} />
         </label>
         <label style={{ fontSize: 12, color: BRAND.muted }}>
           Company
