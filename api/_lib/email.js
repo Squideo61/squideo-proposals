@@ -164,17 +164,6 @@ export function inviteAcceptedHtml({ name, email, roleName, invitedByEmail, link
   return shell(inner);
 }
 
-export function firstViewHtml({ title, clientName, country, city, link }) {
-  const where = [city, country].filter(Boolean).join(', ');
-  const inner = `
-    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">${escapeHtml(clientName || 'A client')} just opened your proposal</h2>
-    <p style="margin:0 0 12px;">They've opened <strong>${escapeHtml(title)}</strong> for the first time${where ? ` from <strong>${escapeHtml(where)}</strong>` : ''}.</p>
-    <p style="margin:0 0 20px;color:#6B7785;font-size:13px;">This is a one-time alert - you won't get another email for the same proposal.</p>
-    <p style="margin:0;"><a href="${escapeHtml(link)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open proposal</a></p>
-  `;
-  return shell(inner);
-}
-
 // Client has finished a video/storyboard review and sent their comments to the
 // team. `kind` is 'video' or 'storyboard'; `itemTitle` is the specific
 // video/storyboard within the project.

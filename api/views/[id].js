@@ -2,7 +2,6 @@
 // GET   /api/views/[id]                                            requires auth
 import sql from '../_lib/db.js';
 import { cors, requireAuth, optionalAuth } from '../_lib/middleware.js';
-import { sendMail, firstViewHtml, APP_URL } from '../_lib/email.js';
 import { sendNotification, ensureTrackingNotificationDefaults } from '../_lib/notifications.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 
@@ -77,15 +76,9 @@ export default async function handler(req, res) {
           const data = rows[0].data || {};
           const ownerEmail = data.preparedByEmail || null;
           const title = data.proposalTitle || data.clientName || 'Your proposal';
-          if (ownerEmail) {
-            const link = `${APP_URL}/?proposal=${id}`;
-            await sendNotification('proposal.first_view', {
-              ownerEmail,
-              subject: `${data.clientName || 'A client'} just opened "${title}"`,
-              html: firstViewHtml({ title, clientName: data.clientName, country, city, link }),
-              text: `${data.clientName || 'A client'} opened ${title}. ${link}`,
-            });
-          }
+          // The "just opened your proposal" email alert was removed — the in-app
+          // tracking-bell notification below covers first-view alerts. We still
+          // claim first_view_emailed_at above so this block fires exactly once.
           // Engagement feed: one tracking-bell alert (in-app + desktop push, no
           // email) the first time the proposal is opened. Owner-scoped.
           if (ownerEmail) {
