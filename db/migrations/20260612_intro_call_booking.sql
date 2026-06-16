@@ -80,3 +80,4 @@ ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS client_key TEXT;
 ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS client_timezone TEXT;
 ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ;
 ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS team_task_created_at TIMESTAMPTZ;
+ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS team_task_id TEXT;  -- id of the day-of team task, so cancelling can delete it

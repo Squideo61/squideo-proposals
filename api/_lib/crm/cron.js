@@ -805,6 +805,7 @@ async function cronIntroCallReminders(req, res) {
     await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS client_timezone TEXT`;
     await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ`;
     await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS team_task_created_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS team_task_id TEXT`;
   } catch (err) { console.warn('[cron intro-call-reminders] ensure columns failed', err.message); }
 
   const force = String(req.query?.force || '') === '1';
@@ -893,6 +894,9 @@ async function cronIntroCallReminders(req, res) {
               VALUES (${b.deal_id}, 'task_created', ${JSON.stringify({ taskId, title, source: 'intro_call_reminder' })}, NULL)
             `;
           }
+          // Remember the task id on the booking so cancelling the call can
+          // delete this task (and stop its reminders) — see cancelBookingById.
+          await sql`UPDATE intro_call_bookings SET team_task_id = ${taskId} WHERE id = ${b.id}`;
           tasksCreated++;
         } catch (err) {
           console.error('[cron intro-call-reminders] task create failed', b.id, err.message);

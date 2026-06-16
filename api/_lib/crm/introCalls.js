@@ -15,6 +15,7 @@ import { APP_URL } from '../email.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { trimOrNull } from './shared.js';
+import { archiveRecord } from './recycleBin.js';
 import { getFreshAccessToken } from './gmail.js';
 import { deleteEvent } from '../googleCalendar.js';
 import {
@@ -194,7 +195,7 @@ async function cancelBookingById(req, res, user) {
   const bookingId = trimOrNull(req.body?.bookingId);
   if (!bookingId) return res.status(400).json({ error: 'bookingId required' });
   const b = (await sql`
-    SELECT id, deal_id, organizer_email, google_event_id, status
+    SELECT id, deal_id, organizer_email, google_event_id, status, team_task_id
       FROM intro_call_bookings WHERE id = ${bookingId}
   `)[0];
   if (!b) return res.status(404).json({ error: 'Booking not found' });
@@ -206,6 +207,27 @@ async function cancelBookingById(req, res, user) {
     console.warn('[intro-calls] event delete failed', err.message);
   }
   await sql`UPDATE intro_call_bookings SET status = 'cancelled' WHERE id = ${bookingId}`;
+
+  // Remove the day-of team task the reminder cron may have created, otherwise it
+  // lingers on people's task lists and keeps firing reminders for a call that's
+  // off. Archive it first so the delete is restorable via the CRM recycle bin.
+  if (b.team_task_id) {
+    try {
+      const [taskRow] = await sql`SELECT * FROM tasks WHERE id = ${b.team_task_id}`;
+      if (taskRow) {
+        const assigneeRows = await sql`SELECT * FROM task_assignees WHERE task_id = ${b.team_task_id}`;
+        await archiveRecord('task', b.team_task_id, [
+          { table: 'tasks', row: taskRow },
+          ...assigneeRows.map((a) => ({ table: 'task_assignees', row: a })),
+        ], user.email);
+        await sql`DELETE FROM tasks WHERE id = ${b.team_task_id}`;
+      }
+      await sql`UPDATE intro_call_bookings SET team_task_id = NULL WHERE id = ${bookingId}`;
+    } catch (err) {
+      console.warn('[intro-calls] team task delete failed', err.message);
+    }
+  }
+
   if (b.deal_id) {
     await sql`
       INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
