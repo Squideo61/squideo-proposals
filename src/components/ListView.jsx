@@ -33,14 +33,15 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
   // Filter options: everyone who can own a proposal (sales, directors, admins,
-  // members) — i.e. all but the production-only roles (producers/copywriters),
-  // who never prepare proposals. Plus anyone who actually prepared one,
-  // regardless of role, so no owner is hidden.
+  // members) — i.e. all but the roles that never prepare proposals: the
+  // production-only roles (producers/copywriters) and Marketing (a scoped role
+  // that only sees the Marketing section). Plus anyone who actually prepared
+  // one, regardless of role, so no owner is hidden.
   const memberOptions = useMemo(() => {
-    const PRODUCTION_ROLES = new Set(['producer', 'copywriter']);
+    const NON_PROPOSAL_ROLES = new Set(['producer', 'copywriter', 'marketing']);
     const map = new Map();
     for (const [email, u] of Object.entries(state.users || {})) {
-      if (!PRODUCTION_ROLES.has(u.role)) map.set(email, u.name || email);
+      if (!NON_PROPOSAL_ROLES.has(u.role)) map.set(email, u.name || email);
     }
     for (const p of proposals) {
       const email = p.preparedByEmail;
