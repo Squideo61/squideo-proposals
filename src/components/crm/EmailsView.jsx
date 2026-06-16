@@ -9,6 +9,7 @@ import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatMailDate, formatRelativeTime, useIsMobile, decodeHtmlEntities } from '../../utils.js';
+import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { DealContextPanel } from './DealContextPanel.jsx';
 import { EmailComposerModal } from './DealDetailView.jsx';
 import { TrackingEye, TrackingBanner } from './EmailTracking.jsx';
@@ -1368,7 +1369,7 @@ function EmailFrame({ html }) {
   const [height, setHeight] = useState(360);
 
   const srcDoc = useMemo(() => {
-    const clean = DOMPurify.sanitize(html || '', FRAME_SANITIZE);
+    const clean = sanitizeEmailBody(html || '', FRAME_SANITIZE);
     return '<!doctype html><html><head><meta charset="utf-8">'
       + '<meta name="viewport" content="width=device-width, initial-scale=1">'
       + '<base target="_blank">'

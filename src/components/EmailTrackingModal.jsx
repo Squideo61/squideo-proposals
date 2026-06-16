@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import DOMPurify from 'dompurify';
 import { X, Eye, MousePointerClick, ArrowUpRight, CheckSquare } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatRelativeTime } from '../utils.js';
+import { sanitizeEmailBody } from '../utils/emailImages.js';
 
 // Short, human date for the message header (e.g. "3 Jun 2026, 14:30").
 function formatDateLabel(iso) {
@@ -21,7 +21,7 @@ const VIEW_SANITIZE = {
   FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form'],
   FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
 };
-const sanitize = (html) => (html ? DOMPurify.sanitize(html, VIEW_SANITIZE) : null);
+const sanitize = (html) => (html ? sanitizeEmailBody(html, VIEW_SANITIZE) : null);
 
 // Opened from a "View Tracking" email-open alert. Loads the thread and surfaces
 // the specific email the recipient opened — the last message WE sent (it carries

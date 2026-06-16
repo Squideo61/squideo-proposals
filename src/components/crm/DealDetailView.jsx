@@ -5,6 +5,7 @@ import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile, formatProposalNumber, decodeHtmlEntities } from '../../utils.js';
+import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { Badge, Modal } from '../ui.jsx';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
@@ -1205,7 +1206,7 @@ function ExpandedMessage({ email, defaultOpen = false, onOpenFull }) {
 
   const sanitized = useMemo(() => {
     if (!data?.bodyHtml) return null;
-    return DOMPurify.sanitize(data.bodyHtml, {
+    return sanitizeEmailBody(data.bodyHtml, {
       USE_PROFILES: { html: true },
       FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form'],
       FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
@@ -1446,7 +1447,7 @@ export function EmailViewerModal({ gmailMessageId, dealId, onClose }) {
     if (!data?.bodyHtml) return null;
     // Strip inline styles + scripting vectors so a sender can't break our
     // modal layout or run code. Wrap in a constrained container at render.
-    return DOMPurify.sanitize(data.bodyHtml, {
+    return sanitizeEmailBody(data.bodyHtml, {
       USE_PROFILES: { html: true },
       FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form'],
       FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
