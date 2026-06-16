@@ -1054,6 +1054,7 @@ function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal }) {
 // message oldest→newest with its body inlined (lazy-loaded). Single-message
 // threads keep the original click-to-modal behaviour.
 export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCompanyId, onOpenMessage, onLinkAnother, onCreateNewDeal }) {
+  const { state } = useStore();
   const [expanded, setExpanded] = useState(false);
   const isMulti = messages.length > 1;
   const latest = messages[messages.length - 1];
@@ -1068,6 +1069,16 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
   // don't need a prompt.
   const unknownCcs = useMemo(() => {
     if (!linkedEmails) return [];
+    // Our own team is never a "new contact" to add. Exclude CRM users, the
+    // signed-in user, the connected mailbox, and anyone on our own email domain
+    // (catches teammates + internal aliases like enquiries@ without CRM accounts).
+    const internal = new Set();
+    for (const u of Object.values(state.users || {})) if (u?.email) internal.add(u.email.toLowerCase());
+    if (state.session?.email) internal.add(state.session.email.toLowerCase());
+    if (state.gmailAccount?.gmailAddress) internal.add(state.gmailAccount.gmailAddress.toLowerCase());
+    const sessionEmail = (state.session?.email || '').toLowerCase();
+    const at = sessionEmail.lastIndexOf('@');
+    const ownDomain = at >= 0 ? sessionEmail.slice(at + 1) : null;
     const seen = new Set();
     const out = [];
     for (const m of messages) {
@@ -1076,13 +1087,14 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
       for (const raw of ccs) {
         if (!raw || typeof raw !== 'string') continue;
         const lower = raw.trim().toLowerCase();
-        if (!lower || seen.has(lower) || linkedEmails.has(lower)) continue;
+        if (!lower || seen.has(lower) || linkedEmails.has(lower) || internal.has(lower)) continue;
+        if (ownDomain && lower.endsWith('@' + ownDomain)) continue;
         seen.add(lower);
         out.push(raw.trim());
       }
     }
     return out;
-  }, [messages, linkedEmails]);
+  }, [messages, linkedEmails, state.users, state.session, state.gmailAccount]);
 
   const handleHeaderClick = () => {
     if (isMulti) {
