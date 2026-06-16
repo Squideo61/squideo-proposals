@@ -1090,14 +1090,25 @@ function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal }) {
 // message oldest→newest with its body inlined (lazy-loaded). Single-message
 // threads keep the original click-to-modal behaviour.
 export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCompanyId, onOpenMessage, onLinkAnother, onCreateNewDeal }) {
-  const { state } = useStore();
+  const { state, actions } = useStore();
   const [expanded, setExpanded] = useState(false);
   const isMulti = messages.length > 1;
   const latest = messages[messages.length - 1];
   const threadId = latest.gmailThreadId || latest.gmailMessageId;
-  const gmailLink = latest.gmailThreadId
-    ? `https://mail.google.com/mail/u/0/#all/${latest.gmailThreadId}`
-    : null;
+
+  // Reply to the conversation inline (no need to jump to Gmail): open the shared
+  // composer prefilled with the recipient, "Re:" subject and the thread id so the
+  // send stays in the same Gmail conversation. Mirrors the full viewer's reply.
+  const replyToThread = () => {
+    const to = latest.direction === 'inbound'
+      ? (latest.fromEmail || '')
+      : (latest.toEmails?.[0] || latest.fromEmail || '');
+    const subject = /^re:/i.test(latest.subject || '') ? latest.subject : 'Re: ' + (latest.subject || '(no subject)');
+    actions.openComposer({
+      dealId: dealId || null,
+      initialDraft: { to, cc: '', subject, body: '', gmailThreadId: latest.gmailThreadId || null },
+    });
+  };
 
   // Addresses Cc'd into any *inbound* message on this thread that aren't
   // already linked to this deal. We only mine inbound because the user asked
@@ -1168,11 +1179,9 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
               onOpenFull={() => onOpenMessage(m.gmailMessageId)}
             />
           ))}
-          {gmailLink && (
-            <a href={gmailLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: BRAND.muted, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'flex-start' }}>
-              <ExternalLink size={11} /> Open thread in Gmail
-            </a>
-          )}
+          <button onClick={replyToThread} className="btn-ghost" style={{ alignSelf: 'flex-start' }}>
+            <Reply size={13} /> Reply
+          </button>
         </div>
       )}
     </div>
