@@ -13,7 +13,8 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
   const { state, showMsg } = useStore();
   const [search, setSearch] = useState('');
   // Quick status filter: null = all (non-archived) | 'open' | 'signed' | 'archive'.
-  const [statusFilter, setStatusFilter] = useState(null);
+  // Default to 'open' so the list lands on the proposals still in play.
+  const [statusFilter, setStatusFilter] = useState('open');
   const [memberFilter, setMemberFilter] = useState(() => {
     try {
       const stored = localStorage.getItem(TEAM_FILTER_STORAGE_KEY);
