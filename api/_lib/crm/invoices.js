@@ -12,7 +12,6 @@
 import { put, del, get as blobGet } from '@vercel/blob';
 import sql from '../db.js';
 import { advanceStage } from '../dealStage.js';
-import { enterProduction } from '../production.js';
 import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { sendNotification } from '../notifications.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
@@ -903,12 +902,8 @@ export async function invoicesRoute(req, res, id, action, user) {
           console.error('[invoices] advanceStage failed', err);
         }
 
-        // Paid work becomes a production project (no-op if already in production).
-        try {
-          await enterProduction(dealId, { source: 'manual-invoice-paid', actorEmail: user.email || null });
-        } catch (err) {
-          console.error('[invoices] enterProduction failed', err);
-        }
+        // Payment no longer opens production — a person marks the deal "Good to
+        // go" once it's ready (see the deals route's good-to-go action).
 
         try {
           const [dealRow] = await sql`SELECT title FROM deals WHERE id = ${dealId}`;
@@ -1254,12 +1249,7 @@ async function notifyInvoicePaid({ row, paidAt, amount, paymentMethod = 'xero', 
   } catch (err) {
     console.error('[invoices] advanceStage failed', err);
   }
-  // Paid work becomes a production project (no-op if already in production).
-  try {
-    await enterProduction(dealId, { source: 'invoice-paid', actorEmail: user?.email || null });
-  } catch (err) {
-    console.error('[invoices] enterProduction failed', err);
-  }
+  // Payment no longer opens production — a person marks the deal "Good to go".
   try {
     const [dealRow] = await sql`SELECT title FROM deals WHERE id = ${dealId}`;
     const title = dealRow?.title || row.invoice_number || row.id;
@@ -1361,24 +1351,22 @@ export async function reconcileProposalBillingPaid(proposalIds) {
   }
   if (writes.length) await Promise.all(writes);
 
-  // Paid via Xero (no Stripe webhook to us) → ensure the deal is on the board,
-  // matching the Stripe paid flow. Idempotent: only deals not yet in production
-  // are touched, so this also back-fills deposits paid before this hook existed.
+  // Paid via Xero (no Stripe webhook to us) → advance the linked deal to 'paid',
+  // matching the Stripe paid flow. Idempotent (advanceStage's ratchet no-ops a
+  // deal that's already paid). Production is opened separately by "Good to go".
   if (paidProposalIds.size) {
     try {
-      const dealsToEnter = await sql`
+      const dealsToAdvance = await sql`
         SELECT DISTINCT d.id AS id
           FROM proposals p JOIN deals d ON d.id = p.deal_id
          WHERE p.id = ANY(${[...paidProposalIds]})
-           AND d.production_phase IS NULL
            AND d.stage <> 'lost'
       `;
-      for (const { id: dealId } of dealsToEnter) {
+      for (const { id: dealId } of dealsToAdvance) {
         await advanceStage(dealId, 'paid', { payload: { source: 'xero-reconcile' } });
-        await enterProduction(dealId, { source: 'xero-reconcile' });
       }
     } catch (err) {
-      console.error('[invoices] reconcile enter-production failed', err);
+      console.error('[invoices] reconcile advance-to-paid failed', err);
     }
   }
 }

@@ -11,6 +11,9 @@ import { trackingForDealThreads } from './tracking.js';
 import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree, isFolderWithin, listFolderContents, getDriveFile } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { enterProduction } from '../production.js';
+import { sendNotification } from '../notifications.js';
+import { APP_URL } from '../email.js';
 
 // Self-heal for db/migrations/20260604_deal_files_drive.sql — Drive-backed
 // deal files. Idempotent and cached; also relaxes blob_url's NOT NULL so
@@ -490,6 +493,44 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       RETURNING id
     `;
     if (!updated.length) return res.status(404).json({ error: 'Not found' });
+    const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
+    const [deal] = await annotateDeals(rows);
+    return res.status(200).json({ ok: true, deal });
+  }
+
+  // "Good to go" — the explicit gate that turns a sold deal into a production
+  // project. This replaces the old auto-on-payment entry: a person confirms the
+  // deal is ready, which moves it onto the board (Pre-Production / New Project,
+  // with one video) AND alerts the project managers. Eligibility: the deal must
+  // be committed — signed, paid, or on a purchase order. One-way (there's no
+  // un-enter), so a 409 protects against an accidental too-early click.
+  if (action === 'good-to-go') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const [d] = await sql`SELECT id, title, stage, po_number, production_phase FROM deals WHERE id = ${id}`;
+    if (!d) return res.status(404).json({ error: 'Not found' });
+    // Idempotent: already a project → return it unchanged (no second notification).
+    if (d.production_phase) {
+      const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
+      const [deal] = await annotateDeals(rows);
+      return res.status(200).json({ ok: true, alreadyInProduction: true, deal });
+    }
+    const [{ signed }] = await sql`
+      SELECT EXISTS (
+        SELECT 1 FROM signatures s JOIN proposals p ON p.id = s.proposal_id WHERE p.deal_id = ${id}
+      ) AS signed`;
+    const eligible = !!signed || d.po_number != null || ['signed', 'paid', 'long_term'].includes(d.stage);
+    if (!eligible) {
+      return res.status(409).json({
+        error: 'This deal isn’t ready yet — a deal must be signed, paid, or on a purchase order before it can be marked good to go.',
+      });
+    }
+    const result = await enterProduction(id, { source: 'good-to-go', actorEmail: user.email || null });
+    // Alert the project managers that there's a new project to pick up. Best-
+    // effort — a notification failure must never undo the production entry.
+    if (result.entered) {
+      try { await notifyGoodToGo(d, user); }
+      catch (err) { console.error('[deals] good-to-go notify failed', err); }
+    }
     const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
     const [deal] = await annotateDeals(rows);
     return res.status(200).json({ ok: true, deal });
@@ -1453,6 +1494,28 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
   }
 
   return res.status(405).end();
+}
+
+// Alert the project managers (and admins/directors, per their prefs) that a
+// deal has been marked "Good to go" and is now a production project. Broadcast
+// on the general (Updates) bell + email; the person who clicked is excluded —
+// they know they just did it. Best-effort: the caller wraps this in try/catch.
+async function notifyGoodToGo(deal, user) {
+  const title = deal.title || deal.id;
+  const link = `${APP_URL}/crm?deal=${deal.id}`;
+  const actor = user?.name || user?.email || 'Someone';
+  await sendNotification('project.good_to_go', {
+    subject: `🟢 Good to go: ${title}`,
+    html: `<p style="font-size:15px"><strong>${actor}</strong> marked <strong>${title}</strong> good to go — it’s now in production and ready to pick up.</p>`
+        + `<p><a href="${link}">Open the project</a></p>`,
+    text: `${actor} marked “${title}” good to go — it’s now in production and ready to pick up. ${link}`,
+    excludeEmails: user?.email ? [user.email] : null,
+    inApp: {
+      title: `Good to go: ${title}`,
+      body: `${actor} moved this deal into production.`,
+      link: `#/deal/${deal.id}`,
+    },
+  });
 }
 
 // Compute the ex-VAT value of a proposal that best reflects the actual

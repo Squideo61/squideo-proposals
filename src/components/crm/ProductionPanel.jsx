@@ -19,16 +19,16 @@ export function ProductionPanel({ dealId, deal, videos, isMobile, onOpenVideo })
   };
 
   if (!inProduction) {
+    // A deal only becomes a project once someone marks it "Good to go" (the
+    // button at the top of the page) — that's the single gate now, and it
+    // notifies the project managers. Payment alone no longer enters production,
+    // so there's no ungated "Add to production" shortcut here.
     return (
       <div style={container}>
         <PanelHeader />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <span style={{ fontSize: 13, color: BRAND.muted }}>
-            This deal isn’t in production yet. Adding it creates a project with one video in Pre-Production.
-          </span>
-          <button className="btn" onClick={() => actions.enterProduction(dealId).then(() => showMsg('Added to production'))}>
-            <Plus size={14} /> Add to production
-          </button>
+        <div style={{ fontSize: 13, color: BRAND.muted, marginTop: 12 }}>
+          This deal isn’t in production yet. Once it’s sold, use <strong>Good to go</strong> at the top of
+          the page to move it into Projects (one video in Pre-Production) and alert the project managers.
         </div>
       </div>
     );

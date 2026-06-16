@@ -20,7 +20,6 @@ import { getInvoicesByIds } from '../_lib/xero.js';
 import { sendNotification } from '../_lib/notifications.js';
 import { APP_URL } from '../_lib/email.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
-import { enterProduction } from '../_lib/production.js';
 import { markExtrasPaidForXeroInvoice } from '../_lib/crm/extras.js';
 import { escapeHtml } from '../_lib/crm/shared.js';
 
@@ -92,16 +91,16 @@ async function processInvoiceEvents(events) {
     }
     // A paid proposal-billing invoice (deposit / full / PO) → move its deal into
     // production, same as the Stripe paid flow. Done regardless of contactId.
-    await enterProductionForPaidInvoice(inv);
+    await advanceDealForPaidInvoice(inv);
     if (!inv.contactId) continue;
     await creditForPaidInvoice(inv);
   }
 }
 
 // When a Xero invoice we raised for a proposal is paid, advance the linked deal
-// to 'paid' and create its production project. Best-effort + idempotent
-// (advanceStage no-ops if already paid; enterProduction if already in production).
-async function enterProductionForPaidInvoice(inv) {
+// to 'paid'. Best-effort + idempotent (advanceStage no-ops if already paid).
+// Production no longer opens on payment — a person marks the deal "Good to go".
+async function advanceDealForPaidInvoice(inv) {
   try {
     const [row] = await sql`SELECT proposal_id FROM proposal_billing WHERE xero_invoice_id = ${inv.invoiceId} LIMIT 1`;
     const proposalId = row?.proposal_id;
@@ -109,9 +108,8 @@ async function enterProductionForPaidInvoice(inv) {
     const dealId = await dealIdForProposal(proposalId);
     if (!dealId) return;
     await advanceStage(dealId, 'paid', { payload: { proposalId, source: 'xero-webhook', invoice: inv.invoiceNumber || inv.invoiceId } });
-    await enterProduction(dealId, { source: 'xero-webhook' });
   } catch (err) {
-    console.error('[xero webhook] enter production failed', err);
+    console.error('[xero webhook] advance deal to paid failed', err);
   }
 }
 

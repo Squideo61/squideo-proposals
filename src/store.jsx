@@ -1635,6 +1635,18 @@ export function StoreProvider({ children }) {
         () => api.delete('/api/crm/deals/' + encodeURIComponent(dealId)),
       );
     },
+    // Mark a sold deal "Good to go": move it onto the production board and alert
+    // the project managers. One-way (no undo) — the server gates eligibility
+    // (signed / paid / PO) and rejects a too-early click; the caller surfaces
+    // the error. On success we reload the deal + board so the UI flips to the
+    // project (production progress bar) view.
+    markDealGoodToGo(dealId) {
+      return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/good-to-go', {})
+        .then((resp) => {
+          if (resp?.deal) setState(s => applyOne(s, { kind: 'deal', id: resp.deal.id, patch: resp.deal }));
+          return Promise.all([actions.loadDealDetail(dealId), actions.loadProductionVideos()]).then(() => resp);
+        });
+    },
 
     // ---------- Production board (videos move through stages) ----------
     // The board + Projects overview both read state.productionVideos (every

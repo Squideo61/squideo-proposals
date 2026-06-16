@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -144,6 +144,17 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   }, [proposals, deal.value]);
   const projectVideos = detail?.videos || [];
   const projectPhase = useMemo(() => aggregateProjectPhase(projectVideos), [projectVideos]);
+  // Once a deal has production videos it's already a project. Before that, the
+  // "Good to go" gate moves it into Projects — but only when it's committed:
+  // a signed proposal, a paid/long-term stage, or a purchase order. (The server
+  // enforces the same rule; this just decides whether to offer the button.)
+  const isProject = projectVideos.length > 0;
+  const po = detail?.purchaseOrder || null;
+  const canGoodToGo = !isProject && (
+    proposals.some(p => p.signed)
+    || ['signed', 'paid', 'long_term'].includes(deal.stage)
+    || (po && (po.isPo || !!po.number))
+  );
   const events = detail?.events || [];
   const tasks = detail?.tasks || [];
   const emails = detail?.emails || [];
@@ -214,6 +225,15 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
     showMsg(`Stage: ${PIPELINE_STAGES.find(s => s.id === next)?.label || next}`);
   };
 
+  // "Good to go": move the deal into Projects/production and notify the project
+  // managers. One-way, so confirm first.
+  const handleGoodToGo = () => {
+    if (!window.confirm('Mark this deal “Good to go”?\n\nIt will move into Projects (production) and the project managers will be notified. This can’t be undone.')) return;
+    actions.markDealGoodToGo(dealId)
+      .then(() => showMsg('Good to go — moved to Projects, project managers notified'))
+      .catch((err) => showMsg(err?.message || 'Could not mark good to go'));
+  };
+
   // Project overview video (e.g. Loom): owner records a quick walkthrough for
   // producers to watch first. Captured via a simple prompt; cleared with a blank.
   const overviewUrl = deal.overviewVideoUrl || null;
@@ -243,6 +263,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           <IntroCallButton dealId={dealId} />
           {!productionOnly && (
             <>
+              {canGoodToGo && (
+                <button
+                  onClick={handleGoodToGo}
+                  className="btn"
+                  style={{ background: '#22C55E', borderColor: '#22C55E', color: '#fff' }}
+                  title="Move this deal into Projects (production) and notify the project managers"
+                ><Rocket size={14} /> Good to go</button>
+              )}
               {proposals.length === 0 && (
                 <button
                   onClick={() => setChoosingProposal(true)}

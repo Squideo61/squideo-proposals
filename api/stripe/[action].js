@@ -5,7 +5,6 @@ import { sendMail, paidHtml, clientPaidThanksHtml, invoicePaidHtml, APP_URL, adm
 import { sendNotification } from '../_lib/notifications.js';
 import { getOrCreateContact, createInvoice, emailInvoice, createPayment } from '../_lib/xero.js';
 import { advanceStage, dealIdForProposal, xeroContactIdForProposal } from '../_lib/dealStage.js';
-import { enterProduction } from '../_lib/production.js';
 import { computeProposalCheckout } from '../_lib/proposalPricing.js';
 import { escapeHtml } from '../_lib/crm/shared.js';
 import {
@@ -462,14 +461,13 @@ export default async function handler(req, res) {
             await setupPartnerSubscription({ stripe, session, proposalId });
           }
 
-          // CRM: advance the linked deal to 'paid' and open its production
-          // project (Pre-Production / New Project, with one video). Both are
-          // best-effort and idempotent against the verify fallback racing us.
+          // CRM: advance the linked deal to 'paid'. Best-effort and idempotent
+          // against the verify fallback racing us. Production no longer opens
+          // automatically on payment — a person marks the deal "Good to go".
           try {
             const dealId = await dealIdForProposal(proposalId);
             if (dealId) {
               await advanceStage(dealId, 'paid', { payload: { proposalId, amount, paymentType: isDeposit ? 'deposit' : 'full', source: 'stripe-webhook' } });
-              await enterProduction(dealId, { source: 'stripe-webhook' });
             }
           } catch (err) {
             console.error('[stripe webhook] paid-deal hook failed', err);
@@ -858,14 +856,13 @@ export default async function handler(req, res) {
     `;
     const isFirstWrite = upserted[0]?.inserted === true;
 
-    // CRM: advance the linked deal to 'paid' and open its production project.
-    // Best-effort. The webhook may race ahead — advanceStage's ratchet and
-    // enterProduction's "already in production" guard keep both idempotent.
+    // CRM: advance the linked deal to 'paid'. Best-effort. The webhook may race
+    // ahead — advanceStage's ratchet keeps this idempotent. Production is opened
+    // separately by the "Good to go" gate, not by payment.
     try {
       const dealId = await dealIdForProposal(proposalId);
       if (dealId) {
         await advanceStage(dealId, 'paid', { payload: { proposalId, amount: payment.amount, paymentType: payment.paymentType, source: 'stripe-verify' } });
-        await enterProduction(dealId, { source: 'stripe-verify' });
       }
     } catch (err) {
       console.error('[stripe verify] paid-deal hook failed', err);

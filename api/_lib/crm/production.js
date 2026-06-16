@@ -21,7 +21,7 @@ import { makeId, trimOrNull, numberOrNull, driveFilesEnabled } from './shared.js
 import { serialiseDeal, ensureDealFileDriveColumns, dealDriveFolder, driveErrorHint } from './deals.js';
 import { getFreshAccessToken } from './gmail.js';
 import { uploadToFolder, ensureSubfolderByPath, ensureNamedSubfolder, deleteDriveFile } from '../googleDrive.js';
-import { enterProduction, ensureProductionSchema, backfillPaidDealsIntoProduction } from '../production.js';
+import { enterProduction, ensureProductionSchema } from '../production.js';
 import { isValidStage } from '../dealStage.js';
 import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, isValidMilestone, VIDEO_MILESTONE_BY_ID, stageOrderIndex, previewKindForStage, FIRST_PRODUCTION } from '../productionStages.js';
 import { getRole } from '../userRoles.js';
@@ -139,9 +139,9 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     // GET: every video on the board (the Projects overview is derived from this
     // same list client-side, grouping by project).
     if (req.method === 'GET') {
-      // Self-heal: pull any already-paid deal onto the board before listing, so a
-      // deal paid via a route that didn't auto-enter still shows up here.
-      await backfillPaidDealsIntoProduction();
+      // A deal only reaches the board once someone marks it "Good to go" (see
+      // the deals route's good-to-go action) — payment alone no longer enters
+      // production, so there's no paid-deal backfill to run here.
       const rows = await sql`
         SELECT pv.*, d.title AS project_title, c.name AS company_name,
                d.production_entered_at AS production_entered_at,

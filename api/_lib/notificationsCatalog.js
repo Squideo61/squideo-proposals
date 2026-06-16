@@ -187,6 +187,14 @@ export const NOTIFICATIONS = [
     channel: 'general',
   },
   {
+    key: 'project.good_to_go',
+    label: 'Project good to go',
+    description: 'A deal is marked "Good to go" and moves into production — a new project for the team to pick up.',
+    audience: 'broadcast',
+    group: 'Production',
+    channel: 'general',
+  },
+  {
     key: 'finance.quarter_summary',
     label: 'Quarterly VAT & Corp Tax summary',
     description: 'At the end of each calendar quarter, a summary of the VAT and Corporation Tax you should have set aside.',

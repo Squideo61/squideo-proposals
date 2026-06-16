@@ -3,7 +3,7 @@
 // in try/catch by its caller so a failure here can never break the payment
 // flow that triggered it.
 import sql from './db.js';
-import { logDealEvent, advanceStage } from './dealStage.js';
+import { logDealEvent } from './dealStage.js';
 import { FIRST_PRODUCTION } from './productionStages.js';
 import { makeId } from './crm/shared.js';
 
@@ -220,43 +220,4 @@ export async function enterProduction(dealId, { source = null, actorEmail = null
 
   await logDealEvent(dealId, 'entered_production', { actorEmail, payload: { phase, stage, source } });
   return { entered: true, phase, stage };
-}
-
-// Self-heal: enter production for any deal that has been PAID (via any route)
-// but isn't on the board yet. Called when the board loads so paid deals always
-// appear, even ones paid before the per-route hooks existed or paid via a route
-// that didn't fire one (e.g. a Xero invoice reconciled on the company page only).
-// Best-effort + idempotent; bounded — only returns deals needing entry.
-export async function backfillPaidDealsIntoProduction() {
-  await ensureProductionSchema();
-  let rows;
-  try {
-    rows = await sql`
-      SELECT d.id
-        FROM deals d
-       WHERE d.production_phase IS NULL
-         AND d.stage <> 'lost'
-         AND (
-           EXISTS (SELECT 1 FROM payments pay JOIN proposals p ON p.id = pay.proposal_id WHERE p.deal_id = d.id)
-           OR EXISTS (SELECT 1 FROM proposal_billing pb JOIN proposals p ON p.id = pb.proposal_id
-                       WHERE p.deal_id = d.id AND pb.paid_amount IS NOT NULL AND pb.paid_amount > 0)
-           OR EXISTS (SELECT 1 FROM manual_invoices mi WHERE mi.deal_id = d.id AND mi.status = 'paid')
-           OR EXISTS (SELECT 1 FROM manual_payments mp JOIN proposals p ON p.id = mp.proposal_id
-                       WHERE p.deal_id = d.id AND mp.manual_invoice_id IS NULL)
-           OR EXISTS (SELECT 1 FROM partner_invoices pi JOIN proposals p ON p.id = pi.proposal_id WHERE p.deal_id = d.id)
-         )
-    `;
-  } catch (err) {
-    console.error('[production] backfill query failed', err.message);
-    return 0;
-  }
-  for (const { id } of rows) {
-    try {
-      await advanceStage(id, 'paid', { payload: { source: 'production-backfill' } });
-      await enterProduction(id, { source: 'production-backfill' });
-    } catch (err) {
-      console.error('[production] backfill enter failed for', id, err.message);
-    }
-  }
-  return rows.length;
 }

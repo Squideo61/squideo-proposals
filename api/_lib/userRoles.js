@@ -75,6 +75,15 @@ export function ensureSystemRoles() {
            SET notification_defaults = notification_defaults || '{"pp.marked_paid": true}'::jsonb, updated_at = NOW()
          WHERE id IN ('admin', 'director', 'member') AND NOT (notification_defaults ? 'pp.marked_paid')
       `;
+
+      // "Project good to go" — fired when a sold deal is marked good to go and
+      // moves into production. Default ON for Admin / Director / Project Manager
+      // (role 'member') so the people who run production actually hear about it.
+      await sql`
+        UPDATE roles
+           SET notification_defaults = notification_defaults || '{"project.good_to_go": true}'::jsonb, updated_at = NOW()
+         WHERE id IN ('admin', 'director', 'member') AND NOT (notification_defaults ? 'project.good_to_go')
+      `;
     } catch (err) {
       systemRolesEnsured = null;
       console.warn('[roles] ensure system roles failed', err.message);
