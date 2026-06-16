@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BarChart3, Clock, Eye, Globe, MapPin, X } from 'lucide-react';
+import { Activity, BarChart3, Clock, Eye, Globe, MapPin, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatProposalNumber } from '../utils.js';
@@ -17,6 +17,17 @@ function relativeTime(iso) {
   const d = Math.round(h / 24);
   if (d < 30) return d + ' days ago';
   return new Date(iso).toLocaleDateString('en-GB');
+}
+
+// A session row is keyed by (proposal, browser session id), so a client who
+// returns to the same link later in the same browser updates last_active_at
+// while opened_at stays pinned at the first open. When that gap is meaningful,
+// show "last active" too — otherwise the per-session "Opened 5d ago" appears to
+// contradict the list's "3h ago" (which tracks the most recent activity).
+const REVISIT_GAP_MS = 5 * 60 * 1000;
+function hasLaterActivity(s) {
+  if (!s.opened_at || !s.last_active_at) return false;
+  return new Date(s.last_active_at).getTime() - new Date(s.opened_at).getTime() > REVISIT_GAP_MS;
 }
 
 function parseUA(ua) {
@@ -59,6 +70,12 @@ export function ViewAnalyticsModal({ proposal, onClose }) {
   const totalOpens = sessions.length;
   const uniqueIps = new Set(sessions.map((s) => s.ip_address).filter(Boolean)).size;
   const totalDuration = sessions.reduce((acc, s) => acc + (Number(s.duration_seconds) || 0), 0);
+  // Most recent activity across all sessions — mirrors the "X ago" the list row
+  // shows (which uses MAX(last_active_at)), so the two views reconcile.
+  const lastActiveMs = sessions.reduce((acc, s) => {
+    const t = s.last_active_at ? new Date(s.last_active_at).getTime() : 0;
+    return t > acc ? t : acc;
+  }, 0);
   const number = proposal._number ? formatProposalNumber(proposal._number) : '';
   const title = (number ? number + ' · ' : '') + (proposal.clientName || 'Untitled proposal');
 
@@ -124,6 +141,7 @@ export function ViewAnalyticsModal({ proposal, onClose }) {
             <Stat icon={Eye} label="Total opens" value={totalOpens} />
             <Stat icon={Globe} label="Unique IPs" value={uniqueIps} />
             <Stat icon={Clock} label="Total time" value={formatDuration(totalDuration)} />
+            <Stat icon={Activity} label="Last active" value={lastActiveMs ? relativeTime(lastActiveMs) : '—'} />
           </div>
 
           {loading && sessions.length === 0 ? (
@@ -159,6 +177,11 @@ export function ViewAnalyticsModal({ proposal, onClose }) {
                             <div style={{ fontSize: 11, color: BRAND.muted }}>
                               {new Date(s.opened_at).toLocaleString('en-GB')}
                             </div>
+                            {hasLaterActivity(s) && (
+                              <div style={{ fontSize: 11, color: BRAND.blue, marginTop: 2 }}>
+                                Returned · last active {relativeTime(s.last_active_at)}
+                              </div>
+                            )}
                           </Td>
                           <Td>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
