@@ -8,7 +8,7 @@ import {
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatMailDate, formatRelativeTime, useIsMobile } from '../../utils.js';
+import { formatMailDate, formatRelativeTime, useIsMobile, decodeHtmlEntities } from '../../utils.js';
 import { DealContextPanel } from './DealContextPanel.jsx';
 import { EmailComposerModal } from './DealDetailView.jsx';
 import { TrackingEye, TrackingBanner } from './EmailTracking.jsx';
@@ -893,7 +893,7 @@ function TriageRow({ message, first, density, onOpen, onDismiss, href }) {
         <div style={{ fontWeight: 600, fontSize: 14, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {message.subject || <span style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no subject)</span>}
         </div>
-        {message.snippet && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{message.snippet}</div>}
+        {message.snippet && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{decodeHtmlEntities(message.snippet)}</div>}
         <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>
           <span style={{ fontWeight: 700 }}>{formatMailDate(message.sentAt)}</span>{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}
         </div>
@@ -1041,7 +1041,7 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
         </span>
         <span style={{ flex: 1, minWidth: 0, fontSize: 14, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           <span style={{ fontWeight: row.unread ? 700 : 400 }}>{row.subject || '(no subject)'}</span>
-          {row.snippet && <span style={{ color: BRAND.muted, fontWeight: 400 }}> — {row.snippet}</span>}
+          {row.snippet && <span style={{ color: BRAND.muted, fontWeight: 400 }}> — {decodeHtmlEntities(row.snippet)}</span>}
         </span>
       </a>
       {chips.length > 0 && (
@@ -1322,7 +1322,7 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
           background: (outbound ? '#2BB8E6' : '#16A34A') + '22', color: outbound ? '#2BB8E6' : '#16A34A',
         }}>{outbound ? 'OUT' : 'IN'}</span>
         <span style={{ fontWeight: 600, fontSize: 13, color: BRAND.ink, flexShrink: 0, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
-        {!open && <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{message.snippet}</span>}
+        {!open && <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{decodeHtmlEntities(message.snippet)}</span>}
         <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11, color: BRAND.muted }}>{formatDateLabel(message.date)}</span>
         <ChevronDown size={14} color={BRAND.muted} style={{ flexShrink: 0, transition: 'transform 150ms', transform: open ? 'none' : 'rotate(-90deg)' }} />
       </button>

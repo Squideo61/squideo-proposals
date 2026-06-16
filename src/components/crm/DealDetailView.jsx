@@ -4,7 +4,7 @@ import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Downl
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP, formatRelativeTime, useIsMobile, formatProposalNumber } from '../../utils.js';
+import { formatGBP, formatRelativeTime, useIsMobile, formatProposalNumber, decodeHtmlEntities } from '../../utils.js';
 import { Badge, Modal } from '../ui.jsx';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
@@ -866,7 +866,7 @@ function EmailRow({ email, onOpen, threadCount, expanded, dealTitle, onLinkAnoth
   // Hard cap snippet length even before CSS truncation, in case Gmail returned
   // a long one with embedded newlines that defeat single-line nowrap.
   const snippetTrim = email.snippet
-    ? email.snippet.replace(/\s+/g, ' ').trim().slice(0, 140)
+    ? decodeHtmlEntities(email.snippet).replace(/\s+/g, ' ').trim().slice(0, 140)
     : null;
   const [hover, setHover] = useState(false);
   const hasThreadChip = typeof threadCount === 'number' && threadCount > 1;
@@ -1240,7 +1240,7 @@ function ExpandedMessage({ email, defaultOpen = false, onOpenFull }) {
           </span>
           {!open && email.snippet && (
             <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {email.snippet}
+              {decodeHtmlEntities(email.snippet)}
             </span>
           )}
           <span style={{ marginLeft: 'auto', fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>

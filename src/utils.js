@@ -116,6 +116,26 @@ export const formatAmountWithGbp = (amount, currency = 'GBP', gbpAmount = null) 
 export const formatProposalNumber = (n) =>
   n && n.year && n.seq ? n.year + '-' + String(n.seq).padStart(3, '0') : '';
 
+// Gmail snippets (and some stored email fields) arrive HTML-escaped — e.g.
+// &#39; for an apostrophe, &amp; for &. Decode the common named + numeric
+// entities so preview text reads naturally. Pure (no DOM) so it's safe to call
+// during render; only well-formed entities are touched, so already-decoded
+// text (and stray "&" characters) pass through unchanged.
+const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+export const decodeHtmlEntities = (input) => {
+  if (!input) return input;
+  return String(input).replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, body) => {
+    if (body[0] === '#') {
+      const code = (body[1] === 'x' || body[1] === 'X')
+        ? parseInt(body.slice(2), 16)
+        : parseInt(body.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+    }
+    const named = NAMED_ENTITIES[body.toLowerCase()];
+    return named != null ? named : m;
+  });
+};
+
 export const formatRelativeTime = (iso) => {
   if (!iso) return '';
   const t = new Date(iso).getTime();
