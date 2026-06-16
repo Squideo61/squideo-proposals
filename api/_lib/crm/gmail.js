@@ -271,6 +271,10 @@ export async function gmailRoute(req, res, id, action, user) {
     return gmailAttachments(req, res, user);
   }
 
+  if (id === 'inline-image') {
+    return gmailInlineImage(req, res, user);
+  }
+
   if (id === 'schedule') {
     return gmailSchedule(req, res, user);
   }
@@ -333,6 +337,112 @@ async function gmailAttachments(req, res, user) {
   }
 
   return res.status(405).end();
+}
+
+// GET /api/crm/gmail/inline-image?messageId=<id>&cid=<contentId>
+// Resolve an inline (cid:) image embedded in an email body to its actual bytes
+// and serve them same-origin, so the email viewers can render embedded images /
+// signatures. Browsers can't load cid: URLs (only mail clients can) and our CSP
+// blocks them, so the viewers rewrite cid: refs to point here.
+//
+// Uses the message OWNER's Gmail token — a deal email may have been synced by a
+// teammate, and Gmail only serves a message to its own mailbox. Auth + image
+// content-type enforced; the (messageId, cid) pair is immutable so we cache hard.
+const INLINE_MSG_CACHE = new Map(); // messageId -> { payload, at } (warm-instance only)
+const INLINE_MSG_TTL_MS = 60_000;
+
+async function gmailInlineImage(req, res, user) {
+  if (req.method !== 'GET') return res.status(405).end();
+  const messageId = (req.query?.messageId || '').toString();
+  let cid = (req.query?.cid || '').toString();
+  if (!messageId || !cid) return res.status(400).json({ error: 'messageId and cid required' });
+  cid = cid.replace(/^cid:/i, '').replace(/^<|>$/g, '').trim();
+
+  // The message lives in whoever's mailbox synced it; fall back to the current
+  // user (viewing their own live mailbox) when we have no record of it.
+  let owner = user.email;
+  try {
+    const [row] = await sql`SELECT user_email FROM email_messages WHERE gmail_message_id = ${messageId} LIMIT 1`;
+    if (row?.user_email) owner = row.user_email;
+  } catch { /* fall back to current user */ }
+
+  let accessToken;
+  try { accessToken = await getFreshAccessToken(owner); }
+  catch (err) {
+    if (err.code === 'NOT_CONNECTED' || err.code === 'REAUTH') {
+      return res.status(409).json({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
+
+  const base = 'https://gmail.googleapis.com/gmail/v1/users/me';
+  let payload;
+  const cached = INLINE_MSG_CACHE.get(messageId);
+  if (cached && (Date.now() - cached.at) < INLINE_MSG_TTL_MS) {
+    payload = cached.payload;
+  } else {
+    try {
+      const r = await fetch(`${base}/messages/${encodeURIComponent(messageId)}?format=full`, {
+        headers: { Authorization: 'Bearer ' + accessToken },
+      });
+      if (!r.ok) return res.status(502).send('message fetch failed');
+      payload = (await r.json()).payload;
+    } catch { return res.status(502).send('message fetch failed'); }
+    INLINE_MSG_CACHE.set(messageId, { payload, at: Date.now() });
+  }
+
+  const part = findInlinePart(payload, cid);
+  if (!part) return res.status(404).send('inline image not found');
+  const mimeType = part.mimeType || 'application/octet-stream';
+  if (!mimeType.startsWith('image/')) return res.status(415).send('not an image');
+
+  let buf;
+  if (part.body?.data) {
+    buf = Buffer.from(part.body.data, 'base64url');
+  } else if (part.body?.attachmentId) {
+    try {
+      const r = await fetch(
+        `${base}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(part.body.attachmentId)}`,
+        { headers: { Authorization: 'Bearer ' + accessToken } },
+      );
+      if (!r.ok) return res.status(502).send('attachment fetch failed');
+      buf = Buffer.from((await r.json()).data || '', 'base64url');
+    } catch { return res.status(502).send('attachment fetch failed'); }
+  } else {
+    return res.status(404).send('no image data');
+  }
+
+  res.setHeader('Content-Type', mimeType);
+  res.setHeader('Content-Length', String(buf.length));
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  return res.status(200).end(buf);
+}
+
+// Walk a Gmail payload tree for the part whose Content-ID matches `cid` (with or
+// without angle brackets). Falls back to matching the part's X-Attachment-Id or
+// filename, which some senders reference instead.
+function findInlinePart(payload, cid) {
+  const want = cid.toLowerCase();
+  let found = null;
+  const walk = (part) => {
+    if (!part || found) return;
+    for (const h of part.headers || []) {
+      const name = (h.name || '').toLowerCase();
+      if (name === 'content-id' || name === 'x-attachment-id') {
+        const val = (h.value || '').replace(/^<|>$/g, '').trim().toLowerCase();
+        if (val === want) { found = part; return; }
+      }
+    }
+    if (!found && (part.mimeType || '').startsWith('image/') && part.filename
+        && part.filename.toLowerCase() === want) {
+      found = part; return;
+    }
+    if (Array.isArray(part.parts)) for (const p of part.parts) walk(p);
+  };
+  walk(payload);
+  return found;
 }
 
 // Schedule an email to send later, list a deal's pending scheduled sends, or

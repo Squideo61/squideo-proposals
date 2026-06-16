@@ -1210,8 +1210,8 @@ function ExpandedMessage({ email, defaultOpen = false, onOpenFull }) {
       USE_PROFILES: { html: true },
       FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form'],
       FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
-    });
-  }, [data?.bodyHtml]);
+    }, { messageId: email.gmailMessageId });
+  }, [data?.bodyHtml, email.gmailMessageId]);
 
   const inbound = email.direction === 'inbound';
   const accent = inbound ? '#16A34A' : '#2BB8E6';
@@ -1451,8 +1451,8 @@ export function EmailViewerModal({ gmailMessageId, dealId, onClose }) {
       USE_PROFILES: { html: true },
       FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form'],
       FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
-    });
-  }, [data?.bodyHtml]);
+    }, { messageId: gmailMessageId });
+  }, [data?.bodyHtml, gmailMessageId]);
 
   const inbound = data?.direction === 'inbound';
 

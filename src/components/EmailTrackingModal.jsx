@@ -21,7 +21,7 @@ const VIEW_SANITIZE = {
   FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form'],
   FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
 };
-const sanitize = (html) => (html ? sanitizeEmailBody(html, VIEW_SANITIZE) : null);
+const sanitize = (html, messageId) => (html ? sanitizeEmailBody(html, VIEW_SANITIZE, { messageId }) : null);
 
 // Opened from a "View Tracking" email-open alert. Loads the thread and surfaces
 // the specific email the recipient opened — the last message WE sent (it carries
@@ -57,7 +57,7 @@ export function EmailTrackingModal({ threadId, onClose, onOpenDeal }) {
     || messages[messages.length - 1]
     || null;
   const tracking = thread?.tracking || null;
-  const bodyHtml = tracked ? sanitize(tracked.html) : null;
+  const bodyHtml = tracked ? sanitize(tracked.html, tracked.id) : null;
 
   // The deal this email thread is linked to (if any), plus its next open task.
   const deal = (thread?.deals && thread.deals[0]) || null;

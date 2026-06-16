@@ -1,29 +1,44 @@
 import DOMPurify from 'dompurify';
 
-// Route a remote email image through our same-origin proxy (/api/email-image)
-// so ad/tracker blockers and third-party CDN reputation can't stop it from
-// rendering — the same approach Gmail takes by proxying every remote image.
-// Only absolute http(s) URLs are proxied; data:, cid:, blob: and relative URLs
-// are left untouched (cid: inline images can't be proxied and stay as-is).
-export const proxiedEmailImageUrl = (src) => {
+// Rewrite an email image src so it actually loads in a browser:
+//   - absolute http(s) → our same-origin proxy (/api/email-image), so
+//     ad/tracker blockers and third-party CDN reputation can't block it (the
+//     trick Gmail uses by proxying every remote image);
+//   - cid: inline-attachment refs → /api/crm/gmail/inline-image, which pulls the
+//     embedded bytes from Gmail (needs the message id — browsers/CSP can't load
+//     cid: at all);
+//   - data:, blob:, relative → left untouched.
+const rewriteEmailImageSrc = (src, messageId) => {
   const s = (src || '').trim();
-  if (!/^https?:\/\//i.test(s)) return src;
-  return '/api/email-image?u=' + encodeURIComponent(s);
+  if (/^cid:/i.test(s)) {
+    if (!messageId) return src; // can't resolve an inline ref without the message
+    const cid = s.replace(/^cid:/i, '').replace(/^<|>$/g, '');
+    return '/api/crm/gmail/inline-image?messageId=' + encodeURIComponent(messageId)
+      + '&cid=' + encodeURIComponent(cid);
+  }
+  if (/^https?:\/\//i.test(s)) return '/api/email-image?u=' + encodeURIComponent(s);
+  return src;
 };
 
+// Exposed for callers that build an <img> src outside the sanitizer.
+export const proxiedEmailImageUrl = (src) => rewriteEmailImageSrc(src, null);
+
 // DOMPurify.sanitize for an email body being DISPLAYED, with a temporary hook
-// that points every <img> (and srcset candidate) at the image proxy and hardens
-// loading. The hook is registered only for this call and removed immediately
-// after, so other sanitize() callers — crucially the reply-quote/compose path,
-// whose output is sent to real recipients and must keep original image URLs —
-// are never affected.
-export const sanitizeEmailBody = (html, config) => {
+// that routes every <img> (and srcset candidate) through the image proxy /
+// inline-image resolver and hardens loading. The hook is registered only for
+// this call and removed immediately after, so other sanitize() callers —
+// crucially the reply-quote/compose path, whose output is sent to real
+// recipients and must keep original image URLs — are never affected.
+//
+// `opts.messageId` enables cid: inline-image resolution for that message.
+export const sanitizeEmailBody = (html, config, opts = {}) => {
+  const messageId = opts.messageId || null;
   const hook = (node) => {
     if (node.nodeName !== 'IMG') return;
     const src = node.getAttribute('src');
     if (src) {
-      const proxied = proxiedEmailImageUrl(src);
-      if (proxied !== src) node.setAttribute('src', proxied);
+      const rewritten = rewriteEmailImageSrc(src, messageId);
+      if (rewritten !== src) node.setAttribute('src', rewritten);
     }
     const srcset = node.getAttribute('srcset');
     if (srcset) {
@@ -33,7 +48,7 @@ export const sanitizeEmailBody = (html, config) => {
         const sp = seg.indexOf(' ');
         const url = sp === -1 ? seg : seg.slice(0, sp);
         const descriptor = sp === -1 ? '' : seg.slice(sp);
-        return proxiedEmailImageUrl(url) + descriptor;
+        return rewriteEmailImageSrc(url, messageId) + descriptor;
       }).filter(Boolean).join(', ');
       node.setAttribute('srcset', rewritten);
     }

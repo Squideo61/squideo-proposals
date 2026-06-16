@@ -1335,14 +1335,14 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
           </div>
           <div className="email-body" style={{ fontSize: 13.5, lineHeight: 1.6, wordBreak: 'break-word' }}>
             {hasHtml
-              ? <EmailFrame html={main} />
+              ? <EmailFrame html={main} messageId={message.id} />
               : message.text
                 ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{main}</pre>
                 : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body)</div>}
             {hasQuote && <QuoteToggle shown={showQuoted} onToggle={() => setShowQuoted(s => !s)} />}
             {hasQuote && showQuoted && (
               hasHtml
-                ? <EmailFrame html={quoted} />
+                ? <EmailFrame html={quoted} messageId={message.id} />
                 : <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0, color: BRAND.muted }}>{quoted}</pre>
             )}
           </div>
@@ -1364,12 +1364,12 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
 // Gmail — without leaking into or breaking the surrounding app. No
 // allow-scripts in the sandbox, so nothing in the email can execute JS; the
 // HTML is sanitised first as defence-in-depth. Height auto-fits the content.
-function EmailFrame({ html }) {
+function EmailFrame({ html, messageId = null }) {
   const ref = useRef(null);
   const [height, setHeight] = useState(360);
 
   const srcDoc = useMemo(() => {
-    const clean = sanitizeEmailBody(html || '', FRAME_SANITIZE);
+    const clean = sanitizeEmailBody(html || '', FRAME_SANITIZE, { messageId });
     return '<!doctype html><html><head><meta charset="utf-8">'
       + '<meta name="viewport" content="width=device-width, initial-scale=1">'
       + '<base target="_blank">'
@@ -1379,7 +1379,7 @@ function EmailFrame({ html }) {
       + 'img{max-width:100%;height:auto;}'
       + 'a{color:#2BB8E6;}'
       + '</style></head><body>' + clean + '</body></html>';
-  }, [html]);
+  }, [html, messageId]);
 
   const resize = () => {
     const f = ref.current;
