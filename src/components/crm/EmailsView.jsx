@@ -1188,7 +1188,7 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOp
                 : <button onClick={() => act('trash')} className="btn-icon" title="Delete" aria-label="Delete"><Trash2 size={16} /></button>}
               {folder !== 'spam' && folder !== 'drafts' && <button onClick={() => act('spam')} className="btn-icon" title="Mark as spam" aria-label="Mark as spam"><ShieldAlert size={16} /></button>}
               {folder === 'spam' && <button onClick={() => act('unspam')} className="btn-icon" title="Not spam" aria-label="Not spam"><ShieldAlert size={16} /></button>}
-              {folder !== 'drafts' && <button onClick={() => act('markUnread')} className="btn-icon" title="Mark unread" aria-label="Mark unread"><MailOpen size={16} /></button>}
+              {folder !== 'drafts' && <button onClick={() => act('markUnread')} className="btn-icon" title="Mark unread" aria-label="Mark unread"><Mail size={16} /></button>}
               {gmailWeb && <a href={gmailWeb} target="_blank" rel="noreferrer" className="btn-icon" title="Open in Gmail" aria-label="Open in Gmail" style={{ textDecoration: 'none' }}><ExternalLink size={16} /></a>}
             </div>
           )}
