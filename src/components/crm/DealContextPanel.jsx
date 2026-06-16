@@ -162,6 +162,17 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
     for (const sc of (detail.secondaryContacts || [])) {
       if (sc.email) linked.add(sc.email.toLowerCase());
     }
+    // Our own team is never a "new contact" to add to a deal. Exclude CRM users,
+    // the signed-in user and the connected mailbox, plus anyone on our own email
+    // domain — that catches team members and internal aliases (enquiries@, etc.)
+    // that don't have a CRM account.
+    const internal = new Set();
+    for (const u of Object.values(state.users || {})) if (u?.email) internal.add(u.email.toLowerCase());
+    if (state.session?.email) internal.add(state.session.email.toLowerCase());
+    if (state.gmailAccount?.gmailAddress) internal.add(state.gmailAccount.gmailAddress.toLowerCase());
+    const sessionEmail = (state.session?.email || '').toLowerCase();
+    const at = sessionEmail.lastIndexOf('@');
+    const ownDomain = at >= 0 ? sessionEmail.slice(at + 1) : null;
     const seen = new Set();
     const out = [];
     for (const em of (detail.emails || [])) {
@@ -170,13 +181,14 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
       for (const raw of (em.ccEmails || [])) {
         if (!raw || typeof raw !== 'string') continue;
         const lower = raw.trim().toLowerCase();
-        if (!lower || seen.has(lower) || linked.has(lower)) continue;
+        if (!lower || seen.has(lower) || linked.has(lower) || internal.has(lower)) continue;
+        if (ownDomain && lower.endsWith('@' + ownDomain)) continue;
         seen.add(lower);
         out.push(raw.trim());
       }
     }
     return out;
-  }, [detail, gmailThreadId]);
+  }, [detail, gmailThreadId, state.users, state.session, state.gmailAccount]);
 
   return (
     <>

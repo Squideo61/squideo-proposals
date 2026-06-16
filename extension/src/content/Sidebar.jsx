@@ -213,6 +213,14 @@ function DealDetail({ detail, gmailThreadId, onChanged }) {
     for (const sc of (detail.secondaryContacts || [])) {
       if (sc.email) linked.add(sc.email.toLowerCase());
     }
+    // Don't suggest our own team as a contact. The deal owner is always
+    // internal, so treat its domain as ours and drop the owner + any cc on that
+    // domain (catches teammates and internal aliases like enquiries@).
+    const ownerEmail = (detail.ownerEmail || '').toLowerCase();
+    const internal = new Set();
+    if (ownerEmail) internal.add(ownerEmail);
+    const at = ownerEmail.lastIndexOf('@');
+    const ownDomain = at >= 0 ? ownerEmail.slice(at + 1) : null;
     const seen = new Set();
     const out = [];
     for (const em of (detail.emails || [])) {
@@ -221,7 +229,8 @@ function DealDetail({ detail, gmailThreadId, onChanged }) {
       for (const raw of (em.ccEmails || [])) {
         if (!raw || typeof raw !== 'string') continue;
         const lower = raw.trim().toLowerCase();
-        if (!lower || seen.has(lower) || linked.has(lower)) continue;
+        if (!lower || seen.has(lower) || linked.has(lower) || internal.has(lower)) continue;
+        if (ownDomain && lower.endsWith('@' + ownDomain)) continue;
         seen.add(lower);
         out.push(raw.trim());
       }
