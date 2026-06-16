@@ -2588,12 +2588,12 @@ function EditDealModal({ deal, onClose }) {
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} dismissible={false} showClose>
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Edit deal</h2>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <FormRow label="Title"><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} required /></FormRow>
         <FormRow label="Value (£, ex VAT)"><input className="input" type="number" min="0" step="0.01" value={value} onChange={(e) => setValue(e.target.value)} /></FormRow>
-        <FormRow label="Company">
+        <FormRow label="Organisation">
           <select className="input" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
             <option value="">—</option>
             {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -2619,11 +2619,11 @@ function EditDealModal({ deal, onClose }) {
               <input className="input" autoFocus placeholder="Name" name="squideo-contact-name" autoComplete="off" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} />
               <input className="input" type="email" placeholder="Email" name="squideo-contact-email" autoComplete="off" value={newContactEmail} onChange={(e) => setNewContactEmail(e.target.value)} />
               <label style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                <span>Company</span>
+                <span>Organisation</span>
                 <select className="input" value={newContactCompanyId} onChange={(e) => setNewContactCompanyId(e.target.value)}>
                   <option value="">None</option>
                   {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  <option value="__new__">+ New company…</option>
+                  <option value="__new__">+ New organisation…</option>
                 </select>
               </label>
               {newContactCompanyId === '__new__' && (

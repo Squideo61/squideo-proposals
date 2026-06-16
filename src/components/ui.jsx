@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useState } from 'react';
-import { Check, ChevronDown, Mail, Phone } from 'lucide-react';
+import { Check, ChevronDown, Mail, Phone, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { formatGBP, useIsMobile } from '../utils.js';
@@ -183,15 +183,35 @@ export function Badge({ color, children }) {
   );
 }
 
-export function Modal({ children, onClose, maxWidth = 440, overflow = 'auto' }) {
+// `dismissible` (default true) controls the easy-close affordances: clicking the
+// backdrop and pressing Escape. Set it false for forms where an accidental close
+// would lose typed input — pair with `showClose` so there's still an explicit X
+// (top-right) to dismiss with.
+export function Modal({ children, onClose, maxWidth = 440, overflow = 'auto', dismissible = true, showClose = false }) {
   useEffect(() => {
+    if (!dismissible) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onClose && onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, dismissible]);
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 42, 61, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 20 }}>
-      <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ background: 'white', borderRadius: 12, padding: 24, width: '100%', maxWidth, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', maxHeight: '90vh', overflowY: overflow }}>
+    <div onClick={dismissible ? onClose : undefined} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 42, 61, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 20 }}>
+      <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ position: 'relative', background: 'white', borderRadius: 12, padding: 24, width: '100%', maxWidth, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', maxHeight: '90vh', overflowY: overflow }}>
+        {showClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              position: 'absolute', top: 12, right: 12, zIndex: 1,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 30, height: 30, borderRadius: 8, border: '1px solid ' + BRAND.border,
+              background: 'white', color: BRAND.muted, cursor: 'pointer',
+            }}
+          >
+            <X size={16} />
+          </button>
+        )}
         {children}
       </div>
     </div>
