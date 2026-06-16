@@ -951,7 +951,7 @@ async function pendingPaymentsReport() {
   // Per signature so we can aggregate committed + the deal's VAT rate + PO flag
   // in JS (vatRate parsed as text → avoids a risky SQL numeric cast).
   const sigRows = await sql`
-    SELECT d.id AS did, s.data->>'total' AS total, p.data->>'vatRate' AS rate,
+    SELECT d.id AS did, p.id AS pid, s.data->>'total' AS total, p.data->>'vatRate' AS rate,
            s.data->>'paymentOption' AS opt, p.number_year AS ny, p.number_seq AS ns
       FROM signatures s
       JOIN proposals p ON p.id = s.proposal_id
@@ -976,6 +976,7 @@ async function pendingPaymentsReport() {
   const poByDeal = new Map(); // did -> on the PO route?
   const planByDeal = new Map(); // did -> '5050' | 'full' (the chosen payment plan)
   const numberByDeal = new Map(); // did -> { year, seq } of its earliest proposal
+  const proposalIdByDeal = new Map(); // did -> earliest signed proposal id (for recording a payment)
   for (const r of sigRows) {
     committed.set(r.did, (committed.get(r.did) || 0) + (Number(r.total) || 0));
     rateByDeal.set(r.did, Math.max(rateByDeal.get(r.did) || 0, Number(r.rate) || 0));
@@ -983,7 +984,12 @@ async function pendingPaymentsReport() {
     else if (!planByDeal.has(r.did) && (r.opt === '5050' || r.opt === 'full')) planByDeal.set(r.did, r.opt);
     if (r.ny && r.ns) {
       const cur = numberByDeal.get(r.did);
-      if (!cur || Number(r.ns) < cur.seq) numberByDeal.set(r.did, { year: Number(r.ny), seq: Number(r.ns) });
+      if (!cur || Number(r.ns) < cur.seq) {
+        numberByDeal.set(r.did, { year: Number(r.ny), seq: Number(r.ns) });
+        proposalIdByDeal.set(r.did, r.pid);
+      }
+    } else if (!proposalIdByDeal.has(r.did)) {
+      proposalIdByDeal.set(r.did, r.pid);
     }
   }
 
@@ -1098,8 +1104,13 @@ async function pendingPaymentsReport() {
     }
 
     const inf = info.get(did) || {};
+    // Gross (inc-VAT) outstanding the client actually pays — used to pre-fill a
+    // direct "mark paid" against the signed deal. Extras are net £, grossed at
+    // the deal's VAT rate.
+    const extrasGross = round2(extrasNet * (1 + rate));
     const item = {
       dealId: did,
+      proposalId: proposalIdByDeal.get(did) || null,
       number: numberByDeal.get(did) || null,
       title: inf.title || 'Untitled deal',
       company: inf.company_name || null,
@@ -1108,6 +1119,7 @@ async function pendingPaymentsReport() {
       committed: round2(net(inc) + extrasNet),
       paid: net(paidInc),
       outstanding: round2(outstandingNet + extrasNet),
+      outstandingGross: round2(outstandingInc + extrasGross),
       lines,
       // PO tracking — only meaningful on PO-route deals; the UI shows a
       // "Pending PO" pill until poReceivedAt is set, then "PO <number>".

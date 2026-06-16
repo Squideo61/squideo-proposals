@@ -219,6 +219,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
   // revenue + trend) using the period that's currently selected.
   const refreshFinance = () => {
     actions.loadPendingPayments();
+    actions.loadPredictedPayments(currentMonthKey); // refresh banked-so-far + the predicted list
     actions.loadIncome(periodParam);
     actions.loadFinanceStats(effectiveYear);
     actions.loadTrend(36);
@@ -587,6 +588,16 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
     let p = null;
     if (it.type === 'manual') p = actions.markPendingPaymentPaid(it.row.id, true, method);
     else if (it.type === 'partner') p = actions.markPartnerFeePaid(it.clientKey, true);
+    else if (it.type === 'deal' && it.row?.proposalId) {
+      // Signed deals record a real payment against the proposal (advances to paid
+      // + enters production). Confirm the gross amount first — it's heavier than a
+      // sheet row, and the list shows net.
+      const gross = Number(it.row.outstandingGross) || 0;
+      const net = Number(it.amount) || 0;
+      const ok = window.confirm(`Record a ${method === 'bacs' ? 'BACS' : 'Stripe'} payment of ${formatGBP(gross)} (inc VAT · ${formatGBP(net)} net) for "${it.name}"?\n\nThis marks the deal paid and moves it into production.`);
+      if (!ok) return;
+      p = actions.recordDealPayment(it.row.proposalId, gross, method);
+    }
     if (p) Promise.resolve(p).then(() => onChanged && onChanged());
   };
 
@@ -688,6 +699,8 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
                     <RowActionsMenu items={[
                       it.type === 'manual' && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
                       it.type === 'manual' && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => markPaid(it, 'bacs') },
+                      it.type === 'deal' && it.row?.proposalId && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
+                      it.type === 'deal' && it.row?.proposalId && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => markPaid(it, 'bacs') },
                       it.type === 'partner' && { label: 'Mark paid this month', icon: Check, onClick: () => markPaid(it) },
                       it.type === 'other' && { label: 'Edit', icon: Pencil, onClick: () => setEditOther(it.row) },
                       { label: note ? 'Edit note' : 'Add note', icon: StickyNote, onClick: () => setNoteTarget({ key: it.key, name: it.name, note }) },

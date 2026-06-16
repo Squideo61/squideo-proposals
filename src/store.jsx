@@ -1367,6 +1367,18 @@ export function StoreProvider({ children }) {
       setState(s => ({ ...s, payments: { ...s.payments, [id]: payment } }));
       api.post('/api/payments/' + id, payment).catch(() => {});
     },
+    // Record a manual payment against a signed deal's proposal (e.g. "mark paid
+    // — BACS" from the predicted list). Advances the deal to paid + enters
+    // production server-side. Caller refreshes the finance figures.
+    recordDealPayment(proposalId, amount, method = 'bacs') {
+      return api.post('/api/crm/payments', {
+        proposalId,
+        amount: Number(amount) || 0,
+        paymentMethod: method,
+        paymentType: 'full',
+        paidAt: new Date().toISOString(),
+      });
+    },
     markAsPaid(id, amount, paymentType = 'manual') {
       const payment = {
         amount: Number(amount) || 0,
