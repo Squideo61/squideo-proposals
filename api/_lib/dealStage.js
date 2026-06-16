@@ -3,7 +3,11 @@
 // view event from downgrading a signed deal back to "viewed".
 import sql from './db.js';
 
-export const STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'signed', 'paid', 'long_term', 'lost'];
+// 'interested' sits between 'viewed' and 'signed': a manual-only stage for a
+// deal that's seen the proposal and replied positively but hasn't signed. No
+// event auto-advances into it (that's a human call); the ratchet still protects
+// it (a later proposal re-view won't knock it back to 'viewed').
+export const STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'interested', 'signed', 'paid', 'long_term', 'lost'];
 
 export function isValidStage(stage) {
   return STAGES.includes(stage);

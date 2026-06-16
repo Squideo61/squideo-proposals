@@ -8,6 +8,7 @@ export const PIPELINE_STAGES = [
   { id: 'responded',     label: 'Responded',     color: '#7C3AED', bg: '#EDE9FE', fg: '#5B21B6' },
   { id: 'proposal_sent', label: 'Proposal Sent', color: '#0EA5E9', bg: '#E0F2FE', fg: '#0369A1' },
   { id: 'viewed',        label: 'Viewed',        color: '#FB923C', bg: '#FFF7ED', fg: '#C2410C' },
+  { id: 'interested',    label: 'Interested',    color: '#EC4899', bg: '#FCE7F3', fg: '#BE185D' },
   { id: 'signed',        label: 'Signed',        color: '#2BB8E6', bg: '#E0F9FF', fg: '#0284C7' },
   { id: 'paid',          label: 'Paid',          color: '#16A34A', bg: '#DCFCE7', fg: '#166534' },
   { id: 'long_term',     label: 'Long-term',     color: '#A78BFA', bg: '#F5F3FF', fg: '#6D28D9', defaultCollapsed: true },
