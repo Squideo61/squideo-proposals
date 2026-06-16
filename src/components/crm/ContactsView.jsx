@@ -55,8 +55,9 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXer
 
   const q = search.trim().toLowerCase();
   const filtered = q ? items.filter(c => {
+    const orgIds = (c.companyIds && c.companyIds.length) ? c.companyIds : (c.companyId ? [c.companyId] : []);
     const haystack = view === 'contacts'
-      ? [c.name, c.email, c.phone, c.title, state.companies[c.companyId]?.name].filter(Boolean).join(' ').toLowerCase()
+      ? [c.name, c.email, c.phone, c.title, ...orgIds.map(id => state.companies[id]?.name)].filter(Boolean).join(' ').toLowerCase()
       : [c.name, c.domain, c.notes].filter(Boolean).join(' ').toLowerCase();
     return haystack.includes(q);
   }) : items;
@@ -194,7 +195,14 @@ function Tab({ active, onClick, children }) {
 
 function ContactRow({ contact, onOpen, onEdit }) {
   const { state } = useStore();
-  const company = contact.companyId ? state.companies[contact.companyId] : null;
+  // A contact can belong to several organisations. Show them all (primary first).
+  const orgIds = (contact.companyIds && contact.companyIds.length)
+    ? contact.companyIds
+    : (contact.companyId ? [contact.companyId] : []);
+  const orgNames = orgIds
+    .map(id => state.companies[id]?.name)
+    .filter(Boolean)
+    .sort((a, b) => (a === state.companies[contact.companyId]?.name ? -1 : b === state.companies[contact.companyId]?.name ? 1 : 0));
   return (
     <div style={{ display: 'flex', alignItems: 'stretch', borderTop: '1px solid ' + BRAND.border, background: 'white' }}>
       <button
@@ -208,7 +216,7 @@ function ContactRow({ contact, onOpen, onEdit }) {
           <div style={{ fontWeight: 600, fontSize: 14 }}>{contact.name || contact.email || 'Unnamed'}</div>
           <div style={{ fontSize: 12, color: BRAND.muted, display: 'flex', gap: 12, marginTop: 2, flexWrap: 'wrap' }}>
             {contact.email && <span>{contact.email}</span>}
-            {company && <span>· {company.name}</span>}
+            {orgNames.length > 0 && <span>· {orgNames.join(', ')}</span>}
             {contact.title && <span>· {contact.title}</span>}
           </div>
         </div>

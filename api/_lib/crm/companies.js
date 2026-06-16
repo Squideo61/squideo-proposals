@@ -1,5 +1,5 @@
 import sql from '../db.js';
-import { makeId, trimOrNull, lowerOrNull } from './shared.js';
+import { makeId, trimOrNull, lowerOrNull, ensureContactCompanies } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { updateContactAddress, getOrCreateContact } from '../xero.js';
@@ -186,10 +186,16 @@ export async function companiesRoute(req, res, id, action, user) {
     `;
     if (!companyRow) return res.status(404).json({ error: 'Not found' });
 
+    await ensureContactCompanies();
     const [contactRows, dealRows] = await Promise.all([
+      // Members = contacts whose PRIMARY company is this one OR who hold a
+      // membership link to it (the many-to-many layer).
       sql`
-        SELECT id, email, name, phone, title, company_id, notes, created_at, updated_at
-        FROM contacts WHERE company_id = ${id}
+        SELECT c.id, c.email, c.name, c.phone, c.title, c.company_id, c.notes, c.created_at, c.updated_at,
+               (c.company_id = ${id}) AS is_primary
+        FROM contacts c
+        WHERE c.company_id = ${id}
+           OR EXISTS (SELECT 1 FROM contact_companies cc WHERE cc.contact_id = c.id AND cc.company_id = ${id})
         ORDER BY name ASC NULLS LAST, email ASC
       `,
       sql`
@@ -222,6 +228,7 @@ export async function companiesRoute(req, res, id, action, user) {
         phone: c.phone || null,
         title: c.title || null,
         companyId: c.company_id || null,
+        isPrimary: !!c.is_primary,
         notes: c.notes || null,
         createdAt: c.created_at,
         updatedAt: c.updated_at,

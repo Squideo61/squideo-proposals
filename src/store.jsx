@@ -1882,6 +1882,24 @@ export function StoreProvider({ children }) {
         return c;
       });
     },
+    // Add a contact to an organisation (additive — the contact keeps any other
+    // organisations). Merges the returned contact (incl. companyIds) into cache.
+    addContactToCompany(contactId, companyId) {
+      return api.post('/api/crm/contacts/' + encodeURIComponent(contactId) + '/companies', { companyId })
+        .then((c) => {
+          if (c && c.id) setState(s => ({ ...s, contacts: { ...s.contacts, [c.id]: { ...s.contacts[c.id], ...c } } }));
+          return c;
+        });
+    },
+    // Remove a contact from one organisation (leaves the contact and its other
+    // organisations intact).
+    removeContactFromCompany(contactId, companyId) {
+      return api.delete('/api/crm/contacts/' + encodeURIComponent(contactId) + '/companies/' + encodeURIComponent(companyId))
+        .then((c) => {
+          if (c && c.id) setState(s => ({ ...s, contacts: { ...s.contacts, [c.id]: { ...s.contacts[c.id], ...c } } }));
+          return c;
+        });
+    },
     saveContact(contactId, patch) {
       return mutate(
         { kind: 'contact', id: contactId, patch, errorMsg: 'Failed to save contact' },

@@ -93,7 +93,7 @@ export default async function handler(req, res) {
   try {
     switch (resource) {
       case 'companies': return await companiesRoute(req, res, id, action, user);
-      case 'contacts':  return await contactsRoute(req, res, id, action, user);
+      case 'contacts':  return await contactsRoute(req, res, id, action, user, subaction);
       case 'deals':     return await dealsRoute(req, res, id, action, user, subaction);
       case 'tasks':     return await tasksRoute(req, res, id, action, user);
       case 'gmail':     return await gmailRoute(req, res, id, action, user);

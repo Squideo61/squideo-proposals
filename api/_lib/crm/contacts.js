@@ -1,9 +1,20 @@
 import sql from '../db.js';
-import { makeId, trimOrNull, lowerOrNull, ensureDealContactsTable } from './shared.js';
+import { makeId, trimOrNull, lowerOrNull, ensureDealContactsTable, ensureContactCompanies } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
-export async function contactsRoute(req, res, id, action, user) {
+// Re-read a contact with its full set of organisation ids (the join table is a
+// superset that already includes the primary company_id after backfill).
+async function loadContactRow(id) {
+  const rows = await sql`
+    SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at,
+           COALESCE((SELECT array_agg(cc.company_id) FROM contact_companies cc WHERE cc.contact_id = contacts.id), '{}') AS company_ids
+    FROM contacts WHERE id = ${id}
+  `;
+  return rows[0] ? serialiseContact(rows[0]) : null;
+}
+
+export async function contactsRoute(req, res, id, action, user, subaction = null) {
   if (!id) {
     if (req.method === 'GET') {
       // Count linked deals per contact — both where they're the primary contact
@@ -11,12 +22,14 @@ export async function contactsRoute(req, res, id, action, user) {
       // show "N deals" and warn before deleting. Ensure deal_contacts exists
       // first (lazily created) so the correlated subquery can't 500.
       await ensureDealContactsTable().catch(() => {});
+      await ensureContactCompanies();
       const rows = await sql`
         SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at,
                (SELECT COUNT(DISTINCT d.id)::int FROM deals d
                   WHERE d.primary_contact_id = contacts.id
                      OR EXISTS (SELECT 1 FROM deal_contacts dc WHERE dc.contact_id = contacts.id AND dc.deal_id = d.id)
-               ) AS deal_count
+               ) AS deal_count,
+               COALESCE((SELECT array_agg(cc.company_id) FROM contact_companies cc WHERE cc.contact_id = contacts.id), '{}') AS company_ids
         FROM contacts
         WHERE provisional = FALSE
         ORDER BY name ASC NULLS LAST, email ASC
@@ -26,6 +39,7 @@ export async function contactsRoute(req, res, id, action, user) {
     if (req.method === 'POST') {
       const body = req.body || {};
       const newId = body.id || makeId('ct');
+      const companyId = trimOrNull(body.companyId) || null;
       await sql`
         INSERT INTO contacts (id, email, name, phone, title, company_id, notes)
         VALUES (
@@ -34,32 +48,39 @@ export async function contactsRoute(req, res, id, action, user) {
           ${trimOrNull(body.name)},
           ${trimOrNull(body.phone)},
           ${trimOrNull(body.title)},
-          ${trimOrNull(body.companyId) || null},
+          ${companyId},
           ${trimOrNull(body.notes)}
         )
       `;
-      const rows = await sql`
-        SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
-        FROM contacts WHERE id = ${newId}
-      `;
-      return res.status(201).json(serialiseContact(rows[0]));
+      // Mirror the primary org into the memberships table so the join stays the
+      // complete set of a contact's organisations.
+      if (companyId) {
+        await ensureContactCompanies();
+        await sql`INSERT INTO contact_companies (contact_id, company_id) VALUES (${newId}, ${companyId}) ON CONFLICT DO NOTHING`;
+      }
+      return res.status(201).json(await loadContactRow(newId));
     }
     return res.status(405).end();
   }
 
-  // /contacts/:id/detail — contact + company + deals where they're primary
+  // /contacts/:id/detail — contact + organisations + deals where they're primary
   if (action === 'detail' && req.method === 'GET') {
+    await ensureContactCompanies();
     const [contactRow] = await sql`
-      SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
+      SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at,
+             COALESCE((SELECT array_agg(cc.company_id) FROM contact_companies cc WHERE cc.contact_id = contacts.id), '{}') AS company_ids
       FROM contacts WHERE id = ${id}
     `;
     if (!contactRow) return res.status(404).json({ error: 'Not found' });
 
     const [companyRows, dealRows] = await Promise.all([
-      contactRow.company_id
-        ? sql`SELECT id, name, domain, notes, created_at, updated_at
-              FROM companies WHERE id = ${contactRow.company_id}`
-        : Promise.resolve([]),
+      // Every organisation the contact belongs to (primary first), not just one.
+      sql`SELECT co.id, co.name, co.domain, co.notes, co.created_at, co.updated_at,
+                 (co.id = ${contactRow.company_id}) AS is_primary
+            FROM companies co
+           WHERE co.id = ${contactRow.company_id}
+              OR EXISTS (SELECT 1 FROM contact_companies cc WHERE cc.contact_id = ${id} AND cc.company_id = co.id)
+           ORDER BY (co.id = ${contactRow.company_id}) DESC, co.name ASC`,
       sql`
         SELECT d.id, d.title, d.company_id, d.primary_contact_id, d.owner_email,
                d.stage, d.value, d.expected_close_at, d.stage_changed_at,
@@ -71,16 +92,20 @@ export async function contactsRoute(req, res, id, action, user) {
       `,
     ]);
 
+    const companies = companyRows.map(co => ({
+      id: co.id,
+      name: co.name,
+      domain: co.domain || null,
+      notes: co.notes || null,
+      isPrimary: !!co.is_primary,
+      createdAt: co.created_at,
+      updatedAt: co.updated_at,
+    }));
     return res.status(200).json({
       ...serialiseContact(contactRow),
-      company: companyRows[0] ? {
-        id: companyRows[0].id,
-        name: companyRows[0].name,
-        domain: companyRows[0].domain || null,
-        notes: companyRows[0].notes || null,
-        createdAt: companyRows[0].created_at,
-        updatedAt: companyRows[0].updated_at,
-      } : null,
+      companies,
+      // Primary org kept for back-compat with anything still reading `company`.
+      company: companies.find(co => co.isPrimary) || companies[0] || null,
       deals: dealRows.map(d => ({
         id: d.id,
         title: d.title,
@@ -97,6 +122,46 @@ export async function contactsRoute(req, res, id, action, user) {
         proposalCount: d.proposal_count || 0,
       })),
     });
+  }
+
+  // /contacts/:id/companies — manage which organisations a contact belongs to.
+  //   POST   { companyId }                  → add a membership (additive)
+  //   DELETE /contacts/:id/companies/:cid   → remove that membership
+  // Returns the updated contact (with companyIds) for the optimistic merge.
+  if (action === 'companies') {
+    await ensureContactCompanies();
+    const contact = (await sql`SELECT id, company_id FROM contacts WHERE id = ${id}`)[0];
+    if (!contact) return res.status(404).json({ error: 'Not found' });
+
+    if (req.method === 'POST') {
+      const companyId = trimOrNull((req.body || {}).companyId);
+      if (!companyId) return res.status(400).json({ error: 'companyId required' });
+      const company = (await sql`SELECT id FROM companies WHERE id = ${companyId}`)[0];
+      if (!company) return res.status(404).json({ error: 'Organisation not found' });
+      await sql`INSERT INTO contact_companies (contact_id, company_id) VALUES (${id}, ${companyId}) ON CONFLICT DO NOTHING`;
+      // First org a contact gets becomes its primary (so deals/Xero have one).
+      if (!contact.company_id) {
+        await sql`UPDATE contacts SET company_id = ${companyId}, updated_at = NOW() WHERE id = ${id}`;
+      }
+      return res.status(200).json(await loadContactRow(id));
+    }
+
+    if (req.method === 'DELETE') {
+      const companyId = trimOrNull(subaction) || trimOrNull((req.body || {}).companyId);
+      if (!companyId) return res.status(400).json({ error: 'companyId required' });
+      await sql`DELETE FROM contact_companies WHERE contact_id = ${id} AND company_id = ${companyId}`;
+      // If we removed the primary org, repoint the primary to another membership
+      // (or null) so contacts.company_id always points at a real membership.
+      if (contact.company_id === companyId) {
+        const next = (await sql`
+          SELECT company_id FROM contact_companies WHERE contact_id = ${id}
+          ORDER BY created_at ASC LIMIT 1
+        `)[0];
+        await sql`UPDATE contacts SET company_id = ${next?.company_id || null}, updated_at = NOW() WHERE id = ${id}`;
+      }
+      return res.status(200).json(await loadContactRow(id));
+    }
+    return res.status(405).end();
   }
 
   if (req.method === 'PATCH') {
@@ -126,11 +191,14 @@ export async function contactsRoute(req, res, id, action, user) {
              updated_at = NOW()
        WHERE id = ${id}
     `;
-    const rows = await sql`
-      SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
-      FROM contacts WHERE id = ${id}
-    `;
-    return res.status(200).json(serialiseContact(rows[0]));
+    // Editing the primary org adds it as a membership too (the join table stays
+    // a superset). We don't drop the OLD primary's membership — a contact keeps
+    // its other organisations; detach those from the org/contact page instead.
+    if ('companyId' in body && next.company_id) {
+      await ensureContactCompanies();
+      await sql`INSERT INTO contact_companies (contact_id, company_id) VALUES (${id}, ${next.company_id}) ON CONFLICT DO NOTHING`;
+    }
+    return res.status(200).json(await loadContactRow(id));
   }
   if (req.method === 'DELETE') {
     if (!hasPermission(await getRole(user.role), 'contacts.manage_all')) {
@@ -156,6 +224,16 @@ export function serialiseContact(r) {
     phone: r.phone || null,
     title: r.title || null,
     companyId: r.company_id || null,
+    // All organisations the contact belongs to (primary + memberships). Only on
+    // rows that select the aggregate; the primary is always folded in so it's
+    // never missing even before the backfill reaches an old row.
+    ...('company_ids' in r ? {
+      companyIds: (() => {
+        const ids = new Set((Array.isArray(r.company_ids) ? r.company_ids : []).filter(Boolean));
+        if (r.company_id) ids.add(r.company_id);
+        return [...ids];
+      })(),
+    } : {}),
     notes: r.notes || null,
     provisional: r.provisional === true,
     source: r.source || null,

@@ -47,6 +47,17 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
   const fmtEx = (inc) => formatGBP((Number(inc) || 0) / (1 + vatRate)) + vatSuffix;
   const fmtExNet = (net) => formatGBP(Number(net) || 0) + vatSuffix;
 
+  async function removeContactFromOrg(contact) {
+    if (!window.confirm(`Remove ${contact.name || contact.email || 'this contact'} from ${detail?.name || 'this organisation'}? They'll stay in your contacts and any other organisations.`)) return;
+    try {
+      await actions.removeContactFromCompany(contact.id, companyId);
+      showMsg?.('Removed from organisation', 'success');
+      reload();
+    } catch (err) {
+      showMsg?.(err.message || 'Failed to remove', 'error');
+    }
+  }
+
   async function handleSaveLink() {
     if (!xeroContact) return;
     try {
@@ -284,19 +295,32 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
         >
           {detail.contacts.length === 0 && <Empty text="No contacts at this company" />}
           {detail.contacts.map(c => (
-            <button
-              key={c.id}
-              onClick={() => onOpenContact?.(c.id)}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%', padding: '8px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', marginBottom: 6 }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{c.name || c.email || c.id}</div>
-                <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
-                  {c.title}{c.title && c.email && ' · '}{c.email}
+            <div key={c.id} style={{ display: 'flex', alignItems: 'stretch', gap: 6, marginBottom: 6 }}>
+              <button
+                onClick={() => onOpenContact?.(c.id)}
+                style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>
+                    {c.name || c.email || c.id}
+                    {c.isPrimary === false && <span style={{ fontSize: 10, fontWeight: 600, color: BRAND.muted, marginLeft: 6 }}>· also at other orgs</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
+                    {c.title}{c.title && c.email && ' · '}{c.email}
+                  </div>
                 </div>
-              </div>
-              <User size={14} color={BRAND.muted} />
-            </button>
+                <User size={14} color={BRAND.muted} />
+              </button>
+              <button
+                type="button"
+                onClick={() => removeContactFromOrg(c)}
+                title="Remove from this organisation"
+                aria-label="Remove from this organisation"
+                style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, color: BRAND.muted, cursor: 'pointer' }}
+              >
+                <X size={14} />
+              </button>
+            </div>
           ))}
         </Card>
 
@@ -391,7 +415,7 @@ function AddContactPicker({ companyId, existingIds, onAdded }) {
   const candidates = useMemo(() => {
     const term = q.trim().toLowerCase();
     return Object.values(state.contacts || {})
-      .filter(c => c && c.id && c.companyId !== companyId && !here.has(c.id))
+      .filter(c => c && c.id && !here.has(c.id))
       .filter(c => !term || (c.name || '').toLowerCase().includes(term) || (c.email || '').toLowerCase().includes(term))
       .sort((a, b) => (a.name || a.email || '').localeCompare(b.name || b.email || ''))
       .slice(0, 8);
@@ -401,7 +425,8 @@ function AddContactPicker({ companyId, existingIds, onAdded }) {
   const add = async (c) => {
     setBusy(true);
     try {
-      await actions.saveContact(c.id, { companyId });
+      // Additive: the contact can belong to several organisations at once.
+      await actions.addContactToCompany(c.id, companyId);
       showMsg?.(`${c.name || c.email || 'Contact'} added to this organisation`, 'success');
       setOpen(false);
       setQ('');
@@ -437,7 +462,10 @@ function AddContactPicker({ companyId, existingIds, onAdded }) {
               </div>
             )}
             {candidates.map(c => {
-              const fromCompany = c.companyId ? (state.companies?.[c.companyId]?.name || null) : null;
+              // Other organisations this contact is already in (informational —
+              // adding here is additive, it doesn't move them).
+              const otherOrgs = (c.companyIds && c.companyIds.length ? c.companyIds : (c.companyId ? [c.companyId] : []))
+                .map(cid => state.companies?.[cid]?.name).filter(Boolean);
               return (
                 <button
                   key={c.id}
@@ -451,7 +479,7 @@ function AddContactPicker({ companyId, existingIds, onAdded }) {
                   <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{c.name || c.email || c.id}</span>
                   <span style={{ fontSize: 11, color: BRAND.muted }}>
                     {c.name && c.email ? c.email : ''}
-                    {fromCompany ? `${c.name && c.email ? ' · ' : ''}moving from ${fromCompany}` : ''}
+                    {otherOrgs.length ? `${c.name && c.email ? ' · ' : ''}also at ${otherOrgs.join(', ')}` : ''}
                   </span>
                 </button>
               );
