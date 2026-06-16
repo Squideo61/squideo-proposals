@@ -789,11 +789,11 @@ function Body({ def, rows, density = 'default', searchQuery = '', loading, error
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
         {def.kind === 'triage'
           ? rows.map((m, i) => (
-              <TriageRow key={m.gmailMessageId} message={m} first={i === 0} density={density} onOpen={() => onOpen(m)} onDismiss={() => onDismiss(m)} />
+              <TriageRow key={m.gmailMessageId} message={m} first={i === 0} density={density} href={threadHref(def.id, m.gmailThreadId)} onOpen={() => onOpen(m)} onDismiss={() => onDismiss(m)} />
             ))
           : def.kind === 'gmail'
-            ? rows.map((m, i) => <GmailThreadRow key={m.id} row={m} folder={def.id} first={i === 0} density={density} onOpen={() => onOpen(m)} onAction={onAction} selected={selected.has(m.id)} onToggleSelect={() => toggleOne(m.id)} />)
-            : rows.map((m, i) => <DealThreadRow key={m.gmailThreadId} row={m} first={i === 0} density={density} onOpen={() => onOpen(m)} />)}
+            ? rows.map((m, i) => <GmailThreadRow key={m.id} row={m} folder={def.id} first={i === 0} density={density} href={threadHref(def.id, m.id)} onOpen={() => onOpen(m)} onAction={onAction} selected={selected.has(m.id)} onToggleSelect={() => toggleOne(m.id)} />)
+            : rows.map((m, i) => <DealThreadRow key={m.gmailThreadId} row={m} first={i === 0} density={density} href={threadHref(def.id, m.gmailThreadId)} onOpen={() => onOpen(m)} />)}
       </div>
       {hasMore && (
         <>
@@ -860,15 +860,36 @@ function CountPill({ n }) {
   );
 }
 
+// Build the in-app hash URL for an open conversation — mirrors
+// navigate('email', folder + '~' + threadId). Rendering the row as a real <a>
+// with this href lets the browser open it in a new tab (middle-click,
+// ⌘/Ctrl-click, or right-click → Open in new tab); a plain left-click is still
+// intercepted to route inside the SPA. A fresh tab cold-loads straight into the
+// conversation, since the open thread is driven entirely by the URL.
+function threadHref(folder, threadId) {
+  return threadId ? `#/email/${folder}~${threadId}` : undefined;
+}
+
+// True only for a plain primary-button click with no modifier — the SPA-nav
+// case. Middle-click and ⌘/Ctrl/Shift/Alt clicks fall through to the href so
+// the browser handles the new tab/window itself.
+function isPlainLeftClick(e) {
+  return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+}
+
 // A Triage row — an inbound conversation not yet on any deal. Click to read it
 // and attach via the deal panel; Dismiss drops it from Triage without filing.
-function TriageRow({ message, first, density, onOpen, onDismiss }) {
+function TriageRow({ message, first, density, onOpen, onDismiss, href }) {
   const inbound = message.direction === 'inbound';
   const counterparty = inbound ? message.fromEmail : (message.toEmails?.[0] || '');
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: vpad(density) + ' 16px', borderTop: first ? 'none' : '1px solid ' + BRAND.border, background: 'white' }}>
       <span style={{ flexShrink: 0, marginTop: 2, padding: '1px 5px', borderRadius: 3, fontSize: 10, fontWeight: 700, background: (inbound ? '#16A34A' : '#2BB8E6') + '22', color: inbound ? '#16A34A' : '#2BB8E6' }}>{inbound ? 'IN' : 'OUT'}</span>
-      <button onClick={onOpen} style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0 }}>
+      <a
+        href={href}
+        onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); onOpen(); }}
+        style={{ flex: 1, minWidth: 0, display: 'block', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0, textDecoration: 'none', color: 'inherit' }}
+      >
         <div style={{ fontWeight: 600, fontSize: 14, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {message.subject || <span style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no subject)</span>}
         </div>
@@ -876,22 +897,24 @@ function TriageRow({ message, first, density, onOpen, onDismiss }) {
         <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>
           <span style={{ fontWeight: 700 }}>{formatMailDate(message.sentAt)}</span>{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}
         </div>
-      </button>
+      </a>
       <button onClick={onDismiss} className="btn-ghost" title="Dismiss — not on a deal" aria-label="Dismiss" style={{ flexShrink: 0 }}><X size={14} /></button>
     </div>
   );
 }
 
 // A conversation row in the DB-backed Deals folder.
-function DealThreadRow({ row, first, density, onOpen }) {
+function DealThreadRow({ row, first, density, onOpen, href }) {
   const inbound = row.lastDirection === 'inbound';
   return (
-    <button
-      onClick={onOpen}
+    <a
+      href={href}
+      onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); onOpen(); }}
       style={{
         display: 'flex', alignItems: 'flex-start', gap: 12, width: '100%',
         padding: vpad(density) + ' 16px', borderTop: first ? 'none' : '1px solid ' + BRAND.border,
         background: 'white', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+        textDecoration: 'none', color: 'inherit',
       }}
     >
       <span style={{
@@ -918,7 +941,7 @@ function DealThreadRow({ row, first, density, onOpen }) {
         <div style={{ fontWeight: 700 }}>{formatMailDate(row.sentAt)}</div>
         <div style={{ marginTop: 2 }}>{inbound ? 'from' : 'to'} {row.lastFrom || '—'}</div>
       </div>
-    </button>
+    </a>
   );
 }
 
@@ -965,7 +988,7 @@ function BulkBar({ folder, count, allSelected, onToggleAll, onClear, onBulk }) {
   );
 }
 
-function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selected, onToggleSelect }) {
+function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selected, onToggleSelect, href }) {
   const { state } = useStore();
   const [hover, setHover] = useState(false);
   const chips = state.threadDeals?.[row.id] || [];
@@ -1007,9 +1030,10 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
       >
         <Star size={15} fill={row.starred ? '#F59E0B' : 'none'} />
       </button>
-      <button
-        onClick={onOpen}
-        style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 10, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0 }}
+      <a
+        href={href}
+        onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); onOpen(); }}
+        style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 10, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0, textDecoration: 'none', color: 'inherit' }}
       >
         <span style={{ width: 170, flexShrink: 0, display: 'flex', alignItems: 'baseline', gap: 5, fontSize: 14, fontWeight: row.unread ? 700 : 400, color: BRAND.ink, overflow: 'hidden' }}>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{whoLabel}</span>
@@ -1019,7 +1043,7 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
           <span style={{ fontWeight: row.unread ? 700 : 400 }}>{row.subject || '(no subject)'}</span>
           {row.snippet && <span style={{ color: BRAND.muted, fontWeight: 400 }}> — {row.snippet}</span>}
         </span>
-      </button>
+      </a>
       {chips.length > 0 && (
         <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, maxWidth: 190, overflow: 'hidden' }}>
           <StagePill stage={chips[0].stage} />
