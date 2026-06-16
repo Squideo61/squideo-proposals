@@ -272,27 +272,41 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         )}
 
         {!marketing && [
-          { label: 'Tasks', icon: CheckSquare, views: ['tasks'], go: () => navigate('tasks'), count: openTasksDue },
+          { label: 'Tasks', icon: CheckSquare, route: 'tasks', views: ['tasks'], go: () => navigate('tasks'), count: openTasksDue },
           // Emails inbox view doesn't exist in the producer shell.
-          ...(producer ? [] : [{ label: 'Emails', icon: Mail, views: ['emails', 'triage', 'email'], go: () => navigate('emails'), count: inboxUnread }]),
+          ...(producer ? [] : [{ label: 'Emails', icon: Mail, route: 'emails', views: ['emails', 'triage', 'email'], go: () => navigate('emails'), count: inboxUnread }]),
         ].map((item) => {
           const Icon = item.icon;
           const active = item.views.includes(view);
+          // Rendered as a real <a> so it can be opened in a new tab (middle-click,
+          // ⌘/Ctrl-click, right-click → Open in new tab); a plain left-click still
+          // routes inside the SPA. Active state is a blue outline/text rather than a
+          // grey fill, so it reads as "selected" instead of a stuck/pressed button.
           return (
-            <button
+            <a
               key={item.label}
-              type="button"
-              onClick={item.go}
+              href={`#/${item.route}`}
+              onClick={(e) => {
+                if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                e.preventDefault();
+                item.go();
+              }}
               className="btn-ghost"
               title={item.label}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: active ? '#EEF3F6' : undefined }}
+              aria-current={active ? 'page' : undefined}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none',
+                color: active ? BRAND.blue : 'inherit',
+                borderColor: active ? BRAND.blue : undefined,
+                fontWeight: active ? 600 : undefined,
+              }}
             >
               <Icon size={16} />
               {!isMobile && <span>{item.label}</span>}
               {item.count > 0 && (
                 <span style={{ background: BADGE, color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999 }}>{item.count}</span>
               )}
-            </button>
+            </a>
           );
         })}
 
