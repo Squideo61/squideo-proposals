@@ -298,8 +298,19 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
           {projectVideos.length > 0 && deal.productionEnteredAt && (
-            <Field icon={Calendar} label="Project started">
+            <Field icon={Calendar} label={deal.paymentOption === '5050' ? 'Deposit paid' : deal.paymentOption === 'po' ? 'PO confirmed' : 'Paid'}>
               {new Date(deal.productionEnteredAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+            </Field>
+          )}
+          {projectVideos.length > 0 && (
+            <Field icon={Calendar} label="Production start date">
+              <input
+                type="date"
+                value={(deal.productionStartDate || '').slice(0, 10)}
+                onChange={(e) => actions.saveDeal(dealId, { productionStartDate: e.target.value || null })}
+                title="Set or adjust when production actually starts (e.g. once all client assets are in)"
+                style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
+              />
             </Field>
           )}
           {!productionOnly && (

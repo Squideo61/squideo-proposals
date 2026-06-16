@@ -21,6 +21,9 @@ export async function ensureProductionSchema() {
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_phase TEXT`;
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_stage TEXT`;
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_entered_at TIMESTAMPTZ`;
+      // Manually-set production start date (a PM enters/adjusts it — work can't
+      // always begin the day it's paid, e.g. awaiting client assets).
+      await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_start_date DATE`;
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_stage_changed_at TIMESTAMPTZ`;
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_credits INTEGER NOT NULL DEFAULT 0`;
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS producer_email TEXT`;

@@ -1263,8 +1263,19 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 
     const leadSource = await dealLeadSource(deal);
 
+    // Payment plan from the signed proposal ('5050' | 'full' | 'po') — labels the
+    // project's "paid" badge (e.g. "Deposit paid" for a 50/50 deal).
+    let paymentOption = null;
+    for (const p of proposals) {
+      let sd = p.signature_data;
+      if (typeof sd === 'string') { try { sd = JSON.parse(sd); } catch { sd = null; } }
+      const opt = sd && sd.paymentOption;
+      if (opt) { paymentOption = opt; break; }
+    }
+
     return res.status(200).json({
       ...deal,
+      paymentOption,
       // First-touch marketing attribution for the lead that became this deal
       // (null if it didn't come from the quote form), incl. a returning-client flag.
       leadSource,
@@ -1386,6 +1397,12 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       await setDealAssignees(id, producers);
       await sql`UPDATE deals SET producer_email = ${producers[0] || null} WHERE id = ${id}`;
     }
+    // Manual production start date (PM-set; nullable). Self-heal the column so the
+    // edit works on a workspace that hasn't hit a production path yet.
+    if ('productionStartDate' in body) {
+      await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_start_date DATE`.catch(() => {});
+      await sql`UPDATE deals SET production_start_date = ${trimOrNull(body.productionStartDate)}, updated_at = NOW() WHERE id = ${id}`;
+    }
     const rows = await sql`
       SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
              value, expected_close_at, lost_reason, notes, overview_video_url, last_activity_at, created_at, updated_at, producer_email
@@ -1458,6 +1475,7 @@ export function serialiseDeal(r) {
     out.productionPhase           = r.production_phase || null;
     out.productionStage           = r.production_stage || null;
     out.productionEnteredAt        = r.production_entered_at || null;
+    out.productionStartDate        = r.production_start_date || null;
     out.productionStageChangedAt   = r.production_stage_changed_at || null;
     out.productionCredits          = r.production_credits == null ? 0 : Number(r.production_credits);
     out.producerEmail              = r.producer_email || null;

@@ -6,13 +6,20 @@ import { useIsMobile } from '../../utils.js';
 import { PHASE_BY_ID, STAGE_LABEL } from '../../lib/productionStages.js';
 import { SearchBox } from './ProductionView.jsx';
 
-// "Started 15 Jun 2026" — the day the project landed in production (paid).
-const formatStartDate = (iso) => {
+const fmtDate = (iso) => {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 };
+// How the project was paid, labelling the date it landed in production: a 50/50
+// deal kicks off on its deposit, a "full" deal on the full payment, a PO deal on
+// the confirmed PO.
+const paidLabel = (paymentOption) => (
+  paymentOption === '5050' ? 'Deposit paid'
+    : paymentOption === 'po' ? 'PO confirmed'
+      : 'Paid'
+);
 
 // Projects overview: every project at a glance — how many videos it has and
 // which stages those videos are spread across. Derived from the same video
@@ -30,19 +37,21 @@ export function ProjectsOverviewView({ onBack, onOpenProject }) {
   const projects = useMemo(() => {
     const map = new Map();
     for (const v of videos) {
-      if (!map.has(v.dealId)) map.set(v.dealId, { dealId: v.dealId, projectTitle: v.projectTitle, companyName: v.companyName, projectNumber: v.projectNumber || null, driveFolderId: v.driveFolderId || null, enteredProductionAt: null, earliestCreated: null, videos: [] });
+      if (!map.has(v.dealId)) map.set(v.dealId, { dealId: v.dealId, projectTitle: v.projectTitle, companyName: v.companyName, projectNumber: v.projectNumber || null, driveFolderId: v.driveFolderId || null, enteredProductionAt: null, earliestCreated: null, paymentOption: v.paymentOption || null, startDate: v.productionStartDate || null, videos: [] });
       const p = map.get(v.dealId);
       p.videos.push(v);
-      // When the project started: the deal's production_entered_at (set when paid),
-      // falling back to the earliest video created_at for older projects.
+      // When the project was paid (landed in production): the deal's
+      // production_entered_at, falling back to the earliest video created_at.
       if (!p.enteredProductionAt && v.enteredProductionAt) p.enteredProductionAt = v.enteredProductionAt;
       if (v.createdAt && (!p.earliestCreated || v.createdAt < p.earliestCreated)) p.earliestCreated = v.createdAt;
+      if (!p.paymentOption && v.paymentOption) p.paymentOption = v.paymentOption;
+      if (!p.startDate && v.productionStartDate) p.startDate = v.productionStartDate;
     }
-    const list = Array.from(map.values()).map(p => ({ ...p, startedAt: p.enteredProductionAt || p.earliestCreated || null }));
-    // Newest project first; undated projects fall to the bottom (then by name).
+    const list = Array.from(map.values()).map(p => ({ ...p, paidAt: p.enteredProductionAt || p.earliestCreated || null }));
+    // Newest project first (by when it was paid); undated fall to the bottom.
     return list.sort((a, b) => {
-      const ta = a.startedAt ? new Date(a.startedAt).getTime() : 0;
-      const tb = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+      const ta = a.paidAt ? new Date(a.paidAt).getTime() : 0;
+      const tb = b.paidAt ? new Date(b.paidAt).getTime() : 0;
       if (tb !== ta) return tb - ta;
       return (a.projectTitle || '').localeCompare(b.projectTitle || '');
     });
@@ -125,9 +134,14 @@ function ProjectCard({ project, onOpen }) {
         <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {project.companyName ? <span>{project.companyName} · </span> : null}
           <Film size={12} /> {videos.length} video{videos.length === 1 ? '' : 's'}
-          {formatStartDate(project.startedAt) && (
+          {fmtDate(project.paidAt) && (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              · <CalendarDays size={12} /> Started {formatStartDate(project.startedAt)}
+              · {paidLabel(project.paymentOption)} {fmtDate(project.paidAt)}
+            </span>
+          )}
+          {fmtDate(project.startDate) && (
+            <span title="Production start date" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: BRAND.blue }}>
+              · <CalendarDays size={12} /> Starts {fmtDate(project.startDate)}
             </span>
           )}
         </div>
