@@ -122,7 +122,7 @@ function UnlinkedView({ gmailThreadId, counterpartyEmail }) {
 // ---- Deal detail (when linked) ----
 
 function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) {
-  const { actions } = useStore();
+  const { state, actions } = useStore();
   const [editingTask, setEditingTask] = useState(null);
   const openTasks = (detail.tasks || []).filter(t => !t.doneAt).slice(0, 3);
 
