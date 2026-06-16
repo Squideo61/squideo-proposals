@@ -15,7 +15,7 @@
     "@vercel/functions": "^3.6.2",
     "bcryptjs": "^3.0.3",
     "canvas-confetti": "^1.9.4",
-    "dompurify": "^3.4.8",
+    "dompurify": "^3.4.9",
     "jose": "^6.2.3",
     "lucide-react": "^0.577.0",
     "otpauth": "^9.5.1",
