@@ -1,10 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, LayoutGrid, Film, ChevronRight, ExternalLink } from 'lucide-react';
+import { ArrowLeft, LayoutGrid, Film, ChevronRight, ExternalLink, CalendarDays } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { PHASE_BY_ID, STAGE_LABEL } from '../../lib/productionStages.js';
 import { SearchBox } from './ProductionView.jsx';
+
+// "Started 15 Jun 2026" — the day the project landed in production (paid).
+const formatStartDate = (iso) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+};
 
 // Projects overview: every project at a glance — how many videos it has and
 // which stages those videos are spread across. Derived from the same video
@@ -22,10 +30,22 @@ export function ProjectsOverviewView({ onBack, onOpenProject }) {
   const projects = useMemo(() => {
     const map = new Map();
     for (const v of videos) {
-      if (!map.has(v.dealId)) map.set(v.dealId, { dealId: v.dealId, projectTitle: v.projectTitle, companyName: v.companyName, projectNumber: v.projectNumber || null, driveFolderId: v.driveFolderId || null, videos: [] });
-      map.get(v.dealId).videos.push(v);
+      if (!map.has(v.dealId)) map.set(v.dealId, { dealId: v.dealId, projectTitle: v.projectTitle, companyName: v.companyName, projectNumber: v.projectNumber || null, driveFolderId: v.driveFolderId || null, enteredProductionAt: null, earliestCreated: null, videos: [] });
+      const p = map.get(v.dealId);
+      p.videos.push(v);
+      // When the project started: the deal's production_entered_at (set when paid),
+      // falling back to the earliest video created_at for older projects.
+      if (!p.enteredProductionAt && v.enteredProductionAt) p.enteredProductionAt = v.enteredProductionAt;
+      if (v.createdAt && (!p.earliestCreated || v.createdAt < p.earliestCreated)) p.earliestCreated = v.createdAt;
     }
-    return Array.from(map.values()).sort((a, b) => (a.projectTitle || '').localeCompare(b.projectTitle || ''));
+    const list = Array.from(map.values()).map(p => ({ ...p, startedAt: p.enteredProductionAt || p.earliestCreated || null }));
+    // Newest project first; undated projects fall to the bottom (then by name).
+    return list.sort((a, b) => {
+      const ta = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+      const tb = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+      if (tb !== ta) return tb - ta;
+      return (a.projectTitle || '').localeCompare(b.projectTitle || '');
+    });
   }, [videos]);
 
   const [query, setQuery] = useState('');
@@ -102,9 +122,14 @@ function ProjectCard({ project, onOpen }) {
           )}
           <span>{project.projectTitle || 'Untitled project'}</span>
         </div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {project.companyName ? <span>{project.companyName} · </span> : null}
           <Film size={12} /> {videos.length} video{videos.length === 1 ? '' : 's'}
+          {formatStartDate(project.startedAt) && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              · <CalendarDays size={12} /> Started {formatStartDate(project.startedAt)}
+            </span>
+          )}
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
           {breakdown.map((b, i) => (

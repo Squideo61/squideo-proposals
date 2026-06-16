@@ -73,6 +73,7 @@ async function ensureLinkLockColumns() {
 const VIDEO_SELECT = (whereSql) => sql`
   SELECT pv.*, d.title AS project_title, c.name AS company_name,
          d.drive_folder_id AS drive_folder_id,
+         d.production_entered_at AS production_entered_at,
          (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
             FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails,
          (SELECT p.number_year || '-' || lpad(p.number_seq::text, 3, '0')
@@ -142,6 +143,7 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       await backfillPaidDealsIntoProduction();
       const rows = await sql`
         SELECT pv.*, d.title AS project_title, c.name AS company_name,
+               d.production_entered_at AS production_entered_at,
                (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
                   FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails
           FROM project_videos pv
@@ -1082,6 +1084,7 @@ export function serialiseVideo(r) {
   if ('company_name' in r) out.companyName = r.company_name || null;
   if ('drive_folder_id' in r) out.driveFolderId = r.drive_folder_id || null;
   if ('project_number' in r) out.projectNumber = r.project_number || null;
+  if ('production_entered_at' in r) out.enteredProductionAt = r.production_entered_at || null;
   if ('revision_round' in r) out.revisionRound = r.revision_round != null ? Number(r.revision_round) : null;
   return out;
 }

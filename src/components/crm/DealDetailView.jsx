@@ -297,6 +297,11 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   : 'Set manually'}>{formatGBP(dealValueInfo.value)}</strong>
               : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
+          {projectVideos.length > 0 && deal.productionEnteredAt && (
+            <Field icon={Calendar} label="Project started">
+              {new Date(deal.productionEnteredAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+            </Field>
+          )}
           {!productionOnly && (
             <Field icon={User} label="Deal Owner">
               {deal.ownerEmail ? (
