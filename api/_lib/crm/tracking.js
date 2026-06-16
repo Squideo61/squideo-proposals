@@ -74,6 +74,43 @@ export async function openIsInternalSelfView(token) {
   }
 }
 
+// One open notification per thread per window. Opening a thread in any mail
+// client fetches the pixel for EVERY tracked message in it at once, so without
+// this a multi-send thread fires a burst of "opened" alerts. Atomic per
+// (user, thread) so concurrent pixel loads can't all claim — exactly one wins.
+// Returns true if the caller should send the notification. Best-effort: on any
+// error (or no thread id) it returns true so we never silently drop alerts.
+let threadNotifyTableReady = false;
+export async function claimThreadOpenNotify(userEmail, gmailThreadId) {
+  if (!userEmail || !gmailThreadId) return true;
+  try {
+    if (!threadNotifyTableReady) {
+      await sql`
+        CREATE TABLE IF NOT EXISTS email_thread_open_notify (
+          user_email TEXT NOT NULL,
+          gmail_thread_id TEXT NOT NULL,
+          notified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (user_email, gmail_thread_id)
+        )`;
+      threadNotifyTableReady = true;
+    }
+    // Insert (first ever) or refresh only if the last alert is older than the
+    // window. A row returned means we won the claim → notify; empty means a
+    // sibling open just notified → skip.
+    const won = await sql`
+      INSERT INTO email_thread_open_notify (user_email, gmail_thread_id, notified_at)
+      VALUES (${userEmail}, ${gmailThreadId}, NOW())
+      ON CONFLICT (user_email, gmail_thread_id)
+      DO UPDATE SET notified_at = NOW()
+        WHERE email_thread_open_notify.notified_at < NOW() - interval '10 minutes'
+      RETURNING gmail_thread_id`;
+    return won.length > 0;
+  } catch (err) {
+    console.error('[tracking] claimThreadOpenNotify failed', err.message);
+    return true;
+  }
+}
+
 // Persist a tracking row + its rewritten links after a successful send. Never
 // throws — tracking is best-effort and must not fail the send.
 export async function recordTrackedSend({ token, userEmail, messageId, threadId, subject, recipients, links, source = 'crm' }) {

@@ -6,7 +6,7 @@
 // Geo comes from Vercel's edge headers (x-vercel-ip-*), so no external lookup.
 import sql from '../_lib/db.js';
 import { APP_URL } from '../_lib/email.js';
-import { TRANSPARENT_GIF, ensureOpenNotifiedColumn, openIsInternalSelfView, resolveSentThreadId } from '../_lib/crm/tracking.js';
+import { TRANSPARENT_GIF, ensureOpenNotifiedColumn, openIsInternalSelfView, resolveSentThreadId, claimThreadOpenNotify } from '../_lib/crm/tracking.js';
 import { sendNotification, ensureTrackingNotificationDefaults } from '../_lib/notifications.js';
 import { optionalAuth } from '../_lib/middleware.js';
 
@@ -68,6 +68,12 @@ async function notifyFirstOpen(token, geo) {
         catch { /* best-effort heal */ }
       }
     }
+    // Collapse the burst: opening a thread loads the pixel for EVERY tracked
+    // message in it at once. Only the first claim within the window notifies, so
+    // one thread-open = one alert (not one per message). Per-message opens are
+    // still recorded for analytics — this only de-dupes the notification.
+    if (threadId && !(await claimThreadOpenNotify(t.user_email, threadId))) return;
+
     const dealRows = threadId
       ? await sql`SELECT deal_id FROM email_thread_deals WHERE gmail_thread_id = ${threadId} LIMIT 1`
       : [];
