@@ -2970,6 +2970,11 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
   const [countdown, setCountdown] = useState(null);
   const sendTimeoutRef = useRef(null);
   const sendIntervalRef = useRef(null);
+  // Holds the "Send & create follow-up" task payload while the undo window runs.
+  // The task is only created once the email actually sends (in doSend), so an
+  // Undo cancels the task too. A ref (not state) so the deferred doSend reads
+  // the latest value without a stale closure.
+  const pendingFollowUpRef = useRef(null);
   // Attachment refs uploaded to the temporary email-attachments blob store.
   // Each: { id, filename, mimeType, sizeBytes, blobUrl?, blobPathname?, uploading?, error? }.
   const [attachments, setAttachments] = useState(initialDraft?.attachments ?? []);
@@ -3204,7 +3209,17 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
     try {
       const resp = await actions.sendGmail(buildPayload());
       if (!resp?.ok) throw new Error('Send failed');
-      showMsg('Email sent');
+      // The email actually went out — only now create the deferred follow-up
+      // task (if this was a "Send & create follow-up"). Doing it here, after the
+      // undo window elapsed, means an Undo cancels the task as well. Created
+      // before onSent so the deal reload it triggers already includes the task.
+      let followUpFailed = false;
+      if (pendingFollowUpRef.current) {
+        const fu = pendingFollowUpRef.current;
+        pendingFollowUpRef.current = null;
+        try { await actions.createTask(fu); } catch { followUpFailed = true; }
+      }
+      showMsg(followUpFailed ? 'Email sent — but the follow-up task could not be created.' : 'Email sent');
       onSent?.();
       return true;
     } catch (err) {
@@ -3244,6 +3259,9 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
   const undoSend = () => {
     clearSendTimers();
     setCountdown(null);
+    // Cancel any deferred follow-up task — the send didn't happen, so neither
+    // should the task.
+    pendingFollowUpRef.current = null;
   };
 
   // Cancel a pending send if the composer unmounts (closed/navigated away) so a
@@ -3256,10 +3274,13 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
   // days out) to set the follow-up; once the task is created we send the email.
   const canSend = gmailConnected && !sending && !anyUploading && !!to.trim() && !!subject.trim() && !bodyEmpty;
   const openFollowUp = () => { if (canSend) setShowFollowUp(true); };
-  const onFollowUpSaved = () => {
+  // The follow-up task box hands its values back here (it does NOT create the
+  // task itself). We stash them and start the same 8-second undo window as the
+  // plain Send; doSend creates the task only once the email truly goes out, and
+  // Undo discards both. The footer then shows "Sending in Ns… / Undo send".
+  const onFollowUpValues = (values) => {
+    pendingFollowUpRef.current = values;
     setShowFollowUp(false);
-    // Go through the same 8-second undo window as the plain Send button, so this
-    // path also shows "Sending in Ns… / Undo send" rather than firing instantly.
     beginSend();
   };
 
@@ -3885,7 +3906,7 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
             dueAt: (() => { const d = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); d.setHours(8, 0, 0, 0); return d.toISOString(); })(),
           }}
           onClose={() => setShowFollowUp(false)}
-          onSaved={onFollowUpSaved}
+          onSubmitValues={onFollowUpValues}
           submitLabel="Create & send"
         />
       )}

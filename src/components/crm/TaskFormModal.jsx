@@ -13,7 +13,12 @@ import { BRAND } from '../../theme.js';
 //   - Pass nothing to create with a deal picker.
 // Calls onSaved(task) after either path. The modal does NOT close itself —
 // the caller decides (so it can also refresh related views).
-export function TaskFormModal({ task, defaults, onClose, onSaved, submitLabel }) {
+//   - Pass `onSubmitValues` to take over creation: instead of writing the task
+//     itself, the modal validates and hands the raw payload back, letting the
+//     caller decide when (or whether) to create it — e.g. the email composer
+//     defers the follow-up task until the send actually goes out, so undoing
+//     the send also cancels the task.
+export function TaskFormModal({ task, defaults, onClose, onSaved, onSubmitValues, submitLabel }) {
   const { state, actions } = useStore();
   const editing = !!task;
   // New tasks pre-fill "Follow up" (the common case) — overwrite it if the task
@@ -66,6 +71,13 @@ export function TaskFormModal({ task, defaults, onClose, onSaved, submitLabel })
       assigneeEmails,
       dealId: dealId || null,
     };
+    // Deferred-create mode: hand the values back and let the caller persist
+    // them on its own schedule (no server write here).
+    if (onSubmitValues) {
+      setSubmitting(false);
+      onSubmitValues(payload);
+      return;
+    }
     let result;
     if (editing) result = await actions.saveTask(task.id, payload);
     else result = await actions.createTask(payload);
