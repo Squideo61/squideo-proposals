@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -251,6 +251,13 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                 ><FileText size={14} /> Create or link proposal</button>
               )}
               <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
+              <button
+                onClick={() => actions.toggleDealHot(dealId, !deal.hot)}
+                className="btn-ghost"
+                aria-pressed={!!deal.hot}
+                title={deal.hot ? 'Flagged hot — click to unflag' : 'Flag as hot'}
+                style={{ color: deal.hot ? '#EA580C' : undefined, borderColor: deal.hot ? '#EA580C' : undefined, fontWeight: deal.hot ? 600 : undefined }}
+              ><Flame size={14} fill={deal.hot ? '#EA580C' : 'none'} /> {deal.hot ? 'Hot' : 'Mark hot'}</button>
               <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
               <button
                 onClick={() => {

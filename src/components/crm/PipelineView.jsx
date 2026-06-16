@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Check, ChevronDown, Plus, KanbanSquare, Eye, Mail, FileText, CheckSquare } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, Plus, KanbanSquare, Eye, Mail, FileText, CheckSquare, Flame } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile } from '../../utils.js';
@@ -30,11 +30,16 @@ export function PipelineView({ onBack, onOpenDeal }) {
     try { localStorage.setItem(OWNER_FILTER_STORAGE_KEY, ownerFilter); } catch {}
   }, [ownerFilter]);
 
+  // "Hot only" filter — show just the deals flagged warm/keen, regardless of
+  // which stage they're in (the flag is orthogonal to the funnel position).
+  const [hotOnly, setHotOnly] = useState(false);
   const allDeals = useMemo(() => Object.values(state.deals || {}), [state.deals]);
-  const deals = useMemo(
-    () => (ownerFilter ? allDeals.filter(d => d.ownerEmail === ownerFilter) : allDeals),
-    [allDeals, ownerFilter],
-  );
+  const hotCount = useMemo(() => allDeals.filter(d => d.hot).length, [allDeals]);
+  const deals = useMemo(() => {
+    let list = ownerFilter ? allDeals.filter(d => d.ownerEmail === ownerFilter) : allDeals;
+    if (hotOnly) list = list.filter(d => d.hot);
+    return list;
+  }, [allDeals, ownerFilter, hotOnly]);
 
   // Who can the pipeline be filtered by: anyone who can own a deal (sales,
   // directors, admins, members) — i.e. everyone except the production-only
@@ -84,6 +89,18 @@ export function PipelineView({ onBack, onOpenDeal }) {
             memberOptions={memberOptions}
             sessionEmail={sessionEmail}
           />
+          <button
+            type="button"
+            onClick={() => setHotOnly(v => !v)}
+            className="btn-ghost"
+            aria-pressed={hotOnly}
+            title="Show only deals flagged hot"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13,
+              color: hotOnly ? '#EA580C' : undefined, borderColor: hotOnly ? '#EA580C' : undefined,
+              fontWeight: hotOnly ? 600 : undefined }}
+          >
+            <Flame size={14} fill={hotOnly ? '#EA580C' : 'none'} /> Hot{hotCount > 0 ? ` · ${hotCount}` : ''}
+          </button>
           <span style={{ fontSize: 13, color: BRAND.muted }}>{deals.length} deals · all amounts ex-VAT (net)</span>
         </div>
         <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New deal</button>
@@ -457,7 +474,7 @@ function EmailMetaPill({ lastEmailAt, opens, lastOpenedAt }) {
 }
 
 function DealRow({ deal, onOpen }) {
-  const { state } = useStore();
+  const { state, actions } = useStore();
   const owner = deal.ownerEmail ? state.users[deal.ownerEmail] : null;
   const company = deal.companyId ? state.companies[deal.companyId] : null;
   const name = company?.name || deal.title || 'Untitled deal';
@@ -504,6 +521,18 @@ function DealRow({ deal, onOpen }) {
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+          <button
+            type="button"
+            draggable={false}
+            onClick={(e) => { e.stopPropagation(); actions.toggleDealHot(deal.id, !deal.hot); }}
+            title={deal.hot ? 'Flagged hot — click to unflag' : 'Flag as hot'}
+            aria-pressed={!!deal.hot}
+            style={{ display: 'inline-flex', alignItems: 'center', background: 'none', border: 'none',
+              cursor: 'pointer', padding: 0, flexShrink: 0,
+              color: deal.hot ? '#EA580C' : BRAND.muted, opacity: deal.hot ? 1 : 0.4 }}
+          >
+            <Flame size={14} fill={deal.hot ? '#EA580C' : 'none'} />
+          </button>
           <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>
             {name}
           </span>

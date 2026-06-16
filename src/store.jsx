@@ -1610,6 +1610,25 @@ export function StoreProvider({ children }) {
         },
       );
     },
+    // Toggle the orthogonal "hot" warm-lead flag (independent of stage).
+    toggleDealHot(dealId, hot) {
+      return mutate(
+        { kind: 'deal', id: dealId, patch: { hot }, errorMsg: 'Failed to update deal' },
+        () => api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/hot', { hot }),
+        (s, resp) => resp?.deal
+          ? applyOne(s, { kind: 'deal', id: resp.deal.id, patch: resp.deal })
+          : s,
+        (snap) => {
+          const before = snap.deals[dealId] || {};
+          if (!!before.hot === !!hot) return null;
+          return {
+            label: `${hot ? 'Flag' : 'Unflag'} ${before.title || 'deal'} as hot`,
+            undo: () => actions.toggleDealHot(dealId, !hot),
+            redo: () => actions.toggleDealHot(dealId, hot),
+          };
+        },
+      );
+    },
     deleteDeal(dealId) {
       return mutate(
         { kind: 'deal', id: dealId, delete: true, errorMsg: 'Failed to delete deal' },

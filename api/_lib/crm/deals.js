@@ -56,6 +56,17 @@ export function ensureDealPo() {
   return dealPoEnsured;
 }
 
+// Self-heal for db/migrations/20260616_deal_hot_flag.sql — the orthogonal "hot"
+// warm-lead marker (settable at any stage). Cached so it runs at most once per
+// warm instance.
+let dealHotEnsured = null;
+export function ensureDealHot() {
+  if (dealHotEnsured) return dealHotEnsured;
+  dealHotEnsured = sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS hot BOOLEAN NOT NULL DEFAULT FALSE`
+    .then(() => {}).catch((err) => { dealHotEnsured = null; throw err; });
+  return dealHotEnsured;
+}
+
 // Turn a Drive API error into an actionable message for the user.
 export function driveErrorHint(err) {
   const msg = err?.message || '';
@@ -382,6 +393,9 @@ export async function dealLeadSource(deal) {
 }
 
 export async function dealsRoute(req, res, id, action, user, subaction = null) {
+  // Cheap (cached) self-heal so the `hot` column is present for every list /
+  // detail SELECT * and the toggle below, even before the migration is applied.
+  await ensureDealHot();
   if (!id) {
     if (req.method === 'GET') {
       // Optional filter by stage, owner. Default: everything (Kanban renders
@@ -464,6 +478,21 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
     const [deal] = await annotateDeals(rows);
     return res.status(200).json({ ok: true, changed: true, deal });
+  }
+
+  // Orthogonal "hot" flag — a warm-lead marker independent of the stage, so a
+  // deal can be flagged keen at any point in the funnel. POST { hot: bool }.
+  if (action === 'hot') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const hot = !!(req.body && req.body.hot);
+    const updated = await sql`
+      UPDATE deals SET hot = ${hot}, updated_at = NOW() WHERE id = ${id}
+      RETURNING id
+    `;
+    if (!updated.length) return res.status(404).json({ error: 'Not found' });
+    const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
+    const [deal] = await annotateDeals(rows);
+    return res.status(200).json({ ok: true, deal });
   }
 
   if (action === 'comments') {
@@ -1464,6 +1493,10 @@ export function serialiseDeal(r) {
   // Only carried on rows that select it (detail SELECT *, the PATCH returning
   // list); omitted on partial selects so the optimistic merge never blanks it.
   if ('overview_video_url' in r) out.overviewVideoUrl = r.overview_video_url || null;
+  // Orthogonal "hot" warm-lead flag. Carried on SELECT * rows (list + detail +
+  // annotateDeals); omitted on partial selects so the optimistic merge never
+  // blanks it on a stage move / edit.
+  if ('hot' in r) out.hot = !!r.hot;
   // PO tracking fields — carried on SELECT * rows (deals list + detail). Omitted
   // on partial selects so a stage move / edit never blanks them in the cache.
   if ('po_number' in r) { out.poNumber = r.po_number || null; out.poReceivedAt = r.po_received_at || null; }
