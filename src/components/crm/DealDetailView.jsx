@@ -1201,6 +1201,18 @@ function ExpandedMessage({ email, defaultOpen = false, onOpenFull }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Re-sync open state when this message stops (or starts) being the latest —
+  // e.g. after you send a reply, the message you replied to is no longer last,
+  // so it collapses and only your new message stays open. Gated on an actual
+  // change in defaultOpen so a manual expand/collapse is never overridden.
+  const prevDefaultOpen = useRef(defaultOpen);
+  useEffect(() => {
+    if (prevDefaultOpen.current !== defaultOpen) {
+      setOpen(defaultOpen);
+      prevDefaultOpen.current = defaultOpen;
+    }
+  }, [defaultOpen]);
+
   // Lazy-load the body the first time the message is opened (and not before),
   // so collapsed messages cost nothing.
   useEffect(() => {
