@@ -3256,9 +3256,11 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
   // days out) to set the follow-up; once the task is created we send the email.
   const canSend = gmailConnected && !sending && !anyUploading && !!to.trim() && !!subject.trim() && !bodyEmpty;
   const openFollowUp = () => { if (canSend) setShowFollowUp(true); };
-  const onFollowUpSaved = async () => {
+  const onFollowUpSaved = () => {
     setShowFollowUp(false);
-    await doSend();
+    // Go through the same 8-second undo window as the plain Send button, so this
+    // path also shows "Sending in Ns… / Undo send" rather than firing instantly.
+    beginSend();
   };
 
   const handleSchedule = async () => {
