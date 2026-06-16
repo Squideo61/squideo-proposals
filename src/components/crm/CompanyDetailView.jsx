@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Award, Building2, CheckCircle2, Circle, FileText, Globe, MapPin, Percent, User, Edit2, Link2, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -277,7 +277,11 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
-        <Card title="Contacts" count={detail.contacts.length}>
+        <Card
+          title="Contacts"
+          count={detail.contacts.length}
+          action={<AddContactPicker companyId={companyId} existingIds={detail.contacts.map(c => c.id)} onAdded={reload} />}
+        >
           {detail.contacts.length === 0 && <Empty text="No contacts at this company" />}
           {detail.contacts.map(c => (
             <button
@@ -359,6 +363,102 @@ function Stat({ label, value, hint }) {
       </div>
       <div style={{ fontSize: 18, fontWeight: 700 }}>{value}</div>
       {hint && <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>{hint}</div>}
+    </div>
+  );
+}
+
+// "+ Add contact" on a company's Contacts card — links an EXISTING contact to
+// this organisation. A contact has a single company, so picking one that's
+// already at another org reassigns it here (the row flags that). Uses
+// saveContact (optimistic + undoable) then reloads the company detail.
+function AddContactPicker({ companyId, existingIds, onAdded }) {
+  const { state, actions, showMsg } = useStore();
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+
+  const here = new Set(existingIds || []);
+  const candidates = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return Object.values(state.contacts || {})
+      .filter(c => c && c.id && c.companyId !== companyId && !here.has(c.id))
+      .filter(c => !term || (c.name || '').toLowerCase().includes(term) || (c.email || '').toLowerCase().includes(term))
+      .sort((a, b) => (a.name || a.email || '').localeCompare(b.name || b.email || ''))
+      .slice(0, 8);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.contacts, companyId, q]);
+
+  const add = async (c) => {
+    setBusy(true);
+    try {
+      await actions.saveContact(c.id, { companyId });
+      showMsg?.(`${c.name || c.email || 'Contact'} added to this organisation`, 'success');
+      setOpen(false);
+      setQ('');
+      onAdded?.();
+    } catch (err) {
+      showMsg?.(err.message || 'Failed to add contact', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen(o => !o)} className="btn-ghost" style={{ fontSize: 12 }}>+ Add contact</button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 50, width: 280,
+          background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)', padding: 8,
+        }}>
+          <input
+            className="input"
+            autoFocus
+            placeholder="Search contacts…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            style={{ fontSize: 13, marginBottom: 6 }}
+          />
+          <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {candidates.length === 0 && (
+              <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic', padding: '6px 4px' }}>
+                {q ? 'No matching contacts' : 'Type to search your contacts'}
+              </div>
+            )}
+            {candidates.map(c => {
+              const fromCompany = c.companyId ? (state.companies?.[c.companyId]?.name || null) : null;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => add(c)}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, width: '100%', padding: '6px 8px', border: 'none', background: 'transparent', borderRadius: 6, cursor: busy ? 'default' : 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{c.name || c.email || c.id}</span>
+                  <span style={{ fontSize: 11, color: BRAND.muted }}>
+                    {c.name && c.email ? c.email : ''}
+                    {fromCompany ? `${c.name && c.email ? ' · ' : ''}moving from ${fromCompany}` : ''}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
