@@ -7,7 +7,7 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
-import { trackingForDealThreads, trackingForMessages } from './tracking.js';
+import { trackingForDealThreads, trackingForMessages, backfillDealTrackingIds } from './tracking.js';
 import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree, isFolderWithin, listFolderContents, getDriveFile } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
@@ -1346,6 +1346,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       const prows = await sql`SELECT user_email FROM deal_assignees WHERE deal_id = ${id} ORDER BY assigned_at`;
       if (prows.length) dealProducerEmails = prows.map(r => r.user_email);
     } catch (_) { /* deal_assignees not yet migrated */ }
+
+    // Recover any orphaned (Gmail-composed) tracking rows for this deal's sends
+    // first, so the lookups below can find a teammate's tracked emails even when
+    // the extension's /link step never filled in the Gmail ids.
+    await backfillDealTrackingIds(emails);
 
     // Open/click tracking for this deal's outbound threads, team-wide (not just
     // the viewer's own sends). Keyed by thread; degrades to {} pre-migration.

@@ -295,6 +295,66 @@ export async function trackingForMessages(messageIds) {
   }
 }
 
+// Self-heal: link orphaned tracking rows to a deal's emails. Extension-composed
+// (Gmail) sends register their tracking row at 'presending' with NULL ids and
+// rely on a follow-up /link call to fill the Gmail ids; when that step doesn't
+// land (e.g. an out-of-date extension build) the row is left with BOTH
+// gmail_thread_id AND gmail_message_id null — so neither trackingForDealThreads
+// (by thread) nor trackingForMessages (by message) can find it, and a
+// teammate's tracked email shows no eye at all. We recover the link the same
+// way resolveSentThreadId does in reverse: match each orphan to the deal's
+// synced sent message by shared recipient + nearest send time (subject
+// preferred), then patch its ids. Runs on deal load; once patched, subsequent
+// loads find no orphans and skip. Best-effort — never throws.
+export async function backfillDealTrackingIds(emails) {
+  const outbound = (emails || []).filter((e) =>
+    e.gmail_thread_id && e.gmail_message_id &&
+    (e.direction === 'outgoing' || e.direction === 'outbound'));
+  if (!outbound.length) return;
+  const recips = Array.from(new Set(
+    outbound.flatMap((e) => (e.to_emails || []).map((x) => String(x).toLowerCase()))
+  )).filter(Boolean);
+  if (!recips.length) return;
+  try {
+    const orphans = await sql`
+      SELECT id, recipients, subject, sent_at
+        FROM email_tracking
+       WHERE gmail_thread_id IS NULL
+         AND EXISTS (SELECT 1 FROM unnest(recipients) r WHERE LOWER(r) = ANY(${recips}::text[]))`;
+    if (!orphans.length) return;
+    const norm = (s) => String(s || '').replace(/^\s*re:\s*/i, '').trim().toLowerCase();
+    const WINDOW_MS = 10 * 60 * 1000;
+    // Greedy one-to-one: oldest orphan first, each claims the closest unused
+    // outbound message, so a multi-send thread maps row↔message rather than
+    // collapsing several rows onto one email.
+    const used = new Set();
+    const ordered = [...orphans].sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at));
+    for (const o of ordered) {
+      const oRecips = (o.recipients || []).map((x) => String(x).toLowerCase());
+      let best = null, bestScore = Infinity;
+      for (const e of outbound) {
+        if (used.has(e.gmail_message_id)) continue;
+        const eRecips = (e.to_emails || []).map((x) => String(x).toLowerCase());
+        if (!eRecips.some((x) => oRecips.includes(x))) continue;
+        const dt = Math.abs(new Date(e.sent_at).getTime() - new Date(o.sent_at).getTime());
+        if (dt > WINDOW_MS) continue;
+        const score = dt + (norm(e.subject) === norm(o.subject) ? 0 : 5 * 60 * 1000);
+        if (score < bestScore) { bestScore = score; best = e; }
+      }
+      if (best) {
+        used.add(best.gmail_message_id);
+        await sql`
+          UPDATE email_tracking
+             SET gmail_message_id = COALESCE(gmail_message_id, ${best.gmail_message_id}),
+                 gmail_thread_id  = ${best.gmail_thread_id}
+           WHERE id = ${o.id} AND gmail_thread_id IS NULL`;
+      }
+    }
+  } catch (err) {
+    console.warn('[tracking] backfillDealTrackingIds failed', err.message);
+  }
+}
+
 function mapTrackingRows(rows) {
   const out = {};
   for (const r of rows) {
