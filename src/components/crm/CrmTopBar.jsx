@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BarChart3, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, PoundSterling, Settings, Trophy, Undo2, Redo2, UserCog } from 'lucide-react';
+import { BarChart3, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, PoundSterling, Settings, Square, Trophy, Undo2, Redo2, UserCog } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -50,9 +50,13 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     return emails.some(e => String(e).toLowerCase() === myEmail);
   };
   const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999);
-  const openTasksDue = (state.tasks || []).filter((t) => (
-    isMyTask(t) && !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= endOfToday.getTime()
-  )).length;
+  // The actionable set shown in the Tasks dropdown AND counted by the pill: my
+  // own open tasks due at/before the end of today (today + overdue backlog),
+  // soonest-first.
+  const todaysTasks = (state.tasks || [])
+    .filter((t) => isMyTask(t) && !t.doneAt && t.dueAt && new Date(t.dueAt).getTime() <= endOfToday.getTime())
+    .sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt));
+  const openTasksDue = todaysTasks.length;
   // The Emails badge mirrors Gmail's inbox unread count (matches the Inbox
   // folder badge inside the Emails view). Needs the mailbox labels loaded, so we
   // fetch them once the account is connected (the Emails view also refreshes
@@ -271,10 +275,23 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         </div>
         )}
 
-        {!marketing && [
-          { label: 'Tasks', icon: CheckSquare, route: 'tasks', views: ['tasks'], go: () => navigate('tasks'), count: openTasksDue },
-          // Emails inbox view doesn't exist in the producer shell.
-          ...(producer ? [] : [{ label: 'Emails', icon: Mail, route: 'emails', views: ['emails', 'triage', 'email'], go: () => navigate('emails'), count: inboxUnread }]),
+        {/* Tasks opens a quick dropdown of today's tasks (tick them off in place,
+            or jump to the full page) rather than navigating on the first click. */}
+        {!marketing && (
+          <TasksMenu
+            tasks={todaysTasks}
+            count={openTasksDue}
+            deals={state.deals}
+            active={view === 'tasks'}
+            navigate={navigate}
+            actions={actions}
+            isMobile={isMobile}
+          />
+        )}
+
+        {/* Emails inbox view doesn't exist in the producer shell. */}
+        {!marketing && !producer && [
+          { label: 'Emails', icon: Mail, route: 'emails', views: ['emails', 'triage', 'email'], go: () => navigate('emails'), count: inboxUnread },
         ].map((item) => {
           const Icon = item.icon;
           const active = item.views.includes(view);
@@ -371,6 +388,156 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// A short, friendly due label for a header row: "Overdue", "Due 14:30" (today)
+// or a date for anything that slipped from an earlier day.
+function dueLabel(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (d.getTime() < now.getTime()) {
+    return isToday ? `Overdue · ${time}` : `Overdue · ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;
+  }
+  return `Due ${time}`;
+}
+
+// The Tasks header control: a pill that, on a plain left-click, opens a popover
+// of the day's tasks instead of routing. Each can be ticked off in place
+// (optimistic toggle, kept visible with a strikethrough until reopen so the list
+// doesn't jump), with a "Show all" link through to the full Tasks page.
+// Middle/⌘/Ctrl-click still opens the Tasks page in a new tab (it's a real <a>).
+function TasksMenu({ tasks, count, deals, active, navigate, actions, isMobile }) {
+  const [open, setOpen] = useState(false);
+  const [snapshot, setSnapshot] = useState([]);
+  const [doneIds, setDoneIds] = useState(() => new Set());
+  const ref = useRef(null);
+
+  // Freeze the list (and clear local "ticked" marks) each time the menu opens,
+  // so completing tasks doesn't reorder/empty it from under the cursor.
+  useEffect(() => {
+    if (open) { setSnapshot(tasks); setDoneIds(new Set()); }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+
+  const toggle = (id) => {
+    setDoneIds((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+    actions.toggleTask(id);
+  };
+  const goAll = () => { setOpen(false); navigate('tasks'); };
+  const openDeal = (dealId) => { setOpen(false); navigate('deal', dealId); };
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <a
+        href="#/tasks"
+        onClick={(e) => {
+          if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+          e.preventDefault();
+          setOpen((o) => !o);
+        }}
+        className="btn-ghost"
+        title="Tasks"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-current={active ? 'page' : undefined}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none',
+          color: (active || open) ? BRAND.blue : 'inherit',
+          borderColor: (active || open) ? BRAND.blue : undefined,
+          fontWeight: (active || open) ? 600 : undefined,
+        }}
+      >
+        <CheckSquare size={16} />
+        {!isMobile && <span>Tasks</span>}
+        {count > 0 && (
+          <span style={{ background: BADGE, color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999 }}>{count}</span>
+        )}
+      </a>
+
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+            background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10,
+            boxShadow: '0 8px 24px rgba(15, 42, 61, 0.12)', width: 340, maxWidth: '90vw',
+            zIndex: 50, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Today's tasks{snapshot.length ? ` · ${snapshot.length}` : ''}
+            </span>
+          </div>
+
+          <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+            {snapshot.length === 0 ? (
+              <div style={{ padding: '24px 16px', textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>
+                Nothing due today. 🎉
+              </div>
+            ) : snapshot.map((t) => {
+              const done = doneIds.has(t.id);
+              const deal = t.dealId && deals ? deals[t.dealId] : null;
+              const Icon = done ? CheckSquare : Square;
+              return (
+                <div key={t.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', borderTop: '1px solid ' + BRAND.paper }}>
+                  <button
+                    type="button"
+                    onClick={() => toggle(t.id)}
+                    className="btn-icon"
+                    aria-label={done ? 'Mark not done' : 'Mark done'}
+                    style={{ padding: 2, border: 'none', background: 'transparent', flexShrink: 0, marginTop: 1 }}
+                  >
+                    <Icon size={16} color={done ? '#16A34A' : BRAND.muted} />
+                  </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, color: done ? BRAND.muted : BRAND.ink, textDecoration: done ? 'line-through' : 'none', wordBreak: 'break-word' }}>
+                      {t.title}
+                    </div>
+                    <div style={{ fontSize: 11.5, marginTop: 2, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span style={{ color: new Date(t.dueAt).getTime() < Date.now() && !done ? '#DC2626' : BRAND.muted, fontWeight: new Date(t.dueAt).getTime() < Date.now() && !done ? 600 : 400 }}>
+                        {dueLabel(t.dueAt)}
+                      </span>
+                      {deal && (
+                        <span role="link" onClick={() => openDeal(deal.id)} style={{ color: BRAND.blue, cursor: 'pointer' }}>
+                          · {deal.title}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={goAll}
+            onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
+              padding: '11px 14px', border: 'none', borderTop: '1px solid ' + BRAND.border, background: 'white',
+              cursor: 'pointer', fontSize: 13, fontWeight: 600, color: BRAND.blue,
+            }}
+          >
+            Show all tasks
+          </button>
+        </div>
+      )}
     </div>
   );
 }
