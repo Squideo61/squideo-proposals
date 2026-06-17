@@ -1255,6 +1255,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                   message={m}
                   myEmail={myEmail}
                   connected={connected}
+                  addToDealId={embedded ? (contextDeal?.id || null) : null}
                   defaultExpanded={i === messages.length - 1 || m.unread}
                 />
               ))}
@@ -1324,7 +1325,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
 
 // One message inside a conversation. Collapsed shows a one-line header; click
 // to expand the full sanitised body + attachments.
-function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
+function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealId = null }) {
   const [open, setOpen] = useState(!!defaultExpanded);
   const [showQuoted, setShowQuoted] = useState(false);
   const outbound = message.outbound || (message.fromEmail && message.fromEmail.toLowerCase() === myEmail);
@@ -1384,7 +1385,7 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
           {message.attachments?.length > 0 && (
             <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
               {message.attachments.map((a, i) => (
-                <EmailAttachmentCard key={i} att={a} messageId={message.id} connected={connected} />
+                <EmailAttachmentCard key={i} att={a} messageId={message.id} connected={connected} dealId={addToDealId} />
               ))}
             </div>
           )}

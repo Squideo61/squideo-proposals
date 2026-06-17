@@ -3,7 +3,6 @@ import { BRAND, APP_MAX_WIDTH } from './theme.js';
 import { DEFAULT_PROPOSAL } from './defaults.js';
 import { StoreProvider, useStore } from './store.jsx';
 import { makeId } from './utils.js';
-import { permissionsInclude } from './lib/permissions.js';
 import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 import { Toast } from './components/ui.jsx';
 import { AuthScreen } from './components/AuthScreen.jsx';
@@ -95,15 +94,18 @@ function AppShell() {
   const navDepthRef = useRef(0);
 
   // True when the app was opened at the bare root (no hash) — used once to land
-  // finance/director users on the mission-control dashboard instead of the
-  // proposals list. Captured at module-eval of the component so a later in-app
-  // navigation to the list never re-triggers the redirect.
+  // users on their home dashboard instead of the proposals list. Captured at
+  // module-eval of the component so a later in-app navigation to the list never
+  // re-triggers the redirect.
   const landedAtRootRef = useRef(!window.location.hash || window.location.hash === '#/');
   const didDefaultLandRef = useRef(false);
 
-  // Redirect a fresh root load to the dashboard for users who can see business
-  // finances. Replaces (not pushes) history so Back doesn't bounce to the list,
-  // and only fires for the full CRM shell (never producers / deep links).
+  // Land a fresh root load on the home dashboard. Business Overview is the
+  // homepage for every full-shell user (the page finance-gates its own money
+  // sections, so non-finance roles get a safe pipeline/production/their-work
+  // view); Marketing-only accounts get the Marketing dashboard instead.
+  // Replaces (not pushes) history so Back doesn't bounce to the list, and never
+  // fires for producers (own shell) or deep links.
   useEffect(() => {
     if (didDefaultLandRef.current || !landedAtRootRef.current) return;
     if (!user || producerOnly) return;
@@ -113,7 +115,7 @@ function AppShell() {
       window.history.replaceState(null, '', buildHash('marketing', 'overview'));
       setView('marketing');
       setActiveId('overview');
-    } else if (permissionsInclude(user.permissions, 'finance.manage')) {
+    } else {
       window.history.replaceState(null, '', buildHash('overview', null));
       setView('overview');
       setActiveId(null);

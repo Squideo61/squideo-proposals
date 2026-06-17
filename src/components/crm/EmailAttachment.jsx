@@ -1,6 +1,7 @@
-import React from 'react';
-import { Download, FileText, Image as ImageIcon, File, FileSpreadsheet, FileArchive } from 'lucide-react';
+import React, { useState } from 'react';
+import { Download, FileText, Image as ImageIcon, File, FileSpreadsheet, FileArchive, FolderPlus, Check } from 'lucide-react';
 import { BRAND } from '../../theme.js';
+import { useStore } from '../../store.jsx';
 import { PdfThumb } from '../storyboard/PdfThumb.jsx';
 
 // Gmail-style attachment preview cards for the email viewers: a thumbnail
@@ -43,13 +44,41 @@ function fileSize(bytes) {
   return (n / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-export function EmailAttachmentCard({ att, messageId, connected }) {
+export function EmailAttachmentCard({ att, messageId, connected, dealId = null }) {
+  const { actions, showMsg } = useStore();
   const usable = !!(connected && att.attachmentId && messageId);
   const kind = kindOf(att);
   const openUrl = usable ? attachmentUrl(messageId, att, 'inline') : null;
   const downloadUrl = usable ? attachmentUrl(messageId, att, 'attachment') : null;
   const Icon = ICON_FOR[kind] || File;
   const size = fileSize(att.size ?? att.sizeBytes);
+
+  // "Add to files" copies the attachment into the deal's Files card (Drive/blob),
+  // shown only on deal-scoped readers. Mirrors the old single-message viewer.
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const canAdd = !!(dealId && att.attachmentId && messageId);
+  const addToFiles = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!canAdd || saving || saved) return;
+    setSaving(true);
+    try {
+      await actions.addDealFileFromEmail(dealId, {
+        gmailMessageId: messageId,
+        attachmentId: att.attachmentId,
+        filename: att.filename,
+        mimeType: att.mimeType,
+        size: att.size ?? att.sizeBytes,
+      });
+      setSaved(true);
+      showMsg(`"${att.filename || 'attachment'}" added to files`);
+    } catch (err) {
+      showMsg(err?.message || 'Failed to add attachment');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   let preview;
   if (usable && kind === 'image') {
@@ -105,6 +134,18 @@ export function EmailAttachmentCard({ att, messageId, connected }) {
              background: 'rgba(255,255,255,0.92)', border: '1px solid ' + BRAND.border, color: BRAND.blue }}>
           <Download size={14} />
         </a>
+      )}
+      {canAdd && (
+        <button
+          onClick={addToFiles}
+          disabled={saving || saved}
+          title={saved ? 'Added to files' : 'Add to deal files'}
+          style={{ position: 'absolute', top: 6, right: downloadUrl ? 36 : 6, display: 'flex', padding: 5, borderRadius: 6,
+            cursor: saved ? 'default' : 'pointer',
+            background: 'rgba(255,255,255,0.92)', border: '1px solid ' + BRAND.border,
+            color: saved ? '#16A34A' : BRAND.blue }}>
+          {saved ? <Check size={14} /> : <FolderPlus size={14} />}
+        </button>
       )}
     </div>
   );
