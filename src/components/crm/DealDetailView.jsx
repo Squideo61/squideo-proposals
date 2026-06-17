@@ -1204,6 +1204,7 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
               key={m.gmailMessageId}
               email={m}
               defaultOpen={i === messages.length - 1}
+              isLast={i === messages.length - 1}
               onOpenFull={() => onOpenMessage(m.gmailMessageId)}
             />
           ))}
@@ -1219,7 +1220,7 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
 // One message inside an expanded thread. Loads its body on mount (cached in
 // the store so re-opens are free), sanitises HTML, and falls back to plain
 // text. Click the header to open the standalone modal.
-function ExpandedMessage({ email, defaultOpen = false, onOpenFull }) {
+function ExpandedMessage({ email, defaultOpen = false, isLast = false, onOpenFull }) {
   const { state, actions } = useStore();
   const cached = state.emailBodies?.[email.gmailMessageId] || null;
   // Collapsed by default for every message except the latest, so opening a
@@ -1299,12 +1300,19 @@ function ExpandedMessage({ email, defaultOpen = false, onOpenFull }) {
           <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
         </button>
         {/* This sent email's own open/click tracking, on the right of the row.
-            Inbound messages and untracked sends render nothing. */}
-        {!inbound && email.messageTracking?.tracked && (
-          <span style={{ flexShrink: 0 }}>
-            <TrackingEye tracking={email.messageTracking} />
-          </span>
-        )}
+            For the latest sent email we fall back to the thread-level summary,
+            so a teammate's email (whose tracking row may lack a per-message id,
+            e.g. Gmail-composed) still shows its tracking here. Inbound messages
+            and untracked sends render nothing. */}
+        {(() => {
+          if (inbound) return null;
+          const t = email.messageTracking?.tracked
+            ? email.messageTracking
+            : (isLast ? email.tracking : null);
+          return t?.tracked ? (
+            <span style={{ flexShrink: 0 }}><TrackingEye tracking={t} /></span>
+          ) : null;
+        })()}
         <button
           type="button"
           onClick={onOpenFull}
