@@ -148,7 +148,7 @@ export function UserNotificationEditor({ email, onClose, inline = false }) {
   );
 
   if (inline) return Body;
-  return <Modal onClose={onClose} maxWidth={720}>{Body}</Modal>;
+  return <Modal onClose={onClose} maxWidth={720} showClose={false}>{Body}</Modal>;
 }
 
 function SegBtn({ label, active, onClick }) {

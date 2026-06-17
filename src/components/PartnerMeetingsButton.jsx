@@ -83,7 +83,7 @@ export function PartnerMeetingsButton({ clientKey, clientName, primary = false }
       </button>
 
       {open && (
-        <Modal onClose={() => setOpen(false)} maxWidth={460}>
+        <Modal onClose={() => setOpen(false)} maxWidth={460} showClose={false}>
           <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Meetings — {clientName}</h2>

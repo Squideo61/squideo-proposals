@@ -68,7 +68,7 @@ export function RoleEditor({ role, onClose }) {
   };
 
   return (
-    <Modal onClose={onClose} maxWidth={780}>
+    <Modal onClose={onClose} maxWidth={780} showClose={false}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>
           Edit role{isSystem ? ' (system)' : ''}

@@ -75,8 +75,8 @@ export function EmailTrackingModal({ threadId, onClose, onOpenDeal }) {
   }, [deal, state.tasks]);
 
   return createPortal(
-    <div onMouseDown={onClose} style={OVERLAY}>
-      <div onMouseDown={(e) => e.stopPropagation()} style={PANEL} role="dialog" aria-modal="true">
+    <div style={OVERLAY}>
+      <div style={PANEL} role="dialog" aria-modal="true">
         <div style={HEADER}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
             <Eye size={18} color="#16A34A" style={{ flexShrink: 0 }} />

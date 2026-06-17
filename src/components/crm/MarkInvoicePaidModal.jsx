@@ -53,7 +53,7 @@ export function MarkInvoicePaidModal({ invoiceId, invoiceNumber, amount, xeroInv
   }
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} showClose={false}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Mark invoice as paid</h2>
         <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>

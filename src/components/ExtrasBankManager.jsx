@@ -31,7 +31,7 @@ export function ExtrasBankManager({ onClose }) {
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} showClose={false}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
         <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Extras Bank</h3>
         <button onClick={onClose} aria-label="Close" className="btn-icon"><X size={14} /></button>

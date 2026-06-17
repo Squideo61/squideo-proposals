@@ -237,7 +237,7 @@ function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClo
     ? `${request.countryCode ? request.countryCode + ' ' : ''}${request.phone}`
     : null;
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} showClose={false}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>
           {request.name || request.email || 'Quote request'}

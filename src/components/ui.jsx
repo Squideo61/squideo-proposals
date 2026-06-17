@@ -187,17 +187,27 @@ export function Badge({ color, children }) {
 // backdrop and pressing Escape. Set it false for forms where an accidental close
 // would lose typed input — pair with `showClose` so there's still an explicit X
 // (top-right) to dismiss with.
-export function Modal({ children, onClose, maxWidth = 440, overflow = 'auto', dismissible = true, showClose = false }) {
+export function Modal({ children, onClose, maxWidth = 440, overflow = 'auto', dismissible = true, showClose = true, closeOnBackdrop = false }) {
   useEffect(() => {
     if (!dismissible) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onClose && onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, dismissible]);
+  // A backdrop click no longer dismisses the modal by default — you close it
+  // deliberately via the X, an explicit Cancel/Close button, or Escape — so a
+  // stray click (or releasing a text-selection drag) just outside a half-filled
+  // form can't discard it. Opt back in with closeOnBackdrop where a quick
+  // click-away dismiss is genuinely wanted. The `e.target === e.currentTarget`
+  // guard means only a press that both starts and lands on the dim backdrop
+  // counts, never one bubbling up from the dialog's contents.
+  const onBackdrop = (closeOnBackdrop && dismissible)
+    ? (e) => { if (e.target === e.currentTarget) onClose && onClose(); }
+    : undefined;
   return (
-    <div onClick={dismissible ? onClose : undefined} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 42, 61, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 20 }}>
-      <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ position: 'relative', background: 'white', borderRadius: 12, padding: 24, width: '100%', maxWidth, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', maxHeight: '90vh', overflowY: overflow }}>
-        {showClose && (
+    <div onMouseDown={onBackdrop} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 42, 61, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 20 }}>
+      <div role="dialog" aria-modal="true" style={{ position: 'relative', background: 'white', borderRadius: 12, padding: 24, width: '100%', maxWidth, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', maxHeight: '90vh', overflowY: overflow }}>
+        {showClose && onClose && (
           <button
             type="button"
             onClick={onClose}

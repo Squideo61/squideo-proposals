@@ -755,7 +755,7 @@ function PredictedNoteModal({ target, onClose, onSave }) {
   const [text, setText] = useState(target.note || '');
   const editing = !!target.note;
   return (
-    <Modal onClose={onClose} maxWidth={460}>
+    <Modal onClose={onClose} maxWidth={460} showClose={false}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>{editing ? 'Edit note' : 'Add note'}</h2>
         <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
@@ -912,7 +912,7 @@ function MarkPoReceivedModal({ target, actions, onClose, onSaved }) {
     }
   };
   return (
-    <Modal onClose={onClose} maxWidth={420}>
+    <Modal onClose={onClose} maxWidth={420} showClose={false}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>{editing ? 'Edit PO number' : 'Mark PO received'}</h2>
         <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
@@ -1209,7 +1209,7 @@ function EditOtherModal({ row, actions, onClose, onSaved, isMobile }) {
     onSaved();
   };
   return (
-    <Modal onClose={onClose} maxWidth={540}>
+    <Modal onClose={onClose} maxWidth={540} showClose={false}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
         <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Edit recurring revenue</h2>
         <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>

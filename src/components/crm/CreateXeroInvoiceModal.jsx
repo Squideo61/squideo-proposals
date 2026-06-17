@@ -148,7 +148,7 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
   }
 
   return (
-    <Modal onClose={onClose} maxWidth={740}>
+    <Modal onClose={onClose} maxWidth={740} showClose={false}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Create Xero invoice</h2>
         <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
