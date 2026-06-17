@@ -82,6 +82,13 @@ async function usersHandler(req, res) {
       const targetRows = await sql`SELECT email FROM users WHERE email = ${targetEmailLower}`;
       if (!targetRows[0]) return res.status(404).json({ error: 'User not found' });
       await sql`UPDATE users SET role = ${newRole} WHERE email = ${targetEmailLower}`;
+      // Invalidate the target's existing sessions: their session JWT bakes in the
+      // role they had at login, and every permission check reads it from the
+      // token (not the DB). Without this, a role change wouldn't take effect until
+      // they happened to log out and back in — they'd keep the old permissions
+      // (or, for a new role like Marketing, get 403s while the UI shows the new
+      // section). Bumping token_version forces a re-auth so the new role applies.
+      await bumpTokenVersion(targetEmailLower);
       return res.status(200).json({ ok: true, email: targetEmailLower, role: newRole });
     }
 
