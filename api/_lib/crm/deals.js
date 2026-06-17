@@ -1331,7 +1331,10 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       Array.from(new Set(emails.map(e => e.gmail_thread_id).filter(Boolean)))
     );
 
-    const leadSource = await dealLeadSource(deal);
+    // Marketing lead source is for sales/management — never send it to producer
+    // or copywriter accounts (they don't see marketing attribution).
+    const isProducerRole = user?.role === 'producer' || user?.role === 'copywriter';
+    const leadSource = isProducerRole ? null : await dealLeadSource(deal);
 
     // Payment plan from the signed proposal ('5050' | 'full' | 'po') — labels the
     // project's "paid" badge (e.g. "Deposit paid" for a 50/50 deal).
