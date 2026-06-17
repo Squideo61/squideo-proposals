@@ -56,7 +56,9 @@ export function EmailTrackingModal({ threadId, onClose, onOpenDeal }) {
   const tracked = [...messages].reverse().find((m) => (m.fromEmail || '').toLowerCase() === myEmail)
     || messages[messages.length - 1]
     || null;
-  const tracking = thread?.tracking || null;
+  // Tracking for the specific sent email shown below (its own opens/clicks),
+  // falling back to the thread-level summary if per-message data isn't present.
+  const tracking = tracked?.tracking || thread?.tracking || null;
   const bodyHtml = tracked ? sanitize(tracked.html, tracked.id) : null;
 
   // The deal this email thread is linked to (if any), plus its next open task.

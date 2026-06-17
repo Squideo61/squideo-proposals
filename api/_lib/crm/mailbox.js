@@ -15,7 +15,7 @@
 import sql from '../db.js';
 import { getFreshAccessToken } from './gmail.js';
 import { actionToLabels } from './mailboxLabels.js';
-import { trackingForThreads } from './tracking.js';
+import { trackingForThreads, trackingForMessages } from './tracking.js';
 import {
   extractBody,
   extractAttachments,
@@ -367,6 +367,13 @@ async function getThread(req, res, accessToken, user) {
     const map = await trackingForThreads(user.email, [t.id]);
     tracking = map[t.id] || null;
   }
+
+  // Per-message tracking so each sent email row shows its own eye, and the
+  // banner can reflect just the latest sent email rather than a thread-wide sum.
+  try {
+    const msgTracking = await trackingForMessages(messages.map(m => m.id));
+    for (const m of messages) m.tracking = msgTracking[m.id] || null;
+  } catch { /* best-effort — leave messages untracked on failure */ }
 
   // Deals this thread is linked to, so the viewer can jump straight to the deal.
   let deals = [];

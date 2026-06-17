@@ -1100,6 +1100,12 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOp
 
   const latest = messages[messages.length - 1] || null;
   const subject = thread?.subject || latest?.subject || '(no subject)';
+  // The banner shows tracking for the LAST sent email only (its own opens/
+  // clicks), not a thread-wide sum — so it reads as "the last email you sent."
+  const lastTracked = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i]?.tracking) return messages[i].tracking;
+    return null;
+  }, [messages]);
   // The other party of the conversation — drives the deal panel's contact
   // suggestions and the attach snapshot.
   const counterparty = useMemo(() => {
@@ -1198,9 +1204,9 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOp
         {subject}
         {messages.length > 1 && <span style={{ color: BRAND.muted, fontWeight: 500 }}> · {messages.length} messages</span>}
       </h2>
-      {thread?.tracking?.tracked && (
+      {lastTracked && (
         <TrackingBanner
-          tracking={thread.tracking}
+          tracking={lastTracked}
           onClick={onOpenTracking ? () => onOpenTracking(openRef.threadId) : undefined}
         />
       )}
@@ -1331,7 +1337,13 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
         }}>{outbound ? 'OUT' : 'IN'}</span>
         <span style={{ fontWeight: 600, fontSize: 13, color: BRAND.ink, flexShrink: 0, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
         {!open && <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{decodeHtmlEntities(message.snippet)}</span>}
-        <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11, color: BRAND.muted }}>{formatDateLabel(message.date)}</span>
+        {/* Per-email open/click state — the eye on the right of each sent email. */}
+        {message.tracking && (
+          <span style={{ marginLeft: open ? 'auto' : 0, flexShrink: 0, display: 'inline-flex' }} onClick={(e) => e.stopPropagation()}>
+            <TrackingEye tracking={message.tracking} />
+          </span>
+        )}
+        <span style={{ marginLeft: message.tracking ? 0 : 'auto', flexShrink: 0, fontSize: 11, color: BRAND.muted }}>{formatDateLabel(message.date)}</span>
         <ChevronDown size={14} color={BRAND.muted} style={{ flexShrink: 0, transition: 'transform 150ms', transform: open ? 'none' : 'rotate(-90deg)' }} />
       </button>
       {open && (

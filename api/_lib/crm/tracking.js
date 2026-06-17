@@ -238,6 +238,50 @@ export async function trackingForDealThreads(threadIds) {
   }
 }
 
+// Per-MESSAGE tracking, keyed by gmail_message_id — drives the eye on each sent
+// email row and the "last email" banner (the latest sent email's own state,
+// not a thread-wide sum). Same aggregation as trackingForThreads but grouped by
+// message. Not scoped to a sender: gmail_message_id is unique and the thread is
+// already authorised by the caller.
+export async function trackingForMessages(messageIds) {
+  const ids = (messageIds || []).filter(Boolean);
+  if (!ids.length) return {};
+  try {
+    const rows = await sql`
+      SELECT t.gmail_message_id AS message_id,
+             COUNT(*) FILTER (WHERE e.kind = 'open'
+               AND e.occurred_at > t.sent_at + interval '5 seconds')                       AS opens,
+             MAX(e.occurred_at) FILTER (WHERE e.kind = 'open'
+               AND e.occurred_at > t.sent_at + interval '5 seconds')                       AS last_opened_at,
+             COUNT(*) FILTER (WHERE e.kind = 'click')                                       AS clicks,
+             MAX(e.occurred_at) FILTER (WHERE e.kind = 'click')                             AS last_clicked_at,
+             ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.city) FILTER (WHERE e.kind = 'open'), NULL)  AS cities,
+             ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.country) FILTER (WHERE e.kind = 'open'), NULL) AS countries,
+             ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.link_url) FILTER (WHERE e.kind = 'click'), NULL) AS clicked_urls
+        FROM email_tracking t
+        LEFT JOIN email_tracking_events e ON e.tracking_id = t.id
+       WHERE t.gmail_message_id = ANY(${ids})
+       GROUP BY t.gmail_message_id
+    `;
+    const out = {};
+    for (const r of rows) {
+      out[r.message_id] = {
+        tracked: true,
+        opens: Number(r.opens) || 0,
+        lastOpenedAt: r.last_opened_at || null,
+        clicks: Number(r.clicks) || 0,
+        lastClickedAt: r.last_clicked_at || null,
+        locations: buildLocations(r.cities, r.countries),
+        clickedUrls: r.clicked_urls || [],
+      };
+    }
+    return out;
+  } catch (err) {
+    console.warn('[tracking] trackingForMessages failed', err.message);
+    return {};
+  }
+}
+
 function mapTrackingRows(rows) {
   const out = {};
   for (const r of rows) {

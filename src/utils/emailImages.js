@@ -16,7 +16,18 @@ const rewriteEmailImageSrc = (src, messageId) => {
     return '/api/crm/gmail/inline-image?messageId=' + encodeURIComponent(messageId)
       + '&cid=' + encodeURIComponent(cid);
   }
-  if (/^https?:\/\//i.test(s)) return '/api/email-image?u=' + encodeURIComponent(s);
+  if (/^https?:\/\//i.test(s)) {
+    // Never proxy our own tracking pixels (or any same-origin image): they must
+    // load DIRECTLY in the browser so the request carries the viewer's session
+    // cookie, which the /api/track endpoint uses to suppress internal/team views.
+    // Proxying would fetch them server-side with no cookie and falsely register
+    // an open. (Same-origin images don't need the ad-blocker proxy anyway.)
+    try {
+      const u = new URL(s);
+      if (u.origin === window.location.origin || u.pathname.startsWith('/api/track/')) return src;
+    } catch { /* malformed URL — fall through to proxy */ }
+    return '/api/email-image?u=' + encodeURIComponent(s);
+  }
   return src;
 };
 
