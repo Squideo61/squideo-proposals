@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Mail, Inbox, Send, FileText, Star, ShieldAlert, Trash2, Archive,
-  Search, X, RefreshCw, MailOpen, Reply, ReplyAll, Forward, Paperclip, Download,
+  Search, X, RefreshCw, MailOpen, Reply, ReplyAll, Forward, Paperclip,
   Briefcase, PenSquare, ExternalLink, ChevronDown, CircleDot,
   Users, Info, MessagesSquare, Tag, Settings,
 } from 'lucide-react';
@@ -10,6 +10,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatMailDate, formatRelativeTime, useIsMobile, decodeHtmlEntities } from '../../utils.js';
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
+import { EmailAttachmentCard } from './EmailAttachment.jsx';
 import { DealContextPanel } from './DealContextPanel.jsx';
 import { EmailComposerModal } from './DealDetailView.jsx';
 import { TrackingEye, TrackingBanner } from './EmailTracking.jsx';
@@ -1347,9 +1348,9 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded }) {
             )}
           </div>
           {message.attachments?.length > 0 && (
-            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
               {message.attachments.map((a, i) => (
-                <AttachmentChip key={i} att={a} messageId={message.id} connected={connected} />
+                <EmailAttachmentCard key={i} att={a} messageId={message.id} connected={connected} />
               ))}
             </div>
           )}
@@ -1415,26 +1416,6 @@ function EmailFrame({ html, messageId = null }) {
       style={{ width: '100%', border: 'none', height: height + 'px', display: 'block' }}
     />
   );
-}
-
-function AttachmentChip({ att, messageId, connected }) {
-  const id = att.attachmentId;
-  const href = (connected && id && messageId)
-    ? '/api/crm/gmail/attachment?' + new URLSearchParams({
-        messageId, attachmentId: id, filename: att.filename || 'attachment', mimeType: att.mimeType || 'application/octet-stream',
-      }).toString()
-    : null;
-  const inner = (
-    <>
-      <Paperclip size={13} color={BRAND.muted} />
-      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{att.filename || 'attachment'}</span>
-      {href && <Download size={13} color={BRAND.blue} />}
-    </>
-  );
-  const style = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8, fontSize: 12.5, color: BRAND.ink, textDecoration: 'none', background: 'white' };
-  return href
-    ? <a href={href} target="_blank" rel="noreferrer" style={{ ...style, cursor: 'pointer' }}>{inner}</a>
-    : <span style={{ ...style, color: BRAND.muted }} title="Connect Gmail to download">{inner}</span>;
 }
 
 function displayName(fromHeader) {

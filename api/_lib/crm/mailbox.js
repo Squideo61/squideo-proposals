@@ -392,8 +392,10 @@ async function getThread(req, res, accessToken, user) {
   });
 }
 
-// GET /api/crm/gmail/attachment?messageId=&attachmentId=&filename=&mimeType=
-// Streams the decoded attachment bytes back to the browser as a download.
+// GET /api/crm/gmail/attachment?messageId=&attachmentId=&filename=&mimeType=&disposition=
+// Streams the decoded attachment bytes back to the browser. Default disposition
+// is `attachment` (download); pass disposition=inline so the attachment preview
+// cards can render the bytes inline (image <img>, PDF thumbnail, open-in-tab).
 async function getAttachment(req, res, accessToken) {
   if (req.method !== 'GET') return res.status(405).end();
   const messageId = qp(req, 'messageId');
@@ -401,6 +403,7 @@ async function getAttachment(req, res, accessToken) {
   if (!messageId || !attachmentId) return res.status(400).json({ error: 'messageId and attachmentId required' });
   const filename = (qp(req, 'filename') || 'attachment').replace(/"/g, '');
   const mimeType = qp(req, 'mimeType') || 'application/octet-stream';
+  const disposition = qp(req, 'disposition') === 'inline' ? 'inline' : 'attachment';
 
   const j = await (await gmailFetch(
     accessToken,
@@ -408,8 +411,12 @@ async function getAttachment(req, res, accessToken) {
   )).json();
   const buf = Buffer.from(j.data || '', 'base64url');
   res.setHeader('Content-Type', mimeType);
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Disposition', `${disposition}; filename="${filename}"`);
   res.setHeader('Content-Length', String(buf.length));
+  // (messageId, attachmentId) is immutable — let the browser cache previews so a
+  // re-open / thumbnail re-render doesn't refetch from Gmail each time.
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   return res.status(200).end(buf);
 }
 
