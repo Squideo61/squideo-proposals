@@ -234,7 +234,7 @@ function QuoteToggle({ shown, onToggle }) {
   );
 }
 
-export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOpenDeal, onOpenProposal, onSelectFolder, onOpenThread, onCloseThread }) {
+export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOpenDeal, onOpenProposal, onSelectFolder, onOpenThread, onCloseThread, onOpenTracking }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const active = FOLDER_BY_ID[folder] ? folder : 'inbox';
@@ -526,6 +526,7 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               onBack={() => { if (active === 'triage') actions.refreshTriage(); onCloseThread?.(); }}
               onOpenDeal={onOpenDeal}
               onOpenProposal={onOpenProposal}
+              onOpenTracking={onOpenTracking}
             />
           ) : (
           <>
@@ -1073,7 +1074,7 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
 // Full conversation modal: loads the thread (live Gmail or DB) and renders
 // every message stacked, newest expanded and older ones collapsible.
 // Tracking summary (TrackingBanner) shown at the top of a tracked conversation.
-function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOpenProposal }) {
+function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOpenProposal, onOpenTracking }) {
   const { state, actions, showMsg } = useStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1197,7 +1198,12 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOp
         {subject}
         {messages.length > 1 && <span style={{ color: BRAND.muted, fontWeight: 500 }}> · {messages.length} messages</span>}
       </h2>
-      {thread?.tracking?.tracked && <TrackingBanner tracking={thread.tracking} />}
+      {thread?.tracking?.tracked && (
+        <TrackingBanner
+          tracking={thread.tracking}
+          onClick={onOpenTracking ? () => onOpenTracking(openRef.threadId) : undefined}
+        />
+      )}
 
       <div style={{ display: 'flex', gap: 18, flexDirection: isMobile ? 'column' : 'row', alignItems: 'flex-start' }}>
         {/* Conversation (left) */}

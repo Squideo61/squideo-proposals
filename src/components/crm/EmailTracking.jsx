@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, MousePointerClick } from 'lucide-react';
+import { Eye, MousePointerClick, ChevronRight } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { formatRelativeTime } from '../../utils.js';
 
@@ -114,17 +114,27 @@ export function TrackingCard({ tracking, style, onMouseEnter, onMouseLeave }) {
   );
 }
 
-// Full-width summary banner, shown at the top of an opened tracked conversation.
-export function TrackingBanner({ tracking }) {
+// Compact summary "pill", shown at the top of an opened tracked conversation.
+// Sizes to its content (doesn't span the row) and, when `onClick` is supplied,
+// becomes a button that opens the full email-tracking view.
+export function TrackingBanner({ tracking, onClick }) {
   const opened = tracking.opens > 0;
+  const clickable = typeof onClick === 'function';
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
-      padding: '8px 12px', marginBottom: 14, borderRadius: 8,
-      background: opened ? '#16A34A14' : BRAND.subtle || '#F3F4F6',
-      border: '1px solid ' + (opened ? '#16A34A44' : BRAND.border),
-      fontSize: 12.5,
-    }}>
+    <div
+      onClick={onClick}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+      title={clickable ? 'View full tracking details' : undefined}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+        maxWidth: '100%', padding: '8px 12px', marginBottom: 14, borderRadius: 8,
+        background: opened ? '#16A34A14' : BRAND.subtle || '#F3F4F6',
+        border: '1px solid ' + (opened ? '#16A34A44' : BRAND.border),
+        fontSize: 12.5, cursor: clickable ? 'pointer' : 'default',
+      }}
+    >
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, color: opened ? '#16A34A' : BRAND.muted }}>
         <Eye size={15} />
         {opened ? `Opened ${tracking.opens}×` : 'Sent · not opened yet'}
@@ -138,6 +148,11 @@ export function TrackingBanner({ tracking }) {
       {tracking.clicks > 0 && (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, color: BRAND.blue }}>
           <MousePointerClick size={14} /> {tracking.clicks} link click{tracking.clicks === 1 ? '' : 's'}
+        </span>
+      )}
+      {clickable && (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontWeight: 600, color: opened ? '#16A34A' : BRAND.muted }}>
+          Details <ChevronRight size={14} />
         </span>
       )}
     </div>

@@ -546,6 +546,7 @@ function AppShell() {
             onSelectFolder={(f) => navigate('emails', f)}
             onOpenThread={(folder, threadId) => navigate('email', folder + '~' + threadId)}
             onCloseThread={() => goBack('emails')}
+            onOpenTracking={(threadId) => setModal({ type: 'emailTracking', threadId })}
           />
         );
       })()}
