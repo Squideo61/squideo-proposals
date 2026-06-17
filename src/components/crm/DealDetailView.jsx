@@ -18,6 +18,7 @@ import { ProductionPanel } from './ProductionPanel.jsx';
 import { IntroCallButton } from './IntroCallCard.jsx';
 import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
 import { TrackingEye } from './EmailTracking.jsx';
+import { ContactModal } from './ContactsView.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
@@ -4757,6 +4758,7 @@ function SecondaryContactsRow({ dealId, primaryContact, secondaryContacts, defau
   const { state, actions, showMsg } = useStore();
   const [picking, setPicking] = useState(false);
   const [creating, setCreating] = useState(null); // { email, name } prefill
+  const [editing, setEditing] = useState(null); // the contact being edited
 
   const remove = async (contactId) => {
     try {
@@ -4765,6 +4767,10 @@ function SecondaryContactsRow({ dealId, primaryContact, secondaryContacts, defau
       showMsg(e?.message || 'Could not remove contact');
     }
   };
+
+  // Open the shared contact editor, preferring the full CRM record (phone,
+  // title, company, notes) over the slimmed-down chip the deal carries.
+  const edit = (c) => setEditing((c && state.contacts?.[c.id]) || c);
 
   return (
     <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -4776,6 +4782,7 @@ function SecondaryContactsRow({ dealId, primaryContact, secondaryContacts, defau
           contact={primaryContact}
           label="primary"
           removable={false}
+          onEdit={() => edit(primaryContact)}
         />
       )}
       {secondaryContacts.map((c) => (
@@ -4785,6 +4792,7 @@ function SecondaryContactsRow({ dealId, primaryContact, secondaryContacts, defau
           label="secondary"
           removable
           onRemove={() => remove(c.id)}
+          onEdit={() => edit(c)}
         />
       ))}
       <button
@@ -4824,22 +4832,36 @@ function SecondaryContactsRow({ dealId, primaryContact, secondaryContacts, defau
           onCreated={() => setCreating(null)}
         />
       )}
+      {editing && (
+        <ContactModal
+          contact={editing}
+          onClose={() => { setEditing(null); actions.loadDealDetail(dealId); }}
+        />
+      )}
     </div>
   );
 }
 
-function ContactChip({ contact, label, removable, onRemove }) {
+function ContactChip({ contact, label, removable, onRemove, onEdit }) {
   const display = contact.name || contact.email || '(no email)';
   const subtitle = contact.name && contact.email ? contact.email : null;
+  const clickable = !!onEdit;
   return (
     <span
+      onClick={clickable ? () => onEdit() : undefined}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEdit(); } } : undefined}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 6,
         padding: '4px 10px', borderRadius: 999,
         border: '1px solid ' + BRAND.border,
         background: 'white', fontSize: 12, maxWidth: 320,
+        cursor: clickable ? 'pointer' : 'default',
       }}
-      title={subtitle ? `${display} · ${subtitle} (${label})` : `${display} (${label})`}
+      onMouseEnter={clickable ? (e) => { e.currentTarget.style.background = '#F4F8FB'; e.currentTarget.style.borderColor = BRAND.blue; } : undefined}
+      onMouseLeave={clickable ? (e) => { e.currentTarget.style.background = 'white'; e.currentTarget.style.borderColor = BRAND.border; } : undefined}
+      title={subtitle ? `${display} · ${subtitle} — click to edit` : `${display} — click to edit`}
     >
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {display}

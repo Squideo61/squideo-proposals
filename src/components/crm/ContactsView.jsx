@@ -331,7 +331,7 @@ function CustomerBadge({ label, tone, title }) {
   );
 }
 
-function ContactModal({ contact, onClose }) {
+export function ContactModal({ contact, onClose }) {
   const { state, actions } = useStore();
   const editing = !!contact;
   const [name, setName] = useState(contact?.name || '');
