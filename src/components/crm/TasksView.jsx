@@ -17,7 +17,7 @@ function taskAssignees(t) {
     : (t.assigneeEmail ? [t.assigneeEmail] : []);
 }
 
-export function TasksView({ onBack, onOpenDeal }) {
+export function TasksView({ onBack, onOpenDeal, forceMine = false }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const [creating, setCreating] = useState(false);
@@ -25,14 +25,21 @@ export function TasksView({ onBack, onOpenDeal }) {
   // Only users who can manage every task (Admin) may browse other people's
   // tasks; everyone else is server-scoped to their own and gets no team filter.
   const canSeeAllTasks = permissionsInclude(state.session?.permissions, 'tasks.manage_all');
-  // Defaults to the current user ("My tasks"); '' = everyone. Persisted.
+  // Defaults to the current user ("My tasks"); '' = everyone. Persisted —
+  // EXCEPT when opened via a "your tasks due" notification (forceMine), which
+  // always snaps back to the signed-in user regardless of the last-browsed scope.
   const [memberFilter, setMemberFilter] = useState(() => {
+    if (forceMine) return state.session?.email || '';
     try {
       const stored = localStorage.getItem(TASK_FILTER_STORAGE_KEY);
       if (stored !== null) return stored;
     } catch {}
     return state.session?.email || '';
   });
+  // React to arriving from a notification while the view is already mounted.
+  useEffect(() => {
+    if (forceMine && state.session?.email) setMemberFilter(state.session.email);
+  }, [forceMine, state.session?.email]);
   useEffect(() => {
     try { localStorage.setItem(TASK_FILTER_STORAGE_KEY, memberFilter); } catch {}
   }, [memberFilter]);

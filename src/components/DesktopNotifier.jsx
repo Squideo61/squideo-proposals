@@ -97,7 +97,7 @@ export function DesktopNotifier({ onOpenLink }) {
           {
             title: `Task due: ${t.title}`,
             body: deal ? deal.title : (t.notes || undefined),
-            link: t.dealId ? `#/deal/${t.dealId}` : '#/tasks',
+            link: t.dealId ? `#/deal/${t.dealId}` : '#/tasks/mine',
             tag: `task-${t.id}`,
           },
           open,

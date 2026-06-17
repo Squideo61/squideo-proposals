@@ -515,7 +515,9 @@ export async function cronTaskReminders(res) {
       // Mirror the email into the bell + a background desktop push (Tier 2),
       // so a reminder still lands if the assignee isn't reading email. Tagged
       // task-<id> to collapse with the in-tab popup the app fires at due time.
-      const inAppLink = t.deal_id ? `#/deal/${t.deal_id}` : '#/tasks';
+      // A deal task opens the deal; a standalone task opens the recipient's OWN
+      // tasks (/mine snaps the scope to them, ignoring any last-browsed filter).
+      const inAppLink = t.deal_id ? `#/deal/${t.deal_id}` : '#/tasks/mine';
       await persistInApp('task.reminder', subscribed, {
         subject,
         inApp: {
@@ -581,7 +583,9 @@ export async function cronTaskDigest(res) {
   }
 
   const baseRoot = APP_URL.replace(/\/$/, '');
-  const tasksUrl = `${baseRoot}/#/tasks`;
+  // /mine snaps the Tasks view to the recipient's own tasks (this digest is
+  // per-person — "your tasks due today"), regardless of any last-browsed filter.
+  const tasksUrl = `${baseRoot}/#/tasks/mine`;
   let sent = 0;
   for (const [email, tasks] of byUser) {
     const subject = tasks.length === 1
@@ -600,7 +604,7 @@ export async function cronTaskDigest(res) {
         inApp: {
           title: subject,
           body: summary,
-          link: '#/tasks',
+          link: '#/tasks/mine',
           tag: `task-digest-${new Date().toISOString().slice(0, 10)}`,
         },
       });
