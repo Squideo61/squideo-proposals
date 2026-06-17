@@ -2517,11 +2517,17 @@ function labelForStage(id) {
 }
 
 // Marketing attribution summary for the lead that became this deal.
-const LEAD_CHANNEL_LABELS = { paid_search: 'Paid search', organic: 'Organic', social: 'Social', referral: 'Referral', direct: 'Direct' };
+const LEAD_CHANNEL_BADGE = {
+  paid_search: { label: 'Paid search', bg: '#E0F2FE', fg: '#0369A1' },
+  social:      { label: 'Social',      bg: '#F3E8FF', fg: '#7C3AED' },
+  organic:     { label: 'Organic',     bg: '#DCFCE7', fg: '#166534' },
+  referral:    { label: 'Referral',    bg: '#FEF3C7', fg: '#92400E' },
+  direct:      { label: 'Direct',      bg: '#F1F5F9', fg: '#475569' },
+};
 function LeadSourceCard({ src }) {
+  const ch = LEAD_CHANNEL_BADGE[src.channel] || { label: src.channel || 'Unknown', bg: '#F1F5F9', fg: '#475569' };
   const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : null);
   const fields = [
-    ['Channel', LEAD_CHANNEL_LABELS[src.channel] || src.channel],
     ['Campaign', src.campaign],
     ['Keyword', src.keyword],
     ['Source / Medium', src.source && src.medium ? `${src.source} / ${src.medium}` : (src.source || src.medium)],
@@ -2529,13 +2535,16 @@ function LeadSourceCard({ src }) {
   ].filter(([, v]) => v);
   return (
     <div style={{ marginTop: 16, border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
         <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Lead source</h3>
+        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.3, padding: '3px 10px', borderRadius: 999, background: ch.bg, color: ch.fg }}>
+          {ch.label}
+        </span>
         <span style={{
-          fontSize: 10, fontWeight: 800, letterSpacing: 0.4, padding: '2px 8px', borderRadius: 999,
-          background: src.returningClient ? '#FEF3C7' : '#DCFCE7', color: src.returningClient ? '#92400E' : '#166534',
+          fontSize: 10, fontWeight: 700, letterSpacing: 0.4, padding: '2px 8px', borderRadius: 999,
+          background: src.returningClient ? '#FEF3C7' : '#ECFDF5', color: src.returningClient ? '#92400E' : '#166534',
         }}>
-          {src.returningClient ? 'RETURNING CLIENT' : 'NEW LEAD'}
+          {src.returningClient ? 'Returning client' : 'New lead'}
         </span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px 20px' }}>

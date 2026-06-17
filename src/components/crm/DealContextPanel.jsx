@@ -468,24 +468,31 @@ function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], l
 
 // ---- Lead source (marketing attribution) ----
 
-const CHANNEL_LABELS = { paid_search: 'Paid search', organic: 'Organic', social: 'Social', referral: 'Referral', direct: 'Direct' };
+export const CHANNEL_BADGE = {
+  paid_search: { label: 'Paid search', bg: '#E0F2FE', fg: '#0369A1' },
+  social:      { label: 'Social',      bg: '#F3E8FF', fg: '#7C3AED' },
+  organic:     { label: 'Organic',     bg: '#DCFCE7', fg: '#166534' },
+  referral:    { label: 'Referral',    bg: '#FEF3C7', fg: '#92400E' },
+  direct:      { label: 'Direct',      bg: '#F1F5F9', fg: '#475569' },
+};
+export const channelBadge = (c) => CHANNEL_BADGE[c] || { label: c || 'Unknown', bg: '#F1F5F9', fg: '#475569' };
 
 function LeadSourceMini({ src }) {
+  const ch = channelBadge(src.channel);
   const rows = [
-    ['Channel', CHANNEL_LABELS[src.channel] || src.channel],
     ['Campaign', src.campaign],
     ['Keyword', src.keyword],
     ['Source', src.source && src.medium ? `${src.source} / ${src.medium}` : (src.source || src.medium)],
   ].filter(([, v]) => v);
   return (
     <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12, marginBottom: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: rows.length ? 6 : 0 }}>
-        <Label>Lead source</Label>
-        <span style={{
-          fontSize: 10, fontWeight: 800, letterSpacing: 0.4, padding: '2px 6px', borderRadius: 4,
-          background: src.returningClient ? '#FEF3C7' : '#DCFCE7', color: src.returningClient ? '#92400E' : '#166534',
-        }}>
-          {src.returningClient ? 'RETURNING CLIENT' : 'NEW LEAD'}
+      <Label>Lead source</Label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '6px 0 8px' }}>
+        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.3, padding: '2px 8px', borderRadius: 999, background: ch.bg, color: ch.fg }}>
+          {ch.label}
+        </span>
+        <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '2px 6px', borderRadius: 999, background: src.returningClient ? '#FEF3C7' : '#ECFDF5', color: src.returningClient ? '#92400E' : '#166534' }}>
+          {src.returningClient ? 'Returning client' : 'New'}
         </span>
       </div>
       {rows.map(([k, v]) => (
