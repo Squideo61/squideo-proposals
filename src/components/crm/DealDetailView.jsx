@@ -887,7 +887,7 @@ export function EventRow({ event, users }) {
   );
 }
 
-function EmailRow({ email, onOpen, threadCount, expanded, dealTitle, onLinkAnother, onCreateNewDeal }) {
+function EmailRow({ email, onOpen, threadCount, expandable, expanded, dealTitle, onLinkAnother, onCreateNewDeal }) {
   const inbound = email.direction === 'inbound';
   const arrow = inbound ? '↓' : '↑';
   const accent = inbound ? '#16A34A' : '#2BB8E6';
@@ -921,7 +921,7 @@ function EmailRow({ email, onOpen, threadCount, expanded, dealTitle, onLinkAnoth
       }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      title={hasThreadChip ? (expanded ? 'Collapse thread' : 'Expand thread') : 'Open email'}
+      title={hasThreadChip ? (expanded ? 'Collapse thread' : 'Expand thread') : (expanded ? 'Collapse email' : 'Expand email')}
       style={{
         display: 'flex', gap: 8, fontSize: 13, minWidth: 0,
         textAlign: 'left', width: '100%', padding: '4px 6px',
@@ -989,13 +989,15 @@ function EmailRow({ email, onOpen, threadCount, expanded, dealTitle, onLinkAnoth
           {linkLabel}
         </div>
       </div>
-      {hasThreadChip && (
+      {(hasThreadChip || expandable) && (
         <div style={{ flexShrink: 0, alignSelf: 'center', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{
-            fontSize: 10, fontWeight: 700, color: BRAND.muted,
-            background: '#EEF2F6', padding: '2px 6px', borderRadius: 999,
-            letterSpacing: 0.3,
-          }}>{threadCount} msgs</span>
+          {hasThreadChip && (
+            <span style={{
+              fontSize: 10, fontWeight: 700, color: BRAND.muted,
+              background: '#EEF2F6', padding: '2px 6px', borderRadius: 999,
+              letterSpacing: 0.3,
+            }}>{threadCount} msgs</span>
+          )}
           <span style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1 }}>{expanded ? '▾' : '▸'}</span>
         </div>
       )}
@@ -1171,13 +1173,10 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
     return out;
   }, [messages, linkedEmails, state.users, state.session, state.gmailAccount]);
 
-  const handleHeaderClick = () => {
-    if (isMulti) {
-      setExpanded(e => !e);
-    } else {
-      onOpenMessage(latest.gmailMessageId);
-    }
-  };
+  // Both single emails and threads now expand inline (a single email used to
+  // open the standalone modal — you can still reach it via the row's
+  // "open full" icon). Toggling shows the body(ies) in place.
+  const handleHeaderClick = () => setExpanded(e => !e);
 
   return (
     <div>
@@ -1185,7 +1184,8 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
         email={latest}
         onOpen={handleHeaderClick}
         threadCount={isMulti ? messages.length : null}
-        expanded={isMulti ? expanded : false}
+        expandable
+        expanded={expanded}
         dealTitle={dealTitle}
         onLinkAnother={onLinkAnother ? () => onLinkAnother({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
         onCreateNewDeal={onCreateNewDeal ? () => onCreateNewDeal({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
@@ -1197,7 +1197,7 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
           defaultCompanyId={defaultCompanyId}
         />
       )}
-      {expanded && isMulti && (
+      {expanded && (
         <div style={{ marginTop: 8, marginLeft: 22, paddingLeft: 12, borderLeft: '2px solid ' + BRAND.border, display: 'flex', flexDirection: 'column', gap: 10 }}>
           {messages.map((m, i) => (
             <ExpandedMessage
