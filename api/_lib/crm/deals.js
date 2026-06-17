@@ -70,6 +70,17 @@ export function ensureDealHot() {
   return dealHotEnsured;
 }
 
+// Self-heal for db/migrations/20260617_deal_vat_rate.sql — a per-deal VAT rate
+// stored as a fraction (0.2 = 20%). Nullable; null is treated as the standard
+// 20% at display time. Cached so it runs at most once per warm instance.
+let dealVatEnsured = null;
+export function ensureDealVat() {
+  if (dealVatEnsured) return dealVatEnsured;
+  dealVatEnsured = sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS vat_rate NUMERIC`
+    .then(() => {}).catch((err) => { dealVatEnsured = null; throw err; });
+  return dealVatEnsured;
+}
+
 // Turn a Drive API error into an actionable message for the user.
 export function driveErrorHint(err) {
   const msg = err?.message || '';
@@ -396,9 +407,11 @@ export async function dealLeadSource(deal) {
 }
 
 export async function dealsRoute(req, res, id, action, user, subaction = null) {
-  // Cheap (cached) self-heal so the `hot` column is present for every list /
-  // detail SELECT * and the toggle below, even before the migration is applied.
+  // Cheap (cached) self-heal so the `hot` and `vat_rate` columns are present for
+  // every list / detail SELECT * and the writes below, even before the
+  // migrations are applied.
   await ensureDealHot();
+  await ensureDealVat();
   if (!id) {
     if (req.method === 'GET') {
       // Optional filter by stage, owner. Default: everything (Kanban renders
@@ -425,7 +438,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       const newId = body.id || makeId('deal');
       const stage = isValidStage(body.stage) ? body.stage : 'lead';
       await sql`
-        INSERT INTO deals (id, title, company_id, primary_contact_id, owner_email, stage, value, expected_close_at, notes)
+        INSERT INTO deals (id, title, company_id, primary_contact_id, owner_email, stage, value, vat_rate, expected_close_at, notes)
         VALUES (
           ${newId},
           ${title},
@@ -434,6 +447,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
           ${trimOrNull(body.ownerEmail) || user.email},
           ${stage},
           ${numberOrNull(body.value)},
+          ${numberOrNull(body.vatRate)},
           ${trimOrNull(body.expectedCloseAt)},
           ${trimOrNull(body.notes)}
         )
@@ -444,7 +458,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       `;
       const rows = await sql`
         SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-               value, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
+               value, vat_rate, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
         FROM deals WHERE id = ${newId}
       `;
       return res.status(201).json(serialiseDeal(rows[0]));
@@ -1443,7 +1457,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     const body = req.body || {};
     const cur = (await sql`
       SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-             value, expected_close_at, lost_reason, notes, overview_video_url, last_activity_at, created_at, updated_at
+             value, vat_rate, expected_close_at, lost_reason, notes, overview_video_url, last_activity_at, created_at, updated_at
       FROM deals WHERE id = ${id}
     `)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
@@ -1453,6 +1467,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       primary_contact_id:  'primaryContactId'  in body ? (trimOrNull(body.primaryContactId) || null) : cur.primary_contact_id,
       owner_email:         'ownerEmail'        in body ? (trimOrNull(body.ownerEmail) || null) : cur.owner_email,
       value:               'value'             in body ? numberOrNull(body.value) : cur.value,
+      vat_rate:            'vatRate'           in body ? numberOrNull(body.vatRate) : cur.vat_rate,
       expected_close_at:   'expectedCloseAt'   in body ? (trimOrNull(body.expectedCloseAt)) : cur.expected_close_at,
       notes:               'notes'             in body ? trimOrNull(body.notes) : cur.notes,
       overview_video_url:  'overviewVideoUrl'  in body ? trimOrNull(body.overviewVideoUrl) : cur.overview_video_url,
@@ -1464,6 +1479,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         primary_contact_id = ${next.primary_contact_id},
         owner_email = ${next.owner_email},
         value = ${next.value},
+        vat_rate = ${next.vat_rate},
         expected_close_at = ${next.expected_close_at},
         notes = ${next.notes},
         overview_video_url = ${next.overview_video_url},
@@ -1486,7 +1502,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     }
     const rows = await sql`
       SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
-             value, expected_close_at, lost_reason, notes, overview_video_url, last_activity_at, created_at, updated_at, producer_email
+             value, vat_rate, expected_close_at, lost_reason, notes, overview_video_url, last_activity_at, created_at, updated_at, producer_email
       FROM deals WHERE id = ${id}
     `;
     const producerRows = await sql`SELECT user_email FROM deal_assignees WHERE deal_id = ${id} ORDER BY assigned_at`;
@@ -1571,6 +1587,9 @@ export function serialiseDeal(r) {
   // annotateDeals); omitted on partial selects so the optimistic merge never
   // blanks it on a stage move / edit.
   if ('hot' in r) out.hot = !!r.hot;
+  // Per-deal VAT rate (fraction; 0.2 = 20%). Carried on SELECT * + the create/
+  // PATCH returns; guarded so a partial select never blanks it in the cache.
+  if ('vat_rate' in r) out.vatRate = r.vat_rate == null ? null : Number(r.vat_rate);
   // PO tracking fields — carried on SELECT * rows (deals list + detail). Omitted
   // on partial selects so a stage move / edit never blanks them in the cache.
   if ('po_number' in r) { out.poNumber = r.po_number || null; out.poReceivedAt = r.po_received_at || null; }

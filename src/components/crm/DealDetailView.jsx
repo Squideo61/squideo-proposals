@@ -333,9 +333,21 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           </Field>
           <Field label="Value (ex VAT)">
             {dealValueInfo.value != null
-              ? <strong title={dealValueInfo.source === 'signed' ? 'Signed sale value (incl. extras)'
-                  : dealValueInfo.source === 'proposal' ? 'From the latest proposal (not yet signed)'
-                  : 'Set manually'}>{formatGBP(dealValueInfo.value)}</strong>
+              ? (() => {
+                  const rate = deal.vatRate != null ? deal.vatRate : 0.2;
+                  return (
+                    <>
+                      <strong title={dealValueInfo.source === 'signed' ? 'Signed sale value (incl. extras)'
+                        : dealValueInfo.source === 'proposal' ? 'From the latest proposal (not yet signed)'
+                        : 'Set manually'}>{formatGBP(dealValueInfo.value)}</strong>
+                      {rate > 0 && (
+                        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
+                          {formatGBP(dealValueInfo.value * (1 + rate))} inc VAT ({+(rate * 100).toFixed(2)}%)
+                        </div>
+                      )}
+                    </>
+                  );
+                })()
               : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
           {projectVideos.length > 0 && deal.productionEnteredAt && (
@@ -2607,6 +2619,9 @@ function EditDealModal({ deal, onClose }) {
   const { state, actions } = useStore();
   const [title, setTitle] = useState(deal.title || '');
   const [value, setValue] = useState(deal.value != null ? String(deal.value) : '');
+  // VAT rate is stored as a fraction (0.2); the field edits it as a percent.
+  // Defaults to 20% when unset (the UK standard rate).
+  const [vatPct, setVatPct] = useState(deal.vatRate != null ? String(+(deal.vatRate * 100).toFixed(2)) : '20');
   const [companyId, setCompanyId] = useState(deal.companyId || '');
   const [primaryContactId, setPrimaryContactId] = useState(deal.primaryContactId || '');
   const [ownerEmail, setOwnerEmail] = useState(deal.ownerEmail || '');
@@ -2668,6 +2683,7 @@ function EditDealModal({ deal, onClose }) {
     await actions.saveDeal(deal.id, {
       title: title.trim(),
       value: value === '' ? null : Number(value),
+      vatRate: vatPct === '' ? null : Number(vatPct) / 100,
       companyId: companyId || null,
       primaryContactId: primaryContactId || null,
       ownerEmail: ownerEmail || null,
@@ -2682,7 +2698,10 @@ function EditDealModal({ deal, onClose }) {
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Edit deal</h2>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <FormRow label="Title"><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} required /></FormRow>
-        <FormRow label="Value (£, ex VAT)"><input className="input" type="number" min="0" step="0.01" value={value} onChange={(e) => setValue(e.target.value)} /></FormRow>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{ flex: 2 }}><FormRow label="Value (£, ex VAT)"><input className="input" type="number" min="0" step="0.01" value={value} onChange={(e) => setValue(e.target.value)} /></FormRow></div>
+          <div style={{ flex: 1 }}><FormRow label="VAT rate (%)"><input className="input" type="number" min="0" max="100" step="0.1" value={vatPct} onChange={(e) => setVatPct(e.target.value)} /></FormRow></div>
+        </div>
         <FormRow label="Organisation">
           <select className="input" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
             <option value="">—</option>

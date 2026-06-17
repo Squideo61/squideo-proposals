@@ -601,6 +601,7 @@ export function NewDealModal({ onClose, onCreated, initialTitle = '' }) {
   const [title, setTitle] = useState(initialTitle);
   const [stage, setStage] = useState('lead');
   const [value, setValue] = useState('');
+  const [vatPct, setVatPct] = useState('20');
   const [xeroContact, setXeroContact] = useState(null);
   const [primaryContactId, setPrimaryContactId] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -630,6 +631,7 @@ export function NewDealModal({ onClose, onCreated, initialTitle = '' }) {
         title: title.trim(),
         stage,
         value: value === '' ? null : Number(value),
+        vatRate: vatPct === '' ? null : Number(vatPct) / 100,
         companyId,
         primaryContactId: primaryContactId || null,
       });
@@ -662,10 +664,16 @@ export function NewDealModal({ onClose, onCreated, initialTitle = '' }) {
             {PIPELINE_STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
         </label>
-        <label style={{ fontSize: 13, fontWeight: 500 }}>
-          Value (£, ex VAT, optional)
-          <input className="input" type="number" min="0" step="0.01" value={value} onChange={(e) => setValue(e.target.value)} style={{ marginTop: 4 }} />
-        </label>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <label style={{ fontSize: 13, fontWeight: 500, flex: 2 }}>
+            Value (£, ex VAT, optional)
+            <input className="input" type="number" min="0" step="0.01" value={value} onChange={(e) => setValue(e.target.value)} style={{ marginTop: 4 }} />
+          </label>
+          <label style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>
+            VAT rate (%)
+            <input className="input" type="number" min="0" max="100" step="0.1" value={vatPct} onChange={(e) => setVatPct(e.target.value)} style={{ marginTop: 4 }} />
+          </label>
+        </div>
         <label style={{ fontSize: 13, fontWeight: 500 }}>
           Primary contact (optional)
           <select className="input" value={primaryContactId} onChange={(e) => setPrimaryContactId(e.target.value)} style={{ marginTop: 4 }}>
