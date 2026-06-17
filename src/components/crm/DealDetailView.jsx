@@ -324,7 +324,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
           <Field icon={User} label="Primary contact">
-            {contact ? <>{contact.name || contact.email}{contact.email && contact.name ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {contact.email}</span> : null}</> : <span style={{ color: BRAND.muted }}>—</span>}
+            {contact ? <>{contact.name || contact.email}{contact.email && contact.name ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {contact.email}</span> : null}{contact.phone ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {contact.phone}</span> : null}</> : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
           <Field label="Value (ex VAT)">
             {dealValueInfo.value != null
@@ -359,7 +359,6 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               ) : <span style={{ color: BRAND.muted }}>—</span>}
             </Field>
           )}
-          {!productionOnly && <Field icon={Calendar} label="Expected close">{deal.expectedCloseAt || <span style={{ color: BRAND.muted }}>—</span>}</Field>}
           {!productionOnly && <Field label="Last activity">{formatRelativeTime(deal.lastActivityAt)}</Field>}
         </div>
         <div style={{ marginTop: 16 }}>
@@ -2587,7 +2586,6 @@ function EditDealModal({ deal, onClose }) {
   const [companyId, setCompanyId] = useState(deal.companyId || '');
   const [primaryContactId, setPrimaryContactId] = useState(deal.primaryContactId || '');
   const [ownerEmail, setOwnerEmail] = useState(deal.ownerEmail || '');
-  const [expectedCloseAt, setExpectedCloseAt] = useState(deal.expectedCloseAt || '');
   const [notes, setNotes] = useState(deal.notes || '');
   const [submitting, setSubmitting] = useState(false);
 
@@ -2649,7 +2647,6 @@ function EditDealModal({ deal, onClose }) {
       companyId: companyId || null,
       primaryContactId: primaryContactId || null,
       ownerEmail: ownerEmail || null,
-      expectedCloseAt: expectedCloseAt || null,
       notes: notes || null,
     });
     setSubmitting(false);
@@ -2712,7 +2709,6 @@ function EditDealModal({ deal, onClose }) {
             {users.map(u => <option key={u.email} value={u.email}>{u.name || u.email}</option>)}
           </select>
         </FormRow>
-        <FormRow label="Expected close (YYYY-MM-DD)"><input className="input" type="date" value={expectedCloseAt} onChange={(e) => setExpectedCloseAt(e.target.value)} /></FormRow>
         <FormRow label="Notes"><textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ fontFamily: 'inherit', resize: 'vertical' }} /></FormRow>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
