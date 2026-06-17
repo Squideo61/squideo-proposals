@@ -1,10 +1,19 @@
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, MousePointerClick, ChevronRight } from 'lucide-react';
+import { Eye, MapPin, MousePointerClick, ChevronRight } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { formatRelativeTime } from '../../utils.js';
 
 const CARD_WIDTH = 240;
+
+// Split a tracking summary's locations into the most-recent open's location
+// (highlighted everywhere) and the remaining distinct places it's been opened.
+function splitLocations(tracking) {
+  const all = tracking.locations || [];
+  const last = tracking.lastLocation || null;
+  const others = (last ? all.filter((l) => l && l.toLowerCase() !== last.toLowerCase()) : all).slice(0, 3);
+  return { last, others };
+}
 
 // Streak-style open/click tracking UI, shared by the Gmail inbox (EmailsView)
 // and the deal/project Emails section (DealDetailView). Driven by the tracking
@@ -94,11 +103,26 @@ export function TrackingCard({ tracking, style, onMouseEnter, onMouseLeave }) {
           Last opened {formatRelativeTime(tracking.lastOpenedAt)}
         </div>
       )}
-      {opened && tracking.locations?.length > 0 && (
-        <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 3 }}>
-          {tracking.locations.slice(0, 3).join(', ')}
-        </div>
-      )}
+      {opened && (() => {
+        const { last, others } = splitLocations(tracking);
+        if (!last && others.length === 0) return null;
+        return (
+          <>
+            {last && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, fontWeight: 700, color: '#16A34A', marginTop: 4 }}>
+                <MapPin size={12} style={{ flexShrink: 0 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{last}</span>
+                <span style={{ fontWeight: 500, color: BRAND.muted }}>· latest</span>
+              </div>
+            )}
+            {others.length > 0 && (
+              <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>
+                {last ? 'Also: ' : ''}{others.join(', ')}
+              </div>
+            )}
+          </>
+        );
+      })()}
       {tracking.clicks > 0 && (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid ' + BRAND.border }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 12, color: BRAND.blue }}>
@@ -142,9 +166,22 @@ export function TrackingBanner({ tracking, onClick }) {
       {opened && tracking.lastOpenedAt && (
         <span style={{ color: BRAND.muted }}>Last opened {formatRelativeTime(tracking.lastOpenedAt)}</span>
       )}
-      {opened && tracking.locations?.length > 0 && (
-        <span style={{ color: BRAND.muted }}>{tracking.locations.slice(0, 3).join(', ')}</span>
-      )}
+      {opened && (() => {
+        const { last, others } = splitLocations(tracking);
+        if (!last && others.length === 0) return null;
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {last && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontWeight: 700, color: '#16A34A' }}>
+                <MapPin size={13} /> {last}
+              </span>
+            )}
+            {others.length > 0 && (
+              <span style={{ color: BRAND.muted }}>{last ? 'Also: ' : ''}{others.join(', ')}</span>
+            )}
+          </span>
+        );
+      })()}
       {tracking.clicks > 0 && (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, color: BRAND.blue }}>
           <MousePointerClick size={14} /> {tracking.clicks} link click{tracking.clicks === 1 ? '' : 's'}

@@ -1297,6 +1297,13 @@ function ExpandedMessage({ email, defaultOpen = false, onOpenFull }) {
           </span>
           <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
         </button>
+        {/* This sent email's own open/click tracking, on the right of the row.
+            Inbound messages and untracked sends render nothing. */}
+        {!inbound && email.messageTracking?.tracked && (
+          <span style={{ flexShrink: 0 }}>
+            <TrackingEye tracking={email.messageTracking} />
+          </span>
+        )}
         <button
           type="button"
           onClick={onOpenFull}

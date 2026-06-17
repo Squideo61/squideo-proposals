@@ -193,6 +193,10 @@ export async function trackingForThreads(userEmail, threadIds) {
              MAX(e.occurred_at) FILTER (WHERE e.kind = 'click')                             AS last_clicked_at,
              ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.city) FILTER (WHERE e.kind = 'open'), NULL)  AS cities,
              ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.country) FILTER (WHERE e.kind = 'open'), NULL) AS countries,
+             (ARRAY_REMOVE(ARRAY_AGG(e.city ORDER BY e.occurred_at DESC)
+               FILTER (WHERE e.kind = 'open' AND e.occurred_at > t.sent_at + interval '5 seconds'), NULL))[1] AS last_city,
+             (ARRAY_REMOVE(ARRAY_AGG(e.country ORDER BY e.occurred_at DESC)
+               FILTER (WHERE e.kind = 'open' AND e.occurred_at > t.sent_at + interval '5 seconds'), NULL))[1] AS last_country,
              ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.link_url) FILTER (WHERE e.kind = 'click'), NULL) AS clicked_urls
         FROM email_tracking t
         LEFT JOIN email_tracking_events e ON e.tracking_id = t.id
@@ -225,6 +229,10 @@ export async function trackingForDealThreads(threadIds) {
              MAX(e.occurred_at) FILTER (WHERE e.kind = 'click')                             AS last_clicked_at,
              ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.city) FILTER (WHERE e.kind = 'open'), NULL)  AS cities,
              ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.country) FILTER (WHERE e.kind = 'open'), NULL) AS countries,
+             (ARRAY_REMOVE(ARRAY_AGG(e.city ORDER BY e.occurred_at DESC)
+               FILTER (WHERE e.kind = 'open' AND e.occurred_at > t.sent_at + interval '5 seconds'), NULL))[1] AS last_city,
+             (ARRAY_REMOVE(ARRAY_AGG(e.country ORDER BY e.occurred_at DESC)
+               FILTER (WHERE e.kind = 'open' AND e.occurred_at > t.sent_at + interval '5 seconds'), NULL))[1] AS last_country,
              ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.link_url) FILTER (WHERE e.kind = 'click'), NULL) AS clicked_urls
         FROM email_tracking t
         LEFT JOIN email_tracking_events e ON e.tracking_id = t.id
@@ -257,6 +265,10 @@ export async function trackingForMessages(messageIds) {
              MAX(e.occurred_at) FILTER (WHERE e.kind = 'click')                             AS last_clicked_at,
              ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.city) FILTER (WHERE e.kind = 'open'), NULL)  AS cities,
              ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.country) FILTER (WHERE e.kind = 'open'), NULL) AS countries,
+             (ARRAY_REMOVE(ARRAY_AGG(e.city ORDER BY e.occurred_at DESC)
+               FILTER (WHERE e.kind = 'open' AND e.occurred_at > t.sent_at + interval '5 seconds'), NULL))[1] AS last_city,
+             (ARRAY_REMOVE(ARRAY_AGG(e.country ORDER BY e.occurred_at DESC)
+               FILTER (WHERE e.kind = 'open' AND e.occurred_at > t.sent_at + interval '5 seconds'), NULL))[1] AS last_country,
              ARRAY_REMOVE(ARRAY_AGG(DISTINCT e.link_url) FILTER (WHERE e.kind = 'click'), NULL) AS clicked_urls
         FROM email_tracking t
         LEFT JOIN email_tracking_events e ON e.tracking_id = t.id
@@ -272,6 +284,7 @@ export async function trackingForMessages(messageIds) {
         clicks: Number(r.clicks) || 0,
         lastClickedAt: r.last_clicked_at || null,
         locations: buildLocations(r.cities, r.countries),
+        lastLocation: r.last_city || r.last_country || null,
         clickedUrls: r.clicked_urls || [],
       };
     }
@@ -292,6 +305,10 @@ function mapTrackingRows(rows) {
       clicks: Number(r.clicks) || 0,
       lastClickedAt: r.last_clicked_at || null,
       locations: buildLocations(r.cities, r.countries),
+      // The location of the single most recent open — surfaced/highlighted in
+      // the UI separately from the distinct set, so "where they last read it"
+      // is clear even when the email's been opened from several places.
+      lastLocation: r.last_city || r.last_country || null,
       clickedUrls: r.clicked_urls || [],
     };
   }

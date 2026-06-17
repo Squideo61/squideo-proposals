@@ -7,7 +7,7 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
-import { trackingForDealThreads } from './tracking.js';
+import { trackingForDealThreads, trackingForMessages } from './tracking.js';
 import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree, isFolderWithin, listFolderContents, getDriveFile } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
@@ -1352,6 +1352,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     const emailTracking = await trackingForDealThreads(
       Array.from(new Set(emails.map(e => e.gmail_thread_id).filter(Boolean)))
     );
+    // Per-message tracking too, so an expanded thread can show each sent email's
+    // own opens (and the "last email" eye) rather than only the thread total.
+    const messageTracking = await trackingForMessages(
+      Array.from(new Set(emails.map(e => e.gmail_message_id).filter(Boolean)))
+    );
 
     // Marketing lead source is for sales/management — never send it to producer
     // or copywriter accounts (they don't see marketing attribution).
@@ -1423,6 +1428,9 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         // Streak-style open/click tracking for this thread's outbound sends.
         // Null for untracked threads / inbound-only; the UI gates on direction.
         tracking: emailTracking[em.gmail_thread_id] || null,
+        // This individual message's own tracking (drives the per-email eye in an
+        // expanded thread). Null for inbound / untracked messages.
+        messageTracking: messageTracking[em.gmail_message_id] || null,
       })),
       files: files.map(f => ({
         id: f.id, filename: f.filename, mimeType: f.mime_type || null,
