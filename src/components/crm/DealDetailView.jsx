@@ -2638,6 +2638,13 @@ function EditDealModal({ deal, onClose }) {
   const [creatingContact, setCreatingContact] = useState(false);
   const [contactErr, setContactErr] = useState('');
 
+  // Additional (secondary) contacts on the deal — managed live (added/removed
+  // immediately, like the deal page's Contacts row), independent of the form's
+  // Save. Read from the live detail so chips update as they're added/removed.
+  const [pickingExtra, setPickingExtra] = useState(false);
+  const [creatingExtra, setCreatingExtra] = useState(null); // { email?, name? } prefill
+  const secondaryContacts = state.dealDetail?.[deal.id]?.secondaryContacts || [];
+
   const companies = Object.values(state.companies || {});
   const contacts = Object.values(state.contacts || {});
   const users = Object.values(state.users || {});
@@ -2746,6 +2753,20 @@ function EditDealModal({ deal, onClose }) {
             </div>
           )}
         </div>
+        {/* Additional contacts — added/removed immediately (like the deal page's
+            Contacts row), so you can attach more people without leaving Edit. */}
+        <div style={{ fontSize: 13, fontWeight: 500, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span>Additional contacts</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+            {secondaryContacts.length === 0 && <span style={{ fontSize: 12, color: BRAND.muted }}>None yet</span>}
+            {secondaryContacts.map((c) => (
+              <ContactChip key={c.id} contact={c} label="secondary" removable onRemove={() => actions.removeDealContact(deal.id, c.id)} />
+            ))}
+            <button type="button" onClick={() => setPickingExtra(true)} className="btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }}>
+              <Plus size={12} /> Add contact
+            </button>
+          </div>
+        </div>
         <FormRow label="Deal Owner">
           <select className="input" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)}>
             <option value="">—</option>
@@ -2758,6 +2779,28 @@ function EditDealModal({ deal, onClose }) {
           <button type="submit" className="btn" disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</button>
         </div>
       </form>
+      {pickingExtra && (
+        <PickContactModal
+          dealId={deal.id}
+          excludeIds={new Set([primaryContactId, ...secondaryContacts.map(c => c.id)].filter(Boolean))}
+          defaultCompanyId={companyId || null}
+          onClose={() => setPickingExtra(false)}
+          onPickExisting={async (contactId) => {
+            try { await actions.addDealContact(deal.id, { contactId }); setPickingExtra(false); }
+            catch (e) { setContactErr(e?.message || 'Could not add contact'); }
+          }}
+          onCreateNew={(prefill) => { setPickingExtra(false); setCreatingExtra(prefill || {}); }}
+        />
+      )}
+      {creatingExtra && (
+        <CreateContactModal
+          dealId={deal.id}
+          defaultCompanyId={companyId || null}
+          prefill={creatingExtra}
+          onClose={() => setCreatingExtra(null)}
+          onCreated={() => setCreatingExtra(null)}
+        />
+      )}
     </Modal>
   );
 }
