@@ -1,5 +1,6 @@
 import sql from '../db.js';
 import { ensureMessageDealsTable } from './shared.js';
+import { trackingForMessages } from './tracking.js';
 
 // GET /api/crm/emails/:gmailMessageId — returns one full email message
 // including body_html / body_text. Lazy-loaded by the deal detail UI when the
@@ -156,6 +157,9 @@ async function getDealThread(req, res, threadId) {
     ORDER BY sent_at ASC
   `;
   if (!rows.length) return res.status(404).json({ error: 'Not found' });
+  // Per-message open/click tracking, so the full thread reader shows the same
+  // per-email eye/banner as the deal page rows (untracked/inbound sends → null).
+  const tracking = await trackingForMessages(rows.map(r => r.gmail_message_id));
   return res.status(200).json({
     id: threadId,
     threadId,
@@ -173,6 +177,7 @@ async function getDealThread(req, res, threadId) {
       text: em.body_text || null,
       attachments: em.gmail_attachments || [],
       outbound: em.direction === 'outbound' || em.direction === 'outgoing',
+      tracking: tracking[em.gmail_message_id] || null,
     })),
   });
 }

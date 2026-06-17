@@ -5,7 +5,7 @@ import { useStore } from '../../store.jsx';
 import { Card, Empty } from './Card.jsx';
 import {
   CommentThread, CommentInput, EventRow, ThreadRow,
-  EmailViewerModal, LinkEmailModal, NewDealFromEmailFlow,
+  ThreadViewerModal, LinkEmailModal, NewDealFromEmailFlow,
 } from './DealDetailView.jsx';
 
 // Reusable Emails + Activity + Comments panel for a deal, lifted out of the deal
@@ -146,7 +146,7 @@ export function DealConversation({ dealId, isMobile, sections = ['emails', 'acti
       )}
 
       {openEmailId && (
-        <EmailViewerModal gmailMessageId={openEmailId} dealId={dealId} onClose={() => setOpenEmailId(null)} />
+        <ThreadViewerModal gmailMessageId={openEmailId} dealId={dealId} onClose={() => setOpenEmailId(null)} />
       )}
       {linkEmailTarget && (
         <LinkEmailModal

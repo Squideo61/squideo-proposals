@@ -1074,7 +1074,10 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
 // Full conversation modal: loads the thread (live Gmail or DB) and renders
 // every message stacked, newest expanded and older ones collapsible.
 // Tracking summary (TrackingBanner) shown at the top of a tracked conversation.
-function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOpenProposal, onOpenTracking }) {
+// `embedded` renders the reader inside another surface (e.g. a deal-page modal):
+// it drops the folder back-button and the deal-context side panel (you're already
+// on the deal) and attributes inline replies to `contextDeal`.
+export function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOpenProposal, onOpenTracking, embedded = false, contextDeal = null }) {
   const { state, actions, showMsg } = useStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1120,11 +1123,20 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOp
   // null | 'reply' | 'replyAll' | 'forward'.
   const [composeMode, setComposeMode] = useState(null);
 
+  // True if WE sent this message. DB/deal threads carry an explicit direction
+  // flag (reliable even when viewing someone else's deal as an admin); Gmail
+  // threads always report outbound:false, so there we infer it from our own
+  // mailbox address. Using the flag first keeps replies correct when the viewer
+  // isn't the mailbox owner (else we'd reply to our own colleague, not the client).
+  const outboundOf = (msg) =>
+    isGmail ? !!(msg?.fromEmail && msg.fromEmail.toLowerCase() === myEmail) : !!msg?.outbound;
+
   // Reply goes to the other party of the latest message.
   const replyRecipient = (msg) => {
     if (!msg) return '';
-    if (msg.fromEmail && msg.fromEmail.toLowerCase() !== myEmail) return msg.fromEmail;
-    return (msg.to || [])[0] || msg.fromEmail || '';
+    return outboundOf(msg)
+      ? ((msg.to || [])[0] || msg.fromEmail || '')
+      : (msg.fromEmail || (msg.to || [])[0] || '');
   };
 
   // Everyone on the latest message except me — drives the "Reply all" button,
@@ -1199,7 +1211,9 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOp
 
   return (
     <div>
-      <button onClick={onBack} className="btn-ghost" style={{ marginBottom: 10 }}><ArrowLeft size={14} /> {folderLabel}</button>
+      {!embedded && (
+        <button onClick={onBack} className="btn-ghost" style={{ marginBottom: 10 }}><ArrowLeft size={14} /> {folderLabel}</button>
+      )}
       <h2 style={{ margin: '0 0 14px', fontSize: 19, fontWeight: 700, wordBreak: 'break-word' }}>
         {subject}
         {messages.length > 1 && <span style={{ color: BRAND.muted, fontWeight: 500 }}> · {messages.length} messages</span>}
@@ -1261,7 +1275,7 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOp
                   <EmailComposerModal
                     key={composeMode}
                     inline
-                    deal={null}
+                    deal={contextDeal}
                     contact={null}
                     initialDraft={draftFor(composeMode)}
                     onClose={() => setComposeMode(null)}
@@ -1283,7 +1297,8 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOp
 
         {/* Deal context panel (right) — shown for every conversation, so emails
             already on a deal display their deal here too. Sticks in view as the
-            conversation scrolls. */}
+            conversation scrolls. Hidden when embedded (you're already on the deal). */}
+        {!embedded && (
         <div style={{
           width: isMobile ? '100%' : 320, flexShrink: 0,
           borderLeft: isMobile ? 'none' : '1px solid ' + BRAND.border,
@@ -1301,6 +1316,7 @@ function ConversationView({ openRef, folder, connected, onBack, onOpenDeal, onOp
             onOpenProposal={onOpenProposal}
           />
         </div>
+        )}
       </div>
     </div>
   );

@@ -19,6 +19,7 @@ import { IntroCallButton } from './IntroCallCard.jsx';
 import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
 import { TrackingEye } from './EmailTracking.jsx';
 import { ContactModal } from './ContactsView.jsx';
+import { ConversationView } from './EmailsView.jsx';
 
 const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
 
@@ -703,7 +704,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         />
       )}
       {openEmailId && (
-        <EmailViewerModal
+        <ThreadViewerModal
           gmailMessageId={openEmailId}
           dealId={dealId}
           onClose={() => setOpenEmailId(null)}
@@ -1589,6 +1590,40 @@ export function EmailViewerModal({ gmailMessageId, dealId, onClose }) {
           <button onClick={reply} className="btn" disabled={!data}><Reply size={14} /> Reply</button>
         </div>
       </div>
+    </Modal>
+  );
+}
+
+// Opens an email on a deal page as the FULL conversation reader (the same rich
+// view used in the Emails inbox), not a cramped single-message popup — so admins
+// /directors see other people's deal emails exactly as they see their own. The
+// thread bodies load by thread id (not mailbox owner), so any deal you can see,
+// you can read in full. Resolves the clicked message's thread from the loaded
+// deal detail and hands it to the embedded ConversationView.
+export function ThreadViewerModal({ gmailMessageId, dealId, onClose }) {
+  const { state } = useStore();
+  const detail = state.dealDetail?.[dealId];
+  const deal = detail || state.deals?.[dealId] || null;
+  const emails = detail?.emails || [];
+  // The deal rows carry the gmail thread id; fall back to the message id (a
+  // single-message "thread") if it isn't loaded yet.
+  const threadId = useMemo(() => {
+    const m = emails.find((e) => e.gmailMessageId === gmailMessageId);
+    return m?.gmailThreadId || gmailMessageId;
+  }, [emails, gmailMessageId]);
+  const connected = !!(state.gmailAccount && state.gmailAccount.connected);
+  const openRef = useMemo(() => ({ kind: 'db', threadId, unread: false }), [threadId]);
+
+  return (
+    <Modal onClose={onClose} maxWidth={920}>
+      <ConversationView
+        openRef={openRef}
+        folder="deals"
+        connected={connected}
+        embedded
+        contextDeal={deal}
+        onBack={onClose}
+      />
     </Modal>
   );
 }
