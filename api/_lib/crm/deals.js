@@ -488,6 +488,14 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
   if (action === 'hot') {
     if (req.method !== 'POST') return res.status(405).end();
     const hot = !!(req.body && req.body.hot);
+    // "Hot" is a sales/lead warmth marker — a deal that's already a project in
+    // production can't be flagged hot. Unflagging (hot=false) stays allowed so a
+    // pre-existing flag can still be cleared.
+    if (hot) {
+      const [cur] = await sql`SELECT production_phase FROM deals WHERE id = ${id}`;
+      if (!cur) return res.status(404).json({ error: 'Not found' });
+      if (cur.production_phase) return res.status(409).json({ error: 'A project in production can’t be flagged hot.' });
+    }
     const updated = await sql`
       UPDATE deals SET hot = ${hot}, updated_at = NOW() WHERE id = ${id}
       RETURNING id

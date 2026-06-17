@@ -145,11 +145,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   }, [proposals, deal.value]);
   const projectVideos = detail?.videos || [];
   const projectPhase = useMemo(() => aggregateProjectPhase(projectVideos), [projectVideos]);
-  // Once a deal has production videos it's already a project. Before that, the
+  // Once a deal is in production it's a project (production_phase is set as soon
+  // as it enters, before videos finish loading, so check both). Before that, the
   // "Good to go" gate moves it into Projects — but only when it's committed:
   // a signed proposal, a paid/long-term stage, or a purchase order. (The server
   // enforces the same rule; this just decides whether to offer the button.)
-  const isProject = projectVideos.length > 0;
+  const isProject = projectVideos.length > 0 || !!deal.productionPhase;
   const po = detail?.purchaseOrder || null;
   const canGoodToGo = !isProject && (
     proposals.some(p => p.signed)
@@ -280,13 +281,17 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                 ><FileText size={14} /> Create or link proposal</button>
               )}
               <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
-              <button
-                onClick={() => actions.toggleDealHot(dealId, !deal.hot)}
-                className="btn-ghost"
-                aria-pressed={!!deal.hot}
-                title={deal.hot ? 'Flagged hot — click to unflag' : 'Flag as hot'}
-                style={{ color: deal.hot ? '#EA580C' : undefined, borderColor: deal.hot ? '#EA580C' : undefined, fontWeight: deal.hot ? 600 : undefined }}
-              ><Flame size={14} fill={deal.hot ? '#EA580C' : 'none'} /> {deal.hot ? 'Hot' : 'Mark hot'}</button>
+              {/* "Hot" is a sales/lead warmth marker — irrelevant once the deal
+                  is a won project in production, so hide it there. */}
+              {!isProject && (
+                <button
+                  onClick={() => actions.toggleDealHot(dealId, !deal.hot)}
+                  className="btn-ghost"
+                  aria-pressed={!!deal.hot}
+                  title={deal.hot ? 'Flagged hot — click to unflag' : 'Flag as hot'}
+                  style={{ color: deal.hot ? '#EA580C' : undefined, borderColor: deal.hot ? '#EA580C' : undefined, fontWeight: deal.hot ? 600 : undefined }}
+                ><Flame size={14} fill={deal.hot ? '#EA580C' : 'none'} /> {deal.hot ? 'Hot' : 'Mark hot'}</button>
+              )}
               <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
               <button
                 onClick={() => {
