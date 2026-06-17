@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -472,10 +472,9 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         <Card title="Proposal">
           {proposals.length === 0 && <Empty text="No proposals attached yet" />}
           {proposals.map(p => (
-            <button
+            <div
               key={p.id}
-              onClick={() => onOpenProposal?.(p.id, p.signed)}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%', padding: '8px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', marginBottom: 6 }}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%', padding: '8px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, marginBottom: 6 }}
             >
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -494,8 +493,19 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   </div>
                 )}
               </div>
-              <ExternalLink size={14} color={BRAND.muted} />
-            </button>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => onOpenProposal?.(p.id, 'edit')}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: BRAND.ink }}
+                ><Edit2 size={13} /> Edit</button>
+                <button
+                  type="button"
+                  onClick={() => onOpenProposal?.(p.id, 'preview')}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: BRAND.blue, border: '1px solid ' + BRAND.blue, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: 'white' }}
+                ><Eye size={13} /> Preview</button>
+              </div>
+            </div>
           ))}
         </Card>
 

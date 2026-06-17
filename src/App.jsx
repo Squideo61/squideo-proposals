@@ -489,7 +489,7 @@ function AppShell() {
         <DealDetailView
           dealId={activeId}
           onBack={() => goBack(view === 'project' ? 'projects' : 'pipeline')}
-          onOpenProposal={(id, signed) => navigate(signed ? 'client' : 'builder', id)}
+          onOpenProposal={(id, mode) => navigate(mode === 'preview' ? 'client' : 'builder', id)}
           onCreateProposal={createForDeal}
           onOpenVideo={(id) => navigate('video', id)}
           onOpenCompany={(id) => navigate('company', id)}
@@ -639,7 +639,7 @@ function AppShell() {
       {view === 'builder' && activeId && (
         <BuilderView
           id={activeId}
-          onBack={() => navigate('list')}
+          onBack={() => goBack('list')}
           onPreview={() => navigate('client', activeId)}
           onSaveAsTemplate={saveAsTemplate}
         />
@@ -654,7 +654,7 @@ function AppShell() {
       {view === 'client' && activeId && (
         <ClientView
           id={activeId}
-          onBack={() => navigate('list')}
+          onBack={() => goBack('list')}
           onEdit={() => navigate('builder', activeId)}
         />
       )}
