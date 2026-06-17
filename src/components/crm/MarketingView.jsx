@@ -70,6 +70,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
   const [leads, setLeads] = useState(null);
   const [snippet, setSnippet] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [reload, setReload] = useState(0); // bump to re-run the active fetch (Retry)
 
   // Follow the section coming from the header (navigate('marketing', <section>)).
   useEffect(() => { if (sectionProp) setSection(sectionProp); }, [sectionProp]);
@@ -89,7 +90,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
       .then((d) => { if (active) setOverview(d); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [section, from, to, actions]);
+  }, [section, from, to, actions, reload]);
 
   useEffect(() => {
     if (section !== 'reports') return;
@@ -99,7 +100,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
       .then((d) => { if (active) setReport(d); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [section, groupBy, from, to, actions]);
+  }, [section, groupBy, from, to, actions, reload]);
 
   useEffect(() => {
     if (section !== 'leads') return;
@@ -109,7 +110,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
       .then((d) => { if (active) setLeads(d); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [section, from, to, actions]);
+  }, [section, from, to, actions, reload]);
 
   useEffect(() => {
     if (section !== 'settings' || snippet) return;
@@ -163,13 +164,14 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
         })}
       </div>
 
-      {section === 'overview' && <OverviewTab data={overview} loading={loading} adsConfigured={adsConfigured} onOpenSettings={() => setSection('settings')} />}
+      {section === 'overview' && <OverviewTab data={overview} loading={loading} adsConfigured={adsConfigured} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'reports' && (
         <ReportsTab
           data={report} loading={loading} groupBy={groupBy} setGroupBy={setGroupBy} adsConfigured={adsConfigured}
+          onRetry={() => setReload((n) => n + 1)}
         />
       )}
-      {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} />}
+      {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'settings' && <SettingsTab snippet={snippet} onSync={() => actions.syncAdSpend()} />}
     </div>
   );
@@ -199,11 +201,23 @@ function Loading() {
 function Empty({ children }) {
   return <div style={{ padding: 40, textAlign: 'center', color: BRAND.muted, border: '1px dashed ' + BRAND.border, borderRadius: 12 }}>{children}</div>;
 }
+function LoadFailed({ onRetry }) {
+  return (
+    <div style={{ padding: 40, textAlign: 'center', color: BRAND.muted, border: '1px dashed ' + BRAND.border, borderRadius: 12 }}>
+      <div style={{ marginBottom: 12 }}>Couldn’t load marketing data. Your session may have expired, or there was a temporary glitch.</div>
+      {onRetry && <button onClick={onRetry} className="btn-secondary" style={{ padding: '6px 14px' }}>Retry</button>}
+    </div>
+  );
+}
 
 // ---- Dashboard -----------------------------------------------------------
 
-function OverviewTab({ data, loading, adsConfigured, onOpenSettings }) {
+function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry }) {
   if (loading && !data) return <Loading />;
+  // A valid response is always an object (even with zero leads). `data == null`
+  // after loading means the request failed — show a retry, never the misleading
+  // "connect Google Ads" banner or a screen full of zeros.
+  if (!data) return <LoadFailed onRetry={onRetry} />;
   const t = data?.totals || { leads: 0, qualified: 0, won: 0, revenue: 0, spend: null, roas: null, costPerLead: null, conversionRate: 0 };
   const channels = (data?.rows || []).slice().sort((a, b) => b.leads - a.leads);
   const chartData = channels.map((r) => ({ name: prettyChannel(r.key), leads: r.leads, revenue: r.revenue, key: r.key }));
@@ -278,7 +292,7 @@ function ChannelTable({ rows, adsConfigured }) {
 
 // ---- Reports -------------------------------------------------------------
 
-function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured }) {
+function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured, onRetry }) {
   const [sortKey, setSortKey] = useState('revenue');
   const [sortDir, setSortDir] = useState('desc');
   const rows = useMemo(() => {
@@ -301,7 +315,7 @@ function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured }) {
           <button key={g.key} onClick={() => setGroupBy(g.key)} style={segBtn(groupBy === g.key)}>{g.label}</button>
         ))}
       </div>
-      {loading && !data ? <Loading /> : rows.length === 0 ? <Empty>No leads in this period yet.</Empty> : (
+      {loading && !data ? <Loading /> : !data ? <LoadFailed onRetry={onRetry} /> : rows.length === 0 ? <Empty>No leads in this period yet.</Empty> : (
         <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -373,8 +387,9 @@ const STATUS_STYLE = {
   disqualified: { bg: '#FEE2E2', fg: '#991B1B', label: 'Disqualified' },
 };
 
-function LeadsTab({ data, loading, onOpenDeal }) {
+function LeadsTab({ data, loading, onOpenDeal, onRetry }) {
   if (loading && !data) return <Loading />;
+  if (!data) return <LoadFailed onRetry={onRetry} />;
   const leads = data?.leads || [];
   if (leads.length === 0) return <Empty>No leads captured in this period yet.</Empty>;
   return (
