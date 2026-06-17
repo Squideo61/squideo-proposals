@@ -179,9 +179,10 @@ async function reports(req, groupBy) {
   for (const r of rows) {
     const { key, label, campaignId } = keyFor(r);
     let g = groups.get(key);
-    if (!g) { g = { key, label, campaignId: campaignId || null, leads: 0, qualified: 0, won: 0, revenue: 0 }; groups.set(key, g); }
+    if (!g) { g = { key, label, campaignId: campaignId || null, leads: 0, qualified: 0, disqualified: 0, won: 0, revenue: 0 }; groups.set(key, g); }
     g.leads += 1;
     if (r.status === 'qualified') g.qualified += 1;
+    else if (r.status === 'disqualified') g.disqualified += 1;
     const dv = r.deal_id ? values.get(r.deal_id) : null;
     if (dv && dv.won) { g.won += 1; g.revenue += dv.value; }
   }
@@ -202,30 +203,39 @@ async function reports(req, groupBy) {
       campaignId: g.campaignId,
       leads: g.leads,
       qualified: g.qualified,
+      disqualified: g.disqualified,
       won: g.won,
       revenue: round2(g.revenue),
       spend: spend == null ? null : round2(spend),
       costPerLead: spend != null && g.leads > 0 ? round2(spend / g.leads) : null,
       roas: spend != null && spend > 0 ? round2(g.revenue / spend) : null,
       conversionRate: g.leads > 0 ? round2((g.won / g.leads) * 100) : 0,
+      // Lead quality = qualified out of the leads we've actually reviewed
+      // (qualified + disqualified). null until at least one has been reviewed.
+      qualityRate: (g.qualified + g.disqualified) > 0
+        ? round2((g.qualified / (g.qualified + g.disqualified)) * 100) : null,
     };
   }).sort((a, b) => b.revenue - a.revenue || b.leads - a.leads);
 
   // Totals across every lead in range (spend = whole-account spend in range).
   const tLeads = rows.length;
   const tQualified = rows.filter((r) => r.status === 'qualified').length;
+  const tDisqualified = rows.filter((r) => r.status === 'disqualified').length;
+  const tReviewed = tQualified + tDisqualified;
   let tWon = 0, tRevenue = 0;
   for (const r of rows) { const dv = r.deal_id ? values.get(r.deal_id) : null; if (dv && dv.won) { tWon += 1; tRevenue += dv.value; } }
   const tSpend = adsConfigured() ? totalSpend : null;
   const totals = {
     leads: tLeads,
     qualified: tQualified,
+    disqualified: tDisqualified,
     won: tWon,
     revenue: round2(tRevenue),
     spend: tSpend == null ? null : round2(tSpend),
     costPerLead: tSpend != null && tLeads > 0 ? round2(tSpend / tLeads) : null,
     roas: tSpend != null && tSpend > 0 ? round2(tRevenue / tSpend) : null,
     conversionRate: tLeads > 0 ? round2((tWon / tLeads) * 100) : 0,
+    qualityRate: tReviewed > 0 ? round2((tQualified / tReviewed) * 100) : null,
   };
 
   return { groupBy: dim, from: fromStr, to: toStr, adsConfigured: adsConfigured(), rows: out, totals };

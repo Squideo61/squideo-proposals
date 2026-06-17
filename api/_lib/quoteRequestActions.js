@@ -193,9 +193,13 @@ export async function qualifyQuoteRequest(id, { actorEmail } = {}) {
   return { status: 'ok', contactId, dealId, companyId };
 }
 
-// Disqualifies a quote request: removes the row, files, blobs, and any
-// provisional contact we created. Returns 'already_qualified' if the request
-// has already been promoted to a deal — that'd lose work, so we refuse.
+// Disqualifies a quote request. Soft delete: we keep the quote_requests row
+// (flipped to status='disqualified') so Marketing can report on disqualified
+// leads and compute a qualified-vs-disqualified quality rate. We still purge the
+// bits we don't need for metrics — the provisional contact we created, plus the
+// uploaded files and their blobs (PII + storage). Returns 'already_qualified' if
+// the request has already been promoted to a deal — that'd lose work, so we
+// refuse. The row leaves the "new" inbox because that view filters on status.
 export async function disqualifyQuoteRequest(id) {
   const loaded = await loadQuoteRequestForAction(id);
   if (!loaded) return { status: 'not_found' };
@@ -213,13 +217,19 @@ export async function disqualifyQuoteRequest(id) {
         AND source = 'quote_request'
     `;
   }
-  // Delete blobs (best-effort; ignore failures so DB row still goes).
+  // Delete blobs (best-effort; ignore failures so the status flip still goes).
   for (const f of loaded.files) {
     if (f.blob_url) {
       try { await del(f.blob_url); } catch (e) { console.warn('[quote-requests] blob delete failed', e?.message); }
     }
   }
   await sql`DELETE FROM quote_request_files WHERE quote_request_id = ${id}`;
-  await sql`DELETE FROM quote_requests WHERE id = ${id}`;
+  await sql`
+    UPDATE quote_requests
+       SET status = 'disqualified',
+           contact_id = NULL,
+           reviewed_at = COALESCE(reviewed_at, NOW())
+     WHERE id = ${id}
+  `;
   return { status: 'ok' };
 }

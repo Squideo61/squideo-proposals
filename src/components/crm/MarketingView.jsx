@@ -218,7 +218,7 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry }) 
   // after loading means the request failed — show a retry, never the misleading
   // "connect Google Ads" banner or a screen full of zeros.
   if (!data) return <LoadFailed onRetry={onRetry} />;
-  const t = data?.totals || { leads: 0, qualified: 0, won: 0, revenue: 0, spend: null, roas: null, costPerLead: null, conversionRate: 0 };
+  const t = data?.totals || { leads: 0, qualified: 0, disqualified: 0, won: 0, revenue: 0, spend: null, roas: null, costPerLead: null, conversionRate: 0, qualityRate: null };
   const channels = (data?.rows || []).slice().sort((a, b) => b.leads - a.leads);
   const chartData = channels.map((r) => ({ name: prettyChannel(r.key), leads: r.leads, revenue: r.revenue, key: r.key }));
 
@@ -233,7 +233,14 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry }) 
       )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
         <Card label="Leads" value={t.leads} />
-        <Card label="Qualified" value={t.qualified} sub={t.leads ? Math.round((t.qualified / t.leads) * 100) + '% of leads' : null} />
+        <Card label="Qualified" value={t.qualified} sub={t.leads ? Math.round((t.qualified / t.leads) * 100) + '% of leads' : null} accent="#16A34A" />
+        <Card label="Disqualified" value={t.disqualified ?? 0} sub={t.leads ? Math.round(((t.disqualified || 0) / t.leads) * 100) + '% of leads' : null} accent="#DC2626" />
+        <Card
+          label="Lead quality"
+          value={t.qualityRate == null ? '—' : Math.round(t.qualityRate) + '%'}
+          sub="qualified of reviewed"
+          accent={t.qualityRate != null && t.qualityRate >= 50 ? '#16A34A' : (t.qualityRate != null ? '#DC2626' : undefined)}
+        />
         <Card label="Won" value={t.won} sub={pct(t.conversionRate) + ' conversion'} accent="#16A34A" />
         <Card label="Revenue" value={formatGBP(t.revenue)} accent="#16A34A" />
         <Card label="Ad spend" value={dash(t.spend, formatGBP)} />
@@ -270,7 +277,7 @@ function ChannelTable({ rows, adsConfigured }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr style={{ background: BRAND.paper, textAlign: 'left' }}>
-            <Th>Channel</Th><Th right>Leads</Th><Th right>Won</Th><Th right>Revenue</Th>
+            <Th>Channel</Th><Th right>Leads</Th><Th right>Qualified</Th><Th right>Disqualified</Th><Th right>Quality</Th><Th right>Won</Th><Th right>Revenue</Th>
             {adsConfigured && <><Th right>Spend</Th><Th right>Cost/lead</Th><Th right>ROAS</Th></>}
           </tr>
         </thead>
@@ -279,6 +286,9 @@ function ChannelTable({ rows, adsConfigured }) {
             <tr key={r.key} style={{ borderTop: '1px solid ' + BRAND.border }}>
               <Td><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', background: CHANNEL_COLORS[r.key] || BRAND.muted, marginRight: 8 }} />{prettyChannel(r.key)}</Td>
               <Td right>{r.leads}</Td>
+              <Td right>{r.qualified ?? 0}</Td>
+              <Td right>{r.disqualified ?? 0}</Td>
+              <Td right>{r.qualityRate == null ? '—' : Math.round(r.qualityRate) + '%'}</Td>
               <Td right>{r.won}</Td>
               <Td right>{formatGBP(r.revenue)}</Td>
               {adsConfigured && <><Td right>{dash(r.spend, formatGBP)}</Td><Td right>{dash(r.costPerLead, formatGBP)}</Td><Td right>{fmtRoas(r.roas)}</Td></>}
@@ -323,6 +333,8 @@ function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured, onRetry
                 <Th onClick={() => sortBy('label')} clickable>{GROUP_OPTIONS.find((g) => g.key === groupBy)?.label}{arrow('label')}</Th>
                 <Th right onClick={() => sortBy('leads')} clickable>Leads{arrow('leads')}</Th>
                 <Th right onClick={() => sortBy('qualified')} clickable>Qualified{arrow('qualified')}</Th>
+                <Th right onClick={() => sortBy('disqualified')} clickable>Disq.{arrow('disqualified')}</Th>
+                <Th right onClick={() => sortBy('qualityRate')} clickable>Quality{arrow('qualityRate')}</Th>
                 <Th right onClick={() => sortBy('won')} clickable>Won{arrow('won')}</Th>
                 <Th right onClick={() => sortBy('conversionRate')} clickable>Conv.{arrow('conversionRate')}</Th>
                 <Th right onClick={() => sortBy('revenue')} clickable>Revenue{arrow('revenue')}</Th>
@@ -349,6 +361,8 @@ function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured, onRetry
                   </Td>
                   <Td right>{r.leads}</Td>
                   <Td right>{r.qualified}</Td>
+                  <Td right>{r.disqualified ?? 0}</Td>
+                  <Td right>{r.qualityRate == null ? '—' : Math.round(r.qualityRate) + '%'}</Td>
                   <Td right>{r.won}</Td>
                   <Td right>{pct(r.conversionRate)}</Td>
                   <Td right>{formatGBP(r.revenue)}</Td>
@@ -362,6 +376,8 @@ function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured, onRetry
                   <Td>Total</Td>
                   <Td right>{data.totals.leads}</Td>
                   <Td right>{data.totals.qualified}</Td>
+                  <Td right>{data.totals.disqualified ?? 0}</Td>
+                  <Td right>{data.totals.qualityRate == null ? '—' : Math.round(data.totals.qualityRate) + '%'}</Td>
                   <Td right>{data.totals.won}</Td>
                   <Td right>{pct(data.totals.conversionRate)}</Td>
                   <Td right>{formatGBP(data.totals.revenue)}</Td>
@@ -388,12 +404,35 @@ const STATUS_STYLE = {
 };
 
 function LeadsTab({ data, loading, onOpenDeal, onRetry }) {
+  const [filter, setFilter] = useState('all'); // all | new | qualified | disqualified
   if (loading && !data) return <Loading />;
   if (!data) return <LoadFailed onRetry={onRetry} />;
-  const leads = data?.leads || [];
-  if (leads.length === 0) return <Empty>No leads captured in this period yet.</Empty>;
+  const allLeads = data?.leads || [];
+  if (allLeads.length === 0) return <Empty>No leads captured in this period yet.</Empty>;
+  const counts = {
+    all: allLeads.length,
+    new: allLeads.filter((l) => (l.status || 'new') === 'new').length,
+    qualified: allLeads.filter((l) => l.status === 'qualified').length,
+    disqualified: allLeads.filter((l) => l.status === 'disqualified').length,
+  };
+  const FILTERS = [
+    { key: 'all', label: 'All' },
+    { key: 'new', label: 'New' },
+    { key: 'qualified', label: 'Qualified' },
+    { key: 'disqualified', label: 'Disqualified' },
+  ];
+  const leads = filter === 'all' ? allLeads : allLeads.filter((l) => (l.status || 'new') === filter);
   return (
-    <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12 }}>
+    <div>
+      <div style={{ display: 'inline-flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2, marginBottom: 16, flexWrap: 'wrap' }}>
+        {FILTERS.map((f) => (
+          <button key={f.key} onClick={() => setFilter(f.key)} style={segBtn(filter === f.key)}>
+            {f.label} <span style={{ opacity: 0.7 }}>{counts[f.key]}</span>
+          </button>
+        ))}
+      </div>
+      {leads.length === 0 ? <Empty>No {filter} leads in this period.</Empty> : (
+      <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr style={{ background: BRAND.paper, textAlign: 'left' }}>
@@ -425,6 +464,8 @@ function LeadsTab({ data, loading, onOpenDeal, onRetry }) {
           })}
         </tbody>
       </table>
+      </div>
+      )}
     </div>
   );
 }
