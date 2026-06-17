@@ -371,7 +371,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               set.has(email) ? set.delete(email) : set.add(email);
               actions.saveDeal(dealId, { producerEmails: Array.from(set) });
             }}
-            emptyLabel="No producers assigned"
+            emptyLabel="No team members assigned"
           />
         </div>
         {!productionOnly && (
