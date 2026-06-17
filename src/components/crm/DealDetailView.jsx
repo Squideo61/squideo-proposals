@@ -324,7 +324,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
           <Field icon={User} label="Primary contact">
-            {contact ? <>{contact.name || contact.email}{contact.email && contact.name ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {contact.email}</span> : null}{contact.phone ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {contact.phone}</span> : null}</> : <span style={{ color: BRAND.muted }}>—</span>}
+            {contact ? <>{contact.name || contact.email}{contact.email && contact.name ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {contact.email}</span> : null}{contact.phone ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · <a href={`tel:${contact.phone.replace(/\s+/g, '')}`} style={{ color: BRAND.blue, textDecoration: 'none' }} title="Call this contact">{contact.phone}</a></span> : null}</> : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
           <Field label="Value (ex VAT)">
             {dealValueInfo.value != null
