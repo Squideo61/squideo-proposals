@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Coins, Plus, FolderOpen } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
-import { useIsMobile } from '../utils.js';
+import { formatGBP, useIsMobile } from '../utils.js';
 import { api } from '../api.js';
 import { Modal } from './ui.jsx';
 import { PartnerMeetingsButton } from './PartnerMeetingsButton.jsx';
@@ -158,25 +158,21 @@ export function PartnerCreditsView({ onBack, onOpen, onOpenDeal }) {
                         <div style={{ fontSize: 11, color: BRAND.muted }}>
                           {row.status === 'active'
                             ? `${row.subscriptions.active} active / ${row.subscriptions.count} subscription${row.subscriptions.count === 1 ? '' : 's'}`
-                            : row.status === 'credits_only'
-                              ? 'Credits only'
-                              : 'No active subscription'}
+                            : (row.paused
+                                ? 'Paused — using up credits'
+                                : row.status === 'credits_only'
+                                  ? 'Credits only'
+                                  : 'No active subscription')}
                         </div>
                       </td>
                       <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                        <StatusPill status={row.status} />
+                        <StatusPill status={row.status} paused={row.paused} />
                       </td>
                       <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtCredits(issued)}</td>
                       <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtCredits(used)}</td>
                       <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{fmtCredits(row.creditsRemaining)}</td>
                       <td style={{ padding: '12px 8px', textAlign: 'right' }}>
-                        <MonthlyFeeCell
-                          row={row}
-                          onSave={(v) => actions.setPartnerManualFee(row.clientKey, v)
-                            .then(() => actions.fetchPartnerCreditsList())
-                            .then(() => showMsg('Monthly spend saved'))
-                            .catch((err) => showMsg(err?.message || 'Could not save'))}
-                        />
+                        <MonthlyFeeCell row={row} />
                       </td>
                       <td style={{ padding: '12px 8px', textAlign: 'right' }}>
                         <VatRateCell
@@ -239,7 +235,6 @@ function ProjectCreditsSection({ projects, isMobile, onOpenDeal }) {
             <thead>
               <tr style={{ borderBottom: '1px solid ' + BRAND.border, color: BRAND.muted, textAlign: 'left' }}>
                 <Th>Project</Th>
-                <Th align="center">Status</Th>
                 <Th align="right">Issued</Th>
                 <Th align="right">Used</Th>
                 <Th align="right">Remaining</Th>
@@ -268,9 +263,6 @@ function ProjectCreditsSection({ projects, isMobile, onOpenDeal }) {
                         {p.companyName && p.dealTitle ? ` · ${p.dealTitle}` : ''}
                       </div>
                     </td>
-                    <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                      <ProjectStatusPill status={p.status} />
-                    </td>
                     <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtCredits(issued)}</td>
                     <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtCredits(used)}</td>
                     <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: remaining < 0 ? '#DC2626' : undefined }}>{fmtCredits(remaining)}</td>
@@ -293,58 +285,19 @@ function ProjectCreditsSection({ projects, isMobile, onOpenDeal }) {
   );
 }
 
-function ProjectStatusPill({ status }) {
-  const map = {
-    active:    { bg: '#DBEAFE', fg: '#1E40AF', label: 'Active' },
-    completed: { bg: '#DCFCE7', fg: '#15803D', label: 'Completed' },
-    archived:  { bg: '#F3F4F6', fg: '#6B7280', label: 'Archived' },
-  };
-  const s = map[status] || map.active;
+// Read-only monthly spend (ex-VAT). Editing lives on the client page — this
+// view just shows the figure. An "auto" hint flags figures derived from the
+// signed proposal rather than set by hand.
+function MonthlyFeeCell({ row }) {
+  const amount = Number(row.monthlyNet) || 0;
   return (
-    <span style={{
-      display: 'inline-block', padding: '3px 10px', borderRadius: 999,
-      fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
-      background: s.bg, color: s.fg,
-    }}>{s.label}</span>
-  );
-}
-
-// Inline editable monthly spend (ex-VAT). Click stops the row opening; saves on
-// blur / Enter only when the value actually changed. Shows an "auto" hint when
-// the figure is derived from the signed proposal rather than set by hand.
-function MonthlyFeeCell({ row, onSave }) {
-  const initial = row.monthlyNet != null && row.monthlyNet !== 0 ? String(row.monthlyNet) : '';
-  const [val, setVal] = useState(initial);
-  const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    setVal(row.monthlyNet != null && row.monthlyNet !== 0 ? String(row.monthlyNet) : '');
-  }, [row.monthlyNet]);
-  const commit = () => {
-    const current = Number(row.monthlyNet) || 0;
-    const next = parseFloat(val) || 0;
-    if (next === current) return;
-    setSaving(true);
-    Promise.resolve(onSave(next)).finally(() => setSaving(false));
-  };
-  return (
-    <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
-      {!row.manualFee && (Number(row.monthlyNet) || 0) > 0 && (
-        <span title="Derived from the signed partner proposal — type to override" style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>auto</span>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end', fontVariantNumeric: 'tabular-nums' }}>
+      {!row.manualFee && amount > 0 && (
+        <span title="Derived from the signed partner proposal" style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>auto</span>
       )}
-      <span style={{ color: BRAND.muted, fontSize: 12 }}>£</span>
-      <input
-        type="number"
-        step="0.01"
-        min="0"
-        value={val}
-        onChange={(e) => setVal(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
-        placeholder="0.00"
-        disabled={saving}
-        title="Monthly spend, ex-VAT — feeds the Finance Pending Payments total"
-        style={{ width: 84, padding: '4px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
-      />
+      <span title="Monthly spend, ex-VAT — edit it on the client page">
+        {amount > 0 ? formatGBP(amount) : <span style={{ color: BRAND.muted }}>—</span>}
+      </span>
     </span>
   );
 }
@@ -416,13 +369,17 @@ function Th({ children, align }) {
   );
 }
 
-function StatusPill({ status }) {
+function StatusPill({ status, paused }) {
   const map = {
     active:       { bg: '#DCFCE7', fg: '#15803D', label: 'Subscription' },
     credits_only: { bg: '#DBEAFE', fg: '#1E40AF', label: 'Credits Only' },
     inactive:     { bg: '#F3F4F6', fg: '#6B7280', label: 'Inactive' },
   };
-  const s = map[status] || map.inactive;
+  // A paused subscription shows over the credits-only/inactive rollup so the
+  // pause is visible at a glance (an active sub still wins).
+  const s = (paused && status !== 'active')
+    ? { bg: '#FEF3C7', fg: '#B45309', label: 'Paused' }
+    : (map[status] || map.inactive);
   return (
     <span style={{
       display: 'inline-block',

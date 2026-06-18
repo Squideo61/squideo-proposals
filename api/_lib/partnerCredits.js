@@ -64,6 +64,7 @@ export async function creditTotalsForKeys(keys) {
         COALESCE(SUM(issued_from_sub), 0)::NUMERIC AS sub_issued,
         GREATEST(MAX(last_recurring), MAX(initial_paid)) AS last_payment_at,
         BOOL_OR(status = 'active') AS any_active,
+        BOOL_OR(status = 'paused') AS any_paused,
         BOOL_OR(is_recurring_active) AS any_recurring_active,
         BOOL_OR(is_credits_only) AS any_credits_only
       FROM sub_totals
@@ -89,6 +90,7 @@ export async function creditTotalsForKeys(keys) {
       (s.sub_issued + COALESCE(m.adj_added, 0)
         - COALESCE(m.work_used, 0) - COALESCE(m.adj_removed, 0))                 AS credits_remaining,
       s.last_payment_at,
+      s.any_paused,
       CASE
         WHEN s.any_recurring_active THEN 'active'
         WHEN s.any_credits_only

@@ -295,6 +295,7 @@ async function listCredits(res) {
       creditsRemaining,
       lastPaymentAt: r.last_payment_at,
       status: r.status,
+      paused: !!r.any_paused,
       monthlyNet,
       vatRate: r2(vatRate),
       monthlyVat: r2(monthlyNet * vatRate),
@@ -400,6 +401,31 @@ async function clientDetail(res, key) {
   if (subscriptions.length === 0) {
     return res.status(404).json({ error: 'Client not found' });
   }
+
+  // Monthly spend (ex-VAT) + VAT rate for the header. Mirrors listCredits: a
+  // hand-set manual fee wins; otherwise it's derived from the latest signed
+  // partner proposal. Edited on this page (read-only in the list).
+  const [manualFeeRow] = await sql`
+    SELECT monthly_net, vat_rate FROM partner_manual_fees WHERE client_key = ${key}
+  `;
+  const [feeRow] = await sql`
+    SELECT (sg.data->'amountBreakdown'->>'partnerExVat')::numeric AS partner_ex_vat,
+           NULLIF(sg.data->>'vatRate', '')::numeric               AS vat_rate
+      FROM partner_subscriptions ps
+      JOIN signatures sg ON sg.proposal_id = ps.proposal_id
+     WHERE ps.client_key = ${key}
+       AND (sg.data->'amountBreakdown'->>'partnerExVat') IS NOT NULL
+     ORDER BY sg.signed_at DESC NULLS LAST
+     LIMIT 1
+  `;
+  const hasManualRow = !!manualFeeRow;
+  const manualMonthly = hasManualRow && manualFeeRow.monthly_net != null ? Number(manualFeeRow.monthly_net) : null;
+  const autoNet = feeRow && feeRow.partner_ex_vat != null ? Number(feeRow.partner_ex_vat) : 0;
+  const monthlyNet = manualMonthly != null ? r2(manualMonthly) : r2(autoNet);
+  const vatRate = hasManualRow
+    ? (manualFeeRow.vat_rate == null ? 0.20 : Number(manualFeeRow.vat_rate))
+    : (feeRow && feeRow.vat_rate != null ? Number(feeRow.vat_rate) : 0.20);
+  const manualFee = manualMonthly != null;
 
   const formatProposalNumber = (year, seq) => {
     if (!year || !seq) return null;
@@ -511,6 +537,9 @@ async function clientDetail(res, key) {
     clientKey: key,
     clientName,
     status,
+    monthlyNet,
+    vatRate: r2(vatRate),
+    manualFee,
     subscriptions: subs,
     payments,
     allocations: allocationList,

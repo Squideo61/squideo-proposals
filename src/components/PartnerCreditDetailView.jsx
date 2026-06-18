@@ -97,6 +97,18 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
               {subscriptions.length} subscription{subscriptions.length === 1 ? '' : 's'} on file
             </span>
           </div>
+          <MonthlyFeeEditor
+            monthlyNet={detail.monthlyNet}
+            vatRate={detail.vatRate}
+            manualFee={detail.manualFee}
+            onSave={(v) => actions.setPartnerManualFee(clientKey, v)
+              .then(() => Promise.all([
+                actions.fetchPartnerCreditDetail(clientKey),
+                actions.fetchPartnerCreditsList(),
+              ]))
+              .then(() => showMsg('Monthly spend saved'))
+              .catch((err) => { showMsg(err?.message || 'Could not save'); throw err; })}
+          />
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <PartnerMeetingsButton clientKey={clientKey} clientName={clientName || clientKey} primary />
@@ -880,6 +892,75 @@ function DetailField({ label, children }) {
     <div>
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: BRAND.muted, marginBottom: 4 }}>{label}</div>
       {children}
+    </div>
+  );
+}
+
+// Monthly spend (ex-VAT) — set here on the client page (read-only in the
+// Partners & Credits list). Feeds the Finance Pending-Payments total. An "auto"
+// hint flags figures derived from the signed proposal rather than set by hand.
+function MonthlyFeeEditor({ monthlyNet, vatRate, manualFee, onSave }) {
+  const amount = Number(monthlyNet) || 0;
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(amount ? String(amount) : '');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setVal((Number(monthlyNet) || 0) ? String(monthlyNet) : ''); }, [monthlyNet]);
+
+  const vatPct = vatRate != null ? Math.round(Number(vatRate) * 100) : 20;
+
+  const commit = async () => {
+    const next = parseFloat(val) || 0;
+    if (next === amount) { setEditing(false); return; }
+    setSaving(true);
+    try { await onSave(next); setEditing(false); }
+    catch { /* message shown by caller */ }
+    finally { setSaving(false); }
+  };
+
+  if (editing) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+        <span style={{ fontSize: 12, color: BRAND.muted }}>£</span>
+        <input
+          type="number" step="0.01" min="0" autoFocus
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') { setVal(amount ? String(amount) : ''); setEditing(false); }
+          }}
+          disabled={saving}
+          placeholder="0.00"
+          style={{ width: 110, padding: '5px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+        />
+        <span style={{ fontSize: 12, color: BRAND.muted }}>ex VAT / mo</span>
+        <button type="button" onClick={commit} disabled={saving} className="btn" style={{ padding: '4px 10px', fontSize: 12 }}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button type="button" onClick={() => { setVal(amount ? String(amount) : ''); setEditing(false); }} disabled={saving} className="btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 13 }}>
+      <span style={{ color: BRAND.muted }}>Monthly spend</span>
+      <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+        {amount > 0 ? `${formatGBP(amount)} ex VAT` : '—'}
+      </span>
+      {amount > 0 && <span style={{ color: BRAND.muted, fontSize: 12 }}>· {vatPct}% VAT</span>}
+      {amount > 0 && !manualFee && (
+        <span title="Derived from the signed partner proposal" style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>auto</span>
+      )}
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="btn-icon"
+        aria-label="Edit monthly spend"
+        title="Edit monthly spend"
+      ><Pencil size={13} /></button>
     </div>
   );
 }
