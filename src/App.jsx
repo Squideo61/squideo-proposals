@@ -623,6 +623,7 @@ function AppShell() {
         <PartnerCreditsView
           onBack={() => navigate('list')}
           onOpen={(clientKey) => navigate('partner-credit-detail', clientKey)}
+          onOpenDeal={(id) => navigate('deal', id)}
         />
       )}
       {view === 'partner-credit-detail' && activeId && (

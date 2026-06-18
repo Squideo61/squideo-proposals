@@ -39,6 +39,11 @@ export default async function handler(req, res) {
       return await clientDetail(res, key);
     }
 
+    if (action === 'project-credits') {
+      if (req.method !== 'GET') return res.status(405).end();
+      return await listProjectCredits(res);
+    }
+
     if (action === 'allocations') {
       if (req.method === 'POST')   return await logAllocation(req, res, user);
       if (req.method === 'DELETE') {
@@ -301,6 +306,44 @@ async function listCredits(res) {
     };
   });
 
+  return res.status(200).json(list);
+}
+
+// GET /api/partner/project-credits — every credits-type deal "credit based
+// project" (project_retainers) across all deals, with its company/deal context
+// and issued/used/remaining. Mirrored into the Partners & Credits page so all
+// credit balances live in one place. Money-budget retainers are excluded — they
+// don't fit the credit columns. Read-only here; logging happens on the deal.
+async function listProjectCredits(res) {
+  const rows = await sql`
+    SELECT r.id, r.deal_id, r.title, r.status, r.allocation_amount, r.created_at,
+           d.title AS deal_title, d.company_id,
+           co.name AS company_name,
+           COALESCE((
+             SELECT SUM(e.value) FROM project_retainer_entries e WHERE e.retainer_id = r.id
+           ), 0) AS used
+      FROM project_retainers r
+      JOIN deals d ON d.id = r.deal_id
+      LEFT JOIN companies co ON co.id = d.company_id
+     WHERE r.allocation_type = 'credits'
+     ORDER BY (r.status = 'active') DESC, r.created_at DESC
+  `;
+  const list = rows.map(r => {
+    const issued = Number(r.allocation_amount) || 0;
+    const used = Number(r.used) || 0;
+    return {
+      id: r.id,
+      title: r.title,
+      dealId: r.deal_id,
+      dealTitle: r.deal_title || null,
+      companyId: r.company_id || null,
+      companyName: r.company_name || null,
+      status: r.status || 'active',
+      creditsIssued: issued,
+      creditsUsed: used,
+      creditsRemaining: issued - used,
+    };
+  });
   return res.status(200).json(list);
 }
 

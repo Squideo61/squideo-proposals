@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Coins, Plus } from 'lucide-react';
+import { ArrowLeft, Coins, Plus, FolderOpen } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { useIsMobile } from '../utils.js';
+import { api } from '../api.js';
 import { Modal } from './ui.jsx';
 import { PartnerMeetingsButton } from './PartnerMeetingsButton.jsx';
 
@@ -18,11 +19,12 @@ function fmtDate(s) {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export function PartnerCreditsView({ onBack, onOpen }) {
+export function PartnerCreditsView({ onBack, onOpen, onOpenDeal }) {
   const { state, actions, showMsg } = useStore();
   const [loading, setLoading] = useState(state.partnerCreditsList === null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [filter, setFilter] = useState('all'); // 'all' | 'active' | 'credits_only'
+  const [projectCredits, setProjectCredits] = useState(null);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -31,6 +33,16 @@ export function PartnerCreditsView({ onBack, onOpen }) {
     actions.fetchPartnerCreditsList().finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [actions]);
+
+  // Deal "credit based projects" (credits-type) mirrored from across all deals,
+  // shown as a separate section below the partner clients.
+  useEffect(() => {
+    let active = true;
+    api.get('/api/partner/project-credits')
+      .then((rows) => { if (active) setProjectCredits(rows || []); })
+      .catch(() => { if (active) setProjectCredits([]); });
+    return () => { active = false; };
+  }, []);
 
   const list = state.partnerCreditsList || [];
   const counts = {
@@ -204,7 +216,96 @@ export function PartnerCreditsView({ onBack, onOpen }) {
           </div>
         </Card>
       )}
+
+      <ProjectCreditsSection projects={projectCredits} isMobile={isMobile} onOpenDeal={onOpenDeal} />
     </div>
+  );
+}
+
+// Deal credit-based projects (credits-type), mirrored from the deal pages so the
+// whole credit picture lives here. Read-only — click a row to open its deal.
+function ProjectCreditsSection({ projects, isMobile, onOpenDeal }) {
+  if (!projects || projects.length === 0) return null;
+  return (
+    <div style={{ marginTop: 32 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <FolderOpen size={18} color={BRAND.blue} />
+        <h2 style={{ fontSize: 17, fontWeight: 600, margin: 0 }}>Current Projects</h2>
+        <span style={{ fontSize: 12, color: BRAND.muted }}>({projects.length})</span>
+      </div>
+      <Card>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid ' + BRAND.border, color: BRAND.muted, textAlign: 'left' }}>
+                <Th>Project</Th>
+                <Th align="center">Status</Th>
+                <Th align="right">Issued</Th>
+                <Th align="right">Used</Th>
+                <Th align="right">Remaining</Th>
+                {!isMobile && <Th>Usage</Th>}
+              </tr>
+            </thead>
+            <tbody>
+              {projects.map(p => {
+                const issued = Number(p.creditsIssued) || 0;
+                const used = Number(p.creditsUsed) || 0;
+                const pct = issued > 0 ? Math.min(100, Math.round((used / issued) * 100)) : 0;
+                const remaining = Number(p.creditsRemaining) || 0;
+                const clickable = !!(onOpenDeal && p.dealId);
+                return (
+                  <tr
+                    key={p.id}
+                    onClick={clickable ? () => onOpenDeal(p.dealId) : undefined}
+                    style={{ borderBottom: '1px solid ' + BRAND.border, cursor: clickable ? 'pointer' : 'default' }}
+                    onMouseEnter={(e) => { if (clickable) e.currentTarget.style.background = '#F8FAFC'; }}
+                    onMouseLeave={(e) => { if (clickable) e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <td style={{ padding: '12px 8px' }}>
+                      <div style={{ fontWeight: 600 }}>{p.title}</div>
+                      <div style={{ fontSize: 11, color: BRAND.muted }}>
+                        {p.companyName || p.dealTitle || '—'}
+                        {p.companyName && p.dealTitle ? ` · ${p.dealTitle}` : ''}
+                      </div>
+                    </td>
+                    <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                      <ProjectStatusPill status={p.status} />
+                    </td>
+                    <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtCredits(issued)}</td>
+                    <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtCredits(used)}</td>
+                    <td style={{ padding: '12px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: remaining < 0 ? '#DC2626' : undefined }}>{fmtCredits(remaining)}</td>
+                    {!isMobile && (
+                      <td style={{ padding: '12px 8px', minWidth: 160 }}>
+                        <div style={{ background: BRAND.border, borderRadius: 999, height: 8, overflow: 'hidden' }}>
+                          <div style={{ width: pct + '%', background: pct >= 90 ? '#EF4444' : pct >= 70 ? '#F59E0B' : BRAND.blue, height: '100%' }} />
+                        </div>
+                        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>{pct}%</div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function ProjectStatusPill({ status }) {
+  const map = {
+    active:    { bg: '#DBEAFE', fg: '#1E40AF', label: 'Active' },
+    completed: { bg: '#DCFCE7', fg: '#15803D', label: 'Completed' },
+    archived:  { bg: '#F3F4F6', fg: '#6B7280', label: 'Archived' },
+  };
+  const s = map[status] || map.active;
+  return (
+    <span style={{
+      display: 'inline-block', padding: '3px 10px', borderRadius: 999,
+      fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
+      background: s.bg, color: s.fg,
+    }}>{s.label}</span>
   );
 }
 
