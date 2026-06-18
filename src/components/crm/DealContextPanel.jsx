@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, Plus, X, Search, FileText, ChevronDown, Check } from 'lucide-react';
+import { ExternalLink, Plus, X, Search, FileText, ChevronDown, Check, Pencil } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
@@ -195,15 +195,7 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
     <>
       <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12, marginBottom: 14 }}>
         <Row><DealMetaKey>Stage</DealMetaKey><StageDropdown dealId={detail.id} stage={detail.stage} /></Row>
-        {valueInfo.value != null && (
-          <Row>
-            <DealMetaKey>Value</DealMetaKey>
-            <span style={{ fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              £{Number(valueInfo.value).toLocaleString('en-GB')}
-              {valueInfo.signed && <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: '#16A34A' }}>SIGNED</span>}
-            </span>
-          </Row>
-        )}
+        <ValueRow dealId={detail.id} valueInfo={valueInfo} />
         {detail.ownerEmail && (
           <Row>
             <DealMetaKey>Owner</DealMetaKey>
@@ -212,6 +204,21 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
               <span style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={detail.ownerEmail}>
                 {state.users?.[detail.ownerEmail]?.name || detail.ownerEmail}
               </span>
+            </span>
+          </Row>
+        )}
+        {detail.primaryContact && (
+          <Row>
+            <DealMetaKey>Contact</DealMetaKey>
+            <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 0, maxWidth: 180 }}>
+              <span style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }} title={detail.primaryContact.name || detail.primaryContact.email}>
+                {detail.primaryContact.name || detail.primaryContact.email}
+              </span>
+              {detail.primaryContact.name && detail.primaryContact.email && (
+                <a href={`mailto:${detail.primaryContact.email}`} style={{ fontSize: 11, color: BRAND.blue, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }} title={detail.primaryContact.email}>
+                  {detail.primaryContact.email}
+                </a>
+              )}
             </span>
           </Row>
         )}
@@ -538,6 +545,89 @@ function StageBadge({ stage, compact }) {
     <span style={{ display: 'inline-block', padding: compact ? '1px 6px' : '2px 8px', borderRadius: 4, background: c.bg, color: c.fg, fontSize: compact ? 10 : 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>
       {STAGE_LABEL[stage] || stage}
     </span>
+  );
+}
+
+// Editable deal value. A signed proposal is the authoritative figure, so it's
+// shown read-only with a SIGNED badge; otherwise the manual deal value can be
+// edited inline (and an unsigned proposal's value still flows through via the
+// caller's valueInfo precedence). Saves to the deal's `value` field.
+function ValueRow({ dealId, valueInfo }) {
+  const { actions, showMsg } = useStore();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const savingRef = useRef(false);
+
+  const start = () => {
+    setDraft(valueInfo.value != null ? String(valueInfo.value) : '');
+    setEditing(true);
+  };
+
+  const commit = async (persist) => {
+    if (savingRef.current) return;
+    if (!persist) { setEditing(false); return; }
+    const raw = draft.trim().replace(/[£,\s]/g, '');
+    const num = raw === '' ? null : Number(raw);
+    if (raw !== '' && !Number.isFinite(num)) { showMsg('Enter a valid number'); return; }
+    savingRef.current = true;
+    try {
+      await actions.saveDeal(dealId, { value: num });
+      setEditing(false);
+    } catch (e) {
+      showMsg(e?.message || 'Could not save value');
+    } finally {
+      savingRef.current = false;
+    }
+  };
+
+  if (valueInfo.signed) {
+    return (
+      <Row>
+        <DealMetaKey>Value</DealMetaKey>
+        <span style={{ fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          £{Number(valueInfo.value).toLocaleString('en-GB')}
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: '#16A34A' }}>SIGNED</span>
+        </span>
+      </Row>
+    );
+  }
+
+  if (editing) {
+    return (
+      <Row>
+        <DealMetaKey>Value</DealMetaKey>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+          <span style={{ fontSize: 13, color: BRAND.muted }}>£</span>
+          <input
+            autoFocus
+            className="input"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(true); } if (e.key === 'Escape') { e.preventDefault(); commit(false); } }}
+            onBlur={() => commit(true)}
+            inputMode="decimal"
+            placeholder="0"
+            style={{ width: 90, fontSize: 12, padding: '2px 6px', textAlign: 'right' }}
+          />
+        </span>
+      </Row>
+    );
+  }
+
+  return (
+    <Row>
+      <DealMetaKey>Value</DealMetaKey>
+      <button
+        onClick={start}
+        title="Click to edit deal value"
+        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 5, color: BRAND.ink }}
+      >
+        {valueInfo.value != null
+          ? <span style={{ fontSize: 13, fontWeight: 600 }}>£{Number(valueInfo.value).toLocaleString('en-GB')}</span>
+          : <span style={{ fontSize: 12, color: BRAND.muted }}>Add value</span>}
+        <Pencil size={11} style={{ opacity: 0.5 }} />
+      </button>
+    </Row>
   );
 }
 
