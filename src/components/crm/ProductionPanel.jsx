@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Clapperboard, Film, Plus, Trash2, Send, Coins, ExternalLink, ChevronRight } from 'lucide-react';
+import { Clapperboard, Film, Plus, Trash2, Send, Coins, ExternalLink, ChevronRight, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_LABEL } from '../../lib/productionStages.js';
 import { VideoProgressBar } from './ProductionProgressBar.jsx';
+import { Modal } from '../ui.jsx';
 
 // The project's videos + pre-paid credit balance. Each video moves through the
 // board independently and is edited on its own page (onOpenVideo); this panel
@@ -12,6 +13,7 @@ export function ProductionPanel({ dealId, deal, videos, isMobile, onOpenVideo })
   const { actions, showMsg } = useStore();
   const inProduction = !!deal.productionPhase;
   const credits = deal.productionCredits || 0;
+  const [addOpen, setAddOpen] = useState(false);
 
   const container = {
     background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12,
@@ -34,10 +36,13 @@ export function ProductionPanel({ dealId, deal, videos, isMobile, onOpenVideo })
     );
   }
 
-  const addVideo = () => {
-    const title = (window.prompt('Name this video (e.g. "Hero film", "Cutdown 30s"):') || '').trim();
-    if (title === '' && !window.confirm('Add a video with a default name?')) return;
-    actions.addProjectVideo(dealId, title || null).catch(e => showMsg(e.message || 'Could not add video'));
+  // Add one-or-many videos at once: the modal collects a list of names, then we
+  // create them in order so they land on the board in the order they were typed.
+  const createVideos = async (titles) => {
+    for (const t of titles) {
+      // eslint-disable-next-line no-await-in-loop
+      await actions.addProjectVideo(dealId, t || null);
+    }
   };
   const addCredits = () => {
     const raw = window.prompt('How many credits to add?', '1');
@@ -65,8 +70,16 @@ export function ProductionPanel({ dealId, deal, videos, isMobile, onOpenVideo })
         )}
         {credits > 0 && <button className="btn-ghost" onClick={useCredit}>Use a credit</button>}
         <button className="btn-ghost" onClick={addCredits}><Coins size={14} /> Add credits</button>
-        <button className="btn" onClick={addVideo}><Plus size={14} /> Add video</button>
+        <button className="btn" onClick={() => setAddOpen(true)}><Plus size={14} /> Add video</button>
       </div>
+
+      {addOpen && (
+        <AddVideosModal
+          onClose={() => setAddOpen(false)}
+          onCreate={createVideos}
+          showMsg={showMsg}
+        />
+      )}
 
       {videos.length === 0 ? (
         <div style={{ color: BRAND.muted, fontSize: 13, fontStyle: 'italic', padding: '8px 0' }}>
@@ -78,6 +91,94 @@ export function ProductionPanel({ dealId, deal, videos, isMobile, onOpenVideo })
         </div>
       )}
     </div>
+  );
+}
+
+// Name one or many videos before creating them. Starts on a single "Video 1"
+// row; "Add another" appends "Video N" (editable). All rows are created in order
+// when you hit the button.
+function AddVideosModal({ onClose, onCreate, showMsg }) {
+  const [names, setNames] = useState(['Video 1']);
+  const [saving, setSaving] = useState(false);
+
+  const setAt = (i, val) => setNames(arr => arr.map((n, idx) => (idx === i ? val : n)));
+  const addRow = () => setNames(arr => [...arr, `Video ${arr.length + 1}`]);
+  const removeRow = (i) => setNames(arr => (arr.length <= 1 ? arr : arr.filter((_, idx) => idx !== i)));
+
+  const submit = async () => {
+    if (saving) return;
+    const titles = names.map(n => n.trim());
+    setSaving(true);
+    try {
+      await onCreate(titles);
+      onClose();
+    } catch (e) {
+      showMsg(e.message || 'Could not add video');
+      setSaving(false);
+    }
+  };
+
+  const count = names.length;
+  return (
+    <Modal onClose={saving ? undefined : onClose} maxWidth={460}>
+      <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Add {count === 1 ? 'a video' : `${count} videos`}</h2>
+      <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 16 }}>
+        Name each video (e.g. “Hero film”, “Cutdown 30s”). You can add as many as you like.
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {names.map((name, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Film size={16} color={BRAND.muted} style={{ flexShrink: 0 }} />
+            <input
+              autoFocus={i === names.length - 1}
+              value={name}
+              onChange={e => setAt(i, e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+              placeholder={`Video ${i + 1}`}
+              disabled={saving}
+              style={{
+                flex: 1, padding: '8px 10px', fontSize: 14,
+                border: '1px solid ' + BRAND.border, borderRadius: 8,
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => removeRow(i)}
+              disabled={saving || names.length <= 1}
+              aria-label="Remove video"
+              title="Remove"
+              style={{
+                flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 30, height: 30, borderRadius: 8, border: '1px solid ' + BRAND.border,
+                background: 'white', color: BRAND.muted,
+                cursor: names.length <= 1 ? 'default' : 'pointer',
+                opacity: names.length <= 1 ? 0.4 : 1,
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        className="btn-ghost"
+        onClick={addRow}
+        disabled={saving}
+        style={{ marginTop: 10 }}
+      >
+        <Plus size={14} /> Add video
+      </button>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+        <button type="button" className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+        <button type="button" className="btn" onClick={submit} disabled={saving}>
+          {saving ? 'Adding…' : `Add ${count === 1 ? 'video' : `${count} videos`}`}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
