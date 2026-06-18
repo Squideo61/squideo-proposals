@@ -4,6 +4,7 @@ import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { updateContactAddress, getOrCreateContact } from '../xero.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
+import { creditTotalsForKeys } from '../partnerCredits.js';
 
 // Self-heal for db/migrations/20260603_company_address.sql. Called at the top of
 // every companies code path so a workspace that skipped the manual Neon apply
@@ -250,6 +251,112 @@ export async function companiesRoute(req, res, id, action, user) {
         balance: dealBalances[d.id] || null,
       })),
     });
+  }
+
+  // GET /companies/:id/credits — a read-only mirror of every credit allocated
+  // against this company, from both sources: deal "credit based projects"
+  // (project_retainers across all the company's deals) and partner credits
+  // (partner_subscriptions / credit_allocations matched to the company).
+  if (action === 'credits' && req.method === 'GET') {
+    const [companyRow] = await sql`SELECT id, name, xero_contact_id FROM companies WHERE id = ${id}`;
+    if (!companyRow) return res.status(404).json({ error: 'Not found' });
+
+    // --- Deal credit-based projects (mirrors retainersRoute's read, by company)
+    const retainerRows = await sql`
+      SELECT r.id, r.deal_id, r.contact_id, r.title,
+             r.allocation_type, r.allocation_amount, r.currency,
+             r.notes, r.status, r.created_at,
+             d.title AS deal_title,
+             c.name AS contact_name
+        FROM project_retainers r
+        JOIN deals d ON d.id = r.deal_id
+        LEFT JOIN contacts c ON c.id = r.contact_id
+       WHERE d.company_id = ${id}
+       ORDER BY r.created_at ASC
+    `;
+    let retainers = [];
+    if (retainerRows.length) {
+      const retainerIds = retainerRows.map(r => r.id);
+      const entryRows = await sql`
+        SELECT e.id, e.retainer_id, e.description, e.value, e.worked_at
+          FROM project_retainer_entries e
+         WHERE e.retainer_id = ANY(${retainerIds})
+         ORDER BY e.worked_at DESC, e.created_at DESC
+      `;
+      const entriesByRetainer = new Map();
+      for (const e of entryRows) {
+        if (!entriesByRetainer.has(e.retainer_id)) entriesByRetainer.set(e.retainer_id, []);
+        entriesByRetainer.get(e.retainer_id).push({
+          id: e.id,
+          description: e.description,
+          value: Number(e.value),
+          workedAt: e.worked_at,
+        });
+      }
+      retainers = retainerRows.map(r => ({
+        id: r.id,
+        dealId: r.deal_id,
+        dealTitle: r.deal_title || null,
+        contactName: r.contact_name || null,
+        title: r.title,
+        allocationType: r.allocation_type,
+        allocationAmount: Number(r.allocation_amount),
+        currency: r.currency,
+        notes: r.notes || null,
+        status: r.status || 'active',
+        createdAt: r.created_at,
+        entries: entriesByRetainer.get(r.id) || [],
+      }));
+    }
+
+    // --- Partner credits matched to this company. No company_id on partner
+    // tables, so resolve client_keys three ways (deduped): proposal→deal→company,
+    // shared Xero contact, and an exact (case-insensitive) name match.
+    const keyRows = await sql`
+      SELECT DISTINCT ps.client_key
+        FROM partner_subscriptions ps
+        LEFT JOIN proposals p ON p.id = ps.proposal_id
+        LEFT JOIN deals d ON d.id = p.deal_id
+       WHERE d.company_id = ${id}
+          OR (${companyRow.xero_contact_id}::text IS NOT NULL AND ps.xero_contact_id = ${companyRow.xero_contact_id})
+          OR LOWER(ps.client_name) = LOWER(${companyRow.name})
+    `;
+    const clientKeys = keyRows.map(r => r.client_key);
+    let partnerCredits = [];
+    if (clientKeys.length) {
+      const [totals, allocRows] = await Promise.all([
+        creditTotalsForKeys(clientKeys),
+        sql`
+          SELECT id, client_key, description, credit_cost, kind, allocated_at, allocated_by
+            FROM credit_allocations
+           WHERE client_key = ANY(${clientKeys})
+           ORDER BY allocated_at DESC, id DESC
+        `,
+      ]);
+      const allocByClient = new Map();
+      for (const a of allocRows) {
+        if (!allocByClient.has(a.client_key)) allocByClient.set(a.client_key, []);
+        allocByClient.get(a.client_key).push({
+          id: a.id,
+          description: a.description,
+          creditCost: Number(a.credit_cost) || 0,
+          kind: a.kind || 'work',
+          allocatedAt: a.allocated_at,
+          allocatedBy: a.allocated_by || null,
+        });
+      }
+      partnerCredits = totals.map(t => ({
+        clientKey: t.client_key,
+        clientName: t.client_name,
+        status: t.status,
+        creditsIssued: Number(t.credits_issued) || 0,
+        creditsUsed: Number(t.credits_used) || 0,
+        creditsRemaining: Number(t.credits_remaining) || 0,
+        allocations: allocByClient.get(t.client_key) || [],
+      }));
+    }
+
+    return res.status(200).json({ retainers, partnerCredits });
   }
 
   // POST /companies/:id/create-xero-contact — create a brand-new Xero contact

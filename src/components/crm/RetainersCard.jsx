@@ -9,26 +9,7 @@ import { Modal } from '../ui.jsx';
 import { AddRetainerModal } from './AddRetainerModal.jsx';
 import { AddRetainerEntryModal } from './AddRetainerEntryModal.jsx';
 import { openRetainerPrintWindow } from '../../utils/printRetainer.js';
-
-function fmtMoney(n) {
-  return '£' + Number(n || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function fmtCredits(n) {
-  const v = Number(n) || 0;
-  return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, '');
-}
-
-function fmtValue(retainer, n) {
-  return retainer.allocationType === 'money'
-    ? fmtMoney(n)
-    : fmtCredits(n) + ' credits';
-}
-
-function fmtDate(d) {
-  if (!d) return '';
-  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-}
+import { fmtValue, fmtDate, creditBarMeta, CreditUsageBar } from './creditDisplay.jsx';
 
 export function RetainersCard({ dealId, contacts }) {
   const { showMsg, state } = useStore();
@@ -156,12 +137,8 @@ function RetainerSection({ retainer, isAdmin, onEdit, onLogWork, onPrint, onSetS
   const [open, setOpen] = useState(!dimmed);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const total = Number(retainer.allocationAmount) || 0;
-  const used  = (retainer.entries || []).reduce((s, e) => s + Number(e.value || 0), 0);
-  const remaining = total - used;
-  const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
-  const barColor = pct >= 90 ? '#DC2626' : pct >= 70 ? '#D97706' : '#16A34A';
-  const remainingColor = remaining < 0 ? '#DC2626' : remaining === 0 ? BRAND.muted : '#16A34A';
+  const used = (retainer.entries || []).reduce((s, e) => s + Number(e.value || 0), 0);
+  const { remaining, remainingColor } = creditBarMeta(retainer.allocationAmount, used);
 
   async function deleteEntry(entryId) {
     if (!window.confirm('Remove this work entry?')) return;
@@ -220,7 +197,7 @@ function RetainerSection({ retainer, isAdmin, onEdit, onLogWork, onPrint, onSetS
           )}
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: remainingColor }}>{fmtValue(retainer, remaining)}</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: remainingColor }}>{fmtValue(retainer.allocationType, remaining)}</div>
           <div style={{ fontSize: 10, color: BRAND.muted }}>remaining</div>
         </div>
         <button onClick={onLogWork} className="btn-ghost" style={{ fontSize: 12, padding: '4px 10px', whiteSpace: 'nowrap' }}>
@@ -232,21 +209,7 @@ function RetainerSection({ retainer, isAdmin, onEdit, onLogWork, onPrint, onSetS
       {open && (
         <div style={{ padding: 12 }}>
           {/* Progress bar */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: BRAND.muted, marginBottom: 4 }}>
-              <span>Used: <strong style={{ color: BRAND.ink }}>{fmtValue(retainer, used)}</strong></span>
-              <span>of <strong style={{ color: BRAND.ink }}>{fmtValue(retainer, total)}</strong></span>
-            </div>
-            <div style={{ background: BRAND.border, borderRadius: 4, height: 6, overflow: 'hidden' }}>
-              <div style={{ background: barColor, height: 6, width: Math.min(100, pct) + '%', borderRadius: 4, transition: 'width 0.3s' }} />
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 11 }}>
-              <span style={{ color: BRAND.muted }}>{Math.round(pct)}% used</span>
-              <span style={{ fontWeight: 600, color: remainingColor }}>
-                {remaining >= 0 ? fmtValue(retainer, remaining) + ' remaining' : fmtValue(retainer, Math.abs(remaining)) + ' over budget'}
-              </span>
-            </div>
-          </div>
+          <CreditUsageBar allocationType={retainer.allocationType} total={retainer.allocationAmount} used={used} />
 
           {/* Work log */}
           {retainer.entries.length === 0 ? (
@@ -269,7 +232,7 @@ function RetainerSection({ retainer, isAdmin, onEdit, onLogWork, onPrint, onSetS
                     <td style={{ padding: '6px 6px', color: BRAND.muted, whiteSpace: 'nowrap', borderBottom: '1px solid ' + BRAND.border }}>{fmtDate(e.workedAt)}</td>
                     <td style={{ padding: '6px 6px', color: BRAND.ink, borderBottom: '1px solid ' + BRAND.border }}>{e.description}</td>
                     <td style={{ padding: '6px 6px', color: BRAND.ink, fontWeight: 600, textAlign: 'right', whiteSpace: 'nowrap', borderBottom: '1px solid ' + BRAND.border }}>
-                      {fmtValue(retainer, e.value)}
+                      {fmtValue(retainer.allocationType, e.value)}
                     </td>
                     <td style={{ padding: '6px 4px', borderBottom: '1px solid ' + BRAND.border }}>
                       <button

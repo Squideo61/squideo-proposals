@@ -5,6 +5,7 @@ import { useStore } from '../../store.jsx';
 import { useIsMobile, formatGBP, formatRelativeTime, effectiveAddress, formatAddressLines } from '../../utils.js';
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
+import { CompanyCreditsCard } from './CompanyCreditsCard.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
@@ -285,6 +286,12 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
             {detail.notes}
           </div>
         )}
+      </div>
+
+      {/* Read-only mirror of all credits allocated to this company (deal
+          credit-based projects + matched partner credits). */}
+      <div style={{ marginBottom: 16 }}>
+        <CompanyCreditsCard companyId={companyId} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>
