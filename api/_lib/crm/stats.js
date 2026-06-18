@@ -735,6 +735,50 @@ async function fetchExtraRows(since, until, withMeta) {
   }
 }
 
+// Standalone ad-hoc invoices (issued or paid) in [since, until): manual invoices
+// whose effective deal has NO signed proposal — so they represent a sale the CRM
+// wouldn't otherwise know about (a signed deal's value is counted by signature,
+// and its deposit/final invoices must NOT double-count). Bucketed by issue date.
+// Used by the sales reports + trend so an invoice raised without a proposal still
+// counts as sales. Robust to the table not existing → [].
+async function fetchStandaloneInvoiceRows(since, until) {
+  try {
+    return await sql`
+      SELECT mi.id, mi.invoice_number, mi.amount, mi.subtotal_ex_vat, mi.tax_amount,
+             mi.status,
+             COALESCE(mi.issued_at, mi.created_at) AS at,
+             COALESCE(mi.deal_id, pr.deal_id) AS deal_id,
+             COALESCE(c.name, ddc.name, dpc.name) AS company
+        FROM manual_invoices mi
+        LEFT JOIN proposals pr  ON pr.id  = mi.proposal_id
+        LEFT JOIN deals dd      ON dd.id  = mi.deal_id
+        LEFT JOIN deals dp      ON dp.id  = pr.deal_id
+        LEFT JOIN companies c   ON c.id   = mi.company_id
+        LEFT JOIN companies ddc ON ddc.id = dd.company_id
+        LEFT JOIN companies dpc ON dpc.id = dp.company_id
+       WHERE mi.status IN ('issued', 'paid')
+         AND COALESCE(mi.issued_at, mi.created_at) >= ${since}
+         AND COALESCE(mi.issued_at, mi.created_at) <  ${until}
+         AND NOT EXISTS (
+           SELECT 1 FROM signatures s
+             JOIN proposals p2 ON p2.id = s.proposal_id
+            WHERE p2.deal_id = COALESCE(mi.deal_id, pr.deal_id)
+              AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
+         )`;
+  } catch {
+    return [];
+  }
+}
+
+// Net/VAT/gross for a standalone-invoice row: prefer the stored ex-VAT subtotal +
+// tax, else treat `amount` as gross with no VAT split available.
+function invoiceSplit(r) {
+  const gross = Number(r.amount) || 0;
+  const net = r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : gross;
+  const vat = r.tax_amount != null ? Number(r.tax_amount) : Math.max(0, gross - net);
+  return { net: round2(net), vat: round2(vat), gross: round2(net + vat) };
+}
+
 // Monthly "cash generated" by NEW BUSINESS for a year: every deal signed valued
 // at its net (ex-VAT) signed total, bucketed by signature date, PLUS ad-hoc
 // extras (net) bucketed by their created date. Same monthly/quarter/YTD shape as
@@ -765,6 +809,16 @@ async function salesFinanceReport(year) {
     const b = monthsMap[monthKey(new Date(r.created_at))];
     if (!b) continue;
     const { net, vat, gross } = extraSplit(r.amount, r.vat_rate);
+    b.net += net; b.vat += vat; b.gross += gross;
+  }
+  // Ad-hoc invoices with no signed proposal — a sale the CRM only knows about via
+  // the invoice. Bucketed by issue date so they show on the Sales bar/cards.
+  const invRows = await fetchStandaloneInvoiceRows(since, until);
+  for (const r of invRows) {
+    if (!r.at) continue;
+    const b = monthsMap[monthKey(new Date(r.at))];
+    if (!b) continue;
+    const { net, vat, gross } = invoiceSplit(r);
     b.net += net; b.vat += vat; b.gross += gross;
   }
   const months = Object.entries(monthsMap).map(([month, v]) => ({
@@ -842,6 +896,20 @@ async function salesLedgerReport(action) {
       number: null,
     });
   }
+  // Ad-hoc invoices with no signed proposal — counted as sales at their issue date.
+  const invRows = await fetchStandaloneInvoiceRows(since, until);
+  for (const r of invRows) {
+    if (!r.at) continue;
+    const { net, vat, gross } = invoiceSplit(r);
+    rows.push({
+      at: new Date(r.at).toISOString(),
+      net, vat, gross,
+      source: 'invoice', label: r.invoice_number || 'Invoice',
+      company: r.company || null,
+      dealId: r.deal_id || null,
+      number: null,
+    });
+  }
 
   rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
   const total = round2(rows.reduce((s, r) => s + r.net, 0));
@@ -899,6 +967,18 @@ async function trendReport(action) {
     const net = Number(r.amount) || 0;
     b.cashGenerated += net;
     b.pps += net;
+  }
+
+  // Ad-hoc invoices with no signed proposal — generated value at issue date, and
+  // (while still unpaid) new money owed.
+  const invRows = await fetchStandaloneInvoiceRows(since, until);
+  for (const r of invRows) {
+    if (!r.at) continue;
+    const b = buckets[monthKey(new Date(r.at))];
+    if (!b) continue;
+    const { net } = invoiceSplit(r);
+    b.cashGenerated += net;
+    if (r.status !== 'paid') b.pps += net;
   }
 
   // Splice the imported sheet history over CRM figures where present.
@@ -1133,18 +1213,34 @@ async function pendingPaymentsReport() {
   po.sort(byOutstanding);
   const sum = (arr) => round2(arr.reduce((s, x) => s + x.outstanding, 0));
 
-  // Company-level invoices (raised against a company, not a signed deal — e.g. an
-  // uploaded ad-hoc invoice). Issued-but-unpaid only; these are invoiced & awaiting.
-  // Shaped like an imported invoiced row so they sit in the same Invoiced list,
-  // tagged 'company-invoice' (shown as "not linked to a deal").
+  // Ad-hoc / manual invoices issued-but-unpaid that AREN'T already covered by a
+  // signed-deal row above: a company-level invoice (no deal), or an invoice raised
+  // on a deal that has no signed proposal (so it never appears in normal/po). Both
+  // are invoiced & awaiting payment; shaped like an imported invoiced row so they
+  // sit in the same Invoiced list, tagged 'company-invoice'. The NOT EXISTS guard
+  // means an invoice on a *signed* deal is left to the deal's own row (no
+  // double-count). Company/deal links are surfaced so the row opens its deal.
   const companyInvRows = await sql`
-    SELECT mi.id, mi.company_id, c.name AS company, mi.invoice_number,
-           mi.amount, mi.subtotal_ex_vat, mi.tax_amount
+    SELECT mi.id, mi.invoice_number, mi.amount, mi.subtotal_ex_vat, mi.tax_amount,
+           COALESCE(mi.deal_id, pr.deal_id) AS deal_id,
+           COALESCE(mi.company_id, dd.company_id, dp.company_id) AS company_id,
+           COALESCE(c.name, ddc.name, dpc.name) AS company,
+           COALESCE(dd.title, dp.title) AS deal_title
       FROM manual_invoices mi
-      LEFT JOIN companies c ON c.id = mi.company_id
-      LEFT JOIN proposals pr ON pr.id = mi.proposal_id
-     WHERE mi.status = 'issued' AND mi.company_id IS NOT NULL
-       AND mi.deal_id IS NULL AND pr.deal_id IS NULL
+      LEFT JOIN proposals pr  ON pr.id  = mi.proposal_id
+      LEFT JOIN deals dd      ON dd.id  = mi.deal_id
+      LEFT JOIN deals dp      ON dp.id  = pr.deal_id
+      LEFT JOIN companies c   ON c.id   = mi.company_id
+      LEFT JOIN companies ddc ON ddc.id = dd.company_id
+      LEFT JOIN companies dpc ON dpc.id = dp.company_id
+     WHERE mi.status = 'issued'
+       AND (mi.company_id IS NOT NULL OR mi.deal_id IS NOT NULL OR pr.deal_id IS NOT NULL)
+       AND NOT EXISTS (
+         SELECT 1 FROM signatures s
+           JOIN proposals p2 ON p2.id = s.proposal_id
+          WHERE p2.deal_id = COALESCE(mi.deal_id, pr.deal_id)
+            AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
+       )
   `;
   const companyInvoices = [];
   let companyInvoicedNet = 0;
@@ -1161,11 +1257,11 @@ async function pendingPaymentsReport() {
       invoiceType: 'Invoice',
       description: r.invoice_number || null,
       poNumber: null,
-      note: null,
+      note: r.deal_title || null,
       amountExVat: round2(net),
       vat: round2(vat),
       status: 'invoiced',
-      dealId: null,
+      dealId: r.deal_id || null,
     });
   }
   companyInvoices.sort((a, b) => (Number(b.amountExVat) || 0) - (Number(a.amountExVat) || 0));

@@ -1437,7 +1437,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
   // (records the payment in Xero), not the imported-payment toggle.
   const rowActions = isCompanyInvoice ? [
     { label: 'Mark paid…', icon: Check, onClick: () => setPayingInvoice(true) },
-    canOpen && { label: 'Open customer', icon: ExternalLink, onClick: openLinked },
+    canOpen && { label: linkedDeal ? 'Open deal' : 'Open customer', icon: ExternalLink, onClick: openLinked },
   ] : [
     isInvoicedGroup
       ? { label: 'Move back to pending', icon: RotateCcw, onClick: onUninvoice }
@@ -1457,7 +1457,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
     <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '5px 14px' }}>
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          {isCompanyInvoice ? (
+          {isCompanyInvoice && !linkedDeal ? (
             <span title="A company invoice — not linked to a deal" style={{ fontSize: 9, fontWeight: 700, color: '#B45309', background: '#FFFBEB', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
               Not linked to a deal
             </span>
@@ -1467,7 +1467,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
                 ? (r.linkedCompanyName ? `Linked to customer: ${r.linkedCompanyName}` : 'Linked to a customer')
                 : (onOpenDeal ? 'Open linked deal' : 'Linked to a CRM deal')}
               style={{ cursor: canOpen ? 'pointer' : 'default', fontSize: 9, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              {linkedCompany ? 'Customer' : 'Linked'}
+              {linkedDeal ? 'Deal' : linkedCompany ? 'Customer' : 'Linked'}
             </span>
           ) : (
             <span style={{ fontSize: 9, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -1936,10 +1936,12 @@ function IncomeRow({ r, onOpenDeal, onSetDate }) {
   );
 }
 
-// Where a sales-ledger row came from: a deal signing or an ad-hoc extra.
+// Where a sales-ledger row came from: a deal signing, an ad-hoc extra, or an
+// ad-hoc invoice raised without a signed proposal.
 const SALES_SOURCE_META = {
   signed: { label: 'Signed', color: '#15803D', bg: '#ECFDF3' },
   extra: { label: 'Extra', color: '#C2410C', bg: '#FFF7ED' },
+  invoice: { label: 'Invoice', color: '#0369A1', bg: '#E0F2FE' },
 };
 
 function SalesSourceBadge({ source }) {
@@ -1987,7 +1989,7 @@ function SalesLedgerPanel({ ledger, onOpenDeal, isMobile, periodLabel }) {
 }
 
 function SalesRow({ r, onOpenDeal }) {
-  const name = r.company || (r.source === 'extra' ? (r.label || 'Extra') : 'Unattributed');
+  const name = r.company || ((r.source === 'extra' || r.source === 'invoice') ? (r.label || (r.source === 'invoice' ? 'Invoice' : 'Extra')) : 'Unattributed');
   const number = r.number ? formatProposalNumber(r.number) : '';
   const date = r.at ? new Date(r.at).toLocaleDateString('en-GB') : '';
   const canOpen = !!(onOpenDeal && r.dealId);
@@ -2009,7 +2011,7 @@ function SalesRow({ r, onOpenDeal }) {
           </span>
           {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
           <SalesSourceBadge source={r.source} />
-          {r.source === 'extra' && r.company && r.label && (
+          {(r.source === 'extra' || r.source === 'invoice') && r.company && r.label && (
             <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
               {r.label}
             </span>
