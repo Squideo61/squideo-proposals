@@ -4669,6 +4669,18 @@ function SecondaryContactsRow({ dealId, primaryContact, secondaryContacts, defau
   // title, company, notes) over the slimmed-down chip the deal carries.
   const edit = (c) => setEditing((c && state.contacts?.[c.id]) || c);
 
+  // Promote the edited contact to this deal's primary. The server demotes the
+  // old primary to a secondary, so no one is dropped.
+  const makePrimary = async (contactId) => {
+    try {
+      await actions.saveDeal(dealId, { primaryContactId: contactId });
+      setEditing(null);
+      actions.loadDealDetail(dealId);
+    } catch (e) {
+      showMsg(e?.message || 'Could not set primary contact');
+    }
+  };
+
   return (
     <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
       <span style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
@@ -4732,6 +4744,10 @@ function SecondaryContactsRow({ dealId, primaryContact, secondaryContacts, defau
       {editing && (
         <ContactModal
           contact={editing}
+          dealContext={{
+            isPrimary: !!primaryContact && editing.id === primaryContact.id,
+            onMakePrimary: () => makePrimary(editing.id),
+          }}
           onClose={() => { setEditing(null); actions.loadDealDetail(dealId); }}
         />
       )}

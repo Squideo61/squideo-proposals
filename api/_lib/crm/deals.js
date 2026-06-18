@@ -697,6 +697,19 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     })));
   }
 
+  // A deal with exactly one contact and no primary set promotes that lone
+  // contact to primary automatically (it moves out of the secondary list) — a
+  // single contact is, by definition, the primary one.
+  async function autoPrimaryIfSingle(dealId) {
+    const d = (await sql`SELECT primary_contact_id FROM deals WHERE id = ${dealId}`)[0];
+    if (!d || d.primary_contact_id) return;
+    const secs = await sql`SELECT contact_id FROM deal_contacts WHERE deal_id = ${dealId}`;
+    if (secs.length === 1) {
+      await sql`UPDATE deals SET primary_contact_id = ${secs[0].contact_id}, last_activity_at = NOW() WHERE id = ${dealId}`;
+      await sql`DELETE FROM deal_contacts WHERE deal_id = ${dealId} AND contact_id = ${secs[0].contact_id}`;
+    }
+  }
+
   // /deals/:id/contacts — secondary contacts on this deal.
   //   POST  { contactId }                    → link an existing contact
   //   POST  { email, name?, title?, companyId? } → create-and-link in one shot
@@ -749,6 +762,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         ON CONFLICT (deal_id, contact_id) DO NOTHING
       `;
       await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${id}`;
+      await autoPrimaryIfSingle(id);
 
       const contact = (await sql`
         SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at
@@ -761,6 +775,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       const contactId = trimOrNull(subaction);
       if (!contactId) return res.status(400).json({ error: 'contactId is required' });
       await sql`DELETE FROM deal_contacts WHERE deal_id = ${id} AND contact_id = ${contactId}`;
+      await autoPrimaryIfSingle(id);
       return res.status(200).json({ ok: true });
     }
 
@@ -1500,6 +1515,22 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         updated_at = NOW()
       WHERE id = ${id}
     `;
+    // When the primary contact changes, keep the two lists consistent: the new
+    // primary shouldn't also sit in the secondary list, and the old primary is
+    // demoted to a secondary so it isn't dropped from the deal. Lets "Make
+    // primary" be a single primaryContactId PATCH from the contact editor.
+    if ('primaryContactId' in body && next.primary_contact_id !== cur.primary_contact_id) {
+      await ensureDealContactsTable();
+      if (next.primary_contact_id) {
+        await sql`DELETE FROM deal_contacts WHERE deal_id = ${id} AND contact_id = ${next.primary_contact_id}`;
+      }
+      if (cur.primary_contact_id && cur.primary_contact_id !== next.primary_contact_id) {
+        await sql`
+          INSERT INTO deal_contacts (deal_id, contact_id, role, added_by)
+          VALUES (${id}, ${cur.primary_contact_id}, 'secondary', ${user.email || null})
+          ON CONFLICT (deal_id, contact_id) DO NOTHING`;
+      }
+    }
     // Producers (team): accept the array or legacy single; keep producer_email
     // populated with the first for back-compat.
     if ('producerEmails' in body || 'producerEmail' in body) {

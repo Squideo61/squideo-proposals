@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowLeft, Building2, CheckCircle2, Circle, Edit2, Plus, Search, Trash2, User, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, CheckCircle2, Circle, Edit2, Plus, Search, Star, Trash2, User, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, deriveAddress, formatGBP } from '../../utils.js';
@@ -331,7 +331,7 @@ function CustomerBadge({ label, tone, title }) {
   );
 }
 
-export function ContactModal({ contact, onClose }) {
+export function ContactModal({ contact, onClose, dealContext = null }) {
   const { state, actions } = useStore();
   const editing = !!contact;
   const [name, setName] = useState(contact?.name || '');
@@ -374,7 +374,14 @@ export function ContactModal({ contact, onClose }) {
 
   return (
     <Modal onClose={onClose}>
-      <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>{editing ? 'Edit contact' : 'New contact'}</h2>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 16px', flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{editing ? 'Edit contact' : 'New contact'}</h2>
+        {dealContext?.isPrimary && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 700, color: '#16A34A', background: '#16A34A14', border: '1px solid #16A34A44', padding: '2px 8px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            <Star size={11} fill="#16A34A" /> Primary
+          </span>
+        )}
+      </div>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {/* autoComplete off + non-standard names: stop Edge/Chrome autofill
             replacing a typed full name with a single profile token on blur. */}
@@ -389,10 +396,19 @@ export function ContactModal({ contact, onClose }) {
           </select>
         </Row>
         <Row label="Notes"><textarea className="input" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ fontFamily: 'inherit', resize: 'vertical' }} /></Row>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 8 }}>
-          {editing
-            ? <button type="button" onClick={handleDelete} className="btn-ghost is-danger"><Trash2 size={14} /> Delete</button>
-            : <span />}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {editing && (
+              <button type="button" onClick={handleDelete} className="btn-ghost is-danger"><Trash2 size={14} /> Delete</button>
+            )}
+            {/* Promote this contact to the deal's primary (only in a deal
+                context, and only when it isn't already the primary). */}
+            {dealContext && !dealContext.isPrimary && (
+              <button type="button" onClick={() => dealContext.onMakePrimary()} className="btn-ghost" disabled={submitting}>
+                <Star size={14} /> Make primary
+              </button>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
             <button type="submit" className="btn" disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</button>
