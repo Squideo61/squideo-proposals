@@ -3,7 +3,7 @@ import { ExternalLink, Plus, X, Search, FileText, ChevronDown, Check, Pencil } f
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
-import { Avatar } from '../Avatar.jsx';
+import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 
 const STAGE_LABEL = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s.label]));
@@ -125,7 +125,25 @@ function UnlinkedView({ gmailThreadId, counterpartyEmail }) {
 function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) {
   const { state, actions } = useStore();
   const [editingTask, setEditingTask] = useState(null);
-  const openTasks = (detail.tasks || []).filter(t => !t.doneAt).slice(0, 3);
+  const [teamOpen, setTeamOpen] = useState(false);
+
+  // Split the deal's open tasks into the signed-in user's (assigned to me, or
+  // unassigned so they don't get buried) and the rest of the team's. Unassigned
+  // count as "mine" so the deal viewer still sees orphaned to-dos at a glance.
+  const { myTasks, teamTasks } = useMemo(() => {
+    const me = (state.session?.email || '').toLowerCase();
+    const assigneesOf = (t) => (Array.isArray(t.assigneeEmails) && t.assigneeEmails.length
+      ? t.assigneeEmails
+      : (t.assigneeEmail ? [t.assigneeEmail] : []));
+    const open = (detail.tasks || []).filter(t => !t.doneAt);
+    const mine = [];
+    const team = [];
+    for (const t of open) {
+      const a = assigneesOf(t).map(e => String(e).toLowerCase());
+      if (a.length === 0 || a.includes(me)) mine.push(t); else team.push(t);
+    }
+    return { myTasks: mine, teamTasks: team };
+  }, [detail.tasks, state.session?.email]);
 
   // Quick deal summary that tracks reality: a signed proposal's total is the
   // actual sale value (incl. extras) and wins, so the figure — and the "Signed"
@@ -226,30 +244,34 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
         <CcSuggestions dealId={detail.id} addresses={unknownCcs} defaultCompanyId={detail.companyId || null} />
       )}
 
-      <Label>Open tasks</Label>
+      <Label>My open tasks</Label>
       <div style={{ margin: '6px 0 6px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {openTasks.length === 0 ? <Muted>No open tasks.</Muted> : openTasks.map(t => (
-          <div key={t.id} style={{ display: 'flex', gap: 6, fontSize: 12.5 }}>
-            <button
-              onClick={() => actions.toggleTask(t.id)}
-              title="Mark done"
-              aria-label="Mark done"
-              style={{ flexShrink: 0, width: 14, height: 14, marginTop: 1, padding: 0, border: '1.5px solid ' + BRAND.muted, borderRadius: 3, background: 'white', cursor: 'pointer' }}
-            />
-            <button
-              onClick={() => setEditingTask(t)}
-              title="Edit task — change the due date to postpone"
-              style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, color: BRAND.ink }}
-            >
-              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</div>
-              {t.dueAt && <div style={{ fontSize: 11, color: BRAND.muted }}>Due {new Date(t.dueAt).toLocaleDateString('en-GB')}</div>}
-            </button>
-          </div>
+        {myTasks.length === 0 ? <Muted>No open tasks assigned to you.</Muted> : myTasks.map(t => (
+          <TaskMini key={t.id} task={t} onEdit={setEditingTask} />
         ))}
       </div>
-      <div style={{ marginBottom: 14 }}>
+      <div style={{ marginBottom: teamTasks.length > 0 ? 8 : 14 }}>
         <AddTaskForm dealId={detail.id} />
       </div>
+
+      {teamTasks.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <button
+            onClick={() => setTeamOpen(o => !o)}
+            aria-expanded={teamOpen}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Team tasks</span>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: '#475569', background: '#EEF2F6', borderRadius: 999, padding: '1px 7px', lineHeight: 1.6 }}>{teamTasks.length}</span>
+            <ChevronDown size={13} color={BRAND.muted} style={{ marginLeft: 'auto', transition: 'transform 150ms', transform: teamOpen ? 'none' : 'rotate(-90deg)' }} />
+          </button>
+          {teamOpen && (
+            <div style={{ margin: '8px 0 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {teamTasks.map(t => <TaskMini key={t.id} task={t} onEdit={setEditingTask} showAssignees />)}
+            </div>
+          )}
+        </div>
+      )}
 
       {editingTask && (
         <TaskFormModal
@@ -271,6 +293,36 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
         </>
       )}
     </>
+  );
+}
+
+// A compact open-task row for the deal panel: a tick-to-complete checkbox and a
+// click-to-edit title/due-date. Team tasks additionally show whose they are.
+function TaskMini({ task, onEdit, showAssignees }) {
+  const { actions } = useStore();
+  const assignees = Array.isArray(task.assigneeEmails) && task.assigneeEmails.length
+    ? task.assigneeEmails
+    : (task.assigneeEmail ? [task.assigneeEmail] : []);
+  return (
+    <div style={{ display: 'flex', gap: 6, fontSize: 12.5, alignItems: 'flex-start' }}>
+      <button
+        onClick={() => actions.toggleTask(task.id)}
+        title="Mark done"
+        aria-label="Mark done"
+        style={{ flexShrink: 0, width: 14, height: 14, marginTop: 1, padding: 0, border: '1.5px solid ' + BRAND.muted, borderRadius: 3, background: 'white', cursor: 'pointer' }}
+      />
+      <button
+        onClick={() => onEdit(task)}
+        title="Edit task — change the due date to postpone"
+        style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, color: BRAND.ink }}
+      >
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</div>
+        {task.dueAt && <div style={{ fontSize: 11, color: BRAND.muted }}>Due {new Date(task.dueAt).toLocaleDateString('en-GB')}</div>}
+      </button>
+      {showAssignees && assignees.length > 0 && (
+        <div style={{ flexShrink: 0 }}><AvatarGroup emails={assignees} max={2} size={18} /></div>
+      )}
+    </div>
   );
 }
 
