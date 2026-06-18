@@ -666,9 +666,13 @@ async function patchManualSubscription(req, res, subId) {
     const sd = body.startDate ? String(body.startDate).slice(0, 10) : null;
     updates.push(sql`UPDATE partner_subscriptions SET start_date = ${sd}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);
   }
-  if (typeof body.status === 'string' && ['active', 'canceled', 'inactive'].includes(body.status)) {
-    const cancelTs = body.status === 'canceled' ? new Date().toISOString() : null;
-    updates.push(sql`UPDATE partner_subscriptions SET status = ${body.status}, canceled_at = ${cancelTs}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);
+  if (typeof body.status === 'string' && ['active', 'canceled', 'paused', 'inactive'].includes(body.status)) {
+    // Pausing stops crediting (the sub is no longer 'active') and stamps the
+    // stop date so auto-credit accrual is capped at the pause point, exactly
+    // like a cancel — the client keeps any remaining credits and stays in the
+    // partners list as "credits only". Re-activating clears the stamp.
+    const stopTs = (body.status === 'canceled' || body.status === 'paused') ? new Date().toISOString() : null;
+    updates.push(sql`UPDATE partner_subscriptions SET status = ${body.status}, canceled_at = ${stopTs}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);
   }
   if (typeof body.clientName === 'string' && body.clientName.trim()) {
     updates.push(sql`UPDATE partner_subscriptions SET client_name = ${body.clientName.trim()}, updated_at = NOW() WHERE stripe_subscription_id = ${subId}`);

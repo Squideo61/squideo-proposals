@@ -157,7 +157,7 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
                     {s.isManual
                       ? (s.startDate ? 'Started ' + fmtDate(s.startDate) : 'Started ' + fmtDate(s.createdAt))
                       : (s.currentPeriodEnd ? 'Renews ' + fmtDate(s.currentPeriodEnd) : '—')}
-                    {s.canceledAt && <div>Cancelled {fmtDate(s.canceledAt)}</div>}
+                    {s.canceledAt && <div>{s.status === 'paused' ? 'Paused' : 'Cancelled'} {fmtDate(s.canceledAt)}</div>}
                     {s.isManual && s.autoCredit && s.creditsPerMonth > 0 && (() => {
                       const day = new Date(s.startDate || s.createdAt).getDate();
                       return (
@@ -776,6 +776,7 @@ function EditSubscriptionModal({ subscription, onClose, onSaved, onDeleted, patc
         <DetailField label="Status">
           <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="active">Active</option>
+            <option value="paused">Paused</option>
             <option value="canceled">Cancelled</option>
             <option value="inactive">Inactive</option>
           </select>
@@ -888,6 +889,8 @@ function StatusPill({ status }) {
     ? { bg: '#DCFCE7', fg: '#15803D', label: 'Active' }
     : status === 'credits_only'
       ? { bg: '#DBEAFE', fg: '#1E40AF', label: 'Credits Only' }
+    : status === 'paused'
+      ? { bg: '#FEF3C7', fg: '#B45309', label: 'Paused' }
     : status === 'canceled'
       ? { bg: '#FEE2E2', fg: '#B91C1C', label: 'Cancelled' }
       : { bg: '#F3F4F6', fg: '#6B7280', label: status || 'Inactive' };
