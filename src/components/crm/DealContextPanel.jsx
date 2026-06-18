@@ -151,14 +151,16 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
   // deal value, then the latest proposed value. Mirrors the deal page's logic.
   const allProposals = detail.proposals || [];
   const newestProposal = (list) => list.reduce((best, p) => (best && (best.number || 0) >= (p.number || 0) ? best : p), null);
+  // Mirrors the deal page: a signed proposal wins, then the latest proposed value
+  // (sending a proposal supersedes a manual figure), then a manual deal value.
   const valueInfo = useMemo(() => {
     const priced = allProposals.filter(p => (p.totalExVat ?? p.basePrice) != null);
     const signed = newestProposal(priced.filter(p => p.signed));
-    if (signed) return { value: signed.totalExVat ?? signed.basePrice, signed: true };
-    if (detail.value != null) return { value: detail.value, signed: false };
+    if (signed) return { value: signed.totalExVat ?? signed.basePrice, source: 'signed' };
     const latest = newestProposal(priced);
-    if (latest) return { value: latest.totalExVat ?? latest.basePrice, signed: false };
-    return { value: null, signed: false };
+    if (latest) return { value: latest.totalExVat ?? latest.basePrice, source: 'proposal' };
+    if (detail.value != null) return { value: detail.value, source: 'manual' };
+    return { value: null, source: null };
   }, [allProposals, detail.value]);
   // The proposal the "View proposal" button opens: the signed one if there is
   // one (newest), else the newest proposal overall.
@@ -618,13 +620,21 @@ function ValueRow({ dealId, valueInfo }) {
     }
   };
 
-  if (valueInfo.signed) {
+  // A proposal (signed or just sent) is authoritative, so the value is read-only
+  // then — editing the manual figure would be silently overridden by the proposal.
+  if (valueInfo.source === 'signed' || valueInfo.source === 'proposal') {
+    const signed = valueInfo.source === 'signed';
     return (
       <Row>
         <DealMetaKey>Value</DealMetaKey>
-        <span style={{ fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span
+          style={{ fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          title={signed ? 'Signed sale value (incl. extras)' : 'From the latest proposal (not yet signed)'}
+        >
           £{Number(valueInfo.value).toLocaleString('en-GB')}
-          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: '#16A34A' }}>SIGNED</span>
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: signed ? '#16A34A' : BRAND.muted }}>
+            {signed ? 'SIGNED' : 'PROPOSAL'}
+          </span>
         </span>
       </Row>
     );

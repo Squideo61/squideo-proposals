@@ -307,15 +307,16 @@ export async function annotateDeals(rows) {
   return rows.map(r => {
     const pv = propViewMap.get(r.id);
     const eo = emailOpenMap.get(r.id);
-    // Effective value: signed sale value wins, then a manual deal value, then
-    // the latest proposed value.
+    // Effective value: signed sale value wins, then the latest proposed value
+    // (sending a proposal supersedes a manual figure so the value tracks the
+    // quote actually sent), then a manual deal value as the final fallback.
     const vinfo = valueByDeal.get(r.id) || {};
     const manualVal = r.value != null ? Number(r.value) : null;
     let effectiveValue = null;
     let valueSource = null;
     if (vinfo.signedValue != null) { effectiveValue = vinfo.signedValue; valueSource = 'signed'; }
-    else if (manualVal != null) { effectiveValue = manualVal; valueSource = 'manual'; }
     else if (vinfo.latestValue != null) { effectiveValue = vinfo.latestValue; valueSource = 'proposal'; }
+    else if (manualVal != null) { effectiveValue = manualVal; valueSource = 'manual'; }
     const proposalOpens = pv ? Number(pv.opens) || 0 : 0;
     const emailOpens = eo ? Number(eo.opens) || 0 : 0;
     const lastProposalOpenAt = pv?.last_at || null;

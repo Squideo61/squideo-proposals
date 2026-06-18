@@ -131,18 +131,18 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
 
   const proposals = detail?.proposals || [];
   // Value shown on the deal card. A signed proposal's total is the *actual* sale
-  // value (incl. selected extras), so it wins — the figure updates to reality
-  // once signed even if it differs from what was proposed or manually entered.
-  // Otherwise: a manually-set deal value, then the latest proposed value — so a
-  // deal that has a proposal always shows a number instead of a dash.
+  // value (incl. selected extras), so it wins. Otherwise the latest *proposed*
+  // value takes over — sending a proposal supersedes any manual figure, so the
+  // deal value tracks the quote you actually sent. A manual deal value is only
+  // used before any proposal exists (and as the final fallback so it's never a dash).
   const dealValueInfo = useMemo(() => {
     const priced = proposals.filter(p => (p.totalExVat ?? p.basePrice) != null);
     const newest = (list) => list.reduce((best, p) => (best && (best.number || 0) >= (p.number || 0) ? best : p), null);
     const signed = newest(priced.filter(p => p.signed));
     if (signed) return { value: signed.totalExVat ?? signed.basePrice, source: 'signed' };
-    if (deal.value != null) return { value: deal.value, source: 'manual' };
     const latest = newest(priced);
     if (latest) return { value: latest.totalExVat ?? latest.basePrice, source: 'proposal' };
+    if (deal.value != null) return { value: deal.value, source: 'manual' };
     return { value: null, source: null };
   }, [proposals, deal.value]);
   const projectVideos = detail?.videos || [];
