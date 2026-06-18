@@ -140,6 +140,23 @@ export async function ensureIntroCallNotificationDefault() {
   }
 }
 
+// Self-heal the role default for comment.mention so @-mentions notify before a
+// seed/migration lands. Defaults ON for every role — a mention is a direct,
+// deliberate ping, so it should reach the person unless they explicitly mute it.
+// Guarded to run once per warm instance.
+let commentMentionDefaultReady = false;
+export async function ensureCommentMentionNotificationDefault() {
+  if (commentMentionDefaultReady) return;
+  try {
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{comment.mention}', 'true'::jsonb, true)
+      WHERE NOT (notification_defaults ? 'comment.mention')`;
+    commentMentionDefaultReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureCommentMentionNotificationDefault failed', err.message);
+  }
+}
+
 // Read the effective state of a single (user, key) — role default merged with
 // per-user override. Returns boolean. Unknown users → false.
 export async function isEnabledForUser(email, key) {

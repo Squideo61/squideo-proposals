@@ -4,7 +4,7 @@ import sql from '../db.js';
 import { isValidStage } from '../dealStage.js';
 import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureMessageDealsTable, ensureDealContactsTable, driveFilesEnabled } from './shared.js';
 import { serialiseTask } from './tasks.js';
-import { serialiseComment } from './comments.js';
+import { serialiseComment, notifyCommentMentions } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
 import { trackingForDealThreads, trackingForMessages, backfillDealTrackingIds } from './tracking.js';
@@ -573,6 +573,12 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     await sql`
       UPDATE deals SET last_activity_at = NOW(), updated_at = NOW() WHERE id = ${id}
     `;
+    // Ping any @-mentioned teammates (in-app + email + desktop push). Best-effort
+    // so a notification problem never fails the comment itself.
+    if (mentions.length) {
+      try { await notifyCommentMentions({ dealId: id, body: text, mentions, author: user }); }
+      catch (err) { console.error('[deals] comment mention notify failed', err); }
+    }
     const rows = await sql`
       SELECT c.id, c.deal_id, c.parent_id, c.body, c.mentions,
              c.created_by, c.created_at, c.updated_at,

@@ -2,8 +2,36 @@ import sql from '../db.js';
 import { trimOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { sendNotification, ensureCommentMentionNotificationDefault } from '../notifications.js';
+import { APP_URL } from '../email.js';
 
 const ALLOWED_REACTIONS = ['👍', '👎', '❤️', '😂', '🎉', '👀'];
+
+// Notify @-mentioned teammates about a comment. `mentions` are user emails;
+// the author is always excluded. Best-effort — callers wrap in try/catch so a
+// notification hiccup never fails the comment write. Lands in the Updates bell
+// (+ email + desktop push) and deep-links to the deal, where comments live for
+// both deal and project/video pages.
+export async function notifyCommentMentions({ dealId, body, mentions, author }) {
+  const authorEmail = String(author?.email || '').toLowerCase();
+  const recipients = Array.from(new Set(
+    (mentions || []).map(e => String(e).toLowerCase()).filter(Boolean)
+  )).filter(e => e !== authorEmail);
+  if (!recipients.length) return;
+  await ensureCommentMentionNotificationDefault();
+  const deal = (await sql`SELECT title FROM deals WHERE id = ${dealId}`)[0];
+  const dealTitle = deal?.title || 'a deal';
+  const authorName = author?.name || author?.email || 'A teammate';
+  const snippet = body.length > 280 ? body.slice(0, 277) + '…' : body;
+  const link = `#/deal/${dealId}`;
+  await sendNotification('comment.mention', {
+    assigneeEmails: recipients,
+    excludeEmails: authorEmail ? [authorEmail] : null,
+    subject: `${authorName} mentioned you — ${dealTitle}`,
+    text: `${authorName} mentioned you in a comment on ${dealTitle}:\n\n"${snippet}"\n\n${APP_URL}/${link}`,
+    inApp: { title: `${authorName} mentioned you`, body: snippet, link },
+  });
+}
 
 export async function commentsRoute(req, res, id, action, user) {
   if (!id) return res.status(404).json({ error: 'Comment id required' });
@@ -13,7 +41,7 @@ export async function commentsRoute(req, res, id, action, user) {
     const text = trimOrNull(body.body);
     if (!text) return res.status(400).json({ error: 'body is required' });
     const mentions = Array.isArray(body.mentions) ? body.mentions.filter(m => typeof m === 'string') : [];
-    const rows = await sql`SELECT created_by FROM deal_comments WHERE id = ${id}`;
+    const rows = await sql`SELECT created_by, deal_id, mentions FROM deal_comments WHERE id = ${id}`;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     if (rows[0].created_by !== user.email && !hasPermission(await getRole(user.role), 'comments.manage_all'))
       return res.status(403).json({ error: 'Forbidden' });
@@ -21,6 +49,14 @@ export async function commentsRoute(req, res, id, action, user) {
       UPDATE deal_comments SET body = ${text}, mentions = ${mentions}, updated_at = NOW()
       WHERE id = ${id}
     `;
+    // Notify only people newly @-mentioned by this edit (not those already
+    // pinged when the comment was first posted). Best-effort.
+    const already = new Set((rows[0].mentions || []).map(e => String(e).toLowerCase()));
+    const added = mentions.filter(e => !already.has(String(e).toLowerCase()));
+    if (added.length) {
+      try { await notifyCommentMentions({ dealId: rows[0].deal_id, body: text, mentions: added, author: user }); }
+      catch (err) { console.error('[comments] mention notify (edit) failed', err); }
+    }
     const updated = await sql`
       SELECT c.id, c.deal_id, c.parent_id, c.body, c.mentions,
              c.created_by, c.created_at, c.updated_at,

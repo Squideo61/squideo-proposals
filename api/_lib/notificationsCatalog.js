@@ -179,6 +179,14 @@ export const NOTIFICATIONS = [
     channel: 'tracking',
   },
   {
+    key: 'comment.mention',
+    label: 'Mentioned in a comment',
+    description: 'A teammate @-mentions you in a comment on a deal or project.',
+    audience: 'assignee',
+    group: 'CRM',
+    channel: 'general',
+  },
+  {
     key: 'intro_call.booked',
     label: 'Intro call booked',
     description: 'A client books an intro call via a project booking link.',
