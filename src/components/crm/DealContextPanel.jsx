@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Plus, X, Search, FileText } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ExternalLink, Plus, X, Search, FileText, ChevronDown, Check } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
@@ -59,7 +59,7 @@ function LinkedView({ linked, gmailThreadId, counterpartyEmail, onOpenDeal, onOp
       <Label>This thread is on</Label>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 14px' }}>
         {linked.map(d => (
-          <DealChip key={d.dealId} title={d.title} stage={d.stage} onRemove={() => detach(d.dealId)} disabled={busy} />
+          <DealChip key={d.dealId} title={d.title} stage={state.deals?.[d.dealId]?.stage || d.stage} onRemove={() => detach(d.dealId)} disabled={busy} />
         ))}
       </div>
 
@@ -193,7 +193,7 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
   return (
     <>
       <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12, marginBottom: 14 }}>
-        <Row><DealMetaKey>Stage</DealMetaKey><StageBadge stage={detail.stage} /></Row>
+        <Row><DealMetaKey>Stage</DealMetaKey><StageDropdown dealId={detail.id} stage={detail.stage} /></Row>
         {valueInfo.value != null && (
           <Row>
             <DealMetaKey>Value</DealMetaKey>
@@ -527,6 +527,102 @@ function StageBadge({ stage, compact }) {
     <span style={{ display: 'inline-block', padding: compact ? '1px 6px' : '2px 8px', borderRadius: 4, background: c.bg, color: c.fg, fontSize: compact ? 10 : 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>
       {STAGE_LABEL[stage] || stage}
     </span>
+  );
+}
+
+// Streak-style coloured stage marker — a small right-pointing flag in the
+// stage's accent colour, used in the stage dropdown.
+function StageMark({ color }) {
+  return (
+    <span style={{
+      flexShrink: 0, width: 0, height: 0,
+      borderTop: '5px solid transparent', borderBottom: '5px solid transparent',
+      borderLeft: `7px solid ${color}`,
+    }} />
+  );
+}
+
+// Clickable stage pill that opens a Streak-like dropdown of every stage (each
+// with its coloured marker), so the deal's stage can be changed straight from
+// the email thread's deal panel. moveDealStage patches state.deals AND the
+// cached dealDetail, so the pill + chip update instantly.
+function StageDropdown({ dealId, stage }) {
+  const { actions, showMsg } = useStore();
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+
+  const c = STAGE_COLOURS[stage] || STAGE_COLOURS.lead;
+  const current = PIPELINE_STAGES.find((s) => s.id === stage);
+
+  const choose = (next) => {
+    setOpen(false);
+    if (next === stage) return;
+    actions.moveDealStage(dealId, next);
+    showMsg(`Stage: ${STAGE_LABEL[next] || next}`);
+  };
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title="Change stage"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 6px 2px 8px', borderRadius: 4,
+          background: c.bg, color: c.fg, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4,
+          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        <StageMark color={(current && current.color) || c.fg} />
+        {STAGE_LABEL[stage] || stage}
+        <ChevronDown size={12} style={{ opacity: 0.7 }} />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 60,
+            background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(15, 42, 61, 0.14)', padding: 4, minWidth: 210,
+            maxHeight: 300, overflowY: 'auto',
+          }}
+        >
+          {PIPELINE_STAGES.map((s) => {
+            const selected = s.id === stage;
+            return (
+              <button
+                key={s.id}
+                role="option"
+                aria-selected={selected}
+                onClick={() => choose(s.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 8px',
+                  background: selected ? '#F1F5F9' : 'transparent', border: 'none', borderRadius: 6,
+                  cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, color: BRAND.ink, textAlign: 'left',
+                }}
+                onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = '#F8FAFC'; }}
+                onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = 'transparent'; }}
+              >
+                <StageMark color={s.color} />
+                <span style={{ flex: 1, minWidth: 0 }}>{s.label}</span>
+                {selected && <Check size={14} color={BRAND.blue} style={{ flexShrink: 0 }} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
