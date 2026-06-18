@@ -3,6 +3,7 @@ import { ExternalLink, Plus, X, Search, FileText, ChevronDown, Check } from 'luc
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
+import { Avatar } from '../Avatar.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 
 const STAGE_LABEL = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s.label]));
@@ -203,7 +204,17 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
             </span>
           </Row>
         )}
-        {detail.ownerEmail && <Row><DealMetaKey>Owner</DealMetaKey><span style={{ fontSize: 12 }}>{detail.ownerEmail}</span></Row>}
+        {detail.ownerEmail && (
+          <Row>
+            <DealMetaKey>Owner</DealMetaKey>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+              <Avatar email={detail.ownerEmail} size={20} />
+              <span style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={detail.ownerEmail}>
+                {state.users?.[detail.ownerEmail]?.name || detail.ownerEmail}
+              </span>
+            </span>
+          </Row>
+        )}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
           <button onClick={() => onOpenDeal?.(detail.id)} className="btn" style={{ fontSize: 12 }}>
             Open deal <ExternalLink size={13} />
