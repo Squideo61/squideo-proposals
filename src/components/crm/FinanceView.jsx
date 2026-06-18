@@ -48,10 +48,13 @@ function predictMenuItem(predict, item) {
 // in `partners`). Each item carries the ids needed to open its deal/customer/
 // partner. Shared by the Predicted tab and the Performance projection. Net
 // (ex-VAT) amounts, sorted high→low.
-function collectPredicted(pending, partners, predictKeys) {
+function collectPredicted(pending, partners, predictKeys, excludedKeys) {
   const out = [];
   const seen = new Set();
-  const add = (key, it) => { if (!seen.has(key)) { seen.add(key); out.push({ key, ...it }); } };
+  const excluded = excludedKeys || new Set();
+  // Auto items (partners / other) the user has switched off this month never
+  // make the list; manual rows are dropped by un-flagging, so they won't be here.
+  const add = (key, it) => { if (!seen.has(key) && !excluded.has(key)) { seen.add(key); out.push({ key, ...it }); } };
   const keys = predictKeys || new Set();
   const p = pending || {};
   for (const d of (p.normal || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Signed deal', dealId: d.dealId, type: 'deal', row: d, isPo: false });
@@ -255,6 +258,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
   // Payments row via context (so the ⋮ menu can flag/unflag without prop drilling).
   const predicted = state.predictedPayments && state.predictedPayments.month === currentMonthKey ? state.predictedPayments : null;
   const predictKeys = useMemo(() => new Set(predicted?.keys || []), [predicted]);
+  const excludedKeys = useMemo(() => new Set(predicted?.excludedKeys || []), [predicted]);
   const predictCtx = useMemo(() => ({
     month: currentMonthKey,
     keys: predictKeys,
@@ -263,8 +267,8 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
   // Live total of everything still predicted to land this month — drives the
   // Predicted tab and the "with predicted" projection on the Performance chart.
   const predictedTotal = useMemo(
-    () => collectPredicted(pending, activePartners, predictKeys).reduce((s, it) => s + it.amount, 0),
-    [pending, activePartners, predictKeys],
+    () => collectPredicted(pending, activePartners, predictKeys, excludedKeys).reduce((s, it) => s + it.amount, 0),
+    [pending, activePartners, predictKeys, excludedKeys],
   );
   // Live monthly income targets (Minimum / £4k / £5k) for the Predicted tab's
   // over/under-target metric — same figures the Performance pacing uses.
@@ -400,12 +404,14 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
           pending={pending}
           partners={activePartners}
           predictKeys={predictKeys}
+          excludedKeys={excludedKeys}
           monthName={currentMonthName}
           bankedNet={predicted?.bankedNet || 0}
           targets={incomeTargets}
           notes={predicted?.notes || {}}
           onSaveNote={(key, note) => actions.setPredictedPaymentNote(currentMonthKey, key, note)}
           onUnpredict={(key) => actions.togglePredictedPayment(currentMonthKey, key, false)}
+          onExclude={(item, excluded) => actions.excludePredictedPayment(currentMonthKey, item.key, excluded, item.label || item.name || null, Number(item.amount) || 0)}
           onOpenDeal={onOpenDeal}
           onOpenCompany={onOpenCompany}
           onOpenPartner={onOpenPartner}
@@ -569,15 +575,24 @@ function PredictedRowBadges({ item }) {
 // active partners — so a predicted item that's since been paid simply drops off
 // (and is already counted in the banked figure). Projects the month-end position
 // as banked-so-far + everything still predicted to land. All figures ex-VAT (net).
-function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, bankedNet, targets, notes = {}, onSaveNote, onUnpredict, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
+function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys, monthName, bankedNet, targets, notes = {}, onSaveNote, onUnpredict, onExclude, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
   const [editOther, setEditOther] = useState(null); // the "Other" row being edited
   const [noteTarget, setNoteTarget] = useState(null); // { key, name, note } being edited
-  const items = useMemo(() => collectPredicted(pending, partners, predictKeys).map((it) => ({
+  const items = useMemo(() => collectPredicted(pending, partners, predictKeys, excludedKeys).map((it) => ({
     ...it,
     open: it.dealId && onOpenDeal ? () => onOpenDeal(it.dealId)
       : it.companyId && onOpenCompany ? () => onOpenCompany(it.companyId)
         : it.clientKey && onOpenPartner ? () => onOpenPartner(it.clientKey) : null,
-  })), [pending, partners, predictKeys, onOpenDeal, onOpenCompany, onOpenPartner]);
+  })), [pending, partners, predictKeys, excludedKeys, onOpenDeal, onOpenCompany, onOpenPartner]);
+
+  // Auto items (partners / other recurring) switched OFF for this month — shown
+  // muted at the bottom so they're easy to add back. Recomputed from the live
+  // data with exclusions ignored, then filtered to the excluded auto keys.
+  const excludedItems = useMemo(() => {
+    if (!excludedKeys || excludedKeys.size === 0) return [];
+    return collectPredicted(pending, partners, predictKeys, new Set())
+      .filter((it) => it.auto && excludedKeys.has(it.key));
+  }, [pending, partners, predictKeys, excludedKeys]);
 
   // Bank a predicted payment without leaving the tab. Imported PP/PO rows mark
   // paid via the pending-payment toggle (Stripe/BACS); active partners record
@@ -706,7 +721,11 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
                       { label: note ? 'Edit note' : 'Add note', icon: StickyNote, onClick: () => setNoteTarget({ key: it.key, name: it.name, note }) },
                       it.type === 'other' && { label: 'Remove', icon: Trash2, onClick: () => removeOther(it.row) },
                       it.open && { label: it.dealId ? 'Open deal' : it.companyId ? 'Open customer' : 'Open partner', icon: ExternalLink, onClick: it.open },
-                      !it.auto && { label: 'Remove from predicted', icon: X, onClick: () => onUnpredict(it.key) },
+                      // Manual rows un-flag; auto rows (partners / other) get
+                      // excluded for this month and listed below to add back.
+                      it.auto
+                        ? (onExclude && { label: 'Remove from predicted', icon: X, onClick: () => onExclude(it, true) })
+                        : { label: 'Remove from predicted', icon: X, onClick: () => onUnpredict(it.key) },
                     ]} />
                   </div>
                   {note && (
@@ -725,6 +744,29 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, monthName, b
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 14px', borderTop: '2px solid ' + BRAND.border, fontSize: 13, fontWeight: 700, color: BRAND.ink }}>
               <span>Total predicted</span>
               <span>{formatGBP(predictedTotal)}</span>
+            </div>
+          </div>
+        )}
+
+        {excludedItems.length > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+              Excluded this month · not counted
+            </div>
+            <div style={{ border: '1px dashed ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+              {excludedItems.map((it) => (
+                <div key={it.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderTop: '1px solid ' + BRAND.border, background: BRAND.paper }}>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: BRAND.muted, textDecoration: 'line-through', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}</span>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, background: 'white', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{it.source}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.muted, flexShrink: 0, minWidth: 70, textAlign: 'right', textDecoration: 'line-through' }}>{formatGBP(it.amount)}</span>
+                  <button
+                    type="button"
+                    onClick={() => onExclude && onExclude(it, false)}
+                    className="btn-ghost"
+                    style={{ padding: '3px 10px', fontSize: 12, flexShrink: 0 }}
+                  >Add back</button>
+                </div>
+              ))}
             </div>
           </div>
         )}

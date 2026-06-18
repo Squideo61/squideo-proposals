@@ -1348,7 +1348,11 @@ function ensurePredictedPayments() {
       created_at timestamptz DEFAULT now(),
       PRIMARY KEY (item_key, month)
     )
-  `.then(() => true).catch((err) => { predictedPaymentsReady = null; throw err; });
+  `
+    // `excluded` flips an auto-included item (active partner / other recurring)
+    // OFF for a given month, so it drops out of the predicted list + projection.
+    .then(() => sql`ALTER TABLE predicted_payments ADD COLUMN IF NOT EXISTS excluded boolean NOT NULL DEFAULT false`)
+    .then(() => true).catch((err) => { predictedPaymentsReady = null; throw err; });
   return predictedPaymentsReady;
 }
 
@@ -1383,7 +1387,7 @@ async function predictedPaymentsRoute(req, res, action, user) {
   const month = /^\d{4}-\d{2}$/.test(action || '') ? action : serverMonthKey();
 
   const snapshot = async () => {
-    const rows = await sql`SELECT item_key, label, amount_ex_vat FROM predicted_payments WHERE month = ${month}`;
+    const rows = await sql`SELECT item_key, label, amount_ex_vat, excluded FROM predicted_payments WHERE month = ${month}`;
     const noteRows = await sql`SELECT item_key, note FROM predicted_payment_notes`;
     const notes = {};
     for (const r of noteRows) if (r.note) notes[r.item_key] = r.note;
@@ -1391,11 +1395,14 @@ async function predictedPaymentsRoute(req, res, action, user) {
     // total is added to for the projected month-end figure.
     let bankedNet = 0;
     try { bankedNet = round2((await incomeReport(month)).total || 0); } catch { bankedNet = 0; }
+    const included = rows.filter((r) => !r.excluded);
     return {
       month,
       bankedNet,
-      keys: rows.map((r) => r.item_key),
-      items: rows.map((r) => ({ key: r.item_key, label: r.label || null, amount: Number(r.amount_ex_vat) || 0 })),
+      keys: included.map((r) => r.item_key),
+      items: included.map((r) => ({ key: r.item_key, label: r.label || null, amount: Number(r.amount_ex_vat) || 0 })),
+      // Auto-included items the user has switched OFF for this month.
+      excludedKeys: rows.filter((r) => r.excluded).map((r) => r.item_key),
       notes,
     };
   };
@@ -1420,6 +1427,23 @@ async function predictedPaymentsRoute(req, res, action, user) {
           DO UPDATE SET note = EXCLUDED.note, updated_by = EXCLUDED.updated_by, updated_at = NOW()`;
       } else {
         await sql`DELETE FROM predicted_payment_notes WHERE item_key = ${itemKey}`;
+      }
+      return res.status(200).json(await snapshot());
+    }
+    // Exclude / re-include an auto item (active partner / other recurring) for
+    // this month — distinct from the manual predicted toggle.
+    if ('excluded' in body) {
+      const label = trimOrNull(body.label);
+      const amount = numberOrNull(body.amountExVat) || 0;
+      const actor = user?.name || user?.email || null;
+      if (body.excluded) {
+        await sql`
+          INSERT INTO predicted_payments (item_key, month, label, amount_ex_vat, created_by, excluded)
+          VALUES (${itemKey}, ${month}, ${label}, ${amount}, ${actor}, true)
+          ON CONFLICT (item_key, month)
+          DO UPDATE SET excluded = true, label = EXCLUDED.label, amount_ex_vat = EXCLUDED.amount_ex_vat`;
+      } else {
+        await sql`DELETE FROM predicted_payments WHERE item_key = ${itemKey} AND month = ${month} AND excluded = true`;
       }
       return res.status(200).json(await snapshot());
     }

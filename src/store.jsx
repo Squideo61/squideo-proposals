@@ -1226,6 +1226,22 @@ export function StoreProvider({ children }) {
         .then((data) => { if (data) setState(s => ({ ...s, predictedPayments: data })); return data; })
         .catch(() => {});
     },
+    // Exclude (or re-include) an auto-included item — an active partner or
+    // "other" recurring row — from this month's predicted list. Optimistic on
+    // the excluded-key set so it drops off / returns instantly.
+    excludePredictedPayment(month, itemKey, excluded, label = null, amountExVat = 0) {
+      setState(s => {
+        const cur = s.predictedPayments && s.predictedPayments.month === month
+          ? s.predictedPayments
+          : { month, keys: [], items: [], excludedKeys: [], bankedNet: 0 };
+        const set = new Set(cur.excludedKeys || []);
+        if (excluded) set.add(itemKey); else set.delete(itemKey);
+        return { ...s, predictedPayments: { ...cur, month, excludedKeys: [...set] } };
+      });
+      return api.post('/api/crm/stats/predicted-payments/' + month, { itemKey, excluded, label, amountExVat })
+        .then((data) => { if (data) setState(s => ({ ...s, predictedPayments: data })); return data; })
+        .catch(() => {});
+    },
     // Add / edit / clear a progress note on a predicted payment (catch-up notes).
     // Notes are keyed by item, not month, so they persist. Optimistic.
     setPredictedPaymentNote(month, itemKey, note) {
