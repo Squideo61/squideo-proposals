@@ -1013,7 +1013,9 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
       padding: vpad(density) + ' 14px',
       borderTop: first ? 'none' : '1px solid ' + (hover ? 'transparent' : BRAND.border),
       borderLeft: '3px solid ' + (stageC ? stageC.fg : 'transparent'),
-      background: selected ? '#FEF9E7' : hover ? 'white' : row.unread ? '#F4FAFE' : stageC ? stageC.bg : 'white',
+      // Very light tint: the stage colour at ~7% over white (vs the heavier
+      // pastel `bg`), so the stripe carries the colour and the row stays subtle.
+      background: selected ? '#FEF9E7' : hover ? 'white' : row.unread ? '#F4FAFE' : stageC ? stageC.fg + '12' : 'white',
       // Gmail-style hover "pop": the row lifts on a soft shadow above its
       // neighbours. position+zIndex keep the shadow over the next row's border.
       position: 'relative',
