@@ -213,14 +213,26 @@ const PREVIEW_META = {
   video:      { label: 'Draft video', icon: Film, empty: 'No draft video yet — use “Send for review”, then upload a draft.' },
 };
 
-// Turn a Google Drive/Docs link into an embeddable preview URL, or null if it
-// isn't a recognised Google link (caller then shows a plain "View" button).
+// Turn a Google Drive/Docs link into a clean embeddable …/preview URL, or null if
+// it isn't a recognised Google link (caller then shows a plain "View" button).
+// Handles the many shapes a pasted link takes — native editors
+// (docs.google.com/{document,spreadsheets,presentation,drawings,forms}/d/<id>),
+// the /u/<n>/ account-scoped path, Drive files (/file/d/<id>/view), and the
+// id-in-query forms (open?id=, uc?id=, ?id=). We rebuild a canonical URL and drop
+// the original query string, since stray params (?usp=…, ?tab=…) break the embed.
 function googleEmbedUrl(url) {
   if (!url) return null;
-  if (url.includes('drive.google.com')) return url.replace('/view', '/preview');
-  // docs.google.com/{document,spreadsheets,presentation}/d/<id>/… → …/preview
-  const m = url.match(/^(https:\/\/docs\.google\.com\/[a-z]+\/d\/[^/?#]+)/i);
-  if (m) return m[1] + '/preview';
+  let u;
+  try { u = new URL(url.trim()); } catch { return null; }
+  const host = u.hostname.replace(/^www\./, '');
+  if (host !== 'docs.google.com' && host !== 'drive.google.com') return null;
+  // Native Google editor docs.
+  const docMatch = u.pathname.match(/\/(document|spreadsheets|presentation|drawings|forms)\/(?:u\/\d+\/)?d\/([^/]+)/i);
+  if (docMatch) return `https://docs.google.com/${docMatch[1].toLowerCase()}/d/${docMatch[2]}/preview`;
+  // Drive files: /file/d/<id>/… or an id carried in the query (open?id=, uc?id=).
+  const fileMatch = u.pathname.match(/\/file\/(?:u\/\d+\/)?d\/([^/]+)/i);
+  const id = fileMatch ? fileMatch[1] : u.searchParams.get('id');
+  if (id) return `https://drive.google.com/file/d/${id}/preview`;
   return null;
 }
 
@@ -669,6 +681,9 @@ function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
                   onChange={(e) => setLinkTitle(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleLink(); }}
                 />
+                <div style={{ fontSize: 11, color: BRAND.muted, lineHeight: 1.4 }}>
+                  Set the doc to <strong>Anyone with the link → Viewer</strong> in Google, or the inline preview can't load (the “Open” link still works either way).
+                </div>
                 <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                   <button onClick={() => { setLinkOpen(false); setLinkUrlInput(''); setLinkTitle(''); }}
                     className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
