@@ -995,6 +995,10 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
   const { state } = useStore();
   const [hover, setHover] = useState(false);
   const chips = state.threadDeals?.[row.id] || [];
+  // Conversations tied to a CRM deal get a blue left-accent stripe + faint tint
+  // so they stand out in the mailbox. A transparent stripe on every other row
+  // keeps the text aligned.
+  const onDeal = chips.length > 0;
   const who = (row.participants && row.participants.length ? row.participants.join(', ') : null)
     || displayName(row.from) || row.fromEmail || '(unknown)';
   // Sent rows read like Gmail's Sent: "To: <recipient>" rather than the sender.
@@ -1007,7 +1011,8 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
       display: 'flex', alignItems: 'center', gap: 10,
       padding: vpad(density) + ' 14px',
       borderTop: first ? 'none' : '1px solid ' + (hover ? 'transparent' : BRAND.border),
-      background: selected ? '#FEF9E7' : hover ? 'white' : row.unread ? '#F4FAFE' : 'white',
+      borderLeft: '3px solid ' + (onDeal ? BRAND.blue : 'transparent'),
+      background: selected ? '#FEF9E7' : hover ? 'white' : row.unread ? '#F4FAFE' : onDeal ? '#F2FBFE' : 'white',
       // Gmail-style hover "pop": the row lifts on a soft shadow above its
       // neighbours. position+zIndex keep the shadow over the next row's border.
       position: 'relative',
