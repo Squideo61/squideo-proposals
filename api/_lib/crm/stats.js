@@ -1225,7 +1225,8 @@ async function pendingPaymentsReport() {
            COALESCE(mi.deal_id, pr.deal_id) AS deal_id,
            COALESCE(mi.company_id, dd.company_id, dp.company_id) AS company_id,
            COALESCE(c.name, ddc.name, dpc.name) AS company,
-           COALESCE(dd.title, dp.title) AS deal_title
+           COALESCE(dd.title, dp.title) AS deal_title,
+           COALESCE(dd.production_phase, dp.production_phase) AS production_phase
       FROM manual_invoices mi
       LEFT JOIN proposals pr  ON pr.id  = mi.proposal_id
       LEFT JOIN deals dd      ON dd.id  = mi.deal_id
@@ -1262,6 +1263,8 @@ async function pendingPaymentsReport() {
       vat: round2(vat),
       status: 'invoiced',
       dealId: r.deal_id || null,
+      // A deal in production is a "project" — drives the row's Deal/Project label.
+      isProject: !!r.production_phase,
     });
   }
   companyInvoices.sort((a, b) => (Number(b.amountExVat) || 0) - (Number(a.amountExVat) || 0));

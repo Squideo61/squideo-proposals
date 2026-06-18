@@ -1421,6 +1421,8 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
   const isInvoicedGroup = variant === 'invoiced';
   const isCompanyInvoice = r.kind === 'company-invoice';
   const linkedDeal = !!r.dealId;
+  // A deal in production is a "project" — affects only wording (Deal vs Project).
+  const dealNoun = r.isProject ? 'project' : 'deal';
   const linkedCompany = !!r.companyId;
   const linked = linkedDeal || linkedCompany;
   const net = Number(r.amountExVat) || 0;
@@ -1437,7 +1439,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
   // (records the payment in Xero), not the imported-payment toggle.
   const rowActions = isCompanyInvoice ? [
     { label: 'Mark paid…', icon: Check, onClick: () => setPayingInvoice(true) },
-    canOpen && { label: linkedDeal ? 'Open deal' : 'Open customer', icon: ExternalLink, onClick: openLinked },
+    canOpen && { label: linkedDeal ? `Open ${dealNoun}` : 'Open customer', icon: ExternalLink, onClick: openLinked },
   ] : [
     isInvoicedGroup
       ? { label: 'Move back to pending', icon: RotateCcw, onClick: onUninvoice }
@@ -1445,7 +1447,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
     { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => onPaid('stripe') },
     { label: 'Mark paid — BACS', icon: Banknote, onClick: () => onPaid('bacs') },
     onLink && { label: linked ? 'Edit link' : 'Link to deal / customer', icon: Link2, onClick: () => setLinkOpen(true) },
-    canOpen && { label: linkedCompany ? 'Open customer' : 'Open deal', icon: ExternalLink, onClick: openLinked },
+    canOpen && { label: linkedCompany ? 'Open customer' : `Open ${dealNoun}`, icon: ExternalLink, onClick: openLinked },
     { label: 'Remove', icon: Trash2, danger: true, onClick: onRemove },
   ];
   const predictKey = predictKeyForManual(r);
@@ -1465,9 +1467,9 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
             <span onClick={openLinked}
               title={linkedCompany
                 ? (r.linkedCompanyName ? `Linked to customer: ${r.linkedCompanyName}` : 'Linked to a customer')
-                : (onOpenDeal ? 'Open linked deal' : 'Linked to a CRM deal')}
+                : (onOpenDeal ? `Open linked ${dealNoun}` : `Linked to a CRM ${dealNoun}`)}
               style={{ cursor: canOpen ? 'pointer' : 'default', fontSize: 9, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              {linkedDeal ? 'Deal' : linkedCompany ? 'Customer' : 'Linked'}
+              {linkedDeal ? (r.isProject ? 'Project' : 'Deal') : linkedCompany ? 'Customer' : 'Linked'}
             </span>
           ) : (
             <span style={{ fontSize: 9, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
