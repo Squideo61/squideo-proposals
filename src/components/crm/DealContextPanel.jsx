@@ -207,21 +207,7 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
             </span>
           </Row>
         )}
-        {detail.primaryContact && (
-          <Row>
-            <DealMetaKey>Contact</DealMetaKey>
-            <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 0, maxWidth: 180 }}>
-              <span style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }} title={detail.primaryContact.name || detail.primaryContact.email}>
-                {detail.primaryContact.name || detail.primaryContact.email}
-              </span>
-              {detail.primaryContact.name && detail.primaryContact.email && (
-                <a href={`mailto:${detail.primaryContact.email}`} style={{ fontSize: 11, color: BRAND.blue, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }} title={detail.primaryContact.email}>
-                  {detail.primaryContact.email}
-                </a>
-              )}
-            </span>
-          </Row>
-        )}
+        <PrimaryContactRow detail={detail} />
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
           <button onClick={() => onOpenDeal?.(detail.id)} className="btn" style={{ fontSize: 12 }}>
             Open deal <ExternalLink size={13} />
@@ -628,6 +614,192 @@ function ValueRow({ dealId, valueInfo }) {
         <Pencil size={11} style={{ opacity: 0.5 }} />
       </button>
     </Row>
+  );
+}
+
+// Editable primary contact. Shows the deal's primary contact and opens a picker
+// of (a) people already on the deal and (b) anyone who appears in the deal's
+// linked emails — choosing one attaches them as a contact (upsert by email) if
+// needed and promotes them to primary. Reloads the deal detail afterwards so the
+// primary/secondary reshuffle is reflected.
+function PrimaryContactRow({ detail }) {
+  const { state, actions, showMsg } = useStore();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+
+  const primary = detail.primaryContact || null;
+
+  // People already attached to the deal (primary + secondaries).
+  const dealContacts = useMemo(() => {
+    const out = [];
+    const seen = new Set();
+    if (primary?.id) { out.push(primary); seen.add(primary.id); }
+    for (const c of (detail.secondaryContacts || [])) {
+      if (c?.id && !seen.has(c.id)) { out.push(c); seen.add(c.id); }
+    }
+    return out;
+  }, [primary, detail.secondaryContacts]);
+
+  // Distinct external people in the deal's emails who aren't already on the deal.
+  // Excludes our own team (CRM users, the mailbox, anyone on our domain), matching
+  // the "new on this thread" rules. Resolves each to an existing contact by email
+  // where possible so we link rather than duplicate.
+  const emailPeople = useMemo(() => {
+    const contactByEmail = new Map();
+    for (const c of Object.values(state.contacts || {})) if (c?.email) contactByEmail.set(c.email.toLowerCase(), c);
+
+    const onDeal = new Set(dealContacts.map(c => (c.email || '').toLowerCase()).filter(Boolean));
+
+    const internal = new Set();
+    for (const u of Object.values(state.users || {})) if (u?.email) internal.add(u.email.toLowerCase());
+    if (state.session?.email) internal.add(state.session.email.toLowerCase());
+    if (state.gmailAccount?.gmailAddress) internal.add(state.gmailAccount.gmailAddress.toLowerCase());
+    const sessionEmail = (state.session?.email || '').toLowerCase();
+    const at = sessionEmail.lastIndexOf('@');
+    const ownDomain = at >= 0 ? sessionEmail.slice(at + 1) : null;
+
+    const seen = new Set();
+    const out = [];
+    for (const em of (detail.emails || [])) {
+      const addrs = [em.fromEmail, ...(em.toEmails || []), ...(em.ccEmails || [])];
+      for (const raw of addrs) {
+        if (!raw || typeof raw !== 'string') continue;
+        const lower = raw.trim().toLowerCase();
+        if (!lower || seen.has(lower) || onDeal.has(lower) || internal.has(lower)) continue;
+        if (ownDomain && lower.endsWith('@' + ownDomain)) continue;
+        seen.add(lower);
+        const existing = contactByEmail.get(lower);
+        out.push({ email: raw.trim(), contactId: existing?.id || null, name: existing?.name || null });
+      }
+    }
+    return out;
+  }, [detail.emails, dealContacts, state.contacts, state.users, state.session, state.gmailAccount]);
+
+  const setPrimary = async ({ contactId, email, name }) => {
+    if (busy) return;
+    if (contactId && contactId === primary?.id) { setOpen(false); return; }
+    setBusy(true);
+    try {
+      let id = contactId;
+      if (!id) {
+        const c = await actions.addDealContact(detail.id, { email, name: name || null, companyId: detail.companyId || null });
+        id = c?.id;
+      }
+      if (!id) throw new Error('Could not resolve contact');
+      await actions.saveDeal(detail.id, { primaryContactId: id });
+      await actions.loadDealDetail(detail.id);
+      showMsg('Primary contact updated');
+      setOpen(false);
+    } catch (e) {
+      showMsg(e?.message || 'Could not set primary contact');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Row>
+      <DealMetaKey>Primary contact</DealMetaKey>
+      <div ref={ref} style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 0, maxWidth: 190 }}>
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          title="Change primary contact"
+          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: 190, color: BRAND.ink }}
+        >
+          {primary
+            ? <span style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }} title={primary.name || primary.email}>{primary.name || primary.email}</span>
+            : <span style={{ fontSize: 12, color: BRAND.muted }}>Set primary contact</span>}
+          <Pencil size={11} style={{ opacity: 0.5, flexShrink: 0 }} />
+        </button>
+        {primary?.name && primary?.email && (
+          <a href={`mailto:${primary.email}`} style={{ fontSize: 11, color: BRAND.blue, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 190 }} title={primary.email}>
+            {primary.email}
+          </a>
+        )}
+        {open && (
+          <div
+            role="listbox"
+            style={{
+              position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 60,
+              background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
+              boxShadow: '0 8px 24px rgba(15, 42, 61, 0.14)', padding: 4, minWidth: 230, maxWidth: 280,
+              maxHeight: 320, overflowY: 'auto', textAlign: 'left', cursor: busy ? 'wait' : 'default',
+            }}
+          >
+            {dealContacts.length > 0 && <PickerHeading>On this deal</PickerHeading>}
+            {dealContacts.map((c) => (
+              <ContactOption
+                key={c.id}
+                name={c.name}
+                email={c.email}
+                selected={c.id === primary?.id}
+                disabled={busy}
+                onClick={() => setPrimary({ contactId: c.id, email: c.email, name: c.name })}
+              />
+            ))}
+            {emailPeople.length > 0 && <PickerHeading>From this deal's emails</PickerHeading>}
+            {emailPeople.map((p) => (
+              <ContactOption
+                key={p.email}
+                name={p.name}
+                email={p.email}
+                add={!p.contactId}
+                disabled={busy}
+                onClick={() => setPrimary(p)}
+              />
+            ))}
+            {dealContacts.length === 0 && emailPeople.length === 0 && (
+              <Muted style={{ padding: '6px 8px' }}>No people found in this deal's emails yet.</Muted>
+            )}
+          </div>
+        )}
+      </div>
+    </Row>
+  );
+}
+
+const PickerHeading = ({ children }) => (
+  <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, padding: '6px 8px 3px' }}>{children}</div>
+);
+
+function ContactOption({ name, email, selected, add, disabled, onClick }) {
+  return (
+    <button
+      role="option"
+      aria-selected={!!selected}
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 8px',
+        background: selected ? '#F1F5F9' : 'transparent', border: 'none', borderRadius: 6,
+        cursor: disabled ? 'wait' : 'pointer', fontFamily: 'inherit', textAlign: 'left', minWidth: 0,
+      }}
+      onMouseEnter={(e) => { if (!selected && !disabled) e.currentTarget.style.background = '#F8FAFC'; }}
+      onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = 'transparent'; }}
+    >
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: 'block', fontSize: 12.5, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {name || email}
+        </span>
+        {name && email && (
+          <span style={{ display: 'block', fontSize: 11, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</span>
+        )}
+      </span>
+      {selected
+        ? <Check size={14} color={BRAND.blue} style={{ flexShrink: 0 }} />
+        : add ? <Plus size={13} color={BRAND.muted} style={{ flexShrink: 0 }} /> : null}
+    </button>
   );
 }
 
