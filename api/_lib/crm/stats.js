@@ -675,28 +675,38 @@ async function performanceReport(action) {
   return { period, spanMonths, since, until, days };
 }
 
-// Sales performance: new business SIGNED in the period, valued at the net
-// (ex-VAT) signed total — "the cash each sale generates" — bucketed by the
-// signature date. Same JS-aggregation shape as performanceReport so the client
-// treats days[].net identically; `count` is the number of signings that day.
+// Sales performance: new business sold in the period, valued at the net (ex-VAT)
+// total — "the cash each sale generates" — bucketed by day. Counts the same
+// sources as salesFinanceReport so the pace graph + "signed so far" headline
+// agree with the Finance Sales cards: signed proposals (by signature date),
+// ad-hoc extras (by created date) and standalone ad-hoc invoices with no signed
+// proposal (by issue date). `count` is the number of sale events that day.
 async function salesReport(action) {
   const { period, spanMonths, since, until } = parsePerformancePeriod(action);
-  const rows = await sql`
-    SELECT s.signed_at, (s.data->>'total')::numeric AS total, pr.data->>'vatRate' AS rate
-      FROM signatures s
-      JOIN proposals pr ON pr.id = s.proposal_id
-     WHERE s.signed_at >= ${since} AND s.signed_at < ${until}
-       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
-  `;
+  const [sigRows, extraRows, invRows] = await Promise.all([
+    sql`
+      SELECT s.signed_at, (s.data->>'total')::numeric AS total, pr.data->>'vatRate' AS rate
+        FROM signatures s
+        JOIN proposals pr ON pr.id = s.proposal_id
+       WHERE s.signed_at >= ${since} AND s.signed_at < ${until}
+         AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
+    `,
+    fetchExtraRows(since, until, false),
+    fetchStandaloneInvoiceRows(since, until),
+  ]);
 
   const byDay = {};
-  for (const r of rows) {
-    if (!r.signed_at) continue;
-    const k = dayKey(new Date(r.signed_at));
+  const add = (dateVal, net) => {
+    if (!dateVal) return;
+    const k = dayKey(new Date(dateVal));
     if (!byDay[k]) byDay[k] = { net: 0, count: 0 };
-    byDay[k].net += splitVat(r.total, r.rate).net;
+    byDay[k].net += net;
     byDay[k].count += 1;
-  }
+  };
+  for (const r of sigRows) add(r.signed_at, splitVat(r.total, r.rate).net);
+  for (const r of extraRows) add(r.created_at, extraSplit(r.amount, r.vat_rate).net);
+  for (const r of invRows) add(r.at, invoiceSplit(r).net);
+
   const days = Object.entries(byDay)
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([date, v]) => ({ date, net: round2(v.net), count: v.count }));
