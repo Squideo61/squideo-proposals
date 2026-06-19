@@ -21,7 +21,7 @@ import { TrackingEye } from './EmailTracking.jsx';
 import { ContactModal } from './ContactsView.jsx';
 import { ConversationView } from './EmailsView.jsx';
 
-const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Other'];
+const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Funding not obtained', 'Other'];
 
 // Render plain text with any http(s) URLs turned into clickable links that open
 // in a new tab. Used for quote-request notes, which the client pastes raw.
