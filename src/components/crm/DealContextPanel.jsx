@@ -5,6 +5,7 @@ import { useStore } from '../../store.jsx';
 import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
+import { LostReasonModal } from './LostReasonModal.jsx';
 
 const STAGE_LABEL = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s.label]));
 
@@ -884,6 +885,7 @@ function StageMark({ color }) {
 function StageDropdown({ dealId, stage }) {
   const { actions, showMsg } = useStore();
   const [open, setOpen] = useState(false);
+  const [askLost, setAskLost] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -901,6 +903,8 @@ function StageDropdown({ dealId, stage }) {
   const choose = (next) => {
     setOpen(false);
     if (next === stage) return;
+    // Marking lost prompts for a reason, same as the deal page.
+    if (next === 'lost') { setAskLost(true); return; }
     actions.moveDealStage(dealId, next);
     showMsg(`Stage: ${STAGE_LABEL[next] || next}`);
   };
@@ -956,6 +960,16 @@ function StageDropdown({ dealId, stage }) {
             );
           })}
         </div>
+      )}
+      {askLost && (
+        <LostReasonModal
+          onClose={() => setAskLost(false)}
+          onSubmit={(reason) => {
+            setAskLost(false);
+            actions.moveDealStage(dealId, 'lost', reason);
+            showMsg('Marked as lost');
+          }}
+        />
       )}
     </div>
   );

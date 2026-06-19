@@ -19,9 +19,9 @@ import { IntroCallButton } from './IntroCallCard.jsx';
 import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
 import { TrackingEye } from './EmailTracking.jsx';
 import { ContactModal } from './ContactsView.jsx';
+import { LostReasonModal } from './LostReasonModal.jsx';
 import { ConversationView } from './EmailsView.jsx';
 
-const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Funding not obtained', 'Indefinite hold', 'Other'];
 
 // Render plain text with any http(s) URLs turned into clickable links that open
 // in a new tab. Used for quote-request notes, which the client pastes raw.
@@ -2699,28 +2699,6 @@ function EditDealModal({ deal, onClose }) {
           onCreated={() => setCreatingExtra(null)}
         />
       )}
-    </Modal>
-  );
-}
-
-function LostReasonModal({ onClose, onSubmit }) {
-  const [reason, setReason] = useState('Price');
-  return (
-    <Modal onClose={onClose}>
-      <h2 style={{ margin: '0 0 12px', fontSize: 18, fontWeight: 700 }}>Mark deal as lost</h2>
-      <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 16px' }}>What's the main reason?</p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 18 }}>
-        {LOST_REASONS.map(r => (
-          <label key={r} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', cursor: 'pointer', fontSize: 14 }}>
-            <input type="radio" name="lost" checked={reason === r} onChange={() => setReason(r)} />
-            <span>{r}</span>
-          </label>
-        ))}
-      </div>
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button onClick={onClose} className="btn-ghost">Cancel</button>
-        <button onClick={() => onSubmit(reason)} className="btn">Confirm lost</button>
-      </div>
     </Modal>
   );
 }
