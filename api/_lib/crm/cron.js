@@ -593,14 +593,21 @@ export async function cronTaskDigest(res) {
       : `${tasks.length} tasks due today`;
     const summary = tasks.slice(0, 3).map(t => t.title).join(', ')
       + (tasks.length > 3 ? ` +${tasks.length - 3} more` : '');
+    // One-click "Mark done" per task — a per-recipient signed token, same flow
+    // as the at-due reminder, so each task can be ticked off straight from the
+    // digest without opening the app.
+    const withDoneUrl = await Promise.all(tasks.map(async (t) => {
+      const token = await signTaskActionToken({ taskId: t.id, email, action: 'done' });
+      return { ...t, doneUrl: `${baseRoot}/api/crm/tasks/${encodeURIComponent(t.id)}/done-link?token=${encodeURIComponent(token)}` };
+    }));
     try {
       // sendNotification filters by the recipient's task.digest pref, then emails
       // + persists in-app + pushes in one call.
       const r = await sendNotification('task.digest', {
         assigneeEmails: [email],
         subject,
-        html: buildDigestEmail(tasks, tasksUrl),
-        text: `Due today:\n${tasks.map(t => `• ${t.title} — ${new Date(t.due_at).toLocaleString('en-GB', { timeStyle: 'short' })}${t.deal_title ? ' (' + t.deal_title + ')' : ''}`).join('\n')}\n\n${tasksUrl}`,
+        html: buildDigestEmail(withDoneUrl, tasksUrl),
+        text: `Due today:\n${withDoneUrl.map(t => `• ${t.title} — ${new Date(t.due_at).toLocaleString('en-GB', { timeStyle: 'short' })}${t.deal_title ? ' (' + t.deal_title + ')' : ''}\n  Mark done: ${t.doneUrl}`).join('\n')}\n\n${tasksUrl}`,
         inApp: {
           title: subject,
           body: summary,
@@ -626,9 +633,12 @@ function buildDigestEmail(tasks, tasksUrl) {
   const items = tasks.map((t) => {
     const due = new Date(t.due_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
     const deal = t.deal_title ? ` <span style="color:#6B7785;">· ${escapeHtml(t.deal_title)}</span>` : '';
+    const doneLink = t.doneUrl
+      ? ` &nbsp;<a href="${t.doneUrl}" style="font-size:12px;color:#16A34A;text-decoration:none;font-weight:600;white-space:nowrap;">✓ Mark done</a>`
+      : '';
     return `<li style="margin:0 0 10px;font-size:14px;line-height:1.5;">
       <strong>${escapeHtml(t.title)}</strong>${deal}<br/>
-      <span style="font-size:12px;color:#6B7785;">Due ${escapeHtml(due)}</span>
+      <span style="font-size:12px;color:#6B7785;">Due ${escapeHtml(due)}</span>${doneLink}
     </li>`;
   }).join('');
   return `
