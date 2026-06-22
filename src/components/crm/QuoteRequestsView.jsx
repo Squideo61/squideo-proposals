@@ -279,8 +279,8 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onC
               </button>
             )}
             {!isDisqualified && (
-              <button onClick={onDisqualify} disabled={busy} className="btn-ghost" title="Disqualify (deletes the request and any provisional contact)">
-                <X size={14} />
+              <button onClick={onDisqualify} disabled={busy} className="btn-ghost" title="Disqualify — logs a non-qualified lead for marketing and deletes the request + any provisional contact">
+                <X size={14} /> Disqualify
               </button>
             )}
           </>
