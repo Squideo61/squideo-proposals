@@ -2017,6 +2017,21 @@ export function StoreProvider({ children }) {
         return list;
       }).catch(() => []);
     },
+    // Re-pull the open-task set (workspace-wide) and merge it over state.tasks
+    // WITHOUT dropping any completed rows already loaded (the full Tasks page
+    // keeps done tasks in state.tasks; the header only ever needs open ones).
+    // Used by the header Tasks dropdown so it reflects completions made anywhere
+    // — deal panel, extension, email link — not just ticks inside the menu.
+    syncOpenTasks() {
+      return api.get('/api/crm/tasks?scope=open').then((rows) => {
+        const open = Array.isArray(rows) ? rows : [];
+        setState(s => {
+          const doneKept = (s.tasks || []).filter(t => t.doneAt); // open & done are disjoint by id
+          return { ...s, tasks: [...open, ...doneKept] };
+        });
+        return open;
+      }).catch(() => []);
+    },
     createTask(input) {
       // No optimistic insert — id is server-assigned. Use mutate purely for
       // the rollback/toast scaffolding; onSuccess applies the new row to both

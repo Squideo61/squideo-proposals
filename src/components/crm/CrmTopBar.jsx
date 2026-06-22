@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, PoundSterling, Settings, Square, Trophy, Undo2, Redo2, UserCog } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -418,10 +418,17 @@ function TasksMenu({ tasks, count, deals, active, navigate, actions, isMobile })
   const ref = useRef(null);
 
   // Freeze the list (and clear local "ticked" marks) each time the menu opens,
-  // so completing tasks doesn't reorder/empty it from under the cursor.
+  // so completing tasks doesn't reorder/empty it from under the cursor. Also
+  // pull fresh open tasks from the server, so completions made elsewhere (deal
+  // panel, extension, an emailed task link) are reflected rather than lingering.
   useEffect(() => {
-    if (open) { setSnapshot(tasks); setDoneIds(new Set()); }
+    if (open) { setSnapshot(tasks); setDoneIds(new Set()); actions.syncOpenTasks(); }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A snapshot row counts as done if ticked here OR if it has dropped out of the
+  // live open-task set (completed elsewhere). Membership stays frozen so the list
+  // doesn't reorder under the cursor; only the tick state reacts.
+  const liveOpenIds = useMemo(() => new Set((tasks || []).map(t => t.id)), [tasks]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -489,7 +496,7 @@ function TasksMenu({ tasks, count, deals, active, navigate, actions, isMobile })
                 Nothing due today. 🎉
               </div>
             ) : snapshot.map((t) => {
-              const done = doneIds.has(t.id);
+              const done = doneIds.has(t.id) || !liveOpenIds.has(t.id);
               const deal = t.dealId && deals ? deals[t.dealId] : null;
               const Icon = done ? CheckSquare : Square;
               return (
