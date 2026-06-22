@@ -1360,6 +1360,13 @@ function ExpandedMessage({ email, defaultOpen = false, isLast = false, onOpenFul
       </div>
       {open && (
         <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8, fontSize: 13, lineHeight: 1.5, maxHeight: 320, overflowY: 'auto', wordBreak: 'break-word' }}>
+          {/* Full recipient list so every addressee — including everyone Cc'd —
+              is visible, not just the first To. */}
+          <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 8, lineHeight: 1.5 }}>
+            {email.fromEmail && <div><span style={{ fontWeight: 600 }}>From:</span> {email.fromEmail}</div>}
+            {email.toEmails?.length > 0 && <div><span style={{ fontWeight: 600 }}>To:</span> {email.toEmails.join(', ')}</div>}
+            {email.ccEmails?.length > 0 && <div><span style={{ fontWeight: 600 }}>Cc:</span> {email.ccEmails.join(', ')}</div>}
+          </div>
           {loading && <div style={{ color: BRAND.muted, fontSize: 12 }}>Loading…</div>}
           {error && <div style={{ color: '#DC2626', fontSize: 12 }}>{error}</div>}
           {!loading && !error && data && (
