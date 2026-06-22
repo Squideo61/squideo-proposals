@@ -790,6 +790,11 @@ function PrimaryContactRow({ detail }) {
             {primary.email}
           </a>
         )}
+        {primary?.phone && (
+          <a href={`tel:${primary.phone.replace(/\s+/g, '')}`} style={{ fontSize: 11, color: BRAND.blue, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 190 }} title={`Call ${primary.phone}`}>
+            {primary.phone}
+          </a>
+        )}
         {open && (
           <div
             role="listbox"
