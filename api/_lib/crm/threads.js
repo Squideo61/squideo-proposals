@@ -300,12 +300,32 @@ export async function threadsRoute(req, res, id, action, user) {
           DELETE FROM email_thread_deals
           WHERE gmail_thread_id = ${id} AND deal_id = ${dealId}
         `;
+        // Also drop any per-message links for messages in this thread to the
+        // same deal, so "unlink from this deal" fully detaches the conversation
+        // rather than leaving orphaned message-scope links that keep it showing.
+        await sql`
+          DELETE FROM email_message_deals
+          WHERE deal_id = ${dealId}
+            AND gmail_message_id IN (
+              SELECT gmail_message_id FROM email_messages WHERE gmail_thread_id = ${id}
+            )
+        `;
       } else {
         await sql`
           DELETE FROM email_message_deals
           WHERE gmail_message_id = ${gmailMessageId} AND deal_id = ${dealId}
         `;
       }
+      // Log the detach on the deal timeline (mirror of the 'email_linked' event).
+      await sql`
+        INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+        VALUES (
+          ${dealId},
+          'email_unlinked',
+          ${JSON.stringify({ gmailThreadId: id, gmailMessageId: gmailMessageId || null, scope, source: 'manual' })},
+          ${user.email || null}
+        )
+      `;
       return res.status(200).json({ ok: true });
     }
 

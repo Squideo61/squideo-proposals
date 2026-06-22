@@ -621,6 +621,16 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   onOpenMessage={(id) => setOpenEmailId(id)}
                   onLinkAnother={(target) => setLinkEmailTarget(target)}
                   onCreateNewDeal={(target) => setNewDealFromEmail(target)}
+                  onUnlink={async (target) => {
+                    if (!window.confirm('Unlink this conversation from this deal? It stays in your mailbox and on any other deals it’s linked to.')) return;
+                    try {
+                      await actions.unlinkEmail({ threadId: target.threadId, dealId, scope: 'thread' });
+                      showMsg('Email unlinked from this deal');
+                      actions.loadDealDetail(dealId);
+                    } catch (err) {
+                      showMsg('Could not unlink: ' + (err?.message || 'unknown error'));
+                    }
+                  }}
                 />
               ))}
             </div>
@@ -887,7 +897,7 @@ export function EventRow({ event, users }) {
   );
 }
 
-function EmailRow({ email, onOpen, threadCount, expandable, expanded, dealTitle, onLinkAnother, onCreateNewDeal }) {
+function EmailRow({ email, onOpen, threadCount, expandable, expanded, dealTitle, onLinkAnother, onCreateNewDeal, onUnlink }) {
   const inbound = email.direction === 'inbound';
   const arrow = inbound ? '↓' : '↑';
   const accent = inbound ? '#16A34A' : '#2BB8E6';
@@ -1001,7 +1011,7 @@ function EmailRow({ email, onOpen, threadCount, expandable, expanded, dealTitle,
           <span style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1 }}>{expanded ? '▾' : '▸'}</span>
         </div>
       )}
-      {(onLinkAnother || onCreateNewDeal) && (
+      {(onLinkAnother || onCreateNewDeal || onUnlink) && (
         <div
           style={{ flexShrink: 0, alignSelf: 'flex-start', marginTop: 1 }}
           // Stop the kebab's clicks from triggering the row's onOpen.
@@ -1029,6 +1039,7 @@ function EmailRow({ email, onOpen, threadCount, expandable, expanded, dealTitle,
               onClose={() => setMenuOpen(false)}
               onLinkAnother={onLinkAnother}
               onCreateNewDeal={onCreateNewDeal}
+              onUnlink={onUnlink}
             />
           )}
         </div>
@@ -1040,7 +1051,7 @@ function EmailRow({ email, onOpen, threadCount, expandable, expanded, dealTitle,
 // Portal-positioned actions menu for an email row. Mirrors the ProjectMenu
 // pattern in RetainersCard.jsx (click-outside / Escape closes, fixed-position
 // computed from the anchor's bounding rect).
-function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal }) {
+function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal, onUnlink }) {
   const menuRef = useRef(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
 
@@ -1080,6 +1091,7 @@ function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal }) {
   const items = [
     onLinkAnother && { label: 'Add to another deal', onClick: () => { onClose(); onLinkAnother(); } },
     onCreateNewDeal && { label: 'Create new deal from this email', onClick: () => { onClose(); onCreateNewDeal(); } },
+    onUnlink && { label: 'Unlink from this deal', danger: true, onClick: () => { onClose(); onUnlink(); } },
   ].filter(Boolean);
 
   return createPortal(
@@ -1101,10 +1113,13 @@ function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal }) {
           style={{
             display: 'block', width: '100%', textAlign: 'left',
             background: 'transparent', border: 'none', cursor: 'pointer',
-            padding: '8px 10px', borderRadius: 6, fontSize: 13, color: BRAND.ink,
+            padding: '8px 10px', borderRadius: 6, fontSize: 13,
+            color: it.danger ? '#DC2626' : BRAND.ink,
             fontFamily: 'inherit',
+            borderTop: it.danger ? '1px solid ' + BRAND.border : undefined,
+            marginTop: it.danger ? 4 : undefined,
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = '#F4F8FB')}
+          onMouseEnter={(e) => (e.currentTarget.style.background = it.danger ? '#FEF2F2' : '#F4F8FB')}
           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
         >
           {it.label}
@@ -1119,7 +1134,7 @@ function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal }) {
 // thread with a "(N messages)" chip when applicable. Expanded: stacks every
 // message oldest→newest with its body inlined (lazy-loaded). Single-message
 // threads keep the original click-to-modal behaviour.
-export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCompanyId, onOpenMessage, onLinkAnother, onCreateNewDeal }) {
+export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCompanyId, onOpenMessage, onLinkAnother, onCreateNewDeal, onUnlink }) {
   const { state, actions } = useStore();
   const [expanded, setExpanded] = useState(false);
   const isMulti = messages.length > 1;
@@ -1189,6 +1204,7 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
         dealTitle={dealTitle}
         onLinkAnother={onLinkAnother ? () => onLinkAnother({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
         onCreateNewDeal={onCreateNewDeal ? () => onCreateNewDeal({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
+        onUnlink={onUnlink ? () => onUnlink({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
       />
       {unknownCcs.length > 0 && (
         <CcSuggestionStrip
@@ -2414,6 +2430,8 @@ function describeEvent(e) {
     case 'task_done':     return `Task completed: ${p.title || ''}`;
     case 'task_reopened': return `Task reopened: ${p.title || ''}`;
     case 'email_sent':    return p.subject ? `Email sent: ${p.subject}` : 'Email sent';
+    case 'email_linked':  return p.scope === 'message' ? 'Email linked to this deal' : 'Conversation linked to this deal';
+    case 'email_unlinked':return p.scope === 'message' ? 'Email unlinked from this deal' : 'Conversation unlinked from this deal';
     case 'note':          return p.text || 'Note added';
     case 'revision_draft_uploaded': return `Revised video uploaded: ${p.video || 'video'}${p.draft ? ` (draft ${p.draft})` : ''}`;
     case 'revision_completed':   return `Revision complete: ${p.video || 'video'}${p.draft ? ` (draft ${p.draft})` : ''}`;
