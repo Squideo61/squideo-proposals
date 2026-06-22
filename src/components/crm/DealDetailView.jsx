@@ -1137,23 +1137,25 @@ function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal, onU
 export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCompanyId, onOpenMessage, onLinkAnother, onCreateNewDeal, onUnlink }) {
   const { state, actions } = useStore();
   const [expanded, setExpanded] = useState(false);
+  // Inline reply (Gmail-style) — when true, the composer renders at the foot of
+  // the expanded thread instead of popping the floating dock composer. Keeps the
+  // reply in context with the conversation, matching the full thread reader.
+  const [replying, setReplying] = useState(false);
   const isMulti = messages.length > 1;
   const latest = messages[messages.length - 1];
   const threadId = latest.gmailThreadId || latest.gmailMessageId;
 
-  // Reply to the conversation inline (no need to jump to Gmail): open the shared
-  // composer prefilled with the recipient, "Re:" subject and the thread id so the
-  // send stays in the same Gmail conversation. Mirrors the full viewer's reply.
-  const replyToThread = () => {
+  // Seed draft for the inline reply: the other party of the latest message, a
+  // "Re:" subject, and the thread id so the send stays in the same Gmail
+  // conversation. Body is left empty — the thread is shown right above it.
+  const replyDraft = () => {
     const to = latest.direction === 'inbound'
       ? (latest.fromEmail || '')
       : (latest.toEmails?.[0] || latest.fromEmail || '');
     const subject = /^re:/i.test(latest.subject || '') ? latest.subject : 'Re: ' + (latest.subject || '(no subject)');
-    actions.openComposer({
-      dealId: dealId || null,
-      initialDraft: { to, cc: '', subject, body: '', gmailThreadId: latest.gmailThreadId || null },
-    });
+    return { to, cc: '', subject, body: '', gmailThreadId: latest.gmailThreadId || null };
   };
+  const startReply = () => { setExpanded(true); setReplying(true); };
 
   // Addresses Cc'd into any *inbound* message on this thread that aren't
   // already linked to this deal. We only mine inbound because the user asked
@@ -1224,9 +1226,20 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
               onOpenFull={() => onOpenMessage(m.gmailMessageId)}
             />
           ))}
-          <button onClick={replyToThread} className="btn-ghost" style={{ alignSelf: 'flex-start' }}>
-            <Reply size={13} /> Reply
-          </button>
+          {replying ? (
+            <EmailComposerModal
+              inline
+              deal={{ id: dealId, title: dealTitle }}
+              contact={null}
+              initialDraft={replyDraft()}
+              onClose={() => setReplying(false)}
+              onSent={() => { setReplying(false); actions.loadDealDetail(dealId); }}
+            />
+          ) : (
+            <button onClick={startReply} className="btn-ghost" style={{ alignSelf: 'flex-start' }}>
+              <Reply size={13} /> Reply
+            </button>
+          )}
         </div>
       )}
     </div>
