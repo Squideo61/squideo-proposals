@@ -8,6 +8,9 @@ import { Modal } from '../ui.jsx';
 export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
+  // Clearing a request is admin-only (the wildcard '*' permission). Everyone with
+  // quote_requests.manage can still qualify/disqualify.
+  const isAdmin = Array.isArray(state.session?.permissions) && state.session.permissions.includes('*');
   const [filter, setFilter] = useState('new');
   const [active, setActive] = useState(null);
   const [reviewedContact, setReviewedContact] = useState(null);
@@ -49,6 +52,7 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
     () => all.filter((r) => filter === 'all' || r.status === filter),
     [all, filter]
   );
+  const newCount = all.filter((r) => r.status === 'new').length;
 
   const handleQualify = async (req) => {
     if (busyId) return;
@@ -62,6 +66,29 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
     } else {
       showMsg('Could not qualify');
     }
+  };
+
+  const handleClear = async (req) => {
+    if (busyId) return;
+    setBusyId(req.id);
+    const ok = await actions.clearQuoteRequest(req.id);
+    setBusyId(null);
+    if (ok) {
+      showMsg('Cleared from inbox');
+      setActive(null);
+    } else {
+      showMsg('Could not clear');
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (busyId) return;
+    if (!window.confirm(`Clear all ${newCount} new request${newCount === 1 ? '' : 's'} from the inbox? They stay in "All" and aren't marked disqualified, so marketing data is unaffected.`)) return;
+    setBusyId('all');
+    const n = await actions.clearNewQuoteRequests();
+    setBusyId(null);
+    if (n >= 0) showMsg(`Cleared ${n} request${n === 1 ? '' : 's'}`);
+    else showMsg('Could not clear');
   };
 
   const handleDisqualify = async (req) => {
@@ -94,8 +121,6 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
     }
   };
 
-  const newCount = all.filter((r) => r.status === 'new').length;
-
   return (
     <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -108,6 +133,16 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
           {filter === 'new' ? `${newCount} new` : `${requests.length} ${filter}`}
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+          {isAdmin && filter === 'new' && newCount > 0 && (
+            <button
+              onClick={handleClearAll}
+              disabled={busyId === 'all'}
+              className="btn-ghost"
+              title="Remove all new requests from the inbox without disqualifying them"
+            >
+              {busyId === 'all' ? 'Clearing…' : 'Clear all'}
+            </button>
+          )}
           {['new', 'qualified', 'all'].map((f) => (
             <button
               key={f}
@@ -121,10 +156,11 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
         </div>
       </header>
 
-      <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 16px', maxWidth: 640 }}>
+      <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 16px', maxWidth: 680 }}>
         Leads from the public quote form. Click a row to review the full details, then
         Qualify (creates a contact + lead-stage deal) or Disqualify (deletes the request
-        and any provisional contact).
+        and any provisional contact). Clear just removes a request from this inbox
+        without judging it — the lead is kept and marketing data is unaffected.
       </p>
 
       {requests.length === 0 ? (
@@ -142,6 +178,8 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
               onOpen={() => openDetail(r)}
               onQualify={() => handleQualify(r)}
               onDisqualify={() => handleDisqualify(r)}
+              onClear={() => handleClear(r)}
+              canClear={isAdmin}
               onOpenDeal={onOpenDeal}
             />
           ))}
@@ -157,6 +195,8 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
           onClose={() => setActive(null)}
           onQualify={() => handleQualify(active)}
           onDisqualify={() => handleDisqualify(active)}
+          onClear={() => handleClear(active)}
+          canClear={isAdmin}
           onOpenContact={onOpenContact}
           onOpenDeal={onOpenDeal}
         />
@@ -165,8 +205,10 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
   );
 }
 
-function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onOpenDeal }) {
+function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onClear, canClear, onOpenDeal }) {
   const isQualified = request.status === 'qualified';
+  const isCleared = request.status === 'cleared';
+  const isDisqualified = request.status === 'disqualified';
   return (
     <div
       style={{
@@ -191,6 +233,16 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onO
           {isQualified && (
             <span style={{ background: '#16A34A22', color: '#16A34A', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
               Qualified
+            </span>
+          )}
+          {isCleared && (
+            <span style={{ background: '#94A3B822', color: '#64748B', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              Cleared
+            </span>
+          )}
+          {isDisqualified && (
+            <span style={{ background: '#DC262622', color: '#DC2626', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              Disqualified
             </span>
           )}
         </div>
@@ -221,9 +273,16 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onO
             <button onClick={onQualify} disabled={busy} className="btn">
               <Check size={14} /> Qualify
             </button>
-            <button onClick={onDisqualify} disabled={busy} className="btn-ghost" title="Disqualify">
-              <X size={14} />
-            </button>
+            {canClear && !isCleared && (
+              <button onClick={onClear} disabled={busy} className="btn-ghost" title="Clear from inbox (keeps the lead; not marked disqualified)">
+                Clear
+              </button>
+            )}
+            {!isDisqualified && (
+              <button onClick={onDisqualify} disabled={busy} className="btn-ghost" title="Disqualify (deletes the request and any provisional contact)">
+                <X size={14} />
+              </button>
+            )}
           </>
         )}
       </div>
@@ -231,8 +290,9 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onO
   );
 }
 
-function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClose, onQualify, onDisqualify, onOpenContact, onOpenDeal }) {
+function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClose, onQualify, onDisqualify, onClear, canClear, onOpenContact, onOpenDeal }) {
   const isQualified = request.status === 'qualified';
+  const isCleared = request.status === 'cleared';
   const fullPhone = request.phone
     ? `${request.countryCode ? request.countryCode + ' ' : ''}${request.phone}`
     : null;
@@ -311,6 +371,11 @@ function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClo
 
       {!isQualified && (
         <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          {canClear && !isCleared && (
+            <button onClick={onClear} disabled={busy} className="btn-ghost" title="Remove from inbox without disqualifying — keeps the lead">
+              Clear
+            </button>
+          )}
           <button onClick={onDisqualify} disabled={busy} className="btn-ghost">
             <X size={14} /> Disqualify
           </button>

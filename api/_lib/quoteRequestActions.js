@@ -193,6 +193,42 @@ export async function qualifyQuoteRequest(id, { actorEmail } = {}) {
   return { status: 'ok', contactId, dealId, companyId };
 }
 
+// Clears a quote request out of the "new" inbox WITHOUT judging it. Unlike
+// disqualify (which marks the lead bad — counted against the marketing quality
+// rate — and purges the provisional contact/files), clear is a neutral
+// "handled elsewhere / housekeeping" flag: status='cleared' still counts as a
+// lead for attribution totals but is excluded from qualified-vs-disqualified
+// quality maths, and we keep the contact, files and blobs untouched. Refuses an
+// already-qualified request (that'd lose the deal link). Reversible — flip the
+// status back to 'new' to restore it to the inbox.
+export async function clearQuoteRequest(id) {
+  const loaded = await loadQuoteRequestForAction(id);
+  if (!loaded) return { status: 'not_found' };
+  if (loaded.row.status === 'qualified') {
+    return { status: 'already_qualified', dealId: loaded.row.deal_id };
+  }
+  await sql`
+    UPDATE quote_requests
+       SET status = 'cleared',
+           reviewed_at = COALESCE(reviewed_at, NOW())
+     WHERE id = ${id}
+  `;
+  return { status: 'ok' };
+}
+
+// Bulk variant — clears every request still sitting in the "new" inbox in one
+// statement. Qualified/disqualified/already-cleared rows are left untouched.
+export async function clearNewQuoteRequests() {
+  const rows = await sql`
+    UPDATE quote_requests
+       SET status = 'cleared',
+           reviewed_at = COALESCE(reviewed_at, NOW())
+     WHERE status = 'new'
+     RETURNING id
+  `;
+  return { status: 'ok', clearedIds: rows.map((r) => r.id) };
+}
+
 // Disqualifies a quote request. Soft delete: we keep the quote_requests row
 // (flipped to status='disqualified') so Marketing can report on disqualified
 // leads and compute a qualified-vs-disqualified quality rate. We still purge the

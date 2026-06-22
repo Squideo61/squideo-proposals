@@ -6,7 +6,7 @@ import { serialiseCompany } from './_lib/crm/companies.js';
 import { serialiseDeal } from './_lib/crm/deals.js';
 import { getRole } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
-import { qualifyQuoteRequest, disqualifyQuoteRequest } from './_lib/quoteRequestActions.js';
+import { qualifyQuoteRequest, disqualifyQuoteRequest, clearQuoteRequest, clearNewQuoteRequests } from './_lib/quoteRequestActions.js';
 
 function serialiseQuoteRequest(r, files = []) {
   return {
@@ -86,11 +86,21 @@ export default async function handler(req, res) {
 
   const user = await requireAuth(req, res);
   if (!user) return;
-  if (!hasPermission(await getRole(user.role), 'quote_requests.manage')) {
+  const role = await getRole(user.role);
+  if (!hasPermission(role, 'quote_requests.manage')) {
     return res.status(403).json({ error: 'You do not have permission to view quote requests' });
   }
+  // Clearing (single + bulk) is admin-only — the wildcard '*' role.
+  const isAdmin = Array.isArray(role?.permissions) && role.permissions.includes('*');
 
   try {
+    // ── Bulk clear (POST, no id) — empties the "new" inbox non-destructively ──
+    if (!id && req.method === 'POST' && action === 'clear-new') {
+      if (!isAdmin) return res.status(403).json({ error: 'Only admins can clear quote requests' });
+      const result = await clearNewQuoteRequests();
+      return res.status(200).json({ ok: true, clearedIds: result.clearedIds });
+    }
+
     // ── List ────────────────────────────────────────────────────────────────
     if (!id) {
       if (req.method !== 'GET') return res.status(405).end();
@@ -138,6 +148,17 @@ export default async function handler(req, res) {
     // ── Disqualify (DELETE) ────────────────────────────────────────────────
     if (req.method === 'DELETE') {
       const result = await disqualifyQuoteRequest(id);
+      if (result.status === 'not_found') return res.status(404).json({ error: 'Not found' });
+      if (result.status === 'already_qualified') {
+        return res.status(409).json({ error: 'Already qualified — open the deal instead' });
+      }
+      return res.status(200).json({ ok: true });
+    }
+
+    // ── Clear (POST /:id/clear) — neutral "remove from inbox", admin-only ──
+    if (req.method === 'POST' && action === 'clear') {
+      if (!isAdmin) return res.status(403).json({ error: 'Only admins can clear quote requests' });
+      const result = await clearQuoteRequest(id);
       if (result.status === 'not_found') return res.status(404).json({ error: 'Not found' });
       if (result.status === 'already_qualified') {
         return res.status(409).json({ error: 'Already qualified — open the deal instead' });

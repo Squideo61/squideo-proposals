@@ -2519,6 +2519,24 @@ export function StoreProvider({ children }) {
         })
         .catch(() => null);
     },
+    clearQuoteRequest(id) {
+      // Neutral "remove from the inbox" — keeps the lead (and its contact/files)
+      // and does NOT mark it disqualified, so marketing quality metrics are
+      // untouched. Optimistically drop it from the current list (the contact is
+      // intentionally left in place, unlike disqualify).
+      setState(s => ({ ...s, quoteRequests: s.quoteRequests.filter(r => r.id !== id) }));
+      return api.post('/api/quote-requests-admin/' + encodeURIComponent(id) + '/clear', {})
+        .then(() => true)
+        .catch(() => { fetchAllRef.current?.(); return false; });
+    },
+    clearNewQuoteRequests() {
+      // Bulk: clear every still-"new" request in one call. Optimistically drop
+      // them locally; refetch on failure to re-sync.
+      setState(s => ({ ...s, quoteRequests: s.quoteRequests.filter(r => r.status !== 'new') }));
+      return api.post('/api/quote-requests-admin?_action=clear-new', {})
+        .then((r) => (r && Array.isArray(r.clearedIds)) ? r.clearedIds.length : 0)
+        .catch(() => { fetchAllRef.current?.(); return -1; });
+    },
     disqualifyQuoteRequest(id) {
       // Optimistic: drop the row and any provisional contact it linked to.
       let provContactId = null;
