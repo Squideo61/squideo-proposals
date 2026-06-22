@@ -3774,14 +3774,22 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
             </button>
             {countdown != null ? (
               // Undo window: the email is on its way in N seconds unless cancelled.
+              // The countdown lives inside the bright-green "Send now" button,
+              // which also skips the wait when clicked.
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 13, color: BRAND.muted, whiteSpace: 'nowrap' }}>
-                  Sending in {countdown}s…
-                </span>
-                <button type="button" onClick={sendNow} className="btn-ghost" style={{ whiteSpace: 'nowrap' }} title="Skip the wait and send right now">
-                  Send now
+                <button
+                  type="button"
+                  onClick={sendNow}
+                  style={{
+                    whiteSpace: 'nowrap', border: 'none', cursor: 'pointer',
+                    background: '#16A34A', color: 'white', fontWeight: 700,
+                    fontFamily: 'inherit', fontSize: 13, padding: '7px 14px', borderRadius: 8,
+                  }}
+                  title="Skip the wait and send right now"
+                >
+                  Send now ({countdown}s)
                 </button>
-                <button type="button" onClick={undoSend} className="btn" autoFocus style={{ whiteSpace: 'nowrap' }}>
+                <button type="button" onClick={undoSend} className="btn-ghost" autoFocus style={{ whiteSpace: 'nowrap' }}>
                   Undo send
                 </button>
               </div>
