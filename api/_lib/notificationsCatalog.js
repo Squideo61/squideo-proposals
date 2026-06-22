@@ -123,6 +123,14 @@ export const NOTIFICATIONS = [
     channel: 'finance',
   },
   {
+    key: 'quote_request.qualified',
+    label: 'Quote request qualified',
+    description: 'A teammate qualifies a quote request into a deal.',
+    audience: 'broadcast',
+    group: 'Leads',
+    channel: 'finance',
+  },
+  {
     key: 'quote_request.partial',
     label: 'Abandoned quote request',
     description: 'A visitor starts the quote form, stops typing for 20 minutes, and we have enough info to follow up.',

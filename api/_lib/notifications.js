@@ -157,6 +157,24 @@ export async function ensureCommentMentionNotificationDefault() {
   }
 }
 
+// Self-heal the role default for quote_request.qualified so the "a teammate
+// qualified a lead" alert works before its seed/migration lands. Defaults each
+// role to whatever it gets for quote_request.new (the same sales/finance roles
+// that watch incoming leads). Guarded to run once per warm instance.
+let quoteQualifiedDefaultReady = false;
+export async function ensureQuoteQualifiedNotificationDefault() {
+  if (quoteQualifiedDefaultReady) return;
+  try {
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{quote_request.qualified}',
+      COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'quote_request.qualified')`;
+    quoteQualifiedDefaultReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureQuoteQualifiedNotificationDefault failed', err.message);
+  }
+}
+
 // Read the effective state of a single (user, key) — role default merged with
 // per-user override. Returns boolean. Unknown users → false.
 export async function isEnabledForUser(email, key) {

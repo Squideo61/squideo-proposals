@@ -6,6 +6,8 @@
 import { del } from '@vercel/blob';
 import sql from './db.js';
 import { makeId, trimOrNull, lowerOrNull } from './crm/shared.js';
+import { sendNotification, ensureQuoteQualifiedNotificationDefault } from './notifications.js';
+import { APP_URL } from './email.js';
 
 // Domains we never treat as company identifiers. Matching a CRM company by
 // "gmail.com" would lump every Gmail-using requester into one org.
@@ -190,7 +192,45 @@ export async function qualifyQuoteRequest(id, { actorEmail } = {}) {
      WHERE id = ${id}
   `;
 
+  // Notify the sales/finance team (the £ bell) that a lead was qualified into a
+  // deal — minus whoever did it, so you're only pinged about other people's
+  // qualifications. Best-effort: never block the qualify on a notification.
+  try {
+    await ensureQuoteQualifiedNotificationDefault();
+    const actor = (actorEmail || '').toLowerCase() || null;
+    let actorName = null;
+    if (actor) {
+      const u = (await sql`SELECT name FROM users WHERE LOWER(email) = ${actor} LIMIT 1`)[0];
+      actorName = u?.name || null;
+    }
+    const who = actorName || actor || 'A teammate';
+    const requester = trimOrNull(loaded.row.name) || trimOrNull(loaded.row.company) || loaded.row.email || 'a lead';
+    const base = (APP_URL || '').replace(/\/$/, '');
+    await sendNotification('quote_request.qualified', {
+      subject: `Lead qualified: ${dealTitle}`,
+      html: `<p><strong>${escapeForHtml(who)}</strong> qualified the quote request from <strong>${escapeForHtml(requester)}</strong> into a deal.</p>`
+        + `<p style="margin:16px 0 0;"><a href="${base}/#/deal/${encodeURIComponent(dealId)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open the deal</a></p>`,
+      text: `${who} qualified the quote request from ${requester} into a deal "${dealTitle}". ${base}/#/deal/${dealId}`,
+      excludeEmails: actor ? [actor] : null,
+      inApp: {
+        title: `Lead qualified: ${dealTitle}`,
+        body: `${who} qualified ${requester} into a deal`,
+        link: `#/deal/${dealId}`,
+      },
+    });
+  } catch (err) {
+    console.warn('[quote-requests] qualified notification failed', err?.message);
+  }
+
   return { status: 'ok', contactId, dealId, companyId };
+}
+
+// Minimal HTML escape for the notification body (mirrors the helper used by the
+// cron emails) — keeps requester/actor names safe in the email markup.
+function escapeForHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // Clears a quote request out of the "new" inbox WITHOUT judging it. Unlike
