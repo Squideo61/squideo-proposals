@@ -527,7 +527,7 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
           <CreatorAvatar proposal={proposal} size={isMobile ? 20 : 24} showName={!isMobile} />
         </div>
         {!isMobile && <div style={{ width: 1, height: 24, background: BRAND.border, flexShrink: 0 }} />}
-        {signed && proposal._dealId && onOpenDeal && (
+        {proposal._dealId && onOpenDeal && (
           <button
             onClick={(e) => { stop(e); onOpenDeal(proposal._dealId); }}
             className="btn"
