@@ -126,6 +126,7 @@ function UnlinkedView({ gmailThreadId, counterpartyEmail }) {
 function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) {
   const { state, actions } = useStore();
   const [editingTask, setEditingTask] = useState(null);
+  const [creatingTask, setCreatingTask] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
 
   // Split the deal's open tasks into the signed-in user's (assigned to me, or
@@ -254,7 +255,7 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
         ))}
       </div>
       <div style={{ marginBottom: teamTasks.length > 0 ? 8 : 14 }}>
-        <AddTaskForm dealId={detail.id} />
+        <button onClick={() => setCreatingTask(true)} className="btn-ghost" style={{ fontSize: 12 }}>+ Add task</button>
       </div>
 
       {teamTasks.length > 0 && (
@@ -282,6 +283,14 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
           defaults={{ dealId: detail.id }}
           onClose={() => setEditingTask(null)}
           onSaved={() => setEditingTask(null)}
+        />
+      )}
+
+      {creatingTask && (
+        <TaskFormModal
+          defaults={{ dealId: detail.id }}
+          onClose={() => setCreatingTask(false)}
+          onSaved={() => setCreatingTask(false)}
         />
       )}
 
@@ -326,46 +335,6 @@ function TaskMini({ task, onEdit, showAssignees }) {
         <div style={{ flexShrink: 0 }}><AvatarGroup emails={assignees} max={2} size={18} /></div>
       )}
     </div>
-  );
-}
-
-// Inline "+ Add task" — the in-app twin of the extension's quick task form.
-// createTask threads the new row into state.dealDetail[dealId].tasks, so the
-// open-tasks list above refreshes without a manual reload.
-function AddTaskForm({ dealId }) {
-  const { actions, showMsg } = useStore();
-  const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState('');
-  const [dueAt, setDueAt] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-    setBusy(true);
-    try {
-      await actions.createTask({ dealId, title: title.trim(), dueAt: dueAt ? new Date(dueAt).toISOString() : undefined });
-      setTitle(''); setDueAt(''); setOpen(false);
-    } catch (err) {
-      showMsg(err?.message || 'Could not add task');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!open) {
-    return <button onClick={() => setOpen(true)} className="btn-ghost" style={{ fontSize: 12 }}>+ Add task</button>;
-  }
-
-  return (
-    <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <input autoFocus className="input" value={title} onChange={e => setTitle(e.target.value)} placeholder="Task title" required style={{ fontSize: 12 }} />
-      <input type="date" className="input" value={dueAt} onChange={e => setDueAt(e.target.value)} style={{ fontSize: 12 }} />
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button type="submit" disabled={busy || !title.trim()} className="btn" style={{ flex: 1, fontSize: 12, justifyContent: 'center' }}>{busy ? 'Adding…' : 'Add'}</button>
-        <button type="button" onClick={() => { setOpen(false); setTitle(''); setDueAt(''); }} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
-      </div>
-    </form>
   );
 }
 
