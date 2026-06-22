@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Film, FolderOpen, Send, ExternalLink, Trash2, FileText, Upload, CheckCircle2, Circle, ListChecks, ChevronDown, ChevronRight, Link2 } from 'lucide-react';
+import { ArrowLeft, Film, FolderOpen, Send, ExternalLink, Trash2, FileText, Upload, CheckCircle2, Circle, ListChecks, ChevronDown, ChevronRight, Link2, Unlink } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
@@ -601,8 +601,13 @@ function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
     catch { /* handled in action */ }
     finally { setBusy(false); }
   }
-  function removeAsset(id) {
-    if (window.confirm('Delete this file?')) actions.deleteMilestoneAsset(videoId, id).catch(() => {});
+  function removeAsset(asset) {
+    // A linked Google Doc is unlinked (the doc itself is untouched); an uploaded
+    // file is deleted.
+    const isLink = asset.mimeType === 'link';
+    if (window.confirm(isLink ? 'Unlink this document? (the Google Doc itself is not deleted)' : 'Delete this file?')) {
+      actions.deleteMilestoneAsset(videoId, asset.id).catch(() => {});
+    }
   }
 
   return (
@@ -699,17 +704,22 @@ function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
 
           {assets.length > 0 && (
             <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {assets.map(a => (
+              {assets.map(a => {
+                const isLink = a.mimeType === 'link';
+                return (
                 <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                  <FileText size={14} color={BRAND.muted} />
+                  {isLink ? <Link2 size={14} color={BRAND.muted} /> : <FileText size={14} color={BRAND.muted} />}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.filename}</div>
                     <div style={{ fontSize: 11, color: BRAND.muted }}>{userName(a.uploadedBy)} · {fmtDate(a.createdAt)}{a.driveUrl ? ' · in Drive' : ''}</div>
                   </div>
-                  {a.url && <a href={a.url} target="_blank" rel="noreferrer" className="btn-ghost" title="View"><ExternalLink size={13} /></a>}
-                  <button onClick={() => removeAsset(a.id)} className="btn-ghost" title="Delete"><Trash2 size={13} /></button>
+                  {a.url && <a href={a.url} target="_blank" rel="noreferrer" className="btn-ghost" title={isLink ? 'Open' : 'View'}><ExternalLink size={13} /></a>}
+                  <button onClick={() => removeAsset(a)} className="btn-ghost" title={isLink ? 'Unlink' : 'Delete'}>
+                    {isLink ? <Unlink size={13} /> : <Trash2 size={13} />}
+                  </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
