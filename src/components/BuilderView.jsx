@@ -1000,6 +1000,20 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         collapsedHint={sectionMeta.find(s => s.id === 'extras')?.hint}
         {...sectionProps('extras')}
       >
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', marginBottom: 12, padding: '8px 10px', background: data.hideOptionalExtras ? '#FFF7ED' : BRAND.paper, border: '1px solid ' + (data.hideOptionalExtras ? '#FED7AA' : BRAND.border), borderRadius: 8 }}>
+          <input
+            type="checkbox"
+            checked={!!data.hideOptionalExtras}
+            onChange={(e) => update({ hideOptionalExtras: e.target.checked })}
+          />
+          <span style={{ fontWeight: 600 }}>Hide the Optional Extras section from the client</span>
+          {data.hideOptionalExtras && <span style={{ color: '#9A3412', fontSize: 12 }}>— hidden on the proposal &amp; PDF</span>}
+        </label>
+        {data.hideOptionalExtras && (
+          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 12 }}>
+            Your extras below are kept but won&apos;t be shown to the client. Untick to show the section again.
+          </div>
+        )}
         {data.optionalExtras.map((extra, i) => (
           <div
             key={extra.id}

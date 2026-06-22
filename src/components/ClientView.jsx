@@ -787,6 +787,14 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           </div>
         )}
 
+        {(() => {
+        // Optional extras can be hidden entirely from the client. Still show the
+        // section on an already-signed proposal that locked in selected extras,
+        // so the signed record stays accurate.
+        const hasSignedExtras = Array.isArray(signed?.selectedExtras) && signed.selectedExtras.length > 0;
+        if (data.hideOptionalExtras && !hasSignedExtras) return null;
+        return (
+        <>
         <PageTitle>Optional Extras</PageTitle>
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden', marginBottom: 24 }}>
           {data.optionalExtras.map((extra, i) => {
@@ -842,6 +850,9 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             );
           })}
         </div>
+        </>
+        );
+        })()}
 
         {data.partnerProgramme.enabled && (
           <div style={{ position: 'relative', marginTop: 24, marginBottom: 16, background: '#FFFAEB', border: '1px solid #C9A227', borderRadius: 12, padding: 16 }}>

@@ -442,8 +442,8 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
 
   ${partnerBlock}
 
-  <!-- Optional extras -->
-  ${(signable || extrasToShow.length > 0) ? `
+  <!-- Optional extras (hidden when the proposal opts out, unless extras were already selected) -->
+  ${(((signable && !data.hideOptionalExtras) || extrasToShow.length > 0)) ? `
   <h2 class="page-title">${signable ? 'Optional Extras' : 'Selected Optional Extras'}</h2>
   <div style="border:1px solid #E5E9EE;border-radius:10px;padding:4px 16px;margin-bottom:16px;">
     ${extrasRows}
