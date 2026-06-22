@@ -433,6 +433,9 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
       partnerSelected,
       partnerCredits,
       paymentOption,
+      // Captured so the post-sign payment prompt only promises the incentive
+      // (free subtitled version) when it was actually offered.
+      payInFullIncentive: data.payInFullIncentive !== false,
       total: dueNowTotal,
       partnerTotal: partnerSelected ? partnerTotal : 0,
       amountBreakdown: partnerSelected ? {
@@ -1024,7 +1027,8 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           {(() => {
             const subtitlesPrice = data.optionalExtras.find(e => e.id === 'subtitles')?.price ?? 125;
             const fullIncentive = data.paymentOptionDescs?.full?.trim() || `get a free subtitled version (worth £${subtitlesPrice})`;
-            const fullTitle = partnerSelected ? 'Pay in full' : `Pay in full - ${fullIncentive}`;
+            const incentiveOn = data.payInFullIncentive !== false;
+            const fullTitle = (partnerSelected || !incentiveOn) ? 'Pay in full' : `Pay in full - ${fullIncentive}`;
             const OPTION_CONFIG = {
               '5050': { title: '50/50 split', desc: '50% deposit to start, balance invoiced when you approve the final video.' },
               'full': { title: fullTitle, desc: 'Pay upfront via card or BACS.' },

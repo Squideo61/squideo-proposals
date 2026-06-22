@@ -744,19 +744,36 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                     <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{desc}</div>
                   </div>
                 </label>
-                {key === 'full' && enabled && (
-                  <div style={{ paddingLeft: 26, paddingBottom: 10 }}>
-                    <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 4 }}>Custom incentive text (optional)</div>
-                    <input
-                      className="input"
-                      style={{ fontSize: 13 }}
-                      value={data.paymentOptionDescs?.full || ''}
-                      placeholder={`get a free subtitled version (worth £${subtitlesPrice})`}
-                      onChange={(e) => update({ paymentOptionDescs: { ...data.paymentOptionDescs, full: e.target.value } })}
-                    />
-                    <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>Leave blank to use the auto-generated text. Replaces the incentive shown to the client.</div>
-                  </div>
-                )}
+                {key === 'full' && enabled && (() => {
+                  // Whether to dangle an incentive (free subtitled version) for
+                  // paying in full. Defaults ON; absent flag = included.
+                  const incentiveOn = data.payInFullIncentive !== false;
+                  return (
+                    <div style={{ paddingLeft: 26, paddingBottom: 10 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', marginBottom: incentiveOn ? 10 : 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={incentiveOn}
+                          onChange={(e) => update({ payInFullIncentive: e.target.checked })}
+                        />
+                        <span>Include a pay-in-full incentive shown to the client</span>
+                      </label>
+                      {incentiveOn && (
+                        <>
+                          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 4 }}>Custom incentive text (optional)</div>
+                          <input
+                            className="input"
+                            style={{ fontSize: 13 }}
+                            value={data.paymentOptionDescs?.full || ''}
+                            placeholder={`get a free subtitled version (worth £${subtitlesPrice})`}
+                            onChange={(e) => update({ paymentOptionDescs: { ...data.paymentOptionDescs, full: e.target.value } })}
+                          />
+                          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>Leave blank to use the auto-generated text. Replaces the incentive shown to the client.</div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           });

@@ -465,6 +465,11 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   <h2 class="page-title">${signable ? 'Payment Options' : 'Selected Payment Option'}</h2>
   <div style="display:grid;gap:10px;margin-bottom:28px;">
     ${(() => {
+      // Pay-in-full incentive is optional (defaults on) and may carry custom text.
+      const subtitlesPrice = (data.optionalExtras || []).find(e => e.id === 'subtitles')?.price ?? 125;
+      const incentiveOn = data.payInFullIncentive !== false;
+      const fullIncentive = (data.paymentOptionDescs?.full || '').trim() || `get a free subtitled version (worth £${subtitlesPrice})`;
+      const fullTitle = (partnerSelected || !incentiveOn) ? 'Pay in full' : `Pay in full - ${fullIncentive}`;
       const blocks = {
         '5050': `
           <div style="border:2px solid ${paymentOption === '5050' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === '5050' ? '#F0F9FF' : 'white'};">
@@ -473,7 +478,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
           </div>`,
         'full': `
           <div style="border:2px solid ${paymentOption === 'full' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === 'full' ? '#F0F9FF' : 'white'};">
-            <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'full' ? '✓ ' : ''}${partnerSelected ? 'Pay in full' : 'Pay in full - get a free subtitled version (worth £125)'}</div>
+            <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'full' ? '✓ ' : ''}${fullTitle}</div>
             <div style="font-size:13px;color:#6B7785;">Pay upfront via card or BACS.</div>
           </div>`,
         'po': `
