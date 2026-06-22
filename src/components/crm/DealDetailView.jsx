@@ -3291,6 +3291,15 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
     pendingFollowUpRef.current = null;
   };
 
+  // "Send now": skip the rest of the undo window and fire immediately. Same
+  // path doSend would have taken when the timer elapsed.
+  const sendNow = () => {
+    if (countdown == null) return;
+    clearSendTimers();
+    setCountdown(null);
+    doSend();
+  };
+
   // Cancel a pending send if the composer unmounts (closed/navigated away) so a
   // half-counted email never fires after the UI is gone.
   useEffect(() => clearSendTimers, []);
@@ -3725,6 +3734,9 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
                 <span style={{ fontSize: 13, color: BRAND.muted, whiteSpace: 'nowrap' }}>
                   Sending in {countdown}s…
                 </span>
+                <button type="button" onClick={sendNow} className="btn-ghost" style={{ whiteSpace: 'nowrap' }} title="Skip the wait and send right now">
+                  Send now
+                </button>
                 <button type="button" onClick={undoSend} className="btn" autoFocus style={{ whiteSpace: 'nowrap' }}>
                   Undo send
                 </button>
