@@ -984,9 +984,15 @@ function EmailRow({ email, onOpen, threadCount, expandable, expanded, dealTitle,
         )}
         <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span>{formatRelativeTime(email.sentAt)}{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}</span>
-          {/* Thread-level tracking (only present on threads with an outbound
-              tracked send), so it shows even when the latest message is a reply. */}
-          <TrackingEye tracking={email.tracking} />
+          {/* Reflect THIS (latest) email's own open state when it is itself a
+              tracked send — so an unopened follow-up reads "Not opened" rather
+              than inheriting the thread's earlier green opens. Falls back to the
+              thread aggregate only when the latest message isn't itself tracked
+              (e.g. the newest message is an inbound reply). */}
+          <TrackingEye
+            tracking={email.messageTracking?.tracked ? email.messageTracking : email.tracking}
+            labelUnopened={!!email.messageTracking?.tracked}
+          />
         </div>
         <div
           style={{

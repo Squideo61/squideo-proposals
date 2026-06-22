@@ -27,7 +27,7 @@ function splitLocations(tracking) {
 // eye) so it floats above the page and is never clipped by an `overflow:hidden`
 // ancestor (e.g. the deal Emails row). A short close delay bridges the gap so
 // you can move the mouse onto the card to read it.
-export function TrackingEye({ tracking }) {
+export function TrackingEye({ tracking, labelUnopened = false }) {
   const [pos, setPos] = useState(null);
   const anchorRef = useRef(null);
   const closeTimer = useRef(null);
@@ -67,6 +67,9 @@ export function TrackingEye({ tracking }) {
         <span style={{ fontSize: 10.5, fontWeight: 700, color: colour }}>
           {formatRelativeTime(tracking.lastOpenedAt).replace(' ago', '')}
         </span>
+      )}
+      {!opened && labelUnopened && (
+        <span style={{ fontSize: 10.5, fontWeight: 600, color: BRAND.muted }}>Not opened</span>
       )}
       {pos && createPortal(
         <TrackingCard
