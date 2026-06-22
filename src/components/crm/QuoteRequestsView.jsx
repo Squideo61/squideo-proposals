@@ -273,14 +273,14 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onC
             <button onClick={onQualify} disabled={busy} className="btn">
               <Check size={14} /> Qualify
             </button>
+            {!isDisqualified && (
+              <button onClick={onDisqualify} disabled={busy} className="btn-ghost is-danger" title="Disqualify — logs a non-qualified lead for marketing and deletes the request + any provisional contact">
+                <X size={14} /> Disqualify
+              </button>
+            )}
             {canClear && !isCleared && (
               <button onClick={onClear} disabled={busy} className="btn-ghost" title="Clear from inbox (keeps the lead; not marked disqualified)">
                 Clear
-              </button>
-            )}
-            {!isDisqualified && (
-              <button onClick={onDisqualify} disabled={busy} className="btn-ghost" title="Disqualify — logs a non-qualified lead for marketing and deletes the request + any provisional contact">
-                <X size={14} /> Disqualify
               </button>
             )}
           </>
