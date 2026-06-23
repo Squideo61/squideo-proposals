@@ -187,12 +187,14 @@ export function Badge({ color, children }) {
 // backdrop and pressing Escape. Set it false for forms where an accidental close
 // would lose typed input — pair with `showClose` so there's still an explicit X
 // (top-right) to dismiss with.
-export function Modal({ children, onClose, maxWidth = 440, overflow = 'auto', dismissible = true, showClose = true, closeOnBackdrop = false, fullScreenOnMobile = false }) {
+export function Modal({ children, onClose, maxWidth = 440, overflow = 'auto', dismissible = true, showClose = true, closeOnBackdrop = false, fullScreenOnMobile = true }) {
   const isMobile = useIsMobile();
-  // On phones, opt-in full-screen dialogs (forms, pickers) fill the viewport
-  // instead of floating in a cramped 440px card. This changes geometry only —
-  // dismissal still requires the X / Escape / an explicit button (closeOnBackdrop
-  // stays off by default), so a half-filled form can't be lost to a stray tap.
+  // On phones every dialog fills the viewport by default instead of floating in
+  // a cramped card behind the keyboard — pass fullScreenOnMobile={false} for the
+  // rare small popover that should stay a centred box. This changes geometry
+  // only — dismissal still requires the X / Escape / an explicit button
+  // (closeOnBackdrop stays off by default), so a half-filled form can't be lost
+  // to a stray tap.
   const fullScreen = fullScreenOnMobile && isMobile;
   useEffect(() => {
     if (!dismissible) return undefined;
@@ -228,8 +230,7 @@ export function Modal({ children, onClose, maxWidth = 440, overflow = 'auto', di
             onClick={onClose}
             aria-label="Close"
             style={{
-              position: fullScreen ? 'sticky' : 'absolute', top: 12, right: 12, zIndex: 1,
-              float: fullScreen ? 'right' : undefined, marginLeft: fullScreen ? 'auto' : undefined,
+              position: 'absolute', top: 12, right: 12, zIndex: 1,
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               width: 30, height: 30, borderRadius: 8, border: '1px solid ' + BRAND.border,
               background: 'white', color: BRAND.muted, cursor: 'pointer',

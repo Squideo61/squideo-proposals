@@ -93,7 +93,7 @@ export function TaskFormModal({ task, defaults, onClose, onSaved, onSubmitValues
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} fullScreenOnMobile>
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>{editing ? 'Edit task' : 'New task'}</h2>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Row label="Title">
