@@ -131,6 +131,21 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     },
   ].filter(s => s.items.length > 0);
 
+  // Producers get a trimmed nav: just their Projects items they can access
+  // (Production board + Revisions) — no Sales/Business, and not Partners &
+  // Credits. So they can navigate to Emails/Revisions rather than only reaching
+  // them by link.
+  const producerSections = producer
+    ? sections
+        .filter((s) => s.key === 'projects')
+        .map((s) => ({ ...s, items: s.items.filter((i) => i.label !== 'Partners & Credits') }))
+        .filter((s) => s.items.length > 0)
+    : [];
+  // The sections actually shown in the desktop dropdowns / mobile drawer.
+  const navSections = producer
+    ? producerSections
+    : (marketing ? sections.filter((s) => s.key === 'marketing') : sections);
+
   const activeSection = sections.find(s => s.views.includes(view))?.key;
   const contactsActive = ['contacts', 'contact', 'company', 'xero-duplicates'].includes(view);
 
@@ -157,7 +172,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         {/* Mobile: a hamburger opens the full nav tree in a drawer (the desktop
             section dropdowns are hidden below 640px). Producer shell has no
             section nav, so it keeps its minimal bar with no hamburger. */}
-        {isMobile && !producer && (
+        {isMobile && navSections.length > 0 && (
           <button
             type="button"
             onClick={() => setDrawerOpen(true)}
@@ -177,9 +192,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
           {!isMobile && <span style={{ fontSize: 17, fontWeight: 700 }}>Squideo</span>}
         </button>
 
-        {!producer && !isMobile && (
+        {!isMobile && navSections.length > 0 && (
         <nav ref={navRef} style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-          {(marketing ? sections.filter((s) => s.key === 'marketing') : sections).map((s) => {
+          {navSections.map((s) => {
             const isActive = activeSection === s.key;
             const isOpen = openMenu === s.key;
             const hasBadge = s.items.some(i => i.count > 0);
@@ -247,7 +262,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
               </div>
             );
           })}
-          {!marketing && (
+          {!marketing && !producer && (
           <button
             type="button"
             onClick={() => navigate('contacts')}
@@ -307,8 +322,8 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
           />
         )}
 
-        {/* Emails inbox view doesn't exist in the producer shell. */}
-        {!marketing && !producer && [
+        {/* Emails is available to producers too (their project comms inbox). */}
+        {!marketing && [
           { label: 'Emails', icon: Mail, route: 'emails', views: ['emails', 'triage', 'email'], go: () => navigate('emails'), count: inboxUnread },
         ].map((item) => {
           const Icon = item.icon;
@@ -408,10 +423,10 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       </div>
     </div>
 
-    {isMobile && !producer && drawerOpen && (
+    {isMobile && drawerOpen && navSections.length > 0 && (
       <MobileNavDrawer
-        sections={marketing ? sections.filter((s) => s.key === 'marketing') : sections}
-        showContacts={!marketing}
+        sections={navSections}
+        showContacts={!marketing && !producer}
         contactsActive={contactsActive}
         navigate={navigate}
         onClose={() => setDrawerOpen(false)}

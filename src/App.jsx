@@ -372,7 +372,7 @@ function AppShell() {
   if (producerOnly) {
     // The production board (the fall-through case) stays full width; the detail
     // pages a producer opens are centred at the cap like the rest of the app.
-    const producerBoard = !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards' || view === 'tasks');
+    const producerBoard = !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards' || view === 'tasks' || view === 'emails' || view === 'email' || view === 'triage' || (view === 'client' && activeId));
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <DesktopNotifier onOpenLink={openLink} />
@@ -401,6 +401,27 @@ function AppShell() {
             <StoryboardsView onBack={() => navigate('production')} />
           ) : view === 'tasks' ? (
             <TasksView onBack={() => navigate('production')} onOpenDeal={(id) => navigate('deal', id)} forceMine={activeId === 'mine'} />
+          ) : (view === 'emails' || view === 'triage' || view === 'email') ? (() => {
+            // Producers get their own Gmail inbox in the same shell. Mirrors the
+            // main shell's Emails wiring, but Back/landing returns to the board.
+            const emailParts = view === 'email' && activeId ? activeId.split('~') : null;
+            const emailFolder = emailParts && emailParts.length > 1 ? emailParts[0] : 'inbox';
+            const emailThread = emailParts ? emailParts[emailParts.length - 1] : null;
+            return (
+              <EmailsView
+                folder={view === 'triage' ? 'triage' : (view === 'email' ? emailFolder : (activeId || 'inbox'))}
+                openThreadId={view === 'email' ? emailThread : null}
+                onBack={() => navigate('production')}
+                onOpenDeal={(id) => navigate('deal', id)}
+                onOpenProposal={(id) => navigate('client', id)}
+                onSelectFolder={(f) => navigate('emails', f)}
+                onOpenThread={(folder, threadId) => navigate('email', folder + '~' + threadId)}
+                onCloseThread={() => goBack('emails')}
+                onOpenTracking={(threadId) => setModal({ type: 'emailTracking', threadId })}
+              />
+            );
+          })() : view === 'client' && activeId ? (
+            <ClientView id={activeId} onBack={() => goBack('production')} onEdit={() => navigate('builder', activeId)} />
           ) : (
             <ProductionView onBack={null} onOpenVideo={(id) => navigate('video', id)} onOpenProject={(id) => navigate('project', id)} onOpenProjects={() => navigate('projects')} />
           )}
@@ -416,6 +437,11 @@ function AppShell() {
         {modal && modal.type === 'account' && (
           <Suspense fallback={null}>
             <AccountSettings onClose={() => setModal(null)} onLogout={logout} />
+          </Suspense>
+        )}
+        {modal && modal.type === 'emailTracking' && (
+          <Suspense fallback={null}>
+            <EmailTrackingModal threadId={modal.threadId} onClose={() => setModal(null)} onOpenDeal={(id) => navigate('deal', id)} />
           </Suspense>
         )}
         <Toast msg={toast} />
