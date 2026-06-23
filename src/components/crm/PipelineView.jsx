@@ -645,7 +645,7 @@ export function NewDealModal({ onClose, onCreated, initialTitle = '' }) {
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} fullScreenOnMobile>
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>New deal</h2>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <label style={{ fontSize: 13, fontWeight: 500 }}>

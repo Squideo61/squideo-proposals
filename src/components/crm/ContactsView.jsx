@@ -373,7 +373,7 @@ export function ContactModal({ contact, onClose, dealContext = null }) {
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} fullScreenOnMobile>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 16px', flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{editing ? 'Edit contact' : 'New contact'}</h2>
         {dealContext?.isPrimary && (
@@ -505,7 +505,7 @@ export function CompanyModal({ company, onClose }) {
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} fullScreenOnMobile>
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>{editing ? 'Edit company' : 'New company'}</h2>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Row label="Name"><input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus required /></Row>
@@ -602,7 +602,7 @@ function ImportFromXeroModal({ onClose, onImported }) {
   };
 
   return (
-    <Modal onClose={onClose} overflow="visible">
+    <Modal onClose={onClose} overflow="visible" fullScreenOnMobile>
       <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Import from Xero</h2>
       <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted }}>
         Find a Xero contact to create the organisation here (linked to Xero) and, optionally, a contact person.
