@@ -262,6 +262,25 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     try { localStorage.setItem(DENSITY_KEY, d); } catch { /* ignore */ }
   };
 
+  // Because the search query carries across folders (below), switching folder
+  // with text still in the box silently keeps filtering the new folder. Pulse a
+  // blue glow on the search box on each folder change while it holds text, so
+  // it's obvious the results are still being narrowed by a leftover query.
+  const searchInputRef = useRef(null);
+  const prevActiveRef = useRef(active);
+  useEffect(() => {
+    const prev = prevActiveRef.current;
+    prevActiveRef.current = active;
+    if (prev === active || !search.trim()) return;
+    const el = searchInputRef.current;
+    if (!el || typeof el.animate !== 'function') return;
+    el.animate([
+      { boxShadow: '0 0 0 0 rgba(43,184,230,0)', borderColor: BRAND.border },
+      { boxShadow: '0 0 0 4px rgba(43,184,230,0.45)', borderColor: BRAND.blue, offset: 0.3 },
+      { boxShadow: '0 0 0 0 rgba(43,184,230,0)', borderColor: BRAND.border },
+    ], { duration: 950, easing: 'ease-out' });
+  }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Deliberately DON'T clear the search when the folder changes — the query
   // carries over so switching Inbox⇄Sent⇄… keeps filtering without re-typing.
   // A Gmail search already spans the whole mailbox (see listFolder: the label is
@@ -556,6 +575,7 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
             <div style={{ position: 'relative', width: isMobile ? '100%' : 280 }}>
               <Search size={14} color={BRAND.muted} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
               <input
+                ref={searchInputRef}
                 className="input"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
