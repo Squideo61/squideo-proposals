@@ -1127,6 +1127,25 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
     return latest?.fromEmail || null;
   }, [messages, myEmail, latest]);
 
+  // The deal this conversation is linked to. On the deal page it's handed in as
+  // contextDeal; in the inbox we resolve it from the thread→deal links so a
+  // reply (and any "Create & send" follow-up task) is still auto-associated with
+  // the right deal instead of making the user pick it again.
+  useEffect(() => {
+    if (embedded || contextDeal) return; // deal page already knows the deal
+    if (state.threadDeals?.[openRef.threadId] !== undefined) return; // already resolved
+    actions.resolveThreadDeals([{ threadId: openRef.threadId, senderEmails: counterparty ? [counterparty] : [] }]);
+  }, [openRef.threadId, counterparty, embedded, contextDeal]); // eslint-disable-line react-hooks/exhaustive-deps
+  const resolvedDeal = useMemo(() => {
+    if (contextDeal) return contextDeal;
+    const chips = state.threadDeals?.[openRef.threadId] || [];
+    if (!chips.length) return null;
+    // Prefer an explicit thread→deal link; otherwise a sole contact match (the
+    // same single deal the side panel shows).
+    const chosen = chips.find(c => c.source === 'explicit') || (chips.length === 1 ? chips[0] : null);
+    return chosen ? { id: chosen.dealId, title: chosen.title } : null;
+  }, [contextDeal, state.threadDeals, openRef.threadId]);
+
   // Inline reply composer at the foot of the thread (Gmail-style).
   // null | 'reply' | 'replyAll' | 'forward'.
   const [composeMode, setComposeMode] = useState(null);
@@ -1284,7 +1303,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                   <EmailComposerModal
                     key={composeMode}
                     inline
-                    deal={contextDeal}
+                    deal={resolvedDeal}
                     contact={null}
                     initialDraft={draftFor(composeMode)}
                     onClose={() => setComposeMode(null)}
