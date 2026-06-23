@@ -31,6 +31,14 @@ function isIOS() {
     || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
 }
 
+// Only nudge to install on a phone/tablet — desktop Chrome also fires
+// beforeinstallprompt, but we don't want to pester desktop users to install.
+function isMobileDevice() {
+  try {
+    return window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 1024;
+  } catch { return false; }
+}
+
 export function InstallNudge() {
   const [dismissed, setDismissed] = useState(() => {
     try { return localStorage.getItem(DISMISS_KEY) === '1'; } catch { return false; }
@@ -87,9 +95,9 @@ export function InstallNudge() {
   let mode = null;
   if (standalone) {
     if (pushSupported() && desktopNotificationsSupported() && perm === 'default') mode = 'notifications';
-  } else if (deferredPrompt) {
+  } else if (isMobileDevice() && deferredPrompt) {
     mode = 'install-android';
-  } else if (isIOS()) {
+  } else if (isMobileDevice() && isIOS()) {
     mode = 'install-ios';
   }
 
