@@ -2684,22 +2684,37 @@ export function StoreProvider({ children }) {
         forums:     { key: 'CATEGORY_FORUMS',     field: 'threadsUnread' },
         promotions: { key: 'CATEGORY_PROMOTIONS', field: 'threadsUnread' },
       };
+      // The same optimistic transform applied to any row list: drop the acted
+      // rows when the action removes them from this folder, else patch their
+      // read/star flags in place.
+      const applyToRows = (list) => (removesFromFolder
+        ? list.filter(r => !idSet.has(r.id))
+        : list.map(r => {
+            if (!idSet.has(r.id)) return r;
+            if (action === 'markRead')   return { ...r, unread: false };
+            if (action === 'markUnread') return { ...r, unread: true };
+            if (action === 'star')       return { ...r, starred: true };
+            if (action === 'unstar')     return { ...r, starred: false };
+            return r;
+          }));
+      let activeSearchQ = null; // captured for the error-recovery re-sync below
       setState(s => {
         const f = s.mailbox?.[folder];
         if (!f || !Array.isArray(f.rows)) return s;
         const acted = f.rows.filter(r => idSet.has(r.id));
         const actedUnread = acted.filter(r => r.unread).length;
         const actedRead = acted.length - actedUnread;
-        const rows = removesFromFolder
-          ? f.rows.filter(r => !idSet.has(r.id))
-          : f.rows.map(r => {
-              if (!idSet.has(r.id)) return r;
-              if (action === 'markRead')   return { ...r, unread: false };
-              if (action === 'markUnread') return { ...r, unread: true };
-              if (action === 'star')       return { ...r, starred: true };
-              if (action === 'unstar')     return { ...r, starred: false };
-              return r;
-            });
+        const rows = applyToRows(f.rows);
+
+        // While searching, the visible list is (partly) the server search
+        // results, not the folder rows — keep that slice in sync too, otherwise
+        // a deleted/archived row that came from search lingers on screen until
+        // the next refresh.
+        const searchSlice = s.mailboxSearch;
+        activeSearchQ = searchSlice?.q || null;
+        const mailboxSearch = (searchSlice && Array.isArray(searchSlice.rows))
+          ? { ...searchSlice, rows: applyToRows(searchSlice.rows) }
+          : searchSlice;
 
         // Optimistic badge maths so the sidebar updates instantly.
         const labels = { ...(s.mailboxLabels || {}) };
@@ -2723,7 +2738,7 @@ export function StoreProvider({ children }) {
           else if (removesFromFolder)       bump('UNREAD', 'threadsTotal', -actedUnread);
         }
 
-        return { ...s, mailbox: { ...s.mailbox, [folder]: { ...f, rows } }, mailboxLabels: labels };
+        return { ...s, mailbox: { ...s.mailbox, [folder]: { ...f, rows } }, mailboxLabels: labels, mailboxSearch };
       });
       // No immediate label re-fetch: Gmail's counts lag after a modify and
       // would overwrite the (correct) optimistic badge with a stale value.
@@ -2734,6 +2749,8 @@ export function StoreProvider({ children }) {
           // Re-sync folder + labels so the optimistic changes don't stick on error.
           actions.loadMailboxFolder(folder);
           actions.loadMailboxLabels();
+          // Also re-sync the search slice if one was on screen (we mutated it).
+          if (activeSearchQ) actions.loadMailboxSearch(folder, { q: activeSearchQ });
           throw err;
         });
     },
