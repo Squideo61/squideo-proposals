@@ -492,33 +492,36 @@ export async function cronTaskReminders(res) {
         <a href="${dealLink}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open in Squideo</a>
       </p>
     `;
-    // Filter by per-user pref via resolveRecipients (audience: assignee).
-    const subscribed = await resolveRecipients('task.reminder', { assigneeEmails: recipients });
-    if (!subscribed.length) continue;
+    // In-app is the primary channel (task.reminder, on by default); email is a
+    // separate opt-in (task.reminder_email, off by default) so the team can rely
+    // on the in-app bell without inbox noise, while anyone who still wants the
+    // email can switch it on for themselves.
+    const inAppRecipients = await resolveRecipients('task.reminder', { assigneeEmails: recipients });
+    const emailRecipients = await resolveRecipients('task.reminder_email', { assigneeEmails: recipients });
+    if (!inAppRecipients.length && !emailRecipients.length) continue;
 
-    // Fan out in parallel — Resend rate limits are well above our team size.
+    // Email only those who opted in. Fan out in parallel — Resend rate limits
+    // are well above our team size.
     const results = await Promise.allSettled(
-      subscribed.map(async (to) => {
+      emailRecipients.map(async (to) => {
         const token = await signTaskActionToken({ taskId: t.id, email: to, action: 'done' });
         const doneUrl = `${baseRoot}/api/crm/tasks/${encodeURIComponent(t.id)}/done-link?token=${encodeURIComponent(token)}`;
         const text = `Reminder: ${t.title} — due ${dueLabel}${t.deal_title ? ' (deal: ' + t.deal_title + ')' : ''}.\nMark done: ${doneUrl}\nOpen: ${dealLink}`;
         return sendMail({ to, subject, html: buildHtml(doneUrl), text });
       })
     );
-    const anySent = results.some(r => r.status === 'fulfilled');
     results.forEach((r, i) => {
       if (r.status === 'rejected') {
-        console.error('[cron task-reminders] send failed', { taskId: t.id, to: subscribed[i], err: r.reason });
+        console.error('[cron task-reminders] send failed', { taskId: t.id, to: emailRecipients[i], err: r.reason });
       }
     });
-    if (anySent) {
-      // Mirror the email into the bell + a background desktop push (Tier 2),
-      // so a reminder still lands if the assignee isn't reading email. Tagged
-      // task-<id> to collapse with the in-tab popup the app fires at due time.
-      // A deal task opens the deal; a standalone task opens the recipient's OWN
-      // tasks (/mine snaps the scope to them, ignoring any last-browsed filter).
+    // Mirror into the bell + a background desktop push (Tier 2) for everyone
+    // with the in-app pref on. Tagged task-<id> to collapse with the in-tab
+    // popup the app fires at due time. A deal task opens the deal; a standalone
+    // task opens the recipient's OWN tasks (/mine snaps the scope to them).
+    if (inAppRecipients.length) {
       const inAppLink = t.deal_id ? `#/deal/${t.deal_id}` : '#/tasks/mine';
-      await persistInApp('task.reminder', subscribed, {
+      await persistInApp('task.reminder', inAppRecipients, {
         subject,
         inApp: {
           title: `Task due: ${t.title}`,
@@ -527,11 +530,11 @@ export async function cronTaskReminders(res) {
           tag: `task-${t.id}`,
         },
       });
-      // Stamp once per task — we don't track per-assignee delivery state on
-      // purpose; if one address bounces, the team coordinates in-app.
-      await sql`UPDATE tasks SET reminded_at = NOW() WHERE id = ${t.id}`;
-      sent++;
     }
+    // Stamp once per task — we don't track per-assignee delivery state on
+    // purpose; if one address bounces, the team coordinates in-app.
+    await sql`UPDATE tasks SET reminded_at = NOW() WHERE id = ${t.id}`;
+    sent++;
   }
 
   return res.status(200).json({ ok: true, found: due.length, sent });
@@ -601,13 +604,13 @@ export async function cronTaskDigest(res) {
       return { ...t, doneUrl: `${baseRoot}/api/crm/tasks/${encodeURIComponent(t.id)}/done-link?token=${encodeURIComponent(token)}` };
     }));
     try {
-      // sendNotification filters by the recipient's task.digest pref, then emails
-      // + persists in-app + pushes in one call.
-      const r = await sendNotification('task.digest', {
+      const text = `Due today:\n${withDoneUrl.map(t => `• ${t.title} — ${new Date(t.due_at).toLocaleString('en-GB', { timeStyle: 'short' })}${t.deal_title ? ' (' + t.deal_title + ')' : ''}\n  Mark done: ${t.doneUrl}`).join('\n')}\n\n${tasksUrl}`;
+      // In-app digest (task.digest, on by default) + push, with no email.
+      await sendNotification('task.digest', {
         assigneeEmails: [email],
         subject,
-        html: buildDigestEmail(withDoneUrl, tasksUrl),
-        text: `Due today:\n${withDoneUrl.map(t => `• ${t.title} — ${new Date(t.due_at).toLocaleString('en-GB', { timeStyle: 'short' })}${t.deal_title ? ' (' + t.deal_title + ')' : ''}\n  Mark done: ${t.doneUrl}`).join('\n')}\n\n${tasksUrl}`,
+        text,
+        inAppOnly: true,
         inApp: {
           title: subject,
           body: summary,
@@ -615,7 +618,12 @@ export async function cronTaskDigest(res) {
           tag: `task-digest-${new Date().toISOString().slice(0, 10)}`,
         },
       });
-      if (r.sent) sent++;
+      // Email only if the recipient opted into digest emails (off by default).
+      const emailTo = await resolveRecipients('task.digest_email', { assigneeEmails: [email] });
+      if (emailTo.length) {
+        await sendMail({ to: emailTo, subject, html: buildDigestEmail(withDoneUrl, tasksUrl), text });
+      }
+      sent++;
     } catch (err) {
       console.error('[cron task-digest] send failed', { email, err: err.message });
     }
