@@ -28,7 +28,11 @@ function urlBase64ToUint8Array(base64String) {
 let swRegistration = null;
 async function getRegistration() {
   if (swRegistration) return swRegistration;
-  swRegistration = await navigator.serviceWorker.register('/sw.js');
+  // main.jsx registers /sw.js at startup, so prefer the existing registration
+  // and only register here as a fallback. Registering is idempotent per scope,
+  // but reusing avoids a redundant second call and a possible race.
+  swRegistration = await navigator.serviceWorker.getRegistration('/sw.js')
+    || await navigator.serviceWorker.register('/sw.js');
   await navigator.serviceWorker.ready;
   return swRegistration;
 }
