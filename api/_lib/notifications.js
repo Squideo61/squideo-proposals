@@ -175,6 +175,24 @@ export async function ensureQuoteQualifiedNotificationDefault() {
   }
 }
 
+// Self-heal the role default for extra.added so the "extra charge added" alert
+// works before its seed/migration lands. Default ON for Admin + Director only —
+// they own billing oversight and need to know when production logs an ad-hoc
+// charge; the production team that adds them doesn't need pinging. Guarded to
+// run once per warm instance.
+let extraAddedDefaultReady = false;
+export async function ensureExtraAddedNotificationDefault() {
+  if (extraAddedDefaultReady) return;
+  try {
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{extra.added}', 'true'::jsonb, true)
+      WHERE id IN ('admin', 'director') AND NOT (notification_defaults ? 'extra.added')`;
+    extraAddedDefaultReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureExtraAddedNotificationDefault failed', err.message);
+  }
+}
+
 // Read the effective state of a single (user, key) — role default merged with
 // per-user override. Returns boolean. Unknown users → false.
 export async function isEnabledForUser(email, key) {

@@ -11,6 +11,32 @@ import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { sendNotification, ensureExtraAddedNotificationDefault } from '../notifications.js';
+
+// Alert Admins + Directors that an ad-hoc extra was logged on a deal (in-app
+// bell + desktop push; no email — these are frequent production-floor actions).
+// The creator is excluded. Best-effort; never fails the write.
+async function notifyExtraAdded({ dealId, dealTitle, description, amount, author }) {
+  try {
+    await ensureExtraAddedNotificationDefault();
+    const amountStr = '£' + (Number(amount) || 0).toFixed(2);
+    const who = author?.name || author?.email || 'A production manager';
+    const title = dealTitle || 'a deal';
+    await sendNotification('extra.added', {
+      excludeEmails: author?.email ? [author.email] : null,
+      subject: `Extra charge added — ${title}`,
+      text: `${who} added an extra charge to ${title}: ${description} (${amountStr} ex-VAT). It's now in Pending Payments.`,
+      inApp: {
+        title: `Extra charge: ${amountStr} ex-VAT`,
+        body: `${who} added "${description}" to ${title}`,
+        link: `#/deal/${dealId}`,
+      },
+      inAppOnly: true,
+    });
+  } catch (err) {
+    console.error('[extras] notify failed', err);
+  }
+}
 
 // Self-heal for db/migrations/20260604_deal_extras.sql so the table exists even
 // where the migration hasn't been run by hand.
@@ -150,12 +176,18 @@ export async function extrasRoute(req, res, id, action, user) {
     return res.status(200).json(rows.map(serialiseExtra));
   }
 
-  // Everything below mutates money state — gate on invoice management.
-  const canManage = hasPermission(await getRole(user.role), 'invoices.manage');
+  // Permissions: anyone who works production (production.access) can LOG an
+  // extra during a shoot/edit — the management team is alerted and it lands in
+  // Pending Payments for review. Editing amounts/status and billing still
+  // require invoices.manage (money state); the creator may delete their own
+  // not-yet-invoiced extra to fix a mistake.
+  const role = await getRole(user.role);
+  const canManage = hasPermission(role, 'invoices.manage');
+  const canAddExtra = canManage || hasPermission(role, 'production.access');
 
   // POST /api/crm/extras — create a pending extra on a deal.
   if (req.method === 'POST' && !id) {
-    if (!canManage) return res.status(403).json({ error: 'Forbidden' });
+    if (!canAddExtra) return res.status(403).json({ error: 'Forbidden' });
     const body = req.body || {};
     const dealId = trimOrNull(body.dealId);
     const description = trimOrNull(body.description);
@@ -165,7 +197,7 @@ export async function extrasRoute(req, res, id, action, user) {
     if (!description) return res.status(400).json({ error: 'description required' });
     if (amount == null || amount <= 0) return res.status(400).json({ error: 'A positive amount is required' });
 
-    const [dealRow] = await sql`SELECT id FROM deals WHERE id = ${dealId}`;
+    const [dealRow] = await sql`SELECT id, title FROM deals WHERE id = ${dealId}`;
     if (!dealRow) return res.status(404).json({ error: 'Deal not found' });
 
     const newId = makeId('xtr');
@@ -173,6 +205,7 @@ export async function extrasRoute(req, res, id, action, user) {
       INSERT INTO deal_extras (id, deal_id, description, amount, vat_rate, status, created_by)
       VALUES (${newId}, ${dealId}, ${description}, ${amount}, ${vatRate}, 'pending', ${user.email || null})
       RETURNING *`;
+    await notifyExtraAdded({ dealId, dealTitle: dealRow.title, description, amount, author: user });
     return res.status(201).json(serialiseExtra(row));
   }
 
@@ -201,9 +234,11 @@ export async function extrasRoute(req, res, id, action, user) {
   // invoice, which releases the extra back to pending — so we never orphan a
   // Xero line or silently drop billed work.
   if (req.method === 'DELETE' && id) {
-    if (!canManage) return res.status(403).json({ error: 'Forbidden' });
-    const [cur] = await sql`SELECT status FROM deal_extras WHERE id = ${id}`;
+    const [cur] = await sql`SELECT status, created_by FROM deal_extras WHERE id = ${id}`;
     if (!cur) return res.status(200).json({ ok: true }); // already gone — idempotent
+    // Finance can delete any pending extra; whoever logged it can delete their
+    // own (to fix a mistake) — but only while it's still pending.
+    if (!canManage && cur.created_by !== user.email) return res.status(403).json({ error: 'Forbidden' });
     if (cur.status !== 'pending') {
       return res.status(409).json({ error: 'This extra is on an invoice — void or delete that invoice first to remove it.' });
     }

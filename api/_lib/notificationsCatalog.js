@@ -59,6 +59,14 @@ export const NOTIFICATIONS = [
     channel: 'finance',
   },
   {
+    key: 'extra.added',
+    label: 'Extra charge added',
+    description: 'A production manager logs an ad-hoc extra charge on a deal during production.',
+    audience: 'broadcast',
+    group: 'Payments',
+    channel: 'finance',
+  },
+  {
     key: 'pp.marked_paid',
     label: 'Pending payment marked paid',
     description: 'Someone ticks off a pending payment (an imported PP/PO or a partner fee) as collected.',
