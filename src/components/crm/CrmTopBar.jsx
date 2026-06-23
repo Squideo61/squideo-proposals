@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, PoundSterling, Settings, Square, Trophy, Undo2, Redo2, UserCog } from 'lucide-react';
+import { BarChart3, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, PoundSterling, Settings, Square, Trophy, Undo2, Redo2, UserCog, X } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -24,6 +24,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   const nextUndo = undoStack[undoStack.length - 1];
   const nextRedo = redoStack[redoStack.length - 1];
   const [openMenu, setOpenMenu] = useState(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const navRef = useRef(null);
   const accountRef = useRef(null);
 
@@ -150,8 +151,24 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   }, [openMenu]);
 
   return (
-    <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'white', borderBottom: '1px solid ' + BRAND.border }}>
+    <>
+    <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'white', borderBottom: '1px solid ' + BRAND.border, paddingTop: 'env(safe-area-inset-top)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: isMobile ? '0 12px' : '0 24px', height: 56, maxWidth: fullWidth ? 'none' : APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+        {/* Mobile: a hamburger opens the full nav tree in a drawer (the desktop
+            section dropdowns are hidden below 640px). Producer shell has no
+            section nav, so it keeps its minimal bar with no hamburger. */}
+        {isMobile && !producer && (
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="btn-icon"
+            aria-label="Open menu"
+            aria-expanded={drawerOpen}
+            style={{ border: 'none', background: 'transparent', color: BRAND.ink, padding: 6, marginLeft: -4 }}
+          >
+            <Menu size={22} />
+          </button>
+        )}
         <button
           onClick={() => navigate(producer ? 'production' : marketing ? 'marketing' : 'list')}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginRight: 6, color: BRAND.ink }}
@@ -160,7 +177,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
           {!isMobile && <span style={{ fontSize: 17, fontWeight: 700 }}>Squideo</span>}
         </button>
 
-        {!producer && (
+        {!producer && !isMobile && (
         <nav ref={navRef} style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
           {(marketing ? sections.filter((s) => s.key === 'marketing') : sections).map((s) => {
             const isActive = activeSection === s.key;
@@ -249,8 +266,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
 
         <div style={{ flex: 1 }} />
 
-        {/* CRM-wide undo / redo. Tooltips name the next reversible action. */}
-        {!marketing && (
+        {/* CRM-wide undo / redo. Tooltips name the next reversible action.
+            Moved into the mobile nav drawer below 640px to reclaim bar width. */}
+        {!marketing && !isMobile && (
         <div style={{ display: 'inline-flex', alignItems: 'center' }}>
           <button
             type="button"
@@ -385,6 +403,143 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
                 );
               })}
             </div>
+          )}
+        </div>
+      </div>
+    </div>
+
+    {isMobile && !producer && drawerOpen && (
+      <MobileNavDrawer
+        sections={marketing ? sections.filter((s) => s.key === 'marketing') : sections}
+        showContacts={!marketing}
+        contactsActive={contactsActive}
+        navigate={navigate}
+        onClose={() => setDrawerOpen(false)}
+        actions={actions}
+        nextUndo={!marketing ? nextUndo : null}
+        nextRedo={!marketing ? nextRedo : null}
+        undoBusy={state.undoBusy}
+        onManageAccount={onManageAccount}
+        canAdmin={canAdmin}
+        user={user}
+      />
+    )}
+    </>
+  );
+}
+
+// Slide-in left drawer holding the full nav tree on phones (the desktop section
+// dropdowns are hidden below 640px). Renders the SAME `sections` array as the
+// desktop nav — each item reuses its `go()` / `count` / `soon`. Closes on item
+// tap, scrim tap (a nav drawer, not a form — the no-backdrop-close rule guards
+// form data, not this), Escape, and hash/route changes so hardware Back closes it.
+function MobileNavDrawer({ sections, showContacts, contactsActive, navigate, onClose, actions, nextUndo, nextRedo, undoBusy, onManageAccount, canAdmin, user }) {
+  useEffect(() => {
+    const onEsc = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onEsc);
+    window.addEventListener('hashchange', onClose);
+    window.addEventListener('popstate', onClose);
+    return () => {
+      window.removeEventListener('keydown', onEsc);
+      window.removeEventListener('hashchange', onClose);
+      window.removeEventListener('popstate', onClose);
+    };
+  }, [onClose]);
+
+  const go = (fn) => { fn(); onClose(); };
+
+  return (
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15, 42, 61, 0.5)', zIndex: 1500, display: 'flex' }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Navigation"
+        style={{
+          width: 284, maxWidth: '85vw', height: '100%', background: 'white',
+          display: 'flex', flexDirection: 'column', boxShadow: '2px 0 24px rgba(15,42,61,0.18)',
+          paddingTop: 'env(safe-area-inset-top)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid ' + BRAND.border }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            {user?.avatar
+              ? <img src={user.avatar} alt={user.name} style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover' }} />
+              : <div style={{ width: 30, height: 30, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13 }}>{(user?.name || '?')[0].toUpperCase()}</div>}
+            <span style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.name || 'Account'}</span>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close menu" className="btn-icon" style={{ border: 'none', background: 'transparent', color: BRAND.muted, padding: 6 }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: 10 }}>
+          {sections.map((s) => (
+            <div key={s.key} style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, padding: '10px 10px 4px' }}>{s.label}</div>
+              {s.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => go(item.go)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12, width: '100%',
+                      padding: '11px 10px', border: 'none', background: 'transparent', borderRadius: 8,
+                      cursor: 'pointer', fontSize: 15, color: BRAND.ink, textAlign: 'left', minHeight: 44,
+                    }}
+                  >
+                    <Icon size={18} color={BRAND.muted} />
+                    <span style={{ flex: 1 }}>{item.label}</span>
+                    {item.count > 0 && (
+                      <span style={{ background: BADGE, color: 'white', fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 999 }}>{item.count}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+
+          {showContacts && (
+            <button
+              type="button"
+              onClick={() => go(() => navigate('contacts'))}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12, width: '100%',
+                padding: '11px 10px', border: 'none', borderRadius: 8, cursor: 'pointer',
+                fontSize: 15, fontWeight: contactsActive ? 600 : 500, color: BRAND.ink, textAlign: 'left',
+                background: contactsActive ? '#EEF3F6' : 'transparent', minHeight: 44, marginTop: 4,
+              }}
+            >
+              <UserCog size={18} color={BRAND.muted} />
+              <span style={{ flex: 1 }}>Contacts</span>
+            </button>
+          )}
+        </div>
+
+        <div style={{ borderTop: '1px solid ' + BRAND.border, padding: 10, paddingBottom: 'calc(10px + env(safe-area-inset-bottom))' }}>
+          {(nextUndo || nextRedo) && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <button type="button" onClick={() => { actions.undo(); }} disabled={!nextUndo || undoBusy} className="btn" style={{ flex: 1, opacity: nextUndo ? 1 : 0.4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Undo2 size={16} /> Undo
+              </button>
+              <button type="button" onClick={() => { actions.redo(); }} disabled={!nextRedo || undoBusy} className="btn" style={{ flex: 1, opacity: nextRedo ? 1 : 0.4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Redo2 size={16} /> Redo
+              </button>
+            </div>
+          )}
+          <button type="button" onClick={() => go(() => onManageAccount())} style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '11px 10px', border: 'none', background: 'transparent', borderRadius: 8, cursor: 'pointer', fontSize: 15, color: BRAND.ink, textAlign: 'left', minHeight: 44 }}>
+            <UserCog size={18} color={BRAND.muted} />
+            <span style={{ flex: 1 }}>Account settings</span>
+          </button>
+          {canAdmin && (
+            <button type="button" onClick={() => go(() => navigate('admin', 'users'))} style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '11px 10px', border: 'none', background: 'transparent', borderRadius: 8, cursor: 'pointer', fontSize: 15, color: BRAND.ink, textAlign: 'left', minHeight: 44 }}>
+              <Settings size={18} color={BRAND.muted} />
+              <span style={{ flex: 1 }}>Admin</span>
+            </button>
           )}
         </div>
       </div>
