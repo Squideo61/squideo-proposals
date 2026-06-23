@@ -187,7 +187,13 @@ export function Badge({ color, children }) {
 // backdrop and pressing Escape. Set it false for forms where an accidental close
 // would lose typed input — pair with `showClose` so there's still an explicit X
 // (top-right) to dismiss with.
-export function Modal({ children, onClose, maxWidth = 440, overflow = 'auto', dismissible = true, showClose = true, closeOnBackdrop = false }) {
+export function Modal({ children, onClose, maxWidth = 440, overflow = 'auto', dismissible = true, showClose = true, closeOnBackdrop = false, fullScreenOnMobile = false }) {
+  const isMobile = useIsMobile();
+  // On phones, opt-in full-screen dialogs (forms, pickers) fill the viewport
+  // instead of floating in a cramped 440px card. This changes geometry only —
+  // dismissal still requires the X / Escape / an explicit button (closeOnBackdrop
+  // stays off by default), so a half-filled form can't be lost to a stray tap.
+  const fullScreen = fullScreenOnMobile && isMobile;
   useEffect(() => {
     if (!dismissible) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onClose && onClose(); };
@@ -205,15 +211,25 @@ export function Modal({ children, onClose, maxWidth = 440, overflow = 'auto', di
     ? (e) => { if (e.target === e.currentTarget) onClose && onClose(); }
     : undefined;
   return (
-    <div onMouseDown={onBackdrop} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 42, 61, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 20 }}>
-      <div role="dialog" aria-modal="true" style={{ position: 'relative', background: 'white', borderRadius: 12, padding: 24, width: '100%', maxWidth, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', maxHeight: '90vh', overflowY: overflow }}>
+    <div onMouseDown={onBackdrop} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 42, 61, 0.5)', display: 'flex', alignItems: fullScreen ? 'stretch' : 'center', justifyContent: 'center', zIndex: 2000, padding: fullScreen ? 0 : 20 }}>
+      <div role="dialog" aria-modal="true" style={{
+        position: 'relative', background: 'white',
+        borderRadius: fullScreen ? 0 : 12,
+        padding: fullScreen ? '20px 16px calc(20px + env(safe-area-inset-bottom))' : 24,
+        paddingTop: fullScreen ? 'calc(20px + env(safe-area-inset-top))' : 24,
+        width: '100%', maxWidth: fullScreen ? 'none' : maxWidth,
+        boxShadow: fullScreen ? 'none' : '0 20px 60px rgba(0,0,0,0.3)',
+        maxHeight: fullScreen ? '100vh' : '90vh', height: fullScreen ? '100vh' : undefined,
+        overflowY: overflow,
+      }}>
         {showClose && onClose && (
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
             style={{
-              position: 'absolute', top: 12, right: 12, zIndex: 1,
+              position: fullScreen ? 'sticky' : 'absolute', top: 12, right: 12, zIndex: 1,
+              float: fullScreen ? 'right' : undefined, marginLeft: fullScreen ? 'auto' : undefined,
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               width: 30, height: 30, borderRadius: 8, border: '1px solid ' + BRAND.border,
               background: 'white', color: BRAND.muted, cursor: 'pointer',
@@ -225,6 +241,73 @@ export function Modal({ children, onClose, maxWidth = 440, overflow = 'auto', di
         {children}
       </div>
     </div>
+  );
+}
+
+// Renders tabular data as a real <table> on tablet/desktop and as a stack of
+// label:value cards on phones, so wide tables don't force horizontal scrolling
+// on small screens. `columns` is [{ key, label, render?(row), align?, hideOnMobile? }];
+// `render` falls back to row[key]. `onRowClick` makes rows tappable in both modes.
+export function ResponsiveTable({ columns, rows, keyField = 'id', onRowClick, empty = 'Nothing to show.' }) {
+  const isMobile = useIsMobile();
+  const cell = (col, row) => (col.render ? col.render(row) : row[col.key]);
+
+  if (!rows || rows.length === 0) {
+    return <div style={{ padding: '24px 16px', textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>{empty}</div>;
+  }
+
+  if (isMobile) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {rows.map((row, i) => (
+          <div
+            key={row[keyField] ?? i}
+            onClick={onRowClick ? () => onRowClick(row) : undefined}
+            style={{
+              border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 14,
+              background: 'white', cursor: onRowClick ? 'pointer' : 'default',
+              display: 'flex', flexDirection: 'column', gap: 8,
+            }}
+          >
+            {columns.filter(c => !c.hideOnMobile).map((col) => (
+              <div key={col.key} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline' }}>
+                <span style={{ fontSize: 12, color: BRAND.muted, fontWeight: 600, flexShrink: 0 }}>{col.label}</span>
+                <span style={{ fontSize: 14, color: BRAND.ink, textAlign: 'right', minWidth: 0, wordBreak: 'break-word' }}>{cell(col, row)}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+      <thead>
+        <tr>
+          {columns.map((col) => (
+            <th key={col.key} style={{ textAlign: col.align || 'left', padding: '10px 12px', borderBottom: '1px solid ' + BRAND.border, color: BRAND.muted, fontWeight: 600, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              {col.label}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, i) => (
+          <tr
+            key={row[keyField] ?? i}
+            onClick={onRowClick ? () => onRowClick(row) : undefined}
+            style={{ cursor: onRowClick ? 'pointer' : 'default' }}
+          >
+            {columns.map((col) => (
+              <td key={col.key} style={{ textAlign: col.align || 'left', padding: '10px 12px', borderBottom: '1px solid ' + BRAND.paper, color: BRAND.ink }}>
+                {cell(col, row)}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

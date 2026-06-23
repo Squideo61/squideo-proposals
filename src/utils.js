@@ -10,14 +10,32 @@ const randHex = (bytes) => {
 };
 export const makeId = () => 'id_' + Date.now() + '_' + randHex(9);
 
-export function useIsMobile() {
-  const [mobile, setMobile] = useState(() => window.innerWidth <= 640);
+// Single source of truth for the responsive boundaries: 'mobile' (≤640, phones),
+// 'tablet' (≤1024, iPads / small windows) and 'desktop'. Heavy data views
+// (Finance, Production, Emails) are unusable on a phone but workable with
+// horizontal scroll on a tablet, so the middle band matters.
+export const BREAKPOINTS = { mobile: 640, tablet: 1024 };
+function currentBreakpoint() {
+  const w = window.innerWidth;
+  if (w <= BREAKPOINTS.mobile) return 'mobile';
+  if (w <= BREAKPOINTS.tablet) return 'tablet';
+  return 'desktop';
+}
+
+export function useBreakpoint() {
+  const [bp, setBp] = useState(currentBreakpoint);
   useEffect(() => {
-    const fn = () => setMobile(window.innerWidth <= 640);
+    const fn = () => setBp(currentBreakpoint());
     window.addEventListener('resize', fn);
     return () => window.removeEventListener('resize', fn);
   }, []);
-  return mobile;
+  return bp;
+}
+
+// Kept as the app's existing primitive (used in 32+ components). Defined on top
+// of useBreakpoint so the 640 boundary lives in exactly one place.
+export function useIsMobile() {
+  return useBreakpoint() === 'mobile';
 }
 
 export const formatGBP = (n) => '£' + (Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');

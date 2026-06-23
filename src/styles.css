@@ -154,6 +154,27 @@ body {
   .btn, .btn-ghost { padding: 10px 14px; min-height: 44px; }
   .btn-icon { padding: 10px; min-height: 44px; min-width: 44px; justify-content: center; }
   .input { font-size: 16px; } /* prevent iOS Safari auto-zoom on focus */
+
+  /* Swipeable boards (kanban / wide grids): each direct child becomes a
+     near-full-width snap page the user pages through horizontally, instead of
+     squeezing many columns onto a phone. Opt in by adding class="board-scroll". */
+  .board-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+  }
+  .board-scroll > * {
+    scroll-snap-align: start;
+    min-width: 80vw;
+    flex-shrink: 0;
+  }
+}
+
+/* ---------- Tablet ---------- */
+/* Wide data views (Finance tables, the Production grid) stay table/grid-shaped
+   on tablets but get horizontal scroll so they don't overflow the viewport. */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .board-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 }
 
 /* ---------- Sticky CTA (proposal) ---------- */
