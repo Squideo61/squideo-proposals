@@ -12,6 +12,7 @@ import { RevisionShell } from './components/revision/RevisionShell.jsx';
 import { TemplatePicker } from './components/TemplatePicker.jsx';
 import { NotificationBell } from './components/NotificationBell.jsx';
 import { DesktopNotifier } from './components/DesktopNotifier.jsx';
+import { InstallNudge } from './components/InstallNudge.jsx';
 import { CrmTopBar } from './components/crm/CrmTopBar.jsx';
 
 const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: m[name] })));
@@ -375,6 +376,7 @@ function AppShell() {
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <DesktopNotifier onOpenLink={openLink} />
+        <InstallNudge />
         {/* Trimmed top bar: logo + Tasks + notification bells + Account. No
             Sales/Business/Projects nav — producers stay scoped to production. */}
         <CrmTopBar
@@ -429,6 +431,7 @@ function AppShell() {
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <DesktopNotifier onOpenLink={openLink} />
+        <InstallNudge />
         <CrmTopBar
           marketing
           view={view}
@@ -452,6 +455,7 @@ function AppShell() {
   return (
     <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
       <DesktopNotifier onOpenLink={openLink} />
+      <InstallNudge />
       {!NO_TOPBAR_VIEWS.has(view) && (
         <CrmTopBar
           view={view}
