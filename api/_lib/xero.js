@@ -437,11 +437,13 @@ export async function createPayment({ invoiceId, accountCode, amount, date, refe
   return res.Payments[0].PaymentID;
 }
 
-export async function createQuote({ contactId, lineItems, reference, status = 'SENT' }) {
+export async function createQuote({ contactId, lineItems, reference, status = 'SENT', date }) {
   const payload = {
     Contact: { ContactID: contactId },
     LineAmountTypes: 'Exclusive',
     Status: status,
+    // Xero rejects a quote with no Date ("Date cannot be empty"); default today.
+    Date: date || new Date().toISOString().slice(0, 10),
     Reference: reference || undefined,
     LineItems: lineItems.map(li => ({
       Description: li.description,
