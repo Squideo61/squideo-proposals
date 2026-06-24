@@ -713,11 +713,28 @@ export async function getFreshAccessToken(userEmail) {
   if (row.access_token && expiresAt > Date.now() + 30_000) {
     return row.access_token;
   }
-  const refreshToken = decryptToken({
-    enc: row.refresh_token_enc,
-    iv: row.refresh_token_iv,
-    tag: row.refresh_token_tag,
-  });
+  let refreshToken;
+  try {
+    refreshToken = decryptToken({
+      enc: row.refresh_token_enc,
+      iv: row.refresh_token_iv,
+      tag: row.refresh_token_tag,
+    });
+  } catch (err) {
+    // The stored token can't be decrypted — almost always because it was
+    // encrypted under a previous GMAIL_TOKEN_KEY (key rotation). Treat it
+    // exactly like a revoked token: flag the account disconnected so the UI
+    // prompts a one-time reconnect rather than surfacing a raw crypto error.
+    console.warn('[gmail] token decrypt failed — flagging reconnect', { userEmail, err: err.message });
+    await sql`
+      UPDATE gmail_accounts
+         SET disconnected_at = NOW(), updated_at = NOW()
+       WHERE user_email = ${userEmail}
+    `;
+    const e = new Error('Gmail authorisation expired. Reconnect to continue.');
+    e.code = 'REAUTH';
+    throw e;
+  }
   let refreshed;
   try {
     refreshed = await refreshAccessToken(refreshToken);
