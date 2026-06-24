@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, BarChart3, Check, ChevronDown, Clock, Copy, Download, ExternalLink, Eye, FileText, Inbox, LayoutTemplate, Link2, MoreVertical, Plus, Receipt, Search, Trash2, Undo2, Users, X } from 'lucide-react';
+import { Archive, ArchiveRestore, BarChart3, Check, ChevronDown, Clock, Copy, Download, ExternalLink, Eye, FileText, Inbox, LayoutTemplate, Link2, MoreVertical, Pencil, Plus, Receipt, Search, Trash2, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, proposalSignedTotalExVat, computeBaseDiscount, useIsMobile } from '../utils.js';
@@ -440,6 +440,107 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
   };
   const stop = (e) => e.stopPropagation();
 
+  // The ⋮ menu's actions, shared by the desktop and mobile cards.
+  const actionItems = [
+    { label: 'View analytics', icon: BarChart3, onClick: onAnalytics },
+    { label: 'Preview', icon: Eye, onClick: () => onPreview(proposal.id) },
+    {
+      label: signed ? 'Download signed proposal' : 'Download PDF',
+      icon: Download,
+      onClick: () => openPrintWindow(proposal, signed ? printOptionsForSigned(signed, payment) : {}),
+    },
+    ...(onDuplicate ? [{ label: 'Duplicate proposal', icon: Copy, onClick: () => onDuplicate(proposal.id) }] : []),
+    ...(signed && proposal._xeroInvoiceId
+      ? [{ label: 'View invoice', icon: Receipt, onClick: () => window.open('/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(proposal._xeroInvoiceId), '_blank', 'noopener') }]
+      : []),
+    ...(signed && !fullyPaid ? [{ label: 'Mark as paid', icon: Check, onClick: handleMarkPaid }] : []),
+    ...(signed && !payment ? [{ label: 'Unmark as accepted', icon: Undo2, onClick: handleUnmarkAccepted }] : []),
+    {
+      label: proposal.archived ? 'Unarchive' : 'Archive',
+      icon: proposal.archived ? ArchiveRestore : Archive,
+      onClick: () => {
+        const next = !proposal.archived;
+        actions.setProposalArchived(proposal.id, next)
+          .then(() => showMsg(next ? 'Proposal archived' : 'Proposal unarchived'))
+          .catch(() => showMsg('Failed to update proposal'));
+      },
+    },
+    { label: 'Delete', icon: Trash2, onClick: () => onDelete(proposal.id), danger: true },
+  ];
+
+  // On mobile the per-card buttons (Go to deal / copy / Edit) that sit inline on
+  // desktop collapse into the ⋮ menu, so each card stays a tight two-line row.
+  const mobileMenuItems = [
+    ...(proposal._dealId && onOpenDeal ? [{ label: 'Go to deal', icon: ExternalLink, onClick: () => onOpenDeal(proposal._dealId) }] : []),
+    { label: 'Edit proposal', icon: Pencil, onClick: () => onOpen(proposal.id) },
+    { label: 'Copy share link', icon: Link2, onClick: copyLink },
+    ...actionItems,
+  ];
+
+  // One highest-priority status pill for the compact card; the left accent
+  // border already encodes the same state as a colour, so a single label is enough.
+  let statusBadge = null;
+  if (proposal.archived) statusBadge = <Badge color="grey">ARCHIVED</Badge>;
+  else if (fullyPaid) statusBadge = <Badge color="blue">PAID</Badge>;
+  else if (partlyPaid) statusBadge = <Badge color="green">{isHalf ? 'DEPOSIT' : 'PART PAID'}</Badge>;
+  else if (signed) statusBadge = <Badge color="green">ACCEPTED</Badge>;
+  else if (opened) statusBadge = <Badge color="yellow">OPENED</Badge>;
+
+  // Compact mobile card: a tight two-line row — number + name (truncated) on top,
+  // status + business · date beneath — with the price on the right and every
+  // action behind the ⋮ menu. Far shorter than the desktop card, so more fit.
+  if (isMobile) {
+    return (
+      <div
+        className="proposal-card"
+        role="button"
+        tabIndex={0}
+        onClick={handleCardClick}
+        onKeyDown={handleCardKey}
+        aria-label={`Preview proposal for ${proposal.clientName || 'untitled'}`}
+        style={{
+          position: 'relative',
+          zIndex: menuOpen ? 50 : 'auto',
+          background: 'white',
+          border: '1px solid ' + BRAND.border,
+          borderLeft: '4px solid ' + accentColour,
+          borderRadius: 10,
+          padding: '10px 8px 10px 12px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          cursor: 'pointer',
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            {number && (
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: BRAND.muted, background: '#F1F5F9', padding: '1px 6px', borderRadius: 5, letterSpacing: 0.3, flexShrink: 0 }}>
+                {number}
+              </span>
+            )}
+            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+              {proposal.clientName || 'Untitled Proposal'}
+            </h3>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, minWidth: 0 }}>
+            {statusBadge}
+            <span style={{ fontSize: 11.5, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+              {proposal.contactBusinessName || '—'}{proposal.date ? ` · ${proposal.date}` : ''}
+            </span>
+          </div>
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: BRAND.ink, lineHeight: 1.1 }}>{figure}</div>
+          {hasVat && <div style={{ fontSize: 10, color: BRAND.muted, marginTop: 1 }}>+VAT</div>}
+        </div>
+        <div onClick={stop} style={{ flexShrink: 0 }}>
+          <ActionMenu open={menuOpen} onOpenChange={setMenuOpen} items={mobileMenuItems} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="proposal-card"
@@ -542,32 +643,7 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
         <ActionMenu
           open={menuOpen}
           onOpenChange={setMenuOpen}
-          items={[
-            { label: 'View analytics', icon: BarChart3, onClick: onAnalytics },
-            { label: 'Preview', icon: Eye, onClick: () => onPreview(proposal.id) },
-            {
-              label: signed ? 'Download signed proposal' : 'Download PDF',
-              icon: Download,
-              onClick: () => openPrintWindow(proposal, signed ? printOptionsForSigned(signed, payment) : {}),
-            },
-            ...(onDuplicate ? [{ label: 'Duplicate proposal', icon: Copy, onClick: () => onDuplicate(proposal.id) }] : []),
-            ...(signed && proposal._xeroInvoiceId
-              ? [{ label: 'View invoice', icon: Receipt, onClick: () => window.open('/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(proposal._xeroInvoiceId), '_blank', 'noopener') }]
-              : []),
-            ...(signed && !fullyPaid ? [{ label: 'Mark as paid', icon: Check, onClick: handleMarkPaid }] : []),
-            ...(signed && !payment ? [{ label: 'Unmark as accepted', icon: Undo2, onClick: handleUnmarkAccepted }] : []),
-            {
-              label: proposal.archived ? 'Unarchive' : 'Archive',
-              icon: proposal.archived ? ArchiveRestore : Archive,
-              onClick: () => {
-                const next = !proposal.archived;
-                actions.setProposalArchived(proposal.id, next)
-                  .then(() => showMsg(next ? 'Proposal archived' : 'Proposal unarchived'))
-                  .catch(() => showMsg('Failed to update proposal'));
-              },
-            },
-            { label: 'Delete', icon: Trash2, onClick: () => onDelete(proposal.id), danger: true },
-          ]}
+          items={actionItems}
         />
       </div>
     </div>
