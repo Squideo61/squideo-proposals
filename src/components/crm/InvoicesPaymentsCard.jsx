@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Plus, FileText, Trash2, CheckCircle, Link, Copy, Check, ExternalLink } from 'lucide-react';
+import { Plus, FileText, Trash2, CheckCircle, Link, Copy, Check, ExternalLink, Download } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatCurrency, formatAmountWithGbp } from '../../utils.js';
@@ -244,6 +244,18 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
                   {e.quoteNumber && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>· {e.quoteNumber}</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                  {e.xeroQuoteId && (
+                    <a
+                      href={'/api/xero/quote-pdf?quoteId=' + encodeURIComponent(e.xeroQuoteId)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-ghost"
+                      style={{ fontSize: 12, whiteSpace: 'nowrap', textDecoration: 'none' }}
+                      title="Download the Xero quote PDF"
+                    >
+                      <Download size={12} /> Quote
+                    </a>
+                  )}
                   <button
                     onClick={() => createInvoiceFromQuote(e.id)}
                     className="btn"

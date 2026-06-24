@@ -325,6 +325,11 @@ export async function getInvoicePdf(invoiceId) {
   return xeroFetchBytes(`/api.xro/2.0/Invoices/${encodeURIComponent(invoiceId)}`);
 }
 
+// Fetches the rendered PDF for a quote. Returns a Buffer.
+export async function getQuotePdf(quoteId) {
+  return xeroFetchBytes(`/api.xro/2.0/Quotes/${encodeURIComponent(quoteId)}`);
+}
+
 // Looks up an invoice in Xero by its InvoiceNumber (e.g. "INV-6049"). Returns
 // the full Xero invoice object or null if not found. Used to log uploaded PDFs
 // against an invoice that already exists in Xero, without pushing a duplicate.

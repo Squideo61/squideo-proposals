@@ -7,7 +7,7 @@
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { APP_URL } from '../_lib/email.js';
-import { getOrCreateContact, createInvoice, emailInvoice, getInvoicePdf, getInvoiceNumber, getNextInvoiceNumber } from '../_lib/xero.js';
+import { getOrCreateContact, createInvoice, emailInvoice, getInvoicePdf, getQuotePdf, getInvoiceNumber, getNextInvoiceNumber } from '../_lib/xero.js';
 import { xeroContactIdForProposal, dealIdForProposal } from '../_lib/dealStage.js';
 import { sendNotification } from '../_lib/notifications.js';
 import {
@@ -202,6 +202,38 @@ export default async function handler(req, res) {
     } catch (err) {
       console.error('[xero invoice-pdf] failed', err);
       return res.status(502).json({ error: 'Could not fetch invoice from Xero' });
+    }
+  }
+
+  // --- /api/xero/quote-pdf?quoteId=... ---
+  // Same auth-gated passthrough for a Xero quote PDF (the PO-route "Pending PO"
+  // quote). The id is allowlisted against our own deal_extras / proposal_billing
+  // tables so we never proxy arbitrary Xero quote IDs.
+  if (action === 'quote-pdf') {
+    if (req.method !== 'GET') return res.status(405).end();
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const quoteId = (req.query.quoteId || '').trim();
+    if (!quoteId) return res.status(400).json({ error: 'quoteId required' });
+
+    const allowed = await sql`
+      SELECT quote_number AS num FROM deal_extras WHERE xero_quote_id = ${quoteId}
+      UNION ALL
+      SELECT NULL AS num FROM proposal_billing WHERE xero_quote_id = ${quoteId}
+      LIMIT 1
+    `;
+    if (!allowed.length) return res.status(404).json({ error: 'Unknown quote' });
+
+    try {
+      const pdf = await getQuotePdf(quoteId);
+      const filename = `${allowed[0].num || 'Quote-' + quoteId}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'private, max-age=60');
+      return res.status(200).send(pdf);
+    } catch (err) {
+      console.error('[xero quote-pdf] failed', err);
+      return res.status(502).json({ error: 'Could not fetch quote from Xero' });
     }
   }
 
