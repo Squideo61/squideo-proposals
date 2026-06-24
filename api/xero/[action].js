@@ -43,6 +43,12 @@ const SCOPES = [
   'accounting.contacts',
   'accounting.invoices',
   'accounting.payments',
+  // Quotes power the PO route — the "Pending PO" quote raised on PO-route
+  // proposals/extras and the quote→invoice conversion in the Purchase Orders
+  // section. Reconnect Xero (/api/xero/connect) after deploying so the grant
+  // includes this; existing tokens keep working but won't carry the new scope
+  // until re-consented.
+  'accounting.transactions',
 ].join(' ');
 
 function redirectUri() {
