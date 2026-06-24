@@ -6,6 +6,8 @@ import { useIsMobile } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { Logo } from '../ui.jsx';
 import { NotificationBell } from '../NotificationBell.jsx';
+import { MobileNotifications } from '../MobileNotifications.jsx';
+import { MobileTabBar } from './MobileTabBar.jsx';
 
 const BADGE = '#FB923C';
 
@@ -151,6 +153,40 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   const activeSection = sections.find(s => s.views.includes(view))?.key;
   const contactsActive = ['contacts', 'contact', 'company', 'xero-duplicates'].includes(view);
 
+  // Mobile-only bottom tab bar + a single consolidated notifications bell. On
+  // phones the old crammed icon row (Tasks + Emails + three bells + hamburger)
+  // is replaced by: a slim top bar (logo + one bell + avatar) and this fixed
+  // bottom bar carrying the day-to-day destinations. "More" opens the same nav
+  // drawer the hamburger used to. Desktop keeps the full top-bar layout.
+  const tab = (key, label, icon, onClick, views, badge) => ({ key, label, icon, onClick, views, badge });
+  const openMore = () => setDrawerOpen(true);
+  const mobileTabs = marketing
+    ? [
+        tab('m-home', 'Home', LayoutDashboard, () => navigate('marketing', 'overview'), ['marketing']),
+        tab('m-reports', 'Reports', BarChart3, () => navigate('marketing', 'reports')),
+        tab('m-leads', 'Leads', MailQuestion, () => navigate('marketing', 'leads')),
+        tab('m-traffic', 'Traffic', Globe, () => navigate('marketing', 'traffic')),
+        tab('more', 'More', Menu, openMore),
+      ]
+    : producer
+    ? [
+        tab('production', 'Board', KanbanSquare, () => navigate('production'), ['production']),
+        tab('projects', 'Projects', LayoutGrid, () => navigate('projects'), ['projects', 'project', 'video']),
+        tab('tasks', 'Tasks', CheckSquare, () => navigate('tasks'), ['tasks'], openTasksDue),
+        tab('emails', 'Inbox', Mail, () => navigate('emails'), ['emails', 'email', 'triage'], inboxUnread),
+        tab('more', 'More', Menu, openMore),
+      ]
+    : [
+        tab('overview', 'Home', LayoutDashboard, () => navigate('overview'), ['overview']),
+        tab('list', 'Sales', FileText, () => navigate('list'), ['list', 'deal', 'pipeline', 'quote-requests', 'leaderboard', 'templates']),
+        tab('tasks', 'Tasks', CheckSquare, () => navigate('tasks'), ['tasks'], openTasksDue),
+        tab('emails', 'Inbox', Mail, () => navigate('emails'), ['emails', 'email', 'triage'], inboxUnread),
+        tab('more', 'More', Menu, openMore),
+      ];
+  // Feeds folded into the single mobile bell, ordered Updates / Finance / Tracking
+  // (finance is permission-gated, same as its desktop bell).
+  const mobileBellChannels = ['general', ...(canFinanceBell ? ['finance'] : []), 'tracking'];
+
   useEffect(() => {
     if (!openMenu) return;
     const onDown = (e) => {
@@ -171,21 +207,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     <>
     <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'white', borderBottom: '1px solid ' + BRAND.border, paddingTop: 'env(safe-area-inset-top)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: isMobile ? '0 12px' : '0 24px', height: 56, maxWidth: fullWidth ? 'none' : APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
-        {/* Mobile: a hamburger opens the full nav tree in a drawer (the desktop
-            section dropdowns are hidden below 640px). Producer shell has no
-            section nav, so it keeps its minimal bar with no hamburger. */}
-        {isMobile && navSections.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setDrawerOpen(true)}
-            className="btn-icon"
-            aria-label="Open menu"
-            aria-expanded={drawerOpen}
-            style={{ border: 'none', background: 'transparent', color: BRAND.ink, padding: 6, marginLeft: -4 }}
-          >
-            <Menu size={22} />
-          </button>
-        )}
+        {/* Mobile drops the hamburger: the fixed bottom tab bar's "More" tab opens
+            the same nav drawer, so the top bar stays minimal (logo + one bell +
+            avatar) and finally fits a phone. Desktop keeps its section dropdowns. */}
         <button
           onClick={() => navigate(producer ? 'production' : marketing ? 'marketing' : 'list')}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginRight: 6, color: BRAND.ink }}
@@ -310,9 +334,10 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         </div>
         )}
 
-        {/* Tasks opens a quick dropdown of today's tasks (tick them off in place,
-            or jump to the full page) rather than navigating on the first click. */}
-        {!marketing && (
+        {/* Tasks / Emails / the three bells live in the desktop top bar only. On
+            mobile, Tasks + Emails move to the bottom tab bar and the three bells
+            fold into one MobileNotifications sheet (rendered below). */}
+        {!marketing && !isMobile && (
           <TasksMenu
             tasks={todaysTasks}
             count={openTasksDue}
@@ -325,7 +350,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         )}
 
         {/* Emails is available to producers too (their project comms inbox). */}
-        {!marketing && [
+        {!marketing && !isMobile && [
           { label: 'Emails', icon: Mail, route: 'emails', views: ['emails', 'triage', 'email'], go: () => navigate('emails'), count: inboxUnread },
         ].map((item) => {
           const Icon = item.icon;
@@ -362,12 +387,16 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
           );
         })}
 
-        {/* Eye bell (engagement tracking) sits left of the £ bell. Its contents
-            are owner-scoped, so it's shown to everyone — empty for anyone who
-            hasn't sent tracked emails / owns no proposals. */}
-        {!marketing && <NotificationBell onOpenLink={onOpenLink} inline channel="tracking" />}
-        {!marketing && canFinanceBell && <NotificationBell onOpenLink={onOpenLink} inline channel="finance" />}
-        {!marketing && <NotificationBell onOpenLink={onOpenLink} inline />}
+        {/* Desktop: three separate bells (tracking / finance / general). Eye bell
+            (engagement tracking) sits left of the £ bell. Its contents are
+            owner-scoped, so it's shown to everyone — empty for anyone who hasn't
+            sent tracked emails / owns no proposals. */}
+        {!marketing && !isMobile && <NotificationBell onOpenLink={onOpenLink} inline channel="tracking" />}
+        {!marketing && !isMobile && canFinanceBell && <NotificationBell onOpenLink={onOpenLink} inline channel="finance" />}
+        {!marketing && !isMobile && <NotificationBell onOpenLink={onOpenLink} inline />}
+
+        {/* Mobile: the three bells above fold into one sheet with channel tabs. */}
+        {!marketing && isMobile && <MobileNotifications onOpenLink={onOpenLink} channels={mobileBellChannels} />}
 
         <div ref={accountRef} style={{ position: 'relative' }}>
           <button
@@ -441,6 +470,8 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         user={user}
       />
     )}
+
+    {isMobile && mobileTabs.length > 0 && <MobileTabBar tabs={mobileTabs} view={view} />}
     </>
   );
 }

@@ -10,8 +10,10 @@ import {
 import { enablePush, disablePush } from '../lib/pushSubscribe.js';
 
 // Per-channel presentation. 'general' is the standard bell; 'finance' is the £
-// bell shown to its left for sales/money updates.
-const CHANNEL_META = {
+// bell shown to its left for sales/money updates. Exported so the mobile
+// notification center (which folds all three channels into one sheet) reuses the
+// same icons/accents/badge colours.
+export const CHANNEL_META = {
   general: { icon: Bell, label: 'Notifications', accent: BRAND.blue, badge: '#EF4444' },
   finance: { icon: PoundSterling, label: 'Sales & finance', accent: '#0E7490', badge: '#0E7490' },
   tracking: { icon: Eye, label: 'View Tracking', accent: '#16A34A', badge: '#16A34A' },

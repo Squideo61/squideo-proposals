@@ -155,6 +155,10 @@ body {
   .btn-icon { padding: 10px; min-height: 44px; min-width: 44px; justify-content: center; }
   .input { font-size: 16px; } /* prevent iOS Safari auto-zoom on focus */
 
+  /* Keep page content clear of the fixed bottom tab bar (MobileTabBar tags the
+     body while mounted). Height = 54px bar + the iOS home-indicator inset. */
+  body.has-mobile-tabbar { padding-bottom: calc(54px + env(safe-area-inset-bottom)); }
+
   /* Swipeable boards (kanban / wide grids): each direct child becomes a
      near-full-width snap page the user pages through horizontally, instead of
      squeezing many columns onto a phone. Opt in by adding class="board-scroll". */
