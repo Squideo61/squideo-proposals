@@ -455,5 +455,17 @@ export async function createQuote({ contactId, lineItems, reference, status = 'S
     method: 'POST',
     body: JSON.stringify(payload),
   });
-  return res.Quotes[0].QuoteID;
+  const q = res.Quotes[0];
+  return { quoteId: q.QuoteID, quoteNumber: q.QuoteNumber || null };
+}
+
+// "Void" a quote so it leaves the active quotes list once it's been turned into
+// an invoice (Xero has no VOIDED state for quotes — DELETED is the equivalent
+// terminal state). Best-effort caller; safe to call on an already-gone quote.
+export async function voidQuote(quoteId) {
+  if (!quoteId) return;
+  await xeroFetch(`/api.xro/2.0/Quotes/${encodeURIComponent(quoteId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ Status: 'DELETED' }),
+  });
 }

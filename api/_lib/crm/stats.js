@@ -1252,6 +1252,13 @@ async function pendingPaymentsReport() {
           WHERE p2.deal_id = COALESCE(mi.deal_id, pr.deal_id)
             AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
        )
+       -- Standalone "invoice now" / PO-converted extra invoices are already
+       -- counted via the deal's extra line (extrasByDeal). Excluding any invoice
+       -- linked to an extra here prevents double-counting it on unsigned deals
+       -- (a final invoice with extras is already excluded by the signature guard).
+       AND NOT EXISTS (
+         SELECT 1 FROM deal_extras de WHERE de.xero_invoice_id = mi.xero_invoice_id
+       )
   `;
   const companyInvoices = [];
   let companyInvoicedNet = 0;

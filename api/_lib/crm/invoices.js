@@ -28,6 +28,133 @@ import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { pendingExtrasForDeal, markExtrasInvoiced, markExtrasPaidForXeroInvoice, releaseExtrasForVoidedInvoice } from './extras.js';
 
+// Create a Xero ACCREC invoice for a deal/proposal/company from explicit line
+// items, store it in manual_invoices, and (optionally) flip the given extras to
+// 'invoiced'. Extracted from the JSON POST handler so other flows (an extra
+// billed "now", or a PO quote turned into an invoice) reuse the exact same path.
+// Throws Error with a `.status` for caller-facing validation failures.
+export async function createXeroInvoiceForDeal(body, user) {
+  const { dealId, proposalId, companyId, contactName, lineItems, invoiceNumber, reference, issuedAt, dueAt, extraIds } = body || {};
+
+  if (!Array.isArray(lineItems) || !lineItems.length) {
+    const e = new Error('At least one line item required'); e.status = 400; throw e;
+  }
+  if (!dealId && !proposalId && !companyId) {
+    const e = new Error('dealId, proposalId or companyId required'); e.status = 400; throw e;
+  }
+
+  let resolvedDealId = dealId || null;
+  if (!resolvedDealId && proposalId) {
+    const [pr] = await sql`SELECT deal_id FROM proposals WHERE id = ${proposalId}`;
+    resolvedDealId = pr?.deal_id || null;
+  }
+
+  const linked = (resolvedDealId || proposalId)
+    ? await resolveXeroContactInfo(resolvedDealId, proposalId)
+    : await resolveXeroContactInfoForCompany(companyId);
+  const xeroContactInfo = {
+    name: contactName?.trim() || linked?.name,
+    email: linked?.email || null,
+    xeroContactId: linked?.xeroContactId || null,
+  };
+  if (!xeroContactInfo.name && !xeroContactInfo.xeroContactId) {
+    const e = new Error('Could not determine client for Xero invoice'); e.status = 400; throw e;
+  }
+  const xeroContactId = await getOrCreateContact({
+    xeroContactId: xeroContactInfo.xeroContactId,
+    name: xeroContactInfo.name,
+    email: xeroContactInfo.email || undefined,
+  });
+
+  // Push the company's current CRM address onto the contact so it prints on
+  // the invoice (Xero shows the contact's postal address). Non-fatal.
+  try {
+    const addr = await companyAddressForInvoice(resolvedDealId, companyId);
+    if (addr) await updateContactAddress(xeroContactId, addr);
+  } catch (err) {
+    console.warn('[invoices] address sync before invoice failed', err.message);
+  }
+
+  const xeroLineItems = lineItems.map(li => {
+    const vat = Number(li.vatRate) || 0;
+    return {
+      description: String(li.description || '').trim(),
+      quantity: Number(li.quantity) || 1,
+      unitAmount: Number(Number(li.unitAmount || 0).toFixed(2)),
+      taxType: vat > 0 ? 'OUTPUT2' : 'NONE',
+      accountCode: '200',
+      discountRate: li.discountRate ? Number(li.discountRate) : undefined,
+    };
+  });
+
+  const { invoiceId: xeroInvoiceId, invoiceNumber: xeroInvoiceNumber } = await createInvoice({
+    contactId: xeroContactId,
+    lineItems: xeroLineItems,
+    invoiceNumber: invoiceNumber?.trim() || undefined,
+    // PO-route deals pass the PO number here so it prints as the Xero Reference.
+    reference: reference?.trim() || undefined,
+    issueDate: issuedAt || undefined,
+    dueDate: dueAt || undefined,
+  });
+  const storedInvoiceNumber = xeroInvoiceNumber || trimOrNull(invoiceNumber);
+
+  let subTotal = 0;
+  let taxTotal = 0;
+  for (const li of lineItems) {
+    const qty = Number(li.quantity) || 1;
+    const price = Number(li.unitAmount || 0);
+    const disc = Number(li.discountRate || 0);
+    const vat = Number(li.vatRate || 0);
+    const lineEx = qty * price * (1 - disc / 100);
+    subTotal += lineEx;
+    taxTotal += lineEx * (vat / 100);
+  }
+  const totalAmount = subTotal + taxTotal;
+
+  const newId = makeId('inv');
+  await sql`
+    INSERT INTO manual_invoices (
+      id, deal_id, proposal_id, company_id, invoice_number, amount,
+      issued_at, due_at, status, notes, uploaded_by, xero_invoice_id,
+      subtotal_ex_vat, tax_amount
+    ) VALUES (
+      ${newId},
+      ${resolvedDealId},
+      ${trimOrNull(proposalId)},
+      ${trimOrNull(companyId)},
+      ${storedInvoiceNumber},
+      ${Number(totalAmount.toFixed(2))},
+      ${trimOrNull(issuedAt) || new Date().toISOString().slice(0, 10)},
+      ${trimOrNull(dueAt)},
+      'issued',
+      ${lineItems.map(li => li.description).filter(Boolean).join(', ') || null},
+      ${user?.email || null},
+      ${xeroInvoiceId},
+      ${Number(subTotal.toFixed(2))},
+      ${Number(taxTotal.toFixed(2))}
+    )
+  `;
+
+  if (Array.isArray(extraIds) && extraIds.length) {
+    try {
+      await markExtrasInvoiced(extraIds, xeroInvoiceId, storedInvoiceNumber);
+    } catch (err) {
+      console.error('[invoices] markExtrasInvoiced failed', err);
+    }
+  }
+
+  const pdfUrl = '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(xeroInvoiceId);
+  return {
+    id: 'manual:' + newId,
+    source: 'manual',
+    xeroInvoiceId,
+    invoiceNumber: storedInvoiceNumber,
+    amount: Number(totalAmount.toFixed(2)),
+    status: 'issued',
+    pdfUrl,
+  };
+}
+
 // Self-heal for db/migrations/20260603_invoice_company_id.sql — lets invoices be
 // scoped to a company (not just a deal) so the company page can list/create them.
 let invoiceCompanyColEnsured = null;
@@ -456,134 +583,14 @@ export async function invoicesRoute(req, res, id, action, user) {
   // This path is triggered when Content-Type is application/json, which the
   // CRM body parser will have already parsed into req.body.
   if (!id && req.method === 'POST' && (req.headers['content-type'] || '').startsWith('application/json')) {
-    const body = req.body || {};
-    const { dealId, proposalId, companyId, contactName, lineItems, invoiceNumber, reference, issuedAt, dueAt, extraIds } = body;
-
-    if (!Array.isArray(lineItems) || !lineItems.length) {
-      return res.status(400).json({ error: 'At least one line item required' });
-    }
-    if (!dealId && !proposalId && !companyId) {
-      return res.status(400).json({ error: 'dealId, proposalId or companyId required' });
-    }
-
-    let resolvedDealId = dealId || null;
-    if (!resolvedDealId && proposalId) {
-      const [pr] = await sql`SELECT deal_id FROM proposals WHERE id = ${proposalId}`;
-      resolvedDealId = pr?.deal_id || null;
-    }
-
-    // Pull the linked xero_contact_id from the deal (or the company directly,
-    // for company-level invoices) — even when the UI provided a free-text name.
-    // The link is what stops us creating duplicates in Xero; the free-text name
-    // is only a fallback for the create-search.
-    const linked = (resolvedDealId || proposalId)
-      ? await resolveXeroContactInfo(resolvedDealId, proposalId)
-      : await resolveXeroContactInfoForCompany(companyId);
-    const xeroContactInfo = {
-      name: contactName?.trim() || linked?.name,
-      email: linked?.email || null,
-      xeroContactId: linked?.xeroContactId || null,
-    };
-    if (!xeroContactInfo.name && !xeroContactInfo.xeroContactId) {
-      return res.status(400).json({ error: 'Could not determine client for Xero invoice' });
-    }
-    const xeroContactId = await getOrCreateContact({
-      xeroContactId: xeroContactInfo.xeroContactId,
-      name: xeroContactInfo.name,
-      email: xeroContactInfo.email || undefined,
-    });
-
-    // Push the company's current CRM address onto the contact so it prints on
-    // the invoice (Xero shows the contact's postal address). Non-fatal.
     try {
-      const addr = await companyAddressForInvoice(resolvedDealId, companyId);
-      if (addr) await updateContactAddress(xeroContactId, addr);
+      const result = await createXeroInvoiceForDeal(req.body || {}, user);
+      return res.status(201).json(result);
     } catch (err) {
-      console.warn('[invoices] address sync before invoice failed', err.message);
+      if (err.status) return res.status(err.status).json({ error: err.message });
+      console.error('[invoices] create Xero invoice failed', err);
+      return res.status(502).json({ error: err.message || 'Invoice creation failed' });
     }
-
-    const xeroLineItems = lineItems.map(li => {
-      const vat = Number(li.vatRate) || 0;
-      return {
-        description: String(li.description || '').trim(),
-        quantity: Number(li.quantity) || 1,
-        unitAmount: Number(Number(li.unitAmount || 0).toFixed(2)),
-        taxType: vat > 0 ? 'OUTPUT2' : 'NONE',
-        accountCode: '200',
-        discountRate: li.discountRate ? Number(li.discountRate) : undefined,
-      };
-    });
-
-    const { invoiceId: xeroInvoiceId, invoiceNumber: xeroInvoiceNumber } = await createInvoice({
-      contactId: xeroContactId,
-      lineItems: xeroLineItems,
-      invoiceNumber: invoiceNumber?.trim() || undefined,
-      // PO-route deals pass the PO number here so it prints as the Xero Reference.
-      reference: reference?.trim() || undefined,
-      issueDate: issuedAt || undefined,
-      dueDate: dueAt || undefined,
-    });
-    // Use the number Xero assigned (covers auto-assign when field was left blank)
-    const storedInvoiceNumber = xeroInvoiceNumber || trimOrNull(invoiceNumber);
-
-    // Calculate ex-VAT, VAT, and inc-VAT totals for our own record.
-    let subTotal = 0;
-    let taxTotal = 0;
-    for (const li of lineItems) {
-      const qty = Number(li.quantity) || 1;
-      const price = Number(li.unitAmount || 0);
-      const disc = Number(li.discountRate || 0);
-      const vat = Number(li.vatRate || 0);
-      const lineEx = qty * price * (1 - disc / 100);
-      subTotal += lineEx;
-      taxTotal += lineEx * (vat / 100);
-    }
-    const totalAmount = subTotal + taxTotal;
-
-    const newId = makeId('inv');
-    await sql`
-      INSERT INTO manual_invoices (
-        id, deal_id, proposal_id, company_id, invoice_number, amount,
-        issued_at, due_at, status, notes, uploaded_by, xero_invoice_id,
-        subtotal_ex_vat, tax_amount
-      ) VALUES (
-        ${newId},
-        ${resolvedDealId},
-        ${trimOrNull(proposalId)},
-        ${trimOrNull(companyId)},
-        ${storedInvoiceNumber},
-        ${Number(totalAmount.toFixed(2))},
-        ${trimOrNull(issuedAt) || new Date().toISOString().slice(0, 10)},
-        ${trimOrNull(dueAt)},
-        'issued',
-        ${lineItems.map(li => li.description).filter(Boolean).join(', ') || null},
-        ${user.email || null},
-        ${xeroInvoiceId},
-        ${Number(subTotal.toFixed(2))},
-        ${Number(taxTotal.toFixed(2))}
-      )
-    `;
-
-    // Extras billed on this invoice: flip them to 'invoiced' and link the Xero
-    // id so they stop being re-suggested and settle when the invoice is paid.
-    if (Array.isArray(extraIds) && extraIds.length) {
-      try {
-        await markExtrasInvoiced(extraIds, xeroInvoiceId, storedInvoiceNumber);
-      } catch (err) {
-        console.error('[invoices] markExtrasInvoiced failed', err);
-      }
-    }
-
-    const pdfUrl = '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(xeroInvoiceId);
-    return res.status(201).json({
-      id: 'manual:' + newId,
-      source: 'manual',
-      xeroInvoiceId,
-      invoiceNumber: trimOrNull(invoiceNumber),
-      amount: Number(totalAmount.toFixed(2)),
-      status: 'issued',
-      pdfUrl,
-    });
   }
 
   // --- POST /api/crm/invoices — create a manual invoice.
@@ -983,7 +990,7 @@ export async function invoicesRoute(req, res, id, action, user) {
 // company/contact. Also returns `xeroContactId` when the linked local company
 // is linked to a Xero contact — callers should pass that to getOrCreateContact
 // to skip the fragile name-search lookup.
-async function resolveXeroContactInfo(dealId, proposalId) {
+export async function resolveXeroContactInfo(dealId, proposalId) {
   let resolvedDealId = dealId;
   if (!resolvedDealId && proposalId) {
     const [pr] = await sql`SELECT deal_id FROM proposals WHERE id = ${proposalId}`;

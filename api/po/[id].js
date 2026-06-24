@@ -84,12 +84,12 @@ export default async function handler(req, res) {
       : lineItemsForProject(proposal, signed, proposalNumber);
 
     const referenceBase = proposalNumber || (proposal.proposalTitle || proposal.clientName || proposalId);
-    quoteId = await createQuote({
+    ({ quoteId } = await createQuote({
       contactId,
       lineItems,
       reference: `${referenceBase} — Pending PO`.slice(0, 80),
       status: 'SENT',
-    });
+    }));
 
     await sql`UPDATE proposal_billing SET xero_quote_id = ${quoteId} WHERE proposal_id = ${proposalId}`;
   } catch (err) {

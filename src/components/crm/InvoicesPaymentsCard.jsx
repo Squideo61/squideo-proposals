@@ -118,7 +118,11 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
   }, {});
   const totalEntries = Object.entries(totalsByCurrency).filter(([, v]) => v > 0);
 
-  const pendingExtras = (extras || []).filter((e) => e.status !== 'paid');
+  // 'quoted' PO-route extras live in their own Purchase Orders section, not the
+  // "to invoice" list.
+  const pendingExtras = (extras || []).filter((e) => e.status !== 'paid' && e.status !== 'quoted');
+  const poExtras = (extras || []).filter((e) => e.paymentType === 'po' && e.status === 'quoted');
+  const [busyExtraId, setBusyExtraId] = useState(null);
 
   async function deleteExtra(id) {
     try {
@@ -130,8 +134,23 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
     }
   }
 
+  // Turn a PO-route extra's quote into an invoice (voids the quote in Xero).
+  async function createInvoiceFromQuote(id) {
+    setBusyExtraId(id);
+    try {
+      await api.post('/api/crm/extras/' + encodeURIComponent(id) + '/invoice', {});
+      reload();
+      onChanged?.();
+      showMsg?.('Invoice created from quote', 'success');
+    } catch (err) {
+      showMsg?.(err.message || 'Failed to create invoice', 'error');
+    } finally {
+      setBusyExtraId(null);
+    }
+  }
+
   const count = allInvoices.length + standAlonePayments.length;
-  const isEmpty = count === 0 && notInvoicedDeals.length === 0 && pendingExtras.length === 0;
+  const isEmpty = count === 0 && notInvoicedDeals.length === 0 && pendingExtras.length === 0 && poExtras.length === 0;
 
   return (
     <Card
@@ -141,7 +160,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
         <div style={{ display: 'flex', gap: 6 }}>
           <button onClick={() => openCreate()} className="btn"><Plus size={12} /> Create invoice</button>
           <button onClick={() => setAdding(true)} className="btn-ghost"><Plus size={12} /> Upload invoice</button>
-          <button onClick={() => setAddingExtra(true)} className="btn-ghost"><Plus size={12} /> Add extra to final</button>
+          <button onClick={() => setAddingExtra(true)} className="btn-ghost"><Plus size={12} /> Add extra</button>
         </div>
       )}
     >
@@ -205,6 +224,39 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
                     <Trash2 size={14} />
                   </button>
                 )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Purchase orders — PO-route extras with a Xero quote awaiting an invoice */}
+      {!loading && poExtras.length > 0 && (
+        <>
+          <SectionLabel>Purchase orders — awaiting invoice</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {poExtras.map((e) => (
+              <div key={e.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#1D4ED8', background: '#DBEAFE', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, flexShrink: 0 }}>PO quote</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.description}</span>
+                  <span style={{ fontSize: 13, color: '#1E40AF', flexShrink: 0 }}>· {formatGBP(e.amount)}{vatSuffix}</span>
+                  {e.quoteNumber && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>· {e.quoteNumber}</span>}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                  <button
+                    onClick={() => createInvoiceFromQuote(e.id)}
+                    className="btn"
+                    disabled={busyExtraId === e.id}
+                    style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                    title="Create an invoice from this quote and void the quote in Xero"
+                  >
+                    <FileText size={12} /> {busyExtraId === e.id ? 'Creating…' : 'Create invoice'}
+                  </button>
+                  <button onClick={() => deleteExtra(e.id)} className="btn-icon" aria-label="Remove PO quote" title="Void the quote and remove this PO" disabled={busyExtraId === e.id}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
