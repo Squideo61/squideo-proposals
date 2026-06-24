@@ -11,6 +11,8 @@ import { buildResumeEmail } from '../quoteResumeEmail.js';
 import { signTaskActionToken } from '../auth.js';
 import { quarterTaxSummary } from './stats.js';
 import { cronAdSpendSync } from './googleAds.js';
+import { cronGscSync } from './googleSearch.js';
+import { cronGa4Sync } from './googleAnalytics.js';
 import { timingSafeEqualStr } from '../middleware.js';
 
 export async function cronHandler(req, res, action) {
@@ -41,6 +43,8 @@ export async function cronHandler(req, res, action) {
     case 'director-tax-reminders': return cronDirectorTaxReminders(res);
     case 'intro-call-reminders': return cronIntroCallReminders(req, res);
     case 'ad-spend-sync':     return cronAdSpendSync(res);
+    case 'gsc-sync':          return cronGscSync(res);
+    case 'ga4-sync':          return cronGa4Sync(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }

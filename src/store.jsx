@@ -940,11 +940,27 @@ export function StoreProvider({ children }) {
         return data;
       }).catch(() => null);
     },
+    // Marketing → Search Console organic-search report (Search tab).
+    loadMarketingSearch(from, to) {
+      const qs = new URLSearchParams();
+      if (from) qs.set('from', from);
+      if (to) qs.set('to', to);
+      const q = qs.toString();
+      return api.get('/api/crm/analytics/search' + (q ? '?' + q : '')).catch(() => null);
+    },
+    // Marketing → GA4 sitewide traffic-by-channel report (Traffic tab).
+    loadMarketingTraffic(from, to) {
+      const qs = new URLSearchParams();
+      if (from) qs.set('from', from);
+      if (to) qs.set('to', to);
+      const q = qs.toString();
+      return api.get('/api/crm/analytics/traffic' + (q ? '?' + q : '')).catch(() => null);
+    },
     // Marketing → setup snippet + Google Ads tracking template (Settings tab).
     loadMarketingSnippet() {
       return api.get('/api/crm/analytics/snippet').catch(() => null);
     },
-    // Marketing → trigger the Google Ads spend sync on demand ("Sync now").
+    // Marketing → trigger all connected Google syncs on demand ("Sync now").
     syncAdSpend() {
       return api.post('/api/crm/analytics/sync', {}).catch((e) => ({ ok: false, error: e?.message || 'Sync failed' }));
     },

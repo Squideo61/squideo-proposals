@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
-import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw } from 'lucide-react';
+import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
@@ -44,6 +44,8 @@ const TABS = [
   { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'reports', label: 'Reports', icon: BarChart3 },
   { key: 'leads', label: 'Leads', icon: MailQuestion },
+  { key: 'search', label: 'Search', icon: Search },
+  { key: 'traffic', label: 'Traffic', icon: Globe },
   { key: 'settings', label: 'Settings', icon: Megaphone },
 ];
 
@@ -68,6 +70,8 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
   const [overview, setOverview] = useState(null);   // reports grouped by channel
   const [report, setReport] = useState(null);       // reports grouped by groupBy
   const [leads, setLeads] = useState(null);
+  const [search, setSearch] = useState(null);       // Search Console organic report
+  const [traffic, setTraffic] = useState(null);     // GA4 traffic-by-channel report
   const [snippet, setSnippet] = useState(null);
   const [loading, setLoading] = useState(false);
   const [reload, setReload] = useState(0); // bump to re-run the active fetch (Retry)
@@ -108,6 +112,26 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
     setLoading(true);
     actions.loadMarketingLeads(from, to)
       .then((d) => { if (active) setLeads(d); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [section, from, to, actions, reload]);
+
+  useEffect(() => {
+    if (section !== 'search') return;
+    let active = true;
+    setLoading(true);
+    actions.loadMarketingSearch(from, to)
+      .then((d) => { if (active) setSearch(d); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [section, from, to, actions, reload]);
+
+  useEffect(() => {
+    if (section !== 'traffic') return;
+    let active = true;
+    setLoading(true);
+    actions.loadMarketingTraffic(from, to)
+      .then((d) => { if (active) setTraffic(d); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [section, from, to, actions, reload]);
@@ -172,6 +196,8 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
         />
       )}
       {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} onRetry={() => setReload((n) => n + 1)} />}
+      {section === 'search' && <SearchTab data={search} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
+      {section === 'traffic' && <TrafficTab data={traffic} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'settings' && <SettingsTab snippet={snippet} onSync={() => actions.syncAdSpend()} />}
     </div>
   );
@@ -470,6 +496,135 @@ function LeadsTab({ data, loading, onOpenDeal, onRetry }) {
   );
 }
 
+// ---- Search Console + GA4 ------------------------------------------------
+
+const fmtNum = (n) => (Number(n) || 0).toLocaleString('en-GB');
+const fmtPct = (n) => (n == null ? '—' : (Number(n) || 0).toFixed(1) + '%');
+const shortDay = (d) => new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+
+// Shown when a data source's env vars aren't set yet (data?.configured === false).
+function NotConnected({ icon: Icon, title, blurb, onOpenSettings }) {
+  return (
+    <div style={{ padding: 36, textAlign: 'center', border: '1px dashed ' + BRAND.border, borderRadius: 12 }}>
+      <Icon size={26} style={{ color: BRAND.muted, marginBottom: 10 }} />
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>{title}</div>
+      <div style={{ fontSize: 13, color: BRAND.muted, maxWidth: 420, margin: '0 auto 14px' }}>{blurb}</div>
+      <button onClick={onOpenSettings} className="btn-secondary" style={{ padding: '6px 14px' }}>Finish setup →</button>
+    </div>
+  );
+}
+
+// Single-series daily bar chart (clicks / sessions over time).
+function DailyBars({ data, dataKey, color }) {
+  if (!data || data.length === 0) return null;
+  const chartData = data.map((d) => ({ name: shortDay(d.day), value: d[dataKey] }));
+  return (
+    <div style={{ height: 200, marginBottom: 20, maxWidth: 720 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" vertical={false} />
+          <XAxis dataKey="name" tick={{ fontSize: 11 }} interval="preserveStartEnd" minTickGap={24} />
+          <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={36} />
+          <Tooltip formatter={(v) => fmtNum(v)} />
+          <Bar dataKey="value" fill={color} radius={[3, 3, 0, 0]} maxBarSize={28} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function SearchTab({ data, loading, onOpenSettings, onRetry }) {
+  if (loading && !data) return <Loading />;
+  if (!data) return <LoadFailed onRetry={onRetry} />;
+  if (!data.configured) {
+    return <NotConnected icon={Search} title="Connect Google Search Console"
+      blurb="See which organic search queries bring people to squideo.com — clicks, impressions, click-through rate and average ranking position."
+      onOpenSettings={onOpenSettings} />;
+  }
+  const t = data.totals || { clicks: 0, impressions: 0, ctr: 0, position: null };
+  const queries = data.queries || [];
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
+        <Card label="Clicks" value={fmtNum(t.clicks)} accent={BRAND.blue} />
+        <Card label="Impressions" value={fmtNum(t.impressions)} />
+        <Card label="CTR" value={fmtPct(t.ctr)} />
+        <Card label="Avg position" value={t.position == null ? '—' : t.position.toFixed(1)} sub="lower is better" />
+      </div>
+      <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 12px' }}>Clicks over time</h2>
+      <DailyBars data={data.series} dataKey="clicks" color={BRAND.blue} />
+      <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 12px' }}>Top search queries</h2>
+      {queries.length === 0 ? <Empty>No search data for this period yet.</Empty> : (
+        <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: BRAND.paper, textAlign: 'left' }}>
+                <Th>Query</Th><Th right>Clicks</Th><Th right>Impressions</Th><Th right>CTR</Th><Th right>Avg pos.</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {queries.map((q) => (
+                <tr key={q.query} style={{ borderTop: '1px solid ' + BRAND.border }}>
+                  <Td title={q.query}>{q.query}</Td>
+                  <Td right>{fmtNum(q.clicks)}</Td>
+                  <Td right>{fmtNum(q.impressions)}</Td>
+                  <Td right>{fmtPct(q.ctr)}</Td>
+                  <Td right>{q.position == null ? '—' : q.position.toFixed(1)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrafficTab({ data, loading, onOpenSettings, onRetry }) {
+  if (loading && !data) return <Loading />;
+  if (!data) return <LoadFailed onRetry={onRetry} />;
+  if (!data.configured) {
+    return <NotConnected icon={Globe} title="Connect Google Analytics 4"
+      blurb="See total site traffic on squideo.com — sessions, users and key events broken down by channel — alongside your own lead numbers."
+      onOpenSettings={onOpenSettings} />;
+  }
+  const t = data.totals || { sessions: 0, users: 0, keyEvents: 0 };
+  const channels = data.channels || [];
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
+        <Card label="Sessions" value={fmtNum(t.sessions)} accent={BRAND.blue} />
+        <Card label="Users" value={fmtNum(t.users)} />
+        <Card label="Key events" value={fmtNum(t.keyEvents)} sub="GA4 conversions" accent="#16A34A" />
+      </div>
+      <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 12px' }}>Sessions over time</h2>
+      <DailyBars data={data.series} dataKey="sessions" color={BRAND.blue} />
+      <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 12px' }}>By channel</h2>
+      {channels.length === 0 ? <Empty>No traffic data for this period yet.</Empty> : (
+        <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: BRAND.paper, textAlign: 'left' }}>
+                <Th>Channel</Th><Th right>Sessions</Th><Th right>Users</Th><Th right>Key events</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {channels.map((c) => (
+                <tr key={c.channel} style={{ borderTop: '1px solid ' + BRAND.border }}>
+                  <Td>{c.channel}</Td>
+                  <Td right>{fmtNum(c.sessions)}</Td>
+                  <Td right>{fmtNum(c.users)}</Td>
+                  <Td right>{fmtNum(c.keyEvents)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- Settings ------------------------------------------------------------
 
 function SettingsTab({ snippet, onSync }) {
@@ -528,35 +683,81 @@ function SettingsTab({ snippet, onSync }) {
           job then syncs the previous days' spend. Lead and revenue attribution work without it.
         </p>
 
-        {snippet.adsConfigured && (
-          <div>
-            <button
-              onClick={runSync}
-              disabled={syncing}
-              className="btn"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, opacity: syncing ? 0.6 : 1 }}
-            >
-              <RefreshCw size={15} style={syncing ? { animation: 'spin 1s linear infinite' } : undefined} />
-              {syncing ? 'Syncing…' : 'Sync now'}
-            </button>
-            <span style={{ fontSize: 12, color: BRAND.muted, marginLeft: 10 }}>
-              Pulls the last 14 days of spend. Syncs automatically every day at 6am.
-            </span>
-            {syncResult && (
-              <div style={{
-                marginTop: 12, padding: '10px 14px', borderRadius: 8, fontSize: 13,
-                background: syncResult.ok ? '#DCFCE7' : '#FEE2E2',
-                border: '1px solid ' + (syncResult.ok ? '#86EFAC' : '#FCA5A5'),
-                color: syncResult.ok ? '#166534' : '#991B1B',
-              }}>
-                {syncResult.ok
-                  ? `Synced ✓ — pulled ${syncResult.keywordRows ?? 0} keyword rows and ${syncResult.campaignRows ?? 0} campaign rows. Open Reports to see spend & ROAS.`
-                  : `Sync failed: ${syncResult.error || 'unknown error'}`}
-              </div>
-            )}
-          </div>
-        )}
       </Step>
+
+      <Step n={4} title="Connect Search Console + Google Analytics (GA4)">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+          <StatusPill ok={snippet.gscConfigured} label="Search Console" />
+          <StatusPill ok={snippet.ga4Configured} label="Google Analytics 4" />
+        </div>
+        <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 4px' }}>
+          These power the <strong>Search</strong> and <strong>Traffic</strong> tabs. They reuse the same
+          Google OAuth client as Ads — add a refresh token granted the <code>analytics.readonly</code>{' '}
+          and <code>webmasters.readonly</code> scopes (<code>GOOGLE_OAUTH_REFRESH_TOKEN</code>), plus{' '}
+          <code>GA4_PROPERTY_ID</code> and <code>GSC_SITE_URL</code>. A daily job then syncs the data.
+        </p>
+      </Step>
+
+      {(snippet.adsConfigured || snippet.gscConfigured || snippet.ga4Configured) && (
+        <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 16, marginTop: 4 }}>
+          <button
+            onClick={runSync}
+            disabled={syncing}
+            className="btn"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, opacity: syncing ? 0.6 : 1 }}
+          >
+            <RefreshCw size={15} style={syncing ? { animation: 'spin 1s linear infinite' } : undefined} />
+            {syncing ? 'Syncing…' : 'Sync now'}
+          </button>
+          <span style={{ fontSize: 12, color: BRAND.muted, marginLeft: 10 }}>
+            Pulls the latest Ads spend, Search Console and GA4 data. Syncs automatically every day at 6am.
+          </span>
+          {syncResult && <SyncResult result={syncResult} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatusPill({ ok, label }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600,
+      color: ok ? '#166534' : '#9A3412', background: ok ? '#DCFCE7' : '#FFF7ED',
+      border: '1px solid ' + (ok ? '#86EFAC' : '#FED7AA'), padding: '4px 10px', borderRadius: 999,
+    }}>
+      {ok ? <Check size={14} /> : <TrendingUp size={14} />} {label}: {ok ? 'Connected' : 'Not connected'}
+    </span>
+  );
+}
+
+// Per-source result lines from POST /analytics/sync → { ads, gsc, ga4 }. A source
+// that isn't configured is skipped (no line); the rest show success or error.
+function SyncResult({ result }) {
+  const describe = (name, r) => {
+    if (!r || r.skipped) return null;
+    if (r.ok) {
+      let detail = 'synced ✓';
+      if (name === 'Ads' && r.keywordRows != null) detail = `synced ✓ — ${r.keywordRows} keyword, ${r.campaignRows} campaign rows`;
+      else if (name === 'Search Console' && r.queryRows != null) detail = `synced ✓ — ${r.queryRows} query rows`;
+      else if (name === 'GA4' && r.rows != null) detail = `synced ✓ — ${r.rows} rows`;
+      return { name, ok: true, detail };
+    }
+    return { name, ok: false, detail: r.error || 'failed' };
+  };
+  const lines = [describe('Ads', result.ads), describe('Search Console', result.gsc), describe('GA4', result.ga4)].filter(Boolean);
+  if (!lines.length) return null;
+  return (
+    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {lines.map((l) => (
+        <div key={l.name} style={{
+          padding: '8px 12px', borderRadius: 8, fontSize: 13,
+          background: l.ok ? '#DCFCE7' : '#FEE2E2', border: '1px solid ' + (l.ok ? '#86EFAC' : '#FCA5A5'),
+          color: l.ok ? '#166534' : '#991B1B',
+        }}>
+          <strong>{l.name}:</strong> {l.detail}
+        </div>
+      ))}
     </div>
   );
 }

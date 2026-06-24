@@ -14,6 +14,8 @@ import { APP_URL } from '../email.js';
 import { annotateDeals } from './deals.js';
 import { ensureLeadAttribution } from '../leadAttribution.js';
 import { adsConfigured, ensureAdSpend, runAdSpendSync } from './googleAds.js';
+import { gscConfigured, runGscSync, searchReport } from './googleSearch.js';
+import { ga4Configured, runGa4Sync, trafficReport } from './googleAnalytics.js';
 
 const WON_STAGES = new Set(['signed', 'paid']);
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
@@ -249,7 +251,10 @@ function snippetConfig() {
     'gclid={gclid}&campaignid={campaignid}&adgroupid={adgroupid}&keyword={keyword}' +
     '&matchtype={matchtype}&network={network}&device={device}&creative={creative}' +
     '&placement={placement}&utm_source=google&utm_medium=cpc&utm_campaign={campaignid}';
-  return { appOrigin: origin, scriptTag, finalUrlSuffix, adsConfigured: adsConfigured() };
+  return {
+    appOrigin: origin, scriptTag, finalUrlSuffix,
+    adsConfigured: adsConfigured(), gscConfigured: gscConfigured(), ga4Configured: ga4Configured(),
+  };
 }
 
 export async function analyticsRoute(req, res, id, action, user) {
@@ -259,19 +264,23 @@ export async function analyticsRoute(req, res, id, action, user) {
     return res.status(403).json({ error: 'You do not have permission to view Marketing' });
   }
 
-  // Manual "Sync now" (POST /api/crm/analytics/sync) — pull Google Ads spend on
-  // demand using the same logic as the daily cron, with the result returned to
-  // the UI so the user gets immediate success/error feedback.
+  // Manual "Sync now" (POST /api/crm/analytics/sync) — pull every connected
+  // Google data source (Ads spend, Search Console, GA4) on demand using the same
+  // logic as the daily crons, returning a per-source result so the UI can report
+  // success/error for each. A source that isn't configured is reported skipped,
+  // not failed. Runs sources independently so one failure doesn't sink the rest.
   if (req.method === 'POST' && id === 'sync') {
-    if (!adsConfigured()) {
-      return res.status(400).json({ ok: false, error: 'Google Ads is not connected yet — add the GOOGLE_ADS_* environment variables.' });
+    if (!adsConfigured() && !gscConfigured() && !ga4Configured()) {
+      return res.status(400).json({ ok: false, error: 'Nothing connected yet — add the Google Ads / GA4 / Search Console environment variables.' });
     }
-    try {
-      return res.status(200).json(await runAdSpendSync());
-    } catch (err) {
-      console.error('[analytics sync]', err?.message);
-      return res.status(200).json({ ok: false, error: err?.message || 'Sync failed' });
-    }
+    const runSafe = async (fn) => { try { return await fn(); } catch (err) { return { ok: false, error: err?.message || 'failed' }; } };
+    const [ads, gsc, ga4] = await Promise.all([
+      adsConfigured() ? runSafe(runAdSpendSync) : { ok: false, skipped: 'not_configured' },
+      gscConfigured() ? runSafe(runGscSync) : { ok: false, skipped: 'not_configured' },
+      ga4Configured() ? runSafe(runGa4Sync) : { ok: false, skipped: 'not_configured' },
+    ]);
+    const ok = [ads, gsc, ga4].some((r) => r?.ok);
+    return res.status(200).json({ ok, ads, gsc, ga4 });
   }
 
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -280,5 +289,13 @@ export async function analyticsRoute(req, res, id, action, user) {
   if (id === 'leads') return res.status(200).json(await leadsLog(req));
   if (id === 'reports') return res.status(200).json(await reports(req, action));
   if (id === 'snippet') return res.status(200).json(snippetConfig());
+  if (id === 'search') {
+    const { fromStr, toStr } = parseRange(req);
+    return res.status(200).json({ from: fromStr, to: toStr, ...(await searchReport(fromStr, toStr)) });
+  }
+  if (id === 'traffic') {
+    const { fromStr, toStr } = parseRange(req);
+    return res.status(200).json({ from: fromStr, to: toStr, ...(await trafficReport(fromStr, toStr)) });
+  }
   return res.status(404).json({ error: 'Unknown analytics report' });
 }
