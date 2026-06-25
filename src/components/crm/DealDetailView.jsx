@@ -21,6 +21,7 @@ import { TrackingEye } from './EmailTracking.jsx';
 import { ContactModal } from './ContactsView.jsx';
 import { LostReasonModal } from './LostReasonModal.jsx';
 import { ConversationView } from './EmailsView.jsx';
+import { XeroContactPicker } from './XeroContactPicker.jsx';
 
 
 // Render plain text with any http(s) URLs turned into clickable links that open
@@ -2616,13 +2617,17 @@ export function StagePicker({ stage, onChange }) {
 }
 
 function EditDealModal({ deal, onClose }) {
-  const { state, actions } = useStore();
+  const { state, actions, showMsg } = useStore();
   const [title, setTitle] = useState(deal.title || '');
   const [value, setValue] = useState(deal.value != null ? String(deal.value) : '');
   // VAT rate is stored as a fraction (0.2); the field edits it as a percent.
   // Defaults to 20% when unset (the UK standard rate).
   const [vatPct, setVatPct] = useState(deal.vatRate != null ? String(+(deal.vatRate * 100).toFixed(2)) : '20');
   const [companyId, setCompanyId] = useState(deal.companyId || '');
+  // Toggle + busy flag for linking the organisation from Xero (find-or-create a
+  // local company from a Xero contact, then select it).
+  const [linkingXero, setLinkingXero] = useState(false);
+  const [importingXero, setImportingXero] = useState(false);
   const [primaryContactId, setPrimaryContactId] = useState(deal.primaryContactId || '');
   const [ownerEmail, setOwnerEmail] = useState(deal.ownerEmail || '');
   const [notes, setNotes] = useState(deal.notes || '');
@@ -2684,6 +2689,22 @@ function EditDealModal({ deal, onClose }) {
     }
   };
 
+  // Picked a Xero contact → find-or-create the matching local organisation and
+  // select it on the deal. The new company lands in state.companies, so the
+  // select below shows it immediately.
+  const pickXeroOrg = async (xeroContact) => {
+    if (!xeroContact?.id) return;
+    setImportingXero(true);
+    try {
+      const co = await actions.importCompanyFromXero(xeroContact.id);
+      if (co?.id) { setCompanyId(co.id); setLinkingXero(false); }
+    } catch (err) {
+      showMsg(err?.message || 'Could not link Xero organisation');
+    } finally {
+      setImportingXero(false);
+    }
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
@@ -2709,12 +2730,30 @@ function EditDealModal({ deal, onClose }) {
           <div style={{ flex: 2 }}><FormRow label="Value (£, ex VAT)"><input className="input" type="number" min="0" step="0.01" value={value} onChange={(e) => setValue(e.target.value)} /></FormRow></div>
           <div style={{ flex: 1 }}><FormRow label="VAT rate (%)"><input className="input" type="number" min="0" max="100" step="0.1" value={vatPct} onChange={(e) => setVatPct(e.target.value)} /></FormRow></div>
         </div>
-        <FormRow label="Organisation">
-          <select className="input" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-            <option value="">—</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </FormRow>
+        <div style={{ fontSize: 13, fontWeight: 500, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span>Organisation</span>
+          {!linkingXero ? (
+            <>
+              <select className="input" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+                <option value="">—</option>
+                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <button type="button" onClick={() => setLinkingXero(true)} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ Link from Xero</button>
+            </>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, background: BRAND.paper }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted }}>Search Xero contacts — links (or creates) the matching organisation.</span>
+              <XeroContactPicker
+                value={null}
+                onChange={(c) => { if (c) pickXeroOrg(c); }}
+                autoFocus
+                placeholder="Search Xero contacts…"
+                creatingNew={importingXero}
+              />
+              <button type="button" onClick={() => setLinkingXero(false)} disabled={importingXero} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12 }}>Cancel</button>
+            </div>
+          )}
+        </div>
         {/* Rendered as a div (not FormRow's <label>) so the nested inputs/buttons
             of the inline add-contact form don't fight the label association. */}
         <div style={{ fontSize: 13, fontWeight: 500, display: 'flex', flexDirection: 'column', gap: 4 }}>
