@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -1147,9 +1147,23 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
   // the expanded thread instead of popping the floating dock composer. Keeps the
   // reply in context with the conversation, matching the full thread reader.
   const [replying, setReplying] = useState(false);
+  // Whether the active inline reply was opened as "Reply all" (keeps every other
+  // participant on Cc) vs a plain "Reply" (just the sender).
+  const [replyAll, setReplyAll] = useState(false);
   const isMulti = messages.length > 1;
   const latest = messages[messages.length - 1];
   const threadId = latest.gmailThreadId || latest.gmailMessageId;
+
+  // Re: subject shared by both reply variants.
+  const replySubject = () => (/^re:/i.test(latest.subject || '') ? latest.subject : 'Re: ' + (latest.subject || '(no subject)'));
+
+  // Our own addresses — never Cc ourselves on a reply-all.
+  const ownAddresses = useMemo(() => {
+    const own = new Set();
+    if (state.session?.email) own.add(state.session.email.toLowerCase());
+    if (state.gmailAccount?.gmailAddress) own.add(state.gmailAccount.gmailAddress.toLowerCase());
+    return own;
+  }, [state.session, state.gmailAccount]);
 
   // Seed draft for the inline reply: the other party of the latest message, a
   // "Re:" subject, and the thread id so the send stays in the same Gmail
@@ -1158,10 +1172,34 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
     const to = latest.direction === 'inbound'
       ? (latest.fromEmail || '')
       : (latest.toEmails?.[0] || latest.fromEmail || '');
-    const subject = /^re:/i.test(latest.subject || '') ? latest.subject : 'Re: ' + (latest.subject || '(no subject)');
-    return { to, cc: '', subject, body: '', gmailThreadId: latest.gmailThreadId || null };
+    return { to, cc: '', subject: replySubject(), body: '', gmailThreadId: latest.gmailThreadId || null };
   };
-  const startReply = () => { setExpanded(true); setReplying(true); };
+
+  // Everyone (besides us) who was on the latest message's To/Cc but isn't the
+  // primary reply recipient — used to populate the Cc on a "Reply all".
+  const replyAllCc = useMemo(() => {
+    const toList = (latest.direction === 'inbound'
+      ? [latest.fromEmail]
+      : (latest.toEmails?.length ? latest.toEmails : [latest.fromEmail])).filter(Boolean);
+    const exclude = new Set(toList.map(e => e.toLowerCase()));
+    for (const e of ownAddresses) exclude.add(e);
+    const seen = new Set();
+    const cc = [];
+    for (const raw of [...(latest.toEmails || []), ...(latest.ccEmails || [])]) {
+      if (!raw || typeof raw !== 'string') continue;
+      const lower = raw.trim().toLowerCase();
+      if (!lower || seen.has(lower) || exclude.has(lower)) continue;
+      seen.add(lower);
+      cc.push(raw.trim());
+    }
+    return cc;
+  }, [latest, ownAddresses]);
+  const canReplyAll = replyAllCc.length > 0;
+
+  // Reply-all draft = the plain reply plus every other participant on Cc.
+  const replyAllDraft = () => ({ ...replyDraft(), cc: replyAllCc.join(', ') });
+
+  const startReply = (all = false) => { setReplyAll(all); setExpanded(true); setReplying(true); };
 
   // Addresses Cc'd into any *inbound* message on this thread that aren't
   // already linked to this deal. We only mine inbound because the user asked
@@ -1237,14 +1275,21 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
               inline
               deal={{ id: dealId, title: dealTitle }}
               contact={null}
-              initialDraft={replyDraft()}
+              initialDraft={replyAll ? replyAllDraft() : replyDraft()}
               onClose={() => setReplying(false)}
               onSent={() => { setReplying(false); actions.loadDealDetail(dealId); }}
             />
           ) : (
-            <button onClick={startReply} className="btn-ghost" style={{ alignSelf: 'flex-start' }}>
-              <Reply size={13} /> Reply
-            </button>
+            <div style={{ display: 'flex', gap: 8, alignSelf: 'flex-start' }}>
+              <button onClick={() => startReply(false)} className="btn-ghost">
+                <Reply size={13} /> Reply
+              </button>
+              {canReplyAll && (
+                <button onClick={() => startReply(true)} className="btn-ghost">
+                  <ReplyAll size={13} /> Reply all
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}
