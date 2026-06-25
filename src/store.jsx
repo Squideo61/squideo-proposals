@@ -820,13 +820,24 @@ export function StoreProvider({ children }) {
         delete payload._views;
         delete payload._createdAt;
         api.put('/api/proposals/' + id, payload).then((resp) => {
-          if (resp && resp.number) {
-            setState(s => {
+          // Refresh any cached deal detail that carries this proposal, so a
+          // deal's VALUE (derived from its latest proposal's price in
+          // dealDetail.proposals — see DealContextPanel / the deal page) reflects
+          // the edit. Without this the value stays stale until the deal is
+          // reloaded for some other reason. Keyed off the cached proposals list
+          // rather than _dealId, so it's correct however the link was threaded.
+          const staleDealIds = [];
+          setState(s => {
+            for (const [did, det] of Object.entries(s.dealDetail || {})) {
+              if ((det?.proposals || []).some(p => p.id === id)) staleDealIds.push(did);
+            }
+            if (resp && resp.number) {
               const cur = s.proposals[id];
-              if (!cur) return s;
-              return { ...s, proposals: { ...s.proposals, [id]: { ...cur, _number: resp.number } } };
-            });
-          }
+              if (cur) return { ...s, proposals: { ...s.proposals, [id]: { ...cur, _number: resp.number } } };
+            }
+            return s;
+          });
+          staleDealIds.forEach((did) => actions.loadDealDetail(did));
         }).catch(() => {});
       }, 800);
     },
