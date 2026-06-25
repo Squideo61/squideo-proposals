@@ -17,6 +17,9 @@ const PUBLIC_SIGNATURE_FIELDS = [
   'paymentOption', 'total', 'partnerSelected', 'partnerCredits',
   'partnerTotal', 'amountBreakdown',
   'selectedExtras', 'selectedVideoOption',
+  // The drawn/uploaded signature image (PNG data URL) shown on the signed
+  // confirmation + PDF.
+  'signatureImage',
 ];
 
 function publicSignatureView(data) {

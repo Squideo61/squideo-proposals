@@ -74,6 +74,11 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
         <div style={{ fontSize: 14, color: '#2E7D32', lineHeight: 1.6 }}>
           <div>Signed by <strong>{signed.name}</strong> ({signed.email})</div>
           <div>On {new Date(signed.signedAt).toLocaleString('en-GB')}</div>
+          {signed.signatureImage && (
+            <div style={{ marginTop: 10, background: 'white', border: '1px solid #A5D6A7', borderRadius: 8, padding: 8, display: 'inline-block' }}>
+              <img src={signed.signatureImage} alt={`${signed.name || 'Client'} signature`} style={{ maxHeight: 80, maxWidth: 260, objectFit: 'contain', display: 'block' }} />
+            </div>
+          )}
           {signed.partnerSelected && signed.amountBreakdown ? (
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #A5D6A7' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>

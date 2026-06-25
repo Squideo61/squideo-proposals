@@ -313,6 +313,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       </div>
       <div style="font-size:14px;line-height:1.9;color:#166534;">
         <div><strong>Signed by:</strong> ${esc(signed.name || '')}${signed.email ? ' (' + esc(signed.email) + ')' : ''}</div>
+        ${signed.signatureImage ? `<div style="margin:8px 0;background:white;border:1px solid #BBF7D0;border-radius:8px;padding:8px;display:inline-block;"><img src="${esc(signed.signatureImage)}" alt="Signature" style="max-height:70px;max-width:260px;object-fit:contain;display:block;" /></div>` : ''}
         ${signedDate ? `<div><strong>Date:</strong> ${esc(signedDate)}</div>` : ''}
         ${optLabel ? `<div><strong>Payment option:</strong> ${esc(optLabel)}</div>` : ''}
         ${signed.partnerSelected && signed.amountBreakdown ? `
@@ -326,7 +327,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       </div>
       ${paidLine}
       <p style="margin:20px 0 0;font-size:11px;color:#166534;line-height:1.5;font-style:italic;">
-        This document confirms electronic acceptance of the proposal via the Squideo CRM portal. By typing their name on the acceptance form, the signatory provided their electronic signature.
+        This document confirms electronic acceptance of the proposal via the Squideo CRM portal. By typing their name${signed.signatureImage ? ' and signing' : ''} on the acceptance form, the signatory provided their electronic signature.
       </p>
     </div>`;
   })() : '';

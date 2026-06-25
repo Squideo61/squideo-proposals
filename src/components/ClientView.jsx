@@ -12,6 +12,7 @@ import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../ut
 import { startStripeCheckout } from '../utils/stripeCheckout.js';
 import { Field, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
 import { SignedBlock } from './SignedBlock.jsx';
+import { SignaturePad } from './SignaturePad.jsx';
 import { StripeSimModal } from './StripeSimModal.jsx';
 
 function getEmbedUrl(url) {
@@ -327,6 +328,9 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   const [sigName, setSigName] = useState('');
   const [sigEmail, setSigEmail] = useState('');
   const [sigAccepted, setSigAccepted] = useState(false);
+  // Drawn or uploaded signature image (PNG data URL) — required alongside the
+  // typed name, DocuSign-style.
+  const [sigImage, setSigImage] = useState(null);
   const [paymentChoice, setPaymentChoice] = useState(null);
   const isMobile = useIsMobile();
   const signRef = useRef(null);
@@ -420,9 +424,14 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
       showMsg('Please complete name, email and tick the acceptance box.');
       return;
     }
+    if (!sigImage) {
+      showMsg('Please draw or upload your signature.');
+      return;
+    }
     const sig = {
       name: sigName,
       email: sigEmail,
+      signatureImage: sigImage,
       signedAt: new Date().toISOString(),
       selectedExtras: data.optionalExtras
         .filter((e) => selectedExtras[e.id])
@@ -1172,10 +1181,13 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             <Field label="Email address">
               <input className="input" type="email" value={sigEmail} onChange={(e) => setSigEmail(e.target.value)} placeholder="you@company.com" />
             </Field>
+            <Field label="Your signature">
+              <SignaturePad value={sigImage} onChange={setSigImage} />
+            </Field>
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 0', cursor: 'pointer', fontSize: 14 }}>
               <input type="checkbox" checked={sigAccepted} onChange={(e) => setSigAccepted(e.target.checked)} style={{ marginTop: 3 }} />
               <span>
-                I accept this proposal and authorise Squideo to begin work. By typing my name, I am providing my electronic signature
+                I accept this proposal and authorise Squideo to begin work. By typing my name and signing above, I am providing my electronic signature
                 {CONFIG.company.termsUrl ? <>, and agree to our <a href={CONFIG.company.termsUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Terms & Conditions</a></> : null}.
               </span>
             </label>
