@@ -658,16 +658,29 @@ function PrimaryContactRow({ detail }) {
   const { state, actions, showMsg } = useStore();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // When adding a brand-new person (not yet a contact) we capture their name,
+  // phone and organisation inline before committing, rather than saving an
+  // email-only contact. `adding` holds the email-person being added.
+  const [adding, setAdding] = useState(null);
+  const [form, setForm] = useState({ name: '', phone: '', companyId: '' });
   const ref = useRef(null);
+
+  const close = () => { setOpen(false); setAdding(null); };
 
   useEffect(() => {
     if (!open) return undefined;
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) close(); };
+    const onEsc = (e) => { if (e.key === 'Escape') close(); };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onEsc);
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
   }, [open]);
+
+  // Known organisations to pick from, defaulting to the deal's own company.
+  const companyOptions = useMemo(
+    () => Object.values(state.companies || {}).filter(c => c && c.name).sort((a, b) => a.name.localeCompare(b.name)),
+    [state.companies],
+  );
 
   const primary = detail.primaryContact || null;
 
@@ -717,21 +730,26 @@ function PrimaryContactRow({ detail }) {
     return out;
   }, [detail.emails, dealContacts, state.contacts, state.users, state.session, state.gmailAccount]);
 
-  const setPrimary = async ({ contactId, email, name }) => {
+  const setPrimary = async ({ contactId, email, name, phone, companyId }) => {
     if (busy) return;
-    if (contactId && contactId === primary?.id) { setOpen(false); return; }
+    if (contactId && contactId === primary?.id) { close(); return; }
     setBusy(true);
     try {
       let id = contactId;
       if (!id) {
-        const c = await actions.addDealContact(detail.id, { email, name: name || null, companyId: detail.companyId || null });
+        const c = await actions.addDealContact(detail.id, {
+          email,
+          name: name || null,
+          phone: phone || null,
+          companyId: companyId || detail.companyId || null,
+        });
         id = c?.id;
       }
       if (!id) throw new Error('Could not resolve contact');
       await actions.saveDeal(detail.id, { primaryContactId: id });
       await actions.loadDealDetail(detail.id);
       showMsg('Primary contact updated');
-      setOpen(false);
+      close();
     } catch (e) {
       showMsg(e?.message || 'Could not set primary contact');
     } finally {
@@ -739,13 +757,26 @@ function PrimaryContactRow({ detail }) {
     }
   };
 
+  // Start the inline add form for a new person — prefill the organisation with
+  // the deal's company so the common case (same org) is one tap.
+  const beginAdd = (p) => {
+    setForm({ name: p.name || '', phone: '', companyId: detail.companyId || '' });
+    setAdding(p);
+  };
+  const submitAdd = () => setPrimary({
+    email: adding.email,
+    name: form.name.trim() || null,
+    phone: form.phone.trim() || null,
+    companyId: form.companyId || null,
+  });
+
   return (
     <Row>
       <DealMetaKey>Primary contact</DealMetaKey>
       <div ref={ref} style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 0, maxWidth: 190 }}>
         <button
           type="button"
-          onClick={() => setOpen(o => !o)}
+          onClick={() => (open ? close() : setOpen(true))}
           title="Change primary contact"
           style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: 190, color: BRAND.ink }}
         >
@@ -770,34 +801,53 @@ function PrimaryContactRow({ detail }) {
             style={{
               position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 60,
               background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
-              boxShadow: '0 8px 24px rgba(15, 42, 61, 0.14)', padding: 4, minWidth: 230, maxWidth: 280,
-              maxHeight: 320, overflowY: 'auto', textAlign: 'left', cursor: busy ? 'wait' : 'default',
+              boxShadow: '0 8px 24px rgba(15, 42, 61, 0.14)', padding: adding ? 10 : 4, minWidth: 240, maxWidth: 290,
+              maxHeight: 360, overflowY: 'auto', textAlign: 'left', cursor: busy ? 'wait' : 'default',
             }}
           >
-            {dealContacts.length > 0 && <PickerHeading>On this deal</PickerHeading>}
-            {dealContacts.map((c) => (
-              <ContactOption
-                key={c.id}
-                name={c.name}
-                email={c.email}
-                selected={c.id === primary?.id}
-                disabled={busy}
-                onClick={() => setPrimary({ contactId: c.id, email: c.email, name: c.name })}
-              />
-            ))}
-            {emailPeople.length > 0 && <PickerHeading>From this deal's emails</PickerHeading>}
-            {emailPeople.map((p) => (
-              <ContactOption
-                key={p.email}
-                name={p.name}
-                email={p.email}
-                add={!p.contactId}
-                disabled={busy}
-                onClick={() => setPrimary(p)}
-              />
-            ))}
-            {dealContacts.length === 0 && emailPeople.length === 0 && (
-              <Muted style={{ padding: '6px 8px' }}>No people found in this deal's emails yet.</Muted>
+            {adding ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <PickerHeading>Add contact</PickerHeading>
+                <div style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={adding.email}>{adding.email}</div>
+                <input autoFocus className="input" value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Full name" style={{ fontSize: 12 }} />
+                <input className="input" value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="Phone (optional)" inputMode="tel" style={{ fontSize: 12 }} />
+                <select className="input" value={form.companyId} onChange={(e) => setForm(f => ({ ...f, companyId: e.target.value }))} style={{ fontSize: 12 }}>
+                  <option value="">No organisation</option>
+                  {companyOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={submitAdd} disabled={busy} className="btn" style={{ flex: 1, fontSize: 12, justifyContent: 'center' }}>{busy ? 'Adding…' : 'Add & set primary'}</button>
+                  <button onClick={() => setAdding(null)} disabled={busy} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {dealContacts.length > 0 && <PickerHeading>On this deal</PickerHeading>}
+                {dealContacts.map((c) => (
+                  <ContactOption
+                    key={c.id}
+                    name={c.name}
+                    email={c.email}
+                    selected={c.id === primary?.id}
+                    disabled={busy}
+                    onClick={() => setPrimary({ contactId: c.id, email: c.email, name: c.name })}
+                  />
+                ))}
+                {emailPeople.length > 0 && <PickerHeading>From this deal's emails</PickerHeading>}
+                {emailPeople.map((p) => (
+                  <ContactOption
+                    key={p.email}
+                    name={p.name}
+                    email={p.email}
+                    add={!p.contactId}
+                    disabled={busy}
+                    onClick={() => (p.contactId ? setPrimary(p) : beginAdd(p))}
+                  />
+                ))}
+                {dealContacts.length === 0 && emailPeople.length === 0 && (
+                  <Muted style={{ padding: '6px 8px' }}>No people found in this deal's emails yet.</Muted>
+                )}
+              </>
             )}
           </div>
         )}
