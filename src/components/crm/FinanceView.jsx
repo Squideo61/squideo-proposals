@@ -251,7 +251,12 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
   const income = state.income && state.income.period === periodParam ? state.income : null;
   // Active partners (subscription + credits-only) for the Pending Payments
   // Partners section; their outstanding £ rolls into the total outstanding.
-  const activePartners = (state.partnerCreditsList || []).filter((p) => p.status === 'active' || p.status === 'credits_only');
+  // A credits-only partner whose remaining credits are worth £0 owes nothing,
+  // so it's neither pending nor predicted — drop those (subscriptions always
+  // owe next month's fee, so they stay).
+  const activePartners = (state.partnerCreditsList || [])
+    .filter((p) => p.status === 'active' || p.status === 'credits_only')
+    .filter((p) => (Number(p.outstanding) || 0) > 0.005);
   const partnerTotal = activePartners.reduce((s, p) => s + (Number(p.outstanding) || 0), 0);
 
   // Predicted-this-month flags + the shared toggle, exposed to every Pending
