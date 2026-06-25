@@ -2541,18 +2541,21 @@ async function directorExpensesReport(month) {
     const carriedIn = carriedInFold(spentIn, earliest, m);
     const balanceAdjust = balByEmail.get(email) || 0;
     const spent = spentIn(m);
-    // Monthly pot = £250 + carried underspend (the balance is a SEPARATE buffer).
-    const baseAvailable = round2(DIRECTOR_ALLOWANCE + carriedIn);
-    const monthlyRemaining = round2(baseAvailable - spent);
-    // The balancing amount is GRANTED EXTRA spend — wholly separate from the £250.
-    // Overspending the monthly pot draws the grant down, but only to zero: a grant
-    // of nil (or going over with no grant) never shows as a negative balance.
-    const monthlyOver = Math.max(0, round2(spent - baseAvailable));
-    const balanceUsed = balanceAdjust > 0 ? round2(Math.min(balanceAdjust, monthlyOver)) : 0;
+    // The £250 pot + carried underspend, BEFORE the balancing grant.
+    const monthlyPot = round2(DIRECTOR_ALLOWANCE + carriedIn);
+    // The balancing amount RAISES the allowance — it's spendable headroom on top
+    // of the pot, so the headline position includes it. "Used" = however much of
+    // the grant the overspend beyond the pot ate (clamped to the grant); the rest
+    // shows as still available. Untouched until you actually overspend the £250.
+    const overBeyondPot = Math.max(0, round2(spent - monthlyPot));
+    const balanceUsed = balanceAdjust > 0 ? round2(Math.min(balanceAdjust, overBeyondPot)) : 0;
     const balanceLeft = balanceAdjust > 0 ? round2(balanceAdjust - balanceUsed) : round2(balanceAdjust);
-    // Overall position (monthly pot + balance − spend), kept for completeness.
-    const available = round2(baseAvailable + balanceAdjust);
-    const remaining = round2(available - spent);
+    // Allowance (and therefore the headline) now includes the grant.
+    const baseAvailable = round2(monthlyPot + balanceAdjust);
+    const monthlyRemaining = round2(baseAvailable - spent);
+    const monthlyOver = Math.max(0, round2(-monthlyRemaining));
+    const available = baseAvailable;
+    const remaining = monthlyRemaining;
 
     // Honour the manual drag order (rows already sorted by sort_order above).
     const expenses = mine.filter((r) => expenseActiveInMonth(r, m)).map((r) => ({

@@ -773,7 +773,7 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
       </div>
       <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
         {formatGBP(d.spent)} spent of {formatGBP(d.baseAvailable)} this month
-        <span style={{ color: BRAND.muted }}> · {formatGBP(d.allowance)} monthly{d.carriedIn > 0.005 ? ` + ${formatGBP(d.carriedIn)} carried over` : ''}</span>
+        <span style={{ color: BRAND.muted }}> · {formatGBP(d.allowance)} monthly{d.carriedIn > 0.005 ? ` + ${formatGBP(d.carriedIn)} carried over` : ''}{d.balanceAdjust > 0.005 ? ` + ${formatGBP(d.balanceAdjust)} balancing` : ''}</span>
       </div>
 
       {/* Balancing amount — granted EXTRA spend, separate from the £250. Now a
