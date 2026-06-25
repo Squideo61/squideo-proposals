@@ -283,16 +283,6 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                 ><FileText size={14} /> Create or link proposal</button>
               )}
               <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
-              <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
-              <button
-                onClick={() => {
-                  if (window.confirm('Delete this deal? Linked proposals will be unlinked but not removed.')) {
-                    actions.deleteDeal(dealId);
-                    onBack();
-                  }
-                }}
-                className="btn-ghost is-danger"
-              ><Trash2 size={14} /> Delete</button>
             </>
           )}
         </div>
@@ -312,6 +302,27 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               style={{ color: deal.hot ? '#EA580C' : undefined, borderColor: deal.hot ? '#EA580C' : undefined, fontWeight: deal.hot ? 600 : undefined }}
             ><Flame size={14} fill={deal.hot ? '#EA580C' : 'none'} /> {deal.hot ? 'Hot' : 'Mark hot'}</button>
           )}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              onClick={() => { setPrefillTitle(''); setCreatingTask(true); }}
+              className="btn"
+              title="Add a task to this deal"
+            ><Plus size={14} /> Add task</button>
+            {!productionOnly && (
+              <>
+                <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
+                <button
+                  onClick={() => {
+                    if (window.confirm('Delete this deal? Linked proposals will be unlinked but not removed.')) {
+                      actions.deleteDeal(dealId);
+                      onBack();
+                    }
+                  }}
+                  className="btn-ghost is-danger"
+                ><Trash2 size={14} /> Delete</button>
+              </>
+            )}
+          </div>
         </div>
         {/* Once the deal is a project (it has production videos) the sales
             pipeline bar gives way to a production progress bar for the whole
