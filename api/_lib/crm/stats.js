@@ -2453,14 +2453,19 @@ function ensureDirectorExpenses() {
         created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await sql`CREATE INDEX IF NOT EXISTS idx_director_balance_items_email ON director_balance_items (director_email)`;
+    // Each grant is injected in a specific month ('YYYY-MM'): it raises that
+    // month's allowance and any unused portion then rolls forward like the £250
+    // (so it accumulates). Backfill existing rows from their created month.
+    await sql`ALTER TABLE director_balance_items ADD COLUMN IF NOT EXISTS month TEXT`;
+    await sql`UPDATE director_balance_items SET month = to_char(created_at, 'YYYY-MM') WHERE month IS NULL`;
     // Migrate the legacy single balance_adjust into one itemised entry, then zero
     // the column so the two never double-count. Idempotent: once the column is 0
     // there's nothing left to migrate (and the deterministic id can't duplicate).
     // The id MUST be URL-safe (it's a path segment for edit/delete) — md5(email)
     // is hex, unlike the raw email which has @/. that break routing.
     await sql`
-      INSERT INTO director_balance_items (id, director_email, amount, note, created_at)
-      SELECT 'bal-' || md5(director_email), director_email, balance_adjust, 'Balancing amount', NOW()
+      INSERT INTO director_balance_items (id, director_email, amount, note, month, created_at)
+      SELECT 'bal-' || md5(director_email), director_email, balance_adjust, 'Balancing amount', to_char(NOW(), 'YYYY-MM'), NOW()
         FROM director_settings WHERE balance_adjust <> 0
       ON CONFLICT (id) DO NOTHING`;
     await sql`UPDATE director_settings SET balance_adjust = 0 WHERE balance_adjust <> 0`;
@@ -2493,18 +2498,23 @@ function expenseActiveInMonth(r, mk) {
   return r.month === mk;
 }
 
-// Fold the rollover pot for one director from `earliest` up to `month`. Only
-// underspend rolls: pot(first) = 250 ; pot(m) = 250 + max(0, pot(m-1) − spent(m-1)).
-// `spentIn(mk)` returns that month's total spend (recurring-aware). The balancing
-// adjustment is standing headroom and is NOT folded in, so it never compounds.
-function carriedInFold(spentIn, earliest, month) {
-  if (!earliest || earliest >= month) return 0;
-  let pot = DIRECTOR_ALLOWANCE;
-  const span = monthsBetween(earliest, month);
-  for (let i = 0; i < span.length - 1; i++) {
-    pot = DIRECTOR_ALLOWANCE + Math.max(0, pot - spentIn(span[i]));
+// Roll the allowance pot for one director from `earliest` up to `month` and
+// return what's available AT THE START of `month` (before that month's spend).
+// Each month injects £250 + that month's new balancing grants; only underspend
+// (£250 or unused grant alike) carries, so grants accumulate but nothing
+// compounds beyond a simple carry:
+//   avail(first) = 250 + grantIn(first)
+//   avail(m)     = 250 + grantIn(m) + max(0, avail(m-1) − spent(m-1))
+// `spentIn(mk)`/`grantIn(mk)` return that month's spend / newly-granted balance.
+function availableFold(spentIn, grantIn, earliest, month) {
+  const start = (earliest && earliest < month) ? earliest : month;
+  const span = monthsBetween(start, month);
+  let avail = 0;
+  for (let i = 0; i < span.length; i++) {
+    const carry = i === 0 ? 0 : Math.max(0, round2(avail - spentIn(span[i - 1])));
+    avail = round2(DIRECTOR_ALLOWANCE + (grantIn(span[i]) || 0) + carry);
   }
-  return Math.max(0, pot - DIRECTOR_ALLOWANCE);
+  return avail;
 }
 
 async function directorExpensesReport(month) {
@@ -2512,16 +2522,22 @@ async function directorExpensesReport(month) {
   const m = /^\d{4}-\d{2}$/.test(month || '') ? month : curMonthKey();
 
   const rows = await sql`SELECT * FROM director_expenses ORDER BY sort_order ASC NULLS LAST, spent_on DESC NULLS LAST, created_at DESC`;
-  // Itemised balancing grant — the total is the sum of its lines (legacy single
-  // values were migrated into a line in ensureDirectorExpenses).
-  const balItems = await sql`SELECT id, director_email, amount, note, created_at FROM director_balance_items ORDER BY created_at ASC`;
-  const balItemsByEmail = new Map();
-  const balByEmail = new Map();
+  // Itemised balancing grants — each tied to the month it was added. A grant
+  // raises that month's allowance; unused balance then rolls forward with the
+  // £250. Group by email→month (the per-month injected total) and keep the
+  // selected month's lines for display.
+  const balItems = await sql`SELECT id, director_email, amount, note, month, created_at FROM director_balance_items ORDER BY created_at ASC`;
+  const grantByEmailMonth = new Map();  // email → (monthKey → summed amount)
+  const balItemsByEmail = new Map();    // email → array of { id, amount, note, month }
   for (const it of balItems) {
     const key = it.director_email.toLowerCase();
+    const mk = it.month || (it.created_at ? dateKey(it.created_at).slice(0, 7) : null);
+    const amt = Number(it.amount) || 0;
     if (!balItemsByEmail.has(key)) balItemsByEmail.set(key, []);
-    balItemsByEmail.get(key).push({ id: it.id, amount: Number(it.amount) || 0, note: it.note || '' });
-    balByEmail.set(key, round2((balByEmail.get(key) || 0) + (Number(it.amount) || 0)));
+    balItemsByEmail.get(key).push({ id: it.id, amount: amt, note: it.note || '', month: mk });
+    if (!grantByEmailMonth.has(key)) grantByEmailMonth.set(key, new Map());
+    const byMonth = grantByEmailMonth.get(key);
+    byMonth.set(mk, round2((byMonth.get(mk) || 0) + amt));
   }
 
   const userRows = await sql`SELECT email, name, avatar FROM users`;
@@ -2536,24 +2552,25 @@ async function directorExpensesReport(month) {
   const directors = [...DIRECTOR_EMAILS].map((email) => {
     const mine = rows.filter((r) => r.director_email.toLowerCase() === email);
     const spentIn = (mk) => mine.reduce((s, r) => s + (expenseActiveInMonth(r, mk) ? (Number(r.amount) || 0) : 0), 0);
-    const earliest = mine.map((r) => r.month).filter(Boolean).sort()[0] || m;
+    const grantMonths = grantByEmailMonth.get(email) || new Map();
+    const grantIn = (mk) => grantMonths.get(mk) || 0;
+    // Start the fold at the earliest month with any activity (expense OR grant).
+    const activityMonths = [
+      ...mine.map((r) => r.month).filter(Boolean),
+      ...grantMonths.keys(),
+    ].filter(Boolean).sort();
+    const earliest = activityMonths[0] || m;
 
-    const carriedIn = carriedInFold(spentIn, earliest, m);
-    const balanceAdjust = balByEmail.get(email) || 0;
     const spent = spentIn(m);
-    // The £250 pot + carried underspend, BEFORE the balancing grant.
-    const monthlyPot = round2(DIRECTOR_ALLOWANCE + carriedIn);
-    // The balancing amount RAISES the allowance — it's spendable headroom on top
-    // of the pot, so the headline position includes it. "Used" = however much of
-    // the grant the overspend beyond the pot ate (clamped to the grant); the rest
-    // shows as still available. Untouched until you actually overspend the £250.
-    const overBeyondPot = Math.max(0, round2(spent - monthlyPot));
-    const balanceUsed = balanceAdjust > 0 ? round2(Math.min(balanceAdjust, overBeyondPot)) : 0;
-    const balanceLeft = balanceAdjust > 0 ? round2(balanceAdjust - balanceUsed) : round2(balanceAdjust);
-    // Allowance (and therefore the headline) now includes the grant.
-    const baseAvailable = round2(monthlyPot + balanceAdjust);
+    const balanceThisMonth = round2(grantIn(m));
+    // Allowance available this month = £250 + grants added this month + everything
+    // (unused £250 + unused grant) rolled in from prior months. The headline and
+    // the "spent of X" figure both reflect this.
+    const baseAvailable = availableFold(spentIn, grantIn, earliest, m);
     const monthlyRemaining = round2(baseAvailable - spent);
-    const monthlyOver = Math.max(0, round2(-monthlyRemaining));
+    // The portion rolled in from previous months (i.e. not this month's fresh
+    // £250 or this month's new grant) — shown as "carried over".
+    const carriedIn = round2(Math.max(0, baseAvailable - DIRECTOR_ALLOWANCE - balanceThisMonth));
     const available = baseAvailable;
     const remaining = monthlyRemaining;
 
@@ -2570,8 +2587,11 @@ async function directorExpensesReport(month) {
       createdBy: r.created_by || null,
     }));
 
-    const balanceItems = balItemsByEmail.get(email) || [];
-    return { email, name: nameFor(email), allowance: DIRECTOR_ALLOWANCE, carriedIn, baseAvailable, balanceAdjust, balanceItems, balanceLeft, balanceUsed, monthlyOver, monthlyRemaining, available, spent, remaining, expenses };
+    // Only this month's grant lines are editable here (others belong to their
+    // own month, just like expenses); their amounts are already folded into the
+    // carried-over figure.
+    const balanceItems = (balItemsByEmail.get(email) || []).filter((it) => it.month === m);
+    return { email, name: nameFor(email), allowance: DIRECTOR_ALLOWANCE, carriedIn, baseAvailable, balanceThisMonth, balanceItems, monthlyRemaining, available, spent, remaining, expenses };
   });
 
   // "Difference" mirrors the sheet: first director's remaining minus the second.
@@ -2738,11 +2758,12 @@ async function directorZipRoute(req, res, action) {
   return res.status(200).end(zip);
 }
 
-// Balancing amounts are now itemised — each a line with an amount and a note —
-// summing to the director's total grant. Same headroom behaviour as before.
-//   POST   /director-balance            { email, id, amount, note }  — add a line
-//   PATCH  /director-balance/<id>       { amount?, note? }           — edit a line
-//   DELETE /director-balance/<id>                                    — remove a line
+// Balancing amounts are itemised — each a line with an amount, a note, and the
+// month it's granted in. A grant raises that month's allowance and any unused
+// part rolls forward like the £250 (so it accumulates).
+//   POST   /director-balance            { email, id, amount, note, month } — add
+//   PATCH  /director-balance/<id>       { amount?, note? }                 — edit
+//   DELETE /director-balance/<id>                                          — remove
 async function directorBalanceRoute(req, res, action, user) {
   await ensureDirectorExpenses();
   const itemId = action ? String(action) : null;
@@ -2755,9 +2776,10 @@ async function directorBalanceRoute(req, res, action, user) {
     const id = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : makeId('db');
     const amount = round2(Number(body.amount) || 0);
     const note = (body.note == null ? '' : String(body.note)).slice(0, 300);
+    const month = /^\d{4}-\d{2}$/.test(body.month || '') ? body.month : curMonthKey();
     await sql`
-      INSERT INTO director_balance_items (id, director_email, amount, note, created_by, created_at)
-      VALUES (${id}, ${email}, ${amount}, ${note}, ${actor}, NOW())
+      INSERT INTO director_balance_items (id, director_email, amount, note, month, created_by, created_at)
+      VALUES (${id}, ${email}, ${amount}, ${note}, ${month}, ${actor}, NOW())
       ON CONFLICT (id) DO NOTHING`;
     return res.status(200).json({ ok: true, id });
   }

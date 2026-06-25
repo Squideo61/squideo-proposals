@@ -1155,9 +1155,9 @@ export function StoreProvider({ children }) {
     },
     // Balancing amount = a list of grant lines (each with a note) that sum to
     // the director's total standing headroom.
-    addDirectorBalanceItem(email, { amount, note }) {
+    addDirectorBalanceItem(email, { amount, note, month }) {
       const id = 'db_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-      return api.post('/api/crm/stats/director-balance', { email, id, amount, note }).then(() => id);
+      return api.post('/api/crm/stats/director-balance', { email, id, amount, note, month }).then(() => id);
     },
     updateDirectorBalanceItem(id, patch) {
       return api.patch('/api/crm/stats/director-balance/' + encodeURIComponent(id), patch);

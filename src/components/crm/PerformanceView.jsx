@@ -631,16 +631,14 @@ function prevMonthKey(mk) {
   return `${y}-${String(m).padStart(2, '0')}`;
 }
 
-// The balancing-amount panel: a running total (used this month / granted / left)
-// over a list of grant lines, each with a note for what it covers. The lines sum
-// to d.balanceAdjust, so the headroom maths upstream is unchanged. Collapsed to a
-// single "+ Balance" button until the first line is added.
-function DirBalanceSection({ d, actions, reload }) {
+// The balancing-amount panel: this month's grant lines (each with a note for what
+// it's for). A grant raises this month's allowance and any unused part rolls into
+// next month with the £250 — so the running "left" lives in the headline above,
+// and this box is the ledger of what was added this month. Collapsed to a single
+// "+ Balance" button until the first line for this month is added.
+function DirBalanceSection({ d, month, actions, reload }) {
   const items = d.balanceItems || [];
-  const grant = d.balanceAdjust || 0;              // total granted (sum of lines)
-  const used = d.balanceUsed || 0;                 // how much the overspend drew
-  const grantUsedUp = grant > 0.005 && d.balanceLeft <= 0.005;
-  const accent = grantUsedUp ? '#B45309' : DIRECTOR_ACCENT;
+  const addedThisMonth = d.balanceThisMonth || 0;
 
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -658,7 +656,7 @@ function DirBalanceSection({ d, actions, reload }) {
     setBusy(true);
     const p = editId
       ? actions.updateDirectorBalanceItem(editId, { amount: value, note: note.trim() })
-      : actions.addDirectorBalanceItem(d.email, { amount: value, note: note.trim() });
+      : actions.addDirectorBalanceItem(d.email, { amount: value, note: note.trim(), month });
     p.then(() => { cancel(); reload(); }).finally(() => setBusy(false));
   };
   const remove = (it) => {
@@ -686,7 +684,7 @@ function DirBalanceSection({ d, actions, reload }) {
     </div>
   );
 
-  // Nothing granted yet and not mid-add → collapsed button.
+  // Nothing granted this month and not mid-add → collapsed button.
   if (items.length === 0 && !adding) {
     return (
       <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12, marginTop: 10 }} onClick={startAdd}>
@@ -696,24 +694,21 @@ function DirBalanceSection({ d, actions, reload }) {
   }
 
   return (
-    <div style={{ marginTop: 10, padding: '8px 10px', background: BRAND.paper, border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${accent}`, borderRadius: 8 }}>
-      {/* Header: total tally + how much is left, exactly as the old single box. */}
+    <div style={{ marginTop: 10, padding: '8px 10px', background: BRAND.paper, border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${DIRECTOR_ACCENT}`, borderRadius: 8 }}>
+      {/* Header: what was added this month. Any unused part rolls forward, so the
+          remaining headroom is the big "left" figure up top, not here. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Balancing amount</div>
-          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>
-            {used > 0.005
-              ? <>{formatGBP(used)} used this month · {formatGBP(grant)} granted</>
-              : `${formatGBP(grant)} granted · untouched`}
-          </div>
+          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>Added to this month's allowance · unused rolls over</div>
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontSize: 16, fontWeight: 800, color: grantUsedUp ? '#B45309' : PROFIT_POS, lineHeight: 1.1 }}>{formatGBP(d.balanceLeft)}</div>
-          <div style={{ fontSize: 10, color: BRAND.muted }}>left</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: DIRECTOR_ACCENT, lineHeight: 1.1 }}>+{formatGBP(addedThisMonth)}</div>
+          <div style={{ fontSize: 10, color: BRAND.muted }}>this month</div>
         </div>
       </div>
 
-      {/* The individual grant lines. */}
+      {/* The individual grant lines added this month. */}
       <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
         {items.map((it) => (
           <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 6, borderTop: '1px solid ' + BRAND.border, paddingTop: 4 }}>
@@ -773,13 +768,13 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
       </div>
       <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
         {formatGBP(d.spent)} spent of {formatGBP(d.baseAvailable)} this month
-        <span style={{ color: BRAND.muted }}> · {formatGBP(d.allowance)} monthly{d.carriedIn > 0.005 ? ` + ${formatGBP(d.carriedIn)} carried over` : ''}{d.balanceAdjust > 0.005 ? ` + ${formatGBP(d.balanceAdjust)} balancing` : ''}</span>
+        <span style={{ color: BRAND.muted }}> · {formatGBP(d.allowance)} monthly{d.carriedIn > 0.005 ? ` + ${formatGBP(d.carriedIn)} carried over` : ''}{d.balanceThisMonth > 0.005 ? ` + ${formatGBP(d.balanceThisMonth)} balancing` : ''}</span>
       </div>
 
       {/* Balancing amount — granted EXTRA spend, separate from the £250. Now a
           list of grant lines (each with a note for what it's for) that sum to the
           total headroom; the running tally + "left" still work exactly as before. */}
-      <DirBalanceSection d={d} actions={actions} reload={reload} />
+      <DirBalanceSection d={d} month={month} actions={actions} reload={reload} />
 
       {/* Expenses. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 4 }}>
