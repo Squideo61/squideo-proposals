@@ -278,11 +278,14 @@ async function listCredits(res) {
     const manualMonthly = manual ? manual.net : null;
     const vatRate = manual ? manual.vatRate : (fee.rate != null ? fee.rate : 0.20);
     const monthlyNet = manualMonthly != null ? r2(manualMonthly) : r2(fee.exVat); // ex-VAT recurring fee
-    // Base outstanding (ex-VAT): a manual override wins; otherwise subscription →
-    // next month's fee, credits-only → value of credits still owed, inactive → nil.
-    const baseOutstanding = manualMonthly != null
-      ? r2(manualMonthly)
-      : (r.status === 'active' ? monthlyNet : (r.status === 'credits_only' ? r2(creditsRemaining * ratePerCredit) : 0));
+    // Base outstanding (ex-VAT) by status. A recurring fee — manual override or
+    // signed fee — is only owed while the subscription is ACTIVE; a paused
+    // subscription bills nothing, so its monthly fee must not show as pending
+    // (e.g. ASH Waste, paused, with its invoice voided). Credits-only → value of
+    // credits still to be worked off; inactive → nil.
+    const baseOutstanding = r.status === 'active'
+      ? r2(monthlyNet)
+      : (r.status === 'credits_only' ? r2(creditsRemaining * ratePerCredit) : 0);
     // This month already marked paid → collected, so nothing's outstanding now.
     const paidThisMonth = paidByClient.has(r.client_key);
     const outstanding = paidThisMonth ? 0 : baseOutstanding;
