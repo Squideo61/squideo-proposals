@@ -108,6 +108,13 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
               ]))
               .then(() => showMsg('Monthly spend saved'))
               .catch((err) => { showMsg(err?.message || 'Could not save'); throw err; })}
+            onSaveVat={(rate) => actions.setPartnerVatRate(clientKey, rate)
+              .then(() => Promise.all([
+                actions.fetchPartnerCreditDetail(clientKey),
+                actions.fetchPartnerCreditsList(),
+              ]))
+              .then(() => showMsg('VAT rate saved'))
+              .catch((err) => { showMsg(err?.message || 'Could not save'); throw err; })}
           />
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -899,7 +906,7 @@ function DetailField({ label, children }) {
 // Monthly spend (ex-VAT) — set here on the client page (read-only in the
 // Partners & Credits list). Feeds the Finance Pending-Payments total. An "auto"
 // hint flags figures derived from the signed proposal rather than set by hand.
-function MonthlyFeeEditor({ monthlyNet, vatRate, manualFee, onSave }) {
+function MonthlyFeeEditor({ monthlyNet, vatRate, manualFee, onSave, onSaveVat }) {
   const amount = Number(monthlyNet) || 0;
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(amount ? String(amount) : '');
@@ -907,6 +914,19 @@ function MonthlyFeeEditor({ monthlyNet, vatRate, manualFee, onSave }) {
   useEffect(() => { setVal((Number(monthlyNet) || 0) ? String(monthlyNet) : ''); }, [monthlyNet]);
 
   const vatPct = vatRate != null ? Math.round(Number(vatRate) * 100) : 20;
+  const [editingVat, setEditingVat] = useState(false);
+  const [vatVal, setVatVal] = useState(String(vatPct));
+  const [savingVat, setSavingVat] = useState(false);
+  useEffect(() => { setVatVal(String(vatPct)); }, [vatPct]);
+
+  const commitVat = async () => {
+    const next = Math.max(0, Math.min(100, parseFloat(vatVal) || 0));
+    if (next === vatPct) { setEditingVat(false); return; }
+    setSavingVat(true);
+    try { await onSaveVat(next / 100); setEditingVat(false); }
+    catch { /* message shown by caller */ }
+    finally { setSavingVat(false); }
+  };
 
   const commit = async () => {
     const next = parseFloat(val) || 0;
@@ -950,7 +970,33 @@ function MonthlyFeeEditor({ monthlyNet, vatRate, manualFee, onSave }) {
       <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
         {amount > 0 ? `${formatGBP(amount)} ex VAT` : '—'}
       </span>
-      {amount > 0 && <span style={{ color: BRAND.muted, fontSize: 12 }}>· {vatPct}% VAT</span>}
+      {amount > 0 && (editingVat ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+          <span style={{ color: BRAND.muted, fontSize: 12 }}>·</span>
+          <input
+            type="number" step="1" min="0" max="100" autoFocus
+            value={vatVal}
+            onChange={(e) => setVatVal(e.target.value)}
+            onBlur={commitVat}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+              if (e.key === 'Escape') { setVatVal(String(vatPct)); setEditingVat(false); }
+            }}
+            disabled={savingVat}
+            style={{ width: 46, padding: '2px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12, textAlign: 'right' }}
+          />
+          <span style={{ color: BRAND.muted, fontSize: 12 }}>% VAT</span>
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setEditingVat(true)}
+          title="Edit VAT rate %"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', color: BRAND.muted, fontSize: 12 }}
+        >
+          · {vatPct}% VAT <Pencil size={11} style={{ opacity: 0.6 }} />
+        </button>
+      ))}
       {amount > 0 && !manualFee && (
         <span title="Derived from the signed partner proposal" style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>auto</span>
       )}

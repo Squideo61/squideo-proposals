@@ -174,14 +174,8 @@ export function PartnerCreditsView({ onBack, onOpen, onOpenDeal }) {
                       <td style={{ padding: '12px 8px', textAlign: 'right' }}>
                         <MonthlyFeeCell row={row} />
                       </td>
-                      <td style={{ padding: '12px 8px', textAlign: 'right' }}>
-                        <VatRateCell
-                          row={row}
-                          onSave={(rate) => actions.setPartnerVatRate(row.clientKey, rate)
-                            .then(() => actions.fetchPartnerCreditsList())
-                            .then(() => showMsg('VAT rate saved'))
-                            .catch((err) => showMsg(err?.message || 'Could not save'))}
-                        />
+                      <td style={{ padding: '12px 8px', textAlign: 'right', color: BRAND.muted, fontVariantNumeric: 'tabular-nums' }} title="VAT rate — edit it on the client page">
+                        {(row.vatRate != null ? Math.round(Number(row.vatRate) * 100) : 20)}%
                       </td>
                       <td style={{ padding: '12px 8px', textAlign: 'center' }}>
                         <PaidToggle
@@ -298,35 +292,6 @@ function MonthlyFeeCell({ row }) {
       <span title="Monthly spend, ex-VAT — edit it on the client page">
         {amount > 0 ? formatGBP(amount) : <span style={{ color: BRAND.muted }}>—</span>}
       </span>
-    </span>
-  );
-}
-
-// Editable VAT rate (%) per partner. Stored as a fraction (0.20); shown as 20.
-function VatRateCell({ row, onSave }) {
-  const toPct = (r) => (r != null ? Math.round(Number(r) * 100) : 20);
-  const [val, setVal] = useState(String(toPct(row.vatRate)));
-  const [saving, setSaving] = useState(false);
-  useEffect(() => { setVal(String(toPct(row.vatRate))); }, [row.vatRate]);
-  const commit = () => {
-    const next = Math.max(0, Math.min(100, parseFloat(val) || 0));
-    if (next === toPct(row.vatRate)) return;
-    setSaving(true);
-    Promise.resolve(onSave(next / 100)).finally(() => setSaving(false));
-  };
-  return (
-    <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: 2, justifyContent: 'flex-end' }}>
-      <input
-        type="number" step="1" min="0" max="100"
-        value={val}
-        onChange={(e) => setVal(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
-        disabled={saving}
-        title="VAT rate % on this partner's fee — feeds the VAT you set aside"
-        style={{ width: 46, padding: '4px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12, textAlign: 'right' }}
-      />
-      <span style={{ color: BRAND.muted, fontSize: 12 }}>%</span>
     </span>
   );
 }
