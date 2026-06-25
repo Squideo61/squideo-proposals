@@ -12,6 +12,10 @@ const StoreContext = createContext(null);
 //   drafts          — the user's saved drafts list.
 const COMPOSER_CONTEXT_KEY = 'sq_composer_context';
 const DRAFTS_KEY = 'sq_email_drafts';
+// In-progress inline reply drafts, keyed by Gmail thread id. Unlike the dock
+// composer (composerContext), the inline thread reply is unmounted when you
+// navigate away — so its live content is mirrored here to survive that.
+const THREAD_DRAFTS_KEY = 'sq_thread_drafts';
 
 function loadLocal(key, fallback) {
   if (typeof window === 'undefined') return fallback;
@@ -134,6 +138,7 @@ function emptyStore() {
     loading: true,
     composerContext: loadLocal(COMPOSER_CONTEXT_KEY, null),
     drafts: loadLocal(DRAFTS_KEY, []),
+    threadDrafts: loadLocal(THREAD_DRAFTS_KEY, {}),
   };
 }
 
@@ -738,7 +743,8 @@ export function StoreProvider({ children }) {
       // the previous user's in-progress mail to whoever logs in next.
       saveLocal(COMPOSER_CONTEXT_KEY, null);
       saveLocal(DRAFTS_KEY, []);
-      setState({ ...emptyStore(), loading: false, composerContext: null, drafts: [] });
+      saveLocal(THREAD_DRAFTS_KEY, {});
+      setState({ ...emptyStore(), loading: false, composerContext: null, drafts: [], threadDrafts: {} });
     },
     // "Sign out everywhere": bump the server-side token version so every active
     // session (including this one) is rejected on its next request, then tear
@@ -747,7 +753,8 @@ export function StoreProvider({ children }) {
       return api.post('/api/auth/signout-all', {}).catch(() => {}).then(() => {
         saveLocal(COMPOSER_CONTEXT_KEY, null);
         saveLocal(DRAFTS_KEY, []);
-        setState({ ...emptyStore(), loading: false, composerContext: null, drafts: [] });
+        saveLocal(THREAD_DRAFTS_KEY, {});
+        setState({ ...emptyStore(), loading: false, composerContext: null, drafts: [], threadDrafts: {} });
       });
     },
     signup(user) {
@@ -2464,6 +2471,30 @@ export function StoreProvider({ children }) {
         saveLocal(DRAFTS_KEY, drafts);
         saveLocal(COMPOSER_CONTEXT_KEY, ctx);
         return { ...s, drafts, composerContext: ctx };
+      });
+    },
+
+    // Mirror an inline thread-reply's live content, keyed by thread id, so it
+    // survives navigating away from the conversation (the inline composer is
+    // unmounted on navigation, unlike the dock composer). Cleared on send or
+    // an explicit Discard. Attachments persist via their blob refs, same as
+    // the dock composer's autosave.
+    saveThreadDraft(threadId, snapshot) {
+      if (!threadId) return;
+      setState((s) => {
+        const threadDrafts = { ...(s.threadDrafts || {}), [threadId]: { ...snapshot, threadId, savedAt: new Date().toISOString() } };
+        saveLocal(THREAD_DRAFTS_KEY, threadDrafts);
+        return { ...s, threadDrafts };
+      });
+    },
+    clearThreadDraft(threadId) {
+      if (!threadId) return;
+      setState((s) => {
+        if (!s.threadDrafts || !(threadId in s.threadDrafts)) return s;
+        const threadDrafts = { ...s.threadDrafts };
+        delete threadDrafts[threadId];
+        saveLocal(THREAD_DRAFTS_KEY, threadDrafts);
+        return { ...s, threadDrafts };
       });
     },
 

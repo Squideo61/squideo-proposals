@@ -3108,7 +3108,7 @@ function DealScheduledCard({ scheduled, onCancel }) {
   );
 }
 
-export function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSent, onViewThread, inline = false }) {
+export function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSent, onViewThread, inline = false, threadDraftKey = null, draftMode = null }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const gmailConnected = state.gmailAccount && state.gmailAccount.connected;
@@ -3186,22 +3186,40 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
   }, [onClose]);
 
   // Autosave as the user types, so navigating away or refreshing never loses
-  // the draft. Debounced, and persisted into composerContext (which survives a
-  // reload) without changing sessionId, so the live editor isn't remounted.
-  // Only the persistent dock composer is backed by composerContext — the inline
-  // reply composer is ephemeral by design, so it opts out.
+  // the draft. Debounced. The dock composer persists into composerContext (which
+  // survives a reload) without changing sessionId, so the live editor isn't
+  // remounted. The inline reply composer is unmounted on navigation, so it
+  // instead mirrors its content into a per-thread draft slot (keyed by thread
+  // id) — but only once there's something worth keeping, so an untouched reply
+  // doesn't linger and auto-reopen.
   useEffect(() => {
-    if (inline) return undefined;
     const t = setTimeout(() => {
+      const cleanAttachments = attachments.filter(a => a.blobUrl && !a.uploading);
+      if (inline) {
+        if (!threadDraftKey) return;
+        const bodyText = String(body || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').trim();
+        const hasContent = !!bodyText || /<img\b/i.test(String(body || '')) || cleanAttachments.length > 0;
+        if (hasContent) {
+          actions.saveThreadDraft(threadDraftKey, {
+            to, cc, bcc, subject, body,
+            gmailThreadId: replyThreadId || threadDraftKey,
+            extraDeals, attachments: cleanAttachments,
+            mode: draftMode || 'reply',
+          });
+        } else {
+          actions.clearThreadDraft(threadDraftKey);
+        }
+        return;
+      }
       actions.autosaveComposerDraft({
         to, cc, bcc, subject, body,
         gmailThreadId: replyThreadId || null,
         extraDeals,
-        attachments: attachments.filter(a => a.blobUrl && !a.uploading),
+        attachments: cleanAttachments,
       });
     }, 500);
     return () => clearTimeout(t);
-  }, [inline, to, cc, bcc, subject, body, extraDeals, attachments]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inline, threadDraftKey, draftMode, to, cc, bcc, subject, body, extraDeals, attachments]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!gmailConnected) { setSignature(''); return; }

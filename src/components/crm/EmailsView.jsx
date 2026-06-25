@@ -1170,6 +1170,18 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
   // null | 'reply' | 'replyAll' | 'forward'.
   const [composeMode, setComposeMode] = useState(null);
 
+  // A reply that was in progress when the user navigated away is mirrored in the
+  // store keyed by thread id (see saveThreadDraft). On (re)opening a thread,
+  // restore it — reopen the composer in its saved mode with its content — so the
+  // draft + attachments aren't lost. Resets when switching to a thread with no
+  // saved draft (also stops a previous thread's mode leaking across).
+  const savedThreadDraft = state.threadDrafts?.[openRef.threadId] || null;
+  useEffect(() => {
+    const d = state.threadDrafts?.[openRef.threadId];
+    if (d && folder !== 'drafts') setComposeMode(d.mode || 'reply');
+    else setComposeMode(null);
+  }, [openRef.threadId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // True if WE sent this message. DB/deal threads carry an explicit direction
   // flag (reliable even when viewing someone else's deal as an admin); Gmail
   // threads always report outbound:false, so there we infer it from our own
@@ -1325,9 +1337,16 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                     inline
                     deal={resolvedDeal}
                     contact={null}
-                    initialDraft={draftFor(composeMode)}
-                    onClose={() => setComposeMode(null)}
-                    onSent={() => { setComposeMode(null); reloadThread(); }}
+                    // Restore the saved draft only when its mode matches the open
+                    // composer, so switching reply↔forward doesn't show stale content.
+                    initialDraft={savedThreadDraft && savedThreadDraft.mode === composeMode
+                      ? { ...draftFor(composeMode), ...savedThreadDraft }
+                      : draftFor(composeMode)}
+                    threadDraftKey={openRef.threadId}
+                    draftMode={composeMode}
+                    // Discard clears the saved draft; navigating away (unmount) keeps it.
+                    onClose={() => { actions.clearThreadDraft(openRef.threadId); setComposeMode(null); }}
+                    onSent={() => { actions.clearThreadDraft(openRef.threadId); setComposeMode(null); reloadThread(); }}
                   />
                 </div>
               )
