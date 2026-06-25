@@ -39,6 +39,40 @@ function parseRange(req) {
   return { fromDate, toExcl, fromStr: dateStr(fromDate), toStr: dateStr(toExcl) };
 }
 
+// "Marketing data starts from" cutoff — leads before it (incomplete first-touch
+// attribution from the early tracking rollout) are excluded from the lead-based
+// reports so they don't skew channel/CPL/ROAS. Stored on the settings row;
+// configurable in the Marketing UI. NULL means "not configured yet", so we
+// one-time default it to 2026-06-13 (the first day with complete attribution).
+let marketingCutoffReady = null;
+function ensureMarketingCutoff() {
+  if (marketingCutoffReady) return marketingCutoffReady;
+  marketingCutoffReady = (async () => {
+    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS marketing_leads_from DATE`;
+    await sql`UPDATE settings SET marketing_leads_from = '2026-06-13' WHERE id = 1 AND marketing_leads_from IS NULL`;
+  })().catch((err) => { marketingCutoffReady = null; throw err; });
+  return marketingCutoffReady;
+}
+async function getMarketingCutoff() {
+  try {
+    await ensureMarketingCutoff();
+    const [row] = await sql`SELECT marketing_leads_from FROM settings WHERE id = 1`;
+    return row?.marketing_leads_from ? new Date(row.marketing_leads_from).toISOString().slice(0, 10) : null;
+  } catch { return null; }
+}
+
+// parseRange, but floored at the marketing cutoff so the lead-based reports never
+// reach back before it (whatever range the user picked).
+async function leadRange(req) {
+  const r = parseRange(req);
+  const cutoff = await getMarketingCutoff();
+  if (cutoff) {
+    const c = new Date(cutoff + 'T00:00:00Z');
+    if (c > r.fromDate) return { ...r, fromDate: c, fromStr: cutoff };
+  }
+  return r;
+}
+
 // effectiveValue + won flag for a set of deal ids, via annotateDeals (so the
 // numbers match the pipeline). Returns Map<dealId, { value, won }>.
 async function dealValueMap(dealIds) {
@@ -108,7 +142,7 @@ const nonNumeric = (v) => (v && !/^\d+$/.test(v) ? v : null);
 // GET /api/crm/analytics/leads — one row per lead with attribution + the deal it
 // became + the revenue it generated.
 async function leadsLog(req) {
-  const { fromDate, toExcl, fromStr, toStr } = parseRange(req);
+  const { fromDate, toExcl, fromStr, toStr } = await leadRange(req);
   const rows = await sql`
     SELECT qr.id, qr.created_at, qr.name, qr.email, qr.company,
            qr.attr_channel, qr.attr_source, qr.attr_medium, qr.attr_campaign,
@@ -153,7 +187,7 @@ async function leadsLog(req) {
 // campaign/keyword/channel.
 async function reports(req, groupBy) {
   const dim = ['source', 'medium', 'campaign', 'keyword', 'channel'].includes(groupBy) ? groupBy : 'campaign';
-  const { fromDate, toExcl, fromStr, toStr } = parseRange(req);
+  const { fromDate, toExcl, fromStr, toStr } = await leadRange(req);
   const rows = await sql`
     SELECT qr.id, qr.status, qr.deal_id,
            qr.attr_channel, qr.attr_source, qr.attr_medium,
@@ -281,6 +315,20 @@ export async function analyticsRoute(req, res, id, action, user) {
     ]);
     const ok = [ads, gsc, ga4].some((r) => r?.ok);
     return res.status(200).json({ ok, ads, gsc, ga4 });
+  }
+
+  // Marketing data cutoff — the "show leads from" date. GET reads it; PUT/POST
+  // sets it (excludes earlier, incomplete-attribution leads from the reports).
+  if (id === 'settings') {
+    if (req.method === 'GET') return res.status(200).json({ leadsFrom: await getMarketingCutoff() });
+    if (req.method === 'POST' || req.method === 'PUT') {
+      await ensureMarketingCutoff();
+      const v = typeof req.body?.leadsFrom === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.body.leadsFrom) ? req.body.leadsFrom : null;
+      if (!v) return res.status(400).json({ error: 'leadsFrom must be a YYYY-MM-DD date' });
+      await sql`UPDATE settings SET marketing_leads_from = ${v} WHERE id = 1`;
+      return res.status(200).json({ leadsFrom: v });
+    }
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

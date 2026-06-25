@@ -940,6 +940,20 @@ export function StoreProvider({ children }) {
         return data;
       }).catch(() => null);
     },
+    // Marketing → the "show leads from" cutoff date (earlier, incomplete-
+    // attribution leads are excluded from the reports). Read + set.
+    loadMarketingCutoff() {
+      return api.get('/api/crm/analytics/settings').then((d) => {
+        setState(s => ({ ...s, marketingCutoff: d?.leadsFrom || null }));
+        return d?.leadsFrom || null;
+      }).catch(() => null);
+    },
+    setMarketingCutoff(leadsFrom) {
+      setState(s => ({ ...s, marketingCutoff: leadsFrom }));
+      return api.post('/api/crm/analytics/settings', { leadsFrom })
+        .then((d) => { setState(s => ({ ...s, marketingCutoff: d?.leadsFrom || leadsFrom })); return d; })
+        .catch(() => {});
+    },
     // Marketing → Search Console organic-search report (Search tab).
     loadMarketingSearch(from, to) {
       const qs = new URLSearchParams();

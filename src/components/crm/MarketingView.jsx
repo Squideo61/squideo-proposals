@@ -61,7 +61,7 @@ const dash = (v, fmt) => (v == null ? '—' : fmt(v));
 const fmtRoas = (v) => (v == null ? '—' : (Number(v) || 0).toFixed(2) + '×');
 
 export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpenCompany }) {
-  const { actions } = useStore();
+  const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const [section, setSection] = useState(sectionProp || marketingViewMemory.section);
   const [rangeDays, setRangeDays] = useState(marketingViewMemory.rangeDays);
@@ -83,6 +83,15 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
   useEffect(() => { marketingViewMemory.groupBy = groupBy; }, [groupBy]);
 
   const { from, to } = useMemo(() => rangeFor(rangeDays), [rangeDays]);
+
+  // The "show leads from" cutoff — leads before it (incomplete early attribution)
+  // are excluded from the lead-based reports so they don't skew the figures.
+  const cutoff = state.marketingCutoff || null;
+  useEffect(() => { actions.loadMarketingCutoff(); }, [actions]);
+  const onCutoffChange = (v) => {
+    if (!v) return;
+    actions.setMarketingCutoff(v).then(() => setReload((n) => n + 1));
+  };
 
   // Dashboard: channel-grouped report carries both the totals (headline cards)
   // and the per-channel breakdown.
@@ -153,6 +162,17 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
         )}
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Marketing</h1>
         <div style={{ flex: 1 }} />
+        {['overview', 'reports', 'leads'].includes(section) && (
+          <label title="Leads before this date are excluded from the reports (incomplete early attribution)" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.muted }}>
+            Leads from
+            <input
+              type="date"
+              value={cutoff || ''}
+              onChange={(e) => onCutoffChange(e.target.value)}
+              style={{ padding: '5px 8px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 13, color: BRAND.ink }}
+            />
+          </label>
+        )}
         {section !== 'settings' && (
           <div style={{ display: 'inline-flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2 }}>
             {RANGE_PRESETS.map((r) => (
