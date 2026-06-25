@@ -2454,15 +2454,21 @@ function ensureDirectorExpenses() {
       )`;
     await sql`CREATE INDEX IF NOT EXISTS idx_director_balance_items_email ON director_balance_items (director_email)`;
     // Migrate the legacy single balance_adjust into one itemised entry, then zero
-    // the column so the two never double-count. Idempotent: the deterministic id
-    // means re-running inserts nothing, and once the column is 0 there's nothing
-    // left to migrate.
+    // the column so the two never double-count. Idempotent: once the column is 0
+    // there's nothing left to migrate (and the deterministic id can't duplicate).
+    // The id MUST be URL-safe (it's a path segment for edit/delete) — md5(email)
+    // is hex, unlike the raw email which has @/. that break routing.
     await sql`
       INSERT INTO director_balance_items (id, director_email, amount, note, created_at)
-      SELECT 'legacy-' || director_email, director_email, balance_adjust, 'Balancing amount', NOW()
+      SELECT 'bal-' || md5(director_email), director_email, balance_adjust, 'Balancing amount', NOW()
         FROM director_settings WHERE balance_adjust <> 0
       ON CONFLICT (id) DO NOTHING`;
     await sql`UPDATE director_settings SET balance_adjust = 0 WHERE balance_adjust <> 0`;
+    // Repair earlier-migrated rows keyed as 'legacy-<email>' — the @/. in the
+    // email made the path un-routable, so those lines couldn't be edited/deleted.
+    await sql`UPDATE director_balance_items SET id = 'bal-' || md5(director_email)
+               WHERE id LIKE 'legacy-%'
+                 AND NOT EXISTS (SELECT 1 FROM director_balance_items b2 WHERE b2.id = 'bal-' || md5(director_balance_items.director_email))`;
   })().catch((err) => { directorEnsured = null; throw err; });
   return directorEnsured;
 }
