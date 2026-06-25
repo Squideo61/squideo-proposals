@@ -15,7 +15,7 @@
 // rows (scoped by session email), so this needs auth but no special permission.
 import sql from './_lib/db.js';
 import { cors, requireAuth } from './_lib/middleware.js';
-import { channelForKey, FINANCE_CHANNEL_KEYS, TRACKING_CHANNEL_KEYS } from './_lib/notificationsCatalog.js';
+import { channelForKey, FINANCE_CHANNEL_KEYS, TRACKING_CHANNEL_KEYS, BELL_HIDDEN_KEYS } from './_lib/notificationsCatalog.js';
 import { resolveSentThreadId } from './_lib/crm/tracking.js';
 
 const FEED_LIMIT = 30;
@@ -124,6 +124,7 @@ export default async function handler(req, res) {
            WHERE user_email = ${email}
              AND NOT (notification_key = ANY(${FINANCE_CHANNEL_KEYS}))
              AND NOT (notification_key = ANY(${TRACKING_CHANNEL_KEYS}))
+             AND NOT (notification_key = ANY(${BELL_HIDDEN_KEYS}))
            ORDER BY created_at DESC
            LIMIT ${FEED_LIMIT}`,
         sql`
@@ -138,7 +139,8 @@ export default async function handler(req, res) {
           SELECT COUNT(*)::int AS n FROM in_app_notifications
            WHERE user_email = ${email} AND read_at IS NULL
              AND NOT (notification_key = ANY(${FINANCE_CHANNEL_KEYS}))
-             AND NOT (notification_key = ANY(${TRACKING_CHANNEL_KEYS}))`,
+             AND NOT (notification_key = ANY(${TRACKING_CHANNEL_KEYS}))
+             AND NOT (notification_key = ANY(${BELL_HIDDEN_KEYS}))`,
       ]);
 
       const tracking = { items: trackingRows.map(mapRow), unread: trackingUnread[0]?.n || 0 };

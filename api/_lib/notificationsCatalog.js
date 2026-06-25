@@ -287,3 +287,11 @@ export const FINANCE_CHANNEL_KEYS = NOTIFICATIONS
 export const TRACKING_CHANNEL_KEYS = NOTIFICATIONS
   .filter(n => n.channel === 'tracking')
   .map(n => n.key);
+
+// Keys that should NOT surface in any top-bar bell, even though they're
+// persisted as in-app rows. Task reminders/digests live in the Tasks panel
+// (and fire desktop popups + Tier-2 push), so the team doesn't need them
+// duplicated in the Updates bell. We still write the rows — they power Web Push
+// (Tier 2) and a "clear all" path purges them — but the feed endpoint filters
+// them out of the general channel's items + unread count.
+export const BELL_HIDDEN_KEYS = ['task.reminder', 'task.digest'];
