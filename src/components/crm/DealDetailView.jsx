@@ -283,17 +283,6 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                 ><FileText size={14} /> Create or link proposal</button>
               )}
               <button onClick={() => openComposerForDeal()} className="btn"><Mail size={14} /> Send email</button>
-              {/* "Hot" is a sales/lead warmth marker — irrelevant once the deal
-                  is a won project in production, so hide it there. */}
-              {!isProject && (
-                <button
-                  onClick={() => actions.toggleDealHot(dealId, !deal.hot)}
-                  className="btn-ghost"
-                  aria-pressed={!!deal.hot}
-                  title={deal.hot ? 'Flagged hot — click to unflag' : 'Flag as hot'}
-                  style={{ color: deal.hot ? '#EA580C' : undefined, borderColor: deal.hot ? '#EA580C' : undefined, fontWeight: deal.hot ? 600 : undefined }}
-                ><Flame size={14} fill={deal.hot ? '#EA580C' : 'none'} /> {deal.hot ? 'Hot' : 'Mark hot'}</button>
-              )}
               <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
               <button
                 onClick={() => {
@@ -310,7 +299,20 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
       </header>
 
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 16 : 24, marginBottom: 16 }}>
-        <h1 style={{ margin: '0 0 12px', fontSize: 22, fontWeight: 700 }}>{deal.title}</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', margin: '0 0 12px' }}>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>{deal.title}</h1>
+          {/* "Hot" is a sales/lead warmth marker — irrelevant once the deal
+              is a won project in production, so hide it there. */}
+          {!productionOnly && !isProject && (
+            <button
+              onClick={() => actions.toggleDealHot(dealId, !deal.hot)}
+              className="btn-ghost"
+              aria-pressed={!!deal.hot}
+              title={deal.hot ? 'Flagged hot — click to unflag' : 'Flag as hot'}
+              style={{ color: deal.hot ? '#EA580C' : undefined, borderColor: deal.hot ? '#EA580C' : undefined, fontWeight: deal.hot ? 600 : undefined }}
+            ><Flame size={14} fill={deal.hot ? '#EA580C' : 'none'} /> {deal.hot ? 'Hot' : 'Mark hot'}</button>
+          )}
+        </div>
         {/* Once the deal is a project (it has production videos) the sales
             pipeline bar gives way to a production progress bar for the whole
             project — aggregated across its videos. */}
