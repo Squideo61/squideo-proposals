@@ -1251,6 +1251,19 @@ export function StoreProvider({ children }) {
         .then((data) => { if (data) setState(s => ({ ...s, predictedPayments: data })); return data; })
         .catch(() => {});
     },
+    // Mark a pending payment predicted in a SPECIFIC month (e.g. the month of an
+    // expected pay date), which may differ from the one on screen. Doesn't touch
+    // the in-view predicted list unless the server reply is for that same month —
+    // so predicting a future month never clobbers the current view.
+    predictPaymentInMonth(month, itemKey, label = null, amountExVat = 0) {
+      return api.post('/api/crm/stats/predicted-payments/' + month, { itemKey, predicted: true, label, amountExVat })
+        .then((data) => {
+          setState(s => (data && s.predictedPayments && s.predictedPayments.month === month
+            ? { ...s, predictedPayments: data }
+            : s));
+          return data;
+        });
+    },
     // Exclude (or re-include) an auto-included item — an active partner or
     // "other" recurring row — from this month's predicted list. Optimistic on
     // the excluded-key set so it drops off / returns instantly.

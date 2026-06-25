@@ -40,6 +40,60 @@ function predictMenuItem(predict, item) {
   };
 }
 
+// Build the ⋮-menu entry that opens the "expected pay date" picker. Returns
+// null when prediction isn't available for the row.
+function predictDateMenuItem(predict, item, onOpen) {
+  if (!predict || !predict.predictInMonth || !item || !item.key) return null;
+  return { label: 'Add predicted pay date', icon: CalendarCheck, onClick: onOpen };
+}
+
+// Pick an expected pay date for a pending payment. Predicted lists are
+// month-scoped, so the chosen date marks the row predicted in that date's month
+// (shown immediately when that's the current month; saved for later otherwise).
+function PredictDateModal({ label, onClose, onConfirm }) {
+  const { showMsg } = useStore();
+  const [date, setDate] = useState('');
+  const [saving, setSaving] = useState(false);
+  const monthName = date
+    ? new Date(date + 'T00:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+    : '';
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!date || saving) return;
+    setSaving(true);
+    try {
+      await onConfirm(date.slice(0, 7)); // 'YYYY-MM'
+      showMsg?.(`Predicted for ${monthName}`);
+      onClose();
+    } catch (err) {
+      showMsg?.(err?.message || 'Could not add predicted date');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal onClose={onClose} dismissible={false} showClose>
+      <h2 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700 }}>Add predicted pay date</h2>
+      <p style={{ margin: '0 0 14px', fontSize: 13, color: BRAND.muted }}>
+        When do you expect {label ? <strong style={{ color: BRAND.ink }}>{label}</strong> : 'this payment'} to be paid?
+        It’ll be marked predicted in that month.
+      </p>
+      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <input type="date" className="input" value={date} onChange={(e) => setDate(e.target.value)} autoFocus required />
+        {monthName && (
+          <div style={{ fontSize: 12, color: BRAND.muted }}>
+            Will be predicted for <strong style={{ color: BRAND.ink }}>{monthName}</strong>.
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button type="button" onClick={onClose} className="btn-ghost" disabled={saving}>Cancel</button>
+          <button type="submit" className="btn" disabled={!date || saving}>{saving ? 'Adding…' : 'Add predicted date'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // Resolve the live list of predicted-this-month payments. Signed deals / POs /
 // imported rows / company invoices are included only when manually flagged (key
 // in `predictKeys`); a flagged item that's no longer pending (paid/removed) drops
@@ -268,6 +322,10 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
     month: currentMonthKey,
     keys: predictKeys,
     toggle: (item, on) => actions.togglePredictedPayment(currentMonthKey, item.key, on, item.label || null, Number(item.amount) || 0),
+    // Mark predicted for a chosen month (the expected pay date's month), then
+    // refresh the in-view list so it reflects immediately when that's this month.
+    predictInMonth: (item, month) => actions.predictPaymentInMonth(month, item.key, item.label || null, Number(item.amount) || 0)
+      .then((r) => { actions.loadPredictedPayments(currentMonthKey); return r; }),
   }), [currentMonthKey, predictKeys, actions]);
   // Live total of everything still predicted to land this month — drives the
   // Predicted tab and the "with predicted" projection on the Performance chart.
@@ -1423,6 +1481,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
   const predict = usePredict();
   const [linkOpen, setLinkOpen] = useState(false);
   const [payingInvoice, setPayingInvoice] = useState(false);
+  const [predictingDate, setPredictingDate] = useState(false);
   const isInvoicedGroup = variant === 'invoiced';
   const isCompanyInvoice = r.kind === 'company-invoice';
   const linkedDeal = !!r.dealId;
@@ -1456,8 +1515,11 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
     { label: 'Remove', icon: Trash2, danger: true, onClick: onRemove },
   ];
   const predictKey = predictKeyForManual(r);
-  const predictItem = predictMenuItem(predict, { key: predictKey, label: r.company || r.description || 'Pending payment', amount: net });
+  const predictItemLabel = r.company || r.description || 'Pending payment';
+  const predictItem = predictMenuItem(predict, { key: predictKey, label: predictItemLabel, amount: net });
   if (predictItem) rowActions.push(predictItem);
+  const predictDateItem = predictDateMenuItem(predict, { key: predictKey }, () => setPredictingDate(true));
+  if (predictDateItem) rowActions.push(predictDateItem);
   const isPredicted = !!predict?.keys.has(predictKey);
   return (
     <>
@@ -1520,6 +1582,13 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
         amount={(Number(r.amountExVat) || 0) + (Number(r.vat) || 0)}
         onClose={() => setPayingInvoice(false)}
         onMarked={() => { setPayingInvoice(false); if (onChanged) onChanged(); }}
+      />
+    )}
+    {predictingDate && (
+      <PredictDateModal
+        label={predictItemLabel}
+        onClose={() => setPredictingDate(false)}
+        onConfirm={(month) => predict.predictInMonth({ key: predictKey, label: predictItemLabel, amount: net }, month)}
       />
     )}
     </>
@@ -2155,6 +2224,7 @@ function RowActionsMenu({ items }) {
 
 function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoReceived }) {
   const predict = usePredict();
+  const [predictingDate, setPredictingDate] = useState(false);
   const name = d.company || d.title || 'Untitled deal';
   // Only keep the deal title as a second line when it adds something beyond the
   // company name (avoids showing e.g. "Beyond PR" twice).
@@ -2185,9 +2255,11 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
     })),
     onOpenDeal && { label: 'Open deal', icon: ExternalLink, onClick: open },
     d.dealId && predictMenuItem(predict, { key: predictKeyForDeal(d.dealId), label: name, amount: d.outstanding }),
+    d.dealId && predictDateMenuItem(predict, { key: predictKeyForDeal(d.dealId) }, () => setPredictingDate(true)),
   ];
   const isPredicted = !!(d.dealId && predict?.keys.has(predictKeyForDeal(d.dealId)));
   return (
+    <>
     <div
       role="button"
       tabIndex={0}
@@ -2245,6 +2317,14 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
         </div>
       )}
     </div>
+    {predictingDate && (
+      <PredictDateModal
+        label={name}
+        onClose={() => setPredictingDate(false)}
+        onConfirm={(month) => predict.predictInMonth({ key: predictKeyForDeal(d.dealId), label: name, amount: d.outstanding }, month)}
+      />
+    )}
+    </>
   );
 }
 
