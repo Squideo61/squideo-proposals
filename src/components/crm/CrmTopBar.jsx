@@ -80,6 +80,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     || permissionsInclude(perms, 'settings.manage');
   // Whole-business finances — anyone with finance.manage (owner/admin + Director).
   const canBusiness = permissionsInclude(perms, 'finance.manage');
+  // Pending-Payments-only access (Project/Production Managers) — reaches the
+  // Finance page but sees just the Pending Payments tab.
+  const canPendingPayments = canBusiness || permissionsInclude(perms, 'finance.pending_payments');
   // Marketing (lead attribution + ad ROAS) — Admin / whoever's granted it.
   const canMarketing = permissionsInclude(perms, 'marketing.access');
   // The £ (sales & finance) notifications bell — Admin, Directors, Project Managers.
@@ -92,7 +95,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       views: ['overview', 'finance', 'performance'],
       items: [
         { label: 'Overview', icon: LayoutDashboard, go: () => navigate('overview') },
-        ...(canBusiness ? [
+        ...(canPendingPayments ? [
           { label: 'Finance', icon: PoundSterling, go: () => navigate('finance') },
         ] : []),
       ],

@@ -186,7 +186,7 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
 
     const data = workingDays.map((wd, i) => {
       const dayNum = i + 1;
-      const point = { day: dayNum };
+      const point = { day: dayNum, date: wd };
       point.actual = dayNum <= lastActualIdx ? Number(cumTo(wd).toFixed(2)) : null;
       for (const t of targets) point[t.key] = Number(((Number(t.amount) || 0) * spanMonths * dayNum / N).toFixed(2));
       // A flat reference line across the whole graph at the theoretical maximum
@@ -340,7 +340,13 @@ export function PerformancePanel({ section: sectionProp, onSection, predictedTot
               <YAxis tickFormatter={gbpK} tick={{ fontSize: 12, fill: BRAND.muted }} width={56} />
               <Tooltip
                 formatter={(v, n) => [formatGBP(v), n]}
-                labelFormatter={(d) => `Working day ${d}`}
+                labelFormatter={(d, payload) => {
+                  const iso = payload?.[0]?.payload?.date;
+                  const dateLabel = iso
+                    ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+                    : null;
+                  return dateLabel ? `Working day ${d} · ${dateLabel}` : `Working day ${d}`;
+                }}
                 cursor={{ stroke: BRAND.border }}
               />
               <Legend wrapperStyle={{ fontSize: 12 }} />

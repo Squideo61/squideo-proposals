@@ -12,6 +12,7 @@ export const PERMISSIONS = [
   { slug: 'roles.manage',         group: 'Workspace',  label: 'Manage roles + permissions' },
   { slug: 'settings.manage',      group: 'Workspace',  label: 'Edit workspace settings' },
   { slug: 'finance.manage',       group: 'Workspace',  label: 'View + edit business finance (Cash Flow, Performance, Storage costs)' },
+  { slug: 'finance.pending_payments', group: 'Workspace', label: 'View Pending Payments + mark them predicted (no other finance)' },
   { slug: 'finance.notifications',group: 'Workspace',  label: 'See the sales & finance notifications bell (£)' },
   { slug: 'marketing.access',     group: 'Workspace',  label: 'View Marketing (lead attribution + ad ROAS)' },
 

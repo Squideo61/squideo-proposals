@@ -67,6 +67,17 @@ export function ensureSystemRoles() {
       `;
       if ((fnUpd.count || fnUpd.rowCount || 0) > 0) invalidateRoleCache();
 
+      // Pending Payments view + predicting — for Project/Production Managers
+      // (role 'member'), so they can see all pending payments and flag any as
+      // predicted without the full business-finance grant. Back-filled so it
+      // applies without a migration.
+      const ppUpd = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["finance.pending_payments"]'::jsonb, updated_at = NOW()
+         WHERE id = 'member' AND NOT (permissions @> '["finance.pending_payments"]'::jsonb)
+      `;
+      if ((ppUpd.count || ppUpd.rowCount || 0) > 0) invalidateRoleCache('member');
+
       // The "pending payment marked paid" alert is a new broadcast key — default
       // it ON for Admin / Director / Project Manager so they actually receive it
       // (a key absent from notification_defaults resolves to OFF).

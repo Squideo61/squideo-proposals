@@ -3041,8 +3041,24 @@ export async function statsRoute(req, res, id, action, user) {
     return directorBalanceRoute(req, res, action, user);
   }
 
-  // Whole-business finances — Admin + Director (anyone with finance.manage).
-  if (!hasPermission(await getRole(user.role), 'finance.manage')) {
+  // Pending Payments (read) + predicting are also available to the narrower
+  // finance.pending_payments grant (Project/Production Managers): they can see
+  // every pending payment and flag any as predicted, but nothing else in here.
+  const role = await getRole(user.role);
+  const canFinance = hasPermission(role, 'finance.manage');
+  const canPending = canFinance || hasPermission(role, 'finance.pending_payments');
+  if (id === 'pending') {
+    if (!canPending) return res.status(403).json({ error: 'You do not have permission to view pending payments' });
+    if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(200).json(await pendingPaymentsReport());
+  }
+  if (id === 'predicted-payments') {
+    if (!canPending) return res.status(403).json({ error: 'You do not have permission to view predicted payments' });
+    return predictedPaymentsRoute(req, res, action, user);
+  }
+
+  // Everything else below is whole-business finance — Admin + Director only.
+  if (!canFinance) {
     return res.status(403).json({ error: 'You do not have permission to view business finances' });
   }
 
@@ -3052,9 +3068,6 @@ export async function statsRoute(req, res, id, action, user) {
   }
   if (id === 'pending-manual') {
     return pendingManualRoute(req, res, action, user);
-  }
-  if (id === 'predicted-payments') {
-    return predictedPaymentsRoute(req, res, action, user);
   }
   if (id === 'linkable-deals') {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -3096,10 +3109,6 @@ export async function statsRoute(req, res, id, action, user) {
 
   if (id === 'sales-ledger') {
     return res.status(200).json(await salesLedgerReport(action));
-  }
-
-  if (id === 'pending') {
-    return res.status(200).json(await pendingPaymentsReport());
   }
 
   if (id === 'income') {
