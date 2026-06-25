@@ -1153,8 +1153,17 @@ export function StoreProvider({ children }) {
     deleteDirectorInvoice(id) {
       return api.delete('/api/crm/stats/director-invoice/' + encodeURIComponent(id));
     },
-    setDirectorBalance(email, balanceAdjust) {
-      return api.post('/api/crm/stats/director-balance', { email, balanceAdjust });
+    // Balancing amount = a list of grant lines (each with a note) that sum to
+    // the director's total standing headroom.
+    addDirectorBalanceItem(email, { amount, note }) {
+      const id = 'db_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      return api.post('/api/crm/stats/director-balance', { email, id, amount, note }).then(() => id);
+    },
+    updateDirectorBalanceItem(id, patch) {
+      return api.patch('/api/crm/stats/director-balance/' + encodeURIComponent(id), patch);
+    },
+    deleteDirectorBalanceItem(id) {
+      return api.delete('/api/crm/stats/director-balance/' + encodeURIComponent(id));
     },
 
     // Savings & balances: named bank accounts (each with an actual cleared

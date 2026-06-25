@@ -631,21 +631,121 @@ function prevMonthKey(mk) {
   return `${y}-${String(m).padStart(2, '0')}`;
 }
 
+// The balancing-amount panel: a running total (used this month / granted / left)
+// over a list of grant lines, each with a note for what it covers. The lines sum
+// to d.balanceAdjust, so the headroom maths upstream is unchanged. Collapsed to a
+// single "+ Balance" button until the first line is added.
+function DirBalanceSection({ d, actions, reload }) {
+  const items = d.balanceItems || [];
+  const grant = d.balanceAdjust || 0;              // total granted (sum of lines)
+  const used = d.balanceUsed || 0;                 // how much the overspend drew
+  const grantUsedUp = grant > 0.005 && d.balanceLeft <= 0.005;
+  const accent = grantUsedUp ? '#B45309' : DIRECTOR_ACCENT;
+
+  const [adding, setAdding] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [amt, setAmt] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const startAdd = () => { setEditId(null); setAmt(''); setNote(''); setAdding(true); };
+  const startEdit = (it) => { setAdding(false); setEditId(it.id); setAmt(String(it.amount)); setNote(it.note || ''); };
+  const cancel = () => { setAdding(false); setEditId(null); setAmt(''); setNote(''); };
+
+  const save = () => {
+    const value = parseFloat(amt);
+    if (busy || !Number.isFinite(value)) return;
+    setBusy(true);
+    const p = editId
+      ? actions.updateDirectorBalanceItem(editId, { amount: value, note: note.trim() })
+      : actions.addDirectorBalanceItem(d.email, { amount: value, note: note.trim() });
+    p.then(() => { cancel(); reload(); }).finally(() => setBusy(false));
+  };
+  const remove = (it) => {
+    if (busy) return;
+    setBusy(true);
+    actions.deleteDirectorBalanceItem(it.id).then(reload).finally(() => setBusy(false));
+  };
+
+  const editor = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <input
+        type="text" value={note} placeholder="What's it for?" autoFocus
+        onChange={(e) => setNote(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }}
+        style={{ flex: 1, minWidth: 120, padding: '3px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }}
+      />
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>£<input
+        type="number" step="0.01" value={amt} placeholder="0.00"
+        onChange={(e) => setAmt(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }}
+        style={{ width: 72, padding: '3px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }}
+      /></span>
+      <button className="btn-icon" title="Save" onClick={save} disabled={busy} style={{ padding: 2 }}><Check size={13} /></button>
+      <button className="btn-icon" title="Cancel" onClick={cancel} style={{ padding: 2 }}><X size={13} /></button>
+    </div>
+  );
+
+  // Nothing granted yet and not mid-add → collapsed button.
+  if (items.length === 0 && !adding) {
+    return (
+      <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12, marginTop: 10 }} onClick={startAdd}>
+        <Plus size={13} /> Balance
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 10, padding: '8px 10px', background: BRAND.paper, border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${accent}`, borderRadius: 8 }}>
+      {/* Header: total tally + how much is left, exactly as the old single box. */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Balancing amount</div>
+          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>
+            {used > 0.005
+              ? <>{formatGBP(used)} used this month · {formatGBP(grant)} granted</>
+              : `${formatGBP(grant)} granted · untouched`}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: grantUsedUp ? '#B45309' : PROFIT_POS, lineHeight: 1.1 }}>{formatGBP(d.balanceLeft)}</div>
+          <div style={{ fontSize: 10, color: BRAND.muted }}>left</div>
+        </div>
+      </div>
+
+      {/* The individual grant lines. */}
+      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {items.map((it) => (
+          <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 6, borderTop: '1px solid ' + BRAND.border, paddingTop: 4 }}>
+            {editId === it.id ? editor : (
+              <>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {it.note || <span style={{ color: BRAND.muted, fontStyle: 'italic' }}>No note</span>}
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{formatGBP(it.amount)}</span>
+                <button className="btn-icon" title="Edit" onClick={() => startEdit(it)} style={{ padding: 2 }}><Pencil size={12} /></button>
+                <button className="btn-icon" title="Remove" onClick={() => remove(it)} disabled={busy} style={{ padding: 2 }}><Trash2 size={12} /></button>
+              </>
+            )}
+          </div>
+        ))}
+        {adding && <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 4 }}>{editor}</div>}
+      </div>
+
+      {!adding && editId == null && (
+        <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12, marginTop: 6 }} onClick={startAdd}>
+          <Plus size={13} /> Add balancing amount
+        </button>
+      )}
+    </div>
+  );
+}
+
 function DirectorColumn({ d, month, actions, reload, showMsg }) {
   const [adding, setAdding] = useState(false);
-  const [editingBal, setEditingBal] = useState(false);
-  const [bal, setBal] = useState(String(d.balanceAdjust || 0));
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
   const overspent = d.monthlyRemaining < 0;        // over the monthly £250 + carryover
-  const grant = d.balanceAdjust || 0;              // granted extra spend (separate pot)
-  const used = d.balanceUsed || 0;                 // how much of the grant the overspend drew
-  const grantUsedUp = grant > 0.005 && d.balanceLeft <= 0.005; // grant fully spent
-
-  const saveBal = () => {
-    actions.setDirectorBalance(d.email, parseFloat(bal) || 0).then(() => { setEditingBal(false); reload(); });
-  };
-  const cancelBal = () => { setEditingBal(false); setBal(String(d.balanceAdjust || 0)); };
 
   const onDrop = () => {
     if (dragId && overId && dragId !== overId) {
@@ -676,46 +776,10 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
         <span style={{ color: BRAND.muted }}> · {formatGBP(d.allowance)} monthly{d.carriedIn > 0.005 ? ` + ${formatGBP(d.carriedIn)} carried over` : ''}</span>
       </div>
 
-      {/* Balancing amount — granted EXTRA spend, separate from the £250. Its own
-          tally so it's clear how much of the grant is left when someone overspends
-          (overspending the £250 draws it down, never below zero). Collapsed behind a
-          "+ Balance" button until an amount is set (or the user is mid-edit). */}
-      {(grant > 0 || editingBal) ? (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 10, padding: '8px 10px', background: BRAND.paper, border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${grantUsedUp ? '#B45309' : DIRECTOR_ACCENT}`, borderRadius: 8 }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Balancing amount</div>
-          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>
-            {grant <= 0
-              ? 'Granted extra spend — none set'
-              : used > 0.005
-                ? <>{formatGBP(used)} used this month · {formatGBP(grant)} granted</>
-                : `${formatGBP(grant)} granted · untouched`}
-          </div>
-        </div>
-        {editingBal ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-            £<input
-              type="number" step="0.01" value={bal} autoFocus
-              onChange={(e) => setBal(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') saveBal(); if (e.key === 'Escape') cancelBal(); }}
-              style={{ width: 80, padding: '3px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }}
-            />
-            <button className="btn-icon" title="Save" onClick={saveBal} style={{ padding: 2 }}><Check size={13} /></button>
-            <button className="btn-icon" title="Cancel" onClick={cancelBal} style={{ padding: 2 }}><X size={13} /></button>
-          </span>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 16, fontWeight: 800, color: grant <= 0 ? BRAND.muted : (grantUsedUp ? '#B45309' : PROFIT_POS), lineHeight: 1.1 }}>{formatGBP(d.balanceLeft)}</div>
-              <div style={{ fontSize: 10, color: BRAND.muted }}>left</div>
-            </div>
-            <button className="btn-icon" title="Adjust the granted extra spend" onClick={() => setEditingBal(true)} style={{ padding: 2 }}><Pencil size={12} /></button>
-          </div>
-        )}
-      </div>
-      ) : (
-        <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12, marginTop: 10 }} onClick={() => { setBal(''); setEditingBal(true); }}><Plus size={13} /> Balance</button>
-      )}
+      {/* Balancing amount — granted EXTRA spend, separate from the £250. Now a
+          list of grant lines (each with a note for what it's for) that sum to the
+          total headroom; the running tally + "left" still work exactly as before. */}
+      <DirBalanceSection d={d} actions={actions} reload={reload} />
 
       {/* Expenses. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 4 }}>

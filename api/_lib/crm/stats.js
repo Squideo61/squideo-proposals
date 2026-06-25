@@ -2439,6 +2439,30 @@ function ensureDirectorExpenses() {
         balance_adjust NUMERIC(12,2) NOT NULL DEFAULT 0,
         updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
+    // Itemised balancing amounts: the standing grant is now a list of entries
+    // (each with a note for what it covers) that SUM to the director's total
+    // balance — functionally identical to the old single number. One row per
+    // grant line.
+    await sql`
+      CREATE TABLE IF NOT EXISTS director_balance_items (
+        id             TEXT PRIMARY KEY,
+        director_email TEXT NOT NULL,
+        amount         NUMERIC(12,2) NOT NULL DEFAULT 0,
+        note           TEXT,
+        created_by     TEXT,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_director_balance_items_email ON director_balance_items (director_email)`;
+    // Migrate the legacy single balance_adjust into one itemised entry, then zero
+    // the column so the two never double-count. Idempotent: the deterministic id
+    // means re-running inserts nothing, and once the column is 0 there's nothing
+    // left to migrate.
+    await sql`
+      INSERT INTO director_balance_items (id, director_email, amount, note, created_at)
+      SELECT 'legacy-' || director_email, director_email, balance_adjust, 'Balancing amount', NOW()
+        FROM director_settings WHERE balance_adjust <> 0
+      ON CONFLICT (id) DO NOTHING`;
+    await sql`UPDATE director_settings SET balance_adjust = 0 WHERE balance_adjust <> 0`;
   })().catch((err) => { directorEnsured = null; throw err; });
   return directorEnsured;
 }
@@ -2482,8 +2506,17 @@ async function directorExpensesReport(month) {
   const m = /^\d{4}-\d{2}$/.test(month || '') ? month : curMonthKey();
 
   const rows = await sql`SELECT * FROM director_expenses ORDER BY sort_order ASC NULLS LAST, spent_on DESC NULLS LAST, created_at DESC`;
-  const settings = await sql`SELECT director_email, balance_adjust FROM director_settings`;
-  const balByEmail = new Map(settings.map((s) => [s.director_email.toLowerCase(), Number(s.balance_adjust) || 0]));
+  // Itemised balancing grant — the total is the sum of its lines (legacy single
+  // values were migrated into a line in ensureDirectorExpenses).
+  const balItems = await sql`SELECT id, director_email, amount, note, created_at FROM director_balance_items ORDER BY created_at ASC`;
+  const balItemsByEmail = new Map();
+  const balByEmail = new Map();
+  for (const it of balItems) {
+    const key = it.director_email.toLowerCase();
+    if (!balItemsByEmail.has(key)) balItemsByEmail.set(key, []);
+    balItemsByEmail.get(key).push({ id: it.id, amount: Number(it.amount) || 0, note: it.note || '' });
+    balByEmail.set(key, round2((balByEmail.get(key) || 0) + (Number(it.amount) || 0)));
+  }
 
   const userRows = await sql`SELECT email, name, avatar FROM users`;
   const userByEmail = new Map(userRows.map((u) => [u.email.toLowerCase(), u]));
@@ -2528,7 +2561,8 @@ async function directorExpensesReport(month) {
       createdBy: r.created_by || null,
     }));
 
-    return { email, name: nameFor(email), allowance: DIRECTOR_ALLOWANCE, carriedIn, baseAvailable, balanceAdjust, balanceLeft, balanceUsed, monthlyOver, monthlyRemaining, available, spent, remaining, expenses };
+    const balanceItems = balItemsByEmail.get(email) || [];
+    return { email, name: nameFor(email), allowance: DIRECTOR_ALLOWANCE, carriedIn, baseAvailable, balanceAdjust, balanceItems, balanceLeft, balanceUsed, monthlyOver, monthlyRemaining, available, spent, remaining, expenses };
   });
 
   // "Difference" mirrors the sheet: first director's remaining minus the second.
@@ -2695,19 +2729,46 @@ async function directorZipRoute(req, res, action) {
   return res.status(200).end(zip);
 }
 
-// POST /director-balance  { email, balanceAdjust } — upsert the standing adjustment.
-async function directorBalanceRoute(req, res) {
+// Balancing amounts are now itemised — each a line with an amount and a note —
+// summing to the director's total grant. Same headroom behaviour as before.
+//   POST   /director-balance            { email, id, amount, note }  — add a line
+//   PATCH  /director-balance/<id>       { amount?, note? }           — edit a line
+//   DELETE /director-balance/<id>                                    — remove a line
+async function directorBalanceRoute(req, res, action, user) {
   await ensureDirectorExpenses();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  const body = req.body || {};
-  const email = String(body.email || '').toLowerCase();
-  if (!isDirector(email)) return res.status(400).json({ error: 'Unknown director' });
-  const balanceAdjust = Number(body.balanceAdjust) || 0;
-  await sql`
-    INSERT INTO director_settings (director_email, balance_adjust, updated_at)
-    VALUES (${email}, ${balanceAdjust}, NOW())
-    ON CONFLICT (director_email) DO UPDATE SET balance_adjust = ${balanceAdjust}, updated_at = NOW()`;
-  return res.status(200).json({ ok: true });
+  const itemId = action ? String(action) : null;
+  const actor = (user?.email || '').toLowerCase() || null;
+
+  if (req.method === 'POST' && !itemId) {
+    const body = req.body || {};
+    const email = String(body.email || '').toLowerCase();
+    if (!isDirector(email)) return res.status(400).json({ error: 'Unknown director' });
+    const id = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : makeId('db');
+    const amount = round2(Number(body.amount) || 0);
+    const note = (body.note == null ? '' : String(body.note)).slice(0, 300);
+    await sql`
+      INSERT INTO director_balance_items (id, director_email, amount, note, created_by, created_at)
+      VALUES (${id}, ${email}, ${amount}, ${note}, ${actor}, NOW())
+      ON CONFLICT (id) DO NOTHING`;
+    return res.status(200).json({ ok: true, id });
+  }
+
+  if (req.method === 'PATCH' && itemId) {
+    const [existing] = await sql`SELECT * FROM director_balance_items WHERE id = ${itemId}`;
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const body = req.body || {};
+    const amount = body.amount !== undefined ? round2(Number(body.amount) || 0) : existing.amount;
+    const note = body.note !== undefined ? (body.note == null ? '' : String(body.note)).slice(0, 300) : existing.note;
+    await sql`UPDATE director_balance_items SET amount = ${amount}, note = ${note} WHERE id = ${itemId}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  if (req.method === 'DELETE' && itemId) {
+    await sql`DELETE FROM director_balance_items WHERE id = ${itemId}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
 }
 
 // ── Savings & balances + tax pay dates (Directors tab, below the expenses) ──
@@ -2946,7 +3007,7 @@ export async function statsRoute(req, res, id, action, user) {
     if (id === 'director-zip') return directorZipRoute(req, res, action);
     if (id === 'director-savings') return directorSavingsRoute(req, res, action);
     if (id === 'director-tax') return directorTaxRoute(req, res, action);
-    return directorBalanceRoute(req, res);
+    return directorBalanceRoute(req, res, action, user);
   }
 
   // Whole-business finances — Admin + Director (anyone with finance.manage).
