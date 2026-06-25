@@ -214,7 +214,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
             the same nav drawer, so the top bar stays minimal (logo + one bell +
             avatar) and finally fits a phone. Desktop keeps its section dropdowns. */}
         <button
-          onClick={() => navigate(producer ? 'production' : marketing ? 'marketing' : 'list')}
+          onClick={() => navigate(producer ? 'production' : marketing ? 'marketing' : 'overview')}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginRight: 6, color: BRAND.ink }}
         >
           <Logo size={28} />
