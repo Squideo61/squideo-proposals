@@ -1448,14 +1448,17 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
         bare ? null : <div style={{ padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>{isInvoicedGroup ? 'Nothing invoiced yet.' : 'Nothing outstanding — all collected.'}</div>
       ) : (
         <>
-          {/* Column header — keeps the VAT column visible at all times. */}
-          <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '6px 14px', background: BRAND.paper, borderTop: bare ? '1px solid ' + BRAND.border : undefined, borderBottom: '1px solid ' + BRAND.border, fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-            <span>{kind === 'po' ? 'Customer / PO' : 'Customer / item'}</span>
-            <span style={{ textAlign: 'right' }}>Net</span>
-            <span style={{ textAlign: 'right' }}>VAT</span>
-            {!isMobile && <span style={{ textAlign: 'right' }}>Total</span>}
-            {!isMobile && <span />}
-          </div>
+          {/* Column header — desktop only; mobile rows are stacked cards that
+              carry their own Net/VAT labels, so a grid header would misalign. */}
+          {!isMobile && (
+            <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '6px 14px', background: BRAND.paper, borderTop: bare ? '1px solid ' + BRAND.border : undefined, borderBottom: '1px solid ' + BRAND.border, fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              <span>{kind === 'po' ? 'Customer / PO' : 'Customer / item'}</span>
+              <span style={{ textAlign: 'right' }}>Net</span>
+              <span style={{ textAlign: 'right' }}>VAT</span>
+              <span style={{ textAlign: 'right' }}>Total</span>
+              <span />
+            </div>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {rows.map((r) => (
               <ManualPendingRow
@@ -1480,15 +1483,23 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
           </div>
           {/* Net / VAT / Total footer mirroring the sheet. Hidden in bare mode —
               the combining panel shows the grand total instead. */}
-          {!bare && (
+          {!bare && (isMobile ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 14px', borderTop: '2px solid ' + BRAND.border, fontSize: 13, fontWeight: 700, color: BRAND.ink }}>
+              <span>Total</span>
+              <span style={{ display: 'flex', gap: 14, fontVariantNumeric: 'tabular-nums' }}>
+                <span>Net {formatGBP(total)}</span>
+                <span style={{ color: VAT_COLOR }}>VAT {formatGBP(vatTotal)}</span>
+              </span>
+            </div>
+          ) : (
             <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '8px 14px', borderTop: '2px solid ' + BRAND.border, fontSize: 13, fontWeight: 700, color: BRAND.ink }}>
               <span>Total</span>
               <span style={{ textAlign: 'right' }}>{formatGBP(total)}</span>
               <span style={{ textAlign: 'right', color: VAT_COLOR }}>{formatGBP(vatTotal)}</span>
-              {!isMobile && <span style={{ textAlign: 'right' }}>{formatGBP(grossTotal)}</span>}
-              {!isMobile && <span />}
+              <span style={{ textAlign: 'right' }}>{formatGBP(grossTotal)}</span>
+              <span />
             </div>
-          )}
+          ))}
         </>
       )}
       {!isInvoicedGroup && canManage && <PendingImportPanel actions={actions} kind={kind} count={rows.length} isMobile={isMobile} />}
@@ -1548,49 +1559,68 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
   const predictDateItem = predictDateMenuItem(predict, { key: predictKey }, () => setPredictingDate(true));
   if (predictDateItem) rowActions.push(predictDateItem);
   const isPredicted = !!predict?.keys.has(predictKey);
-  return (
-    <>
-    <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '5px 14px' }}>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          {isCompanyInvoice && !linkedDeal ? (
-            <span title="A company invoice — not linked to a deal" style={{ fontSize: 9, fontWeight: 700, color: '#B45309', background: '#FFFBEB', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              Not linked to a deal
-            </span>
-          ) : linked ? (
-            <span onClick={openLinked}
-              title={linkedCompany
-                ? (r.linkedCompanyName ? `Linked to customer: ${r.linkedCompanyName}` : 'Linked to a customer')
-                : (onOpenDeal ? `Open linked ${dealNoun}` : `Linked to a CRM ${dealNoun}`)}
-              style={{ cursor: canOpen ? 'pointer' : 'default', fontSize: 9, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              {linkedDeal ? (r.isProject ? 'Project' : 'Deal') : linkedCompany ? 'Customer' : 'Linked'}
-            </span>
-          ) : (
-            <span style={{ fontSize: 9, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              Imported
-            </span>
-          )}
-          <span onClick={openLinked} style={{ fontSize: 13, fontWeight: 600, color: canOpen ? BRAND.blue : BRAND.ink, cursor: canOpen ? 'pointer' : 'default', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {r.company || 'Unattributed'}
+  // The customer/item cell — shared by the desktop grid and the mobile card.
+  const nameCell = (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        {isCompanyInvoice && !linkedDeal ? (
+          <span title="A company invoice — not linked to a deal" style={{ fontSize: 9, fontWeight: 700, color: '#B45309', background: '#FFFBEB', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+            Not linked to a deal
           </span>
-          {isPredicted && <PredictedTag />}
-          {linkedCompany && r.linkedCompanyName && r.linkedCompanyName !== r.company && (
-            <span title={`Linked to customer: ${r.linkedCompanyName}`} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>
-              → {r.linkedCompanyName}
-            </span>
-          )}
-        </div>
-        {subtitle && (
-          <div title={subtitle} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{subtitle}</div>
+        ) : linked ? (
+          <span onClick={openLinked}
+            title={linkedCompany
+              ? (r.linkedCompanyName ? `Linked to customer: ${r.linkedCompanyName}` : 'Linked to a customer')
+              : (onOpenDeal ? `Open linked ${dealNoun}` : `Linked to a CRM ${dealNoun}`)}
+            style={{ cursor: canOpen ? 'pointer' : 'default', fontSize: 9, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+            {linkedDeal ? (r.isProject ? 'Project' : 'Deal') : linkedCompany ? 'Customer' : 'Linked'}
+          </span>
+        ) : (
+          <span style={{ fontSize: 9, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
+            Imported
+          </span>
+        )}
+        <span onClick={openLinked} style={{ fontSize: 13, fontWeight: 600, color: canOpen ? BRAND.blue : BRAND.ink, cursor: canOpen ? 'pointer' : 'default', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {r.company || 'Unattributed'}
+        </span>
+        {isPredicted && <PredictedTag />}
+        {linkedCompany && r.linkedCompanyName && r.linkedCompanyName !== r.company && (
+          <span title={`Linked to customer: ${r.linkedCompanyName}`} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>
+            → {r.linkedCompanyName}
+          </span>
         )}
       </div>
-      <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{formatGBP(net)}</div>
-      <div style={{ textAlign: 'right', fontSize: 13, color: vat > 0 ? VAT_COLOR : BRAND.muted }}>{formatGBP(vat)}</div>
-      {!isMobile && <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{formatGBP(net + vat)}</div>}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-        <RowActionsMenu items={rowActions} />
-      </div>
+      {subtitle && (
+        <div title={subtitle} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{subtitle}</div>
+      )}
     </div>
+  );
+  return (
+    <>
+    {isMobile ? (
+      // Mobile: a stacked card — name/badges + ⋮ on top, Net/VAT figures beneath
+      // on their own line so right-aligned amounts can't overlap the labels.
+      <div style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>{nameCell}</div>
+          <div style={{ flexShrink: 0 }}><RowActionsMenu items={rowActions} /></div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 18, fontSize: 12, color: BRAND.muted }}>
+          <span>Net <strong style={{ color: BRAND.ink, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatGBP(net)}</strong></span>
+          <span>VAT <strong style={{ color: vat > 0 ? VAT_COLOR : BRAND.ink, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatGBP(vat)}</strong></span>
+        </div>
+      </div>
+    ) : (
+      <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', borderTop: '1px solid ' + BRAND.border, background: 'white', padding: '5px 14px' }}>
+        {nameCell}
+        <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{formatGBP(net)}</div>
+        <div style={{ textAlign: 'right', fontSize: 13, color: vat > 0 ? VAT_COLOR : BRAND.muted }}>{formatGBP(vat)}</div>
+        <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{formatGBP(net + vat)}</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+          <RowActionsMenu items={rowActions} />
+        </div>
+      </div>
+    )}
     {linkOpen && (
       <LinkPicker
         actions={actions}
@@ -1878,7 +1908,7 @@ function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChang
         <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Paid regardless of project stage · signed deals + imported sheet · {count} {count === 1 ? 'item' : 'items'} · use the ⋮ menu on a row for its actions</div>
       </div>
       {crmRows.map((d) => (
-        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isPo onMarkPoReceived={onMarkPoReceived} />
+        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isPo onMarkPoReceived={onMarkPoReceived} isMobile={isMobile} />
       ))}
       <ManualPendingGroup
         bare
@@ -2249,7 +2279,7 @@ function RowActionsMenu({ items }) {
   );
 }
 
-function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoReceived }) {
+function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoReceived, isMobile = false }) {
   const predict = usePredict();
   const [predictingDate, setPredictingDate] = useState(false);
   const name = d.company || d.title || 'Untitled deal';
@@ -2298,28 +2328,60 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
       onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
       style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: onOpenDeal ? 'pointer' : 'default', padding: '8px 14px' }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {name}
-          </span>
-          {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
-          {single && <PaymentBadge type={single0.type} />}
-          {isPo && <PoStatusPill d={d} />}
-          {isPredicted && <PredictedTag />}
-          {single && single0.invoiced === false && <NotInvoicedTag />}
-          {single && single0.label && (
-            <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
-              {single0.label}
+      {isMobile ? (
+        // Mobile: name + amount + ⋮ on the first line; the badges (PO status,
+        // payment type, predicted…) wrap onto their own line beneath so nothing
+        // runs off the edge.
+        <>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {name}
             </span>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, fontVariantNumeric: 'tabular-nums' }}>{formatGBP(d.outstanding)}</div>
+              {showCommitted && <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>}
+            </div>
+            <div style={{ flexShrink: 0 }}><RowActionsMenu items={rowActions} /></div>
+          </div>
+          {(number || isPo || isPredicted || (single && (single0.type || single0.invoiced === false || single0.label))) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 5 }}>
+              {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
+              {single && <PaymentBadge type={single0.type} />}
+              {isPo && <PoStatusPill d={d} />}
+              {isPredicted && <PredictedTag />}
+              {single && single0.invoiced === false && <NotInvoicedTag />}
+              {single && single0.label && (
+                <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>
+                  {single0.label}
+                </span>
+              )}
+            </div>
           )}
+        </>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {name}
+            </span>
+            {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
+            {single && <PaymentBadge type={single0.type} />}
+            {isPo && <PoStatusPill d={d} />}
+            {isPredicted && <PredictedTag />}
+            {single && single0.invoiced === false && <NotInvoicedTag />}
+            {single && single0.label && (
+              <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+                {single0.label}
+              </span>
+            )}
+          </div>
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(d.outstanding)}</div>
+            {showCommitted && <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>}
+          </div>
+          <RowActionsMenu items={rowActions} />
         </div>
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{formatGBP(d.outstanding)}</div>
-          {showCommitted && <div style={{ fontSize: 11, color: BRAND.muted }}>of {formatGBP(d.committed)}</div>}
-        </div>
-        <RowActionsMenu items={rowActions} />
-      </div>
+      )}
       {subtitle && (
         <div style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {subtitle}
