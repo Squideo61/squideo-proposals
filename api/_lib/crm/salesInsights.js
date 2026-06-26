@@ -19,6 +19,11 @@ const WON_STAGES = new Set(['signed', 'paid', 'long_term']);
 const FUNNEL_STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'interested', 'signed'];
 // Probability weighting per open stage for the weighted forecast.
 const STAGE_PROB = { lead: 0.05, responded: 0.10, proposal_sent: 0.30, viewed: 0.45, interested: 0.65 };
+// Signed deals whose whole sales cycle rounds to "0.0d" (created and signed at
+// effectively the same moment) are imported/back-entered records, not deals
+// genuinely won through the pipeline — they're excluded from the signed-proposal
+// metrics. 0.05d ≈ the point below which the cycle displays as "0.0d".
+const INSTANT_CYCLE_DAYS = 0.05;
 const STAGE_LABEL = {
   lead: 'Lead', responded: 'Responded', proposal_sent: 'Proposal sent', viewed: 'Viewed',
   interested: 'Interested', signed: 'Signed', paid: 'Paid', long_term: 'Long-term', lost: 'Lost',
@@ -133,15 +138,20 @@ async function buildInsights(req) {
     const starts = [r.created_at, firstPropAt, leadAt].filter(Boolean).map((x) => new Date(x).getTime());
     const cycleStartAt = starts.length ? new Date(Math.min(...starts)).toISOString() : r.created_at;
     const value = Number(a.effectiveValue) || 0;
+    const cycleDays = days(cycleStartAt, saleAt);
+    // A 0.0d cycle = created and signed at effectively the same moment → an
+    // imported/back-entered sale, not one won through the pipeline.
+    const isInstant = cycleDays != null && cycleDays < INSTANT_CYCLE_DAYS;
     const hasProposal = a.valueSource === 'proposal' || a.valueSource === 'signed' || (a.proposalCount || 0) > 0;
     const tracking = a.tracking || {};
     return {
       id: r.id, title: r.title, stage, owner: r.owner_email || null,
-      createdAt: r.created_at, cycleStartAt, stageChangedAt: r.stage_changed_at, lastActivityAt: r.last_activity_at,
-      // isSale = a genuine signed proposal: won AND has a real value. £0 won
-      // records (placeholders/test/admin entries with no proposal value) are
-      // not counted as signed proposals, though they stay out of open/lost too.
-      lostReason: r.lost_reason || null, value, isWon, isSale: isWon && value > 0, isLost, isOpen, saleAt,
+      createdAt: r.created_at, cycleStartAt, cycleDays, isInstant, stageChangedAt: r.stage_changed_at, lastActivityAt: r.last_activity_at,
+      // isSale = a genuine signed proposal: won AND a real value AND an actual
+      // sales cycle. £0 won records (placeholders/test) and 0.0d-cycle imports
+      // are excluded from the signed-proposal metrics, while staying out of
+      // open/lost too.
+      lostReason: r.lost_reason || null, value, isWon, isSale: isWon && value > 0 && !isInstant, isInstantSale: isWon && value > 0 && isInstant, isLost, isOpen, saleAt,
       paymentOption: sig?.paymentOption || null, hasProposal,
       proposalOpens: tracking.proposalOpens || 0, lastOpenedAt: tracking.lastOpenedAt || null,
       events,
@@ -168,7 +178,9 @@ async function buildInsights(req) {
   // deal further down the funnel can't be less likely to win than one behind it.
   // Recomputed on every request, so it tracks performance with no training job.
   const PRIOR_STRENGTH = 6;
-  const decidedAll = deals.filter((d) => d.isWon || d.isLost);
+  // Imported 0.0d-cycle wins never travelled the pipeline, so they'd distort the
+  // learned stage win-rates — exclude them (but keep genuine wins and all losses).
+  const decidedAll = deals.filter((d) => (d.isWon && !d.isInstant) || d.isLost);
   const winProb = {};
   const probDetail = [];
   let runMax = 0;
