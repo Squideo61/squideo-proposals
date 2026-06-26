@@ -77,6 +77,15 @@ async function buildInsights(req) {
     signedMap = new Map(sig.map((r) => [r.did, { signedAt: r.signed_at, paymentOption: r.payment_option || null }]));
   } catch { /* no signatures table */ }
 
+  // Earliest proposal per deal — the real "cycle start" for deals that were
+  // auto-created at signature time (their deals.created_at ≈ signed_at, which
+  // would otherwise make the sales cycle look like ~0 days).
+  let firstPropMap = new Map();
+  try {
+    const props = await sql`SELECT deal_id, MIN(created_at) AS first_at FROM proposals WHERE deal_id IS NOT NULL GROUP BY deal_id`;
+    firstPropMap = new Map(props.map((r) => [r.deal_id, r.first_at]));
+  } catch { /* no proposals table */ }
+
   // Stage-change history per deal (for velocity / time-in-stage / max reached).
   const stageEventsByDeal = new Map();
   try {
@@ -100,12 +109,17 @@ async function buildInsights(req) {
     const isLost = stage === 'lost';
     const isOpen = !isWon && !isLost;
     const saleAt = sig?.signedAt || (isWon ? r.stage_changed_at : null);
+    // Cycle starts at the earliest real touch — the deal's creation OR its first
+    // proposal (whichever is earlier), so signature-originated deals aren't 0-day.
+    const firstPropAt = firstPropMap.get(r.id) || null;
+    const starts = [r.created_at, firstPropAt].filter(Boolean).map((x) => new Date(x).getTime());
+    const cycleStartAt = starts.length ? new Date(Math.min(...starts)).toISOString() : r.created_at;
     const value = Number(a.effectiveValue) || 0;
     const hasProposal = a.valueSource === 'proposal' || a.valueSource === 'signed' || (a.proposalCount || 0) > 0;
     const tracking = a.tracking || {};
     return {
       id: r.id, title: r.title, stage, owner: r.owner_email || null,
-      createdAt: r.created_at, stageChangedAt: r.stage_changed_at, lastActivityAt: r.last_activity_at,
+      createdAt: r.created_at, cycleStartAt, stageChangedAt: r.stage_changed_at, lastActivityAt: r.last_activity_at,
       lostReason: r.lost_reason || null, value, isWon, isLost, isOpen, saleAt,
       paymentOption: sig?.paymentOption || null, hasProposal,
       proposalOpens: tracking.proposalOpens || 0, lastOpenedAt: tracking.lastOpenedAt || null,
@@ -131,7 +145,7 @@ async function buildInsights(req) {
   const wonValue = round2(wonInRange.reduce((s, d) => s + d.value, 0));
   const decided = wonInRange.length + lostInRange.length;
   const winRate = pctRate(wonInRange.length, decided);
-  const cycleDaysArr = wonInRange.map((d) => days(d.createdAt, d.saleAt)).filter((n) => n != null && n >= 0);
+  const cycleDaysArr = wonInRange.map((d) => days(d.cycleStartAt, d.saleAt)).filter((n) => n != null && n >= 0);
   const avgCycleDays = cycleDaysArr.length ? round1(cycleDaysArr.reduce((a, b) => a + b, 0) / cycleDaysArr.length) : null;
   const medianCycleDays = cycleDaysArr.length ? round1(median(cycleDaysArr)) : null;
   const wonValues = wonInRange.map((d) => d.value).filter((v) => v > 0);
@@ -177,7 +191,7 @@ async function buildInsights(req) {
     return repMap.get(key);
   };
   for (const d of open) { const r = rep(d.owner); r.openValue += d.value; r.openCount += 1; }
-  for (const d of wonInRange) { const r = rep(d.owner); r.wonCount += 1; r.wonValue += d.value; const c = days(d.createdAt, d.saleAt); if (c != null && c >= 0) r.cycle.push(c); }
+  for (const d of wonInRange) { const r = rep(d.owner); r.wonCount += 1; r.wonValue += d.value; const c = days(d.cycleStartAt, d.saleAt); if (c != null && c >= 0) r.cycle.push(c); }
   for (const d of lostInRange) { rep(d.owner).lostCount += 1; }
   const reps = [...repMap.values()].map((r) => ({
     email: r.email, name: r.name,
@@ -225,10 +239,12 @@ async function buildInsights(req) {
   // ---- Proposal engagement → outcome -----------------------------------------
   const withProposal = deals.filter((d) => d.hasProposal);
   const viewed = withProposal.filter((d) => d.proposalOpens > 0);
-  const signedViewed = viewed.filter((d) => d.isWon).length;
-  const notViewed = withProposal.filter((d) => d.proposalOpens === 0);
-  const signedNotViewed = notViewed.filter((d) => d.isWon).length;
-  // Follow-up: a proposal the client opened, still open, sorted by recency × value.
+  // Win-rate-when-viewed compares DECIDED deals only (won or lost) — including
+  // still-open viewed proposals would wrongly count them as "not won".
+  const decidedProp = withProposal.filter((d) => d.isWon || d.isLost);
+  const viewedDecided = decidedProp.filter((d) => d.proposalOpens > 0);
+  const notViewedDecided = decidedProp.filter((d) => d.proposalOpens === 0);
+  // Follow-up: a proposal the client opened, still open, sorted by recency.
   const followUp = open.filter((d) => d.hasProposal && d.proposalOpens > 0 && d.lastOpenedAt)
     .sort((a, b) => new Date(b.lastOpenedAt) - new Date(a.lastOpenedAt))
     .slice(0, 10)
@@ -237,8 +253,8 @@ async function buildInsights(req) {
     sent: withProposal.length,
     viewed: viewed.length,
     viewRate: pctRate(viewed.length, withProposal.length),
-    winRateViewed: pctRate(signedViewed, viewed.length),
-    winRateNotViewed: pctRate(signedNotViewed, notViewed.length),
+    winRateViewed: pctRate(viewedDecided.filter((d) => d.isWon).length, viewedDecided.length),
+    winRateNotViewed: pctRate(notViewedDecided.filter((d) => d.isWon).length, notViewedDecided.length),
     followUp,
   };
 
