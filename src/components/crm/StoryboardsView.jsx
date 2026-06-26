@@ -375,7 +375,7 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
                     ))}
                   </div>
                 )}
-                <DraftComments version={v} comments={comments} />
+                <DraftComments projectId={projectId} version={v} comments={comments} />
               </>
             )}
           </div>
@@ -388,7 +388,8 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
 // Comments for one draft, grouped by slide. Slides with anchored comments show
 // the rendered slide with read-only numbered pins so the producer sees exactly
 // where each note points.
-function DraftComments({ version, comments }) {
+function DraftComments({ projectId, version, comments }) {
+  const { actions } = useStore();
   if (comments.length === 0) {
     return (
       <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
