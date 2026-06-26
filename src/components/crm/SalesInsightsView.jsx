@@ -7,6 +7,7 @@ import {
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
+import { computeRange, rangeHeading, fmtRangeDates, RangeControl } from './dateRange.jsx';
 
 const CARD_SHADOW = '0 1px 2px rgba(16,42,61,0.05)';
 const STAGE_COLOR = {
@@ -14,18 +15,8 @@ const STAGE_COLOR = {
   interested: '#7C3AED', signed: '#16A34A', paid: '#15803D', long_term: '#0D9488', lost: '#DC2626',
 };
 
-const dstr = (d) => d.toISOString().slice(0, 10);
-function computeRange(key) {
-  const now = new Date();
-  const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  let from, label;
-  if (key === '30d') { from = new Date(to.getTime() - 29 * 86400000); label = 'Last 30 days'; }
-  else if (key === '90d') { from = new Date(to.getTime() - 89 * 86400000); label = 'Last 90 days'; }
-  else if (key === 'ytd') { from = new Date(Date.UTC(now.getUTCFullYear(), 0, 1)); label = now.getUTCFullYear() + ' to date'; }
-  else { from = new Date(to.getTime() - 364 * 86400000); label = 'Last 12 months'; }
-  return { from: dstr(from), to: dstr(to), label };
-}
-const PRESETS = [{ k: '30d', l: '30 days' }, { k: '90d', l: '90 days' }, { k: '12m', l: '12 months' }, { k: 'ytd', l: 'This year' }];
+// Persist the chosen range across navigation (module-level, like the other dashboards).
+const salesRangeMemory = { range: { mode: 'preset', days: 365 } };
 
 const fmtDays = (n) => (n == null ? '—' : (n >= 100 ? Math.round(n) : Number(n).toFixed(n < 10 ? 1 : 0)) + 'd');
 const fmtPct = (n) => (n == null ? '—' : Number(n).toFixed(1) + '%');
@@ -39,10 +30,11 @@ const ago = (iso) => {
 export function SalesInsightsView({ onBack, onOpenDeal }) {
   const { actions } = useStore();
   const isMobile = useIsMobile();
-  const [rangeKey, setRangeKey] = useState('12m');
+  const [range, setRange] = useState(salesRangeMemory.range);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const { from, to, label } = useMemo(() => computeRange(rangeKey), [rangeKey]);
+  useEffect(() => { salesRangeMemory.range = range; }, [range]);
+  const { from, to } = useMemo(() => computeRange(range), [range]);
 
   useEffect(() => {
     let active = true;
@@ -65,21 +57,18 @@ export function SalesInsightsView({ onBack, onOpenDeal }) {
           <Gauge size={22} style={{ color: BRAND.blue }} /> Sales Insights
         </h1>
         <div style={{ flex: 1 }} />
-        <div style={{ display: 'inline-flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2 }}>
-          {PRESETS.map((p) => (
-            <button key={p.k} onClick={() => setRangeKey(p.k)} style={segBtn(rangeKey === p.k)}>{p.l}</button>
-          ))}
-        </div>
+        <RangeControl range={range} setRange={setRange} />
       </header>
 
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 17, fontWeight: 700, color: BRAND.ink }}>{label}</span>
+        <span style={{ fontSize: 17, fontWeight: 700, color: BRAND.ink }}>{rangeHeading(range)}</span>
+        <span style={{ fontSize: 13, color: BRAND.muted }}>{fmtRangeDates(from, to)}</span>
         <span style={{ fontSize: 13, color: BRAND.muted }}>
-          Pipeline figures are live; win rate, cycle time, forecasts &amp; bookings cover the period.
+          · Pipeline is live; win rate, cycle, forecast &amp; bookings cover the period.
         </span>
       </div>
 
-      {loading && !data ? <Loading /> : !data ? <Failed onRetry={() => setRangeKey((k) => k)} /> : (
+      {loading && !data ? <Loading /> : !data ? <Failed onRetry={() => setRange((r) => ({ ...r }))} /> : (
         <Insights data={data} isMobile={isMobile} onOpenDeal={onOpenDeal} />
       )}
     </div>
@@ -96,7 +85,7 @@ function Insights({ data, isMobile, onOpenDeal }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 26 }}>
         <Stat icon={Wallet} label="Open pipeline" value={formatGBP(k.openValue)} sub={`${k.openCount || 0} open deals`} accent="#0EA5E9" />
         <Stat icon={Target} label="Weighted forecast" value={formatGBP(k.weightedForecast)} sub="stage-probability weighted" accent="#7C3AED" />
-        <Stat icon={Trophy} label="Bookings" value={formatGBP(k.wonValue)} sub={`${k.wonCount || 0} signed`} accent="#16A34A" colorValue />
+        <Stat icon={Trophy} label="Signed Proposals" value={formatGBP(k.wonValue)} sub={`${k.wonCount || 0} signed`} accent="#16A34A" colorValue />
         <Stat icon={Activity} label="Win rate" value={fmtPct(k.winRate)} sub={`${k.wonCount || 0} won · ${k.lostCount || 0} lost`} accent={k.winRate != null && k.winRate >= 40 ? '#16A34A' : '#F59E0B'} colorValue />
         <Stat icon={Clock} label="Avg sales cycle" value={fmtDays(k.avgCycleDays)} sub={k.medianCycleDays != null ? `median ${fmtDays(k.medianCycleDays)}` : null} accent="#F59E0B" />
         <Stat icon={PoundSterling} label="Avg deal size" value={k.avgDealValue == null ? '—' : formatGBP(k.avgDealValue)} sub={k.medianDealValue != null ? `median ${formatGBP(k.medianDealValue)}` : null} accent="#16A34A" />
@@ -114,8 +103,8 @@ function Insights({ data, isMobile, onOpenDeal }) {
         </div>
       </div>
 
-      {/* Bookings trend */}
-      <SectionLabel>Bookings — signed value by month</SectionLabel>
+      {/* Signed proposals trend */}
+      <SectionLabel>Signed proposals — value by month</SectionLabel>
       <Panel style={{ marginBottom: 26 }}>
         <BookingsTrend rows={data.trend || []} />
       </Panel>
@@ -159,10 +148,6 @@ function Insights({ data, isMobile, onOpenDeal }) {
 
 // ---- pieces ---------------------------------------------------------------
 
-const segBtn = (active) => ({
-  padding: '5px 12px', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13,
-  fontWeight: active ? 600 : 500, color: active ? 'white' : BRAND.ink, background: active ? BRAND.blue : 'transparent',
-});
 function SectionLabel({ children }) {
   return <h2 style={{ fontSize: 12.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6, margin: '0 0 12px' }}>{children}</h2>;
 }
