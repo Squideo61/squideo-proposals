@@ -1210,6 +1210,32 @@ const TAX_KIND_META = {
   personal_tax:  { label: 'Personal Tax',  color: '#B45309', bg: '#FEF3C7', border: '#FDE68A' },
   other:         { label: 'Other',         color: '#475569', bg: '#F1F5F9', border: '#E2E8F0' },
 };
+// Payments are grouped by who they're for. Order is fixed: Adam, Ben, Company.
+const TAX_PERSON_META = {
+  adam:    { label: 'Adam',    heading: "Adam's payments" },
+  ben:     { label: 'Ben',     heading: "Ben's payments" },
+  company: { label: 'Company', heading: 'Company' },
+};
+const TAX_PERSON_ORDER = ['adam', 'ben', 'company'];
+function deriveTaxTitle(kind, person) {
+  const k = (TAX_KIND_META[kind] || TAX_KIND_META.other).label;
+  return person === 'adam' || person === 'ben' ? `${k} — ${TAX_PERSON_META[person].label}` : k;
+}
+
+// Dates where both Adam and Ben have something due — sum each person's amount on
+// that day and report the gap between them (the user wants the difference, not a
+// combined total). Returns [{ dueDate, adam, ben, diff }] sorted by date.
+function sameDayGaps(payments) {
+  const adam = {}, ben = {};
+  for (const p of payments) {
+    if (p.person === 'adam') adam[p.dueDate] = (adam[p.dueDate] || 0) + p.amount;
+    else if (p.person === 'ben') ben[p.dueDate] = (ben[p.dueDate] || 0) + p.amount;
+  }
+  return Object.keys(adam)
+    .filter((d) => ben[d] != null)
+    .sort()
+    .map((d) => ({ dueDate: d, adam: adam[d], ben: ben[d], diff: Math.abs(adam[d] - ben[d]) }));
+}
 
 function TaxPaymentsSection({ isMobile }) {
   const { state, actions, showMsg } = useStore();
@@ -1218,6 +1244,13 @@ function TaxPaymentsSection({ isMobile }) {
   useEffect(() => { actions.loadDirectorTaxPayments(); }, [actions, state.financeRefresh]);
   const data = state.directorTaxPayments;
   const reload = () => actions.loadDirectorTaxPayments();
+
+  const payments = data?.payments || [];
+  const refs = data?.refs || {};
+  const groups = TAX_PERSON_ORDER
+    .map((person) => ({ person, items: payments.filter((p) => p.person === person) }))
+    .filter((g) => g.items.length);
+  const gaps = sameDayGaps(payments);
 
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${DIRECTOR_ACCENT}`, borderRadius: 12, padding: isMobile ? 14 : '14px 18px', marginTop: 16 }}>
@@ -1231,14 +1264,33 @@ function TaxPaymentsSection({ isMobile }) {
         Reminders email you and Ben 7 days before (move it out of Shawbrook so it clears) and again the next day (pay HMRC, with the reference).
       </div>
 
-      {adding && <TaxPaymentForm actions={actions} showMsg={showMsg} onDone={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} />}
+      {adding && <TaxPaymentForm actions={actions} showMsg={showMsg} refs={refs} onDone={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} />}
+
+      {gaps.length > 0 && (
+        <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 8, padding: '8px 12px', margin: '8px 0', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {gaps.map((g) => (
+            <div key={g.dueDate} style={{ fontSize: 12, color: '#9A3412', display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 6 }}>
+              <strong style={{ color: '#7C2D12' }}>{fmtDueDate(g.dueDate)}</strong>
+              <span>Adam {formatGBP(g.adam)} vs Ben {formatGBP(g.ben)}</span>
+              <span>· difference <strong>{formatGBP(g.diff)}</strong></span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {!data ? (
         <div style={{ color: BRAND.muted, fontSize: 13, padding: '8px 0' }}>Loading…</div>
-      ) : data.payments.length === 0 && !adding ? (
+      ) : payments.length === 0 && !adding ? (
         <div style={{ color: BRAND.muted, fontSize: 13, padding: '8px 0' }}>No tax payments logged. Add one to get reminders before it's due.</div>
       ) : (
-        data.payments.map((p) => <TaxPaymentRow key={p.id} payment={p} actions={actions} reload={reload} />)
+        groups.map((g) => (
+          <div key={g.person} style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, padding: '2px 0' }}>
+              {TAX_PERSON_META[g.person].heading}
+            </div>
+            {g.items.map((p) => <TaxPaymentRow key={p.id} payment={p} actions={actions} refs={refs} reload={reload} />)}
+          </div>
+        ))
       )}
     </div>
   );
@@ -1256,14 +1308,14 @@ function daysUntilDate(d) {
   return Math.round((new Date(d + 'T00:00:00Z').getTime() - today) / 86400000);
 }
 
-function TaxPaymentRow({ payment, actions, reload }) {
+function TaxPaymentRow({ payment, actions, refs, reload }) {
   const [editing, setEditing] = useState(false);
   const meta = TAX_KIND_META[payment.kind] || TAX_KIND_META.other;
   const left = daysUntilDate(payment.dueDate);
   const remove = () => { if (window.confirm(`Delete "${payment.title}"?`)) actions.deleteTaxPayment(payment.id).then(reload); };
 
   if (editing) {
-    return <TaxPaymentForm payment={payment} actions={actions} onDone={() => { setEditing(false); reload(); }} onCancel={() => setEditing(false)} />;
+    return <TaxPaymentForm payment={payment} actions={actions} refs={refs} onDone={() => { setEditing(false); reload(); }} onCancel={() => setEditing(false)} />;
   }
 
   return (
@@ -1285,20 +1337,29 @@ function TaxPaymentRow({ payment, actions, reload }) {
   );
 }
 
-function TaxPaymentForm({ payment, actions, showMsg, onDone, onCancel }) {
+function TaxPaymentForm({ payment, actions, refs, showMsg, onDone, onCancel }) {
   const editing = !!payment;
-  const [title, setTitle] = useState(payment?.title || '');
-  const [kind, setKind] = useState(payment?.kind || 'vat');
+  const [person, setPerson] = useState(payment?.person || 'adam');
+  const [kind, setKind] = useState(payment?.kind || 'personal_tax');
   const [dueDate, setDueDate] = useState(payment?.dueDate || todayKey());
   const [amount, setAmount] = useState(payment ? String(payment.amount) : '');
   const [reference, setReference] = useState(payment?.reference || '');
   const [note, setNote] = useState(payment?.note || '');
   const [busy, setBusy] = useState(false);
+  // Personal-tax references are constant per director, so pre-fill the saved one
+  // until the user types their own. We stop auto-filling once they edit it (or
+  // when editing an existing payment, which already has its reference).
+  const [refTouched, setRefTouched] = useState(editing);
+
+  useEffect(() => {
+    if (refTouched) return;
+    setReference(kind === 'personal_tax' && (person === 'adam' || person === 'ben') ? (refs?.[person] || '') : '');
+  }, [person, kind, refs, refTouched]);
 
   const submit = async () => {
-    if (!title.trim() || !dueDate || busy) return;
+    if (!dueDate || busy) return;
     setBusy(true);
-    const body = { title: title.trim(), kind, dueDate, amount: parseFloat(amount) || 0, reference: reference.trim() || null, note: note.trim() || null };
+    const body = { title: deriveTaxTitle(kind, person), kind, person, dueDate, amount: parseFloat(amount) || 0, reference: reference.trim() || null, note: note.trim() || null };
     try {
       if (editing) await actions.updateTaxPayment(payment.id, body);
       else await actions.addTaxPayment(body);
@@ -1307,15 +1368,21 @@ function TaxPaymentForm({ payment, actions, showMsg, onDone, onCancel }) {
     finally { setBusy(false); }
   };
 
+  const selStyle = { padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13, background: 'white', color: BRAND.ink };
+
   return (
     <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, margin: '8px 0' }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <input autoFocus placeholder="Title (e.g. 2026 Q1 VAT, Personal Tax — Ben)" value={title} onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-          style={{ flex: 1, minWidth: 180, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
-        <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13, background: 'white', color: BRAND.ink }}>
+        <label style={{ fontSize: 12, color: BRAND.muted, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          For
+          <select autoFocus value={person} onChange={(e) => setPerson(e.target.value)} style={selStyle}>
+            {TAX_PERSON_ORDER.map((p) => <option key={p} value={p}>{TAX_PERSON_META[p].label}</option>)}
+          </select>
+        </label>
+        <select value={kind} onChange={(e) => setKind(e.target.value)} style={selStyle}>
           {Object.entries(TAX_KIND_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
         </select>
+        <span style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>{deriveTaxTitle(kind, person)}</span>
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
         <label style={{ fontSize: 12, color: BRAND.muted, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -1326,7 +1393,7 @@ function TaxPaymentForm({ payment, actions, showMsg, onDone, onCancel }) {
         <input type="number" step="0.01" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
           style={{ width: 110, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
-        <input placeholder="HMRC reference" value={reference} onChange={(e) => setReference(e.target.value)}
+        <input placeholder="HMRC reference" value={reference} onChange={(e) => { setReference(e.target.value); setRefTouched(true); }}
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
           style={{ flex: 1, minWidth: 140, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
       </div>
@@ -1335,7 +1402,7 @@ function TaxPaymentForm({ payment, actions, showMsg, onDone, onCancel }) {
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
           style={{ flex: 1, minWidth: 160, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12 }} />
         <button className="btn-ghost" style={{ padding: '4px 8px', marginLeft: 'auto' }} onClick={onCancel}><X size={13} /></button>
-        <button className="btn" style={{ padding: '5px 10px' }} onClick={submit} disabled={!title.trim() || !dueDate || busy}><Check size={13} /> {busy ? 'Saving…' : (editing ? 'Save' : 'Add')}</button>
+        <button className="btn" style={{ padding: '5px 10px' }} onClick={submit} disabled={!dueDate || busy}><Check size={13} /> {busy ? 'Saving…' : (editing ? 'Save' : 'Add')}</button>
       </div>
     </div>
   );

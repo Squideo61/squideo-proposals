@@ -2876,6 +2876,23 @@ function ensureDirectorFinance() {
         updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await sql`CREATE INDEX IF NOT EXISTS idx_tax_payments_due ON director_tax_payments (due_date)`;
+    // Group payments by who they're for; back-fill legacy rows from the title.
+    await sql`ALTER TABLE director_tax_payments ADD COLUMN IF NOT EXISTS person TEXT`;
+    await sql`
+      UPDATE director_tax_payments
+         SET person = CASE
+                        WHEN title ILIKE '%adam%' THEN 'adam'
+                        WHEN title ILIKE '%ben%'  THEN 'ben'
+                        ELSE 'company'
+                      END
+       WHERE person IS NULL`;
+    // Each director's constant HMRC personal-tax reference, so it's pre-filled.
+    await sql`
+      CREATE TABLE IF NOT EXISTS director_tax_refs (
+        person      TEXT PRIMARY KEY,
+        reference   TEXT,
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
   })().catch((err) => { directorFinanceEnsured = null; throw err; });
   return directorFinanceEnsured;
 }
@@ -2974,16 +2991,35 @@ async function directorSavingsRoute(req, res, action) {
 
 // GET → upcoming tax payments (sorted by due date). POST add · {reorder} · PATCH/:id · DELETE/:id
 const TAX_KINDS = new Set(['vat', 'corp_tax', 'personal_tax', 'other']);
+const TAX_PERSONS = new Set(['adam', 'ben', 'company']);
+const TAX_PERSON_NAMES = { adam: 'Adam', ben: 'Ben', company: 'Company' };
+const TAX_KIND_LABELS = { vat: 'VAT', corp_tax: 'Corp Tax', personal_tax: 'Personal Tax', other: 'Other' };
+// Auto-build a readable title from kind + person so neither has to be typed.
+function deriveTaxTitle(kind, person) {
+  const k = TAX_KIND_LABELS[kind] || 'Payment';
+  return person === 'adam' || person === 'ben' ? `${k} — ${TAX_PERSON_NAMES[person]}` : k;
+}
+// Keep a director's saved personal-tax reference in step with the latest entry.
+async function saveTaxRef(person, kind, reference) {
+  if (kind !== 'personal_tax' || (person !== 'adam' && person !== 'ben') || !reference) return;
+  await sql`
+    INSERT INTO director_tax_refs (person, reference, updated_at) VALUES (${person}, ${reference}, NOW())
+    ON CONFLICT (person) DO UPDATE SET reference = EXCLUDED.reference, updated_at = NOW()`;
+}
 async function directorTaxRoute(req, res, action) {
   await ensureDirectorFinance();
 
   if (req.method === 'GET') {
     const rows = await sql`SELECT * FROM director_tax_payments ORDER BY due_date ASC, sort_order ASC NULLS LAST, created_at ASC`;
     const payments = rows.map((r) => ({
-      id: r.id, title: r.title, kind: r.kind || 'other', dueDate: dateKey(r.due_date),
+      id: r.id, title: r.title, kind: r.kind || 'other', person: TAX_PERSONS.has(r.person) ? r.person : 'company',
+      dueDate: dateKey(r.due_date),
       amount: Number(r.amount) || 0, reference: r.reference || null, note: r.note || null,
     }));
-    return res.status(200).json({ payments });
+    const refRows = await sql`SELECT person, reference FROM director_tax_refs`;
+    const refs = {};
+    for (const r of refRows) refs[r.person] = r.reference || null;
+    return res.status(200).json({ payments, refs });
   }
 
   if (req.method === 'POST') {
@@ -2997,19 +3033,20 @@ async function directorTaxRoute(req, res, action) {
       }
       return res.status(200).json({ ok: true });
     }
-    const title = trimOrNull(body.title);
     const dueDate = trimOrNull(body.dueDate);
-    if (!title) return res.status(400).json({ error: 'title required' });
     if (!dueDate || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return res.status(400).json({ error: 'valid dueDate required' });
     const kind = TAX_KINDS.has(body.kind) ? body.kind : 'other';
+    const person = TAX_PERSONS.has(body.person) ? body.person : 'company';
+    const title = trimOrNull(body.title) || deriveTaxTitle(kind, person);
     const amount = Number(body.amount) || 0;
     const reference = trimOrNull(body.reference) || null;
     const note = trimOrNull(body.note) || null;
     const id = makeId('tax');
     const [{ m: maxOrder }] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM director_tax_payments`;
     await sql`
-      INSERT INTO director_tax_payments (id, title, kind, due_date, amount, reference, note, sort_order)
-      VALUES (${id}, ${title}, ${kind}, ${dueDate}, ${amount}, ${reference}, ${note}, ${maxOrder + 1})`;
+      INSERT INTO director_tax_payments (id, title, kind, person, due_date, amount, reference, note, sort_order)
+      VALUES (${id}, ${title}, ${kind}, ${person}, ${dueDate}, ${amount}, ${reference}, ${note}, ${maxOrder + 1})`;
+    await saveTaxRef(person, kind, reference);
     return res.status(200).json({ ok: true, id });
   }
 
@@ -3018,8 +3055,12 @@ async function directorTaxRoute(req, res, action) {
     const [existing] = await sql`SELECT * FROM director_tax_payments WHERE id = ${action}`;
     if (!existing) return res.status(404).json({ error: 'Not found' });
     const body = req.body || {};
-    const title = body.title !== undefined ? (trimOrNull(body.title) || existing.title) : existing.title;
     const kind = body.kind !== undefined ? (TAX_KINDS.has(body.kind) ? body.kind : 'other') : existing.kind;
+    const person = body.person !== undefined ? (TAX_PERSONS.has(body.person) ? body.person : 'company') : (TAX_PERSONS.has(existing.person) ? existing.person : 'company');
+    // An explicit title wins; otherwise keep the stored one, re-deriving it when
+    // kind/person changed so the auto-title tracks the new selection.
+    const title = body.title !== undefined ? (trimOrNull(body.title) || deriveTaxTitle(kind, person))
+      : (kind !== existing.kind || person !== existing.person ? deriveTaxTitle(kind, person) : existing.title);
     const dueDate = body.dueDate !== undefined ? (/^\d{4}-\d{2}-\d{2}$/.test(body.dueDate || '') ? body.dueDate : dateKey(existing.due_date)) : dateKey(existing.due_date);
     const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
     const reference = body.reference !== undefined ? (trimOrNull(body.reference) || null) : existing.reference;
@@ -3029,15 +3070,16 @@ async function directorTaxRoute(req, res, action) {
     if (reschedule) {
       await sql`
         UPDATE director_tax_payments
-           SET title = ${title}, kind = ${kind}, due_date = ${dueDate}, amount = ${amount}, reference = ${reference}, note = ${note},
+           SET title = ${title}, kind = ${kind}, person = ${person}, due_date = ${dueDate}, amount = ${amount}, reference = ${reference}, note = ${note},
                reminded_transfer1_at = NULL, reminded_transfer2_at = NULL, updated_at = NOW()
          WHERE id = ${action}`;
     } else {
       await sql`
         UPDATE director_tax_payments
-           SET title = ${title}, kind = ${kind}, due_date = ${dueDate}, amount = ${amount}, reference = ${reference}, note = ${note}, updated_at = NOW()
+           SET title = ${title}, kind = ${kind}, person = ${person}, due_date = ${dueDate}, amount = ${amount}, reference = ${reference}, note = ${note}, updated_at = NOW()
          WHERE id = ${action}`;
     }
+    await saveTaxRef(person, kind, reference);
     return res.status(200).json({ ok: true });
   }
 
