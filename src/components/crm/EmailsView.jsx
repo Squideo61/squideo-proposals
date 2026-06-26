@@ -1013,6 +1013,7 @@ function BulkBar({ folder, count, allSelected, onToggleAll, onClear, onBulk }) {
 
 function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selected, onToggleSelect, href }) {
   const { state } = useStore();
+  const isMobile = useIsMobile();
   const [hover, setHover] = useState(false);
   const chips = state.threadDeals?.[row.id] || [];
   // Conversations tied to a CRM deal get a left-accent stripe + faint tint in
@@ -1024,6 +1025,82 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
     || displayName(row.from) || row.fromEmail || '(unknown)';
   // Sent rows read like Gmail's Sent: "To: <recipient>" rather than the sender.
   const whoLabel = folder === 'sent' ? 'To: ' + who : who;
+  const rowBg = selected ? '#FEF9E7' : row.unread ? '#F4FAFE' : stageC ? stageC.fg + '12' : 'white';
+  const canArchive = folder !== 'trash' && folder !== 'spam' && folder !== 'sent' && folder !== 'drafts';
+
+  // On a phone the desktop's single-row layout (fixed-width sender + flex
+  // subject + inline date + action cluster) overflows and the pieces collide.
+  // Mobile gets a stacked, tappable card: sender + date on top, subject and a
+  // one-line snippet below, deal/tracking chips on a meta line, and the
+  // archive/delete actions as a small touch-target column on the right.
+  if (isMobile) {
+    const mBtn = { padding: 7, borderRadius: 8 };
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'stretch', gap: 8, padding: '10px 12px',
+        borderTop: first ? 'none' : '1px solid ' + BRAND.border,
+        borderLeft: '3px solid ' + (stageC ? stageC.fg : 'transparent'),
+        background: rowBg,
+      }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, flexShrink: 0, paddingTop: 2 }}>
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={onToggleSelect}
+            onClick={(e) => e.stopPropagation()}
+            aria-label="Select conversation"
+            style={{ width: 18, height: 18, cursor: 'pointer' }}
+          />
+          <button
+            onClick={(e) => { e.stopPropagation(); onAction(row.starred ? 'unstar' : 'star', row.id); }}
+            title={row.starred ? 'Unstar' : 'Star'}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: row.starred ? '#F59E0B' : BRAND.muted }}
+          >
+            <Star size={17} fill={row.starred ? '#F59E0B' : 'none'} />
+          </button>
+        </div>
+        <a
+          href={href}
+          onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); onOpen(); }}
+          style={{ flex: 1, minWidth: 0, display: 'block', textDecoration: 'none', color: 'inherit' }}
+        >
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: row.unread ? 700 : 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{whoLabel}</span>
+            <CountPill n={row.messageCount} />
+            <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, color: BRAND.muted }}>{formatMailDate(row.date)}</span>
+          </div>
+          <div style={{ fontSize: 13.5, fontWeight: row.unread ? 600 : 400, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
+            {row.subject || '(no subject)'}
+          </div>
+          {row.snippet && (
+            <div style={{ fontSize: 12.5, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
+              {decodeHtmlEntities(row.snippet)}
+            </div>
+          )}
+          {(chips.length > 0 || row.tracking?.tracked || row.hasAttachments) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+              {chips.length > 0 && <StagePill stage={chips[0].stage} />}
+              {chips.length > 1 && <span style={{ fontSize: 10.5, fontWeight: 700, color: BRAND.muted }}>+{chips.length - 1}</span>}
+              <TrackingEye tracking={row.tracking} />
+              {row.hasAttachments && <Paperclip size={13} color={BRAND.muted} title="Has attachment" />}
+            </div>
+          )}
+        </a>
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, flexShrink: 0 }}>
+          {row.unread && (
+            <button onClick={() => onAction('markRead', row.id)} className="btn-icon" style={mBtn} title="Mark read" aria-label="Mark read"><MailOpen size={16} /></button>
+          )}
+          {canArchive && (
+            <button onClick={() => onAction('archive', row.id)} className="btn-icon" style={mBtn} title="Archive" aria-label="Archive"><Archive size={16} /></button>
+          )}
+          {folder === 'trash'
+            ? <button onClick={() => onAction('untrash', row.id)} className="btn-icon" style={mBtn} title="Restore" aria-label="Restore"><RefreshCw size={16} /></button>
+            : <button onClick={() => onAction('trash', row.id)} className="btn-icon" style={mBtn} title="Delete" aria-label="Delete"><Trash2 size={16} /></button>}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       onMouseEnter={() => setHover(true)}

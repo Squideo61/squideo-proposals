@@ -19,6 +19,10 @@ const STAGE_COLOR = {
 const salesRangeMemory = { range: { mode: 'month', month: thisMonthStr() } };
 
 const fmtDays = (n) => (n == null ? '—' : (n >= 100 ? Math.round(n) : Number(n).toFixed(n < 10 ? 1 : 0)) + 'd');
+// Headline KPI currency: whole pounds only. The pence are noise at this size and
+// — more importantly — dropping them keeps the big number on one line so it never
+// breaks mid-digit (e.g. "£69,05⏎0.00") on a narrow phone.
+const fmtGBP0 = (n) => (n == null ? '—' : '£' + Math.round(Number(n) || 0).toLocaleString('en-GB'));
 const fmtPct = (n) => (n == null ? '—' : Number(n).toFixed(1) + '%');
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
 const monthShort = (k) => { const [y, m] = k.split('-').map(Number); return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' }); };
@@ -98,13 +102,13 @@ function Insights({ data, isMobile, onOpenDeal }) {
   return (
     <div>
       {/* KPI strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 26 }}>
-        <Stat icon={Wallet} label="Open pipeline" value={formatGBP(k.openValue)} sub={`${k.openCount || 0} open deals`} accent="#0EA5E9" />
-        <Stat icon={Target} label="Weighted forecast" value={formatGBP(k.weightedForecast)} sub={fmSub} title={fmTip} accent="#7C3AED" />
-        <Stat icon={Trophy} label="Signed Proposals" value={formatGBP(k.wonValue)} sub={`${k.wonCount || 0} signed`} accent="#16A34A" colorValue />
-        <Stat icon={Activity} label="Win rate" value={fmtPct(k.winRate)} sub={`${k.wonCount || 0} won · ${k.lostCount || 0} lost`} accent={k.winRate != null && k.winRate >= 40 ? '#16A34A' : '#F59E0B'} colorValue />
-        <Stat icon={Clock} label="Avg sales cycle" value={fmtDays(k.avgCycleDays)} sub={k.medianCycleDays != null ? `median ${fmtDays(k.medianCycleDays)}` : null} accent="#F59E0B" />
-        <Stat icon={PoundSterling} label="Avg deal size" value={k.avgDealValue == null ? '—' : formatGBP(k.avgDealValue)} sub={k.medianDealValue != null ? `median ${formatGBP(k.medianDealValue)}` : null} accent="#16A34A" />
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 26 }}>
+        <Stat icon={Wallet} label="Open pipeline" value={fmtGBP0(k.openValue)} sub={`${k.openCount || 0} open deals`} accent="#0EA5E9" isMobile={isMobile} />
+        <Stat icon={Target} label="Weighted forecast" value={fmtGBP0(k.weightedForecast)} sub={fmSub} title={fmTip} accent="#7C3AED" isMobile={isMobile} />
+        <Stat icon={Trophy} label="Signed Proposals" value={fmtGBP0(k.wonValue)} sub={`${k.wonCount || 0} signed`} accent="#16A34A" colorValue isMobile={isMobile} />
+        <Stat icon={Activity} label="Win rate" value={fmtPct(k.winRate)} sub={`${k.wonCount || 0} won · ${k.lostCount || 0} lost`} accent={k.winRate != null && k.winRate >= 40 ? '#16A34A' : '#F59E0B'} colorValue isMobile={isMobile} />
+        <Stat icon={Clock} label="Avg sales cycle" value={fmtDays(k.avgCycleDays)} sub={k.medianCycleDays != null ? `median ${fmtDays(k.medianCycleDays)}` : null} accent="#F59E0B" isMobile={isMobile} />
+        <Stat icon={PoundSterling} label="Avg deal size" value={k.avgDealValue == null ? '—' : fmtGBP0(k.avgDealValue)} sub={k.medianDealValue != null ? `median ${formatGBP(k.medianDealValue)}` : null} accent="#16A34A" isMobile={isMobile} />
       </div>
 
       {/* Pipeline by stage + Stage velocity */}
@@ -178,15 +182,18 @@ function Failed({ onRetry }) {
     <button onClick={onRetry} className="btn-secondary" style={{ padding: '6px 14px' }}>Retry</button>
   </div>;
 }
-function Stat({ icon: Icon, label, value, sub, accent = BRAND.blue, colorValue, title }) {
+function Stat({ icon: Icon, label, value, sub, accent = BRAND.blue, colorValue, title, isMobile }) {
+  const iconSize = isMobile ? 32 : 38;
   return (
-    <div title={title} style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 14, boxShadow: CARD_SHADOW, padding: '15px 16px', display: 'flex', gap: 13, alignItems: 'flex-start', minWidth: 0, cursor: title ? 'help' : 'default' }}>
-      <div style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: accent + '1A', color: accent }}>
-        <Icon size={19} />
+    <div title={title} style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 14, boxShadow: CARD_SHADOW, padding: isMobile ? '13px 13px' : '15px 16px', display: 'flex', gap: isMobile ? 10 : 13, alignItems: 'flex-start', minWidth: 0, cursor: title ? 'help' : 'default' }}>
+      <div style={{ width: iconSize, height: iconSize, borderRadius: 11, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: accent + '1A', color: accent }}>
+        <Icon size={isMobile ? 17 : 19} />
       </div>
-      <div style={{ minWidth: 0 }}>
+      <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: 11.5, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</div>
-        <div style={{ fontSize: 23, fontWeight: 700, marginTop: 3, lineHeight: 1.1, color: colorValue ? accent : BRAND.ink, overflowWrap: 'anywhere' }}>{value}</div>
+        {/* Keep the headline number on one line — wrapping mid-digit reads as a
+            broken value. It shrinks on mobile and ellipsises only as a last resort. */}
+        <div style={{ fontSize: isMobile ? 19 : 23, fontWeight: 700, marginTop: 3, lineHeight: 1.15, color: colorValue ? accent : BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
         {sub != null && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 3 }}>{sub}</div>}
       </div>
     </div>
@@ -401,10 +408,10 @@ function Engagement({ engagement, onOpenDeal, isMobile }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0,0.9fr) minmax(0,1.1fr)', gap: 16, alignItems: 'start' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <Stat icon={FileText} label="Proposals sent" value={e.sent ?? 0} accent="#0EA5E9" />
-        <Stat icon={Eye} label="View rate" value={fmtPct(e.viewRate)} sub={`${e.viewed ?? 0} opened`} accent="#7C3AED" />
-        <Stat icon={Trophy} label="Win — viewed" value={fmtPct(e.winRateViewed)} sub="opened the proposal" accent="#16A34A" colorValue />
-        <Stat icon={XCircle} label="Win — not viewed" value={fmtPct(e.winRateNotViewed)} sub="never opened" accent="#94A3B8" />
+        <Stat icon={FileText} label="Proposals sent" value={e.sent ?? 0} accent="#0EA5E9" isMobile={isMobile} />
+        <Stat icon={Eye} label="View rate" value={fmtPct(e.viewRate)} sub={`${e.viewed ?? 0} opened`} accent="#7C3AED" isMobile={isMobile} />
+        <Stat icon={Trophy} label="Win — viewed" value={fmtPct(e.winRateViewed)} sub="opened the proposal" accent="#16A34A" colorValue isMobile={isMobile} />
+        <Stat icon={XCircle} label="Win — not viewed" value={fmtPct(e.winRateNotViewed)} sub="never opened" accent="#94A3B8" isMobile={isMobile} />
       </div>
       <div>
         <Panel style={{ padding: 0 }}>
