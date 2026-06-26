@@ -138,7 +138,10 @@ async function buildInsights(req) {
     return {
       id: r.id, title: r.title, stage, owner: r.owner_email || null,
       createdAt: r.created_at, cycleStartAt, stageChangedAt: r.stage_changed_at, lastActivityAt: r.last_activity_at,
-      lostReason: r.lost_reason || null, value, isWon, isLost, isOpen, saleAt,
+      // isSale = a genuine signed proposal: won AND has a real value. £0 won
+      // records (placeholders/test/admin entries with no proposal value) are
+      // not counted as signed proposals, though they stay out of open/lost too.
+      lostReason: r.lost_reason || null, value, isWon, isSale: isWon && value > 0, isLost, isOpen, saleAt,
       paymentOption: sig?.paymentOption || null, hasProposal,
       proposalOpens: tracking.proposalOpens || 0, lastOpenedAt: tracking.lastOpenedAt || null,
       events,
@@ -158,7 +161,7 @@ async function buildInsights(req) {
   const weightedForecast = round2(open.reduce((s, d) => s + d.value * (STAGE_PROB[d.stage] || 0), 0));
 
   // ---- Won / lost in range ---------------------------------------------------
-  const wonInRange = deals.filter((d) => d.isWon && inRange(d.saleAt));
+  const wonInRange = deals.filter((d) => d.isSale && inRange(d.saleAt));
   const lostInRange = deals.filter((d) => d.isLost && inRange(d.stageChangedAt));
   const wonValue = round2(wonInRange.reduce((s, d) => s + d.value, 0));
   const decided = wonInRange.length + lostInRange.length;
@@ -225,7 +228,7 @@ async function buildInsights(req) {
   for (let i = 11; i >= 0; i--) { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)); monthKeys.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`); }
   const trendMap = new Map(monthKeys.map((k) => [k, { month: k, count: 0, value: 0 }]));
   for (const d of deals) {
-    if (!d.isWon || !d.saleAt) continue;
+    if (!d.isSale || !d.saleAt) continue;
     const dt = new Date(d.saleAt);
     const k = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
     if (trendMap.has(k)) { const t = trendMap.get(k); t.count += 1; t.value += d.value; }
@@ -259,7 +262,7 @@ async function buildInsights(req) {
   const viewed = withProposal.filter((d) => d.proposalOpens > 0);
   // Win-rate-when-viewed compares DECIDED deals only (won or lost) — including
   // still-open viewed proposals would wrongly count them as "not won".
-  const decidedProp = withProposal.filter((d) => d.isWon || d.isLost);
+  const decidedProp = withProposal.filter((d) => d.isSale || d.isLost);
   const viewedDecided = decidedProp.filter((d) => d.proposalOpens > 0);
   const notViewedDecided = decidedProp.filter((d) => d.proposalOpens === 0);
   // Follow-up: a proposal the client opened, still open, sorted by recency.
@@ -271,8 +274,8 @@ async function buildInsights(req) {
     sent: withProposal.length,
     viewed: viewed.length,
     viewRate: pctRate(viewed.length, withProposal.length),
-    winRateViewed: pctRate(viewedDecided.filter((d) => d.isWon).length, viewedDecided.length),
-    winRateNotViewed: pctRate(notViewedDecided.filter((d) => d.isWon).length, notViewedDecided.length),
+    winRateViewed: pctRate(viewedDecided.filter((d) => d.isSale).length, viewedDecided.length),
+    winRateNotViewed: pctRate(notViewedDecided.filter((d) => d.isSale).length, notViewedDecided.length),
     followUp,
   };
 
