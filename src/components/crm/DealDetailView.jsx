@@ -4,7 +4,7 @@ import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Downl
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP, formatRelativeTime, useIsMobile, formatProposalNumber, decodeHtmlEntities } from '../../utils.js';
+import { formatGBP, formatRelativeTime, formatDuration, useIsMobile, formatProposalNumber, decodeHtmlEntities } from '../../utils.js';
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { Badge, Modal } from '../ui.jsx';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
@@ -22,6 +22,7 @@ import { ContactModal } from './ContactsView.jsx';
 import { LostReasonModal } from './LostReasonModal.jsx';
 import { ConversationView } from './EmailsView.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
+import { ViewAnalyticsModal } from '../ViewAnalyticsModal.jsx';
 
 
 // Render plain text with any http(s) URLs turned into clickable links that open
@@ -107,6 +108,8 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   const [newDealFromEmail, setNewDealFromEmail] = useState(null);
   // "Create or link proposal" chooser modal.
   const [choosingProposal, setChoosingProposal] = useState(false);
+  // Proposal whose viewing analytics modal is open (null = closed).
+  const [analyticsProposal, setAnalyticsProposal] = useState(null);
 
   useEffect(() => {
     if (dealId) {
@@ -538,6 +541,26 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                     )}
                   </div>
                 )}
+                {(p._views?.opens || 0) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setAnalyticsProposal({ ...p, _number: p.number })}
+                    title="View analytics"
+                    style={{ marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid ' + BRAND.border, borderRadius: 999, background: '#FFFBEB', color: '#92400E', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
+                  >
+                    <Eye size={11} />
+                    <span>{p._views.opens} {p._views.opens === 1 ? 'view' : 'views'}</span>
+                    <span style={{ opacity: 0.6 }}>·</span>
+                    <Clock size={11} />
+                    <span>{formatDuration(p._views.duration)}</span>
+                    {p._views.lastActiveAt && (
+                      <>
+                        <span style={{ opacity: 0.6 }}>·</span>
+                        <span>{formatRelativeTime(p._views.lastActiveAt)}</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                 <button
@@ -778,6 +801,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           target={newDealFromEmail}
           onClose={() => setNewDealFromEmail(null)}
           onCreated={() => { setNewDealFromEmail(null); actions.loadDealDetail(dealId); }}
+        />
+      )}
+      {analyticsProposal && (
+        <ViewAnalyticsModal
+          proposal={analyticsProposal}
+          onClose={() => setAnalyticsProposal(null)}
         />
       )}
     </div>

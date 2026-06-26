@@ -1238,9 +1238,20 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows, poFileRows] = await Promise.all([
       sql`
         SELECT p.id, p.data, p.number_year, p.number_seq, p.created_at,
-               s.data AS signature_data
+               s.data AS signature_data,
+               COALESCE(v.opens, 0)    AS view_opens,
+               COALESCE(v.duration, 0) AS view_duration,
+               v.last_active_at        AS view_last_active
           FROM proposals p
           LEFT JOIN signatures s ON s.proposal_id = p.id
+          LEFT JOIN (
+            SELECT proposal_id,
+                   COUNT(*)              AS opens,
+                   SUM(duration_seconds) AS duration,
+                   MAX(last_active_at)   AS last_active_at
+              FROM proposal_views
+             GROUP BY proposal_id
+          ) v ON v.proposal_id = p.id
          WHERE p.deal_id = ${id}
          ORDER BY p.created_at DESC
       `,
@@ -1427,6 +1438,13 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         signed: !!p.signature_data,
         number: p.number_year && p.number_seq ? { year: p.number_year, seq: p.number_seq } : null,
         createdAt: p.created_at,
+        // Viewing engagement (mirrors the proposals list), powering the inline
+        // "X views · time · last active" pill + the analytics modal.
+        _views: {
+          opens: Number(p.view_opens) || 0,
+          duration: Number(p.view_duration) || 0,
+          lastActiveAt: p.view_last_active || null,
+        },
       })),
       events: events.map(e => ({
         id: Number(e.id),
