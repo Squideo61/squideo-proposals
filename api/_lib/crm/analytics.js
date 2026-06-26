@@ -17,7 +17,10 @@ import { adsConfigured, ensureAdSpend, runAdSpendSync } from './googleAds.js';
 import { gscConfigured, runGscSync, searchReport } from './googleSearch.js';
 import { ga4Configured, runGa4Sync, trafficReport } from './googleAnalytics.js';
 
-const WON_STAGES = new Set(['signed', 'paid']);
+// A "sale" is a signed deal (per the chosen definition). signed/paid/long_term
+// all sit at or past the signature, and any deal with a signature row counts too
+// — so a sale is recognised at the moment of signing regardless of payment.
+const SALE_STAGES = new Set(['signed', 'paid', 'long_term']);
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
 
 // Parse ?from=YYYY-MM-DD&to=YYYY-MM-DD off req.url (the dispatcher preserves the
@@ -73,16 +76,44 @@ async function leadRange(req) {
   return r;
 }
 
-// effectiveValue + won flag for a set of deal ids, via annotateDeals (so the
-// numbers match the pipeline). Returns Map<dealId, { value, won }>.
-async function dealValueMap(dealIds) {
+// Per-deal info for the lead reports, via annotateDeals (so values match the
+// pipeline) plus the signature signed_at (the sale date). Returns
+// Map<dealId, { value, stage, proposalValue, isSale, saleAt }>:
+//   value         — effectiveValue (signed > latest proposal > manual)
+//   proposalValue — effectiveValue when a proposal exists (else null)
+//   isSale        — has a signature, or stage is signed/paid/long_term
+//   saleAt        — earliest signature signed_at (fallback: stage_changed_at)
+async function dealInfoMap(dealIds) {
   const map = new Map();
   const ids = [...new Set(dealIds.filter(Boolean))];
   if (!ids.length) return map;
   const rows = await sql`SELECT * FROM deals WHERE id = ANY(${ids})`;
   const annotated = await annotateDeals(rows);
+  const stageInfo = new Map(rows.map((r) => [r.id, { stage: r.stage || null, stageChangedAt: r.stage_changed_at || null }]));
+
+  // Sale date = earliest signed signature across the deal's proposals.
+  let signedMap = new Map();
+  try {
+    const sig = await sql`
+      SELECT p.deal_id AS did, MIN(s.signed_at) AS signed_at
+        FROM signatures s JOIN proposals p ON p.id = s.proposal_id
+       WHERE p.deal_id = ANY(${ids}) AND s.signed_at IS NOT NULL
+       GROUP BY p.deal_id`;
+    signedMap = new Map(sig.map((r) => [r.did, r.signed_at]));
+  } catch { /* signatures table not present */ }
+
   for (const d of annotated) {
-    map.set(d.id, { value: Number(d.effectiveValue) || 0, won: WON_STAGES.has(d.stage) });
+    const si = stageInfo.get(d.id) || {};
+    const signedAt = signedMap.get(d.id) || null;
+    const isSale = !!signedAt || SALE_STAGES.has(si.stage);
+    const hasProposal = d.valueSource === 'proposal' || d.valueSource === 'signed';
+    map.set(d.id, {
+      value: Number(d.effectiveValue) || 0,
+      stage: si.stage,
+      proposalValue: hasProposal ? (Number(d.effectiveValue) || 0) : null,
+      isSale,
+      saleAt: signedAt || (isSale ? (si.stageChangedAt || null) : null),
+    });
   }
   return map;
 }
@@ -153,11 +184,11 @@ async function leadsLog(req) {
       LEFT JOIN deals d ON d.id = qr.deal_id
      WHERE qr.created_at >= ${fromDate} AND qr.created_at < ${toExcl}
      ORDER BY qr.created_at DESC`;
-  const values = await dealValueMap(rows.map((r) => r.deal_id));
+  const info = await dealInfoMap(rows.map((r) => r.deal_id));
   const names = await campaignNameMap();
   const leads = rows.map((r) => {
-    const dv = r.deal_id ? values.get(r.deal_id) : null;
-    const won = !!(dv && dv.won);
+    const dv = r.deal_id ? info.get(r.deal_id) : null;
+    const isSale = !!(dv && dv.isSale);
     return {
       id: r.id,
       createdAt: r.created_at,
@@ -174,10 +205,12 @@ async function leadsLog(req) {
       status: r.status || 'new',
       dealId: r.deal_id || null,
       dealTitle: r.deal_title || null,
-      dealStage: r.deal_stage || null,
+      dealStage: (dv && dv.stage) || r.deal_stage || null,
+      proposalValue: dv && dv.proposalValue != null ? round2(dv.proposalValue) : null,
       companyId: r.company_id || null,
-      won,
-      revenue: won && dv ? round2(dv.value) : 0,
+      won: isSale,
+      saleAt: (dv && dv.saleAt) || null,
+      revenue: isSale && dv ? round2(dv.value) : 0,
     };
   });
   return { from: fromStr, to: toStr, count: leads.length, leads };
@@ -189,12 +222,12 @@ async function reports(req, groupBy) {
   const dim = ['source', 'medium', 'campaign', 'keyword', 'channel'].includes(groupBy) ? groupBy : 'campaign';
   const { fromDate, toExcl, fromStr, toStr } = await leadRange(req);
   const rows = await sql`
-    SELECT qr.id, qr.status, qr.deal_id,
+    SELECT qr.id, qr.status, qr.deal_id, qr.created_at,
            qr.attr_channel, qr.attr_source, qr.attr_medium,
            qr.attr_campaign, qr.attr_campaign_id, qr.attr_keyword, qr.attr_term
       FROM quote_requests qr
      WHERE qr.created_at >= ${fromDate} AND qr.created_at < ${toExcl}`;
-  const values = await dealValueMap(rows.map((r) => r.deal_id));
+  const info = await dealInfoMap(rows.map((r) => r.deal_id));
   const { byCampaign, byKeyword, total: totalSpend } = await spendBuckets(fromStr, toStr);
   const names = dim === 'campaign' ? await campaignNameMap() : null;
 
@@ -212,15 +245,30 @@ async function reports(req, groupBy) {
     return { key: id || r.attr_campaign || '(none)', label, campaignId: id };
   };
 
+  // Accumulators for sale-cycle time (lead created → signed), summed in ms across
+  // every sale in range; averaged into days for the totals.
+  let saleTimeMs = 0;
+  let saleTimeCount = 0;
+
   for (const r of rows) {
     const { key, label, campaignId } = keyFor(r);
     let g = groups.get(key);
-    if (!g) { g = { key, label, campaignId: campaignId || null, leads: 0, qualified: 0, disqualified: 0, won: 0, revenue: 0 }; groups.set(key, g); }
+    if (!g) { g = { key, label, campaignId: campaignId || null, leads: 0, qualified: 0, disqualified: 0, sales: 0, revenue: 0, proposalValue: 0 }; groups.set(key, g); }
     g.leads += 1;
     if (r.status === 'qualified') g.qualified += 1;
     else if (r.status === 'disqualified') g.disqualified += 1;
-    const dv = r.deal_id ? values.get(r.deal_id) : null;
-    if (dv && dv.won) { g.won += 1; g.revenue += dv.value; }
+    const dv = r.deal_id ? info.get(r.deal_id) : null;
+    if (dv) {
+      if (dv.proposalValue != null) g.proposalValue += dv.proposalValue;
+      if (dv.isSale) {
+        g.sales += 1;
+        g.revenue += dv.value;
+        if (dv.saleAt && r.created_at) {
+          const ms = new Date(dv.saleAt).getTime() - new Date(r.created_at).getTime();
+          if (ms >= 0) { saleTimeMs += ms; saleTimeCount += 1; }
+        }
+      }
+    }
   }
 
   const attachSpend = (g) => {
@@ -240,12 +288,17 @@ async function reports(req, groupBy) {
       leads: g.leads,
       qualified: g.qualified,
       disqualified: g.disqualified,
-      won: g.won,
+      sales: g.sales,
+      won: g.sales, // alias kept for any older consumer
       revenue: round2(g.revenue),
+      proposalValue: round2(g.proposalValue),
       spend: spend == null ? null : round2(spend),
       costPerLead: spend != null && g.leads > 0 ? round2(spend / g.leads) : null,
+      costPerSale: spend != null && g.sales > 0 ? round2(spend / g.sales) : null,
       roas: spend != null && spend > 0 ? round2(g.revenue / spend) : null,
-      conversionRate: g.leads > 0 ? round2((g.won / g.leads) * 100) : 0,
+      // Lead→sale rate = signed deals out of leads.
+      conversionRate: g.leads > 0 ? round2((g.sales / g.leads) * 100) : 0,
+      leadToSaleRate: g.leads > 0 ? round2((g.sales / g.leads) * 100) : 0,
       // Lead quality = qualified out of the leads we've actually reviewed
       // (qualified + disqualified). null until at least one has been reviewed.
       qualityRate: (g.qualified + g.disqualified) > 0
@@ -258,19 +311,31 @@ async function reports(req, groupBy) {
   const tQualified = rows.filter((r) => r.status === 'qualified').length;
   const tDisqualified = rows.filter((r) => r.status === 'disqualified').length;
   const tReviewed = tQualified + tDisqualified;
-  let tWon = 0, tRevenue = 0;
-  for (const r of rows) { const dv = r.deal_id ? values.get(r.deal_id) : null; if (dv && dv.won) { tWon += 1; tRevenue += dv.value; } }
+  let tSales = 0, tRevenue = 0, tProposalValue = 0;
+  for (const r of rows) {
+    const dv = r.deal_id ? info.get(r.deal_id) : null;
+    if (!dv) continue;
+    if (dv.proposalValue != null) tProposalValue += dv.proposalValue;
+    if (dv.isSale) { tSales += 1; tRevenue += dv.value; }
+  }
   const tSpend = adsConfigured() ? totalSpend : null;
   const totals = {
     leads: tLeads,
     qualified: tQualified,
     disqualified: tDisqualified,
-    won: tWon,
+    sales: tSales,
+    won: tSales, // alias
     revenue: round2(tRevenue),
+    proposalValueSent: round2(tProposalValue),
     spend: tSpend == null ? null : round2(tSpend),
     costPerLead: tSpend != null && tLeads > 0 ? round2(tSpend / tLeads) : null,
+    costPerSale: tSpend != null && tSales > 0 ? round2(tSpend / tSales) : null,
     roas: tSpend != null && tSpend > 0 ? round2(tRevenue / tSpend) : null,
-    conversionRate: tLeads > 0 ? round2((tWon / tLeads) * 100) : 0,
+    conversionRate: tLeads > 0 ? round2((tSales / tLeads) * 100) : 0,
+    leadToSaleRate: tLeads > 0 ? round2((tSales / tLeads) * 100) : 0,
+    // Average lead→sale time in days (lead created → signed), over sales with
+    // a known sale date. null when there are no dated sales yet.
+    avgLeadToSaleDays: saleTimeCount > 0 ? round2((saleTimeMs / saleTimeCount) / 86400000) : null,
     qualityRate: tReviewed > 0 ? round2((tQualified / tReviewed) * 100) : null,
   };
 

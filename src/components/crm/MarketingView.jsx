@@ -264,7 +264,7 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry }) 
   // after loading means the request failed — show a retry, never the misleading
   // "connect Google Ads" banner or a screen full of zeros.
   if (!data) return <LoadFailed onRetry={onRetry} />;
-  const t = data?.totals || { leads: 0, qualified: 0, disqualified: 0, won: 0, revenue: 0, spend: null, roas: null, costPerLead: null, conversionRate: 0, qualityRate: null };
+  const t = data?.totals || { leads: 0, qualified: 0, disqualified: 0, sales: 0, revenue: 0, proposalValueSent: 0, spend: null, roas: null, costPerLead: null, costPerSale: null, conversionRate: 0, leadToSaleRate: 0, avgLeadToSaleDays: null, qualityRate: null };
   const channels = (data?.rows || []).slice().sort((a, b) => b.leads - a.leads);
   const chartData = channels.map((r) => ({ name: prettyChannel(r.key), leads: r.leads, revenue: r.revenue, key: r.key }));
 
@@ -287,10 +287,13 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry }) 
           sub="qualified of reviewed"
           accent={t.qualityRate != null && t.qualityRate >= 50 ? '#16A34A' : (t.qualityRate != null ? '#DC2626' : undefined)}
         />
-        <Card label="Won" value={t.won} sub={pct(t.conversionRate) + ' conversion'} accent="#16A34A" />
-        <Card label="Revenue" value={formatGBP(t.revenue)} accent="#16A34A" />
+        <Card label="Proposal value" value={formatGBP(t.proposalValueSent)} sub="sent — leads in period" />
+        <Card label="Sales" value={t.sales} sub={pct(t.leadToSaleRate) + ' lead→sale'} accent="#16A34A" />
+        <Card label="Revenue" value={formatGBP(t.revenue)} sub="signed value" accent="#16A34A" />
+        <Card label="Avg lead→sale" value={t.avgLeadToSaleDays == null ? '—' : t.avgLeadToSaleDays + ' days'} />
         <Card label="Ad spend" value={dash(t.spend, formatGBP)} />
         <Card label="Cost / lead" value={dash(t.costPerLead, formatGBP)} />
+        <Card label="Cost / sale" value={dash(t.costPerSale, formatGBP)} />
         <Card label="ROAS" value={fmtRoas(t.roas)} accent={t.roas != null && t.roas >= 1 ? '#16A34A' : undefined} />
       </div>
 
@@ -323,8 +326,8 @@ function ChannelTable({ rows, adsConfigured }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr style={{ background: BRAND.paper, textAlign: 'left' }}>
-            <Th>Channel</Th><Th right>Leads</Th><Th right>Qualified</Th><Th right>Disqualified</Th><Th right>Quality</Th><Th right>Won</Th><Th right>Revenue</Th>
-            {adsConfigured && <><Th right>Spend</Th><Th right>Cost/lead</Th><Th right>ROAS</Th></>}
+            <Th>Channel</Th><Th right>Leads</Th><Th right>Qualified</Th><Th right>Disqualified</Th><Th right>Quality</Th><Th right>Sales</Th><Th right>Proposal £</Th><Th right>Revenue</Th>
+            {adsConfigured && <><Th right>Spend</Th><Th right>Cost/lead</Th><Th right>Cost/sale</Th><Th right>ROAS</Th></>}
           </tr>
         </thead>
         <tbody>
@@ -335,9 +338,10 @@ function ChannelTable({ rows, adsConfigured }) {
               <Td right>{r.qualified ?? 0}</Td>
               <Td right>{r.disqualified ?? 0}</Td>
               <Td right>{r.qualityRate == null ? '—' : Math.round(r.qualityRate) + '%'}</Td>
-              <Td right>{r.won}</Td>
+              <Td right>{r.sales ?? r.won ?? 0}</Td>
+              <Td right>{formatGBP(r.proposalValue || 0)}</Td>
               <Td right>{formatGBP(r.revenue)}</Td>
-              {adsConfigured && <><Td right>{dash(r.spend, formatGBP)}</Td><Td right>{dash(r.costPerLead, formatGBP)}</Td><Td right>{fmtRoas(r.roas)}</Td></>}
+              {adsConfigured && <><Td right>{dash(r.spend, formatGBP)}</Td><Td right>{dash(r.costPerLead, formatGBP)}</Td><Td right>{dash(r.costPerSale, formatGBP)}</Td><Td right>{fmtRoas(r.roas)}</Td></>}
             </tr>
           ))}
         </tbody>
@@ -381,12 +385,14 @@ function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured, onRetry
                 <Th right onClick={() => sortBy('qualified')} clickable>Qualified{arrow('qualified')}</Th>
                 <Th right onClick={() => sortBy('disqualified')} clickable>Disq.{arrow('disqualified')}</Th>
                 <Th right onClick={() => sortBy('qualityRate')} clickable>Quality{arrow('qualityRate')}</Th>
-                <Th right onClick={() => sortBy('won')} clickable>Won{arrow('won')}</Th>
-                <Th right onClick={() => sortBy('conversionRate')} clickable>Conv.{arrow('conversionRate')}</Th>
+                <Th right onClick={() => sortBy('sales')} clickable>Sales{arrow('sales')}</Th>
+                <Th right onClick={() => sortBy('proposalValue')} clickable>Proposal £{arrow('proposalValue')}</Th>
+                <Th right onClick={() => sortBy('conversionRate')} clickable>L→sale{arrow('conversionRate')}</Th>
                 <Th right onClick={() => sortBy('revenue')} clickable>Revenue{arrow('revenue')}</Th>
                 {adsConfigured && <>
                   <Th right onClick={() => sortBy('spend')} clickable>Spend{arrow('spend')}</Th>
                   <Th right onClick={() => sortBy('costPerLead')} clickable>Cost/lead{arrow('costPerLead')}</Th>
+                  <Th right onClick={() => sortBy('costPerSale')} clickable>Cost/sale{arrow('costPerSale')}</Th>
                   <Th right onClick={() => sortBy('roas')} clickable>ROAS{arrow('roas')}</Th>
                 </>}
               </tr>
@@ -409,10 +415,11 @@ function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured, onRetry
                   <Td right>{r.qualified}</Td>
                   <Td right>{r.disqualified ?? 0}</Td>
                   <Td right>{r.qualityRate == null ? '—' : Math.round(r.qualityRate) + '%'}</Td>
-                  <Td right>{r.won}</Td>
+                  <Td right>{r.sales ?? r.won ?? 0}</Td>
+                  <Td right>{formatGBP(r.proposalValue || 0)}</Td>
                   <Td right>{pct(r.conversionRate)}</Td>
                   <Td right>{formatGBP(r.revenue)}</Td>
-                  {adsConfigured && <><Td right>{dash(r.spend, formatGBP)}</Td><Td right>{dash(r.costPerLead, formatGBP)}</Td><Td right>{fmtRoas(r.roas)}</Td></>}
+                  {adsConfigured && <><Td right>{dash(r.spend, formatGBP)}</Td><Td right>{dash(r.costPerLead, formatGBP)}</Td><Td right>{dash(r.costPerSale, formatGBP)}</Td><Td right>{fmtRoas(r.roas)}</Td></>}
                 </tr>
               ))}
             </tbody>
@@ -424,10 +431,11 @@ function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured, onRetry
                   <Td right>{data.totals.qualified}</Td>
                   <Td right>{data.totals.disqualified ?? 0}</Td>
                   <Td right>{data.totals.qualityRate == null ? '—' : Math.round(data.totals.qualityRate) + '%'}</Td>
-                  <Td right>{data.totals.won}</Td>
+                  <Td right>{data.totals.sales ?? data.totals.won ?? 0}</Td>
+                  <Td right>{formatGBP(data.totals.proposalValueSent || 0)}</Td>
                   <Td right>{pct(data.totals.conversionRate)}</Td>
                   <Td right>{formatGBP(data.totals.revenue)}</Td>
-                  {adsConfigured && <><Td right>{dash(data.totals.spend, formatGBP)}</Td><Td right>{dash(data.totals.costPerLead, formatGBP)}</Td><Td right>{fmtRoas(data.totals.roas)}</Td></>}
+                  {adsConfigured && <><Td right>{dash(data.totals.spend, formatGBP)}</Td><Td right>{dash(data.totals.costPerLead, formatGBP)}</Td><Td right>{dash(data.totals.costPerSale, formatGBP)}</Td><Td right>{fmtRoas(data.totals.roas)}</Td></>}
                 </tr>
               </tfoot>
             )}
@@ -447,6 +455,20 @@ const STATUS_STYLE = {
   new: { bg: '#EEF2FF', fg: '#3730A3', label: 'New' },
   qualified: { bg: '#DCFCE7', fg: '#166534', label: 'Qualified' },
   disqualified: { bg: '#FEE2E2', fg: '#991B1B', label: 'Disqualified' },
+};
+
+// Sales-pipeline stage shown per lead (deal stage). Colour-grouped: won = green,
+// lost = red, in-flight = amber, early = slate.
+const STAGE_STYLE = {
+  lead:          { bg: '#F1F5F9', fg: '#475569', label: 'Lead' },
+  responded:     { bg: '#F1F5F9', fg: '#475569', label: 'Responded' },
+  proposal_sent: { bg: '#FEF3C7', fg: '#92400E', label: 'Proposal sent' },
+  viewed:        { bg: '#FEF3C7', fg: '#92400E', label: 'Viewed' },
+  interested:    { bg: '#FEF3C7', fg: '#92400E', label: 'Interested' },
+  signed:        { bg: '#DCFCE7', fg: '#166534', label: 'Signed' },
+  paid:          { bg: '#DCFCE7', fg: '#166534', label: 'Paid' },
+  long_term:     { bg: '#DCFCE7', fg: '#166534', label: 'Long-term' },
+  lost:          { bg: '#FEE2E2', fg: '#991B1B', label: 'Lost' },
 };
 
 function LeadsTab({ data, loading, onOpenDeal, onRetry }) {
@@ -482,12 +504,13 @@ function LeadsTab({ data, loading, onOpenDeal, onRetry }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr style={{ background: BRAND.paper, textAlign: 'left' }}>
-            <Th>Date</Th><Th>Lead</Th><Th>Channel</Th><Th>Campaign</Th><Th>Keyword</Th><Th>Status</Th><Th right>Revenue</Th>
+            <Th>Date</Th><Th>Lead</Th><Th>Channel</Th><Th>Campaign</Th><Th>Keyword</Th><Th>Status</Th><Th>Stage</Th><Th right>Proposal</Th><Th right>Revenue</Th>
           </tr>
         </thead>
         <tbody>
           {leads.map((l) => {
             const st = STATUS_STYLE[l.status] || STATUS_STYLE.new;
+            const stg = l.dealStage ? STAGE_STYLE[l.dealStage] : null;
             const clickable = !!l.dealId && !!onOpenDeal;
             return (
               <tr
@@ -504,6 +527,8 @@ function LeadsTab({ data, loading, onOpenDeal, onRetry }) {
                 <Td title={l.campaign || ''}>{l.campaign || (l.source || '—')}</Td>
                 <Td title={l.keyword || ''}>{l.keyword || '—'}</Td>
                 <Td><span style={{ background: st.bg, color: st.fg, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999 }}>{st.label}</span></Td>
+                <Td>{stg ? <span style={{ background: stg.bg, color: stg.fg, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999 }}>{stg.label}</span> : <span style={{ color: BRAND.muted }}>—</span>}</Td>
+                <Td right>{l.proposalValue != null ? formatGBP(l.proposalValue) : <span style={{ color: BRAND.muted }}>—</span>}</Td>
                 <Td right>{l.won ? <span style={{ color: '#16A34A', fontWeight: 600 }}>{formatGBP(l.revenue)}</span> : <span style={{ color: BRAND.muted }}>—</span>}</Td>
               </tr>
             );
