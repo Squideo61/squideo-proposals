@@ -253,13 +253,13 @@ async function reports(req, groupBy) {
   for (const r of rows) {
     const { key, label, campaignId } = keyFor(r);
     let g = groups.get(key);
-    if (!g) { g = { key, label, campaignId: campaignId || null, leads: 0, qualified: 0, disqualified: 0, sales: 0, revenue: 0, proposalValue: 0 }; groups.set(key, g); }
+    if (!g) { g = { key, label, campaignId: campaignId || null, leads: 0, qualified: 0, disqualified: 0, proposals: 0, sales: 0, revenue: 0, proposalValue: 0 }; groups.set(key, g); }
     g.leads += 1;
     if (r.status === 'qualified') g.qualified += 1;
     else if (r.status === 'disqualified') g.disqualified += 1;
     const dv = r.deal_id ? info.get(r.deal_id) : null;
     if (dv) {
-      if (dv.proposalValue != null) g.proposalValue += dv.proposalValue;
+      if (dv.proposalValue != null) { g.proposals += 1; g.proposalValue += dv.proposalValue; }
       if (dv.isSale) {
         g.sales += 1;
         g.revenue += dv.value;
@@ -288,6 +288,7 @@ async function reports(req, groupBy) {
       leads: g.leads,
       qualified: g.qualified,
       disqualified: g.disqualified,
+      proposals: g.proposals,
       sales: g.sales,
       won: g.sales, // alias kept for any older consumer
       revenue: round2(g.revenue),
@@ -311,11 +312,11 @@ async function reports(req, groupBy) {
   const tQualified = rows.filter((r) => r.status === 'qualified').length;
   const tDisqualified = rows.filter((r) => r.status === 'disqualified').length;
   const tReviewed = tQualified + tDisqualified;
-  let tSales = 0, tRevenue = 0, tProposalValue = 0;
+  let tSales = 0, tRevenue = 0, tProposalValue = 0, tProposals = 0;
   for (const r of rows) {
     const dv = r.deal_id ? info.get(r.deal_id) : null;
     if (!dv) continue;
-    if (dv.proposalValue != null) tProposalValue += dv.proposalValue;
+    if (dv.proposalValue != null) { tProposals += 1; tProposalValue += dv.proposalValue; }
     if (dv.isSale) { tSales += 1; tRevenue += dv.value; }
   }
   const tSpend = adsConfigured() ? totalSpend : null;
@@ -323,6 +324,7 @@ async function reports(req, groupBy) {
     leads: tLeads,
     qualified: tQualified,
     disqualified: tDisqualified,
+    proposalsSent: tProposals,
     sales: tSales,
     won: tSales, // alias
     revenue: round2(tRevenue),

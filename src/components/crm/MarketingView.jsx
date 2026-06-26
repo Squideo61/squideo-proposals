@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
-import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe } from 'lucide-react';
+import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe, Users, UserCheck, FileText, Trophy, PoundSterling, Wallet, Target, Coins, Clock, Gauge, XCircle } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
@@ -208,7 +208,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
         })}
       </div>
 
-      {section === 'overview' && <OverviewTab data={overview} loading={loading} adsConfigured={adsConfigured} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
+      {section === 'overview' && <OverviewTab data={overview} loading={loading} adsConfigured={adsConfigured} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} isMobile={isMobile} />}
       {section === 'reports' && (
         <ReportsTab
           data={report} loading={loading} groupBy={groupBy} setGroupBy={setGroupBy} adsConfigured={adsConfigured}
@@ -241,6 +241,72 @@ function Card({ label, value, sub, accent }) {
   );
 }
 
+const CARD_SHADOW = '0 1px 2px rgba(16,42,61,0.05)';
+
+// Small uppercase section heading to group the dashboard into bands.
+function SectionLabel({ children, style }) {
+  return (
+    <h2 style={{ fontSize: 12.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6, margin: '0 0 12px', ...style }}>
+      {children}
+    </h2>
+  );
+}
+
+// Icon-chip stat tile. `accent` colours the icon chip + (optionally) the value.
+function StatCard({ icon: Icon, label, value, sub, accent = BRAND.blue, big = false, colorValue = false }) {
+  return (
+    <div style={{
+      background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 14, boxShadow: CARD_SHADOW,
+      padding: big ? '18px 20px' : '15px 16px', display: 'flex', gap: 13, alignItems: 'flex-start', minWidth: 0,
+    }}>
+      <div style={{
+        width: big ? 42 : 38, height: big ? 42 : 38, borderRadius: 11, flexShrink: 0,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        background: accent + '1A', color: accent,
+      }}>
+        <Icon size={big ? 21 : 19} />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 11.5, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</div>
+        <div style={{ fontSize: big ? 28 : 23, fontWeight: 700, marginTop: 3, lineHeight: 1.1, color: colorValue ? accent : BRAND.ink, overflowWrap: 'anywhere' }}>{value}</div>
+        {sub != null && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 3 }}>{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Horizontal-bar funnel: each stage's bar width is its share of the top stage,
+// with the count + its % of all leads. Reads top-to-bottom as the lead journey.
+function Funnel({ stages }) {
+  const top = Math.max(stages[0]?.value || 0, 1);
+  return (
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 14, boxShadow: CARD_SHADOW, padding: '18px 20px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {stages.map((s) => {
+          const Icon = s.icon;
+          const w = Math.max(4, Math.round((s.value / top) * 100));
+          return (
+            <div key={s.label}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <Icon size={15} style={{ color: s.color }} /> {s.label}
+                </span>
+                <span style={{ fontSize: 13, color: BRAND.muted, whiteSpace: 'nowrap' }}>
+                  <strong style={{ color: BRAND.ink, fontSize: 16 }}>{s.value}</strong>
+                  {s.pct != null && <span style={{ marginLeft: 8 }}>{s.pct}%</span>}
+                </span>
+              </div>
+              <div style={{ height: 13, borderRadius: 7, background: BRAND.paper, overflow: 'hidden' }}>
+                <div style={{ width: w + '%', height: '100%', borderRadius: 7, background: s.color, transition: 'width .35s ease' }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function Loading() {
   return <div style={{ padding: 40, textAlign: 'center', color: BRAND.muted }}>Loading…</div>;
 }
@@ -258,15 +324,24 @@ function LoadFailed({ onRetry }) {
 
 // ---- Dashboard -----------------------------------------------------------
 
-function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry }) {
+function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry, isMobile }) {
   if (loading && !data) return <Loading />;
   // A valid response is always an object (even with zero leads). `data == null`
   // after loading means the request failed — show a retry, never the misleading
   // "connect Google Ads" banner or a screen full of zeros.
   if (!data) return <LoadFailed onRetry={onRetry} />;
-  const t = data?.totals || { leads: 0, qualified: 0, disqualified: 0, sales: 0, revenue: 0, proposalValueSent: 0, spend: null, roas: null, costPerLead: null, costPerSale: null, conversionRate: 0, leadToSaleRate: 0, avgLeadToSaleDays: null, qualityRate: null };
+  const t = data?.totals || { leads: 0, qualified: 0, disqualified: 0, proposalsSent: 0, sales: 0, revenue: 0, proposalValueSent: 0, spend: null, roas: null, costPerLead: null, costPerSale: null, conversionRate: 0, leadToSaleRate: 0, avgLeadToSaleDays: null, qualityRate: null };
   const channels = (data?.rows || []).slice().sort((a, b) => b.leads - a.leads);
   const chartData = channels.map((r) => ({ name: prettyChannel(r.key), leads: r.leads, revenue: r.revenue, key: r.key }));
+
+  const ofLeads = (n) => (t.leads ? Math.round(((n || 0) / t.leads) * 100) : null);
+  const funnel = [
+    { label: 'Leads', value: t.leads, color: '#64748B', icon: Users, pct: t.leads ? 100 : 0 },
+    { label: 'Qualified', value: t.qualified, color: '#2BB8E6', icon: UserCheck, pct: ofLeads(t.qualified) },
+    { label: 'Proposals sent', value: t.proposalsSent || 0, color: '#F59E0B', icon: FileText, pct: ofLeads(t.proposalsSent) },
+    { label: 'Sales', value: t.sales, color: '#16A34A', icon: Trophy, pct: ofLeads(t.sales) },
+  ];
+  const qualityAccent = t.qualityRate == null ? '#64748B' : (t.qualityRate >= 50 ? '#16A34A' : '#DC2626');
 
   return (
     <div>
@@ -277,44 +352,54 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry }) 
           <button onClick={onOpenSettings} className="btn-link" style={{ fontWeight: 600 }}>Finish setup →</button>
         </div>
       )}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
-        <Card label="Leads" value={t.leads} />
-        <Card label="Qualified" value={t.qualified} sub={t.leads ? Math.round((t.qualified / t.leads) * 100) + '% of leads' : null} accent="#16A34A" />
-        <Card label="Disqualified" value={t.disqualified ?? 0} sub={t.leads ? Math.round(((t.disqualified || 0) / t.leads) * 100) + '% of leads' : null} accent="#DC2626" />
-        <Card
-          label="Lead quality"
-          value={t.qualityRate == null ? '—' : Math.round(t.qualityRate) + '%'}
-          sub="qualified of reviewed"
-          accent={t.qualityRate != null && t.qualityRate >= 50 ? '#16A34A' : (t.qualityRate != null ? '#DC2626' : undefined)}
-        />
-        <Card label="Proposal value" value={formatGBP(t.proposalValueSent)} sub="sent — leads in period" />
-        <Card label="Sales" value={t.sales} sub={pct(t.leadToSaleRate) + ' lead→sale'} accent="#16A34A" />
-        <Card label="Revenue" value={formatGBP(t.revenue)} sub="signed value" accent="#16A34A" />
-        <Card label="Avg lead→sale" value={t.avgLeadToSaleDays == null ? '—' : t.avgLeadToSaleDays + ' days'} />
-        <Card label="Ad spend" value={dash(t.spend, formatGBP)} />
-        <Card label="Cost / lead" value={dash(t.costPerLead, formatGBP)} />
-        <Card label="Cost / sale" value={dash(t.costPerSale, formatGBP)} />
-        <Card label="ROAS" value={fmtRoas(t.roas)} accent={t.roas != null && t.roas >= 1 ? '#16A34A' : undefined} />
+
+      {/* Funnel + headline outcomes */}
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1.35fr) minmax(0, 1fr)', gap: 16, marginBottom: 26, alignItems: 'start' }}>
+        <div>
+          <SectionLabel>Lead funnel</SectionLabel>
+          <Funnel stages={funnel} />
+        </div>
+        <div>
+          <SectionLabel>Outcome</SectionLabel>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <StatCard icon={Trophy} label="Sales" value={t.sales} sub={pct(t.leadToSaleRate) + ' lead→sale'} accent="#16A34A" colorValue big />
+            <StatCard icon={PoundSterling} label="Revenue" value={formatGBP(t.revenue)} sub="signed value" accent="#16A34A" big />
+            <StatCard icon={FileText} label="Proposal value" value={formatGBP(t.proposalValueSent)} sub="sent in period" accent="#0EA5E9" />
+            <StatCard icon={Clock} label="Avg lead→sale" value={t.avgLeadToSaleDays == null ? '—' : t.avgLeadToSaleDays + ' days'} accent="#7C3AED" />
+          </div>
+        </div>
       </div>
 
-      <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 12px' }}>By channel</h2>
+      {/* Spend, efficiency & quality */}
+      <SectionLabel>Spend, efficiency &amp; quality</SectionLabel>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(168px, 1fr))', gap: 12, marginBottom: 26 }}>
+        <StatCard icon={Wallet} label="Ad spend" value={dash(t.spend, formatGBP)} accent="#F59E0B" />
+        <StatCard icon={Target} label="Cost / lead" value={dash(t.costPerLead, formatGBP)} accent="#F59E0B" />
+        <StatCard icon={Coins} label="Cost / sale" value={dash(t.costPerSale, formatGBP)} accent="#F59E0B" />
+        <StatCard icon={TrendingUp} label="ROAS" value={fmtRoas(t.roas)} accent={t.roas != null && t.roas >= 1 ? '#16A34A' : '#64748B'} colorValue />
+        <StatCard icon={Gauge} label="Lead quality" value={t.qualityRate == null ? '—' : Math.round(t.qualityRate) + '%'} sub="qualified of reviewed" accent={qualityAccent} colorValue />
+        <StatCard icon={XCircle} label="Disqualified" value={t.disqualified ?? 0} sub={t.leads ? ofLeads(t.disqualified) + '% of leads' : null} accent="#DC2626" />
+      </div>
+
+      {/* By channel */}
+      <SectionLabel>By channel</SectionLabel>
       {channels.length === 0 ? <Empty>No leads in this period yet.</Empty> : (
-        <>
-          <div style={{ height: 240, marginBottom: 16, maxWidth: 560 }}>
+        <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 14, boxShadow: CARD_SHADOW, padding: '18px 20px' }}>
+          <div style={{ height: 220, marginBottom: 18, maxWidth: 620 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F4" vertical={false} />
                 <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
                 <Tooltip formatter={(v, n) => (n === 'revenue' ? formatGBP(v) : v)} />
-                <Bar dataKey="leads" name="Leads" radius={[4, 4, 0, 0]} maxBarSize={72}>
+                <Bar dataKey="leads" name="Leads" radius={[5, 5, 0, 0]} maxBarSize={64}>
                   {chartData.map((d) => <Cell key={d.key} fill={CHANNEL_COLORS[d.key] || BRAND.blue} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
           <ChannelTable rows={channels} adsConfigured={adsConfigured} />
-        </>
+        </div>
       )}
     </div>
   );
@@ -322,7 +407,7 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry }) 
 
 function ChannelTable({ rows, adsConfigured }) {
   return (
-    <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12 }}>
+    <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr style={{ background: BRAND.paper, textAlign: 'left' }}>
