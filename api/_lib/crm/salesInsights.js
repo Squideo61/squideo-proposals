@@ -150,15 +150,48 @@ async function buildInsights(req) {
 
   const dealById = new Map(deals.map((d) => [d.id, d]));
 
+  // Furthest stage a deal ever reached (so a deal that slipped back, or was
+  // marked lost, is still credited with the progress it made).
+  const maxReachedRank = (d) => {
+    let max = STAGE_RANK[d.isLost ? 'lead' : d.stage] ?? 0;
+    for (const e of d.events) { const rk = STAGE_RANK[e.to]; if (rk != null && e.to !== 'lost' && rk > max) max = rk; }
+    if (d.isWon) max = Math.max(max, STAGE_RANK.signed);
+    return max;
+  };
+
+  // ---- Learned win-probabilities (continuously self-calibrating) -------------
+  // Rather than fixed stage weights, estimate P(win | reached stage) from the
+  // whole deal history: of every *decided* deal (won or lost) that ever reached
+  // a stage, what share were won. Each estimate is blended with the static prior
+  // via pseudo-counts (PRIOR_STRENGTH), so a thin sample leans on the prior and
+  // converges to the firm's real rate as deals close. Enforced monotonic — a
+  // deal further down the funnel can't be less likely to win than one behind it.
+  // Recomputed on every request, so it tracks performance with no training job.
+  const PRIOR_STRENGTH = 6;
+  const decidedAll = deals.filter((d) => d.isWon || d.isLost);
+  const winProb = {};
+  const probDetail = [];
+  let runMax = 0;
+  for (const stage of OPEN_STAGES) {
+    const reached = decidedAll.filter((d) => maxReachedRank(d) >= STAGE_RANK[stage]);
+    const wins = reached.filter((d) => d.isWon).length;
+    const prior = STAGE_PROB[stage] || 0;
+    const blended = (wins + prior * PRIOR_STRENGTH) / (reached.length + PRIOR_STRENGTH);
+    runMax = Math.max(runMax, blended);
+    winProb[stage] = runMax;
+    probDetail.push({ stage, label: STAGE_LABEL[stage], prob: round1(runMax * 100), wins, decided: reached.length });
+  }
+  const probSample = decidedAll.length;
+
   // ---- Pipeline now (open, as of today — not range-scoped) -------------------
   const open = deals.filter((d) => d.isOpen);
   const byStage = OPEN_STAGES.map((stage) => {
     const ds = open.filter((d) => d.stage === stage);
     const value = ds.reduce((s, d) => s + d.value, 0);
-    return { stage, label: STAGE_LABEL[stage], count: ds.length, value: round2(value), weighted: round2(value * (STAGE_PROB[stage] || 0)) };
+    return { stage, label: STAGE_LABEL[stage], count: ds.length, value: round2(value), weighted: round2(value * (winProb[stage] || 0)) };
   });
   const openValue = round2(open.reduce((s, d) => s + d.value, 0));
-  const weightedForecast = round2(open.reduce((s, d) => s + d.value * (STAGE_PROB[d.stage] || 0), 0));
+  const weightedForecast = round2(open.reduce((s, d) => s + d.value * (winProb[d.stage] || 0), 0));
 
   // ---- Won / lost in range ---------------------------------------------------
   const wonInRange = deals.filter((d) => d.isSale && inRange(d.saleAt));
@@ -175,12 +208,6 @@ async function buildInsights(req) {
 
   // ---- Stage funnel + velocity (cohort: deals created in range) --------------
   const cohort = deals.filter((d) => inRange(d.createdAt));
-  const maxReachedRank = (d) => {
-    let max = STAGE_RANK[d.isLost ? 'lead' : d.stage] ?? 0;
-    for (const e of d.events) { const rk = STAGE_RANK[e.to]; if (rk != null && e.to !== 'lost' && rk > max) max = rk; }
-    if (d.isWon) max = Math.max(max, STAGE_RANK.signed);
-    return max;
-  };
   // Completed durations spent in each stage, across the cohort.
   const stageDurations = Object.fromEntries(FUNNEL_STAGES.map((s) => [s, []]));
   for (const d of cohort) {
@@ -303,6 +330,7 @@ async function buildInsights(req) {
       lostCount: lostInRange.length, lostValue: round2(lostInRange.reduce((s, d) => s + d.value, 0)),
     },
     pipeline: { byStage, openValue, weightedForecast },
+    forecastModel: { sampleSize: probSample, priorStrength: PRIOR_STRENGTH, stages: probDetail },
     funnel,
     reps,
     trend,

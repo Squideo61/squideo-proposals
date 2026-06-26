@@ -80,12 +80,27 @@ function Insights({ data, isMobile, onOpenDeal }) {
   const k = data.kpis || {};
   const open = onOpenDeal || (() => {});
 
+  const fm = data.forecastModel || {};
+  const fmStages = fm.stages || [];
+  const fmSample = fm.sampleSize || 0;
+  // Learned once there's enough closed-deal history to move the dial off the
+  // defaults; below that the prior dominates so we say "calibrating".
+  const fmLearned = fmSample >= (fm.priorStrength || 6);
+  const fmSub = fmStages.length
+    ? (fmLearned ? `learned from ${fmSample} closed deals` : `calibrating · ${fmSample} closed so far`)
+    : 'stage-probability weighted';
+  const fmTip = fmStages.length
+    ? 'Expected value of open deals = each deal × its stage win-rate, learned from your history and updated as deals close:\n'
+      + fmStages.map((s) => `  ${s.label}: ${s.prob}%${s.decided ? ` (${s.wins}/${s.decided} won)` : ''}`).join('\n')
+      + `\n\nBased on ${fmSample} closed deal${fmSample === 1 ? '' : 's'}. The fewer that have closed, the closer this stays to sensible defaults.`
+    : undefined;
+
   return (
     <div>
       {/* KPI strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 26 }}>
         <Stat icon={Wallet} label="Open pipeline" value={formatGBP(k.openValue)} sub={`${k.openCount || 0} open deals`} accent="#0EA5E9" />
-        <Stat icon={Target} label="Weighted forecast" value={formatGBP(k.weightedForecast)} sub="stage-probability weighted" accent="#7C3AED" />
+        <Stat icon={Target} label="Weighted forecast" value={formatGBP(k.weightedForecast)} sub={fmSub} title={fmTip} accent="#7C3AED" />
         <Stat icon={Trophy} label="Signed Proposals" value={formatGBP(k.wonValue)} sub={`${k.wonCount || 0} signed`} accent="#16A34A" colorValue />
         <Stat icon={Activity} label="Win rate" value={fmtPct(k.winRate)} sub={`${k.wonCount || 0} won · ${k.lostCount || 0} lost`} accent={k.winRate != null && k.winRate >= 40 ? '#16A34A' : '#F59E0B'} colorValue />
         <Stat icon={Clock} label="Avg sales cycle" value={fmtDays(k.avgCycleDays)} sub={k.medianCycleDays != null ? `median ${fmtDays(k.medianCycleDays)}` : null} accent="#F59E0B" />
@@ -163,9 +178,9 @@ function Failed({ onRetry }) {
     <button onClick={onRetry} className="btn-secondary" style={{ padding: '6px 14px' }}>Retry</button>
   </div>;
 }
-function Stat({ icon: Icon, label, value, sub, accent = BRAND.blue, colorValue }) {
+function Stat({ icon: Icon, label, value, sub, accent = BRAND.blue, colorValue, title }) {
   return (
-    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 14, boxShadow: CARD_SHADOW, padding: '15px 16px', display: 'flex', gap: 13, alignItems: 'flex-start', minWidth: 0 }}>
+    <div title={title} style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 14, boxShadow: CARD_SHADOW, padding: '15px 16px', display: 'flex', gap: 13, alignItems: 'flex-start', minWidth: 0, cursor: title ? 'help' : 'default' }}>
       <div style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: accent + '1A', color: accent }}>
         <Icon size={19} />
       </div>
