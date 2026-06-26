@@ -117,7 +117,15 @@ async function buildInsights(req) {
     const isWon = WON_STAGES.has(stage) || !!sig;
     const isLost = stage === 'lost';
     const isOpen = !isWon && !isLost;
-    const saleAt = sig?.signedAt || (isWon ? r.stage_changed_at : null);
+    const events = stageEventsByDeal.get(r.id) || [];
+    // Sale date = the FIRST time the deal reached a won stage, not the last
+    // stage change. Otherwise a deal signed weeks ago that recently moved
+    // signed→paid (which bumps stage_changed_at) would wrongly count as a sale
+    // in the current window. Prefer a real signature, then the first won event,
+    // then fall back to stage_changed_at.
+    let firstWonAt = null;
+    for (const ev of events) { if (ev.to === 'signed' || ev.to === 'paid' || ev.to === 'long_term') { firstWonAt = ev.at; break; } }
+    const saleAt = sig?.signedAt || firstWonAt || (isWon ? r.stage_changed_at : null);
     // Cycle starts at the earliest real touch — the deal's creation OR its first
     // proposal (whichever is earlier), so signature-originated deals aren't 0-day.
     const firstPropAt = firstPropMap.get(r.id) || null;
@@ -133,7 +141,7 @@ async function buildInsights(req) {
       lostReason: r.lost_reason || null, value, isWon, isLost, isOpen, saleAt,
       paymentOption: sig?.paymentOption || null, hasProposal,
       proposalOpens: tracking.proposalOpens || 0, lastOpenedAt: tracking.lastOpenedAt || null,
-      events: stageEventsByDeal.get(r.id) || [],
+      events,
     };
   });
 
