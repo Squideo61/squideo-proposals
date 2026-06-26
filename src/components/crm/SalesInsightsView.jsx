@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
 import {
   ArrowLeft, Gauge, PoundSterling, Trophy, Target, Clock, Wallet, FileText,
-  Activity, XCircle, AlertTriangle, Eye, Crown,
+  Activity, XCircle, AlertTriangle, Eye, Crown, ChevronRight,
 } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -20,6 +20,7 @@ const salesRangeMemory = { range: { mode: 'month', month: thisMonthStr() } };
 
 const fmtDays = (n) => (n == null ? '—' : (n >= 100 ? Math.round(n) : Number(n).toFixed(n < 10 ? 1 : 0)) + 'd');
 const fmtPct = (n) => (n == null ? '—' : Number(n).toFixed(1) + '%');
+const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
 const monthShort = (k) => { const [y, m] = k.split('-').map(Number); return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' }); };
 const ago = (iso) => {
   if (!iso) return '—';
@@ -112,7 +113,7 @@ function Insights({ data, isMobile, onOpenDeal }) {
       {/* Rep leaderboard */}
       <SectionLabel>Sales rep performance</SectionLabel>
       <Panel style={{ marginBottom: 26, padding: 0 }}>
-        <RepTable rows={data.reps || []} />
+        <RepTable rows={data.reps || []} onOpenDeal={onOpenDeal} />
       </Panel>
 
       {/* Win/Loss + Deal size */}
@@ -251,9 +252,11 @@ function BookingsTrend({ rows }) {
   );
 }
 
-function RepTable({ rows }) {
+function RepTable({ rows, onOpenDeal }) {
+  const [open, setOpen] = useState(null);
   if (!rows.length) return <Empty>No deals assigned to reps yet.</Empty>;
   const topWon = Math.max(...rows.map((r) => r.wonValue), 0);
+  const toggle = (key) => setOpen((cur) => (cur === key ? null : key));
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -263,20 +266,59 @@ function RepTable({ rows }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.email || r.name} style={{ borderTop: '1px solid ' + BRAND.border }}>
-              <Td>
-                {r.wonValue === topWon && topWon > 0 && <Crown size={13} style={{ color: '#F59E0B', marginRight: 5, verticalAlign: '-2px' }} />}
-                {r.name}
-              </Td>
-              <Td right>{formatGBP(r.openValue)}</Td>
-              <Td right>{r.openCount}</Td>
-              <Td right>{r.wonCount}</Td>
-              <Td right><strong>{formatGBP(r.wonValue)}</strong></Td>
-              <Td right>{fmtPct(r.winRate)}</Td>
-              <Td right>{fmtDays(r.avgCycleDays)}</Td>
-            </tr>
-          ))}
+          {rows.map((r) => {
+            const key = r.email || r.name;
+            const deals = r.signedDeals || [];
+            const expandable = deals.length > 0;
+            const isOpen = open === key;
+            return (
+              <React.Fragment key={key}>
+                <tr
+                  onClick={() => expandable && toggle(key)}
+                  style={{ borderTop: '1px solid ' + BRAND.border, cursor: expandable ? 'pointer' : 'default', background: isOpen ? BRAND.paper : 'transparent' }}
+                  title={expandable ? (isOpen ? 'Hide signed deals' : 'Show signed deals') : undefined}
+                >
+                  <Td>
+                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                      <ChevronRight size={14} style={{ marginRight: 4, color: expandable ? BRAND.muted : 'transparent', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
+                      {r.wonValue === topWon && topWon > 0 && <Crown size={13} style={{ color: '#F59E0B', marginRight: 5, verticalAlign: '-2px' }} />}
+                      {r.name}
+                    </span>
+                  </Td>
+                  <Td right>{formatGBP(r.openValue)}</Td>
+                  <Td right>{r.openCount}</Td>
+                  <Td right>{r.wonCount}</Td>
+                  <Td right><strong>{formatGBP(r.wonValue)}</strong></Td>
+                  <Td right>{fmtPct(r.winRate)}</Td>
+                  <Td right>{fmtDays(r.avgCycleDays)}</Td>
+                </tr>
+                {isOpen && (
+                  <tr style={{ background: BRAND.paper }}>
+                    <td colSpan={7} style={{ padding: '4px 14px 12px' }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, margin: '6px 0 8px 18px' }}>
+                        {deals.length} signed {deals.length === 1 ? 'deal' : 'deals'} this period
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginLeft: 18 }}>
+                        {deals.map((d) => (
+                          <div
+                            key={d.id}
+                            onClick={() => onOpenDeal && onOpenDeal(d.id)}
+                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, cursor: onOpenDeal ? 'pointer' : 'default' }}
+                          >
+                            <Trophy size={13} style={{ color: '#16A34A', flexShrink: 0 }} />
+                            <span style={{ flex: 1, fontWeight: 500, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.title}</span>
+                            {d.signedAt && <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0 }}>{fmtDate(d.signedAt)}</span>}
+                            {d.cycleDays != null && <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0, width: 56, textAlign: 'right' }}>{fmtDays(d.cycleDays)} cycle</span>}
+                            <span style={{ fontWeight: 700, color: '#16A34A', flexShrink: 0, width: 80, textAlign: 'right' }}>{formatGBP(d.value)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>

@@ -208,11 +208,15 @@ async function buildInsights(req) {
   const repMap = new Map();
   const rep = (email) => {
     const key = (email || 'unassigned').toLowerCase();
-    if (!repMap.has(key)) repMap.set(key, { email: email || null, name: email ? (nameByEmail.get(key) || email) : 'Unassigned', openValue: 0, openCount: 0, wonCount: 0, wonValue: 0, lostCount: 0, cycle: [] });
+    if (!repMap.has(key)) repMap.set(key, { email: email || null, name: email ? (nameByEmail.get(key) || email) : 'Unassigned', openValue: 0, openCount: 0, wonCount: 0, wonValue: 0, lostCount: 0, cycle: [], signedDeals: [] });
     return repMap.get(key);
   };
   for (const d of open) { const r = rep(d.owner); r.openValue += d.value; r.openCount += 1; }
-  for (const d of wonInRange) { const r = rep(d.owner); r.wonCount += 1; r.wonValue += d.value; const c = days(d.cycleStartAt, d.saleAt); if (c != null && c >= 0) r.cycle.push(c); }
+  for (const d of wonInRange) {
+    const r = rep(d.owner); r.wonCount += 1; r.wonValue += d.value;
+    const c = days(d.cycleStartAt, d.saleAt); if (c != null && c >= 0) r.cycle.push(c);
+    r.signedDeals.push({ id: d.id, title: d.title || 'Untitled deal', value: round2(d.value), signedAt: d.saleAt, cycleDays: c != null && c >= 0 ? c : null });
+  }
   for (const d of lostInRange) { rep(d.owner).lostCount += 1; }
   const reps = [...repMap.values()].map((r) => ({
     email: r.email, name: r.name,
@@ -220,6 +224,7 @@ async function buildInsights(req) {
     wonCount: r.wonCount, wonValue: round2(r.wonValue),
     winRate: pctRate(r.wonCount, r.wonCount + r.lostCount),
     avgCycleDays: r.cycle.length ? round1(r.cycle.reduce((a, b) => a + b, 0) / r.cycle.length) : null,
+    signedDeals: r.signedDeals.sort((a, b) => new Date(b.signedAt || 0) - new Date(a.signedAt || 0)),
   })).sort((a, b) => b.wonValue - a.wonValue || b.openValue - a.openValue);
 
   // ---- Bookings trend (won value by month, last 12 months) -------------------
