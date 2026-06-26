@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { put, del, getDownloadUrl, get as blobGet } from '@vercel/blob';
+import { put, del, get as blobGet } from '@vercel/blob';
 import sql from '../db.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
@@ -2741,8 +2741,18 @@ async function directorInvoiceRoute(req, res, action, user) {
 
   if (req.method === 'GET') {
     if (!row.blob_url) return res.status(404).json({ error: 'No invoice attached' });
-    const downloadUrl = await getDownloadUrl(row.blob_url);
-    return res.status(200).json({ downloadUrl, filename: row.filename || 'invoice' });
+    // The Blob store is private — its raw URL 403s, so stream the bytes back
+    // through here (read server-side, like the ZIP route) and let the browser
+    // display it inline. See [[project_blob_private]].
+    const result = await blobGet(row.blob_url || row.blob_pathname, { access: 'private' });
+    if (!result || !result.stream) return res.status(404).json({ error: 'Invoice file missing' });
+    const data = Buffer.from(await new Response(result.stream).arrayBuffer());
+    const filename = (row.filename || 'invoice').replace(/"/g, '');
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Content-Length', String(data.length));
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    return res.status(200).end(data);
   }
 
   if (req.method === 'DELETE') {

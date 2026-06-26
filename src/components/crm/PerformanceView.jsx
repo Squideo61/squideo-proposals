@@ -825,8 +825,17 @@ function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onD
     finally { setBusy(false); }
   };
   const download = async () => {
-    try { const r = await actions.getDirectorInvoiceUrl(e.id); if (r?.downloadUrl) window.open(r.downloadUrl, '_blank'); }
-    catch { showMsg?.('Could not open invoice', 'error'); }
+    // The receipt lives in a private Blob store, so its raw URL is forbidden —
+    // fetch the bytes through our API (cookie-auth) and view them inline. Open
+    // the tab synchronously first so it isn't blocked as a popup.
+    const win = window.open('', '_blank');
+    try {
+      const res = await fetch('/api/crm/stats/director-invoice/' + encodeURIComponent(e.id), { credentials: 'include' });
+      if (!res.ok) { win?.close(); showMsg?.('Could not open invoice', 'error'); return; }
+      const url = URL.createObjectURL(await res.blob());
+      if (win) win.location = url; else window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch { win?.close(); showMsg?.('Could not open invoice', 'error'); }
   };
   const removeFile = () => actions.deleteDirectorInvoice(e.id).then(reload);
   const remove = () => actions.deleteDirectorExpense(e.id).then(reload);

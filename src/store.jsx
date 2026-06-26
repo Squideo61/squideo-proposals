@@ -1179,9 +1179,6 @@ export function StoreProvider({ children }) {
       if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
       return res.json();
     },
-    getDirectorInvoiceUrl(id) {
-      return api.get('/api/crm/stats/director-invoice/' + encodeURIComponent(id));
-    },
     deleteDirectorInvoice(id) {
       return api.delete('/api/crm/stats/director-invoice/' + encodeURIComponent(id));
     },
