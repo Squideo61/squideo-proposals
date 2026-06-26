@@ -159,16 +159,23 @@ async function buildInsights(req) {
     const value = Number(a.effectiveValue) || 0;
     const cycleDays = days(cycleStartAt, saleAt);
     const isImported = EXCLUDED_IMPORT_DEAL_IDS.has(r.id);
+    // A "signed proposal" must have an actual signature, or have reached the
+    // signed/paid stage. Being moved to "long-term" (an ongoing-client status)
+    // does NOT by itself count as signing a proposal, so a deal parked in
+    // long_term with no signature is kept out of the signed-proposal metrics.
+    const reachedSignedOrPaid = stage === 'signed' || stage === 'paid'
+      || events.some((e) => e.to === 'signed' || e.to === 'paid');
+    const isSignedProposal = !!sig?.signedAt || reachedSignedOrPaid;
     const hasProposal = a.valueSource === 'proposal' || a.valueSource === 'signed' || (a.proposalCount || 0) > 0;
     const tracking = a.tracking || {};
     return {
       id: r.id, title: r.title, stage, owner: r.owner_email || null,
       createdAt: r.created_at, cycleStartAt, cycleDays, isImported, stageChangedAt: r.stage_changed_at, lastActivityAt: r.last_activity_at,
-      // isSale = a genuine signed proposal: won AND a real value, excluding the
-      // listed historical imports. £0 won records (placeholders/test) and those
-      // imports are kept out of the signed-proposal metrics, while staying out
-      // of open/lost too.
-      lostReason: r.lost_reason || null, value, isWon, isSale: isWon && value > 0 && !isImported, isImportedSale: isWon && value > 0 && isImported, isLost, isOpen, saleAt,
+      // isSale = a genuine signed proposal: signed/paid (or carrying a signature),
+      // a real value, and not a listed historical import. £0 records, bare
+      // long-term parks, and imports stay out of the signed-proposal metrics —
+      // while also staying out of open/lost.
+      lostReason: r.lost_reason || null, value, isWon, isSale: isSignedProposal && value > 0 && !isImported, isImportedSale: isSignedProposal && value > 0 && isImported, isLost, isOpen, saleAt,
       paymentOption: sig?.paymentOption || null, hasProposal,
       proposalOpens: tracking.proposalOpens || 0, lastOpenedAt: tracking.lastOpenedAt || null,
       events,
@@ -195,15 +202,16 @@ async function buildInsights(req) {
   // deal further down the funnel can't be less likely to win than one behind it.
   // Recomputed on every request, so it tracks performance with no training job.
   const PRIOR_STRENGTH = 6;
-  // Imported wins never travelled the pipeline, so they'd distort the learned
-  // stage win-rates — exclude them (but keep genuine wins and all losses).
-  const decidedAll = deals.filter((d) => (d.isWon && !d.isImported) || d.isLost);
+  // A "win" here = a genuine signed proposal (d.isSale): excludes imports, £0
+  // placeholders and bare long-term parks, so none of those distort the learned
+  // stage win-rates. Losses are all real losses.
+  const decidedAll = deals.filter((d) => d.isSale || d.isLost);
   const winProb = {};
   const probDetail = [];
   let runMax = 0;
   for (const stage of OPEN_STAGES) {
     const reached = decidedAll.filter((d) => maxReachedRank(d) >= STAGE_RANK[stage]);
-    const wins = reached.filter((d) => d.isWon).length;
+    const wins = reached.filter((d) => d.isSale).length;
     const prior = STAGE_PROB[stage] || 0;
     const blended = (wins + prior * PRIOR_STRENGTH) / (reached.length + PRIOR_STRENGTH);
     runMax = Math.max(runMax, blended);
