@@ -488,34 +488,34 @@ async function fetchPaidManualPps(sinceISO, untilISO) {
 // the leaderboard's existing convention.
 async function fetchPaidRows(sinceISO, untilISO) {
   const [stripeR, partnerR, manualR, invR, pbR] = await Promise.all([
-    sql`SELECT pay.amount AS inc, pay.paid_at, pr.data->>'vatRate' AS rate
+    sql`SELECT pay.amount AS inc, pay.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id
           FROM payments pay JOIN proposals pr ON pr.id = pay.proposal_id
          WHERE pay.paid_at >= ${sinceISO} AND pay.paid_at < ${untilISO}`,
-    sql`SELECT pi.amount AS inc, pi.paid_at, pr.data->>'vatRate' AS rate
+    sql`SELECT pi.amount AS inc, pi.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id
           FROM partner_invoices pi JOIN proposals pr ON pr.id = pi.proposal_id
          WHERE pi.paid_at >= ${sinceISO} AND pi.paid_at < ${untilISO}`,
-    sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate
+    sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id
           FROM manual_payments mp JOIN proposals pr ON pr.id = mp.proposal_id
          WHERE mp.manual_invoice_id IS NULL
            AND mp.paid_at >= ${sinceISO} AND mp.paid_at < ${untilISO}`,
     sql`SELECT mi.amount AS inc, mi.paid_at, mi.subtotal_ex_vat, mi.tax_amount,
-               pr.data->>'vatRate' AS rate
+               pr.data->>'vatRate' AS rate, pr.id AS proposal_id
           FROM manual_invoices mi
           LEFT JOIN proposals pr ON pr.id = mi.proposal_id
          WHERE mi.status = 'paid'
            AND mi.paid_at >= ${sinceISO} AND mi.paid_at < ${untilISO}`,
-    sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate
+    sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id
           FROM proposal_billing pb JOIN proposals pr ON pr.id = pb.proposal_id
          WHERE pb.paid_amount IS NOT NULL
            AND pb.paid_at >= ${sinceISO} AND pb.paid_at < ${untilISO}`,
   ]);
 
   const rows = [];
-  const push = (paidAt, parts) => { if (paidAt) rows.push({ paidAt: new Date(paidAt), ...parts }); };
+  const push = (paidAt, parts, proposalId = null) => { if (paidAt) rows.push({ paidAt: new Date(paidAt), proposalId: proposalId || null, ...parts }); };
 
-  for (const r of stripeR) push(r.paid_at, splitVat(r.inc, r.rate));
-  for (const r of partnerR) push(r.paid_at, splitVat(r.inc, r.rate));
-  for (const r of manualR) push(r.paid_at, splitVat(r.inc, r.rate));
+  for (const r of stripeR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id);
+  for (const r of partnerR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id);
+  for (const r of manualR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id);
   for (const r of invR) {
     // Prefer the invoice's own stored VAT breakdown (most accurate, incl.
     // company-level invoices with no linked proposal); fall back to the linked
@@ -524,12 +524,12 @@ async function fetchPaidRows(sinceISO, untilISO) {
     if (r.subtotal_ex_vat != null || r.tax_amount != null) {
       const net = r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : gross - (Number(r.tax_amount) || 0);
       const vat = r.tax_amount != null ? Number(r.tax_amount) : gross - net;
-      push(r.paid_at, { gross, net, vat });
+      push(r.paid_at, { gross, net, vat }, r.proposal_id);
     } else {
-      push(r.paid_at, splitVat(gross, r.rate));
+      push(r.paid_at, splitVat(gross, r.rate), r.proposal_id);
     }
   }
-  for (const r of pbR) push(r.paid_at, splitVat(r.inc, r.rate));
+  for (const r of pbR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id);
 
   // Manual pending payments marked paid — net + stored VAT.
   const ppPaid = await fetchPaidManualPps(sinceISO, untilISO);
@@ -553,7 +553,34 @@ async function fetchPaidRows(sinceISO, untilISO) {
     }
   } catch { /* partner_fee_payments not created yet — ignore */ }
 
-  return rows;
+  return dedupePaymentRows(rows);
+}
+
+// Collapse rows that are the SAME payment recorded via two mechanisms — e.g. a
+// proposal marked paid manually AND its Xero invoice reconciled, which would
+// otherwise count twice in cash-in and the income ledger. The signature of a
+// true duplicate is: same proposal, same day, same gross amount. When two
+// collide we keep the more authoritative source (a real Stripe/Xero/invoice
+// record over a hand-marked manual payment). Rows with no proposal (imported
+// sheet PPs, ad-hoc/company invoices, partner fees) are always kept — they can't
+// be matched to a proposal to dedupe against. A genuine 50/50 deposit + final
+// differs by day, so it survives. Works for both row shapes (paidAt as a Date or
+// an ISO string; `source` present or not).
+const PAYMENT_SOURCE_PRIORITY = { stripe: 0, billing: 1, invoice: 2, partner: 3, manual: 4, sheet: 5 };
+function dedupePaymentRows(rows) {
+  const idxByKey = new Map();
+  const out = [];
+  for (const r of rows) {
+    if (!r.proposalId) { out.push(r); continue; }
+    const day = (r.paidAt instanceof Date ? r.paidAt.toISOString() : String(r.paidAt)).slice(0, 10);
+    const key = `${r.proposalId}|${day}|${round2(r.gross)}`;
+    if (!idxByKey.has(key)) { idxByKey.set(key, out.length); out.push(r); continue; }
+    const i = idxByKey.get(key);
+    const rp = PAYMENT_SOURCE_PRIORITY[r.source] ?? 9;
+    const cp = PAYMENT_SOURCE_PRIORITY[out[i].source] ?? 9;
+    if (rp < cp) out[i] = r; // replace with the more authoritative record
+  }
+  return out;
 }
 
 async function financeReport(year) {
@@ -1621,21 +1648,21 @@ async function incomeReport(action) {
   await ensureIncomeColumns();
 
   const [stripeR, partnerR, manualR, invR, pbR] = await Promise.all([
-    sql`SELECT pay.amount AS inc, pay.paid_at, pr.data->>'vatRate' AS rate,
+    sql`SELECT pay.amount AS inc, pay.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
                d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
           FROM payments pay
           JOIN proposals pr ON pr.id = pay.proposal_id
           LEFT JOIN deals d ON d.id = pr.deal_id
           LEFT JOIN companies c ON c.id = d.company_id
          WHERE pay.paid_at >= ${since} AND pay.paid_at < ${until}`,
-    sql`SELECT pi.amount AS inc, pi.paid_at, pr.data->>'vatRate' AS rate,
+    sql`SELECT pi.amount AS inc, pi.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
                d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
           FROM partner_invoices pi
           JOIN proposals pr ON pr.id = pi.proposal_id
           LEFT JOIN deals d ON d.id = pr.deal_id
           LEFT JOIN companies c ON c.id = d.company_id
          WHERE pi.paid_at >= ${since} AND pi.paid_at < ${until}`,
-    sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate, mp.id AS edit_key, mp.payment_method AS method,
+    sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate, mp.id AS edit_key, mp.payment_method AS method, pr.id AS proposal_id,
                d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
           FROM manual_payments mp
           JOIN proposals pr ON pr.id = mp.proposal_id
@@ -1644,7 +1671,7 @@ async function incomeReport(action) {
          WHERE mp.manual_invoice_id IS NULL
            AND mp.paid_at >= ${since} AND mp.paid_at < ${until}`,
     sql`SELECT mi.amount AS inc, mi.paid_at, mi.subtotal_ex_vat, mi.tax_amount,
-               pr.data->>'vatRate' AS rate, mi.id AS edit_key, mi.payment_method AS method,
+               pr.data->>'vatRate' AS rate, mi.id AS edit_key, mi.payment_method AS method, pr.id AS proposal_id,
                COALESCE(mi.deal_id, pr.deal_id) AS deal_id,
                COALESCE(dd.company_id, dp.company_id) AS company_id,
                COALESCE(cd.name, cp.name) AS company,
@@ -1657,7 +1684,7 @@ async function incomeReport(action) {
           LEFT JOIN companies cp ON cp.id = dp.company_id
          WHERE mi.status = 'paid'
            AND mi.paid_at >= ${since} AND mi.paid_at < ${until}`,
-    sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate, pb.xero_invoice_id AS edit_key, pb.payment_method AS method,
+    sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate, pb.xero_invoice_id AS edit_key, pb.payment_method AS method, pr.id AS proposal_id,
                d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
           FROM proposal_billing pb
           JOIN proposals pr ON pr.id = pb.proposal_id
@@ -1674,6 +1701,8 @@ async function incomeReport(action) {
       paidAt: new Date(r.paid_at).toISOString(),
       net: round2(parts.net), vat: round2(parts.vat), gross: round2(parts.gross),
       source,
+      // Internal, for dedupe only — stripped from the response below.
+      proposalId: r.proposal_id || null,
       company: r.company || null,
       dealId: r.deal_id || null,
       number: r.ny && r.ns ? { year: Number(r.ny), seq: Number(r.ns) } : null,
@@ -1708,10 +1737,13 @@ async function incomeReport(action) {
     push(r, 'sheet', { net, vat, gross: net + vat });
   }
 
-  rows.sort((a, b) => (a.paidAt < b.paidAt ? 1 : a.paidAt > b.paidAt ? -1 : 0));
-  const total = round2(rows.reduce((s, r) => s + r.net, 0));
+  // Drop duplicates (same proposal paid the same gross on the same day via two
+  // mechanisms), then strip the internal proposalId from the response.
+  const deduped = dedupePaymentRows(rows).map(({ proposalId, ...rest }) => rest); // eslint-disable-line no-unused-vars
+  deduped.sort((a, b) => (a.paidAt < b.paidAt ? 1 : a.paidAt > b.paidAt ? -1 : 0));
+  const total = round2(deduped.reduce((s, r) => s + r.net, 0));
 
-  return { period, rows, total };
+  return { period, rows: deduped, total };
 }
 
 // Bulk upsert / list of the imported Live Sales Sheet history. Gated (caller has
