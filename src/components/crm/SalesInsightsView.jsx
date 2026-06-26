@@ -259,7 +259,7 @@ function RepTable({ rows }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr style={{ background: BRAND.paper, textAlign: 'left' }}>
-            <Th>Rep</Th><Th right>Open pipeline</Th><Th right>Open</Th><Th right>Won</Th><Th right>Booked</Th><Th right>Win rate</Th><Th right>Avg cycle</Th>
+            <Th>Rep</Th><Th right>Open pipeline</Th><Th right>Open deals</Th><Th right>Signed</Th><Th right>Signed £</Th><Th right>Win rate</Th><Th right>Avg cycle</Th>
           </tr>
         </thead>
         <tbody>
