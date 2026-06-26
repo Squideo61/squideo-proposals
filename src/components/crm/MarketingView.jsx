@@ -4,11 +4,11 @@ import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, 
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
-import { computeRange, rangeHeading, fmtRangeDates, segBtn, RangeControl } from './dateRange.jsx';
+import { computeRange, rangeHeading, fmtRangeDates, segBtn, RangeControl, thisMonthStr } from './dateRange.jsx';
 
 // Remembers the Marketing page's view state across navigation (mirrors
 // financeViewMemory): the active tab, report grouping, date range and scroll.
-const marketingViewMemory = { section: 'overview', groupBy: 'campaign', range: { mode: 'preset', days: 90 }, scrollY: 0 };
+const marketingViewMemory = { section: 'overview', groupBy: 'campaign', range: { mode: 'month', month: thisMonthStr() }, scrollY: 0 };
 
 const CHANNEL_LABELS = {
   paid_search: 'Paid search',

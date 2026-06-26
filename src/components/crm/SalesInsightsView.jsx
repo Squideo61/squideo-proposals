@@ -7,7 +7,7 @@ import {
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
-import { computeRange, rangeHeading, fmtRangeDates, RangeControl } from './dateRange.jsx';
+import { computeRange, rangeHeading, fmtRangeDates, RangeControl, thisMonthStr } from './dateRange.jsx';
 
 const CARD_SHADOW = '0 1px 2px rgba(16,42,61,0.05)';
 const STAGE_COLOR = {
@@ -16,7 +16,7 @@ const STAGE_COLOR = {
 };
 
 // Persist the chosen range across navigation (module-level, like the other dashboards).
-const salesRangeMemory = { range: { mode: 'preset', days: 365 } };
+const salesRangeMemory = { range: { mode: 'month', month: thisMonthStr() } };
 
 const fmtDays = (n) => (n == null ? '—' : (n >= 100 ? Math.round(n) : Number(n).toFixed(n < 10 ? 1 : 0)) + 'd');
 const fmtPct = (n) => (n == null ? '—' : Number(n).toFixed(1) + '%');
