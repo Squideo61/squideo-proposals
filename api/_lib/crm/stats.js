@@ -484,8 +484,7 @@ async function fetchPaidManualPps(sinceISO, untilISO) {
 }
 
 // Every paid-money row across all customers with paid_at in [sinceISO, untilISO).
-// Returns [{ paidAt: Date, net, vat, gross }]. Dates are bucketed in UTC, matching
-// the leaderboard's existing convention.
+// Returns [{ paidAt: Date, net, vat, gross }]. Dates are bucketed in UTC.
 async function fetchPaidRows(sinceISO, untilISO) {
   const [stripeR, partnerR, manualR, invR, pbR] = await Promise.all([
     sql`SELECT pay.amount AS inc, pay.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id

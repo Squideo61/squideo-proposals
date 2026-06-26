@@ -116,7 +116,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     {
       key: 'sales',
       label: 'Sales',
-      views: ['list', 'pipeline', 'deal', 'quote-requests', 'templates', 'leaderboard', 'sales-insights'],
+      views: ['list', 'pipeline', 'deal', 'quote-requests', 'templates', 'sales-insights'],
       items: [
         ...(canQuoteRequests ? [{ label: 'Quote Requests', icon: MailQuestion, go: () => navigate('quote-requests'), count: newQuoteRequestsCount }] : []),
         { label: 'Proposals', icon: FileText, go: () => navigate('list') },
@@ -181,7 +181,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       ]
     : [
         tab('overview', 'Home', LayoutDashboard, () => navigate('overview'), ['overview']),
-        tab('list', 'Sales', FileText, () => navigate('list'), ['list', 'deal', 'pipeline', 'quote-requests', 'leaderboard', 'templates']),
+        tab('list', 'Sales', FileText, () => navigate('list'), ['list', 'deal', 'pipeline', 'quote-requests', 'templates']),
         tab('tasks', 'Tasks', CheckSquare, () => navigate('tasks'), ['tasks'], openTasksDue),
         tab('emails', 'Inbox', Mail, () => navigate('emails'), ['emails', 'email', 'triage'], inboxUnread),
         tab('more', 'More', Menu, openMore),

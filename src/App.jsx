@@ -26,7 +26,6 @@ const FULL_WIDTH_VIEWS = new Set(['production']);
 const ListView = lazyNamed(() => import('./components/ListView.jsx'), 'ListView');
 const BuilderView = lazyNamed(() => import('./components/BuilderView.jsx'), 'BuilderView');
 const TemplatesView = lazyNamed(() => import('./components/TemplatesView.jsx'), 'TemplatesView');
-const LeaderboardView = lazyNamed(() => import('./components/LeaderboardView.jsx'), 'LeaderboardView');
 const PartnerCreditsView = lazyNamed(() => import('./components/PartnerCreditsView.jsx'), 'PartnerCreditsView');
 const PartnerCreditDetailView = lazyNamed(() => import('./components/PartnerCreditDetailView.jsx'), 'PartnerCreditDetailView');
 const AdminView = lazyNamed(() => import('./components/admin/AdminView.jsx'), 'AdminView');
@@ -617,9 +616,6 @@ function AppShell() {
           onBack={() => goBack('production')}
           onOpenProject={(id) => navigate('project', id)}
         />
-      )}
-      {view === 'leaderboard' && (
-        <LeaderboardView onBack={() => navigate('list')} />
       )}
       {/* Performance is now folded into Finance; keep the old route as an alias. */}
       {view === 'overview' && (

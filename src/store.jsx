@@ -103,7 +103,6 @@ function emptyStore() {
     revisionCallUrl: '',
     extrasBank: [],
     inclusionsBank: [],
-    leaderboard: null,
     // Marketing → lead attribution reports.
     marketingReports: null,
     marketingLeads: null,
@@ -924,14 +923,6 @@ export function StoreProvider({ children }) {
         setState(s => ({ ...s, viewSessions: { ...s.viewSessions, [id]: list } }));
         return list;
       }).catch(() => []);
-    },
-    loadLeaderboard(range = 'month') {
-      const r = ['month', 'year', 'all'].includes(range) ? range : 'month';
-      return api.get('/api/proposals?view=leaderboard&range=' + r).then((data) => {
-        const board = data || { totals: [], createdTrend: [], signedTrend: [], range: r, grain: r === 'month' ? 'day' : 'month', periodLabel: '' };
-        setState(s => ({ ...s, leaderboard: board }));
-        return board;
-      }).catch(() => ({ totals: [], createdTrend: [], signedTrend: [], range: r, grain: 'day', periodLabel: '' }));
     },
     // Marketing → aggregated lead-attribution report grouped by source / medium /
     // campaign / keyword / channel over an optional date range (YYYY-MM-DD).

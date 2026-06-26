@@ -1,6 +1,5 @@
 // Consolidated proposals endpoint. Handles:
 //   GET    /api/proposals                 — list (auth)
-//   GET    /api/proposals?view=leaderboard — leaderboard (auth)
 //   GET    /api/proposals/:id             — public single read
 //   PUT    /api/proposals/:id             — save + auto-create-deal (auth)
 //   DELETE /api/proposals/:id             — delete (auth)
@@ -52,7 +51,6 @@ export default async function handler(req, res) {
     if (req.method !== 'GET') return res.status(405).end();
     const user = await requireAuth(req, res);
     if (!user) return;
-    if (req.query.view === 'leaderboard') return leaderboard(req, res);
     return list(req, res);
   }
 
@@ -409,128 +407,4 @@ async function list(req, res) {
     };
   }
   return res.status(200).json(proposals);
-}
-
-async function leaderboard(req, res) {
-  const rangeIn = String(req.query.range || 'month').toLowerCase();
-  const range = ['month', 'year', 'all'].includes(rangeIn) ? rangeIn : 'month';
-
-  const now = new Date();
-  let start;
-  let grain;
-  let periodLabel;
-  if (range === 'month') {
-    start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    grain = 'day';
-    periodLabel = now.toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-  } else if (range === 'year') {
-    start = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate()));
-    grain = 'month';
-    periodLabel = 'Past 12 months';
-  } else {
-    start = new Date(0);
-    grain = 'month';
-    periodLabel = 'All time';
-  }
-  const startISO = start.toISOString();
-
-  const totals = await sql`
-    SELECT
-      COALESCE(NULLIF(p.data->>'preparedByEmail', ''), 'unknown') AS email,
-      COUNT(*) FILTER (WHERE p.created_at >= ${startISO}) AS created_count,
-      COUNT(s.proposal_id) FILTER (WHERE s.signed_at >= ${startISO}) AS signed_count,
-      COALESCE(SUM(
-        CASE WHEN s.signed_at >= ${startISO}
-             THEN COALESCE((p.data->>'basePrice')::numeric, 0)
-             ELSE 0 END
-      ), 0) AS deal_value,
-      COALESCE(SUM(pay.amount) FILTER (WHERE pay.paid_at >= ${startISO}), 0) AS revenue_paid
-    FROM proposals p
-    LEFT JOIN signatures s ON s.proposal_id = p.id
-    LEFT JOIN payments  pay ON pay.proposal_id = p.id
-    GROUP BY 1
-    ORDER BY signed_count DESC, created_count DESC, deal_value DESC
-  `;
-
-  const createdTrend = grain === 'day'
-    ? await sql`
-        SELECT
-          COALESCE(NULLIF(p.data->>'preparedByEmail', ''), 'unknown') AS email,
-          DATE_TRUNC('day', p.created_at) AS bucket,
-          COUNT(*) AS count
-        FROM proposals p
-        WHERE p.created_at >= ${startISO}
-        GROUP BY 1, 2
-        ORDER BY 2 ASC
-      `
-    : await sql`
-        SELECT
-          COALESCE(NULLIF(p.data->>'preparedByEmail', ''), 'unknown') AS email,
-          DATE_TRUNC('month', p.created_at) AS bucket,
-          COUNT(*) AS count
-        FROM proposals p
-        WHERE p.created_at >= ${startISO}
-        GROUP BY 1, 2
-        ORDER BY 2 ASC
-      `;
-
-  const signedTrend = grain === 'day'
-    ? await sql`
-        SELECT
-          COALESCE(NULLIF(p.data->>'preparedByEmail', ''), 'unknown') AS email,
-          DATE_TRUNC('day', s.signed_at) AS bucket,
-          COUNT(*) AS count
-        FROM signatures s
-        JOIN proposals p ON p.id = s.proposal_id
-        WHERE s.signed_at >= ${startISO}
-        GROUP BY 1, 2
-        ORDER BY 2 ASC
-      `
-    : await sql`
-        SELECT
-          COALESCE(NULLIF(p.data->>'preparedByEmail', ''), 'unknown') AS email,
-          DATE_TRUNC('month', s.signed_at) AS bucket,
-          COUNT(*) AS count
-        FROM signatures s
-        JOIN proposals p ON p.id = s.proposal_id
-        WHERE s.signed_at >= ${startISO}
-        GROUP BY 1, 2
-        ORDER BY 2 ASC
-      `;
-
-  const users = await sql`SELECT email, name, avatar FROM users`;
-  const userMap = Object.fromEntries(users.map(u => [u.email, u]));
-
-  const totalsOut = totals
-    .map(r => {
-      const u = userMap[r.email];
-      return {
-        email: r.email,
-        name: u?.name || r.email,
-        avatar: u?.avatar || null,
-        created: Number(r.created_count) || 0,
-        signed: Number(r.signed_count) || 0,
-        dealValue: Number(r.deal_value) || 0,
-        revenuePaid: Number(r.revenue_paid) || 0,
-      };
-    })
-    .filter(t => t.created > 0 || t.signed > 0 || t.revenuePaid > 0);
-
-  return res.status(200).json({
-    range,
-    grain,
-    periodLabel,
-    startISO,
-    totals: totalsOut,
-    createdTrend: createdTrend.map(r => ({
-      email: r.email,
-      bucket: r.bucket,
-      count: Number(r.count) || 0,
-    })),
-    signedTrend: signedTrend.map(r => ({
-      email: r.email,
-      bucket: r.bucket,
-      count: Number(r.count) || 0,
-    })),
-  });
 }
