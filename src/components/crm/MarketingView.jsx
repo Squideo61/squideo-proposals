@@ -7,7 +7,7 @@ import { formatGBP, useIsMobile } from '../../utils.js';
 
 // Remembers the Marketing page's view state across navigation (mirrors
 // financeViewMemory): the active tab, report grouping, date range and scroll.
-const marketingViewMemory = { section: 'overview', groupBy: 'campaign', rangeDays: 90, scrollY: 0 };
+const marketingViewMemory = { section: 'overview', groupBy: 'campaign', range: { mode: 'preset', days: 90 }, scrollY: 0 };
 
 const CHANNEL_LABELS = {
   paid_search: 'Paid search',
@@ -56,6 +56,31 @@ function rangeFor(days) {
   const from = new Date(to.getTime() - (days - 1) * 86400000);
   return { from: dateStr(from), to: dateStr(to) };
 }
+
+// ---- Date-range model: preset (rolling window) | month | custom from–to -----
+function thisMonthStr() {
+  const n = new Date();
+  return `${n.getUTCFullYear()}-${String(n.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+function shiftMonth(monthStr, delta) {
+  const [y, m] = monthStr.split('-').map(Number);
+  const d = new Date(Date.UTC(y, (m - 1) + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+function monthRange(monthStr) {
+  const [y, m] = monthStr.split('-').map(Number);
+  const from = new Date(Date.UTC(y, m - 1, 1));
+  const to = new Date(Date.UTC(y, m, 0)); // day 0 of next month = last day of this one
+  return { from: dateStr(from), to: dateStr(to) };
+}
+// Resolve a range descriptor to inclusive { from, to } date strings for the API.
+function computeRange(range) {
+  if (range?.mode === 'month' && range.month) return monthRange(range.month);
+  if (range?.mode === 'custom' && range.from && range.to) {
+    return range.from <= range.to ? { from: range.from, to: range.to } : { from: range.to, to: range.from };
+  }
+  return rangeFor(range?.days || 90);
+}
 const pct = (n) => (n == null ? '—' : (Number(n) || 0).toFixed(1) + '%');
 const dash = (v, fmt) => (v == null ? '—' : fmt(v));
 const fmtRoas = (v) => (v == null ? '—' : (Number(v) || 0).toFixed(2) + '×');
@@ -64,7 +89,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const [section, setSection] = useState(sectionProp || marketingViewMemory.section);
-  const [rangeDays, setRangeDays] = useState(marketingViewMemory.rangeDays);
+  const [range, setRange] = useState(marketingViewMemory.range);
   const [groupBy, setGroupBy] = useState(marketingViewMemory.groupBy);
 
   const [overview, setOverview] = useState(null);   // reports grouped by channel
@@ -79,10 +104,10 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
   // Follow the section coming from the header (navigate('marketing', <section>)).
   useEffect(() => { if (sectionProp) setSection(sectionProp); }, [sectionProp]);
   useEffect(() => { marketingViewMemory.section = section; }, [section]);
-  useEffect(() => { marketingViewMemory.rangeDays = rangeDays; }, [rangeDays]);
+  useEffect(() => { marketingViewMemory.range = range; }, [range]);
   useEffect(() => { marketingViewMemory.groupBy = groupBy; }, [groupBy]);
 
-  const { from, to } = useMemo(() => rangeFor(rangeDays), [rangeDays]);
+  const { from, to } = useMemo(() => computeRange(range), [range]);
 
   // The "show leads from" cutoff — leads before it (incomplete early attribution)
   // are excluded from the lead-based reports so they don't skew the figures.
@@ -162,28 +187,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
         )}
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Marketing</h1>
         <div style={{ flex: 1 }} />
-        {['overview', 'reports', 'leads'].includes(section) && (
-          <label title="Leads before this date are excluded from the reports (incomplete early attribution)" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.muted }}>
-            Leads from
-            <input
-              type="date"
-              value={cutoff || ''}
-              onChange={(e) => onCutoffChange(e.target.value)}
-              style={{ padding: '5px 8px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 13, color: BRAND.ink }}
-            />
-          </label>
-        )}
-        {section !== 'settings' && (
-          <div style={{ display: 'inline-flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2 }}>
-            {RANGE_PRESETS.map((r) => (
-              <button
-                key={r.days}
-                onClick={() => setRangeDays(r.days)}
-                style={segBtn(rangeDays === r.days)}
-              >{r.label}</button>
-            ))}
-          </div>
-        )}
+        {section !== 'settings' && <RangeControl range={range} setRange={setRange} />}
       </header>
 
       {/* Tabs */}
@@ -218,7 +222,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
       {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'search' && <SearchTab data={search} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'traffic' && <TrafficTab data={traffic} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
-      {section === 'settings' && <SettingsTab snippet={snippet} onSync={() => actions.syncAdSpend()} />}
+      {section === 'settings' && <SettingsTab snippet={snippet} onSync={() => actions.syncAdSpend()} cutoff={cutoff} onCutoffChange={onCutoffChange} />}
     </div>
   );
 }
@@ -230,6 +234,67 @@ const segBtn = (active) => ({
   fontWeight: active ? 600 : 500, color: active ? 'white' : BRAND.ink,
   background: active ? BRAND.blue : 'transparent',
 });
+
+// Date-range picker: rolling-window presets, a month stepper (this month +
+// previous months via ‹ ›/the month picker), and a custom from–to range.
+function RangeControl({ range, setRange }) {
+  const tm = thisMonthStr();
+  const month = range.mode === 'month' ? range.month : tm;
+  const atCurrentMonth = month >= tm;
+  const monthActive = range.mode === 'month';
+  const customActive = range.mode === 'custom';
+  const dateInput = {
+    padding: '4px 7px', borderRadius: 7, border: '1px solid ' + BRAND.border,
+    background: 'white', fontSize: 13, color: BRAND.ink,
+  };
+  const arrowBtn = (disabled) => ({
+    border: 'none', background: 'transparent', cursor: disabled ? 'default' : 'pointer',
+    color: disabled ? BRAND.border : BRAND.ink, fontSize: 16, lineHeight: 1, padding: '2px 6px', borderRadius: 6,
+  });
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+      {/* rolling-window presets */}
+      <div style={{ display: 'inline-flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2 }}>
+        {RANGE_PRESETS.map((r) => (
+          <button key={r.days} onClick={() => setRange({ mode: 'preset', days: r.days })} style={segBtn(range.mode === 'preset' && range.days === r.days)}>{r.label}</button>
+        ))}
+      </div>
+
+      {/* month stepper */}
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 1, background: BRAND.paper, borderRadius: 8, padding: 2,
+        border: '1px solid ' + (monthActive ? BRAND.blue : 'transparent'),
+      }}>
+        <button title="Previous month" style={arrowBtn(false)} onClick={() => setRange({ mode: 'month', month: shiftMonth(month, -1) })}>‹</button>
+        <input
+          type="month" value={month} max={tm}
+          onClick={() => { if (!monthActive) setRange({ mode: 'month', month: tm }); }}
+          onChange={(e) => e.target.value && setRange({ mode: 'month', month: e.target.value })}
+          style={{ border: 'none', background: 'transparent', fontSize: 13, fontWeight: monthActive ? 700 : 500, color: monthActive ? BRAND.blue : BRAND.ink, padding: '3px 2px', cursor: 'pointer' }}
+        />
+        <button title="Next month" disabled={atCurrentMonth} style={arrowBtn(atCurrentMonth)} onClick={() => { if (!atCurrentMonth) setRange({ mode: 'month', month: shiftMonth(month, 1) }); }}>›</button>
+      </div>
+
+      {/* custom from–to */}
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6, background: BRAND.paper, borderRadius: 8, padding: '2px 6px',
+        border: '1px solid ' + (customActive ? BRAND.blue : 'transparent'),
+      }}>
+        <input
+          type="date" value={customActive ? range.from : ''} max={customActive ? range.to : undefined}
+          onChange={(e) => { const v = e.target.value; if (v) setRange({ mode: 'custom', from: v, to: customActive && range.to ? range.to : v }); }}
+          style={dateInput}
+        />
+        <span style={{ color: BRAND.muted }}>–</span>
+        <input
+          type="date" value={customActive ? range.to : ''} min={customActive ? range.from : undefined}
+          onChange={(e) => { const v = e.target.value; if (v) setRange({ mode: 'custom', from: customActive && range.from ? range.from : v, to: v }); }}
+          style={dateInput}
+        />
+      </div>
+    </div>
+  );
+}
 
 function Card({ label, value, sub, accent }) {
   return (
@@ -757,7 +822,7 @@ function TrafficTab({ data, loading, onOpenSettings, onRetry }) {
 
 // ---- Settings ------------------------------------------------------------
 
-function SettingsTab({ snippet, onSync }) {
+function SettingsTab({ snippet, onSync, cutoff, onCutoffChange }) {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
   if (!snippet) return <Loading />;
@@ -769,6 +834,21 @@ function SettingsTab({ snippet, onSync }) {
   };
   return (
     <div style={{ maxWidth: 760 }}>
+      {onCutoffChange && (
+        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 18, marginBottom: 16, boxShadow: CARD_SHADOW }}>
+          <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 6px' }}>Marketing data starts from</h3>
+          <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 10px' }}>
+            Leads before this date are excluded from every lead report — attribution was incomplete
+            during the early tracking rollout, so this keeps the channel / CPL / ROAS figures clean.
+          </p>
+          <input
+            type="date"
+            value={cutoff || ''}
+            onChange={(e) => e.target.value && onCutoffChange(e.target.value)}
+            style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
+          />
+        </div>
+      )}
       <p style={{ fontSize: 14, color: BRAND.ink, lineHeight: 1.6, marginTop: 0 }}>
         Marketing attribution links every web-form lead back to the ad, keyword and campaign that
         produced it. Two one-time steps capture the data:
