@@ -73,6 +73,28 @@ function monthRange(monthStr) {
   const to = new Date(Date.UTC(y, m, 0)); // day 0 of next month = last day of this one
   return { from: dateStr(from), to: dateStr(to) };
 }
+function monthLabel(monthStr) {
+  const [y, m] = monthStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+// Short heading for the active range, e.g. "June 2026" / "Last 90 days" / "Custom".
+function rangeHeading(range) {
+  if (range?.mode === 'month' && range.month) return monthLabel(range.month);
+  if (range?.mode === 'custom') return 'Custom range';
+  const p = RANGE_PRESETS.find((x) => x.days === range?.days);
+  return 'Last ' + (p ? p.label.toLowerCase() : '90 days');
+}
+// Explicit date span, e.g. "1 – 30 Jun 2026" / "28 May – 26 Jun 2026".
+function fmtRangeDates(fromStr, toStr) {
+  if (!fromStr || !toStr) return '';
+  const f = new Date(fromStr + 'T00:00:00Z');
+  const t = new Date(toStr + 'T00:00:00Z');
+  const sameYear = f.getUTCFullYear() === t.getUTCFullYear();
+  const sameMonth = sameYear && f.getUTCMonth() === t.getUTCMonth();
+  const fOpt = sameMonth ? { day: 'numeric', timeZone: 'UTC' } : { day: 'numeric', month: 'short', timeZone: 'UTC', ...(sameYear ? {} : { year: 'numeric' }) };
+  const tOpt = { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' };
+  return f.toLocaleDateString('en-GB', fOpt) + ' – ' + t.toLocaleDateString('en-GB', tOpt);
+}
 // Resolve a range descriptor to inclusive { from, to } date strings for the API.
 function computeRange(range) {
   if (range?.mode === 'month' && range.month) return monthRange(range.month);
@@ -211,6 +233,14 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
           );
         })}
       </div>
+
+      {/* Active period — labels each tab so screenshots are self-explanatory. */}
+      {section !== 'settings' && (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '0 0 18px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 17, fontWeight: 700, color: BRAND.ink }}>{rangeHeading(range)}</span>
+          <span style={{ fontSize: 13, color: BRAND.muted }}>{fmtRangeDates(from, to)}</span>
+        </div>
+      )}
 
       {section === 'overview' && <OverviewTab data={overview} loading={loading} adsConfigured={adsConfigured} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} isMobile={isMobile} />}
       {section === 'reports' && (
