@@ -19,11 +19,29 @@ const WON_STAGES = new Set(['signed', 'paid', 'long_term']);
 const FUNNEL_STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'interested', 'signed'];
 // Probability weighting per open stage for the weighted forecast.
 const STAGE_PROB = { lead: 0.05, responded: 0.10, proposal_sent: 0.30, viewed: 0.45, interested: 0.65 };
-// Signed deals whose whole sales cycle rounds to "0.0d" (created and signed at
-// effectively the same moment) are imported/back-entered records, not deals
-// genuinely won through the pipeline — they're excluded from the signed-proposal
-// metrics. 0.05d ≈ the point below which the cycle displays as "0.0d".
-const INSTANT_CYCLE_DAYS = 0.05;
+// One-off list of historical imported/back-entered deals to exclude from the
+// signed-proposal metrics — they were bulk-entered (not won through the
+// pipeline) and inflate the figures. This is an explicit, finite set, NOT a
+// forward-applying rule: genuine same-day signs (e.g. Stockton, mylife) are
+// deliberately absent, and any new deal — however fast it closes — is counted.
+// No more imports are expected; if a future cleanup is ever needed, add IDs here.
+const EXCLUDED_IMPORT_DEAL_IDS = new Set([
+  'deal_1781682720715_fb91b1884055f6ba4d', // Membership Solutions Ltd
+  'deal_1781686640156_fa5740ec73d93ac513', // Airport Coordination Ltd (UK)
+  'deal_1781618597007_caa655026fa62917c0', // S&E CareTrade Video 1
+  'deal_1781597942024_c770f294b689e9fefb', // International Tree Foundation
+  'deal_1781602227135_3e91721fc319b53351', // Catherine Hunter - Humber Teaching NHS
+  'deal_1781600780429_1c284acc5fc55d7233', // Government of Jersey
+  'deal_1781620527698_2fde90050e5d8ec240', // Jola Cloud Solutions Ltd
+  'deal_1781769674927_52bc6f33f4a95175d5', // Venues Group
+  'deal_1781514371549_24e2d802f192f038b0', // Compliance Chain
+  'deal_1781516198554_9048d44792741b95d0', // Alation, Inc
+  'deal_1781515516329_553e705cecf85c5090', // Drain Trader Ltd
+  'deal_1781514183817_cf11b036ee36cead92', // TB Projects
+  'deal_1781515056827_18bfd419331bf22083', // Meliora Medical Group
+  'deal_1781263185731_339f21f0dbb0093d5e', // PIB Employee Benefits Limited
+  'deal_1781270430083_875f32c215317c50d3', // South East Water
+]);
 const STAGE_LABEL = {
   lead: 'Lead', responded: 'Responded', proposal_sent: 'Proposal sent', viewed: 'Viewed',
   interested: 'Interested', signed: 'Signed', paid: 'Paid', long_term: 'Long-term', lost: 'Lost',
@@ -139,19 +157,17 @@ async function buildInsights(req) {
     const cycleStartAt = starts.length ? new Date(Math.min(...starts)).toISOString() : r.created_at;
     const value = Number(a.effectiveValue) || 0;
     const cycleDays = days(cycleStartAt, saleAt);
-    // A 0.0d cycle = created and signed at effectively the same moment → an
-    // imported/back-entered sale, not one won through the pipeline.
-    const isInstant = cycleDays != null && cycleDays < INSTANT_CYCLE_DAYS;
+    const isImported = EXCLUDED_IMPORT_DEAL_IDS.has(r.id);
     const hasProposal = a.valueSource === 'proposal' || a.valueSource === 'signed' || (a.proposalCount || 0) > 0;
     const tracking = a.tracking || {};
     return {
       id: r.id, title: r.title, stage, owner: r.owner_email || null,
-      createdAt: r.created_at, cycleStartAt, cycleDays, isInstant, stageChangedAt: r.stage_changed_at, lastActivityAt: r.last_activity_at,
-      // isSale = a genuine signed proposal: won AND a real value AND an actual
-      // sales cycle. £0 won records (placeholders/test) and 0.0d-cycle imports
-      // are excluded from the signed-proposal metrics, while staying out of
-      // open/lost too.
-      lostReason: r.lost_reason || null, value, isWon, isSale: isWon && value > 0 && !isInstant, isInstantSale: isWon && value > 0 && isInstant, isLost, isOpen, saleAt,
+      createdAt: r.created_at, cycleStartAt, cycleDays, isImported, stageChangedAt: r.stage_changed_at, lastActivityAt: r.last_activity_at,
+      // isSale = a genuine signed proposal: won AND a real value, excluding the
+      // listed historical imports. £0 won records (placeholders/test) and those
+      // imports are kept out of the signed-proposal metrics, while staying out
+      // of open/lost too.
+      lostReason: r.lost_reason || null, value, isWon, isSale: isWon && value > 0 && !isImported, isImportedSale: isWon && value > 0 && isImported, isLost, isOpen, saleAt,
       paymentOption: sig?.paymentOption || null, hasProposal,
       proposalOpens: tracking.proposalOpens || 0, lastOpenedAt: tracking.lastOpenedAt || null,
       events,
@@ -178,9 +194,9 @@ async function buildInsights(req) {
   // deal further down the funnel can't be less likely to win than one behind it.
   // Recomputed on every request, so it tracks performance with no training job.
   const PRIOR_STRENGTH = 6;
-  // Imported 0.0d-cycle wins never travelled the pipeline, so they'd distort the
-  // learned stage win-rates — exclude them (but keep genuine wins and all losses).
-  const decidedAll = deals.filter((d) => (d.isWon && !d.isInstant) || d.isLost);
+  // Imported wins never travelled the pipeline, so they'd distort the learned
+  // stage win-rates — exclude them (but keep genuine wins and all losses).
+  const decidedAll = deals.filter((d) => (d.isWon && !d.isImported) || d.isLost);
   const winProb = {};
   const probDetail = [];
   let runMax = 0;
