@@ -2465,6 +2465,9 @@ function ensureDirectorExpenses() {
     await sql`ALTER TABLE director_expenses ADD COLUMN IF NOT EXISTS effective_to TEXT`;
     // Manual drag-ordering within a director's list.
     await sql`ALTER TABLE director_expenses ADD COLUMN IF NOT EXISTS sort_order INT`;
+    // "Scanned" = receipt already entered straight into Xero, so no need to
+    // attach one here (just a status tag, like vattable).
+    await sql`ALTER TABLE director_expenses ADD COLUMN IF NOT EXISTS scanned BOOLEAN NOT NULL DEFAULT false`;
     await sql`
       CREATE TABLE IF NOT EXISTS director_settings (
         director_email TEXT PRIMARY KEY,
@@ -2613,6 +2616,7 @@ async function directorExpensesReport(month) {
       amount: Number(r.amount) || 0,
       vattable: !!r.vattable,
       recurring: !!r.recurring,
+      scanned: !!r.scanned,
       spentOn: dateKey(r.spent_on),
       hasInvoice: !!r.blob_url,
       filename: r.filename || null,
@@ -2659,14 +2663,15 @@ async function directorExpensesRoute(req, res, action, user) {
     const amount = Number(body.amount) || 0;
     const vattable = body.vattable === true;
     const recurring = body.recurring === true;
+    const scanned = body.scanned === true;
     const spentOn = trimOrNull(body.spentOn) || null;
     const month = (spentOn && /^\d{4}-\d{2}/.test(spentOn)) ? spentOn.slice(0, 7) : curMonthKey();
     const id = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : makeId('de');
     // New rows append to this director's list.
     const [{ m: maxOrder }] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM director_expenses WHERE director_email = ${email}`;
     await sql`
-      INSERT INTO director_expenses (id, director_email, description, amount, vattable, recurring, spent_on, month, sort_order, created_by)
-      VALUES (${id}, ${email}, ${description}, ${amount}, ${vattable}, ${recurring}, ${spentOn}, ${month}, ${maxOrder + 1}, ${actor})
+      INSERT INTO director_expenses (id, director_email, description, amount, vattable, recurring, scanned, spent_on, month, sort_order, created_by)
+      VALUES (${id}, ${email}, ${description}, ${amount}, ${vattable}, ${recurring}, ${scanned}, ${spentOn}, ${month}, ${maxOrder + 1}, ${actor})
       ON CONFLICT (id) DO NOTHING`;
     return res.status(200).json({ ok: true, id });
   }
@@ -2680,13 +2685,14 @@ async function directorExpensesRoute(req, res, action, user) {
     const amount = body.amount !== undefined ? (Number(body.amount) || 0) : existing.amount;
     const vattable = body.vattable !== undefined ? (body.vattable === true) : existing.vattable;
     const recurring = body.recurring !== undefined ? (body.recurring === true) : existing.recurring;
+    const scanned = body.scanned !== undefined ? (body.scanned === true) : existing.scanned;
     // effectiveTo ends a recurring expense from a given month (or null to clear).
     const effectiveTo = body.effectiveTo !== undefined ? (/^\d{4}-\d{2}$/.test(body.effectiveTo || '') ? body.effectiveTo : null) : existing.effective_to;
     const spentOn = body.spentOn !== undefined ? (trimOrNull(body.spentOn) || null) : dateKey(existing.spent_on);
     const month = (spentOn && /^\d{4}-\d{2}/.test(spentOn)) ? spentOn.slice(0, 7) : existing.month;
     await sql`
       UPDATE director_expenses
-         SET description = ${description}, amount = ${amount}, vattable = ${vattable}, recurring = ${recurring}, effective_to = ${effectiveTo}, spent_on = ${spentOn}, month = ${month}, updated_at = NOW()
+         SET description = ${description}, amount = ${amount}, vattable = ${vattable}, recurring = ${recurring}, scanned = ${scanned}, effective_to = ${effectiveTo}, spent_on = ${spentOn}, month = ${month}, updated_at = NOW()
        WHERE id = ${action}`;
     return res.status(200).json({ ok: true });
   }

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download, Upload, Ban, Camera } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download, Upload, Ban, Camera, ScanLine } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -815,6 +815,7 @@ function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onD
   const [date, setDate] = useState(e.spentOn || todayKey());
   const [vat, setVat] = useState(!!e.vattable);
   const [rec, setRec] = useState(!!e.recurring);
+  const [scn, setScn] = useState(!!e.scanned);
 
   const onPick = async (file) => {
     if (!file) return;
@@ -831,11 +832,13 @@ function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onD
   const remove = () => actions.deleteDirectorExpense(e.id).then(reload);
   // Stop a recurring expense from this month onward — keep prior months' history.
   const stopRecurring = () => actions.updateDirectorExpense(e.id, { effectiveTo: prevMonthKey(month) }).then(reload);
+  // Quick toggle for "scanned into Xero" without opening the editor.
+  const toggleScanned = () => actions.updateDirectorExpense(e.id, { scanned: !e.scanned }).then(reload);
 
-  const startEdit = () => { setDesc(e.description); setAmt(String(e.amount)); setDate(e.spentOn || todayKey()); setVat(!!e.vattable); setRec(!!e.recurring); setEditing(true); };
+  const startEdit = () => { setDesc(e.description); setAmt(String(e.amount)); setDate(e.spentOn || todayKey()); setVat(!!e.vattable); setRec(!!e.recurring); setScn(!!e.scanned); setEditing(true); };
   const saveEdit = () => {
     if (!desc.trim()) return;
-    actions.updateDirectorExpense(e.id, { description: desc.trim(), amount: parseFloat(amt) || 0, spentOn: date, vattable: vat, recurring: rec })
+    actions.updateDirectorExpense(e.id, { description: desc.trim(), amount: parseFloat(amt) || 0, spentOn: date, vattable: vat, recurring: rec, scanned: scn })
       .then(() => { setEditing(false); reload(); });
   };
 
@@ -859,6 +862,9 @@ function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onD
           </label>
           <label title="Repeats automatically every month from this one onward" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
             <input type="checkbox" checked={rec} onChange={(ev) => setRec(ev.target.checked)} /> Recurring
+          </label>
+          <label title="Receipt already entered straight into Xero — no need to attach one here" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
+            <input type="checkbox" checked={scn} onChange={(ev) => setScn(ev.target.checked)} /> Scanned
           </label>
           <button className="btn-ghost" style={{ padding: '4px 8px', marginLeft: 'auto' }} onClick={() => setEditing(false)}><X size={13} /> Cancel</button>
           <button className="btn" style={{ padding: '5px 10px' }} onClick={saveEdit} disabled={!desc.trim()}><Check size={13} /> Save</button>
@@ -886,6 +892,7 @@ function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onD
           {e.description}
           {e.vattable && <span title="Marked vattable" style={{ fontSize: 10, fontWeight: 700, color: '#7C3AED', background: '#F3E8FF', border: '1px solid #E9D5FF', padding: '1px 5px', borderRadius: 999, marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 }}>VAT</span>}
           {e.recurring && <span title="Repeats every month" style={{ fontSize: 10, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', border: '1px solid #A5F3FC', padding: '1px 5px', borderRadius: 999, marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 }}>Recurring</span>}
+          {e.scanned && <span title="Receipt entered straight into Xero" style={{ fontSize: 10, fontWeight: 700, color: '#1D4ED8', background: '#EFF6FF', border: '1px solid #BFDBFE', padding: '1px 5px', borderRadius: 999, marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 }}>Scanned</span>}
           {e.hasInvoice && (
             <button type="button" title={`Invoice attached — ${e.filename || 'click to download'}`} onClick={download}
               style={{ fontSize: 10, fontWeight: 700, color: '#15803D', background: '#DCFCE7', border: '1px solid #86EFAC', padding: '1px 6px 1px 4px', borderRadius: 999, marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3, verticalAlign: 'middle' }}>
@@ -907,6 +914,7 @@ function DirExpenseRow({ e, month, actions, reload, showMsg, dragging, over, onD
           <Paperclip size={13} />
         </button>
       )}
+      <button className="btn-icon" title={e.scanned ? 'Scanned into Xero — click to unmark' : 'Mark scanned (receipt entered straight into Xero)'} onClick={toggleScanned} style={{ padding: 3, color: e.scanned ? '#1D4ED8' : BRAND.muted }}><ScanLine size={12} /></button>
       <button className="btn-icon" title="Edit expense" onClick={startEdit} style={{ padding: 3 }}><Pencil size={12} /></button>
       {e.recurring && (
         <button className="btn-icon" title="Stop this recurring expense from this month onward (keeps earlier months)" onClick={stopRecurring} style={{ padding: 3, color: '#B45309' }}><Ban size={12} /></button>
@@ -923,6 +931,7 @@ function DirExpenseForm({ directorEmail, actions, showMsg, onDone, onCancel }) {
   const [spentOn, setSpentOn] = useState(() => todayKey());
   const [vattable, setVattable] = useState(false);
   const [recurring, setRecurring] = useState(false);
+  const [scanned, setScanned] = useState(false);
   const [file, setFile] = useState(null); // receipt chosen before saving
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
@@ -932,7 +941,7 @@ function DirExpenseForm({ directorEmail, actions, showMsg, onDone, onCancel }) {
     if (!description.trim() || busy) return;
     setBusy(true);
     try {
-      const id = await actions.addDirectorExpense({ director_email: directorEmail, description: description.trim(), amount: parseFloat(amount) || 0, spentOn, vattable, recurring });
+      const id = await actions.addDirectorExpense({ director_email: directorEmail, description: description.trim(), amount: parseFloat(amount) || 0, spentOn, vattable, recurring, scanned });
       if (file && id) {
         try { await actions.uploadDirectorInvoice(id, file); }
         catch (err) { showMsg?.(err.message || 'Expense saved, but the receipt upload failed', 'error'); }
@@ -960,6 +969,9 @@ function DirExpenseForm({ directorEmail, actions, showMsg, onDone, onCancel }) {
         </label>
         <label title="Repeats automatically every month from this one onward" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
           <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} /> Recurring
+        </label>
+        <label title="Receipt already entered straight into Xero — no need to attach one here" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink, cursor: 'pointer' }}>
+          <input type="checkbox" checked={scanned} onChange={(e) => setScanned(e.target.checked)} /> Scanned
         </label>
       </div>
 
