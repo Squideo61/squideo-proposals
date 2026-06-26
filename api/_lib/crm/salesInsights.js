@@ -22,10 +22,11 @@ const STAGE_PROB = { lead: 0.05, responded: 0.10, proposal_sent: 0.30, viewed: 0
 // One-off list of historical imported/back-entered deals to exclude from the
 // signed-proposal metrics — they were bulk-entered (not won through the
 // pipeline) and inflate the figures. This is an explicit, finite set, NOT a
-// forward-applying rule: genuine same-day signs (e.g. Stockton, mylife) are
-// deliberately absent, and any new deal — however fast it closes — is counted.
-// No more imports are expected; if a future cleanup is ever needed, add IDs here.
+// forward-applying rule: genuine same-day signs (e.g. Stockton) are deliberately
+// absent, and any new deal — however fast it closes — is counted. No more
+// imports are expected; if a future cleanup is ever needed, add IDs here.
 const EXCLUDED_IMPORT_DEAL_IDS = new Set([
+  'deal_1782382102434_457941b7961f2ab942', // mylife Diabetes Care Ltd (back-entered; actually signed 9 Apr)
   'deal_1781682720715_fb91b1884055f6ba4d', // Membership Solutions Ltd
   'deal_1781686640156_fa5740ec73d93ac513', // Airport Coordination Ltd (UK)
   'deal_1781618597007_caa655026fa62917c0', // S&E CareTrade Video 1
