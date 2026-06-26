@@ -345,7 +345,20 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
           <Field icon={User} label="Primary contact">
-            {contact ? <>{contact.name || contact.email}{contact.email && contact.name ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {contact.email}</span> : null}{contact.phone ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · <a href={`tel:${contact.phone.replace(/\s+/g, '')}`} style={{ color: BRAND.blue, textDecoration: 'none' }} title="Call this contact">{contact.phone}</a></span> : null}</> : <span style={{ color: BRAND.muted }}>—</span>}
+            {contact ? (() => {
+              // The email is a click-to-compose button (opens the email box
+              // pre-addressed to this contact), not just plain text.
+              const emailBtn = contact.email ? (
+                <button type="button" onClick={() => openComposerForDeal()} title="Email this contact" style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: BRAND.blue, cursor: 'pointer' }}>{contact.email}</button>
+              ) : null;
+              return (
+                <>
+                  {contact.name || emailBtn}
+                  {contact.email && contact.name ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {emailBtn}</span> : null}
+                  {contact.phone ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · <a href={`tel:${contact.phone.replace(/\s+/g, '')}`} style={{ color: BRAND.blue, textDecoration: 'none' }} title="Call this contact">{contact.phone}</a></span> : null}
+                </>
+              );
+            })() : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
           <Field label="Value (ex VAT)">
             {dealValueInfo.value != null
@@ -3252,7 +3265,10 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
   // one) and replaces the body — pushing the HTML straight into the
   // contentEditable since the editor is uncontrolled.
   const loadTemplate = (t) => {
-    if (t.subject) setSubject(t.subject);
+    // Only adopt the template's subject when the composer doesn't already have
+    // one — a reply (or anything mid-typed) keeps its subject rather than being
+    // overwritten, so you never have to re-type "Re: …".
+    if (t.subject && !subject.trim()) setSubject(t.subject);
     const html = t.bodyHtml || '';
     setBody(html);
     if (editorRef.current) editorRef.current.innerHTML = html;
