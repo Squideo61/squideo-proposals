@@ -86,6 +86,15 @@ async function buildInsights(req) {
     firstPropMap = new Map(props.map((r) => [r.deal_id, r.first_at]));
   } catch { /* no proposals table */ }
 
+  // The true top-of-funnel for a deal that came from a web-form enquiry is the
+  // enquiry date — earlier than the deal/proposal. Used only to time the sales
+  // cycle accurately (not to report on lead source, which is Marketing's job).
+  let leadCreatedMap = new Map();
+  try {
+    const qrs = await sql`SELECT deal_id, MIN(created_at) AS first_at FROM quote_requests WHERE deal_id IS NOT NULL GROUP BY deal_id`;
+    leadCreatedMap = new Map(qrs.map((r) => [r.deal_id, r.first_at]));
+  } catch { /* no quote_requests table */ }
+
   // Stage-change history per deal (for velocity / time-in-stage / max reached).
   const stageEventsByDeal = new Map();
   try {
@@ -112,7 +121,8 @@ async function buildInsights(req) {
     // Cycle starts at the earliest real touch — the deal's creation OR its first
     // proposal (whichever is earlier), so signature-originated deals aren't 0-day.
     const firstPropAt = firstPropMap.get(r.id) || null;
-    const starts = [r.created_at, firstPropAt].filter(Boolean).map((x) => new Date(x).getTime());
+    const leadAt = leadCreatedMap.get(r.id) || null;
+    const starts = [r.created_at, firstPropAt, leadAt].filter(Boolean).map((x) => new Date(x).getTime());
     const cycleStartAt = starts.length ? new Date(Math.min(...starts)).toISOString() : r.created_at;
     const value = Number(a.effectiveValue) || 0;
     const hasProposal = a.valueSource === 'proposal' || a.valueSource === 'signed' || (a.proposalCount || 0) > 0;
