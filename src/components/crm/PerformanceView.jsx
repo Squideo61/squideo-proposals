@@ -1013,7 +1013,6 @@ function SavingsSection({ isMobile }) {
   const { state, actions, showMsg } = useStore();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
-  const [bal, setBal] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { actions.loadDirectorSavings(); }, [actions, state.financeRefresh]);
@@ -1023,7 +1022,7 @@ function SavingsSection({ isMobile }) {
   const addAccount = async () => {
     if (!name.trim() || busy) return;
     setBusy(true);
-    try { await actions.addSavingsAccount(name.trim(), parseFloat(bal) || 0); setName(''); setBal(''); setAdding(false); reload(); }
+    try { await actions.addSavingsAccount(name.trim(), 0); setName(''); setAdding(false); reload(); }
     catch (err) { showMsg?.(err.message || 'Could not add account', 'error'); }
     finally { setBusy(false); }
   };
@@ -1047,10 +1046,6 @@ function SavingsSection({ isMobile }) {
           <input autoFocus placeholder="Account name (e.g. Shawbrook Savings)" value={name} onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') addAccount(); if (e.key === 'Escape') setAdding(false); }}
             style={{ flex: 1, minWidth: 180, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
-          <span style={{ color: BRAND.muted }}>£</span>
-          <input type="number" step="0.01" placeholder="Balance" value={bal} onChange={(e) => setBal(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') addAccount(); }}
-            style={{ width: 120, padding: '6px 10px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
           <button className="btn-ghost" style={{ padding: '4px 8px' }} onClick={() => setAdding(false)}><X size={13} /></button>
           <button className="btn" style={{ padding: '5px 10px' }} onClick={addAccount} disabled={!name.trim() || busy}><Check size={13} /> Add</button>
         </div>
@@ -1074,7 +1069,6 @@ function SavingsSection({ isMobile }) {
 function SavingsAccountCard({ account, actions, reload, showMsg }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(account.name);
-  const [bal, setBal] = useState(String(account.balance));
   const [adding, setAdding] = useState(false);
   const [pLabel, setPLabel] = useState('');
   const [pAmt, setPAmt] = useState('');
@@ -1084,7 +1078,7 @@ function SavingsAccountCard({ account, actions, reload, showMsg }) {
 
   const saveAccount = () => {
     if (!name.trim()) return;
-    actions.updateSavingsAccount(account.id, { name: name.trim(), balance: parseFloat(bal) || 0 }).then(() => { setEditing(false); reload(); });
+    actions.updateSavingsAccount(account.id, { name: name.trim() }).then(() => { setEditing(false); reload(); });
   };
   const removeAccount = () => {
     if (!window.confirm(`Delete "${account.name}" and all its pots?`)) return;
@@ -1105,19 +1099,14 @@ function SavingsAccountCard({ account, actions, reload, showMsg }) {
     setDragId(null); setOverId(null);
   };
 
-  const overAllocated = account.unallocated < -0.005; // pots add up to more than the balance
-
   return (
     <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '12px 14px', background: BRAND.paper }}>
       {editing ? (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveAccount(); if (e.key === 'Escape') setEditing(false); }}
             style={{ flex: 1, minWidth: 120, padding: '5px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
-          <span style={{ color: BRAND.muted }}>£</span>
-          <input type="number" step="0.01" value={bal} onChange={(e) => setBal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveAccount(); }}
-            style={{ width: 100, padding: '5px 8px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 13 }} />
           <button className="btn-icon" title="Save" onClick={saveAccount} style={{ padding: 2 }}><Check size={13} /></button>
-          <button className="btn-icon" title="Cancel" onClick={() => { setEditing(false); setName(account.name); setBal(String(account.balance)); }} style={{ padding: 2 }}><X size={13} /></button>
+          <button className="btn-icon" title="Cancel" onClick={() => { setEditing(false); setName(account.name); }} style={{ padding: 2 }}><X size={13} /></button>
         </div>
       ) : (
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
@@ -1158,11 +1147,8 @@ function SavingsAccountCard({ account, actions, reload, showMsg }) {
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 8, paddingTop: 8, borderTop: '1px solid ' + BRAND.border }}>
         <button className="btn-ghost" style={{ padding: '3px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={12} /> Add pot</button>
-        <span style={{ fontSize: 11, color: overAllocated ? PROFIT_NEG : BRAND.muted, textAlign: 'right' }}>
-          {formatGBP(account.allocated)} allocated
-          {Math.abs(account.unallocated) > 0.005 && (
-            <> · <strong style={{ color: overAllocated ? PROFIT_NEG : BRAND.ink }}>{formatGBP(Math.abs(account.unallocated))}</strong> {overAllocated ? 'over-allocated' : 'unallocated'}</>
-          )}
+        <span style={{ fontSize: 11, color: BRAND.muted, textAlign: 'right' }}>
+          {account.pots.length} pot{account.pots.length === 1 ? '' : 's'}
         </span>
       </div>
     </div>

@@ -2926,10 +2926,13 @@ async function directorSavingsRoute(req, res, action) {
       const mine = pots.filter((p) => p.account_id === a.id).map((p) => ({
         id: p.id, label: p.label, amount: Number(p.amount) || 0, note: p.note || null,
       }));
+      // The account total is simply the sum of its pots — every pound saved
+      // lives in a pot (use a catch-all "Regular Savings" pot for the rest), so
+      // deleting/editing a pot moves the headline straight away.
       const allocated = round2(mine.reduce((s, p) => s + p.amount, 0));
-      const balance = Number(a.balance) || 0;
+      const balance = allocated;
       grandTotal = round2(grandTotal + balance);
-      return { id: a.id, name: a.name, balance, pots: mine, allocated, unallocated: round2(balance - allocated) };
+      return { id: a.id, name: a.name, balance, pots: mine, allocated, unallocated: 0 };
     });
     return res.status(200).json({ accounts: out, grandTotal });
   }
