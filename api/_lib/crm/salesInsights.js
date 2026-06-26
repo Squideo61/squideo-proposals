@@ -1,0 +1,272 @@
+// Sales Insights — everything the CRM can infer about the *sales cycle* itself:
+// pipeline health, velocity/time-in-stage, win rates, forecasting, rep
+// performance, deal-size shape, proposal engagement → outcome, and stalled
+// deals needing a nudge. Deliberately scoped to what happens to a deal once it's
+// in the pipeline — lead sourcing (channel/campaign/ROAS) lives in Marketing and
+// is not duplicated here.
+//
+// Values come from annotateDeals().effectiveValue (signed > latest proposal >
+// manual) so every figure reconciles with the pipeline. Sale date = the
+// signature's signed_at (fallback: the stage→signed change).
+import sql from '../db.js';
+import { annotateDeals } from './deals.js';
+
+const STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'interested', 'signed', 'paid', 'long_term', 'lost'];
+const STAGE_RANK = Object.fromEntries(STAGES.map((s, i) => [s, i]));
+const OPEN_STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'interested'];
+const WON_STAGES = new Set(['signed', 'paid', 'long_term']);
+// Pre-sale journey shown in the funnel (ends at the first "won" stage).
+const FUNNEL_STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'interested', 'signed'];
+// Probability weighting per open stage for the weighted forecast.
+const STAGE_PROB = { lead: 0.05, responded: 0.10, proposal_sent: 0.30, viewed: 0.45, interested: 0.65 };
+const STAGE_LABEL = {
+  lead: 'Lead', responded: 'Responded', proposal_sent: 'Proposal sent', viewed: 'Viewed',
+  interested: 'Interested', signed: 'Signed', paid: 'Paid', long_term: 'Long-term', lost: 'Lost',
+};
+
+const round2 = (n) => Number((Number(n) || 0).toFixed(2));
+const round1 = (n) => Number((Number(n) || 0).toFixed(1));
+const pctRate = (num, den) => (den > 0 ? round1((num / den) * 100) : null);
+const days = (a, b) => (a && b ? (new Date(b).getTime() - new Date(a).getTime()) / 86400000 : null);
+function median(arr) {
+  const s = arr.filter((n) => n != null).sort((a, b) => a - b);
+  if (!s.length) return null;
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+function parseRange(req) {
+  let from = null, to = null;
+  try { const u = new URL(req.url, 'http://localhost'); from = u.searchParams.get('from'); to = u.searchParams.get('to'); } catch { /* ignore */ }
+  const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+  const now = new Date();
+  const toDate = isDate(to) ? new Date(to + 'T00:00:00Z') : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const toExcl = new Date(toDate.getTime() + 86400000);
+  const fromDate = isDate(from) ? new Date(from + 'T00:00:00Z') : new Date(toExcl.getTime() - 365 * 86400000);
+  return { fromDate, toExcl, fromStr: fromDate.toISOString().slice(0, 10), toStr: toExcl.toISOString().slice(0, 10) };
+}
+
+export async function salesInsightsRoute(req, res, id, action, user) {
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  try {
+    return res.status(200).json(await buildInsights(req));
+  } catch (err) {
+    console.error('[sales-insights]', err?.message);
+    return res.status(500).json({ error: 'Failed to build sales insights' });
+  }
+}
+
+async function buildInsights(req) {
+  const { fromDate, toExcl, fromStr, toStr } = parseRange(req);
+  const inRange = (d) => d && new Date(d) >= fromDate && new Date(d) < toExcl;
+
+  const dealRows = await sql`SELECT * FROM deals`;
+  const annotated = await annotateDeals(dealRows);
+  const annById = new Map(annotated.map((d) => [d.id, d]));
+
+  // Sale date + payment plan from signatures.
+  let signedMap = new Map();
+  try {
+    const sig = await sql`
+      SELECT p.deal_id AS did, MIN(s.signed_at) AS signed_at,
+             (ARRAY_AGG(s.data ->> 'paymentOption'))[1] AS payment_option
+        FROM signatures s JOIN proposals p ON p.id = s.proposal_id
+       WHERE s.signed_at IS NOT NULL
+       GROUP BY p.deal_id`;
+    signedMap = new Map(sig.map((r) => [r.did, { signedAt: r.signed_at, paymentOption: r.payment_option || null }]));
+  } catch { /* no signatures table */ }
+
+  // Stage-change history per deal (for velocity / time-in-stage / max reached).
+  const stageEventsByDeal = new Map();
+  try {
+    const evs = await sql`
+      SELECT deal_id, payload, occurred_at
+        FROM deal_events
+       WHERE event_type = 'stage_change'
+       ORDER BY deal_id, occurred_at ASC`;
+    for (const e of evs) {
+      if (!stageEventsByDeal.has(e.deal_id)) stageEventsByDeal.set(e.deal_id, []);
+      stageEventsByDeal.get(e.deal_id).push({ to: e.payload?.to, at: e.occurred_at });
+    }
+  } catch { /* no deal_events */ }
+
+  // ---- Per-deal derived facts ------------------------------------------------
+  const deals = dealRows.map((r) => {
+    const a = annById.get(r.id) || {};
+    const sig = signedMap.get(r.id) || null;
+    const stage = r.stage || 'lead';
+    const isWon = WON_STAGES.has(stage) || !!sig;
+    const isLost = stage === 'lost';
+    const isOpen = !isWon && !isLost;
+    const saleAt = sig?.signedAt || (isWon ? r.stage_changed_at : null);
+    const value = Number(a.effectiveValue) || 0;
+    const hasProposal = a.valueSource === 'proposal' || a.valueSource === 'signed' || (a.proposalCount || 0) > 0;
+    const tracking = a.tracking || {};
+    return {
+      id: r.id, title: r.title, stage, owner: r.owner_email || null,
+      createdAt: r.created_at, stageChangedAt: r.stage_changed_at, lastActivityAt: r.last_activity_at,
+      lostReason: r.lost_reason || null, value, isWon, isLost, isOpen, saleAt,
+      paymentOption: sig?.paymentOption || null, hasProposal,
+      proposalOpens: tracking.proposalOpens || 0, lastOpenedAt: tracking.lastOpenedAt || null,
+      events: stageEventsByDeal.get(r.id) || [],
+    };
+  });
+
+  const dealById = new Map(deals.map((d) => [d.id, d]));
+
+  // ---- Pipeline now (open, as of today — not range-scoped) -------------------
+  const open = deals.filter((d) => d.isOpen);
+  const byStage = OPEN_STAGES.map((stage) => {
+    const ds = open.filter((d) => d.stage === stage);
+    const value = ds.reduce((s, d) => s + d.value, 0);
+    return { stage, label: STAGE_LABEL[stage], count: ds.length, value: round2(value), weighted: round2(value * (STAGE_PROB[stage] || 0)) };
+  });
+  const openValue = round2(open.reduce((s, d) => s + d.value, 0));
+  const weightedForecast = round2(open.reduce((s, d) => s + d.value * (STAGE_PROB[d.stage] || 0), 0));
+
+  // ---- Won / lost in range ---------------------------------------------------
+  const wonInRange = deals.filter((d) => d.isWon && inRange(d.saleAt));
+  const lostInRange = deals.filter((d) => d.isLost && inRange(d.stageChangedAt));
+  const wonValue = round2(wonInRange.reduce((s, d) => s + d.value, 0));
+  const decided = wonInRange.length + lostInRange.length;
+  const winRate = pctRate(wonInRange.length, decided);
+  const cycleDaysArr = wonInRange.map((d) => days(d.createdAt, d.saleAt)).filter((n) => n != null && n >= 0);
+  const avgCycleDays = cycleDaysArr.length ? round1(cycleDaysArr.reduce((a, b) => a + b, 0) / cycleDaysArr.length) : null;
+  const medianCycleDays = cycleDaysArr.length ? round1(median(cycleDaysArr)) : null;
+  const wonValues = wonInRange.map((d) => d.value).filter((v) => v > 0);
+  const avgDealValue = wonValues.length ? round2(wonValues.reduce((a, b) => a + b, 0) / wonValues.length) : null;
+  const medianDealValue = wonValues.length ? round2(median(wonValues)) : null;
+
+  // ---- Stage funnel + velocity (cohort: deals created in range) --------------
+  const cohort = deals.filter((d) => inRange(d.createdAt));
+  const maxReachedRank = (d) => {
+    let max = STAGE_RANK[d.isLost ? 'lead' : d.stage] ?? 0;
+    for (const e of d.events) { const rk = STAGE_RANK[e.to]; if (rk != null && e.to !== 'lost' && rk > max) max = rk; }
+    if (d.isWon) max = Math.max(max, STAGE_RANK.signed);
+    return max;
+  };
+  // Completed durations spent in each stage, across the cohort.
+  const stageDurations = Object.fromEntries(FUNNEL_STAGES.map((s) => [s, []]));
+  for (const d of cohort) {
+    const seq = [{ to: 'lead', at: d.createdAt }, ...d.events.filter((e) => e.to)];
+    for (let i = 0; i < seq.length - 1; i++) {
+      const dur = days(seq[i].at, seq[i + 1].at);
+      if (dur != null && dur >= 0 && stageDurations[seq[i].to]) stageDurations[seq[i].to].push(dur);
+    }
+  }
+  const funnel = FUNNEL_STAGES.map((stage, i) => {
+    const reached = cohort.filter((d) => maxReachedRank(d) >= STAGE_RANK[stage]).length;
+    const prevReached = i === 0 ? reached : cohort.filter((d) => maxReachedRank(d) >= STAGE_RANK[FUNNEL_STAGES[i - 1]]).length;
+    const durs = stageDurations[stage] || [];
+    return {
+      stage, label: STAGE_LABEL[stage], reached,
+      conversionFromPrev: i === 0 ? 100 : pctRate(reached, prevReached),
+      conversionFromStart: pctRate(reached, cohort.length),
+      avgDaysInStage: durs.length ? round1(durs.reduce((a, b) => a + b, 0) / durs.length) : null,
+    };
+  });
+
+  // ---- Rep leaderboard -------------------------------------------------------
+  const userRows = await sql`SELECT email, name FROM users`;
+  const nameByEmail = new Map(userRows.map((u) => [String(u.email).toLowerCase(), u.name]));
+  const repMap = new Map();
+  const rep = (email) => {
+    const key = (email || 'unassigned').toLowerCase();
+    if (!repMap.has(key)) repMap.set(key, { email: email || null, name: email ? (nameByEmail.get(key) || email) : 'Unassigned', openValue: 0, openCount: 0, wonCount: 0, wonValue: 0, lostCount: 0, cycle: [] });
+    return repMap.get(key);
+  };
+  for (const d of open) { const r = rep(d.owner); r.openValue += d.value; r.openCount += 1; }
+  for (const d of wonInRange) { const r = rep(d.owner); r.wonCount += 1; r.wonValue += d.value; const c = days(d.createdAt, d.saleAt); if (c != null && c >= 0) r.cycle.push(c); }
+  for (const d of lostInRange) { rep(d.owner).lostCount += 1; }
+  const reps = [...repMap.values()].map((r) => ({
+    email: r.email, name: r.name,
+    openValue: round2(r.openValue), openCount: r.openCount,
+    wonCount: r.wonCount, wonValue: round2(r.wonValue),
+    winRate: pctRate(r.wonCount, r.wonCount + r.lostCount),
+    avgCycleDays: r.cycle.length ? round1(r.cycle.reduce((a, b) => a + b, 0) / r.cycle.length) : null,
+  })).sort((a, b) => b.wonValue - a.wonValue || b.openValue - a.openValue);
+
+  // ---- Bookings trend (won value by month, last 12 months) -------------------
+  const now = new Date();
+  const monthKeys = [];
+  for (let i = 11; i >= 0; i--) { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)); monthKeys.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`); }
+  const trendMap = new Map(monthKeys.map((k) => [k, { month: k, count: 0, value: 0 }]));
+  for (const d of deals) {
+    if (!d.isWon || !d.saleAt) continue;
+    const dt = new Date(d.saleAt);
+    const k = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+    if (trendMap.has(k)) { const t = trendMap.get(k); t.count += 1; t.value += d.value; }
+  }
+  const trend = monthKeys.map((k) => ({ ...trendMap.get(k), value: round2(trendMap.get(k).value) }));
+
+  // ---- Lost analysis ---------------------------------------------------------
+  const lostReasonMap = new Map();
+  for (const d of lostInRange) {
+    const key = (d.lostReason && d.lostReason.trim()) || 'No reason given';
+    if (!lostReasonMap.has(key)) lostReasonMap.set(key, { reason: key, count: 0, value: 0 });
+    const r = lostReasonMap.get(key); r.count += 1; r.value += d.value;
+  }
+  const lostByReason = [...lostReasonMap.values()].map((r) => ({ ...r, value: round2(r.value) })).sort((a, b) => b.count - a.count);
+
+  // ---- Deal-size distribution (open + won-in-range) --------------------------
+  const sizePool = [...open, ...wonInRange].map((d) => d.value).filter((v) => v > 0);
+  const BANDS = [
+    { label: '< £1k', min: 0, max: 1000 },
+    { label: '£1k–£3k', min: 1000, max: 3000 },
+    { label: '£3k–£6k', min: 3000, max: 6000 },
+    { label: '£6k–£12k', min: 6000, max: 12000 },
+    { label: '£12k+', min: 12000, max: Infinity },
+  ];
+  const sizeBands = BANDS.map((b) => ({ label: b.label, count: sizePool.filter((v) => v >= b.min && v < b.max).length }));
+  const biggestOpen = open.filter((d) => d.value > 0).sort((a, b) => b.value - a.value).slice(0, 8)
+    .map((d) => ({ id: d.id, title: d.title, value: round2(d.value), stage: d.stage, stageLabel: STAGE_LABEL[d.stage], owner: d.owner }));
+
+  // ---- Proposal engagement → outcome -----------------------------------------
+  const withProposal = deals.filter((d) => d.hasProposal);
+  const viewed = withProposal.filter((d) => d.proposalOpens > 0);
+  const signedViewed = viewed.filter((d) => d.isWon).length;
+  const notViewed = withProposal.filter((d) => d.proposalOpens === 0);
+  const signedNotViewed = notViewed.filter((d) => d.isWon).length;
+  // Follow-up: a proposal the client opened, still open, sorted by recency × value.
+  const followUp = open.filter((d) => d.hasProposal && d.proposalOpens > 0 && d.lastOpenedAt)
+    .sort((a, b) => new Date(b.lastOpenedAt) - new Date(a.lastOpenedAt))
+    .slice(0, 10)
+    .map((d) => ({ id: d.id, title: d.title, value: round2(d.value), stage: d.stage, stageLabel: STAGE_LABEL[d.stage], owner: d.owner, opens: d.proposalOpens, lastOpenedAt: d.lastOpenedAt }));
+  const engagement = {
+    sent: withProposal.length,
+    viewed: viewed.length,
+    viewRate: pctRate(viewed.length, withProposal.length),
+    winRateViewed: pctRate(signedViewed, viewed.length),
+    winRateNotViewed: pctRate(signedNotViewed, notViewed.length),
+    followUp,
+  };
+
+  // ---- Stalled open deals (no activity in 14+ days) --------------------------
+  const STALE_DAYS = 14;
+  const stalled = open.map((d) => {
+    const ref = d.lastActivityAt || d.stageChangedAt || d.createdAt;
+    return { ...d, daysStale: ref ? Math.floor(days(ref, new Date().toISOString())) : null };
+  }).filter((d) => d.daysStale != null && d.daysStale >= STALE_DAYS)
+    .sort((a, b) => b.value - a.value || b.daysStale - a.daysStale)
+    .slice(0, 12)
+    .map((d) => ({ id: d.id, title: d.title, value: round2(d.value), stage: d.stage, stageLabel: STAGE_LABEL[d.stage], owner: d.owner, daysStale: d.daysStale }));
+
+  return {
+    from: fromStr, to: toStr,
+    kpis: {
+      openValue, openCount: open.length, weightedForecast,
+      wonCount: wonInRange.length, wonValue,
+      winRate, avgCycleDays, medianCycleDays, avgDealValue, medianDealValue,
+      lostCount: lostInRange.length, lostValue: round2(lostInRange.reduce((s, d) => s + d.value, 0)),
+    },
+    pipeline: { byStage, openValue, weightedForecast },
+    funnel,
+    reps,
+    trend,
+    lost: { count: lostInRange.length, value: round2(lostInRange.reduce((s, d) => s + d.value, 0)), byReason: lostByReason },
+    dealSize: { avg: avgDealValue, median: medianDealValue, bands: sizeBands, biggestOpen },
+    engagement,
+    stalled,
+  };
+}

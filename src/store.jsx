@@ -958,6 +958,14 @@ export function StoreProvider({ children }) {
         return data;
       }).catch(() => null);
     },
+    // Sales → Sales Insights (pipeline velocity, win rates, forecast, reps…).
+    loadSalesInsights(from, to) {
+      const qs = new URLSearchParams();
+      if (from) qs.set('from', from);
+      if (to) qs.set('to', to);
+      const q = qs.toString();
+      return api.get('/api/crm/sales-insights' + (q ? '?' + q : '')).catch(() => null);
+    },
     // Marketing → the "show leads from" cutoff date (earlier, incomplete-
     // attribution leads are excluded from the reports). Read + set.
     loadMarketingCutoff() {
