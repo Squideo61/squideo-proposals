@@ -309,28 +309,33 @@ function RepTable({ rows, onOpenDeal }) {
                 </tr>
                 {isOpen && (
                   <tr style={{ background: BRAND.paper }}>
-                    <td colSpan={7} style={{ padding: '4px 14px 12px' }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, margin: '6px 0 8px 18px' }}>
-                        {deals.length} signed {deals.length === 1 ? 'deal' : 'deals'} this period
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginLeft: 18 }}>
-                        {deals.map((d) => (
-                          <div
-                            key={d.id}
-                            onClick={() => onOpenDeal && onOpenDeal(d.id)}
-                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, cursor: onOpenDeal ? 'pointer' : 'default' }}
-                          >
-                            <Trophy size={13} style={{ color: '#16A34A', flexShrink: 0 }} />
-                            <span style={{ flex: 1, fontWeight: 500, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.title}</span>
-                            {d.signedAt && <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0 }}>{fmtDate(d.signedAt)}</span>}
-                            {d.cycleDays != null && <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0, width: 56, textAlign: 'right' }}>{fmtDays(d.cycleDays)} cycle</span>}
-                            <span style={{ fontWeight: 700, color: '#16A34A', flexShrink: 0, width: 80, textAlign: 'right' }}>{formatGBP(d.value)}</span>
-                          </div>
-                        ))}
-                      </div>
+                    <td colSpan={7} style={{ padding: '8px 14px 6px 40px', fontSize: 10.5, fontWeight: 600, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                      {deals.length} signed {deals.length === 1 ? 'deal' : 'deals'} this period
                     </td>
                   </tr>
                 )}
+                {/* Deal rows live in the SAME table as the rep rows, so each
+                    deal's value lands directly under "Signed £" and its cycle
+                    under "Avg cycle" — no floaty right-hand gap. */}
+                {isOpen && deals.map((d) => (
+                  <tr
+                    key={d.id}
+                    onClick={() => onOpenDeal && onOpenDeal(d.id)}
+                    style={{ background: BRAND.paper, cursor: onOpenDeal ? 'pointer' : 'default', borderTop: '1px solid ' + BRAND.border }}
+                  >
+                    <Td style={{ paddingLeft: 40 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 0, maxWidth: '100%' }}>
+                        <Trophy size={13} style={{ color: '#16A34A', flexShrink: 0 }} />
+                        <span style={{ fontWeight: 500, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.title}</span>
+                      </span>
+                    </Td>
+                    <Td /><Td />
+                    <Td right style={{ color: BRAND.muted, fontSize: 12, whiteSpace: 'nowrap' }}>{fmtDate(d.signedAt)}</Td>
+                    <Td right style={{ fontWeight: 700, color: '#16A34A', whiteSpace: 'nowrap' }}>{formatGBP(d.value)}</Td>
+                    <Td />
+                    <Td right style={{ color: BRAND.muted, fontSize: 12, whiteSpace: 'nowrap' }}>{d.cycleDays != null ? fmtDays(d.cycleDays) : '—'}</Td>
+                  </tr>
+                ))}
               </React.Fragment>
             );
           })}
