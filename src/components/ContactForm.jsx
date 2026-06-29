@@ -28,7 +28,7 @@ const DEFAULTS = {
   phoneLabel: 'Phone number',
   phonePlaceholder: 'Phone number',
   messageLabel: 'Your message',
-  messagePlaceholder: "Tell us a little about what you're after — even a sentence or two is plenty to get started.",
+  messagePlaceholder: 'How can we help?',
   optInText: 'Join our mailing list for occasional tips and case studies (no spam, promise).',
   showOptIn: true,
   captchaText: "I'm not a robot",
