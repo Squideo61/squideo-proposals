@@ -38,6 +38,27 @@ const DEFAULTS = {
   successDescription: "Thanks for getting in touch — a member of the team will get back to you within 48 hours.",
   apiBase: '/api/quote-requests',
   successRedirectUrl: 'https://www.squideo.com/contact-thank-you',
+  // Right-hand contact details panel (mirrors the squideo.com/contact page).
+  showInfo: true,
+  hoursTitle: 'Business Hours',
+  hours: [
+    ['Mon – Thu', '9:00 am – 5:00 pm'],
+    ['Friday', '9:00 am – 4:00 pm'],
+    ['Sat – Sun', 'Closed'],
+  ],
+  infoTitle: 'Contact us!',
+  email: 'enquiries@squideo.co.uk',
+  phoneDisplay: '(+44) 1482 738656',
+  phoneHref: '+441482738656',
+  companyName: 'Squideo Ltd',
+  address: [
+    '2 Exeter Street',
+    'New Village Road',
+    'Cottingham',
+    'East Riding of Yorkshire',
+    'HU16 4LU',
+    'United Kingdom',
+  ],
   nameRequired: true,
   emailRequired: true,
   phoneRequired: true,
@@ -212,8 +233,10 @@ export function ContactForm(props = {}) {
   };
 
   return (
-    <div className="quote-request-widget contact-form-widget">
+    <div className={`quote-request-widget contact-form-widget ${cfg.showInfo ? 'has-info' : ''}`}>
       <div className="progress-form-container">
+        <div className="contact-layout">
+          <div className="contact-form-col">
         <form className="multi-step-form" onSubmit={onSubmit} noValidate>
           {done ? (
             <div className="form-step success-message active">
@@ -387,6 +410,50 @@ export function ContactForm(props = {}) {
             </div>
           )}
         </form>
+          </div>
+
+          {cfg.showInfo && (
+            <aside className="contact-info-col">
+              <div className="contact-info-block">
+                <h3 className="contact-info-title">{cfg.hoursTitle}</h3>
+                <table className="contact-hours">
+                  <tbody>
+                    {cfg.hours.map(([days, time]) => (
+                      <tr key={days}>
+                        <td className="contact-hours-days">{days}</td>
+                        <td className="contact-hours-time">{time}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="contact-info-block">
+                <h3 className="contact-info-title">{cfg.infoTitle}</h3>
+                {cfg.email && (
+                  <p className="contact-info-line">
+                    <a href={`mailto:${cfg.email}`} className="contact-info-link">{cfg.email}</a>
+                  </p>
+                )}
+                {cfg.phoneDisplay && (
+                  <p className="contact-info-line">
+                    Call us:{' '}
+                    <a href={`tel:${cfg.phoneHref || cfg.phoneDisplay}`} className="contact-info-link">{cfg.phoneDisplay}</a>
+                  </p>
+                )}
+              </div>
+
+              {(cfg.companyName || (cfg.address && cfg.address.length > 0)) && (
+                <address className="contact-info-block contact-address">
+                  {cfg.companyName && <span className="contact-company">{cfg.companyName}</span>}
+                  {(cfg.address || []).map((line) => (
+                    <span key={line}>{line}</span>
+                  ))}
+                </address>
+              )}
+            </aside>
+          )}
+        </div>
       </div>
     </div>
   );

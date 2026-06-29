@@ -5,6 +5,95 @@
   max-width: 640px;
   padding: 24px 20px;
 }
+/* Two-column layout: form on the left, contact details on the right. */
+.contact-form-widget.has-info .progress-form-container {
+  max-width: 1000px;
+}
+.contact-form-widget .contact-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 32px;
+}
+.contact-form-widget .contact-form-col {
+  flex: 1 1 60%;
+  min-width: 0;
+}
+.contact-form-widget .contact-info-col {
+  flex: 1 1 40%;
+  align-self: stretch;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  padding: 40px 32px;
+}
+.contact-form-widget .contact-info-block {
+  margin-bottom: 28px;
+}
+.contact-form-widget .contact-info-block:last-child {
+  margin-bottom: 0;
+}
+.contact-form-widget .contact-info-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #2BB8E6;
+  margin: 0 0 14px 0;
+}
+.contact-form-widget .contact-hours {
+  border-collapse: collapse;
+  width: 100%;
+}
+.contact-form-widget .contact-hours td {
+  padding: 4px 0;
+  font-size: 15px;
+  color: #374151;
+  vertical-align: top;
+}
+.contact-form-widget .contact-hours .contact-hours-days {
+  font-weight: 600;
+  padding-right: 24px;
+  white-space: nowrap;
+}
+.contact-form-widget .contact-hours .contact-hours-time {
+  color: #6b7280;
+}
+.contact-form-widget .contact-info-line {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+  color: #374151;
+}
+.contact-form-widget .contact-info-link {
+  color: #7ac943;
+  font-weight: 600;
+  text-decoration: none;
+}
+.contact-form-widget .contact-info-link:hover {
+  text-decoration: underline;
+}
+.contact-form-widget .contact-address {
+  font-style: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 15px;
+  color: #4b5563;
+  line-height: 1.5;
+}
+.contact-form-widget .contact-address .contact-company {
+  font-weight: 700;
+  color: #111827;
+  font-size: 17px;
+  margin-bottom: 4px;
+}
+@media (max-width: 860px) {
+  .contact-form-widget .contact-layout {
+    flex-direction: column;
+    gap: 20px;
+  }
+  .contact-form-widget .contact-info-col {
+    width: 100%;
+    padding: 28px 24px;
+  }
+}
 .contact-form-widget .contact-message-large {
   min-height: 140px !important;
 }
