@@ -160,6 +160,9 @@ export function ContactForm(props = {}) {
     try {
       const payload = {
         formSessionId: sessionIdRef.current,
+        // Tells the shared /api/quote-requests endpoint to label the team
+        // notifications "New enquiry" instead of "New quote request".
+        leadKind: 'contact',
         name: form.name.trim() || null,
         email: form.email.trim() || null,
         phone: form.phone.trim() || null,

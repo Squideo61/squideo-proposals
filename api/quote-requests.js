@@ -71,7 +71,7 @@ const trimOrNull = (v) => {
   return s ? s : null;
 };
 
-function buildNotificationEmail(qr, files, { qualifyUrl, disqualifyUrl, crmUrl } = {}) {
+function buildNotificationEmail(qr, files, { qualifyUrl, disqualifyUrl, crmUrl, leadLabel = 'quote request' } = {}) {
   const rows = [
     ['Name', qr.name],
     ['Email', qr.email],
@@ -132,7 +132,7 @@ function buildNotificationEmail(qr, files, { qualifyUrl, disqualifyUrl, crmUrl }
     <tr><td align="center">
       <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="max-width:640px;background:#fff;border:1px solid #E5E9EE;border-radius:12px;overflow:hidden;">
         <tr><td style="padding:24px 28px;border-bottom:1px solid #E5E9EE;">
-          <div style="font-size:18px;font-weight:700;color:#0F2A3D;">New quote request</div>
+          <div style="font-size:18px;font-weight:700;color:#0F2A3D;">New ${escapeHtml(leadLabel)}</div>
         </td></tr>
         <tr><td style="padding:24px 28px;font-size:14px;line-height:1.55;color:#0F2A3D;">
           <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
@@ -518,6 +518,9 @@ export default async function handler(req, res) {
     }
 
     const subjectName = qr.name || qr.email || 'Anonymous';
+    // Contact-form leads are the same lead, but labelled "enquiry" in the team
+    // notifications; everything else stays "quote request".
+    const leadLabel = trimOrNull(body.leadKind) === 'contact' ? 'enquiry' : 'quote request';
     const apiBase = APP_URL.replace(/\/$/, '');
     // "Open in CRM" routes through a server-side redirect that checks the
     // current state at click-time: once the request has been qualified, the
@@ -533,7 +536,7 @@ export default async function handler(req, res) {
     const subscribed = await resolveRecipients('quote_request.new', {});
     const extras = NOTIFY_TO ? [NOTIFY_TO.toLowerCase()] : [];
     const recipients = Array.from(new Set([...subscribed, ...extras]));
-    const subject = `New quote request from ${subjectName}`;
+    const subject = `New ${leadLabel} from ${subjectName}`;
 
     await Promise.allSettled(recipients.map(async (to) => {
       const role = await getRoleForUser(to);
@@ -555,7 +558,7 @@ export default async function handler(req, res) {
       await sendMail({
         to,
         subject,
-        html: buildNotificationEmail(qr, storedFiles, { qualifyUrl, disqualifyUrl, crmUrl }),
+        html: buildNotificationEmail(qr, storedFiles, { qualifyUrl, disqualifyUrl, crmUrl, leadLabel }),
       });
     }));
 
