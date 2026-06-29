@@ -72,7 +72,12 @@ export function computeProposalCheckout(proposalData, signatureData) {
   const partnerCredits = Math.max(1, Number(sig.partnerCredits) || 1);
 
   // --- Standard (non-partner) totals ---
-  const manualDiscount = partnerSelected ? 0 : computeBaseDiscount(effectiveBasePrice, data.discount);
+  // A project that's already free (base £0 or 100% manual discount) stays free on
+  // the Partner Programme — keep its discount instead of dropping it for a smaller
+  // partner %. Mirrors ClientView so the validated total matches what the client saw.
+  const manualDiscountAmount = computeBaseDiscount(effectiveBasePrice, data.discount);
+  const projectFullyDiscounted = effectiveBasePrice <= 0 || manualDiscountAmount >= effectiveBasePrice - 0.005;
+  const manualDiscount = (partnerSelected && !projectFullyDiscounted) ? 0 : manualDiscountAmount;
   const netBasePrice = effectiveBasePrice - manualDiscount;
   const subtotal = netBasePrice + extrasTotal;        // ex VAT
   const total = subtotal * (1 + vatRate);             // gross
@@ -90,7 +95,7 @@ export function computeProposalCheckout(proposalData, signatureData) {
   const partnerRatePerMin  = standardRatePerMin * (1 - effectiveDiscount);
   const partnerSubtotal     = partnerRatePerMin * partnerCredits;   // ex VAT (recurring)
   const partnerTotal        = partnerSubtotal * (1 + vatRate);      // gross
-  const partnerDiscount     = subtotal * effectiveDiscount;
+  const partnerDiscount     = projectFullyDiscounted ? 0 : subtotal * effectiveDiscount;
   const discountedSubtotal  = subtotal - partnerDiscount;          // project ex VAT
   const discountedTotal     = discountedSubtotal * (1 + vatRate);  // gross
 

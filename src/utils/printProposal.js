@@ -101,9 +101,14 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   }, 0);
   // Simple manual discount on the base price — standard flow only. Ignored when
   // the client is on the Partner Programme. Locked into signed.discountApplied.
-  const manualDiscount = partnerSelected
+  // A project that's already free (base £0 or a 100% manual discount) stays free
+  // on the Partner Programme — the programme then only adds its monthly sub, and
+  // we don't reintroduce the full price to shave a smaller partner % off it.
+  const manualDiscountAmount = computeBaseDiscount(data.basePrice, data.discount);
+  const projectFullyDiscounted = (Number(data.basePrice) || 0) <= 0 || manualDiscountAmount >= (Number(data.basePrice) || 0) - 0.005;
+  const manualDiscount = (partnerSelected && !projectFullyDiscounted)
     ? 0
-    : (signed?.discountApplied?.amount ?? computeBaseDiscount(data.basePrice, data.discount));
+    : (signed?.discountApplied?.amount ?? manualDiscountAmount);
   const netBasePrice = data.basePrice - manualDiscount;
   const discountLabel = (signed?.discountApplied?.label || data.discount?.label || '').trim() || 'Discount';
   const subtotal = netBasePrice + extrasTotal;
@@ -127,10 +132,12 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   const discountRate = partnerSelected
     ? (typeof lockedDiscount === 'number' ? lockedDiscount : computedDiscount)
     : 0;
-  const partnerDiscount = subtotal * discountRate;
+  const partnerDiscount = projectFullyDiscounted ? 0 : subtotal * discountRate;
   const discountedSubtotal = subtotal - partnerDiscount;
   const discountedVat = discountedSubtotal * data.vatRate;
   const discountedTotal = discountedSubtotal + discountedVat;
+  // Only render the partner project-discount line when there's an actual saving.
+  const showPartnerDiscount = partnerSelected && partnerDiscount > 0;
 
   const teamCards = data.team.map(m => {
     const photoSrc = abs(m.photo || DEFAULT_PHOTOS[m.name] || '');
@@ -457,10 +464,10 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   <div style="background:#0F2A3D;color:white;padding:16px 20px;border-radius:10px;margin-bottom:28px;">
     <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;opacity:0.8;"><span>Subtotal${extrasTotal > 0 ? ' (with selected extras)' : ''}</span><span>${formatGBP(partnerSelected ? discountedSubtotal : subtotal)}</span></div>
     ${showVat ? `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:${partnerSelected ? '4px' : '10px'};opacity:0.8;"><span>VAT</span><span>${formatGBP(partnerSelected ? discountedVat : vat)}</span></div>` : ''}
-    ${partnerSelected ? `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:10px;color:#FFD54F;"><span>${Math.round(discountRate * 100)}% partner discount</span><span>−${formatGBP(partnerDiscount)}</span></div>` : ''}
+    ${showPartnerDiscount ? `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:10px;color:#FFD54F;"><span>${Math.round(discountRate * 100)}% partner discount</span><span>−${formatGBP(partnerDiscount)}</span></div>` : ''}
     <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:700;padding-top:10px;border-top:1px solid rgba(255,255,255,0.2);">
       <span>Project total</span>
-      <span>${partnerSelected ? `<span style="font-weight:400;font-size:13px;opacity:0.5;text-decoration:line-through;margin-right:8px;">${formatGBP(total)}</span>` : ''}${formatGBP(partnerSelected ? discountedTotal : total)}</span>
+      <span>${showPartnerDiscount ? `<span style="font-weight:400;font-size:13px;opacity:0.5;text-decoration:line-through;margin-right:8px;">${formatGBP(total)}</span>` : ''}${formatGBP(partnerSelected ? discountedTotal : total)}</span>
     </div>
   </div>` : ''}
 

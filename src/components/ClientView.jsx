@@ -381,9 +381,16 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   // Simple manual discount on the base price — standard flow only. When the
   // client opts into the Partner Programme its own discount takes over and this
   // is ignored. Once signed, the agreed amount is locked in signed.discountApplied.
-  const manualDiscount = partnerSelected
+  // Is the project already free before any Partner Programme? Either the base
+  // price is £0 or a 100% manual discount wipes it out. When so, opting into the
+  // Partner Programme must NOT reintroduce the full price and shave its own % off
+  // — the project stays free and the programme only adds its monthly subscription.
+  // (Otherwise a free project would paradoxically start costing money on opt-in.)
+  const manualDiscountAmount = computeBaseDiscount(effectiveBasePrice, data.discount);
+  const projectFullyDiscounted = effectiveBasePrice <= 0 || manualDiscountAmount >= effectiveBasePrice - 0.005;
+  const manualDiscount = (partnerSelected && !projectFullyDiscounted)
     ? 0
-    : (signed?.discountApplied?.amount ?? computeBaseDiscount(effectiveBasePrice, data.discount));
+    : (signed?.discountApplied?.amount ?? manualDiscountAmount);
   const netBasePrice = effectiveBasePrice - manualDiscount;
   const discountLabel = (signed?.discountApplied?.label || data.discount?.label || '').trim() || 'Discount';
   const subtotal = netBasePrice + extrasTotal;
@@ -408,8 +415,11 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   const partnerSubtotal = partnerRatePerMin * partnerCredits;
   const partnerVat = partnerSubtotal * data.vatRate;
   const partnerTotal = partnerSubtotal + partnerVat;
-  const partnerDiscount = subtotal * effectiveDiscount;
+  // No further partner discount on a project that's already free.
+  const partnerDiscount = projectFullyDiscounted ? 0 : subtotal * effectiveDiscount;
   const discountedSubtotal = subtotal - partnerDiscount;
+  // Only show the partner project-discount lines when there's an actual saving.
+  const showPartnerProjectDiscount = partnerSelected && partnerDiscount > 0;
   const discountedVat = discountedSubtotal * data.vatRate;
   const discountedTotal = discountedSubtotal + discountedVat;
   // Combined "due today" when client opts into the Partner Programme:
@@ -1016,22 +1026,22 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         )}
 
         <div style={{ background: BRAND.ink, color: 'white', padding: 20, borderRadius: 10, marginBottom: 32 }}>
-          {partnerSelected && (
+          {showPartnerProjectDiscount && (
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, opacity: 0.8 }}>
               <span>Project price (without Partner)</span>
               <span style={{ textDecoration: 'line-through' }}>{formatGBP(subtotal)}{showVat && ' + VAT'}</span>
             </div>
           )}
-          {partnerSelected && (
+          {showPartnerProjectDiscount && (
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 12, color: '#FFD54F' }}>
               <span>Partner discount ({formatPct(effectiveDiscount)}%)</span>
               <span>−{formatGBP(partnerDiscount)}{showVat && ' + VAT'}</span>
             </div>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: partnerSelected ? 15 : 18, fontWeight: partnerSelected ? 600 : 700, paddingTop: partnerSelected ? 12 : 0, borderTop: partnerSelected ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
-            <span>{partnerSelected ? 'Project (discounted)' : `Project total${extrasTotal > 0 ? ' (including selected extras)' : ''}`}</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: showPartnerProjectDiscount ? 15 : 18, fontWeight: showPartnerProjectDiscount ? 600 : 700, paddingTop: showPartnerProjectDiscount ? 12 : 0, borderTop: showPartnerProjectDiscount ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
+            <span>{showPartnerProjectDiscount ? 'Project (discounted)' : `Project total${extrasTotal > 0 ? ' (including selected extras)' : ''}`}</span>
             <span>
-              {formatGBP(partnerSelected ? discountedSubtotal : subtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(partnerSelected ? discountedSubtotal : subtotal)} inc.</span></span>}
+              {formatGBP(showPartnerProjectDiscount ? discountedSubtotal : subtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(showPartnerProjectDiscount ? discountedSubtotal : subtotal)} inc.</span></span>}
             </span>
           </div>
           {partnerSelected && (
@@ -1060,7 +1070,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         <PageTitle>Payment Options</PageTitle>
         {partnerSelected && (
           <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#78350F', lineHeight: 1.5, marginBottom: 12 }}>
-            <strong>Partner Programme selected.</strong> To unlock the {formatPct(effectiveDiscount)}% project discount, payment must be made in full (card/BACS). The 50/50 split is not available with the Partner Programme.
+            <strong>Partner Programme selected.</strong> {showPartnerProjectDiscount ? `To unlock the ${formatPct(effectiveDiscount)}% project discount, payment` : 'Payment'} must be made in full (card/BACS). The 50/50 split is not available with the Partner Programme.
           </div>
         )}
         <div style={{ display: 'grid', gap: 12, marginBottom: 12 }}>
