@@ -92,7 +92,10 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
   const analyticsProposal = analyticsId ? proposals.find((p) => p.id === analyticsId) : null;
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px' : '32px 24px' }}>
+    // overflowX:hidden + box-sizing stop any stray wide child from giving the
+    // page a horizontal scroll, which on a phone was pushing each card's price
+    // (on the right) off the edge so it couldn't be seen at a glance.
+    <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px' : '32px 24px', width: '100%', boxSizing: 'border-box', overflowX: 'hidden' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Proposals</h1>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -193,7 +196,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
           </p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gap: 12 }}>
+        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'minmax(0, 1fr)' }}>
           {filtered.map((p) => (
             <ProposalCard
               key={p.id}

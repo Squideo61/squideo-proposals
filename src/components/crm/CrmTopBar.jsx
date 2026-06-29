@@ -182,7 +182,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       ]
     : [
         tab('overview', 'Home', LayoutDashboard, () => navigate('overview'), ['overview']),
-        tab('list', 'Sales', FileText, () => navigate('list'), ['list', 'deal', 'pipeline', 'quote-requests', 'templates']),
+        tab('pipeline', 'Sales', FileText, () => navigate('pipeline'), ['list', 'deal', 'pipeline', 'quote-requests', 'templates']),
         tab('tasks', 'Tasks', CheckSquare, () => navigate('tasks'), ['tasks'], openTasksDue),
         tab('emails', 'Inbox', Mail, () => navigate('emails'), ['emails', 'email', 'triage'], inboxUnread),
         tab('more', 'More', Menu, openMore),

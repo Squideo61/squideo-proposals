@@ -45,6 +45,9 @@ const TABS = [
 
 const pct = (n) => (n == null ? '—' : (Number(n) || 0).toFixed(1) + '%');
 const dash = (v, fmt) => (v == null ? '—' : fmt(v));
+// Whole-pound currency for the headline KPI tiles. Pence are noise at this size
+// and dropping them keeps the figure on one line (no "£30,775⏎.00" wrap).
+const gbp0 = (n) => '£' + Math.round(Number(n) || 0).toLocaleString('en-GB');
 const fmtRoas = (v) => (v == null ? '—' : (Number(v) || 0).toFixed(2) + '×');
 
 export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpenCompany }) {
@@ -222,21 +225,24 @@ function SectionLabel({ children, style }) {
 
 // Icon-chip stat tile. `accent` colours the icon chip + (optionally) the value.
 function StatCard({ icon: Icon, label, value, sub, accent = BRAND.blue, big = false, colorValue = false }) {
+  const isMobile = useIsMobile();
   return (
     <div style={{
       background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 14, boxShadow: CARD_SHADOW,
-      padding: big ? '18px 20px' : '15px 16px', display: 'flex', gap: 13, alignItems: 'flex-start', minWidth: 0,
+      padding: isMobile ? '13px 13px' : (big ? '18px 20px' : '15px 16px'), display: 'flex', gap: isMobile ? 10 : 13, alignItems: 'flex-start', minWidth: 0,
     }}>
       <div style={{
-        width: big ? 42 : 38, height: big ? 42 : 38, borderRadius: 11, flexShrink: 0,
+        width: isMobile ? 32 : (big ? 42 : 38), height: isMobile ? 32 : (big ? 42 : 38), borderRadius: 11, flexShrink: 0,
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         background: accent + '1A', color: accent,
       }}>
-        <Icon size={big ? 21 : 19} />
+        <Icon size={isMobile ? 17 : (big ? 21 : 19)} />
       </div>
-      <div style={{ minWidth: 0 }}>
+      <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: 11.5, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</div>
-        <div style={{ fontSize: big ? 28 : 23, fontWeight: 700, marginTop: 3, lineHeight: 1.1, color: colorValue ? accent : BRAND.ink, overflowWrap: 'anywhere' }}>{value}</div>
+        {/* Keep the figure on one line — mid-digit wrapping reads as broken. It
+            shrinks on mobile and ellipsises only as a last resort. */}
+        <div style={{ fontSize: isMobile ? 18 : (big ? 28 : 23), fontWeight: 700, marginTop: 3, lineHeight: 1.15, color: colorValue ? accent : BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
         {sub != null && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 3 }}>{sub}</div>}
       </div>
     </div>
@@ -331,8 +337,8 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry, is
           <SectionLabel>Outcome</SectionLabel>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <StatCard icon={Trophy} label="Sales" value={t.sales} sub={pct(t.leadToSaleRate) + ' lead→sale'} accent="#16A34A" colorValue big />
-            <StatCard icon={PoundSterling} label="Revenue" value={formatGBP(t.revenue)} sub="signed value" accent="#16A34A" big />
-            <StatCard icon={FileText} label="Proposal value" value={formatGBP(t.proposalValueSent)} sub="sent in period" accent="#0EA5E9" />
+            <StatCard icon={PoundSterling} label="Revenue" value={gbp0(t.revenue)} sub="signed value" accent="#16A34A" big />
+            <StatCard icon={FileText} label="Proposal value" value={gbp0(t.proposalValueSent)} sub="sent in period" accent="#0EA5E9" />
             <StatCard icon={Clock} label="Avg lead→sale" value={t.avgLeadToSaleDays == null ? '—' : t.avgLeadToSaleDays + ' days'} accent="#7C3AED" />
           </div>
         </div>
@@ -341,9 +347,9 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry, is
       {/* Spend, efficiency & quality */}
       <SectionLabel>Spend, efficiency &amp; quality</SectionLabel>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(168px, 1fr))', gap: 12, marginBottom: 26 }}>
-        <StatCard icon={Wallet} label="Ad spend" value={dash(t.spend, formatGBP)} accent="#F59E0B" />
-        <StatCard icon={Target} label="Cost / lead" value={dash(t.costPerLead, formatGBP)} accent="#F59E0B" />
-        <StatCard icon={Coins} label="Cost / sale" value={dash(t.costPerSale, formatGBP)} accent="#F59E0B" />
+        <StatCard icon={Wallet} label="Ad spend" value={dash(t.spend, gbp0)} accent="#F59E0B" />
+        <StatCard icon={Target} label="Cost / lead" value={dash(t.costPerLead, gbp0)} accent="#F59E0B" />
+        <StatCard icon={Coins} label="Cost / sale" value={dash(t.costPerSale, gbp0)} accent="#F59E0B" />
         <StatCard icon={TrendingUp} label="ROAS" value={fmtRoas(t.roas)} accent={t.roas != null && t.roas >= 1 ? '#16A34A' : '#64748B'} colorValue />
         <StatCard icon={Gauge} label="Lead quality" value={t.qualityRate == null ? '—' : Math.round(t.qualityRate) + '%'} sub="qualified of reviewed" accent={qualityAccent} colorValue />
         <StatCard icon={XCircle} label="Disqualified" value={t.disqualified ?? 0} sub={t.leads ? ofLeads(t.disqualified) + '% of leads' : null} accent="#DC2626" />
