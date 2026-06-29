@@ -18,12 +18,11 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-/* Cap the field width so the inputs don't stretch into the divider / right
-   column — leaves comfortable whitespace on the right of the form. */
-.contact-form-widget .contact-form-col .form-input,
-.contact-form-widget .contact-form-col .phone-input-wrapper,
-.contact-form-widget .contact-form-col .captcha-box {
-  max-width: 460px;
+/* Bound the whole form card so it never stretches into the divider / right
+   column — guarantees clear whitespace between the form and the details panel,
+   and naturally narrows the name/email/etc. fields inside it. */
+.contact-form-widget .contact-form-col .multi-step-form {
+  max-width: 520px;
 }
 .contact-form-widget .contact-info-col {
   flex: 0 0 280px;
