@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { BRAND } from '../../theme.js';
 
 // Fixed bottom navigation for phones — the native-app pattern that replaces the
@@ -16,7 +17,11 @@ export function MobileTabBar({ tabs, view }) {
     return () => document.body.classList.remove('has-mobile-tabbar');
   }, []);
 
-  return (
+  // Portalled to <body> so no transformed/overflow ancestor can become its
+  // containing block and let it drift up the page. `translateZ(0)` + backface
+  // promote it to its own compositor layer, which stops iOS Safari "parking" the
+  // bar mid-page during momentum scroll — it stays pinned to the viewport floor.
+  const bar = (
     <nav
       aria-label="Primary"
       style={{
@@ -24,6 +29,7 @@ export function MobileTabBar({ tabs, view }) {
         display: 'flex', background: 'white', borderTop: '1px solid ' + BRAND.border,
         boxShadow: '0 -1px 8px rgba(15,42,61,0.06)',
         paddingBottom: 'env(safe-area-inset-bottom)',
+        transform: 'translateZ(0)', WebkitBackfaceVisibility: 'hidden',
       }}
     >
       {tabs.map((t) => {
@@ -58,4 +64,6 @@ export function MobileTabBar({ tabs, view }) {
       })}
     </nav>
   );
+
+  return createPortal(bar, document.body);
 }

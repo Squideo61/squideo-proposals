@@ -565,15 +565,21 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   return (
     <div style={{ background: BRAND.paper, minHeight: '100vh' }}>
       {isPreview && (
-        <div style={{ position: 'sticky', top: 0, background: 'white', borderBottom: '1px solid ' + BRAND.border, padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
-          {onBack ? <button onClick={onBack} className="btn-ghost"><ChevronLeft size={16} /> Back</button> : <div />}
-          <div style={{ fontSize: 12, color: '#92400E', fontWeight: 700, letterSpacing: 0.5 }}>
-            PREVIEW MODE
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+        // paddingTop carries the iOS safe-area inset so the bar (and its Back
+        // button) clears the notch/Dynamic Island instead of sitting under the
+        // status bar where taps don't land. On mobile the action buttons drop
+        // their labels to icons so everything fits one tidy row.
+        <div style={{ position: 'sticky', top: 0, background: 'white', borderBottom: '1px solid ' + BRAND.border, padding: isMobile ? '8px 12px' : '12px 24px', paddingTop: `calc(${isMobile ? 8 : 12}px + env(safe-area-inset-top))`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, zIndex: 100 }}>
+          {onBack ? <button onClick={onBack} className="btn-ghost" style={{ flexShrink: 0 }}><ChevronLeft size={16} /> Back</button> : <div />}
+          {!isMobile && (
+            <div style={{ fontSize: 12, color: '#92400E', fontWeight: 700, letterSpacing: 0.5 }}>
+              PREVIEW MODE
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: isMobile ? 4 : 8, flexShrink: 0 }}>
             {onEdit && (
-              <button onClick={onEdit} className="btn-ghost" style={{ fontSize: 13 }} title="Edit this proposal in the builder">
-                <PenLine size={14} /> Edit
+              <button onClick={onEdit} className="btn-ghost" style={{ fontSize: 13 }} title="Edit this proposal in the builder" aria-label="Edit">
+                <PenLine size={14} /> {!isMobile && 'Edit'}
               </button>
             )}
             <button
@@ -585,8 +591,10 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               }}
               className="btn-ghost"
               style={{ fontSize: 13 }}
+              title="Copy link"
+              aria-label="Copy link"
             >
-              <Link2 size={14} /> Copy link
+              <Link2 size={14} /> {!isMobile && 'Copy link'}
             </button>
             <button
               onClick={() => openPrintWindow(
@@ -597,8 +605,10 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               )}
               className="btn-ghost"
               style={{ fontSize: 13 }}
+              title={signed ? 'Download signed copy' : 'Download PDF'}
+              aria-label={signed ? 'Download signed copy' : 'Download PDF'}
             >
-              <FileDown size={14} /> {signed ? 'Download signed copy' : 'Download PDF'}
+              <FileDown size={14} /> {!isMobile && (signed ? 'Download signed copy' : 'Download PDF')}
             </button>
           </div>
         </div>

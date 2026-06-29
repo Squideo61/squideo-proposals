@@ -475,6 +475,7 @@ function EmailMetaPill({ lastEmailAt, opens, lastOpenedAt }) {
 
 function DealRow({ deal, onOpen }) {
   const { state, actions } = useStore();
+  const isMobile = useIsMobile();
   const owner = deal.ownerEmail ? state.users[deal.ownerEmail] : null;
   const company = deal.companyId ? state.companies[deal.companyId] : null;
   const name = company?.name || deal.title || 'Untitled deal';
@@ -506,6 +507,73 @@ function DealRow({ deal, onOpen }) {
   const due = nextTask?.dueAt ? new Date(nextTask.dueAt) : null;
   const overdue = due && due.getTime() < Date.now();
   const lastEmail = deal.lastEmailAt ? new Date(deal.lastEmailAt) : null;
+
+  const hotBtn = (
+    <button
+      type="button"
+      draggable={false}
+      onClick={(e) => { e.stopPropagation(); actions.toggleDealHot(deal.id, !deal.hot); }}
+      title={deal.hot ? 'Flagged hot — click to unflag' : 'Flag as hot'}
+      aria-pressed={!!deal.hot}
+      style={{ display: 'inline-flex', alignItems: 'center', background: 'none', border: 'none',
+        cursor: 'pointer', padding: 0, flexShrink: 0,
+        color: deal.hot ? '#EA580C' : BRAND.muted, opacity: deal.hot ? 1 : 0.4 }}
+    >
+      <Flame size={15} fill={deal.hot ? '#EA580C' : 'none'} />
+    </button>
+  );
+
+  // On a phone the desktop's single dense line (name + pills + eye + value + age
+  // + avatar) collides into an unreadable smear. Mobile stacks it: title + value
+  // on top, the meta chips (status, next task, last email, proposal eye) wrap on
+  // a second line with the age + owner pinned to the right.
+  if (isMobile) {
+    return (
+      <div
+        draggable
+        onDragStart={(e) => e.dataTransfer.setData('application/json', JSON.stringify(deal))}
+        onClick={onOpen}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+        style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer', padding: '11px 12px' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {hotBtn}
+          <span style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>
+            {name}
+          </span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+            {shownValue != null ? formatGBP(shownValue) : <span style={{ color: BRAND.muted, fontWeight: 400 }}>—</span>}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+          <SaleStatusPills deal={deal} />
+          {nextTask && (
+            <span
+              title={`Next due task: ${nextTask.title}${due ? ' · ' + shortDate(due) : ''}`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap',
+                color: overdue ? '#B91C1C' : '#475569',
+                background: overdue ? '#FEF2F2' : '#F1F5F9',
+                border: '1px solid ' + (overdue ? '#FECACA' : BRAND.border) }}
+            >
+              <CheckSquare size={12} style={{ flexShrink: 0 }} />
+              <span style={{ color: BRAND.muted, fontWeight: 500 }}>Next task</span>
+              {due && <span>· {shortDate(due)}</span>}
+            </span>
+          )}
+          <EmailMetaPill lastEmailAt={deal.lastEmailAt} opens={t.emailOpens || 0} lastOpenedAt={t.lastEmailOpenAt} />
+          <TrackingEyeChip icon={FileText} channel="Proposal" sent={proposalSent} opened={t.proposalOpens > 0} lastOpenedAt={t.lastProposalOpenAt} lines={propLines} />
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexShrink: 0 }}>
+            {ageDays != null && (
+              <span style={{ fontSize: 10, color: ageDays > 14 ? '#92400E' : BRAND.muted }} title={`${ageDays} days in stage`}>{ageDays}d</span>
+            )}
+            <Avatar user={owner} fallback={deal.ownerEmail} />
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

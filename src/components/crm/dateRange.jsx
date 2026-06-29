@@ -6,6 +6,7 @@
 //   { mode: 'custom', from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' }
 import React, { useState } from 'react';
 import { BRAND } from '../../theme.js';
+import { useIsMobile } from '../../utils.js';
 
 export const RANGE_PRESETS = [
   { days: 7, label: '7 days' },
@@ -76,6 +77,7 @@ export const segBtn = (active) => ({
 // Date-range picker: rolling-window presets, a month stepper (this month +
 // previous months via ‹ ›/the month picker), and a custom from–to range.
 export function RangeControl({ range, setRange }) {
+  const isMobile = useIsMobile();
   const tm = thisMonthStr();
   const month = range.mode === 'month' ? range.month : tm;
   const atCurrentMonth = month >= tm;
@@ -84,38 +86,43 @@ export function RangeControl({ range, setRange }) {
   const dateInput = {
     padding: '4px 7px', borderRadius: 7, border: '1px solid ' + BRAND.border,
     background: 'white', fontSize: 13, color: BRAND.ink,
+    ...(isMobile ? { flex: 1, minWidth: 0 } : null),
   };
   const arrowBtn = (disabled) => ({
     border: 'none', background: 'transparent', cursor: disabled ? 'default' : 'pointer',
     color: disabled ? BRAND.border : BRAND.ink, fontSize: 16, lineHeight: 1, padding: '2px 6px', borderRadius: 6,
   });
+  // On mobile the three control groups stack into full-width rows (presets,
+  // then the month stepper, then the from–to pickers) so nothing wraps into a
+  // ragged, half-empty line — each row fills the width and reads as one block.
   return (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+    <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', flexWrap: 'wrap', justifyContent: isMobile ? 'stretch' : 'flex-end', flexDirection: isMobile ? 'column' : 'row', width: isMobile ? '100%' : undefined }}>
       {/* rolling-window presets */}
-      <div style={{ display: 'inline-flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2 }}>
+      <div style={{ display: 'flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2 }}>
         {RANGE_PRESETS.map((r) => (
-          <button key={r.days} onClick={() => setRange({ mode: 'preset', days: r.days })} style={segBtn(range.mode === 'preset' && range.days === r.days)}>{r.label}</button>
+          <button key={r.days} onClick={() => setRange({ mode: 'preset', days: r.days })} style={{ ...segBtn(range.mode === 'preset' && range.days === r.days), ...(isMobile ? { flex: 1 } : null) }}>{r.label}</button>
         ))}
       </div>
 
       {/* month stepper */}
       <div style={{
-        display: 'inline-flex', alignItems: 'center', gap: 1, background: BRAND.paper, borderRadius: 8, padding: 2,
+        display: 'flex', alignItems: 'center', gap: 1, background: BRAND.paper, borderRadius: 8, padding: 2,
         border: '1px solid ' + (monthActive ? BRAND.blue : 'transparent'),
+        justifyContent: isMobile ? 'space-between' : undefined,
       }}>
         <button title="Previous month" style={arrowBtn(false)} onClick={() => setRange({ mode: 'month', month: shiftMonth(month, -1) })}>‹</button>
         <input
           type="month" value={month} max={tm}
           onClick={() => { if (!monthActive) setRange({ mode: 'month', month: tm }); }}
           onChange={(e) => e.target.value && setRange({ mode: 'month', month: e.target.value })}
-          style={{ border: 'none', background: 'transparent', fontSize: 13, fontWeight: monthActive ? 700 : 500, color: monthActive ? BRAND.blue : BRAND.ink, padding: '3px 2px', cursor: 'pointer' }}
+          style={{ border: 'none', background: 'transparent', fontSize: 13, fontWeight: monthActive ? 700 : 500, color: monthActive ? BRAND.blue : BRAND.ink, padding: '3px 2px', cursor: 'pointer', ...(isMobile ? { flex: 1, minWidth: 0 } : null) }}
         />
         <button title="Next month" disabled={atCurrentMonth} style={arrowBtn(atCurrentMonth)} onClick={() => { if (!atCurrentMonth) setRange({ mode: 'month', month: shiftMonth(month, 1) }); }}>›</button>
       </div>
 
       {/* custom from–to */}
       <div style={{
-        display: 'inline-flex', alignItems: 'center', gap: 6, background: BRAND.paper, borderRadius: 8, padding: '2px 6px',
+        display: 'flex', alignItems: 'center', gap: 6, background: BRAND.paper, borderRadius: 8, padding: '2px 6px',
         border: '1px solid ' + (customActive ? BRAND.blue : 'transparent'),
       }}>
         <input

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Trash2, Send, Copy, Check, Bell } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
+import { useIsMobile } from '../../utils.js';
 import { api } from '../../api.js';
 import { Field, Badge } from '../ui.jsx';
 import { permissionsInclude } from '../../lib/permissions.js';
@@ -16,6 +17,7 @@ const STATUS_COLOR = {
 
 export function UsersTab() {
   const { state, actions, showMsg } = useStore();
+  const isMobile = useIsMobile();
   const session = state.session;
   const perms = session?.permissions || [];
   const canManage = permissionsInclude(perms, 'users.manage');
@@ -126,7 +128,7 @@ export function UsersTab() {
           marginBottom: 24,
         }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700 }}>Invite a teammate</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 12, alignItems: 'flex-end' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr auto', gap: 12, alignItems: 'flex-end' }}>
             <Field label="Email">
               <input
                 className="input"
@@ -156,41 +158,32 @@ export function UsersTab() {
 
       <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 700 }}>Members ({users.length})</h3>
       <div style={{ display: 'grid', gap: 8, marginBottom: 32 }}>
-        {users.map((u) => (
-          <div key={u.email} style={{
-            display: 'grid',
-            gridTemplateColumns: '48px 1fr auto auto auto',
-            alignItems: 'center',
-            gap: 12,
-            padding: 12,
-            background: 'white',
-            border: '1px solid ' + BRAND.border,
-            borderRadius: 8,
-          }}>
-            {u.avatar
-              ? <img src={u.avatar} alt={u.name} style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover' }} />
-              : <div style={{ width: 36, height: 36, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>{(u.name && u.name[0] || '?').toUpperCase()}</div>
-            }
-            <div style={{ minWidth: 0 }}>
+        {users.map((u) => {
+          const avatar = u.avatar
+            ? <img src={u.avatar} alt={u.name} style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+            : <div style={{ width: 36, height: 36, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 }}>{(u.name && u.name[0] || '?').toUpperCase()}</div>;
+          const identity = (
+            <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <span>{u.name}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{u.name}</span>
                 {u.email === session.email && <span style={{ fontSize: 11, color: BRAND.blue, fontWeight: 600 }}>YOU</span>}
               </div>
               <div style={{ fontSize: 12, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
             </div>
-            {canManage && u.email !== session.email
-              ? (
-                <select
-                  className="input"
-                  value={u.role || 'member'}
-                  onChange={(e) => changeUserRole(u.email, e.target.value)}
-                  style={{ minWidth: 140 }}
-                >
-                  {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </select>
-              )
-              : <Badge color="blue">{state.roles?.[u.role]?.name || u.role || 'member'}</Badge>
-            }
+          );
+          const roleControl = canManage && u.email !== session.email
+            ? (
+              <select
+                className="input"
+                value={u.role || 'member'}
+                onChange={(e) => changeUserRole(u.email, e.target.value)}
+                style={{ minWidth: 140, flex: isMobile ? 1 : undefined }}
+              >
+                {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            )
+            : <Badge color="blue">{state.roles?.[u.role]?.name || u.role || 'member'}</Badge>;
+          const bellBtn = (
             <button
               onClick={() => setNotifEditorFor(u.email)}
               aria-label={'Edit notifications for ' + u.email}
@@ -199,19 +192,56 @@ export function UsersTab() {
             >
               <Bell size={14} />
             </button>
-            {canManage && u.email !== session.email
-              ? (
-                <button
-                  onClick={() => remove(u.email)}
-                  aria-label={'Remove user ' + u.email}
-                  className="btn-icon is-danger"
-                >
-                  <Trash2 size={14} />
-                </button>
-              )
-              : <span />}
-          </div>
-        ))}
+          );
+          const trashBtn = canManage && u.email !== session.email
+            ? (
+              <button
+                onClick={() => remove(u.email)}
+                aria-label={'Remove user ' + u.email}
+                className="btn-icon is-danger"
+              >
+                <Trash2 size={14} />
+              </button>
+            )
+            : null;
+
+          // Mobile: avatar + identity on top, controls on their own full-width
+          // row so the name is never squeezed under the role dropdown.
+          if (isMobile) {
+            return (
+              <div key={u.email} style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  {avatar}
+                  {identity}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {roleControl}
+                  {bellBtn}
+                  {trashBtn}
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={u.email} style={{
+              display: 'grid',
+              gridTemplateColumns: '48px 1fr auto auto auto',
+              alignItems: 'center',
+              gap: 12,
+              padding: 12,
+              background: 'white',
+              border: '1px solid ' + BRAND.border,
+              borderRadius: 8,
+            }}>
+              {avatar}
+              {identity}
+              {roleControl}
+              {bellBtn}
+              {trashBtn || <span />}
+            </div>
+          );
+        })}
       </div>
 
       {canManage && (
