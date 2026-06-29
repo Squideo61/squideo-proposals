@@ -13,7 +13,8 @@
     { "source": "/api/quote-requests-admin/:id/:action", "destination": "/api/quote-requests-admin?_id=:id&_action=:action" },
     { "source": "/api/quote-requests-admin/:id", "destination": "/api/quote-requests-admin?_id=:id" },
     { "source": "/extension-auth", "destination": "/api/extension/auth-page" },
-    { "source": "/quote", "destination": "/quote.html" }
+    { "source": "/quote", "destination": "/quote.html" },
+    { "source": "/contact", "destination": "/contact.html" }
   ],
   "crons": [
     { "path": "/api/crm/cron/task-reminders", "schedule": "*/15 * * * *" },
@@ -40,7 +41,7 @@
       ]
     },
     {
-      "source": "/((?!api/|extension-auth|quote).*)",
+      "source": "/((?!api/|extension-auth|quote|contact).*)",
       "headers": [
         {
           "key": "Content-Security-Policy",
@@ -53,6 +54,20 @@
     },
     {
       "source": "/quote(.html)?",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://squideo.com https://*.squideo.com https://squideo.co.uk https://*.squideo.co.uk https://*.duda.co https://*.dudaone.com https://*.multiscreensite.com"
+        },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Cross-Origin-Resource-Policy", "value": "cross-origin" },
+        { "key": "Cross-Origin-Embedder-Policy", "value": "unsafe-none" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
+      ]
+    },
+    {
+      "source": "/contact(.html)?",
       "headers": [
         {
           "key": "Content-Security-Policy",

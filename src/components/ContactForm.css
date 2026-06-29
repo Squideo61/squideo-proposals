@@ -1,0 +1,19 @@
+/* Contact-specific tweaks layered on top of QuoteRequestForm.css.
+   The contact form is a single screen, so it has no progress header and a
+   slightly tighter container than the multi-step quote form. */
+.contact-form-widget .progress-form-container {
+  max-width: 640px;
+  padding: 24px 20px;
+}
+.contact-form-widget .contact-message-large {
+  min-height: 140px !important;
+}
+.contact-form-widget .form-navigation {
+  /* No "Back" button on a single-step form — keep the submit full width. */
+  border-top: none;
+  padding-top: 8px;
+  margin-top: 24px;
+}
+@media (max-width: 767px) {
+  .contact-form-widget .progress-form-container { padding: 16px 12px; }
+}

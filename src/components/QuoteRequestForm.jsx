@@ -14,7 +14,7 @@ const COMMON_DOMAINS = [
   'aol.com', 'mail.com', 'protonmail.com', 'zoho.com', 'yandex.com',
 ];
 
-const COUNTRIES = [
+export const COUNTRIES = [
   { name: 'United Kingdom', code: 'GB', dialCode: '+44', format: '##### ### ###' },
   { name: 'United States', code: 'US', dialCode: '+1', format: '(###) ###-####' },
   { name: 'Canada', code: 'CA', dialCode: '+1', format: '(###) ###-####' },
@@ -129,7 +129,7 @@ const DEFAULTS = {
   successRedirectUrl: 'https://www.squideo.com/qr-thank-you',
 };
 
-function formatPhoneNumber(value, format) {
+export function formatPhoneNumber(value, format) {
   if (!format) return value;
   const digits = (value || '').replace(/\D/g, '');
   let out = '';
@@ -156,7 +156,7 @@ function levenshtein(a, b) {
   return m[b.length][a.length];
 }
 
-function suggestEmailFix(email) {
+export function suggestEmailFix(email) {
   if (!email || !email.includes('@')) return null;
   const [local, domain] = email.split('@');
   if (!domain) return null;
@@ -168,11 +168,11 @@ function suggestEmailFix(email) {
   return null;
 }
 
-function isValidEmail(email) {
+export function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function timeBasedGreeting() {
+export function timeBasedGreeting() {
   const h = new Date().getHours();
   if (h >= 5 && h < 12) return 'Good morning!';
   if (h >= 12 && h < 17) return 'Good afternoon!';
@@ -180,7 +180,7 @@ function timeBasedGreeting() {
   return 'Working late?';
 }
 
-function getFirstName(full) {
+export function getFirstName(full) {
   if (!full) return '';
   const cleaned = full.replace(/^(mr\.?|mrs\.?|ms\.?|dr\.?|prof\.?)\s+/i, '').trim();
   const first = cleaned.split(/\s+/)[0] || '';
@@ -195,7 +195,7 @@ function formatFileSize(bytes) {
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
 }
 
-function fireConfetti() {
+export function fireConfetti() {
   try {
     const colors = ['#7ac943', '#6bb635', '#FFD700', '#FFA500', '#4ECDC4', '#FF6B6B'];
     const defaults = {
