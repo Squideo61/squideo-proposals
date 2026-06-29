@@ -274,6 +274,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
     update({ optionalExtras: arr });
   };
 
+  // £0 base price is allowed when the Partner Programme is enabled — lets us
+  // give the first video free on a retainer sign-up. Otherwise a real price is
+  // required so a £0 proposal can't go out by accident.
+  const basePriceOk = data.partnerProgramme?.enabled
+    ? Number(data.basePrice) >= 0
+    : Number(data.basePrice) > 0;
+
   // Validation — required fields per section (client fields skipped in template mode)
   const issues = {
     client: isTemplate ? [] : [
@@ -284,7 +291,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       (data.videoOptions || []).length < 2 && !data.requirement?.trim() && 'Requirement',
     ].filter(Boolean),
     pricing: [
-      !(data.basePrice > 0) && 'Base price must be greater than 0',
+      !basePriceOk && (data.partnerProgramme?.enabled ? 'Base price must be £0 or more' : 'Base price must be greater than 0'),
     ].filter(Boolean),
   };
   const totalIssues = Object.values(issues).flat().length;
@@ -699,8 +706,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         {...sectionProps('pricing')}
       >
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
-          <Field label="Project base price (ex VAT)" error={!(data.basePrice > 0)}>
+          <Field label="Project base price (ex VAT)" error={!basePriceOk}>
             <PriceInput className="input" value={data.basePrice} onChange={(n) => update({ basePrice: n })} />
+            {data.partnerProgramme?.enabled && Number(data.basePrice) === 0 && (
+              <div style={{ fontSize: 12, color: '#15803d', marginTop: 4, fontWeight: 600 }}>
+                First video free with the Partner Programme retainer.
+              </div>
+            )}
           </Field>
           <Field label="VAT rate (%)">
             <PriceInput step="1" className="input" value={Math.round(data.vatRate * 100)} onChange={(n) => update({ vatRate: n / 100 })} />
