@@ -10,6 +10,7 @@
 // signature's signed_at (fallback: the stage→signed change).
 import sql from '../db.js';
 import { annotateDeals } from './deals.js';
+import { isSignedSale, isImportedDeal } from './signedSale.js';
 
 const STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'interested', 'signed', 'paid', 'long_term', 'lost'];
 const STAGE_RANK = Object.fromEntries(STAGES.map((s, i) => [s, i]));
@@ -19,30 +20,8 @@ const WON_STAGES = new Set(['signed', 'paid', 'long_term']);
 const FUNNEL_STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'interested', 'signed'];
 // Probability weighting per open stage for the weighted forecast.
 const STAGE_PROB = { lead: 0.05, responded: 0.10, proposal_sent: 0.30, viewed: 0.45, interested: 0.65 };
-// One-off list of historical imported/back-entered deals to exclude from the
-// signed-proposal metrics — they were bulk-entered (not won through the
-// pipeline) and inflate the figures. This is an explicit, finite set, NOT a
-// forward-applying rule: genuine same-day signs (e.g. Stockton) are deliberately
-// absent, and any new deal — however fast it closes — is counted. No more
-// imports are expected; if a future cleanup is ever needed, add IDs here.
-const EXCLUDED_IMPORT_DEAL_IDS = new Set([
-  'deal_1782382102434_457941b7961f2ab942', // mylife Diabetes Care Ltd (back-entered; actually signed 9 Apr)
-  'deal_1781682720715_fb91b1884055f6ba4d', // Membership Solutions Ltd
-  'deal_1781686640156_fa5740ec73d93ac513', // Airport Coordination Ltd (UK)
-  'deal_1781618597007_caa655026fa62917c0', // S&E CareTrade Video 1
-  'deal_1781597942024_c770f294b689e9fefb', // International Tree Foundation
-  'deal_1781602227135_3e91721fc319b53351', // Catherine Hunter - Humber Teaching NHS
-  'deal_1781600780429_1c284acc5fc55d7233', // Government of Jersey
-  'deal_1781620527698_2fde90050e5d8ec240', // Jola Cloud Solutions Ltd
-  'deal_1781769674927_52bc6f33f4a95175d5', // Venues Group
-  'deal_1781514371549_24e2d802f192f038b0', // Compliance Chain
-  'deal_1781516198554_9048d44792741b95d0', // Alation, Inc
-  'deal_1781515516329_553e705cecf85c5090', // Drain Trader Ltd
-  'deal_1781514183817_cf11b036ee36cead92', // TB Projects
-  'deal_1781515056827_18bfd419331bf22083', // Meliora Medical Group
-  'deal_1781263185731_339f21f0dbb0093d5e', // PIB Employee Benefits Limited
-  'deal_1781270430083_875f32c215317c50d3', // South East Water
-]);
+// The imported-deals exclusion list and the "genuine signed sale" predicate live
+// in ./signedSale.js so Sales Insights and Marketing share one definition.
 const STAGE_LABEL = {
   lead: 'Lead', responded: 'Responded', proposal_sent: 'Proposal sent', viewed: 'Viewed',
   interested: 'Interested', signed: 'Signed', paid: 'Paid', long_term: 'Long-term', lost: 'Lost',
@@ -158,24 +137,18 @@ async function buildInsights(req) {
     const cycleStartAt = starts.length ? new Date(Math.min(...starts)).toISOString() : r.created_at;
     const value = Number(a.effectiveValue) || 0;
     const cycleDays = days(cycleStartAt, saleAt);
-    const isImported = EXCLUDED_IMPORT_DEAL_IDS.has(r.id);
-    // A "signed proposal" must have an actual signature, or have reached the
-    // signed/paid stage. Being moved to "long-term" (an ongoing-client status)
-    // does NOT by itself count as signing a proposal, so a deal parked in
-    // long_term with no signature is kept out of the signed-proposal metrics.
-    const reachedSignedOrPaid = stage === 'signed' || stage === 'paid'
-      || events.some((e) => e.to === 'signed' || e.to === 'paid');
-    const isSignedProposal = !!sig?.signedAt || reachedSignedOrPaid;
+    const isImported = isImportedDeal(r.id);
+    // isSale = a genuine signed proposal (see ./signedSale.js): signed/paid (or
+    // carrying a signature), a real value, and not a listed import. £0 records,
+    // bare long-term parks, and imports stay out of the signed-proposal metrics —
+    // while also staying out of open/lost.
+    const isSale = isSignedSale({ id: r.id, stage, hasSignature: !!sig?.signedAt, value, events });
     const hasProposal = a.valueSource === 'proposal' || a.valueSource === 'signed' || (a.proposalCount || 0) > 0;
     const tracking = a.tracking || {};
     return {
       id: r.id, title: r.title, stage, owner: r.owner_email || null,
       createdAt: r.created_at, cycleStartAt, cycleDays, isImported, stageChangedAt: r.stage_changed_at, lastActivityAt: r.last_activity_at,
-      // isSale = a genuine signed proposal: signed/paid (or carrying a signature),
-      // a real value, and not a listed historical import. £0 records, bare
-      // long-term parks, and imports stay out of the signed-proposal metrics —
-      // while also staying out of open/lost.
-      lostReason: r.lost_reason || null, value, isWon, isSale: isSignedProposal && value > 0 && !isImported, isImportedSale: isSignedProposal && value > 0 && isImported, isLost, isOpen, saleAt,
+      lostReason: r.lost_reason || null, value, isWon, isSale, isLost, isOpen, saleAt,
       paymentOption: sig?.paymentOption || null, hasProposal,
       proposalOpens: tracking.proposalOpens || 0, lastOpenedAt: tracking.lastOpenedAt || null,
       events,

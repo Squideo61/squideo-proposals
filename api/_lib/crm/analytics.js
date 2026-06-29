@@ -16,11 +16,12 @@ import { ensureLeadAttribution } from '../leadAttribution.js';
 import { adsConfigured, ensureAdSpend, runAdSpendSync } from './googleAds.js';
 import { gscConfigured, runGscSync, searchReport } from './googleSearch.js';
 import { ga4Configured, runGa4Sync, trafficReport } from './googleAnalytics.js';
+import { isSignedSale } from './signedSale.js';
 
-// A "sale" is a signed deal (per the chosen definition). signed/paid/long_term
-// all sit at or past the signature, and any deal with a signature row counts too
-// — so a sale is recognised at the moment of signing regardless of payment.
-const SALE_STAGES = new Set(['signed', 'paid', 'long_term']);
+// A "sale" uses the shared signed-sale definition (./signedSale.js): an actual
+// signature or a signed/paid stage, a real value, and not a historical import —
+// so Marketing and Sales Insights agree. A deal merely parked in long_term with
+// no signature does NOT count.
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
 
 // Parse ?from=YYYY-MM-DD&to=YYYY-MM-DD off req.url (the dispatcher preserves the
@@ -81,7 +82,9 @@ async function leadRange(req) {
 // Map<dealId, { value, stage, proposalValue, isSale, saleAt }>:
 //   value         — effectiveValue (signed > latest proposal > manual)
 //   proposalValue — effectiveValue when a proposal exists (else null)
-//   isSale        — has a signature, or stage is signed/paid/long_term
+//   isSale        — genuine signed sale per ./signedSale.js (signature or a
+//                   signed/paid stage, real value, not an import; bare long_term
+//                   with no signature does NOT count)
 //   saleAt        — earliest signature signed_at (fallback: stage_changed_at)
 async function dealInfoMap(dealIds) {
   const map = new Map();
@@ -102,15 +105,32 @@ async function dealInfoMap(dealIds) {
     signedMap = new Map(sig.map((r) => [r.did, r.signed_at]));
   } catch { /* signatures table not present */ }
 
+  // Stage-change history — lets the shared predicate credit a deal that reached
+  // signed/paid even if it has since moved on (e.g. to long_term).
+  const eventsByDeal = new Map();
+  try {
+    const evs = await sql`
+      SELECT deal_id, payload, occurred_at
+        FROM deal_events
+       WHERE event_type = 'stage_change' AND deal_id = ANY(${ids})
+       ORDER BY deal_id, occurred_at ASC`;
+    for (const e of evs) {
+      if (!eventsByDeal.has(e.deal_id)) eventsByDeal.set(e.deal_id, []);
+      eventsByDeal.get(e.deal_id).push({ to: e.payload?.to, at: e.occurred_at });
+    }
+  } catch { /* no deal_events */ }
+
   for (const d of annotated) {
     const si = stageInfo.get(d.id) || {};
     const signedAt = signedMap.get(d.id) || null;
-    const isSale = !!signedAt || SALE_STAGES.has(si.stage);
+    const events = eventsByDeal.get(d.id) || [];
+    const value = Number(d.effectiveValue) || 0;
+    const isSale = isSignedSale({ id: d.id, stage: si.stage, hasSignature: !!signedAt, value, events });
     const hasProposal = d.valueSource === 'proposal' || d.valueSource === 'signed';
     map.set(d.id, {
-      value: Number(d.effectiveValue) || 0,
+      value,
       stage: si.stage,
-      proposalValue: hasProposal ? (Number(d.effectiveValue) || 0) : null,
+      proposalValue: hasProposal ? value : null,
       isSale,
       saleAt: signedAt || (isSale ? (si.stageChangedAt || null) : null),
     });
