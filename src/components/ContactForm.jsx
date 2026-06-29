@@ -19,7 +19,7 @@ import './ContactForm.css';
 
 const DEFAULTS = {
   title: 'Got a question? Send us a message',
-  description: "Fill in the form and a member of the team will get back to you within 1 business day.",
+  description: "Fill in the form and a member of the team will get back to you within 48 hours.",
   privacyMessage: 'Your details are private and only used to reply to your enquiry.',
   nameLabel: 'Your name',
   namePlaceholder: 'Jane Smith',
@@ -35,11 +35,12 @@ const DEFAULTS = {
   captchaLogoText: 'Verify',
   submitButtonText: 'Send message',
   successTitle: 'Message sent!',
-  successDescription: "Thanks for getting in touch — a member of the team will get back to you within 1 business day.",
+  successDescription: "Thanks for getting in touch — a member of the team will get back to you within 48 hours.",
   apiBase: '/api/quote-requests',
+  successRedirectUrl: 'https://www.squideo.com/contact-thank-you',
   nameRequired: true,
   emailRequired: true,
-  phoneRequired: false,
+  phoneRequired: true,
   messageRequired: true,
 };
 
@@ -188,6 +189,15 @@ export function ContactForm(props = {}) {
       setDone(true);
       if (typeof cfg.onSubmitted === 'function') {
         try { cfg.onSubmitted(payload); } catch { /* */ }
+      }
+      if (cfg.successRedirectUrl) {
+        // Small delay so the confetti is visible. Use window.top so we break out
+        // of the iframe when embedded on squideo.com; falls through to the
+        // current window if top isn't reachable.
+        setTimeout(() => {
+          try { (window.top || window).location.href = cfg.successRedirectUrl; }
+          catch { window.location.href = cfg.successRedirectUrl; }
+        }, 1200);
       }
     } catch (err) {
       console.error('[ContactForm] submit error', err);
