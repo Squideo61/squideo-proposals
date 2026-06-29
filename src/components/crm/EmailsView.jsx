@@ -43,6 +43,7 @@ const FOLDER_BY_ID = Object.fromEntries([...FOLDERS, ...CATEGORY_FOLDERS].map(f 
 // List row density (Gmail-style). Drives the vertical padding of list rows.
 const DENSITY_KEY = 'squideo.emails.density';
 const UNREAD_ONLY_KEY = 'squideo.emails.unreadOnly';
+const DEALS_UNREAD_FIRST_KEY = 'squideo.emails.dealsUnreadFirst';
 const DENSITY_OPTIONS = [
   { id: 'comfortable', label: 'Comfortable' },
   { id: 'default',     label: 'Default'     },
@@ -253,6 +254,18 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
   const [unreadOnly, setUnreadOnly] = useState(() => {
     try { return localStorage.getItem(UNREAD_ONLY_KEY) === '1'; } catch { return false; }
   });
+  // Deals folder: when on, deals with unread emails float to the top (client-side
+  // — the deals list is loaded whole, not paginated).
+  const [dealsUnreadFirst, setDealsUnreadFirst] = useState(() => {
+    try { return localStorage.getItem(DEALS_UNREAD_FIRST_KEY) === '1'; } catch { return false; }
+  });
+  const toggleDealsUnreadFirst = () => {
+    setDealsUnreadFirst((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(DEALS_UNREAD_FIRST_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
   const [openRef, setOpenRef] = useState(null);     // { kind, threadId, unread } for the conversation modal
   const [density, setDensity] = useState(() => {
     try { return localStorage.getItem(DENSITY_KEY) || 'default'; } catch { return 'default'; }
@@ -375,12 +388,23 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
       }
       return out;
     }
-    if (!q) return rawRows;
-    return rawRows.filter((r) => {
-      const hay = [r.subject, r.snippet, r.lastSnippet, r.lastFrom, r.fromEmail, ...(r.toEmails || [])].join(' ').toLowerCase();
-      return hay.includes(q);
-    });
-  }, [rawRows, search, def.kind, searchSlice, appliedQuery]);
+    let list = rawRows;
+    if (q) {
+      list = rawRows.filter((r) => {
+        const hay = [r.subject, r.snippet, r.lastSnippet, r.lastFrom, r.fromEmail, ...(r.toEmails || [])].join(' ').toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    // Float unread-email deals to the top when toggled, preserving the existing
+    // newest-first order within the unread and read groups (stable sort).
+    if (def.kind === 'deals' && dealsUnreadFirst) {
+      list = list
+        .map((r, i) => ({ r, i }))
+        .sort((a, b) => (Number(!!b.r.unread) - Number(!!a.r.unread)) || (a.i - b.i))
+        .map((x) => x.r);
+    }
+    return list;
+  }, [rawRows, search, def.kind, searchSlice, appliedQuery, dealsUnreadFirst]);
 
   // The search box also finds CRM deals (by deal title, company, contact), not
   // just emails — matched client-side from the store and shown above the email
@@ -554,6 +578,23 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               <def.icon size={16} color={BRAND.blue} /> {def.label}
             </h2>
             <button onClick={refresh} className="btn-icon" title="Refresh" aria-label="Refresh"><RefreshCw size={15} /></button>
+            {def.kind === 'deals' && (
+              <button
+                onClick={toggleDealsUnreadFirst}
+                title="Show deals with unread emails at the top"
+                aria-pressed={dealsUnreadFirst}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5,
+                  padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontSize: 12,
+                  fontFamily: 'inherit', fontWeight: 600,
+                  border: '1px solid ' + (dealsUnreadFirst ? BRAND.blue : BRAND.border),
+                  background: dealsUnreadFirst ? BRAND.blue + '14' : 'white',
+                  color: dealsUnreadFirst ? BRAND.blue : BRAND.muted,
+                }}
+              >
+                <CircleDot size={13} /> Unread first
+              </button>
+            )}
             {def.kind === 'gmail' && active !== 'unread' && active !== 'sent' && active !== 'drafts' && (
               <button
                 onClick={toggleUnreadOnly}
