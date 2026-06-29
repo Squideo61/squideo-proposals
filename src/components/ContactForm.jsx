@@ -18,8 +18,8 @@ import './ContactForm.css';
 // a few contact-specific tweaks in ContactForm.css.
 
 const DEFAULTS = {
-  title: 'Got a question? Send us a message',
-  description: "Fill in the form and a member of the team will get back to you within 48 hours.",
+  title: 'Got an enquiry?',
+  description: 'Fill in the form and a member of our team will get back to you as soon as possible.',
   privacyMessage: 'Your details are private and only used to reply to your enquiry.',
   nameLabel: 'Your name',
   namePlaceholder: 'Jane Smith',
