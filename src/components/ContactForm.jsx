@@ -351,7 +351,7 @@ export function ContactForm(props = {}) {
               <div className="form-group">
                 <label htmlFor="cf-message">{cfg.messageLabel}{!cfg.messageRequired && <span className="optional-label"> (optional)</span>}</label>
                 <textarea
-                  id="cf-message" name="message" rows={6}
+                  id="cf-message" name="message" rows={4}
                   className={`form-input contact-message-large ${errors.message ? 'error' : ''}`}
                   placeholder={cfg.messagePlaceholder}
                   value={form.message}

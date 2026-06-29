@@ -95,13 +95,33 @@
   }
 }
 .contact-form-widget .contact-message-large {
-  min-height: 140px !important;
+  min-height: 96px !important;
+}
+/* Compact spacing so the form column sits at roughly the same height as the
+   contact-details column. */
+.contact-form-widget .multi-step-form {
+  padding: 28px;
+}
+.contact-form-widget .step-description {
+  margin-bottom: 20px;
+}
+.contact-form-widget .privacy-badge {
+  margin-bottom: 18px;
+}
+.contact-form-widget .form-group {
+  margin-bottom: 16px;
+}
+.contact-form-widget .captcha-container {
+  margin-top: 18px;
+}
+.contact-form-widget .captcha-box {
+  padding: 14px 16px;
 }
 .contact-form-widget .form-navigation {
   /* No "Back" button on a single-step form — keep the submit full width. */
   border-top: none;
-  padding-top: 8px;
-  margin-top: 24px;
+  padding-top: 4px;
+  margin-top: 18px;
 }
 @media (max-width: 767px) {
   .contact-form-widget .progress-form-container { padding: 16px 12px; }
