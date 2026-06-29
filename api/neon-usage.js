@@ -87,7 +87,7 @@ function sumMetrics(payload) {
   return { totals, periodStart };
 }
 
-async function compute(key, { orgIdEnv, projectIdEnv } = {}) {
+export async function compute(key, { orgIdEnv, projectIdEnv } = {}) {
   // Neon scopes projects under organizations; the consumption API needs both
   // org_id AND explicit project_ids (an org_id alone returns no projects).
   // Resolve the candidate orgs, then find the one that actually has projects.

@@ -126,6 +126,7 @@ function emptyStore() {
     salesTargets: [],
     costItems: [],
     neonUsage: null,
+    costSnapshots: null,
     bankHolidays: null,
     partnerCreditsList: null,
     partnerCreditDetail: {},
@@ -1962,6 +1963,13 @@ export function StoreProvider({ children }) {
       return api.get('/api/neon-usage' + (refresh ? '?refresh=1' : ''))
         .then((data) => { if (data) setState(s => ({ ...s, neonUsage: data })); return data; })
         .catch((err) => { setState(s => ({ ...s, neonUsage: { error: err?.message || 'Could not load Neon usage' } })); });
+    },
+
+    // Persisted month-end CRM-cost snapshots (Storage tab's month stepper).
+    loadCostSnapshots() {
+      return api.get('/api/cost-snapshots')
+        .then((data) => { const list = data?.snapshots || []; setState(s => ({ ...s, costSnapshots: list })); return list; })
+        .catch(() => { setState(s => ({ ...s, costSnapshots: [] })); });
     },
 
     // Editable fixed monthly CRM cost line items (shared with the settings row).

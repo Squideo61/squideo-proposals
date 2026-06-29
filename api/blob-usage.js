@@ -33,7 +33,7 @@ const CATEGORY_LABEL = {
 let cache = null; // { at, data }
 const TTL_MS = 60 * 60 * 1000;
 
-async function compute() {
+export async function compute() {
   const categories = {}; // prefix -> { count, bytes, label }
   let totalBytes = 0, totalCount = 0;
   const storesSeen = [];

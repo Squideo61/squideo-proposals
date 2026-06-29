@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { HardDrive, RefreshCw, ExternalLink, Database, Wallet, Plus, Trash2 } from 'lucide-react';
+import { HardDrive, RefreshCw, ExternalLink, Database, Wallet, Plus, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
+import { thisMonthStr, shiftMonth, monthLabel } from '../crm/dateRange.jsx';
 
 function fmtBytes(n) {
   const b = Number(n) || 0;
@@ -21,19 +22,26 @@ export function StorageTab() {
   const neon = state.neonUsage;
   const [loading, setLoading] = useState(!blob || !neon);
 
+  // Month stepper: the current month always shows live figures; earlier months
+  // read from the persisted month-end snapshots (loaded once).
+  const currentMonth = thisMonthStr();
+  const [month, setMonth] = useState(currentMonth);
+  const isCurrent = month >= currentMonth;
+  const snapshots = state.costSnapshots;
+
   useEffect(() => {
     const needBlob = !blob, needNeon = !neon;
-    if (!needBlob && !needNeon) { setLoading(false); return; }
-    setLoading(true);
+    setLoading(needBlob || needNeon);
     Promise.all([
       needBlob ? actions.loadBlobUsage({ refresh: false }) : null,
       needNeon ? actions.loadNeonUsage({ refresh: false }) : null,
+      snapshots == null ? actions.loadCostSnapshots() : null,
     ]).finally(() => setLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function refreshAll() {
     setLoading(true);
-    try { await Promise.all([actions.loadBlobUsage({ refresh: true }), actions.loadNeonUsage({ refresh: true })]); }
+    try { await Promise.all([actions.loadBlobUsage({ refresh: true }), actions.loadNeonUsage({ refresh: true }), actions.loadCostSnapshots()]); }
     finally { setLoading(false); }
   }
 
@@ -42,31 +50,104 @@ export function StorageTab() {
   const fixedUsd = (state.costItems || []).reduce((sum, it) => sum + num(it.amountUsd), 0);
   const grandTotal = blobUsd + neonUsd + fixedUsd;
 
+  const snap = !isCurrent ? (snapshots || []).find(s => s.month === month) : null;
+
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <Wallet size={20} color={BRAND.blue} />
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Storage &amp; CRM costs</h2>
-        <button onClick={refreshAll} disabled={loading} className="btn-ghost" style={{ marginLeft: 'auto' }}>
-          <RefreshCw size={14} /> {loading ? 'Refreshing…' : 'Refresh'}
-        </button>
+        <MonthStepper month={month} setMonth={setMonth} max={currentMonth} />
+        {isCurrent && (
+          <button onClick={refreshAll} disabled={loading} className="btn-ghost" style={{ marginLeft: 'auto' }}>
+            <RefreshCw size={14} /> {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        )}
       </div>
 
-      {/* Grand total */}
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
-        <Stat label="Total CRM cost / mo (est.)" value={fmtUsd(grandTotal)}
-          sub="Neon + Vercel Blob + fixed costs" big />
-        <Stat label="Neon database" value={neon?.configured ? fmtUsd(neonUsd) : '—'}
-          sub={neon?.configured ? 'this billing period' : neon?.error ? 'error — see below' : 'not configured'} />
-        <Stat label="Vercel Blob storage" value={fmtUsd(blobUsd)} sub="storage only" />
-        <Stat label="Fixed monthly costs" value={fmtUsd(fixedUsd)}
-          sub={`${(state.costItems || []).length} item${(state.costItems || []).length === 1 ? '' : 's'}`} />
-      </div>
+      {isCurrent ? (
+        <>
+          {/* Grand total */}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
+            <Stat label="Total CRM cost / mo (est.)" value={fmtUsd(grandTotal)}
+              sub="Neon + Vercel Blob + fixed costs" big />
+            <Stat label="Neon database" value={neon?.configured ? fmtUsd(neonUsd) : '—'}
+              sub={neon?.configured ? 'this billing period' : neon?.error ? 'error — see below' : 'not configured'} />
+            <Stat label="Vercel Blob storage" value={fmtUsd(blobUsd)} sub="storage only" />
+            <Stat label="Fixed monthly costs" value={fmtUsd(fixedUsd)}
+              sub={`${(state.costItems || []).length} item${(state.costItems || []).length === 1 ? '' : 's'}`} />
+          </div>
 
-      <NeonSection neon={neon} loading={loading} />
-      <BlobSection blob={blob} loading={loading} />
-      <FixedCostsSection items={state.costItems || []} onSave={actions.saveCostItems} />
+          <NeonSection neon={neon} loading={loading} />
+          <BlobSection blob={blob} loading={loading} />
+          <FixedCostsSection items={state.costItems || []} onSave={actions.saveCostItems} />
+        </>
+      ) : (
+        <PastMonthView month={month} snap={snap} loading={snapshots == null} />
+      )}
     </div>
+  );
+}
+
+// ‹ Month › stepper. `max` is the current month — you can't step into the future.
+function MonthStepper({ month, setMonth, max }) {
+  const atMax = month >= max;
+  const btn = (disabled) => ({
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    border: 'none', background: 'transparent', cursor: disabled ? 'default' : 'pointer',
+    color: disabled ? BRAND.border : BRAND.ink, padding: '4px 6px', borderRadius: 6,
+  });
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2, border: '1px solid ' + BRAND.border }}>
+      <button title="Previous month" aria-label="Previous month" style={btn(false)} onClick={() => setMonth(shiftMonth(month, -1))}><ChevronLeft size={16} /></button>
+      <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, minWidth: 110, textAlign: 'center' }}>{monthLabel(month)}</span>
+      <button title="Next month" aria-label="Next month" disabled={atMax} style={btn(atMax)} onClick={() => { if (!atMax) setMonth(shiftMonth(month, 1)); }}><ChevronRight size={16} /></button>
+    </div>
+  );
+}
+
+// A past month read from its month-end snapshot. Blob storage + fixed costs were
+// point-in-time at capture; Neon is that period's billing estimate — surfaced in
+// the caption so the figure isn't mistaken for a live, recomputable number.
+function PastMonthView({ month, snap, loading }) {
+  if (loading) return <Muted>Loading…</Muted>;
+  if (!snap) {
+    return (
+      <div style={{ padding: 24, background: '#F8FAFC', border: '1px dashed ' + BRAND.border, borderRadius: 12, color: BRAND.muted, fontSize: 14, lineHeight: 1.6 }}>
+        No snapshot for {monthLabel(month)} yet. Monthly snapshots are captured automatically at each month-end, so past months fill in from now on.
+      </div>
+    );
+  }
+  const fixed = Array.isArray(snap.breakdown?.fixed) ? snap.breakdown.fixed : [];
+  const captured = snap.capturedAt ? new Date(snap.capturedAt).toLocaleDateString('en-GB') : null;
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <Stat label={`Total CRM cost — ${monthLabel(month)}`} value={fmtUsd(snap.totalUsd)} sub="Neon + Vercel Blob + fixed costs" big />
+        <Stat label="Neon database" value={fmtUsd(snap.neonUsd)} sub="billing-period estimate" />
+        <Stat label="Vercel Blob storage" value={fmtUsd(snap.blobUsd)} sub="at month-end" />
+        <Stat label="Fixed monthly costs" value={fmtUsd(snap.fixedUsd)} sub={`${fixed.length} item${fixed.length === 1 ? '' : 's'}`} />
+      </div>
+
+      {fixed.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <SectionHeader icon={Wallet} title="Fixed costs at month-end" />
+          <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+            {fixed.map((it, i) => (
+              <div key={it.id || i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: i === fixed.length - 1 ? 'none' : '1px solid ' + BRAND.border }}>
+                <span style={{ fontWeight: 600, fontSize: 13, color: BRAND.ink }}>{it.label || '—'}</span>
+                {it.note && <span style={{ fontSize: 12, color: BRAND.muted }}>{it.note}</span>}
+                <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{fmtUsd(num(it.amountUsd))}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.6 }}>
+        Snapshot{captured ? ` captured ${captured}` : ''}. Neon is the billing-period estimate for that month; Vercel Blob storage and fixed costs are the point-in-time state captured at month-end.
+      </p>
+    </>
   );
 }
 

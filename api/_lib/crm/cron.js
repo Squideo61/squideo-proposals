@@ -13,6 +13,7 @@ import { quarterTaxSummary } from './stats.js';
 import { cronAdSpendSync } from './googleAds.js';
 import { cronGscSync } from './googleSearch.js';
 import { cronGa4Sync } from './googleAnalytics.js';
+import { captureCostSnapshot } from './costSnapshot.js';
 import { timingSafeEqualStr } from '../middleware.js';
 
 export async function cronHandler(req, res, action) {
@@ -45,6 +46,7 @@ export async function cronHandler(req, res, action) {
     case 'ad-spend-sync':     return cronAdSpendSync(res);
     case 'gsc-sync':          return cronGscSync(res);
     case 'ga4-sync':          return cronGa4Sync(res);
+    case 'cost-snapshot':     return cronCostSnapshot(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }
@@ -232,6 +234,28 @@ export async function cronPruneViews(res) {
   `;
   console.log('[cron prune-views] deleted', { count: result.count || result.rowCount || 0 });
   return res.status(200).json({ ok: true, deleted: result.count || result.rowCount || 0 });
+}
+
+// Monthly CRM-cost snapshot. Scheduled daily over the last few days of the
+// month; only acts on the final day so the row captures end-of-month state
+// (Blob storage + fixed costs are point-in-time, Neon is the live billing-period
+// estimate). The month key is the month that's ending. Self-heals its table.
+export async function cronCostSnapshot(res) {
+  const now = new Date();
+  const tomorrow = new Date(now.getTime() + 86400000);
+  const isLastDayOfMonth = tomorrow.getUTCMonth() !== now.getUTCMonth();
+  const monthKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  if (!isLastDayOfMonth) {
+    return res.status(200).json({ ok: true, skipped: 'not month-end', month: monthKey });
+  }
+  try {
+    const snap = await captureCostSnapshot(monthKey);
+    console.log('[cron cost-snapshot] captured', snap);
+    return res.status(200).json({ ok: true, captured: snap });
+  } catch (err) {
+    console.error('[cron cost-snapshot] failed', err);
+    return res.status(500).json({ error: err?.message || 'Snapshot failed' });
+  }
 }
 
 // Hourly nudge: a proposal signed >1h ago with no invoice raised and nothing
