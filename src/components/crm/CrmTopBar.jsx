@@ -8,6 +8,7 @@ import { Logo } from '../ui.jsx';
 import { NotificationBell } from '../NotificationBell.jsx';
 import { MobileNotifications } from '../MobileNotifications.jsx';
 import { MobileTabBar } from './MobileTabBar.jsx';
+import { GlobalSearch } from './GlobalSearch.jsx';
 
 const BADGE = '#FB923C';
 
@@ -308,7 +309,14 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         </nav>
         )}
 
-        <div style={{ flex: 1 }} />
+        {/* CRM-wide search sits in the middle, taking the flexible space between
+            the nav and the right-hand utilities. The marketing/producer shells
+            don't have the deal/contact data loaded, so it's main-CRM only. */}
+        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 0, padding: isMobile ? 0 : '0 16px' }}>
+          {!marketing && !producer && !isMobile && <GlobalSearch navigate={navigate} isMobile={false} />}
+        </div>
+
+        {!marketing && !producer && isMobile && <GlobalSearch navigate={navigate} isMobile />}
 
         {/* CRM-wide undo / redo. Tooltips name the next reversible action.
             Moved into the mobile nav drawer below 640px to reclaim bar width. */}
