@@ -204,21 +204,33 @@ export function GlobalSearch({ navigate, isMobile }) {
           <Search size={18} />
         </button>
         {mobileOpen && (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(15,42,61,0.35)' }} onMouseDown={() => setMobileOpen(false)}>
-            <div onMouseDown={(e) => e.stopPropagation()} style={{ background: 'white', padding: 10, boxShadow: '0 8px 24px rgba(15,42,61,0.18)' }}>
-              <div style={{ position: 'relative' }}>
-                <Search size={16} color={BRAND.muted} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
-                <input
-                  ref={inputRef}
-                  className="input"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={onKeyDown}
-                  placeholder="Search deals, companies, contacts…"
-                  style={{ paddingLeft: 36, paddingRight: 36 }}
-                />
-                <button type="button" onClick={() => setMobileOpen(false)} aria-label="Close search" style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: BRAND.muted }}>
-                  <X size={16} />
+          <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(15,42,61,0.35)' }} onClick={() => setMobileOpen(false)}>
+            {/* paddingTop carries the iOS safe-area inset so the input + close
+                button clear the status bar / notch (otherwise they sit under it,
+                obscured and untappable). */}
+            <div onClick={(e) => e.stopPropagation()} style={{ background: 'white', padding: 10, paddingTop: 'calc(10px + env(safe-area-inset-top))', boxShadow: '0 8px 24px rgba(15,42,61,0.18)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+                  <Search size={16} color={BRAND.muted} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                  <input
+                    ref={inputRef}
+                    className="input"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={onKeyDown}
+                    placeholder="Search deals, companies, contacts…"
+                    style={{ paddingLeft: 36, paddingRight: query ? 32 : 12, width: '100%', boxSizing: 'border-box' }}
+                  />
+                  {query && (
+                    <button type="button" onClick={() => { setQuery(''); inputRef.current?.focus(); }} aria-label="Clear search" style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: BRAND.muted }}>
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                {/* A dedicated Cancel button: a clear, always-visible tap target
+                    to close the overlay (the input's ✕ only clears the text). */}
+                <button type="button" onClick={() => setMobileOpen(false)} className="btn-ghost" style={{ flexShrink: 0, padding: '8px 12px' }}>
+                  Cancel
                 </button>
               </div>
               {showDropdown && <div style={{ marginTop: 8, border: '1px solid ' + BRAND.border, borderRadius: 10 }}>{resultsList}</div>}
