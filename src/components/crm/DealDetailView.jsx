@@ -1430,7 +1430,10 @@ function ExpandedMessage({ email, defaultOpen = false, isLast = false, onOpenFul
               {decodeHtmlEntities(email.snippet)}
             </span>
           )}
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>
+          <span
+            style={{ marginLeft: 'auto', fontSize: 11, color: BRAND.muted, flexShrink: 0 }}
+            title={email.sentAt ? new Date(email.sentAt).toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' }) : undefined}
+          >
             {formatRelativeTime(email.sentAt)}
           </span>
           <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
