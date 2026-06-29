@@ -12,11 +12,18 @@
 .contact-form-widget .contact-layout {
   display: flex;
   align-items: flex-start;
-  gap: 32px;
+  gap: 44px;
 }
 .contact-form-widget .contact-form-col {
   flex: 1 1 60%;
   min-width: 0;
+}
+/* Cap the field width so the inputs don't stretch into the divider / right
+   column — leaves comfortable whitespace on the right of the form. */
+.contact-form-widget .contact-form-col .form-input,
+.contact-form-widget .contact-form-col .phone-input-wrapper,
+.contact-form-widget .contact-form-col .captcha-box {
+  max-width: 460px;
 }
 .contact-form-widget .contact-info-col {
   flex: 1 1 40%;
