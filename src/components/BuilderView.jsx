@@ -468,6 +468,40 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             <Field label="Job title">
               <input className="input" value={data.preparedByTitle || ''} onChange={(e) => update({ preparedByTitle: e.target.value })} placeholder="e.g. Partnership Lead" />
             </Field>
+
+            <div style={{ marginTop: 6, paddingTop: 14, borderTop: '1px solid ' + BRAND.border }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.text, marginBottom: 8 }}>Introduction</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', marginBottom: 12, padding: '8px 10px', background: data.showIntro === false ? '#FFF7ED' : BRAND.paper, border: '1px solid ' + (data.showIntro === false ? '#FED7AA' : BRAND.border), borderRadius: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={data.showIntro !== false}
+                  onChange={(e) => update({ showIntro: e.target.checked })}
+                />
+                <span style={{ fontWeight: 600 }}>Show the introduction on this proposal</span>
+                {data.showIntro === false && <span style={{ color: '#9A3412', fontSize: 12 }}>— hidden on proposal &amp; PDF</span>}
+              </label>
+              {data.showIntro !== false && (
+                <>
+                  <Field label="Heading (leave blank for the default)">
+                    <input
+                      className="input"
+                      value={data.introHeading || ''}
+                      onChange={(e) => update({ introHeading: e.target.value })}
+                      placeholder={data.contactBusinessName ? `${data.contactBusinessName}, thank you for considering Squideo as your creative partner` : 'Thank you for considering Squideo as your creative partner'}
+                    />
+                  </Field>
+                  <Field label="Intro text">
+                    <textarea
+                      className="input"
+                      style={{ minHeight: 120 }}
+                      value={data.intro || ''}
+                      onChange={(e) => update({ intro: e.target.value })}
+                      placeholder="Introduce Squideo to the client… (leave a blank line between paragraphs)"
+                    />
+                  </Field>
+                </>
+              )}
+            </div>
           </>
         )}
       </Section>

@@ -680,10 +680,14 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           </div>
         )}
 
-        <PageTitle>{data.contactBusinessName ? `${data.contactBusinessName}, thank you for considering Squideo as your creative partner` : 'Thank you for considering Squideo as your creative partner'}</PageTitle>
-        {data.intro.split('\n\n').map((p, i) => (
-          <p key={i} style={{ fontSize: 14, lineHeight: 1.7, marginBottom: 12 }}>{p}</p>
-        ))}
+        {data.showIntro !== false && (
+          <>
+            <PageTitle>{data.introHeading?.trim() ? data.introHeading : (data.contactBusinessName ? `${data.contactBusinessName}, thank you for considering Squideo as your creative partner` : 'Thank you for considering Squideo as your creative partner')}</PageTitle>
+            {(data.intro || '').split('\n\n').map((p, i) => (
+              <p key={i} style={{ fontSize: 14, lineHeight: 1.7, marginBottom: 12 }}>{p}</p>
+            ))}
+          </>
+        )}
 
         <PageTitle>Your Delivery Team</PageTitle>
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 16, marginBottom: 16 }}>

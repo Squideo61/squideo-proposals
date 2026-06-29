@@ -389,8 +389,10 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   ${clientLogoBlock}
 
   <!-- Intro -->
-  <h2 class="page-title">Thank You for Considering Squideo</h2>
-  ${data.intro.split('\n\n').map(p => `<p style="font-size:13px;line-height:1.7;margin:0 0 10px;">${esc(p)}</p>`).join('')}
+  ${data.showIntro === false ? '' : `
+  <h2 class="page-title">${esc(data.introHeading?.trim() ? data.introHeading : (data.contactBusinessName ? `${data.contactBusinessName}, thank you for considering Squideo as your creative partner` : 'Thank you for considering Squideo as your creative partner'))}</h2>
+  ${(data.intro || '').split('\n\n').map(p => `<p style="font-size:13px;line-height:1.7;margin:0 0 10px;">${esc(p)}</p>`).join('')}
+  `}
 
   <!-- Team -->
   <h2 class="page-title">Your Delivery Team</h2>
