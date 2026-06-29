@@ -12,20 +12,18 @@
 .contact-form-widget .contact-layout {
   display: flex;
   align-items: flex-start;
-  gap: 44px;
+  justify-content: space-between;
+  gap: 40px;
 }
+/* Fixed-width columns pushed to opposite ends (space-between) so there is
+   always a clear gap between the form and the details panel — the form card
+   never grows to fill the row and crowd the divider. */
 .contact-form-widget .contact-form-col {
-  flex: 1 1 auto;
+  flex: 0 1 520px;
   min-width: 0;
 }
-/* Bound the whole form card so it never stretches into the divider / right
-   column — guarantees clear whitespace between the form and the details panel,
-   and naturally narrows the name/email/etc. fields inside it. */
-.contact-form-widget .contact-form-col .multi-step-form {
-  max-width: 520px;
-}
 .contact-form-widget .contact-info-col {
-  flex: 0 0 280px;
+  flex: 0 0 260px;
   align-self: stretch;
   background: #ffffff;
   border-radius: 12px;
@@ -93,7 +91,12 @@
 @media (max-width: 860px) {
   .contact-form-widget .contact-layout {
     flex-direction: column;
+    align-items: stretch;
     gap: 20px;
+  }
+  .contact-form-widget .contact-form-col {
+    flex: 0 0 auto;
+    width: 100%;
   }
   .contact-form-widget .contact-info-col {
     flex: 0 0 auto;
