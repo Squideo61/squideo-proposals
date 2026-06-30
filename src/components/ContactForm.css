@@ -13,17 +13,19 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 40px;
+  /* Minimum gutter between the two cards — space-between can widen it but never
+     shrink below this, so the form and details panel never crowd each other. */
+  gap: 72px;
 }
 /* Fixed-width columns pushed to opposite ends (space-between) so there is
    always a clear gap between the form and the details panel — the form card
    never grows to fill the row and crowd the divider. */
 .contact-form-widget .contact-form-col {
-  flex: 0 1 520px;
+  flex: 0 1 480px;
   min-width: 0;
 }
 .contact-form-widget .contact-info-col {
-  flex: 0 0 260px;
+  flex: 0 0 280px;
   align-self: stretch;
   background: #ffffff;
   border-radius: 12px;
