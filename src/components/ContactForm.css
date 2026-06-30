@@ -21,8 +21,15 @@
    always a clear gap between the form and the details panel — the form card
    never grows to fill the row and crowd the divider. */
 .contact-form-widget .contact-form-col {
-  flex: 0 1 480px;
+  flex: 0 1 440px;
   min-width: 0;
+}
+/* Hard cap on the field width so the name/email/phone/message boxes stay narrow
+   regardless of how wide the form column ends up. */
+.contact-form-widget .contact-form-col .form-input,
+.contact-form-widget .contact-form-col .phone-input-wrapper,
+.contact-form-widget .contact-form-col .captcha-box {
+  max-width: 380px !important;
 }
 .contact-form-widget .contact-info-col {
   flex: 0 0 280px;
