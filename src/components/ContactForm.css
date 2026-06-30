@@ -13,19 +13,15 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  /* Minimum gutter between the two cards — space-between can widen it but never
-     shrink below this, so the form and details panel never crowd each other. */
-  gap: 72px;
+  gap: 48px;
 }
-/* Fixed-width columns pushed to opposite ends (space-between) so there is
-   always a clear gap between the form and the details panel — the form card
-   never grows to fill the row and crowd the divider. */
+/* The form box/column stays wide (fills the available space); only the text
+   fields inside it are capped narrow, left-aligned with whitespace to their
+   right, so the boxes never reach across toward the details panel. */
 .contact-form-widget .contact-form-col {
-  flex: 0 1 440px;
+  flex: 1 1 auto;
   min-width: 0;
 }
-/* Hard cap on the field width so the name/email/phone/message boxes stay narrow
-   regardless of how wide the form column ends up. */
 .contact-form-widget .contact-form-col .form-input,
 .contact-form-widget .contact-form-col .phone-input-wrapper,
 .contact-form-widget .contact-form-col .captcha-box {
