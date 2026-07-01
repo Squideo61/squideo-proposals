@@ -345,7 +345,7 @@ export function PerformancePanel({
       {!isSales && period === todayKey().slice(0, 7) && cfTargets?.surplus?.total > 0.005 && (
         <div style={{ background: '#F0FDF4', border: '1px solid #A7F3D0', borderRadius: 10, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 13, color: '#166534' }}>
-            <strong>{formatGBP(cfTargets.surplus.total)}</strong> surplus above the minimum — <strong>{formatGBP(cfTargets.surplus.grossTotal)}</strong> total wage available to draw
+            <strong>{formatGBP(cfTargets.surplus.total)}</strong> surplus above the minimum — <strong>{formatGBP(cfTargets.surplus.netTotal)}</strong> take-home available to draw
           </span>
           <span style={{ fontSize: 12, color: BRAND.muted }}>· see Cash Flow &amp; Targets for each director’s breakdown</span>
         </div>
@@ -1491,21 +1491,24 @@ function CfTargets({ targets, cashIn, isMobile }) {
           {overMin ? (
             <>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink }}>Available to draw — full wage each</span>
-                <span style={{ fontSize: 20, fontWeight: 800, color: '#15803D', lineHeight: 1.1 }}>{formatGBP(surplus.grossTotal)}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink }}>Available to draw — take-home each</span>
+                <span style={{ fontSize: 20, fontWeight: 800, color: '#15803D', lineHeight: 1.1 }}>{formatGBP(surplus.netTotal)}</span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${Math.max(1, surplus.directors.length)}, 1fr)`, gap: 8 }}>
-                {surplus.directors.map((d, i) => (
-                  <div key={d.name + i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '8px 10px', background: 'white' }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: '#15803D', lineHeight: 1.1 }}>{formatGBP(d.gross)}</div>
-                    <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 3 }}>{formatGBP(d.base)} base + {formatGBP(d.surplus)} surplus</div>
-                    <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>dividend tax on surplus ≈ {formatGBP(d.tax)}</div>
-                  </div>
-                ))}
+                {surplus.directors.map((d, i) => {
+                  const netSurplus = (d.net || 0) - (d.base || 0); // surplus after its dividend tax
+                  return (
+                    <div key={d.name + i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '8px 10px', background: 'white' }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name} <span style={{ fontWeight: 500, color: BRAND.muted }}>· take-home</span></div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: '#15803D', lineHeight: 1.1 }}>{formatGBP(d.net)}</div>
+                      <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 3 }}>{formatGBP(d.base)} base + {formatGBP(netSurplus)} surplus</div>
+                      <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>+ ≈ {formatGBP(d.tax)} dividend tax (set aside)</div>
+                    </div>
+                  );
+                })}
               </div>
               <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 8 }}>
-                Base pay + an even split of the {formatGBP(surplus.total)} surplus · dividend tax on the surplus ≈ {formatGBP(surplus.taxTotal)}
+                Take-home = base + an even split of the {formatGBP(surplus.total)} surplus, after ≈ {formatGBP(surplus.taxTotal)} dividend tax set aside for HMRC.
               </div>
             </>
           ) : (
@@ -1521,7 +1524,7 @@ function CfTargets({ targets, cashIn, isMobile }) {
       </div>
 
       <p style={{ fontSize: 12, color: BRAND.muted, margin: '12px 0 0' }}>
-        Each director’s <strong>full wage</strong> = their base pay (from the Directors cost rows — edit there and it updates here) plus an even split of the surplus banked above the minimum. The extra over base is taken as <strong>dividends</strong> from post-Corporation-Tax profit (8.75% / 33.75% / 39.35%, £500 allowance, no NI); the base’s income tax + NI is already reserved in the cost base. Estimate only.
+        Each director’s <strong>take-home</strong> = their base pay (from the Directors cost rows — edit there and it updates here) plus an even split of the surplus banked above the minimum, <strong>after the dividend tax on that surplus is set aside</strong> (so the headline is what you actually keep). The surplus is drawn as <strong>dividends</strong> from post-Corporation-Tax profit (8.75% / 33.75% / 39.35%, £500 allowance, no NI); the base pay’s own income tax + NI is already covered in the cost base. Estimate only.
       </p>
     </div>
   );
