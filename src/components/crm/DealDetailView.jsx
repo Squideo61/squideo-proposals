@@ -529,7 +529,16 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
 
         {!productionOnly && (<>
         <Card title="Proposal">
-          {proposals.length === 0 && <Empty text="No proposals attached yet" />}
+          {proposals.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '4px' }}>
+              <Empty text="No proposals attached yet" />
+              <button
+                onClick={() => setChoosingProposal(true)}
+                className="btn"
+                style={{ marginTop: 8, background: '#22C55E', borderColor: '#22C55E', color: '#fff' }}
+              ><FileText size={14} /> Create or link proposal</button>
+            </div>
+          )}
           {proposals.map(p => (
             <div
               key={p.id}
