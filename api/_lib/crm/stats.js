@@ -2295,6 +2295,13 @@ async function cashflowReport(action) {
   await ensureDirectorExpenses();
   const dirExpRows = await sql`SELECT amount, month, recurring, effective_to FROM director_expenses`;
   const dirSpend = (mk) => round2(dirExpRows.reduce((s, r) => s + (expenseActiveInMonth(r, mk) ? (Number(r.amount) || 0) : 0), 0));
+  // Director allowance as a committed monthly cost: the base entitlement
+  // (£250/mo per director) rising to actual spend when the directors go over it.
+  // This lands in the 'allowance' bucket (Director Allowances panel) INSTEAD of the
+  // raw director-tab spend going into the 'director' bucket — so the allowance is
+  // always shown and factored (never £0), and there's no double-count.
+  const DIR_ALLOWANCE_BASE = DIRECTOR_ALLOWANCE * DIRECTOR_EMAILS.size;
+  const dirAllowanceForMonth = (mk) => round2(Math.max(DIR_ALLOWANCE_BASE, dirSpend(mk)));
 
   // Auto director personal-tax saving: income tax + employee NI on each tax_basis
   // director's drawings (annualised), summed back to a monthly figure. Recomputes
@@ -2320,7 +2327,7 @@ async function cashflowReport(action) {
       else if (cat === 'savings') savings += amt;
       else expenses += amt;
     }
-    director += dirSpend(mk); // combined director-tab spend for the month
+    allowance += dirAllowanceForMonth(mk); // director allowance (£250/mo per director, rising to actual spend if over)
     // Savings is in the total (so it's part of the break-even target and comes out
     // of the drawable surplus), but it was excluded from the CT-deductible base
     // above — so Corporation Tax is still computed on the full pre-savings profit.
@@ -2412,17 +2419,20 @@ async function cashflowReport(action) {
     note: null, autoType: 'corp_tax', taxBasis: false,
     recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
   });
-  // Combined director-tab expenses for the month — shown read-only under Directors
-  // so the costs reconcile with the figure that's already counted in the totals.
+  // Director allowance for the month — the base entitlement (£250/mo per director)
+  // rising to actual spend when the directors go over it. Shown read-only under
+  // Director Allowances so it's always visible and reconciles with the totals.
   const dirSel = dirSpend(month);
-  if (dirSel > 0.005) {
-    lines.push({
-      id: 'cfdirectorexp', label: 'Director expenses (Adam + Ben)', category: 'director',
-      amount: dirSel, frequency: 'monthly', monthlyAmount: dirSel,
-      note: 'Combined spend from the Directors tab', autoType: 'director_expenses', taxBasis: false,
-      recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
-    });
-  }
+  const dirAllow = dirAllowanceForMonth(month);
+  lines.push({
+    id: 'cfdirectorallowance', label: 'Director allowances (Adam + Ben)', category: 'allowance',
+    amount: dirAllow, frequency: 'monthly', monthlyAmount: dirAllow,
+    note: dirSel > DIR_ALLOWANCE_BASE + 0.005
+      ? `Over the £${DIR_ALLOWANCE_BASE}/mo allowance — showing actual spend of £${dirSel.toFixed(2)}`
+      : `£${DIRECTOR_ALLOWANCE}/mo per director; rises to actual spend if over`,
+    autoType: 'director_allowance', taxBasis: false,
+    recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
+  });
   const activityRows = await sql`SELECT id, actor_email, action, summary, created_at FROM cashflow_activity ORDER BY created_at DESC LIMIT 40`;
 
   return {

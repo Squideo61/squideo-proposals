@@ -1643,7 +1643,8 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
   const isAuto = !!row.autoType;
   const isCorpTax = row.autoType === 'corp_tax';
   const isDirExp = row.autoType === 'director_expenses'; // synthetic Directors-tab total
-  const isReadOnly = isCorpTax || isDirExp; // no drag / edit / remove
+  const isDirAllow = row.autoType === 'director_allowance'; // synthetic director-allowance line
+  const isReadOnly = isCorpTax || isDirExp || isDirAllow; // no drag / edit / remove
 
   const save = () => {
     const before = { label: row.label, amount: Number(row.amount) || 0, frequency: row.frequency || 'monthly', category: row.category || 'expense', note: row.note || '', taxBasis: !!row.taxBasis };
@@ -1706,7 +1707,9 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
     >
       {isCorpTax
         ? <span style={{ flexShrink: 0, color: VAT_COLOR_CF, display: 'flex', lineHeight: 0 }}><PiggyBank size={14} /></span>
-        : isDirExp
+        : isDirAllow
+          ? <span style={{ flexShrink: 0, color: '#D97706', display: 'flex', lineHeight: 0 }}><Coins size={14} /></span>
+          : isDirExp
           ? <span style={{ flexShrink: 0, color: '#CA8A04', display: 'flex', lineHeight: 0 }}><Crown size={14} /></span>
           : <span title="Drag to reorder" style={{ flexShrink: 0, cursor: 'grab', color: BRAND.muted, display: 'flex', lineHeight: 0 }}><GripVertical size={14} /></span>}
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1717,6 +1720,8 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
         </div>
         {isCorpTax
           ? <div title="HMRC marginal-relief Corporation Tax on this month’s operating profit (19% up to £50k, 25% over £250k, tapered). Also shown as the headline card above; included here so the targets cover it. A loss month sets aside nothing." style={{ fontSize: 11, color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — to set aside on this month’s profit (HMRC marginal relief); counted in the targets</div>
+          : isDirAllow
+            ? <div title="Director allowance from the Directors tab (£250/mo per director), rising to actual spend if the directors go over. Counted in the costs and targets." style={{ fontSize: 11, color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — {row.note || 'director allowance from the Directors tab'}</div>
           : isDirExp
             ? <div title="Combined director expenses logged on the Directors tab for this month — counted in the costs and targets." style={{ fontSize: 11, color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — combined spend from the Directors tab; counted in the totals</div>
             : isAuto
