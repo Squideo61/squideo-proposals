@@ -399,7 +399,12 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
           Income/Sales toggle is lifted here so it also drives the first tab.
           Hidden for pending-only users (whole-business figures). */}
       {!pendingOnly && (
-        <PerformancePanel section={perfSection} onSection={setPerfSection} predictedTotal={predictedTotal} predictedMonthKey={currentMonthKey} />
+        <PerformancePanel
+          section={perfSection} onSection={setPerfSection}
+          predictedTotal={predictedTotal} predictedMonthKey={currentMonthKey}
+          mode={mode} monthKey={monthKey} quarterKey={quarterKey}
+          onMode={setMode} onMonthKey={setMonthKey} onQuarterKey={setQuarterKey}
+        />
       )}
 
       {/* Section tabs — Income (or Sales) / Pending Payments / VAT. The period

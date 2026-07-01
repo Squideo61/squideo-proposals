@@ -91,12 +91,27 @@ const monthOptionLabel = (k) => {
 // day-pace chart). No page chrome of its own — the host page provides that.
 // `section`/`onSection` let the host (Finance page) lift the Income/Sales toggle
 // so it can also drive the breakdown below. Uncontrolled (own state) if omitted.
-export function PerformancePanel({ section: sectionProp, onSection, predictedTotal = 0, predictedMonthKey = null } = {}) {
+export function PerformancePanel({
+  section: sectionProp, onSection, predictedTotal = 0, predictedMonthKey = null,
+  mode: modeProp, monthKey: monthProp, quarterKey: quarterProp, onMode, onMonthKey, onQuarterKey,
+} = {}) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
-  const [mode, setMode] = useState('month'); // 'month' | 'quarter'
-  const [month, setMonth] = useState(() => todayKey().slice(0, 7));
-  const [quarter, setQuarter] = useState(() => recentQuarters(1)[0]);
+  // Period is shared with the host Finance page when the controlled props are
+  // passed, so the day-pace chart and the Income/VAT section below always show
+  // the same month/quarter — the two pickers can never drift apart. Falls back
+  // to local state if the panel is ever used standalone. 'year' is income-only
+  // (there's no yearly day-pace), so it maps to the month view of the picked month.
+  const [modeState, setModeState] = useState('month');
+  const [monthState, setMonthState] = useState(() => todayKey().slice(0, 7));
+  const [quarterState, setQuarterState] = useState(() => recentQuarters(1)[0]);
+  const controlled = modeProp != null;
+  const mode = controlled ? (modeProp === 'quarter' ? 'quarter' : 'month') : modeState; // 'month' | 'quarter'
+  const setMode = controlled ? onMode : setModeState;
+  const month = controlled ? monthProp : monthState;
+  const setMonth = controlled ? onMonthKey : setMonthState;
+  const quarter = controlled ? quarterProp : quarterState;
+  const setQuarter = controlled ? onQuarterKey : setQuarterState;
   const [sectionState, setSectionState] = useState('income'); // 'income' (cash received) | 'sales' (deals signed)
   const section = sectionProp != null ? sectionProp : sectionState;
   const setSection = onSection || setSectionState;
