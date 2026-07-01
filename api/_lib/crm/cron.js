@@ -507,7 +507,7 @@ export async function cronTaskReminders(res) {
     const recipients = joined.length ? joined : (t.assignee_email ? [t.assignee_email] : []);
     if (!recipients.length) continue;
     const dueLabel = new Date(t.due_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
-    const dealLink = t.deal_id ? `${APP_URL}/?deal=${encodeURIComponent(t.deal_id)}` : APP_URL;
+    const dealLink = t.deal_id ? `${APP_URL}/#/deal/${encodeURIComponent(t.deal_id)}` : APP_URL;
     const subject = `Reminder: ${t.title}`;
     // Per-recipient signed token so each click is attributable in the audit log.
     const baseRoot = APP_URL.replace(/\/$/, '');

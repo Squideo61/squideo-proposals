@@ -1604,7 +1604,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 // they know they just did it. Best-effort: the caller wraps this in try/catch.
 async function notifyGoodToGo(deal, user) {
   const title = deal.title || deal.id;
-  const link = `${APP_URL}/crm?deal=${deal.id}`;
+  const link = `${APP_URL}/#/deal/${deal.id}`;
   const actor = user?.name || user?.email || 'Someone';
   await sendNotification('project.good_to_go', {
     subject: `🟢 Good to go: ${title}`,

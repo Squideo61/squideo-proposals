@@ -915,7 +915,7 @@ export async function invoicesRoute(req, res, id, action, user) {
         try {
           const [dealRow] = await sql`SELECT title FROM deals WHERE id = ${dealId}`;
           const title = dealRow?.title || cur.invoice_number || manualId;
-          const link = `${APP_URL}/crm?deal=${dealId}`;
+          const link = `${APP_URL}/#/deal/${dealId}`;
           await sendNotification('invoice.paid_manual', {
             subject: `💰 Invoice paid: ${title}`,
             html: invoicePaidHtml({
@@ -1260,7 +1260,7 @@ async function notifyInvoicePaid({ row, paidAt, amount, paymentMethod = 'xero', 
   try {
     const [dealRow] = await sql`SELECT title FROM deals WHERE id = ${dealId}`;
     const title = dealRow?.title || row.invoice_number || row.id;
-    const link = `${APP_URL}/crm?deal=${dealId}`;
+    const link = `${APP_URL}/#/deal/${dealId}`;
     await sendNotification('invoice.paid_xero', {
       subject: `💰 Invoice paid: ${title}`,
       html: invoicePaidHtml({

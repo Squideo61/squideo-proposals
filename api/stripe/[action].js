@@ -545,7 +545,7 @@ export default async function handler(req, res) {
                 ? (await sql`SELECT title, owner_email FROM deals WHERE id = ${inv.deal_id}`)[0]
                 : null;
               const title = dealRow?.title || inv.invoice_number || manualInvoiceId;
-              const link = inv.deal_id ? `${APP_URL}/crm?deal=${inv.deal_id}` : APP_URL;
+              const link = inv.deal_id ? `${APP_URL}/#/deal/${inv.deal_id}` : APP_URL;
               await sendNotification('invoice.paid_manual', {
                 subject: `💰 Invoice paid via Stripe: ${title}`,
                 html: invoicePaidHtml({
