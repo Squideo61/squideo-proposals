@@ -69,9 +69,19 @@ function toEmbedSrc(raw) {
       const id = u.pathname.slice(1);
       if (id) return 'https://www.youtube.com/embed/' + id;
     }
-    if (host === 'vimeo.com') {
-      const id = u.pathname.split('/').filter(Boolean)[0];
-      if (id && /^\d+$/.test(id)) return 'https://player.vimeo.com/video/' + id;
+    if (host === 'vimeo.com' || host === 'player.vimeo.com') {
+      // vimeo.com/ID, vimeo.com/ID/HASH, or player.vimeo.com/video/ID — keep the
+      // privacy hash so "Hide from Vimeo"/unlisted videos still embed (without it
+      // Vimeo refuses to play them). Hash can be a path segment or ?h= query.
+      const parts = u.pathname.split('/').filter(Boolean);
+      const idIdx = parts[0] === 'video' ? 1 : 0;
+      const id = parts[idIdx];
+      if (id && /^\d+$/.test(id)) {
+        const hash = /^[0-9a-zA-Z]+$/.test(parts[idIdx + 1] || '')
+          ? parts[idIdx + 1]
+          : u.searchParams.get('h');
+        return 'https://player.vimeo.com/video/' + id + (hash ? '?h=' + hash : '');
+      }
     }
   } catch { /* not a valid URL — fall through to link */ }
   return null;
