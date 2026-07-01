@@ -283,11 +283,11 @@ export function PerformancePanel({
       )}
 
       {isCashflow && (
-        <CashFlowView isMobile={isMobile} />
+        <CashFlowView isMobile={isMobile} month={month} setMonth={setMonth} />
       )}
 
       {isDirectors && canDirectors && (
-        <DirectorsView isMobile={isMobile} />
+        <DirectorsView isMobile={isMobile} month={month} setMonth={setMonth} />
       )}
 
       {isSales && editing && (
@@ -443,9 +443,13 @@ function SalesVsPpView({ trend, isMobile, actions, history, partnerOutstanding =
 const PROFIT_POS = '#10B981';
 const PROFIT_NEG = '#EF4444';
 
-function CashFlowView({ isMobile }) {
+function CashFlowView({ isMobile, month: monthProp, setMonth: setMonthProp }) {
   const { state, actions } = useStore();
-  const [month, setMonth] = useState(() => todayKey().slice(0, 7));
+  // Follows the Finance page's shared month picker when provided, so one control
+  // drives every tab; falls back to local state if used standalone.
+  const [monthState, setMonthState] = useState(() => todayKey().slice(0, 7));
+  const month = monthProp || monthState;
+  const setMonth = setMonthProp || setMonthState;
 
   // Reload the viewed month and refresh the shared current-month targets slice so
   // the Income performance graph reflects cost edits straight away (it reads
@@ -566,9 +570,13 @@ function CashFlowView({ isMobile }) {
 // ZIP of the month's invoices for Hubdoc. Mirrors the CashFlowView layout idioms.
 const DIRECTOR_ACCENT = '#CA8A04';
 
-function DirectorsView({ isMobile }) {
+function DirectorsView({ isMobile, month: monthProp, setMonth: setMonthProp }) {
   const { state, actions, showMsg } = useStore();
-  const [month, setMonth] = useState(() => todayKey().slice(0, 7));
+  // Follows the Finance page's shared month picker when provided (one control for
+  // every tab); falls back to local state if used standalone.
+  const [monthState, setMonthState] = useState(() => todayKey().slice(0, 7));
+  const month = monthProp || monthState;
+  const setMonth = setMonthProp || setMonthState;
 
   useEffect(() => { actions.loadDirectorExpenses(month); }, [actions, month, state.financeRefresh]);
 
