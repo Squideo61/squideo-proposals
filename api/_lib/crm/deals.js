@@ -204,7 +204,9 @@ export async function annotateDeals(rows) {
     poRouteSet = new Set(poRows.filter(r => r.is_po).map(r => r.did));
   } catch (_) { /* no signatures table */ }
 
-  // Invoiced: a manual invoice (issued/paid) or a raised proposal-billing invoice.
+  // Invoiced: a manual invoice (issued/paid), a raised proposal-billing invoice,
+  // or a Xero invoice recorded on the payments row (direct Stripe checkout). The
+  // proposal card mirrors the same three sources for _hasXeroInvoice.
   let invoicedSet = new Set();
   try {
     const invRows = await sql`
@@ -218,6 +220,10 @@ export async function annotateDeals(rows) {
         SELECT p.deal_id AS did
           FROM proposal_billing pb JOIN proposals p ON p.id = pb.proposal_id
          WHERE pb.xero_invoice_id IS NOT NULL AND p.deal_id = ANY(${ids})
+        UNION
+        SELECT p.deal_id AS did
+          FROM payments pay JOIN proposals p ON p.id = pay.proposal_id
+         WHERE pay.xero_invoice_id IS NOT NULL AND p.deal_id = ANY(${ids})
       ) q WHERE did IS NOT NULL`;
     invoicedSet = new Set(invRows.map(r => r.did));
   } catch (_) { /* invoices tables not present */ }
