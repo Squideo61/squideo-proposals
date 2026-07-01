@@ -345,9 +345,9 @@ export function PerformancePanel({
       {!isSales && period === todayKey().slice(0, 7) && cfTargets?.surplus?.total > 0.005 && (
         <div style={{ background: '#F0FDF4', border: '1px solid #A7F3D0', borderRadius: 10, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 13, color: '#166534' }}>
-            <strong>{formatGBP(cfTargets.surplus.total)}</strong> surplus above the minimum — each director can draw ≈ <strong>{formatGBP(cfTargets.surplus.perDirector)}</strong>
+            <strong>{formatGBP(cfTargets.surplus.total)}</strong> surplus above the minimum — <strong>{formatGBP(cfTargets.surplus.grossTotal)}</strong> total wage available to draw
           </span>
-          <span style={{ fontSize: 12, color: BRAND.muted }}>· see Cash Flow &amp; Targets for the per-director tax breakdown</span>
+          <span style={{ fontSize: 12, color: BRAND.muted }}>· see Cash Flow &amp; Targets for each director’s breakdown</span>
         </div>
       )}
 
@@ -1469,9 +1469,9 @@ function CfMini({ label, value, color }) {
 // above it is distributable (post-Corp-Tax) profit — split evenly between the
 // directors, shown as an available dividend draw with the dividend tax on it.
 function CfTargets({ targets, cashIn, isMobile }) {
-  const surplus = targets.surplus || { total: 0, perDirector: 0, directors: [], taxTotal: 0, netTotal: 0 };
-  const hasSurplus = (surplus.total || 0) > 0.005;
+  const surplus = targets.surplus || { total: 0, perDirector: 0, grossTotal: 0, directors: [], taxTotal: 0, netTotal: 0 };
   const toGo = Math.max(0, (targets.minimum || 0) - (Number(cashIn) || 0));
+  const overMin = toGo <= 0.005; // cash covers the minimum → base wage funded, surplus (if any) on top
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${BRAND.blue}`, borderRadius: 10, padding: isMobile ? 14 : '14px 18px', marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
@@ -1486,25 +1486,26 @@ function CfTargets({ targets, cashIn, isMobile }) {
           <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.35 }}>All expenses &amp; wages (break-even)</div>
         </div>
 
-        {/* Surplus drawdown */}
-        <div style={{ border: '1px solid ' + (hasSurplus ? '#A7F3D0' : BRAND.border), borderRadius: 10, padding: '12px 14px', background: hasSurplus ? '#F0FDF4' : '#FBFCFE' }}>
-          {hasSurplus ? (
+        {/* Available wage = base + surplus share, per director */}
+        <div style={{ border: '1px solid ' + (overMin ? '#A7F3D0' : BRAND.border), borderRadius: 10, padding: '12px 14px', background: overMin ? '#F0FDF4' : '#FBFCFE' }}>
+          {overMin ? (
             <>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink }}>Available to draw — surplus above minimum</span>
-                <span style={{ fontSize: 20, fontWeight: 800, color: '#15803D', lineHeight: 1.1 }}>{formatGBP(surplus.total)}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink }}>Available to draw — full wage each</span>
+                <span style={{ fontSize: 20, fontWeight: 800, color: '#15803D', lineHeight: 1.1 }}>{formatGBP(surplus.grossTotal)}</span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${Math.max(1, surplus.directors.length)}, 1fr)`, gap: 8 }}>
                 {surplus.directors.map((d, i) => (
                   <div key={d.name + i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '8px 10px', background: 'white' }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</div>
                     <div style={{ fontSize: 20, fontWeight: 800, color: '#15803D', lineHeight: 1.1 }}>{formatGBP(d.gross)}</div>
-                    <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 3 }}>tax ≈ {formatGBP(d.tax)} · net {formatGBP(d.net)}</div>
+                    <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 3 }}>{formatGBP(d.base)} base + {formatGBP(d.surplus)} surplus</div>
+                    <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>dividend tax on surplus ≈ {formatGBP(d.tax)}</div>
                   </div>
                 ))}
               </div>
               <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 8 }}>
-                Split evenly · {formatGBP(surplus.taxTotal)} dividend tax · {formatGBP(surplus.netTotal)} net across {surplus.directors.length} director{surplus.directors.length === 1 ? '' : 's'}
+                Base pay + an even split of the {formatGBP(surplus.total)} surplus · dividend tax on the surplus ≈ {formatGBP(surplus.taxTotal)}
               </div>
             </>
           ) : (
@@ -1512,7 +1513,7 @@ function CfTargets({ targets, cashIn, isMobile }) {
               <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>Available to draw</div>
               <div style={{ fontSize: 24, fontWeight: 800, color: BRAND.muted, lineHeight: 1.1, marginBottom: 6 }}>{formatGBP(0)}</div>
               <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.35 }}>
-                {toGo > 0.005 ? <>Working to the minimum — <strong>{formatGBP(toGo)}</strong> to go before any drawdown.</> : 'At break-even — nothing to draw yet this month.'}
+                Working to the minimum — <strong>{formatGBP(toGo)}</strong> to go before your wage is funded.
               </div>
             </>
           )}
@@ -1520,7 +1521,7 @@ function CfTargets({ targets, cashIn, isMobile }) {
       </div>
 
       <p style={{ fontSize: 12, color: BRAND.muted, margin: '12px 0 0' }}>
-        Work to the minimum; everything banked above it is your surplus, split evenly. Extra draws are taken as <strong>dividends</strong> from post-Corporation-Tax profit (8.75% / 33.75% / 39.35%, £500 allowance, no NI) — so the tax shown is on top of each director’s existing pay. Estimate only.
+        Each director’s <strong>full wage</strong> = their base pay (from the Directors cost rows — edit there and it updates here) plus an even split of the surplus banked above the minimum. The extra over base is taken as <strong>dividends</strong> from post-Corporation-Tax profit (8.75% / 33.75% / 39.35%, £500 allowance, no NI); the base’s income tax + NI is already reserved in the cost base. Estimate only.
       </p>
     </div>
   );

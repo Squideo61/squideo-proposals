@@ -2368,19 +2368,25 @@ async function cashflowReport(action) {
   const surplus = Math.max(0, sel.profit);
   const perDir = numDirectors ? surplus / numDirectors : 0;
   const drawdown = taxBasisRows.map((r) => {
-    const salaryAnnual = monthlyAmountOf(r) * 12; // their existing taxable pay → dividend band placement
-    const tax = round2(dividendTaxOn(perDir * 12, salaryAnnual) / 12);
-    return { name: r.label || 'Director', gross: round2(perDir), tax, net: round2(perDir - tax) };
+    // `base` = the director's current monthly pay (their tax_basis cost row — edit
+    // it in the Costs → Directors panel and it flows through here + the Minimum).
+    // The even share of the surplus on top is taken as a dividend (post-CT profit).
+    const base = round2(monthlyAmountOf(r));
+    const salaryAnnual = monthlyAmountOf(r) * 12; // existing pay → dividend band placement
+    const surplusTax = round2(dividendTaxOn(perDir * 12, salaryAnnual) / 12);
+    const gross = round2(base + perDir); // whole wage available this month
+    return { name: r.label || 'Director', base, surplus: round2(perDir), gross, tax: surplusTax, net: round2(gross - surplusTax) };
   });
   const wageTargets = {
     minimum: round2(sel.costs),
     baseline: WAGE_BASELINE,
     directors: numDirectors,
     surplus: {
-      total: round2(surplus),
+      total: round2(surplus),                                        // surplus above the minimum
       perDirector: round2(perDir),
+      grossTotal: round2(drawdown.reduce((s, d) => s + d.gross, 0)),  // whole wage available across directors
       directors: drawdown,
-      taxTotal: round2(drawdown.reduce((s, d) => s + d.tax, 0)),
+      taxTotal: round2(drawdown.reduce((s, d) => s + d.tax, 0)),      // dividend tax on the surplus portion
       netTotal: round2(drawdown.reduce((s, d) => s + d.net, 0)),
     },
   };
