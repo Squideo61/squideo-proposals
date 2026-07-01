@@ -2166,6 +2166,26 @@ function directorPersonalTax(annual) {
   return ukIncomeTax(annual) + employeeNI(annual);
 }
 
+// Dividend tax (2025/26) on an annual dividend that sits ON TOP of `otherIncome`
+// (the director's salary). The £500 dividend allowance is 0%-rated but still uses
+// up band space; rates are 8.75% (basic), 33.75% (higher), 39.35% (additional),
+// with band tops at £50,270 and £125,140 of total income. No NI on dividends.
+// Estimate only — assumes the personal allowance is already used by salary.
+const DIV_ALLOWANCE = 500;
+const DIV_BASIC = 0.0875, DIV_HIGHER = 0.3375, DIV_ADDL = 0.3935;
+const BAND_BASIC_TOP = 50270, BAND_HIGHER_TOP = 125140;
+function dividendTaxOn(dividend, otherIncome) {
+  let d = Math.max(0, Number(dividend) || 0);
+  if (d <= 0) return 0;
+  let pos = Math.max(0, Number(otherIncome) || 0);
+  let tax = 0;
+  const allow = Math.min(d, DIV_ALLOWANCE); pos += allow; d -= allow; // 0% but occupies band
+  const basic = Math.max(0, Math.min(d, BAND_BASIC_TOP - pos)); tax += basic * DIV_BASIC; pos += basic; d -= basic;
+  const higher = Math.max(0, Math.min(d, BAND_HIGHER_TOP - pos)); tax += higher * DIV_HIGHER; pos += higher; d -= higher;
+  tax += Math.max(0, d) * DIV_ADDL;
+  return tax;
+}
+
 // Shared with the Finance "VAT & Corp tax" report: load the cost base once.
 async function loadCashflowCostRows() {
   await ensureCashflow();
@@ -2333,34 +2353,36 @@ async function cashflowReport(action) {
   const ctYear = round2(corpTaxOn(Math.max(0, selOp.taxProfit) * 12)); // annualised current-month run-rate
   const monthReserve = corpTaxMonthly;
 
-  // Wage-based targets. The "minimum" target is the full cost base (break-even).
-  // The £4k/£5k targets answer: what must we bill so both directors TAKE HOME
-  // (net) that much, with the business funding their personal tax? Each draw level
-  // is the director's net wage; the uplift over the £3,000 baseline is extra
-  // take-home (funded clean) and we add the income tax + employee NI on it so the
-  // take-home stays net. Based on ADAM for both directors (Ben's pay is a
-  // composite of his + Anna's salaries less his car lease, so we mirror Adam for
-  // parity). Adam's taxable drawing = wage + his £500 car allowance — the car is
-  // excluded from the wage figure but is still taxed, so the gross-up is computed
-  // on (wage + car). Added on top of the minimum, which already funds today's
-  // drawings + tax. tax_basis rows = the directors who scale (Adam + Ben).
+  // Targets. The "minimum" is the full cost base (break-even). Rather than fixed
+  // £4k/£5k wage targets (which baked in a personal-tax assumption that didn't
+  // match how the directors actually draw), we surface the SURPLUS above the
+  // minimum — the distributable, post-Corporation-Tax profit (sel.profit) — split
+  // evenly between the tax_basis directors, with the personal tax on each share
+  // treated as DIVIDENDS (post-CT profit → dividend tax, no NI, no CT effect).
+  // The share is annualised on top of the director's salary for band placement
+  // (consistent with the rest of the tab's annualised estimates). tax_basis rows
+  // carry the director names in r.label.
   const WAGE_BASELINE = 3000;
-  const CAR_ALLOWANCE = 500;
-  const TARGET_DRAWS = [4000, 5000];
   const taxBasisRows = costRows.filter((r) => r.tax_basis === true && costAppliesToMonth(r, month));
   const numDirectors = taxBasisRows.length || 2;
-  const adamCurrentTaxable = WAGE_BASELINE + CAR_ALLOWANCE; // £3,500/mo (wage + car)
-  const targetForDraw = (drawLevel) => {
-    const netUplift = Math.max(0, drawLevel - WAGE_BASELINE);       // extra net take-home each
-    const adamNewTaxable = drawLevel + CAR_ALLOWANCE;               // grossed-up taxable (wage + car)
-    const extraTax = (directorPersonalTax(adamNewTaxable * 12) - directorPersonalTax(adamCurrentTaxable * 12)) / 12;
-    return round2(sel.costs + numDirectors * (netUplift + extraTax));
-  };
+  const surplus = Math.max(0, sel.profit);
+  const perDir = numDirectors ? surplus / numDirectors : 0;
+  const drawdown = taxBasisRows.map((r) => {
+    const salaryAnnual = monthlyAmountOf(r) * 12; // their existing taxable pay → dividend band placement
+    const tax = round2(dividendTaxOn(perDir * 12, salaryAnnual) / 12);
+    return { name: r.label || 'Director', gross: round2(perDir), tax, net: round2(perDir - tax) };
+  });
   const wageTargets = {
     minimum: round2(sel.costs),
     baseline: WAGE_BASELINE,
     directors: numDirectors,
-    draws: TARGET_DRAWS.map((d) => ({ draw: d, uplift: d - WAGE_BASELINE, amount: targetForDraw(d) })),
+    surplus: {
+      total: round2(surplus),
+      perDirector: round2(perDir),
+      directors: drawdown,
+      taxTotal: round2(drawdown.reduce((s, d) => s + d.tax, 0)),
+      netTotal: round2(drawdown.reduce((s, d) => s + d.net, 0)),
+    },
   };
 
   const lines = costRows.filter((r) => costAppliesToMonth(r, month)).map(serialiseCost);

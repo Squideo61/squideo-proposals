@@ -26,14 +26,16 @@ export const FALLBACK_TARGETS = [
   { key: 'dream', label: 'Dream 5k', amount: 33406.92, color: '#EAB308' },
 ];
 
-// Resolve the live monthly income targets — saved labels/colours with amounts
-// sourced from the Cash Flow & Targets figures (Minimum / £4k / £5k, in order)
-// when present. Shared with the Finance Predicted tab's over/under-target metric.
+// The single live income target — the Minimum (break-even), with its label/colour
+// from saved settings and its amount from the live Cash Flow & Targets figure. We
+// now work to the minimum only (the surplus above it drives an available-drawdown
+// figure instead of fixed wage targets). Shared with the Finance Predicted tab's
+// over/under-target metric and the Income-performance pace chart.
 export function resolveIncomeTargets(financeTargets, cashflowTargets) {
   const saved = (financeTargets && financeTargets.length) ? financeTargets : FALLBACK_TARGETS;
-  if (!cashflowTargets) return saved;
-  const amounts = [cashflowTargets.minimum, ...(Array.isArray(cashflowTargets.draws) ? cashflowTargets.draws.map((d) => d.amount) : [])];
-  return saved.map((t, i) => (i < amounts.length && amounts[i] != null ? { ...t, amount: amounts[i] } : t));
+  const base = saved[0] || FALLBACK_TARGETS[0];
+  const amount = cashflowTargets && cashflowTargets.minimum != null ? cashflowTargets.minimum : base.amount;
+  return [{ ...base, amount }];
 }
 
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
@@ -152,9 +154,9 @@ export function PerformancePanel({
     .filter((p) => p.status === 'active' || p.status === 'credits_only')
     .reduce((s, p) => s + (Number(p.outstanding) || 0), 0);
 
-  // Income targets mirror the Cash Flow & Targets figures live: keep each saved
-  // target's label/colour but source its amount from the cashflow targets
-  // (Minimum / £4k / £5k, in order). Sales targets stay manually managed.
+  // Income works to the single Minimum target (live from Cash Flow & Targets);
+  // the surplus above it drives an available-drawdown figure, not fixed wage
+  // targets. Sales performance keeps its three manually-managed targets.
   useEffect(() => {
     if (!isSales && !isComparison) actions.loadCashflowTargets();
   }, [actions, isSales, isComparison, state.financeRefresh]);
@@ -163,10 +165,9 @@ export function PerformancePanel({
   const savedTargets = (targetSource && targetSource.length) ? targetSource : FALLBACK_TARGETS;
   const cfTargets = state.cashflowTargets;
   const targets = useMemo(() => {
-    if (isSales || !cfTargets) return savedTargets;
-    const amounts = [cfTargets.minimum, ...(Array.isArray(cfTargets.draws) ? cfTargets.draws.map((d) => d.amount) : [])];
-    return savedTargets.map((t, i) => (i < amounts.length && amounts[i] != null ? { ...t, amount: amounts[i] } : t));
-  }, [savedTargets, cfTargets, isSales]);
+    if (isSales) return savedTargets; // Sales keeps its 3 targets
+    return resolveIncomeTargets(state.financeTargets, cfTargets); // income → single Minimum
+  }, [savedTargets, cfTargets, isSales, state.financeTargets]);
   const holidays = useMemo(
     () => (Array.isArray(state.bankHolidays) && state.bankHolidays.length ? new Set(state.bankHolidays) : ukBankHolidays),
     [state.bankHolidays],
@@ -338,6 +339,18 @@ export function PerformancePanel({
         })}
       </div>
 
+      {/* Once this month's banked cash clears the minimum, the surplus is
+          distributable — show how much each director can draw right now. Current
+          month only (cashflowTargets is the live current-month figure). */}
+      {!isSales && period === todayKey().slice(0, 7) && cfTargets?.surplus?.total > 0.005 && (
+        <div style={{ background: '#F0FDF4', border: '1px solid #A7F3D0', borderRadius: 10, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, color: '#166534' }}>
+            <strong>{formatGBP(cfTargets.surplus.total)}</strong> surplus above the minimum — each director can draw ≈ <strong>{formatGBP(cfTargets.surplus.perDirector)}</strong>
+          </span>
+          <span style={{ fontSize: 12, color: BRAND.muted }}>· see Cash Flow &amp; Targets for the per-director tax breakdown</span>
+        </div>
+      )}
+
       {/* What's left to hit each target, and the daily run-rate needed for the
           working days remaining. */}
       <RemainingCard targets={targets} model={model} isSales={isSales} isMobile={isMobile} />
@@ -503,8 +516,8 @@ function CashFlowView({ isMobile, month: monthProp, setMonth: setMonthProp }) {
             : 'This month’s loss reduces your CT'} />
       </div>
 
-      {/* Monthly revenue targets — minimum (cost base) + the wage-uplift targets. */}
-      {cf.targets && <CfTargets targets={cf.targets} isMobile={isMobile} />}
+      {/* Minimum target + the surplus/available-drawdown for the month. */}
+      {cf.targets && <CfTargets targets={cf.targets} cashIn={sel.cashIn} isMobile={isMobile} />}
 
       {/* Costs editor — recurring overheads + one-offs for the month. */}
       <CfCosts lines={cf.lines} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
@@ -1451,39 +1464,63 @@ function CfMini({ label, value, color }) {
   );
 }
 
-// The three monthly revenue targets, headlined on the Cash Flow & Targets tab.
-// "Minimum" is the full cost base (break-even). The £4k/£5k targets are what you
-// must bill so both directors can draw that wage — each director's wage baseline
-// is £3,000/mo (Adam's £3,500 drawing less his £500 car allowance), both get the
-// same uplift, and the figure grosses up the extra income tax + NI on it.
-function CfTargets({ targets, isMobile }) {
-  const draws = Array.isArray(targets.draws) ? targets.draws : [];
-  const cards = [
-    { key: 'min', label: 'Minimum Target', value: targets.minimum, sub: 'Composed of all expenses & wages', accent: BRAND.muted },
-    ...draws.map((d) => ({
-      key: 'd' + d.draw,
-      label: `£${(d.draw / 1000)}k take-home target`,
-      value: d.amount,
-      sub: `Both directors take home £${d.draw.toLocaleString('en-GB')}/mo after tax (business funds the tax)`,
-      accent: BRAND.blue,
-    })),
-  ];
+// Minimum target + the month's surplus drawdown, headlined on the Cash Flow &
+// Targets tab. "Minimum" is the full cost base (break-even). Everything banked
+// above it is distributable (post-Corp-Tax) profit — split evenly between the
+// directors, shown as an available dividend draw with the dividend tax on it.
+function CfTargets({ targets, cashIn, isMobile }) {
+  const surplus = targets.surplus || { total: 0, perDirector: 0, directors: [], taxTotal: 0, netTotal: 0 };
+  const hasSurplus = (surplus.total || 0) > 0.005;
+  const toGo = Math.max(0, (targets.minimum || 0) - (Number(cashIn) || 0));
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${BRAND.blue}`, borderRadius: 10, padding: isMobile ? 14 : '14px 18px', marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
-        <Target size={14} color={BRAND.blue} /> Monthly revenue targets
+        <Target size={14} color={BRAND.blue} /> Minimum target & available drawdown
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12 }}>
-        {cards.map((c) => (
-          <div key={c.key} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '12px 14px', background: '#FBFCFE' }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>{c.label}</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: c.accent, lineHeight: 1.1, marginBottom: 6 }}>{formatGBP(c.value)}</div>
-            <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.35 }}>{c.sub}</div>
-          </div>
-        ))}
+
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 2fr)', gap: 12 }}>
+        {/* Minimum (break-even) */}
+        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '12px 14px', background: '#FBFCFE' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>Minimum Target</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: BRAND.muted, lineHeight: 1.1, marginBottom: 6 }}>{formatGBP(targets.minimum)}</div>
+          <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.35 }}>All expenses &amp; wages (break-even)</div>
+        </div>
+
+        {/* Surplus drawdown */}
+        <div style={{ border: '1px solid ' + (hasSurplus ? '#A7F3D0' : BRAND.border), borderRadius: 10, padding: '12px 14px', background: hasSurplus ? '#F0FDF4' : '#FBFCFE' }}>
+          {hasSurplus ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink }}>Available to draw — surplus above minimum</span>
+                <span style={{ fontSize: 20, fontWeight: 800, color: '#15803D', lineHeight: 1.1 }}>{formatGBP(surplus.total)}</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${Math.max(1, surplus.directors.length)}, 1fr)`, gap: 8 }}>
+                {surplus.directors.map((d, i) => (
+                  <div key={d.name + i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '8px 10px', background: 'white' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: '#15803D', lineHeight: 1.1 }}>{formatGBP(d.gross)}</div>
+                    <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 3 }}>tax ≈ {formatGBP(d.tax)} · net {formatGBP(d.net)}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 8 }}>
+                Split evenly · {formatGBP(surplus.taxTotal)} dividend tax · {formatGBP(surplus.netTotal)} net across {surplus.directors.length} director{surplus.directors.length === 1 ? '' : 's'}
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>Available to draw</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: BRAND.muted, lineHeight: 1.1, marginBottom: 6 }}>{formatGBP(0)}</div>
+              <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.35 }}>
+                {toGo > 0.005 ? <>Working to the minimum — <strong>{formatGBP(toGo)}</strong> to go before any drawdown.</> : 'At break-even — nothing to draw yet this month.'}
+              </div>
+            </>
+          )}
+        </div>
       </div>
+
       <p style={{ fontSize: 12, color: BRAND.muted, margin: '12px 0 0' }}>
-        Take-home (net) targets, based on Adam — each director keeps this much after tax (Ben’s pay is a composite of his + Anna’s salaries less his car lease, so it mirrors Adam). Baseline {formatGBP(targets.baseline)}/mo; Adam’s £500 car allowance is excluded from the wage but still taxed. The business funds the income tax + employee NI so the take-home is clean — added on top of the minimum (which already funds today’s drawings). Estimate only.
+        Work to the minimum; everything banked above it is your surplus, split evenly. Extra draws are taken as <strong>dividends</strong> from post-Corporation-Tax profit (8.75% / 33.75% / 39.35%, £500 allowance, no NI) — so the tax shown is on top of each director’s existing pay. Estimate only.
       </p>
     </div>
   );
