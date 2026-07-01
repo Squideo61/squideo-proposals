@@ -2133,9 +2133,11 @@ function monthlyAmountOf(r) {
   return r.frequency === 'annual' ? amt / 12 : amt;
 }
 
-// Cost categories: staff wages, freelancers, marketing, director allowances and
-// operating expenses. Anything unrecognised falls back to 'expense'.
-const CATEGORIES = ['wages', 'freelancer', 'marketing', 'director', 'allowance'];
+// Cost categories: staff wages, freelancers, marketing, director allowances,
+// compulsory savings and operating expenses. Anything unrecognised falls back to
+// 'expense'. 'savings' is a committed set-aside — it counts toward the monthly
+// target but is NOT tax-deductible (see deductibleCostTotalForMonth).
+const CATEGORIES = ['wages', 'freelancer', 'marketing', 'director', 'allowance', 'savings'];
 const normCategory = (c) => (CATEGORIES.includes(c) ? c : 'expense');
 
 // UK personal income tax on an annual figure (2025/26 bands): £12,570 personal
@@ -2206,6 +2208,7 @@ function deductibleCostTotalForMonth(costRows, mk) {
   for (const r of costRows) {
     if (!costAppliesToMonth(r, mk)) continue;
     if (r.auto_type === 'director_tax') continue; // personal income tax + NI — not a company expense
+    if (r.category === 'savings') continue; // compulsory savings — a set-aside, not a deductible cost
     const amt = monthlyAmountOf(r);
     total += (r.tax_basis === true) ? Math.min(amt, DIRECTOR_DEDUCTIBLE_SALARY_MONTHLY) : amt;
   }
@@ -2304,7 +2307,7 @@ async function cashflowReport(action) {
 
   // Operating costs per month — everything EXCEPT the auto Corporation Tax line.
   const opCostsForMonth = (mk) => {
-    let wages = 0, expenses = 0, freelancers = 0, marketing = 0, director = 0, allowance = 0;
+    let wages = 0, expenses = 0, freelancers = 0, marketing = 0, director = 0, allowance = 0, savings = 0;
     for (const r of costRows) {
       if (!costAppliesToMonth(r, mk)) continue;
       const amt = resolvedAmount(r);
@@ -2314,10 +2317,14 @@ async function cashflowReport(action) {
       else if (cat === 'marketing') marketing += amt;
       else if (cat === 'director') director += amt;
       else if (cat === 'allowance') allowance += amt;
+      else if (cat === 'savings') savings += amt;
       else expenses += amt;
     }
     director += dirSpend(mk); // combined director-tab spend for the month
-    return { wages: round2(wages), expenses: round2(expenses), freelancers: round2(freelancers), marketing: round2(marketing), director: round2(director), allowance: round2(allowance), total: round2(wages + expenses + freelancers + marketing + director + allowance) };
+    // Savings is in the total (so it's part of the break-even target and comes out
+    // of the drawable surplus), but it was excluded from the CT-deductible base
+    // above — so Corporation Tax is still computed on the full pre-savings profit.
+    return { wages: round2(wages), expenses: round2(expenses), freelancers: round2(freelancers), marketing: round2(marketing), director: round2(director), allowance: round2(allowance), savings: round2(savings), total: round2(wages + expenses + freelancers + marketing + director + allowance + savings) };
   };
 
   const opHistory = keys.map((mk) => {
@@ -2341,7 +2348,7 @@ async function cashflowReport(action) {
     const corpTax = monthlyCorpTax(h.taxProfit);
     const expenses = round2(h.c.expenses + corpTax);
     const costs = round2(h.c.total + corpTax);
-    return { month: h.month, cashIn: h.cashIn, wages: h.c.wages, expenses, freelancers: h.c.freelancers, marketing: h.c.marketing, director: h.c.director, allowance: h.c.allowance, corpTax, costs, profit: round2(h.cashIn - costs) };
+    return { month: h.month, cashIn: h.cashIn, wages: h.c.wages, expenses, freelancers: h.c.freelancers, marketing: h.c.marketing, director: h.c.director, allowance: h.c.allowance, savings: h.c.savings, corpTax, costs, profit: round2(h.cashIn - costs) };
   });
   const costs12 = round2(history.reduce((s, h) => s + h.costs, 0));
 
