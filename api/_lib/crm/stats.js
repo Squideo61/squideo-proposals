@@ -1623,12 +1623,23 @@ async function predictedPaymentsRoute(req, res, action, user) {
     // over (past months keep their own historical list). Auto items (partners /
     // other recurring) recur on their own, so they need no rollover.
     let rolledKeys = [];
-    if (month === serverMonthKey()) {
+    let rolledAwayKeys = [];
+    const cur = serverMonthKey();
+    if (month === cur) {
       const handledThisMonth = new Set(rows.map((r) => r.item_key)); // included OR excluded here
       const prior = await sql`
         SELECT DISTINCT item_key FROM predicted_payments
          WHERE month < ${month} AND excluded = false`;
       rolledKeys = prior.map((r) => r.item_key).filter((k) => !handledThisMonth.has(k));
+    } else if (month < cur) {
+      // This is an earlier month: any of its predictions that carry over into the
+      // current month have MOVED there, so they no longer belong to this month's
+      // list (the client hides them). "Handled in the current month" (re-flagged
+      // or excluded there) means it didn't roll, so it stays on this month.
+      const handledInCurrent = new Set(
+        (await sql`SELECT item_key FROM predicted_payments WHERE month = ${cur}`).map((r) => r.item_key),
+      );
+      rolledAwayKeys = includedKeys.filter((k) => !handledInCurrent.has(k));
     }
 
     return {
@@ -1638,8 +1649,12 @@ async function predictedPaymentsRoute(req, res, action, user) {
       items: included.map((r) => ({ key: r.item_key, label: r.label || null, amount: Number(r.amount_ex_vat) || 0 })),
       // Auto-included items the user has switched OFF for this month.
       excludedKeys: rows.filter((r) => r.excluded).map((r) => r.item_key),
-      // Predictions carried over from an earlier month (removing one excludes it).
+      // Predictions carried over INTO this month from an earlier one (current month
+      // only). Removing one excludes it.
       rolledKeys,
+      // Predictions that have rolled OUT of this (past) month into the current one,
+      // so they should be hidden here.
+      rolledAwayKeys,
       notes,
     };
   };
