@@ -1397,6 +1397,32 @@ export function StoreProvider({ children }) {
       }
       return promise;
     },
+    // Mark a recurring "Other" line as received for a month → logs it as banked
+    // income for that month (shows in the Income ledger + NET REVENUE). Undoable.
+    receiveRecurringOther({ id, month, paidAt, net, vat }, label) {
+      const promise = api.post('/api/crm/stats/recurring-other', { receive: { id, month, paidAt, net, vat } })
+        .then((d) => { actions.loadPendingPayments(); return d; });
+      if (!suppressUndoRef.current) {
+        recordUndo({
+          label: `Mark “${(label || 'recurring').trim()}” received (${month})`,
+          undo: () => api.post('/api/crm/stats/recurring-other', { unreceive: { id, month } }).then(() => actions.loadPendingPayments()),
+          redo: () => api.post('/api/crm/stats/recurring-other', { receive: { id, month, paidAt, net, vat } }).then(() => actions.loadPendingPayments()),
+        });
+      }
+      return promise;
+    },
+    unreceiveRecurringOther({ id, month }, label) {
+      const promise = api.post('/api/crm/stats/recurring-other', { unreceive: { id, month } })
+        .then((d) => { actions.loadPendingPayments(); return d; });
+      if (!suppressUndoRef.current) {
+        recordUndo({
+          label: `Un-mark “${(label || 'recurring').trim()}” (${month})`,
+          undo: () => api.post('/api/crm/stats/recurring-other', { receive: { id, month } }).then(() => actions.loadPendingPayments()),
+          redo: () => api.post('/api/crm/stats/recurring-other', { unreceive: { id, month } }).then(() => actions.loadPendingPayments()),
+        });
+      }
+      return promise;
+    },
     // Signed CRM deals for the "link to deal" picker. [{ dealId, company, title, number, net }].
     loadLinkableDeals() {
       return api.get('/api/crm/stats/linkable-deals')

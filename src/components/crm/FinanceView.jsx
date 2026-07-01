@@ -103,7 +103,7 @@ function PredictDateModal({ label, onClose, onConfirm }) {
 // in `partners`). Each item carries the ids needed to open its deal/customer/
 // partner. Shared by the Predicted tab and the Performance projection. Net
 // (ex-VAT) amounts, sorted high→low.
-function collectPredicted(pending, partners, predictKeys, excludedKeys) {
+function collectPredicted(pending, partners, predictKeys, excludedKeys, currentMonthKey) {
   const out = [];
   const seen = new Set();
   const excluded = excludedKeys || new Set();
@@ -120,14 +120,24 @@ function collectPredicted(pending, partners, predictKeys, excludedKeys) {
   // credits-only = remaining-credit value) — no manual flag needed.
   for (const pt of (partners || [])) if (pt.clientKey) add(predictKeyForPartner(pt.clientKey), { name: pt.clientName || 'Partner', amount: Number(pt.outstanding) || 0, source: 'Partner', clientKey: pt.clientKey, auto: true, type: 'partner', row: pt });
   // "Other" recurring revenue (web hosting etc.) also rides along automatically —
-  // it recurs every month, so it's predicted by default like a partner fee.
-  for (const r of (p.other || [])) if (r.id) add(`other:${r.id}`, { name: r.label || 'Other', amount: Number(r.amountExVat) || 0, source: 'Other', auto: true, type: 'other', row: r });
+  // it recurs every month, so it's predicted by default like a partner fee. Once
+  // it's marked received for this month, it's already banked, so it drops off.
+  for (const r of (p.other || [])) {
+    if (!r.id) continue;
+    if (currentMonthKey && (r.receivedMonths || []).includes(currentMonthKey)) continue;
+    add(`other:${r.id}`, { name: r.label || 'Other', amount: Number(r.amountExVat) || 0, source: 'Other', auto: true, type: 'other', row: r });
+  }
   return out.sort((a, b) => b.amount - a.amount);
 }
 const gbpK = (v) => '£' + Math.round((Number(v) || 0) / 1000) + 'k';
 const shortMonth = (key) => {
   const [y, m] = key.split('-').map(Number);
   return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'short' });
+};
+// 'YYYY-MM' → "Jun '26" for compact received-month pills.
+const receivedLabel = (key) => {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'short' }) + " '" + String(y).slice(2);
 };
 
 function recentQuarters(n = 8) {
@@ -340,8 +350,8 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
   // Live total of everything still predicted to land this month — drives the
   // Predicted tab and the "with predicted" projection on the Performance chart.
   const predictedTotal = useMemo(
-    () => collectPredicted(pending, activePartners, predictKeys, excludedKeys).reduce((s, it) => s + it.amount, 0),
-    [pending, activePartners, predictKeys, excludedKeys],
+    () => collectPredicted(pending, activePartners, predictKeys, excludedKeys, currentMonthKey).reduce((s, it) => s + it.amount, 0),
+    [pending, activePartners, predictKeys, excludedKeys, currentMonthKey],
   );
   // Live monthly income targets (Minimum / £4k / £5k) for the Predicted tab's
   // over/under-target metric — same figures the Performance pacing uses.
@@ -492,6 +502,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
           partners={activePartners}
           predictKeys={predictKeys}
           excludedKeys={excludedKeys}
+          currentMonthKey={currentMonthKey}
           monthName={currentMonthName}
           bankedNet={predicted?.bankedNet || 0}
           targets={incomeTargets}
@@ -662,24 +673,24 @@ function PredictedRowBadges({ item }) {
 // active partners — so a predicted item that's since been paid simply drops off
 // (and is already counted in the banked figure). Projects the month-end position
 // as banked-so-far + everything still predicted to land. All figures ex-VAT (net).
-function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys, monthName, bankedNet, targets, notes = {}, onSaveNote, onUnpredict, onExclude, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
+function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys, currentMonthKey, monthName, bankedNet, targets, notes = {}, onSaveNote, onUnpredict, onExclude, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
   const [editOther, setEditOther] = useState(null); // the "Other" row being edited
   const [noteTarget, setNoteTarget] = useState(null); // { key, name, note } being edited
-  const items = useMemo(() => collectPredicted(pending, partners, predictKeys, excludedKeys).map((it) => ({
+  const items = useMemo(() => collectPredicted(pending, partners, predictKeys, excludedKeys, currentMonthKey).map((it) => ({
     ...it,
     open: it.dealId && onOpenDeal ? () => onOpenDeal(it.dealId)
       : it.companyId && onOpenCompany ? () => onOpenCompany(it.companyId)
         : it.clientKey && onOpenPartner ? () => onOpenPartner(it.clientKey) : null,
-  })), [pending, partners, predictKeys, excludedKeys, onOpenDeal, onOpenCompany, onOpenPartner]);
+  })), [pending, partners, predictKeys, excludedKeys, currentMonthKey, onOpenDeal, onOpenCompany, onOpenPartner]);
 
   // Auto items (partners / other recurring) switched OFF for this month — shown
   // muted at the bottom so they're easy to add back. Recomputed from the live
   // data with exclusions ignored, then filtered to the excluded auto keys.
   const excludedItems = useMemo(() => {
     if (!excludedKeys || excludedKeys.size === 0) return [];
-    return collectPredicted(pending, partners, predictKeys, new Set())
+    return collectPredicted(pending, partners, predictKeys, new Set(), currentMonthKey)
       .filter((it) => it.auto && excludedKeys.has(it.key));
-  }, [pending, partners, predictKeys, excludedKeys]);
+  }, [pending, partners, predictKeys, excludedKeys, currentMonthKey]);
 
   // Bank a predicted payment without leaving the tab. Imported PP/PO rows mark
   // paid via the pending-payment toggle (Stripe/BACS); active partners record
@@ -1252,6 +1263,63 @@ function OtherRowForm({ initial, onSave, onCancel, isMobile, bare = false }) {
   );
 }
 
+// "Mark received" control for a recurring line: shows which months are already
+// banked (green pills; ✕ to undo) and a month picker to log a new one — turning
+// that month's recurring fee into actual income (Income ledger + NET REVENUE).
+function ReceiveControl({ row, actions, onChanged }) {
+  const received = (row.receivedMonths || []).slice().sort().reverse();
+  const [picking, setPicking] = useState(false);
+  const [month, setMonth] = useState(() => recentMonths(2)[1]); // default: last month
+  const [busy, setBusy] = useState(false);
+  const options = recentMonths(12).filter((m) => !received.includes(m));
+
+  const openPick = () => {
+    const lastMonth = recentMonths(2)[1];
+    setMonth(options.includes(lastMonth) ? lastMonth : (options[0] || lastMonth));
+    setPicking(true);
+  };
+  const mark = async () => {
+    if (busy || !month) return;
+    setBusy(true);
+    try { await actions.receiveRecurringOther({ id: row.id, month }, row.label); if (onChanged) onChanged(); }
+    finally { setBusy(false); setPicking(false); }
+  };
+  const unmark = async (m) => {
+    if (busy) return;
+    setBusy(true);
+    try { await actions.unreceiveRecurringOther({ id: row.id, month: m }, row.label); if (onChanged) onChanged(); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+      {received.map((m) => (
+        <span key={m} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, color: '#166534', background: '#DCFCE7', padding: '2px 4px 2px 6px', borderRadius: 5, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+          <Check size={11} /> {receivedLabel(m)}
+          <button title="Un-mark — removes it from that month's income" onClick={() => unmark(m)} disabled={busy}
+            style={{ display: 'inline-flex', border: 'none', background: 'transparent', color: '#166534', cursor: busy ? 'default' : 'pointer', padding: 0, marginLeft: 1 }}>
+            <X size={11} />
+          </button>
+        </span>
+      ))}
+      {picking ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <select value={month} onChange={(e) => setMonth(e.target.value)} style={{ padding: '3px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 12, color: BRAND.ink, background: 'white' }}>
+            {options.map((m) => <option key={m} value={m}>{monthLongLabel(m)}</option>)}
+          </select>
+          <button className="btn-primary" onClick={mark} disabled={busy || !month} style={{ padding: '3px 9px', fontSize: 12 }}>{busy ? 'Saving…' : 'Log income'}</button>
+          <button className="btn-ghost" onClick={() => setPicking(false)} disabled={busy} style={{ padding: '3px 6px', fontSize: 12 }}>Cancel</button>
+        </span>
+      ) : options.length > 0 && (
+        <button onClick={openPick}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: OTHER_ACCENT, background: 'transparent', border: '1px dashed ' + BRAND.border, borderRadius: 5, padding: '2px 7px', cursor: 'pointer' }}>
+          <CalendarCheck size={12} /> Mark received
+        </button>
+      )}
+    </div>
+  );
+}
+
 function OtherPanel({ rows, total, actions, onChanged, isMobile }) {
   const predict = usePredict();
   const canManage = predict?.canManage !== false;
@@ -1298,6 +1366,7 @@ function OtherPanel({ rows, total, actions, onChanged, isMobile }) {
                 <PredictedTag auto />
               </div>
               {r.note && <div title={r.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>{r.note}</div>}
+              {canManage && <ReceiveControl row={r} actions={actions} onChanged={onChanged} />}
             </div>
             <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 64, textAlign: 'right' }}>{formatGBP(r.amountExVat)}/mo</span>
             {canManage && (
@@ -1940,6 +2009,7 @@ const SOURCE_META = {
   invoice: { label: 'Invoice', color: '#15803D', bg: '#ECFDF3' },
   billing: { label: 'Billing', color: '#0E7490', bg: '#ECFEFF' },
   sheet: { label: 'PP', color: '#0E7490', bg: '#ECFEFF' },
+  recurring: { label: 'Recurring', color: '#C2410C', bg: '#FFF7ED' },
 };
 
 function SourceBadge({ source }) {

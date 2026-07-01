@@ -332,14 +332,62 @@ function serialiseOther(r) {
   };
 }
 
-// Recurring "Other" revenue rows (robust to a missing table → []).
+// A recurring line, once its GoCardless (or any) payment lands, is marked
+// "received" for a month here — that turns it into actual banked income for that
+// month (fetchPaidRows / incomeReport read it), while the recurring_other_revenue
+// row stays the ongoing monthly template. net/vat are snapshotted at mark-time so
+// later editing the template doesn't rewrite history. One payment per (line, month).
+let recurringOtherPaymentsEnsured = null;
+function ensureRecurringOtherPayments() {
+  if (recurringOtherPaymentsEnsured) return recurringOtherPaymentsEnsured;
+  recurringOtherPaymentsEnsured = (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS recurring_other_payments (
+        id            TEXT PRIMARY KEY,
+        recurring_id  TEXT NOT NULL,
+        month         TEXT NOT NULL,
+        net           NUMERIC NOT NULL DEFAULT 0,
+        vat           NUMERIC NOT NULL DEFAULT 0,
+        paid_at       TIMESTAMPTZ NOT NULL,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS recurring_other_payments_uniq ON recurring_other_payments (recurring_id, month)`;
+  })().catch((err) => { recurringOtherPaymentsEnsured = null; throw err; });
+  return recurringOtherPaymentsEnsured;
+}
+
+// Recurring payments received in [sinceISO, untilISO) — banked income, labelled by
+// the template's customer name. Robust to a missing table → [].
+async function fetchPaidRecurringOther(sinceISO, untilISO) {
+  try {
+    await ensureRecurringOtherPayments();
+    return await sql`
+      SELECT rop.id AS edit_key, rop.paid_at, rop.net, rop.vat, ro.label AS company
+        FROM recurring_other_payments rop
+        LEFT JOIN recurring_other_revenue ro ON ro.id = rop.recurring_id
+       WHERE rop.paid_at >= ${sinceISO} AND rop.paid_at < ${untilISO}`;
+  } catch {
+    return [];
+  }
+}
+
+// Recurring "Other" revenue rows (robust to a missing table → []). Each row also
+// carries `receivedMonths` — the 'YYYY-MM' months already banked — so the UI can
+// show which months are logged and offer an undo.
 async function fetchRecurringOther() {
   try {
     await ensureRecurringOther();
     const rows = await sql`
       SELECT * FROM recurring_other_revenue
        ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
-    return rows.map(serialiseOther);
+    let paid = [];
+    try {
+      await ensureRecurringOtherPayments();
+      paid = await sql`SELECT recurring_id, month FROM recurring_other_payments`;
+    } catch { /* payments table not created yet — no months received */ }
+    const byId = {};
+    for (const p of paid) (byId[p.recurring_id] = byId[p.recurring_id] || []).push(p.month);
+    return rows.map((r) => ({ ...serialiseOther(r), receivedMonths: byId[r.id] || [] }));
   } catch {
     return [];
   }
@@ -551,6 +599,15 @@ async function fetchPaidRows(sinceISO, untilISO) {
       push(r.paid_at, { net, vat, gross: net + vat });
     }
   } catch { /* partner_fee_payments not created yet — ignore */ }
+
+  // Recurring "Other" revenue marked received this period (web hosting, GoCardless
+  // subscriptions etc.) — banked net + stored VAT.
+  const recPaid = await fetchPaidRecurringOther(sinceISO, untilISO);
+  for (const r of recPaid) {
+    const net = Number(r.net) || 0;
+    const vat = Number(r.vat) || 0;
+    push(r.paid_at, { net, vat, gross: net + vat });
+  }
 
   return dedupePaymentRows(rows);
 }
@@ -1736,6 +1793,14 @@ async function incomeReport(action) {
     push(r, 'sheet', { net, vat, gross: net + vat });
   }
 
+  // Recurring "Other" revenue marked received this period — labelled by customer.
+  const recPaid = await fetchPaidRecurringOther(since, until);
+  for (const r of recPaid) {
+    const net = Number(r.net) || 0;
+    const vat = Number(r.vat) || 0;
+    push({ paid_at: r.paid_at, company: r.company, edit_key: r.edit_key }, 'recurring', { net, vat, gross: net + vat });
+  }
+
   // Drop duplicates (same proposal paid the same gross on the same day via two
   // mechanisms), then strip the internal proposalId from the response.
   const deduped = dedupePaymentRows(rows).map(({ proposalId, ...rest }) => rest); // eslint-disable-line no-unused-vars
@@ -1797,6 +1862,8 @@ async function incomeDateRoute(req, res) {
     await sql`UPDATE manual_payments SET paid_at = ${iso} WHERE id = ${key}`;
   } else if (source === 'sheet') {
     await sql`UPDATE manual_pending_payments SET paid_at = ${iso} WHERE id = ${key}`;
+  } else if (source === 'recurring') {
+    await sql`UPDATE recurring_other_payments SET paid_at = ${iso} WHERE id = ${key}`;
   } else {
     return res.status(400).json({ error: 'This payment type cannot be re-dated here' });
   }
@@ -2364,6 +2431,40 @@ async function recurringOtherRoute(req, res, action, user) {
 
   if (req.method === 'POST' || req.method === 'PUT') {
     const body = req.body || {};
+
+    // Mark a recurring line as received for a month → logs it as banked income
+    // for that month (idempotent per line+month; re-marking refreshes the amount).
+    if (body.receive) {
+      const rid = trimOrNull(body.receive.id);
+      const month = trimOrNull(body.receive.month);
+      if (!rid || !/^\d{4}-\d{2}$/.test(month || '')) return res.status(400).json({ error: 'id and month (YYYY-MM) required' });
+      const [line] = await sql`SELECT * FROM recurring_other_revenue WHERE id = ${rid}`;
+      if (!line) return res.status(404).json({ error: 'Not found' });
+      await ensureRecurringOtherPayments();
+      const netOverride = numberOrNull(body.receive.net);
+      const vatOverride = numberOrNull(body.receive.vat);
+      const net = netOverride != null ? netOverride : Number(line.amount_ex_vat) || 0;
+      const vat = vatOverride != null ? vatOverride : Number(line.vat) || 0;
+      // Default the paid date to mid-day on the 1st of the month (UTC) so it lands
+      // squarely inside the month regardless of timezone; caller may override.
+      const paidAt = body.receive.paidAt ? new Date(body.receive.paidAt) : new Date(`${month}-01T12:00:00.000Z`);
+      if (isNaN(paidAt.getTime())) return res.status(400).json({ error: 'Invalid date' });
+      await sql`
+        INSERT INTO recurring_other_payments (id, recurring_id, month, net, vat, paid_at)
+        VALUES (${makeId('rop')}, ${rid}, ${month}, ${net}, ${vat}, ${paidAt.toISOString()})
+        ON CONFLICT (recurring_id, month) DO UPDATE SET net = EXCLUDED.net, vat = EXCLUDED.vat, paid_at = EXCLUDED.paid_at`;
+      return res.status(200).json({ ok: true, rows: await fetchRecurringOther() });
+    }
+    // Un-mark a month → removes it from banked income again.
+    if (body.unreceive) {
+      const rid = trimOrNull(body.unreceive.id);
+      const month = trimOrNull(body.unreceive.month);
+      if (!rid || !month) return res.status(400).json({ error: 'id and month required' });
+      await ensureRecurringOtherPayments();
+      await sql`DELETE FROM recurring_other_payments WHERE recurring_id = ${rid} AND month = ${month}`;
+      return res.status(200).json({ ok: true, rows: await fetchRecurringOther() });
+    }
+
     // Drag-reorder: persist the given ids in their new order.
     if (Array.isArray(body.reorder)) {
       let i = 0;
