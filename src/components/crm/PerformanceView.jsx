@@ -1643,7 +1643,10 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
     const before = { label: row.label, amount: Number(row.amount) || 0, frequency: row.frequency || 'monthly', category: row.category || 'expense', note: row.note || '', taxBasis: !!row.taxBasis };
     actions.updateCashflowCost(row.id, { label: label.trim() || row.label, amount: parseFloat(amount) || 0, frequency, category, note: note.trim(), taxBasis }, before).then(() => { setEditing(false); reload(); });
   };
-  const remove = () => actions.deleteCashflowCost(row.id, row).then(reload);
+  const remove = () => {
+    if (!window.confirm(`Delete "${row.label}"?\n\nThis removes the expense from your costs and targets. This can’t be undone.`)) return;
+    actions.deleteCashflowCost(row.id, row).then(reload);
+  };
   const reset = () => { setEditing(false); setLabel(row.label); setAmount(String(row.amount)); setFrequency(row.frequency || 'monthly'); setCategory(row.category || 'expense'); setNote(row.note || ''); setTaxBasis(!!row.taxBasis); };
 
   if (editing) {
