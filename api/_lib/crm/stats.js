@@ -1613,13 +1613,33 @@ async function predictedPaymentsRoute(req, res, action, user) {
     let bankedNet = 0;
     try { bankedNet = round2((await incomeReport(month)).total || 0); } catch { bankedNet = 0; }
     const included = rows.filter((r) => !r.excluded);
+    const includedKeys = included.map((r) => r.item_key);
+
+    // Roll unfulfilled predictions forward: any manual prediction flagged in an
+    // EARLIER month that isn't already handled this month surfaces in the current
+    // month too — they're likely to land now. The client intersects these keys
+    // with the live pending list, so ones that were actually paid drop off; only
+    // still-outstanding ones show. Only the current month accumulates the carry-
+    // over (past months keep their own historical list). Auto items (partners /
+    // other recurring) recur on their own, so they need no rollover.
+    let rolledKeys = [];
+    if (month === serverMonthKey()) {
+      const handledThisMonth = new Set(rows.map((r) => r.item_key)); // included OR excluded here
+      const prior = await sql`
+        SELECT DISTINCT item_key FROM predicted_payments
+         WHERE month < ${month} AND excluded = false`;
+      rolledKeys = prior.map((r) => r.item_key).filter((k) => !handledThisMonth.has(k));
+    }
+
     return {
       month,
       bankedNet,
-      keys: included.map((r) => r.item_key),
+      keys: [...includedKeys, ...rolledKeys],
       items: included.map((r) => ({ key: r.item_key, label: r.label || null, amount: Number(r.amount_ex_vat) || 0 })),
       // Auto-included items the user has switched OFF for this month.
       excludedKeys: rows.filter((r) => r.excluded).map((r) => r.item_key),
+      // Predictions carried over from an earlier month (removing one excludes it).
+      rolledKeys,
       notes,
     };
   };
@@ -1675,7 +1695,19 @@ async function predictedPaymentsRoute(req, res, action, user) {
         ON CONFLICT (item_key, month)
         DO UPDATE SET label = EXCLUDED.label, amount_ex_vat = EXCLUDED.amount_ex_vat`;
     } else {
-      await sql`DELETE FROM predicted_payments WHERE item_key = ${itemKey} AND month = ${month}`;
+      await sql`DELETE FROM predicted_payments WHERE item_key = ${itemKey} AND month = ${month} AND excluded = false`;
+      // If this item is still flagged in an earlier month it would roll back into
+      // the current month, so a plain delete wouldn't stick. Drop an excluded
+      // marker for the current month to suppress the carry-over.
+      if (month === serverMonthKey()) {
+        const [prior] = await sql`SELECT 1 FROM predicted_payments WHERE item_key = ${itemKey} AND month < ${month} AND excluded = false LIMIT 1`;
+        if (prior) {
+          await sql`
+            INSERT INTO predicted_payments (item_key, month, excluded)
+            VALUES (${itemKey}, ${month}, true)
+            ON CONFLICT (item_key, month) DO UPDATE SET excluded = true`;
+        }
+      }
     }
     return res.status(200).json(await snapshot());
   }

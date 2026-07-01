@@ -103,7 +103,7 @@ function PredictDateModal({ label, onClose, onConfirm }) {
 // in `partners`). Each item carries the ids needed to open its deal/customer/
 // partner. Shared by the Predicted tab and the Performance projection. Net
 // (ex-VAT) amounts, sorted high→low.
-function collectPredicted(pending, partners, predictKeys, excludedKeys, currentMonthKey) {
+function collectPredicted(pending, partners, predictKeys, excludedKeys, predictMonthKey) {
   const out = [];
   const seen = new Set();
   const excluded = excludedKeys || new Set();
@@ -124,7 +124,7 @@ function collectPredicted(pending, partners, predictKeys, excludedKeys, currentM
   // it's marked received for this month, it's already banked, so it drops off.
   for (const r of (p.other || [])) {
     if (!r.id) continue;
-    if (currentMonthKey && (r.receivedMonths || []).includes(currentMonthKey)) continue;
+    if (predictMonthKey && (r.receivedMonths || []).includes(predictMonthKey)) continue;
     add(`other:${r.id}`, { name: r.label || 'Other', amount: Number(r.amountExVat) || 0, source: 'Other', auto: true, type: 'other', row: r });
   }
   return out.sort((a, b) => b.amount - a.amount);
@@ -278,11 +278,12 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
   useEffect(() => { actions.loadPendingPayments(); }, [actions]);
   useEffect(() => { actions.fetchPartnerCreditsList(); }, [actions]);
 
-  // Predicted-this-month list — always the current calendar month, independent of
-  // the period picker. Passed as a key to the store so a month rollover reloads.
-  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const currentMonthName = now.toLocaleString('en-GB', { month: 'long' });
-  useEffect(() => { actions.loadPredictedPayments(currentMonthKey); }, [actions, currentMonthKey]);
+  // Predicted-payments list follows the shared month picker (defaults to the
+  // current month), so you can review a past month's predictions. Unfulfilled
+  // predictions from earlier months roll into the current month server-side.
+  const predictMonthKey = monthKey;
+  const predictMonthName = new Date(Number(predictMonthKey.slice(0, 4)), Number(predictMonthKey.slice(5)) - 1, 1).toLocaleString('en-GB', { month: 'long' });
+  useEffect(() => { actions.loadPredictedPayments(predictMonthKey); }, [actions, predictMonthKey]);
 
   // Rolling trend (charts) — load 36 months (the Performance comparison needs
   // the full window; the bar charts below slice the last 12). Period-independent.
@@ -293,7 +294,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
   // revenue + trend) using the period that's currently selected.
   const refreshFinance = () => {
     actions.loadPendingPayments();
-    actions.loadPredictedPayments(currentMonthKey); // refresh banked-so-far + the predicted list
+    actions.loadPredictedPayments(predictMonthKey); // refresh banked-so-far + the predicted list
     actions.loadIncome(periodParam);
     actions.loadFinanceStats(effectiveYear);
     actions.loadTrend(36);
@@ -332,26 +333,27 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
 
   // Predicted-this-month flags + the shared toggle, exposed to every Pending
   // Payments row via context (so the ⋮ menu can flag/unflag without prop drilling).
-  const predicted = state.predictedPayments && state.predictedPayments.month === currentMonthKey ? state.predictedPayments : null;
+  const predicted = state.predictedPayments && state.predictedPayments.month === predictMonthKey ? state.predictedPayments : null;
   const predictKeys = useMemo(() => new Set(predicted?.keys || []), [predicted]);
   const excludedKeys = useMemo(() => new Set(predicted?.excludedKeys || []), [predicted]);
+  const rolledKeys = useMemo(() => new Set(predicted?.rolledKeys || []), [predicted]);
   const predictCtx = useMemo(() => ({
-    month: currentMonthKey,
+    month: predictMonthKey,
     keys: predictKeys,
     // Pending-only users (Project/Production Managers) can predict but not run
     // the manage actions (mark paid / invoice / link / remove) — rows hide those.
     canManage,
-    toggle: (item, on) => actions.togglePredictedPayment(currentMonthKey, item.key, on, item.label || null, Number(item.amount) || 0),
+    toggle: (item, on) => actions.togglePredictedPayment(predictMonthKey, item.key, on, item.label || null, Number(item.amount) || 0),
     // Mark predicted for a chosen month (the expected pay date's month), then
     // refresh the in-view list so it reflects immediately when that's this month.
     predictInMonth: (item, month) => actions.predictPaymentInMonth(month, item.key, item.label || null, Number(item.amount) || 0)
-      .then((r) => { actions.loadPredictedPayments(currentMonthKey); return r; }),
-  }), [currentMonthKey, predictKeys, actions, canManage]);
+      .then((r) => { actions.loadPredictedPayments(predictMonthKey); return r; }),
+  }), [predictMonthKey, predictKeys, actions, canManage]);
   // Live total of everything still predicted to land this month — drives the
   // Predicted tab and the "with predicted" projection on the Performance chart.
   const predictedTotal = useMemo(
-    () => collectPredicted(pending, activePartners, predictKeys, excludedKeys, currentMonthKey).reduce((s, it) => s + it.amount, 0),
-    [pending, activePartners, predictKeys, excludedKeys, currentMonthKey],
+    () => collectPredicted(pending, activePartners, predictKeys, excludedKeys, predictMonthKey).reduce((s, it) => s + it.amount, 0),
+    [pending, activePartners, predictKeys, excludedKeys, predictMonthKey],
   );
   // Live monthly income targets (Minimum / £4k / £5k) for the Predicted tab's
   // over/under-target metric — same figures the Performance pacing uses.
@@ -411,7 +413,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
       {!pendingOnly && (
         <PerformancePanel
           section={perfSection} onSection={setPerfSection}
-          predictedTotal={predictedTotal} predictedMonthKey={currentMonthKey}
+          predictedTotal={predictedTotal} predictedMonthKey={predictMonthKey}
           mode={mode} monthKey={monthKey} quarterKey={quarterKey}
           onMode={setMode} onMonthKey={setMonthKey} onQuarterKey={setQuarterKey}
         />
@@ -426,9 +428,19 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
         <Segmented
           value={section}
           onChange={setSection}
-          options={[{ value: 'income', label: firstTab.label }, { value: 'predicted', label: `Predicted ${currentMonthName} Payments` }, { value: 'pending', label: 'Pending Payments' }, { value: 'vat', label: 'VAT & Corp tax' }]}
+          options={[{ value: 'income', label: firstTab.label }, { value: 'predicted', label: `Predicted ${predictMonthName} Payments` }, { value: 'pending', label: 'Pending Payments' }, { value: 'vat', label: 'VAT & Corp tax' }]}
         />
-        {section !== 'pending' && section !== 'predicted' && (
+        {section === 'predicted' ? (
+          // Predicted is a monthly view — just a month picker (defaults to this
+          // month; earlier months show their own list + are rolled into this one).
+          <select
+            value={monthKey}
+            onChange={(e) => setMonthKey(e.target.value)}
+            style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
+          >
+            {recentMonths(12).map((k) => <option key={k} value={k}>{monthLongLabel(k)}</option>)}
+          </select>
+        ) : section !== 'pending' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <Segmented
               value={mode}
@@ -502,14 +514,15 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
           partners={activePartners}
           predictKeys={predictKeys}
           excludedKeys={excludedKeys}
-          currentMonthKey={currentMonthKey}
-          monthName={currentMonthName}
+          rolledKeys={rolledKeys}
+          predictMonthKey={predictMonthKey}
+          monthName={predictMonthName}
           bankedNet={predicted?.bankedNet || 0}
           targets={incomeTargets}
           notes={predicted?.notes || {}}
-          onSaveNote={(key, note) => actions.setPredictedPaymentNote(currentMonthKey, key, note)}
-          onUnpredict={(key) => actions.togglePredictedPayment(currentMonthKey, key, false)}
-          onExclude={(item, excluded) => actions.excludePredictedPayment(currentMonthKey, item.key, excluded, item.label || item.name || null, Number(item.amount) || 0)}
+          onSaveNote={(key, note) => actions.setPredictedPaymentNote(predictMonthKey, key, note)}
+          onUnpredict={(key) => actions.togglePredictedPayment(predictMonthKey, key, false)}
+          onExclude={(item, excluded) => actions.excludePredictedPayment(predictMonthKey, item.key, excluded, item.label || item.name || null, Number(item.amount) || 0)}
           onOpenDeal={onOpenDeal}
           onOpenCompany={onOpenCompany}
           onOpenPartner={onOpenPartner}
@@ -673,24 +686,26 @@ function PredictedRowBadges({ item }) {
 // active partners — so a predicted item that's since been paid simply drops off
 // (and is already counted in the banked figure). Projects the month-end position
 // as banked-so-far + everything still predicted to land. All figures ex-VAT (net).
-function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys, currentMonthKey, monthName, bankedNet, targets, notes = {}, onSaveNote, onUnpredict, onExclude, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
+function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys, rolledKeys, predictMonthKey, monthName, bankedNet, targets, notes = {}, onSaveNote, onUnpredict, onExclude, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
   const [editOther, setEditOther] = useState(null); // the "Other" row being edited
   const [noteTarget, setNoteTarget] = useState(null); // { key, name, note } being edited
-  const items = useMemo(() => collectPredicted(pending, partners, predictKeys, excludedKeys, currentMonthKey).map((it) => ({
+  const rolled = rolledKeys || new Set();
+  const items = useMemo(() => collectPredicted(pending, partners, predictKeys, excludedKeys, predictMonthKey).map((it) => ({
     ...it,
+    rolled: rolled.has(it.key), // carried over from an earlier month
     open: it.dealId && onOpenDeal ? () => onOpenDeal(it.dealId)
       : it.companyId && onOpenCompany ? () => onOpenCompany(it.companyId)
         : it.clientKey && onOpenPartner ? () => onOpenPartner(it.clientKey) : null,
-  })), [pending, partners, predictKeys, excludedKeys, currentMonthKey, onOpenDeal, onOpenCompany, onOpenPartner]);
+  })), [pending, partners, predictKeys, excludedKeys, rolled, predictMonthKey, onOpenDeal, onOpenCompany, onOpenPartner]);
 
   // Auto items (partners / other recurring) switched OFF for this month — shown
   // muted at the bottom so they're easy to add back. Recomputed from the live
   // data with exclusions ignored, then filtered to the excluded auto keys.
   const excludedItems = useMemo(() => {
     if (!excludedKeys || excludedKeys.size === 0) return [];
-    return collectPredicted(pending, partners, predictKeys, new Set(), currentMonthKey)
+    return collectPredicted(pending, partners, predictKeys, new Set(), predictMonthKey)
       .filter((it) => it.auto && excludedKeys.has(it.key));
-  }, [pending, partners, predictKeys, excludedKeys, currentMonthKey]);
+  }, [pending, partners, predictKeys, excludedKeys, predictMonthKey]);
 
   // Bank a predicted payment without leaving the tab. Imported PP/PO rows mark
   // paid via the pending-payment toggle (Stripe/BACS); active partners record
@@ -802,6 +817,9 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                         <span style={{ fontSize: 13, fontWeight: 600, color: clickable ? BRAND.blue : BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{it.name}</span>
                         <PredictedRowBadges item={it} />
+                        {it.rolled && (
+                          <span title="Carried over from an earlier month — it didn't come in yet" style={{ fontSize: 9, fontWeight: 700, color: '#B45309', background: '#FFF7ED', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>Rolled over</span>
+                        )}
                       </div>
                       {subtitle && (
                         <div title={subtitle} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>{subtitle}</div>
@@ -819,9 +837,10 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
                       { label: note ? 'Edit note' : 'Add note', icon: StickyNote, onClick: () => setNoteTarget({ key: it.key, name: it.name, note }) },
                       it.type === 'other' && { label: 'Remove', icon: Trash2, onClick: () => removeOther(it.row) },
                       it.open && { label: it.dealId ? 'Open deal' : it.companyId ? 'Open customer' : 'Open partner', icon: ExternalLink, onClick: it.open },
-                      // Manual rows un-flag; auto rows (partners / other) get
-                      // excluded for this month and listed below to add back.
-                      it.auto
+                      // Manual rows un-flag; auto rows (partners / other) and
+                      // rolled-over rows (no flag for THIS month) get excluded for
+                      // this month instead, so they stop reappearing.
+                      (it.auto || it.rolled)
                         ? (onExclude && { label: 'Remove from predicted', icon: X, onClick: () => onExclude(it, true) })
                         : { label: 'Remove from predicted', icon: X, onClick: () => onUnpredict(it.key) },
                     ]} />

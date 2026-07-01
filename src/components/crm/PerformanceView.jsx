@@ -196,7 +196,9 @@ export function PerformancePanel({
     // to the month-end if every flagged predicted payment lands. Income, current
     // month only, while the period is still running and something's predicted.
     const predTotal = Number(predictedTotal) || 0;
-    const showPredicted = !isSales && period === predictedMonthKey && predTotal > 0 && lastActualIdx > 0 && lastActualIdx < N;
+    // Only project the current (or a future) month — a past month has fully
+    // elapsed, so there's nothing left to "predict" landing.
+    const showPredicted = !isSales && period === predictedMonthKey && period >= todayKey().slice(0, 7) && predTotal > 0 && lastActualIdx > 0 && lastActualIdx < N;
     const predictedMonthEnd = netSoFar + predTotal;
 
     const data = workingDays.map((wd, i) => {
