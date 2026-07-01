@@ -2010,6 +2010,7 @@ const SOURCE_META = {
   billing: { label: 'Billing', color: '#0E7490', bg: '#ECFEFF' },
   sheet: { label: 'PP', color: '#0E7490', bg: '#ECFEFF' },
   recurring: { label: 'Recurring', color: '#C2410C', bg: '#FFF7ED' },
+  partnerfee: { label: 'Partner', color: '#6D28D9', bg: '#F5F3FF' },
 };
 
 function SourceBadge({ source }) {

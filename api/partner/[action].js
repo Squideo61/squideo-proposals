@@ -213,11 +213,15 @@ async function markFeePaid(req, res, user) {
   const vatRate = fee ? Number(fee.vat_rate) : (derived && derived.rate != null ? Number(derived.rate) : 0.20);
   const vat = r2(net * vatRate);
   const method = (body.method || 'BACS').toString().slice(0, 40);
+  // paid_at drives which month the income lands in. For the current month use now;
+  // for a back-logged past month use mid-day on the 1st so it sits inside that
+  // month regardless of timezone (else NOW() would push it into the wrong month).
+  const paidAt = (month === curMonthKey() ? new Date() : new Date(`${month}-01T12:00:00.000Z`)).toISOString();
 
   await sql`
     INSERT INTO partner_fee_payments (id, client_key, month, net, vat, method, paid_at, created_by)
-    VALUES (${'pfp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)}, ${clientKey}, ${month}, ${r2(net)}, ${vat}, ${method}, NOW(), ${user.email || null})
-    ON CONFLICT (client_key, month) DO UPDATE SET net = EXCLUDED.net, vat = EXCLUDED.vat, method = EXCLUDED.method, paid_at = NOW(), created_by = EXCLUDED.created_by`;
+    VALUES (${'pfp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)}, ${clientKey}, ${month}, ${r2(net)}, ${vat}, ${method}, ${paidAt}, ${user.email || null})
+    ON CONFLICT (client_key, month) DO UPDATE SET net = EXCLUDED.net, vat = EXCLUDED.vat, method = EXCLUDED.method, paid_at = ${paidAt}, created_by = EXCLUDED.created_by`;
 
   // Broadcast in-app alert to the sales & finance bell (best-effort).
   const [partner] = await sql`SELECT client_name FROM partner_subscriptions WHERE client_key = ${clientKey} ORDER BY created_at DESC LIMIT 1`;

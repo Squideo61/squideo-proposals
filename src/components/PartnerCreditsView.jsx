@@ -1,11 +1,24 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Coins, Plus, FolderOpen } from 'lucide-react';
+import { ArrowLeft, Coins, Plus, FolderOpen, CalendarClock } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, useIsMobile } from '../utils.js';
 import { api } from '../api.js';
 import { Modal } from './ui.jsx';
 import { PartnerMeetingsButton } from './PartnerMeetingsButton.jsx';
+import { thisMonthStr, shiftMonth } from './crm/dateRange.jsx';
+
+// Recent past months (excluding the current one), newest first, as 'YYYY-MM'.
+function recentPastMonths(n = 6) {
+  const out = [];
+  const cur = thisMonthStr();
+  for (let i = 1; i <= n; i++) out.push(shiftMonth(cur, -i));
+  return out;
+}
+const monthPickLabel = (key) => {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
+};
 
 function fmtCredits(n) {
   const v = Number(n) || 0;
@@ -178,13 +191,22 @@ export function PartnerCreditsView({ onBack, onOpen, onOpenDeal }) {
                         {(row.vatRate != null ? Math.round(Number(row.vatRate) * 100) : 20)}%
                       </td>
                       <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                        <PaidToggle
-                          row={row}
-                          onToggle={(paid) => actions.markPartnerFeePaid(row.clientKey, paid)
-                            .then(() => actions.fetchPartnerCreditsList())
-                            .then(() => showMsg(paid ? 'Marked paid — added to income + VAT' : 'Marked unpaid'))
-                            .catch((err) => showMsg(err?.message || 'Could not update'))}
-                        />
+                        <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+                          <PaidToggle
+                            row={row}
+                            onToggle={(paid) => actions.markPartnerFeePaid(row.clientKey, paid)
+                              .then(() => actions.fetchPartnerCreditsList())
+                              .then(() => showMsg(paid ? 'Marked paid — added to income + VAT' : 'Marked unpaid'))
+                              .catch((err) => showMsg(err?.message || 'Could not update'))}
+                          />
+                          <LogPastMonth
+                            row={row}
+                            onPay={(month) => actions.markPartnerFeePaid(row.clientKey, true, month)
+                              .then(() => actions.fetchPartnerCreditsList())
+                              .then(() => showMsg(`Logged ${monthPickLabel(month)} paid — added to income + VAT`))
+                              .catch((err) => showMsg(err?.message || 'Could not update'))}
+                          />
+                        </div>
                       </td>
                       {!isMobile && (
                         <td style={{ padding: '12px 8px', minWidth: 160 }}>
@@ -323,6 +345,44 @@ function PaidToggle({ row, onToggle }) {
     >
       {paid ? '✓ Paid' : 'Mark paid'}
     </button>
+  );
+}
+
+// Back-log a past month's fee as paid (e.g. last month's Generis received via
+// GoCardless). The main toggle only covers the current month; this drops the
+// payment into the chosen past month so it lands in that month's income.
+function LogPastMonth({ row, onPay }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [month, setMonth] = useState(() => recentPastMonths()[0]);
+  const noAmount = !(Number(row.monthlyNet) > 0);
+  if (noAmount) return null;
+  const months = recentPastMonths();
+  const go = (e) => {
+    e.stopPropagation();
+    if (busy || !month) return;
+    setBusy(true);
+    Promise.resolve(onPay(month)).finally(() => { setBusy(false); setOpen(false); });
+  };
+  if (!open) {
+    return (
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        title="Log a past month as paid (e.g. last month)"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 4, fontSize: 10, fontWeight: 600, color: BRAND.muted, background: 'transparent', border: '1px dashed ' + BRAND.border, borderRadius: 5, padding: '2px 6px', cursor: 'pointer' }}
+      >
+        <CalendarClock size={11} /> Past month
+      </button>
+    );
+  }
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 4, flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
+      <select value={month} onChange={(e) => setMonth(e.target.value)} style={{ padding: '2px 5px', borderRadius: 6, border: '1px solid ' + BRAND.border, fontSize: 11, color: BRAND.ink, background: 'white' }}>
+        {months.map((m) => <option key={m} value={m}>{monthPickLabel(m)}</option>)}
+      </select>
+      <button onClick={go} disabled={busy} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: '1px solid ' + BRAND.blue, background: BRAND.blue, color: 'white', cursor: busy ? 'default' : 'pointer' }}>{busy ? '…' : 'Log paid'}</button>
+      <button onClick={(e) => { e.stopPropagation(); setOpen(false); }} disabled={busy} style={{ fontSize: 11, padding: '2px 6px', borderRadius: 6, border: '1px solid ' + BRAND.border, background: 'white', color: BRAND.muted, cursor: 'pointer' }}>✕</button>
+    </span>
   );
 }
 

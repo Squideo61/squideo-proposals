@@ -1561,9 +1561,10 @@ export function StoreProvider({ children }) {
     setPartnerVatRate(clientKey, vatRate) {
       return api.post('/api/partner/manual-fee', { clientKey, vatRate });
     },
-    // Mark (or un-mark) a partner's fee for this month as collected → income + VAT.
-    markPartnerFeePaid(clientKey, paid = true) {
-      return api.post('/api/partner/mark-fee-paid', { clientKey, paid });
+    // Mark (or un-mark) a partner's fee as collected → income + VAT. Defaults to
+    // this month; pass a 'YYYY-MM' month to back-log (or clear) a past month.
+    markPartnerFeePaid(clientKey, paid = true, month) {
+      return api.post('/api/partner/mark-fee-paid', { clientKey, paid, ...(month ? { month } : {}) });
     },
     fetchPartnerCreditDetail(clientKey) {
       return api.get('/api/partner/clients?key=' + encodeURIComponent(clientKey))

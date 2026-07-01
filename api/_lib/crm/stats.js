@@ -531,6 +531,24 @@ async function fetchPaidManualPps(sinceISO, untilISO) {
   }
 }
 
+// Partner subscription fees marked paid (the "Mark paid" button on Partners &
+// Credits) in [sinceISO, untilISO) — labelled by the partner's name. These already
+// hit NET REVENUE via fetchPaidRows; this surfaces them in the itemised ledger too.
+// Guarded: partner_fee_payments is created by the partner route's self-heal.
+async function fetchPaidPartnerFees(sinceISO, untilISO) {
+  try {
+    return await sql`
+      SELECT pfp.id AS edit_key, pfp.paid_at, pfp.net, pfp.vat, pfp.method,
+             (SELECT ps.client_name FROM partner_subscriptions ps
+               WHERE ps.client_key = pfp.client_key
+               ORDER BY ps.created_at DESC LIMIT 1) AS company
+        FROM partner_fee_payments pfp
+       WHERE pfp.paid_at >= ${sinceISO} AND pfp.paid_at < ${untilISO}`;
+  } catch {
+    return [];
+  }
+}
+
 // Every paid-money row across all customers with paid_at in [sinceISO, untilISO).
 // Returns [{ paidAt: Date, net, vat, gross }]. Dates are bucketed in UTC.
 async function fetchPaidRows(sinceISO, untilISO) {
@@ -1801,6 +1819,14 @@ async function incomeReport(action) {
     push({ paid_at: r.paid_at, company: r.company, edit_key: r.edit_key }, 'recurring', { net, vat, gross: net + vat });
   }
 
+  // Partner subscription fees marked paid this period — labelled by partner name.
+  const feePaid = await fetchPaidPartnerFees(since, until);
+  for (const r of feePaid) {
+    const net = Number(r.net) || 0;
+    const vat = Number(r.vat) || 0;
+    push({ paid_at: r.paid_at, company: r.company, edit_key: r.edit_key, method: r.method }, 'partnerfee', { net, vat, gross: net + vat });
+  }
+
   // Drop duplicates (same proposal paid the same gross on the same day via two
   // mechanisms), then strip the internal proposalId from the response.
   const deduped = dedupePaymentRows(rows).map(({ proposalId, ...rest }) => rest); // eslint-disable-line no-unused-vars
@@ -1864,6 +1890,8 @@ async function incomeDateRoute(req, res) {
     await sql`UPDATE manual_pending_payments SET paid_at = ${iso} WHERE id = ${key}`;
   } else if (source === 'recurring') {
     await sql`UPDATE recurring_other_payments SET paid_at = ${iso} WHERE id = ${key}`;
+  } else if (source === 'partnerfee') {
+    await sql`UPDATE partner_fee_payments SET paid_at = ${iso} WHERE id = ${key}`;
   } else {
     return res.status(400).json({ error: 'This payment type cannot be re-dated here' });
   }
