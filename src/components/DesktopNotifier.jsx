@@ -1,6 +1,26 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store.jsx';
-import { fireDesktopNotification } from '../lib/desktopNotifications.js';
+import { fireDesktopNotification, desktopNotificationsEnabled } from '../lib/desktopNotifications.js';
+import { pushSupported, enablePush } from '../lib/pushSubscribe.js';
+
+// Re-sync the Web Push (Tier 2) subscription once per page load. Push
+// subscriptions are NOT permanent: the browser's push service rotates them,
+// reinstalling the PWA drops them, and the server prunes any that come back
+// 410 Gone. Since enablePush() otherwise only runs on the manual opt-in toggle,
+// a lapsed subscription would silently never come back — the user keeps getting
+// email but loses background push with no signal. Re-establishing it on every
+// load (idempotent: reuses the existing subscription or recreates + re-posts a
+// new one) heals that automatically. Guarded module-level so the several
+// DesktopNotifier mounts across shells only sync once.
+let pushResynced = false;
+function resyncPushSubscription() {
+  if (pushResynced) return;
+  pushResynced = true;
+  // Only when the user has already granted permission and hasn't muted alerts —
+  // never prompt or subscribe silently for someone who never opted in.
+  if (!pushSupported() || !desktopNotificationsEnabled()) return;
+  enablePush().catch(() => {});
+}
 
 // Tier 1 desktop notifications: fires OS popups from an open Squideo tab by
 // diffing the store's polled state for genuinely new items. Renders nothing.
@@ -21,6 +41,9 @@ export function DesktopNotifier({ onOpenLink }) {
   const openRef = useRef(onOpenLink);
   openRef.current = onOpenLink;
   const open = (link) => openRef.current?.(link);
+
+  // Heal any lapsed background-push subscription on load (once per page load).
+  useEffect(() => { resyncPushSubscription(); }, []);
 
   // ---- Bell notifications (general + finance) ----
   const seenNotifIds = useRef(null); // Set<string>; null until first seed
