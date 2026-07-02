@@ -730,7 +730,7 @@ function EditSubscriptionModal({ subscription, onClose, onSaved, onDeleted, patc
   };
 
   const handleDelete = async () => {
-    if (!confirm('Permanently remove this manual subscription? Credit movements will stay on file.')) return;
+    if (!confirm('Delete this partner client? This removes the subscription and its logged credit entries. You can undo it from the top bar (or Ctrl+Z).')) return;
     setRemoving(true);
     try {
       await remove(s.stripeSubscriptionId);

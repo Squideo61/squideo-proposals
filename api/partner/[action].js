@@ -16,6 +16,7 @@ import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
 import { notifyPpMarkedPaid } from '../_lib/crm/stats.js';
 import { creditTotalsForKeys } from '../_lib/partnerCredits.js';
+import { archiveRecord } from '../_lib/crm/recycleBin.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -64,7 +65,7 @@ export default async function handler(req, res) {
         if (!hasPermission(await getRole(user.role), 'users.manage')) {
           return res.status(403).json({ error: 'Only admins can delete subscriptions' });
         }
-        return await deleteManualSubscription(res, subId);
+        return await deleteManualSubscription(res, subId, user);
       }
       return res.status(405).end();
     }
@@ -274,6 +275,21 @@ async function listCredits(res) {
   const paidRows = await sql`SELECT client_key, net, vat FROM partner_fee_payments WHERE month = ${thisMonth}`;
   const paidByClient = new Map(paidRows.map(r => [r.client_key, { net: Number(r.net) || 0, vat: Number(r.vat) || 0 }]));
 
+  // The single manual subscription id per client, when the client has exactly one
+  // subscription and it's manual — that's what the list-row delete removes. Null
+  // for Stripe-tracked or multi-subscription clients (delete via the detail page).
+  const subGroups = await sql`
+    SELECT client_key,
+           COUNT(*)::INT AS n,
+           BOOL_AND(stripe_subscription_id LIKE 'manual_%') AS all_manual,
+           MIN(stripe_subscription_id) AS only_sub
+      FROM partner_subscriptions
+     GROUP BY client_key
+  `;
+  const manualSubByClient = new Map(subGroups.map(r => [
+    r.client_key, (r.n === 1 && r.all_manual) ? r.only_sub : null,
+  ]));
+
   const list = rows.map(r => {
     const creditsRemaining = Number(r.credits_remaining) || 0;
     const fee = feeByClient.get(r.client_key) || { exVat: 0, credits: 0 };
@@ -296,6 +312,7 @@ async function listCredits(res) {
     return {
       clientKey: r.client_key,
       clientName: r.client_name,
+      manualSubId: manualSubByClient.get(r.client_key) || null,
       subscriptions: { count: r.sub_count, active: r.sub_active_count },
       creditsIssued: Number(r.credits_issued) || 0,
       creditsUsed: Number(r.credits_used) || 0,
@@ -831,13 +848,37 @@ async function markMonthPaid(req, res, user, subId) {
   });
 }
 
-async function deleteManualSubscription(res, subId) {
+// Delete a manual subscription. The full row — and, when it's the client's last
+// subscription, all of that client's credit movements — are archived first so
+// the CRM undo (POST /api/crm/restore/<subId>) can bring everything back with
+// the same ids.
+async function deleteManualSubscription(res, subId, user) {
   if (!subId.startsWith('manual_')) {
     return res.status(400).json({ error: 'only manual subscriptions can be deleted' });
   }
-  const result = await sql`
-    DELETE FROM partner_subscriptions WHERE stripe_subscription_id = ${subId} RETURNING stripe_subscription_id
+  const [sub] = await sql`SELECT * FROM partner_subscriptions WHERE stripe_subscription_id = ${subId}`;
+  if (!sub) return res.status(404).json({ error: 'not found' });
+
+  // Only wipe the client's credit entries if no other subscription shares the
+  // client_key (else those movements still belong to the surviving sub).
+  const others = await sql`
+    SELECT 1 FROM partner_subscriptions
+     WHERE client_key = ${sub.client_key} AND stripe_subscription_id <> ${subId} LIMIT 1
   `;
-  if (result.length === 0) return res.status(404).json({ error: 'not found' });
+  const wipeAllocations = others.length === 0;
+  const allocations = wipeAllocations
+    ? await sql`SELECT * FROM credit_allocations WHERE client_key = ${sub.client_key}`
+    : [];
+
+  await archiveRecord('partner_subscription', subId, [
+    { table: 'partner_subscriptions', row: sub },
+    ...allocations.map(a => ({ table: 'credit_allocations', row: a })),
+  ], user?.email || null);
+
+  if (wipeAllocations) {
+    await sql`DELETE FROM credit_allocations WHERE client_key = ${sub.client_key}`;
+  }
+  await sql`DELETE FROM partner_subscriptions WHERE stripe_subscription_id = ${subId}`;
+
   return res.status(200).json({ ok: true });
 }

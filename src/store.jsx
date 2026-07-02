@@ -1607,8 +1607,19 @@ export function StoreProvider({ children }) {
       });
     },
     deleteManualSubscription(subId) {
+      const refresh = () => {
+        setState(s => ({ ...s, partnerCreditDetail: {} }));
+        return actions.fetchPartnerCreditsList();
+      };
       return api.delete('/api/partner/subscriptions?id=' + encodeURIComponent(subId)).then(() => {
-        setState(s => ({ ...s, partnerCreditsList: null, partnerCreditDetail: {} }));
+        refresh();
+        // The server archived the subscription + the client's credit movements
+        // before deleting, so undo restores them (same ids) and redo deletes again.
+        actions.recordUndo({
+          label: 'Delete partner client',
+          undo: () => api.post('/api/crm/restore/' + encodeURIComponent(subId)).then(refresh),
+          redo: () => actions.deleteManualSubscription(subId),
+        });
       });
     },
     markMonthPaid(clientKey, subId, input = {}) {

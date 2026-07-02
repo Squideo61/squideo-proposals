@@ -20,11 +20,12 @@ import { hasPermission } from '../permissions.js';
 // gated by an ownership check (tasks: creator / assignee / tasks.manage_all)
 // additionally allow the original deleter to undo — see restoreRoute.
 const RESTORE_PERMISSION = {
-  task:            'tasks.manage_all',
-  manual_pp:       'finance.manage',
-  cashflow_cost:   'finance.manage',
-  recurring_other: 'finance.manage',
-  project_video:   'production.access',
+  task:                 'tasks.manage_all',
+  manual_pp:            'finance.manage',
+  cashflow_cost:        'finance.manage',
+  recurring_other:      'finance.manage',
+  project_video:        'production.access',
+  partner_subscription: 'users.manage',
 };
 // Entities whose delete allowed the row's owner (not just a permission holder).
 // For these, the original deleter may always restore their own deletion.
@@ -36,6 +37,8 @@ const RESTORABLE_TABLES = new Set([
   'tasks', 'task_assignees', 'manual_pending_payments', 'cashflow_costs', 'recurring_other_revenue',
   // Production video + its cascade children (re-inserted parent-first on restore).
   'project_videos', 'video_milestones', 'video_milestone_assets', 'video_scripts', 'video_assignees',
+  // Partner subscription + the client's credit movements (deleted together).
+  'partner_subscriptions', 'credit_allocations',
 ]);
 
 let ensured = null;
@@ -99,6 +102,16 @@ export async function restoreRecord(recordId) {
       await sql`INSERT INTO video_scripts SELECT * FROM json_populate_record(NULL::video_scripts, ${json}::json) ON CONFLICT (id) DO NOTHING`;
     } else if (table === 'video_assignees') {
       await sql`INSERT INTO video_assignees SELECT * FROM json_populate_record(NULL::video_assignees, ${json}::json) ON CONFLICT DO NOTHING`;
+    } else if (table === 'partner_subscriptions') {
+      await sql`INSERT INTO partner_subscriptions SELECT * FROM json_populate_record(NULL::partner_subscriptions, ${json}::json) ON CONFLICT DO NOTHING`;
+    } else if (table === 'credit_allocations') {
+      // Re-insert with a fresh id (the integer id column may be identity-generated
+      // and its exact value doesn't matter) — content is what we're restoring.
+      await sql`
+        INSERT INTO credit_allocations (client_key, proposal_id, description, credit_cost, kind, allocated_by, notes, allocated_at, source_ref)
+        SELECT client_key, proposal_id, description, credit_cost, kind, allocated_by, notes, allocated_at, source_ref
+          FROM json_populate_record(NULL::credit_allocations, ${json}::json)
+        ON CONFLICT DO NOTHING`;
     }
   }
   await sql`DELETE FROM deleted_records WHERE record_id = ${recordId}`;

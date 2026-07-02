@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Coins, Plus, FolderOpen, CalendarClock, Building2, Check, Search } from 'lucide-react';
+import { ArrowLeft, Coins, Plus, FolderOpen, CalendarClock, Building2, Check, Search, Trash2 } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
+import { permissionsInclude } from '../lib/permissions.js';
 import { formatGBP, useIsMobile } from '../utils.js';
 import { api } from '../api.js';
 import { Modal } from './ui.jsx';
@@ -40,6 +41,18 @@ export function PartnerCreditsView({ onBack, onOpen, onOpenDeal }) {
   const [filter, setFilter] = useState('all'); // 'all' | 'active' | 'credits_only'
   const [projectCredits, setProjectCredits] = useState(null);
   const isMobile = useIsMobile();
+  const isAdmin = permissionsInclude(state.session?.permissions, 'users.manage');
+
+  // Delete a manual partner client straight from the list. Admin-only, warns
+  // first, and is undoable (the server archives the sub + its credit entries).
+  const deleteClient = (row) => {
+    if (!row.manualSubId) return;
+    const name = row.clientName || row.clientKey;
+    if (!window.confirm(`Delete "${name}"?\n\nThis removes the partner client and all its logged credit entries. You can undo it from the top bar (or Ctrl+Z).`)) return;
+    actions.deleteManualSubscription(row.manualSubId)
+      .then(() => showMsg('Partner client deleted — undo from the top bar'))
+      .catch((err) => showMsg(err?.message || 'Could not delete'));
+  };
 
   useEffect(() => {
     let active = true;
@@ -219,7 +232,19 @@ export function PartnerCreditsView({ onBack, onOpen, onOpenDeal }) {
                       )}
                       {!isMobile && <td style={{ padding: '12px 8px', color: BRAND.muted }}>{fmtDate(row.lastPaymentAt)}</td>}
                       <td style={{ padding: '12px 8px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
-                        <PartnerMeetingsButton clientKey={row.clientKey} clientName={row.clientName || row.clientKey} />
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <PartnerMeetingsButton clientKey={row.clientKey} clientName={row.clientName || row.clientKey} />
+                          {isAdmin && row.manualSubId && (
+                            <button
+                              onClick={() => deleteClient(row)}
+                              title="Delete partner client"
+                              aria-label="Delete partner client"
+                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', color: '#B91C1C', cursor: 'pointer' }}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
