@@ -1281,11 +1281,13 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
 
   const startReply = (all = false) => { setReplyAll(all); setExpanded(true); setReplying(true); };
 
-  // Addresses Cc'd into any *inbound* message on this thread that aren't
-  // already linked to this deal. We only mine inbound because the user asked
-  // for "Cc'd in replies I get" — outgoing Cc's are the user's own choice and
-  // don't need a prompt.
-  const unknownCcs = useMemo(() => {
+  // Real participants on this thread that aren't already linked to this deal —
+  // the person who emailed us (inbound `fromEmail`), the people we emailed
+  // (outbound `toEmails`), and anyone Cc'd into a reply we received (inbound
+  // `ccEmails`). These are the addresses worth prompting to add as a contact.
+  // Outbound Cc's are the user's own choice and skipped; our own team is never
+  // a candidate.
+  const unknownParticipants = useMemo(() => {
     if (!linkedEmails) return [];
     // Our own team is never a "new contact" to add. Exclude CRM users, the
     // signed-in user, the connected mailbox, and anyone on our own email domain
@@ -1299,16 +1301,20 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
     const ownDomain = at >= 0 ? sessionEmail.slice(at + 1) : null;
     const seen = new Set();
     const out = [];
+    const consider = (raw) => {
+      if (!raw || typeof raw !== 'string') return;
+      const lower = raw.trim().toLowerCase();
+      if (!lower || seen.has(lower) || linkedEmails.has(lower) || internal.has(lower)) return;
+      if (ownDomain && lower.endsWith('@' + ownDomain)) return;
+      seen.add(lower);
+      out.push(raw.trim());
+    };
     for (const m of messages) {
-      if (m.direction !== 'inbound') continue;
-      const ccs = Array.isArray(m.ccEmails) ? m.ccEmails : [];
-      for (const raw of ccs) {
-        if (!raw || typeof raw !== 'string') continue;
-        const lower = raw.trim().toLowerCase();
-        if (!lower || seen.has(lower) || linkedEmails.has(lower) || internal.has(lower)) continue;
-        if (ownDomain && lower.endsWith('@' + ownDomain)) continue;
-        seen.add(lower);
-        out.push(raw.trim());
+      if (m.direction === 'inbound') {
+        consider(m.fromEmail);
+        for (const raw of (Array.isArray(m.ccEmails) ? m.ccEmails : [])) consider(raw);
+      } else {
+        for (const raw of (Array.isArray(m.toEmails) ? m.toEmails : [])) consider(raw);
       }
     }
     return out;
@@ -1332,10 +1338,10 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
         onCreateNewDeal={onCreateNewDeal ? () => onCreateNewDeal({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
         onUnlink={onUnlink ? () => onUnlink({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
       />
-      {unknownCcs.length > 0 && (
+      {unknownParticipants.length > 0 && (
         <CcSuggestionStrip
           dealId={dealId}
-          addresses={unknownCcs}
+          addresses={unknownParticipants}
           defaultCompanyId={defaultCompanyId}
         />
       )}
@@ -5211,6 +5217,11 @@ function CcSuggestionStrip({ dealId, addresses, defaultCompanyId }) {
     return m;
   }, [state.contacts]);
 
+  // When at least one address has no contact record at all, frame the strip as
+  // "not in your contacts" (the CRM has never seen them); otherwise these are
+  // known contacts simply not yet linked to this deal.
+  const anyUnknown = addresses.some((e) => !contactByEmail.get(e.toLowerCase()));
+
   const handleAdd = async (email) => {
     const existing = contactByEmail.get(email.toLowerCase());
     if (existing) {
@@ -5236,7 +5247,7 @@ function CcSuggestionStrip({ dealId, addresses, defaultCompanyId }) {
         fontSize: 12,
       }}
     >
-      <span style={{ color: '#9A3412', fontWeight: 600 }}>New on this thread:</span>
+      <span style={{ color: '#9A3412', fontWeight: 600 }}>{anyUnknown ? 'Not in your contacts — add?' : 'New on this thread:'}</span>
       {addresses.map((email) => {
         const existing = contactByEmail.get(email.toLowerCase());
         return (

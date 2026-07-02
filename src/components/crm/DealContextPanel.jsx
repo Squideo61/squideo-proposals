@@ -176,10 +176,12 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
     return [...events, ...emails].sort((a, b) => new Date(b.when) - new Date(a.when)).slice(0, 5);
   }, [detail]);
 
-  // Cc'd addresses on inbound messages of the currently-viewed thread that
-  // aren't already a contact on this deal — drives the "New on this thread"
-  // add-as-contact prompt. Mirrors the Chrome extension's sidebar.
-  const unknownCcs = useMemo(() => {
+  // Real participants on the currently-viewed thread that aren't already a
+  // contact on this deal — the sender of a message we received (`fromEmail`),
+  // the people we emailed (`toEmails`), and anyone Cc'd into a reply we got
+  // (`ccEmails`). Drives the add-as-contact prompt. Mirrors the Chrome
+  // extension's sidebar. Outbound Cc's are the user's own choice and skipped.
+  const unknownParticipants = useMemo(() => {
     const linked = new Set();
     if (detail.primaryContact?.email) linked.add(detail.primaryContact.email.toLowerCase());
     for (const sc of (detail.secondaryContacts || [])) {
@@ -198,16 +200,21 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
     const ownDomain = at >= 0 ? sessionEmail.slice(at + 1) : null;
     const seen = new Set();
     const out = [];
+    const consider = (raw) => {
+      if (!raw || typeof raw !== 'string') return;
+      const lower = raw.trim().toLowerCase();
+      if (!lower || seen.has(lower) || linked.has(lower) || internal.has(lower)) return;
+      if (ownDomain && lower.endsWith('@' + ownDomain)) return;
+      seen.add(lower);
+      out.push(raw.trim());
+    };
     for (const em of (detail.emails || [])) {
       if (gmailThreadId && em.gmailThreadId !== gmailThreadId) continue;
-      if (em.direction !== 'inbound') continue;
-      for (const raw of (em.ccEmails || [])) {
-        if (!raw || typeof raw !== 'string') continue;
-        const lower = raw.trim().toLowerCase();
-        if (!lower || seen.has(lower) || linked.has(lower) || internal.has(lower)) continue;
-        if (ownDomain && lower.endsWith('@' + ownDomain)) continue;
-        seen.add(lower);
-        out.push(raw.trim());
+      if (em.direction === 'inbound') {
+        consider(em.fromEmail);
+        for (const raw of (em.ccEmails || [])) consider(raw);
+      } else {
+        for (const raw of (em.toEmails || [])) consider(raw);
       }
     }
     return out;
@@ -244,8 +251,8 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
 
       {detail.leadSource && <LeadSourceMini src={detail.leadSource} />}
 
-      {unknownCcs.length > 0 && (
-        <CcSuggestions dealId={detail.id} addresses={unknownCcs} defaultCompanyId={detail.companyId || null} />
+      {unknownParticipants.length > 0 && (
+        <CcSuggestions dealId={detail.id} addresses={unknownParticipants} defaultCompanyId={detail.companyId || null} />
       )}
 
       <Label>My open tasks</Label>
@@ -338,9 +345,10 @@ function TaskMini({ task, onEdit, showAssignees }) {
   );
 }
 
-// "New on this thread" — Cc'd addresses not yet on the deal, with a one-tap
-// add (and optional name). addDealContact upserts and updates secondaryContacts
-// in place, so an added address drops out of this list automatically.
+// "Not in your contacts" — thread participants (sender, recipients, Cc's) not
+// yet on the deal, with a one-tap add (and optional name). addDealContact
+// upserts and updates secondaryContacts in place, so an added address drops out
+// of this list automatically.
 function CcSuggestions({ dealId, addresses, defaultCompanyId }) {
   const { actions, showMsg } = useStore();
   const [expanded, setExpanded] = useState(null);
@@ -361,8 +369,8 @@ function CcSuggestions({ dealId, addresses, defaultCompanyId }) {
 
   return (
     <>
-      <Label>New on this thread</Label>
-      <Muted style={{ margin: '4px 0 8px' }}>Cc'd in a reply but not yet a contact on this deal.</Muted>
+      <Label>Not in your contacts</Label>
+      <Muted style={{ margin: '4px 0 8px' }}>On this thread but not yet a contact on this deal.</Muted>
       <div style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {addresses.map((email) => {
           const isOpen = expanded === email;
