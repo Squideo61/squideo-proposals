@@ -153,6 +153,7 @@ describe('resolveDealForMessage', () => {
     setSqlHandler((text) => {
       if (text.includes('FROM email_thread_deals WHERE gmail_thread_id')) return [];
       if (text.includes('FROM email_messages em')) return [];
+      if (text.includes('FROM users')) return [];
       if (text.includes('matched_contacts')) {
         return [{ id: 'd9', last_activity_at: new Date() }];
       }
@@ -166,6 +167,7 @@ describe('resolveDealForMessage', () => {
     let captured = null;
     setSqlHandler((text, values) => {
       if (text.includes('FROM email_thread_deals WHERE gmail_thread_id')) return [];
+      if (text.includes('FROM users')) return [];
       if (text.includes('matched_contacts')) {
         captured = values;
         return [];
@@ -184,9 +186,54 @@ describe('resolveDealForMessage', () => {
     expect(flat).toContain('someone@client.com');
   });
 
+  it('Rule 4 — any team address (not just userEmail) is excluded from matching', async () => {
+    // Regression: the mailbox owner receives every inbound email, so their own
+    // address sits in To/Cc of unrelated mail (newsletters, spam). It must not
+    // seed a contact/domain match even when it differs from userEmail.
+    let captured = null;
+    setSqlHandler((text, values) => {
+      if (text.includes('FROM email_thread_deals WHERE gmail_thread_id')) return [];
+      if (text.includes('FROM email_messages em')) return [];
+      if (text.includes('FROM users')) return [{ addr: 'callum@squideo.co.uk' }];
+      if (text.includes('matched_contacts')) { captured = values; return []; }
+      if (text.includes('JOIN companies c')) return [];
+      return [];
+    });
+    const r = await resolveDealForMessage({
+      ...base,
+      fromEmail: 'newsletter@linkedin.com',
+      toEmails: ['callum@squideo.co.uk'], // mailbox owner, differs from userEmail
+      ccEmails: [],
+    });
+    expect(r).toEqual({ dealId: null, resolvedBy: null });
+    const flat = captured.flat();
+    expect(flat).not.toContain('callum@squideo.co.uk');
+    expect(flat).toContain('newsletter@linkedin.com');
+  });
+
+  it('Rule 5 — free-mail sender domains are never used for domain matching', async () => {
+    let domainQueried = false;
+    setSqlHandler((text) => {
+      if (text.includes('FROM email_thread_deals WHERE gmail_thread_id')) return [];
+      if (text.includes('FROM email_messages em')) return [];
+      if (text.includes('FROM users')) return [];
+      if (text.includes('matched_contacts')) return [];
+      if (text.includes('JOIN companies c')) { domainQueried = true; return [{ id: 'dX' }]; }
+      return [];
+    });
+    const r = await resolveDealForMessage({
+      ...base,
+      fromEmail: 'randomperson@gmail.com',
+      toEmails: [],
+    });
+    expect(domainQueried).toBe(false);
+    expect(r).toEqual({ dealId: null, resolvedBy: null });
+  });
+
   it('Rule 5 — domain match falls back when contact lookup is empty', async () => {
     setSqlHandler((text) => {
       if (text.includes('FROM email_thread_deals WHERE gmail_thread_id')) return [];
+      if (text.includes('FROM users')) return [];
       if (text.includes('matched_contacts')) return [];
       if (text.includes('JOIN companies c')) return [{ id: 'd11' }];
       throw new Error('unexpected query: ' + text);

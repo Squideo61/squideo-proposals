@@ -7,6 +7,15 @@ import sql from './db.js';
 
 const GOOGLE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
 
+// Generic mailbox providers that must never be used as a deal-matching domain.
+const FREEMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'hotmail.co.uk',
+  'live.com', 'live.co.uk', 'msn.com', 'yahoo.com', 'yahoo.co.uk', 'ymail.com',
+  'icloud.com', 'me.com', 'mac.com', 'aol.com', 'protonmail.com', 'proton.me',
+  'gmx.com', 'gmx.co.uk', 'zoho.com', 'yandex.com', 'mail.com', 'btinternet.com',
+  'sky.com', 'talktalk.net', 'virginmedia.com', 'ntlworld.com',
+]);
+
 // Verify the OIDC JWT that Google attaches to each Pub/Sub push when the
 // subscription has authentication enabled. The audience claim defaults to
 // the push endpoint URL (which is what we want — we left "Audience" blank
@@ -236,10 +245,25 @@ export async function resolveDealForMessage({
 
   // 4. Contact email match — pick the most recently active deal that has
   //    this contact attached (either as primary, or via deal_contacts).
+  //
+  // Strip ALL internal/team addresses first, not just the mailbox owner's
+  // userEmail. The mailbox owner's own address appears in the To/Cc of every
+  // message they receive; if it (or the team domain, or a cc'd colleague)
+  // happens to touch a deal, matching on it would funnel unrelated inbound
+  // mail onto that deal — and the last_activity bump below then snowballs
+  // every later message onto the same one. (userEmail is the CRM login, which
+  // can differ from the real gmail_address, so filtering on it alone leaks.)
+  const internalRows = await sql`
+    SELECT LOWER(email) AS addr FROM users WHERE email IS NOT NULL
+    UNION
+    SELECT LOWER(gmail_address) AS addr FROM gmail_accounts WHERE gmail_address IS NOT NULL
+  `;
+  const internalAddrs = new Set(internalRows.map(r => r.addr));
+  if (userEmail) internalAddrs.add(userEmail.toLowerCase());
   const otherEmails = [fromEmail, ...toEmails, ...ccEmails]
     .filter(Boolean)
     .map(s => s.toLowerCase())
-    .filter(e => e !== (userEmail || '').toLowerCase());
+    .filter(e => !internalAddrs.has(e));
   if (otherEmails.length) {
     const contactMatch = await sql`
       WITH matched_contacts AS (
@@ -261,7 +285,13 @@ export async function resolveDealForMessage({
     if (contactMatch.length) return { dealId: contactMatch[0].id, resolvedBy: 'contact' };
 
     // 5. Domain match — fall back to companies.domain on a non-team email.
-    const domains = otherEmails.map(e => e.split('@')[1]).filter(Boolean);
+    //    Skip generic free-mail providers: a company saved (or auto-created)
+    //    with one of these as its "domain" would otherwise swallow every
+    //    personal-email sender into that single deal.
+    const domains = otherEmails
+      .map(e => e.split('@')[1])
+      .filter(Boolean)
+      .filter(dom => !FREEMAIL_DOMAINS.has(dom));
     if (domains.length) {
       const domainMatch = await sql`
         SELECT d.id
