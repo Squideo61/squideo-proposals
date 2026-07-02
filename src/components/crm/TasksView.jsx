@@ -250,6 +250,13 @@ function TaskRow({ task, actions, state, onOpenDeal, onEdit }) {
       >
         <div style={{ fontSize: 14, fontWeight: 500, textDecoration: done ? 'line-through' : 'none', color: done ? BRAND.muted : BRAND.ink, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span>{task.title}</span>
+          {task.isMilestone && (
+            <span style={{
+              display: 'inline-block', padding: '1px 6px', borderRadius: 3,
+              background: '#E0F2FE', color: '#0369A1',
+              fontSize: 10, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase',
+            }}>Milestone</span>
+          )}
           {overdue && (
             <span style={{
               display: 'inline-block', padding: '1px 6px', borderRadius: 3,

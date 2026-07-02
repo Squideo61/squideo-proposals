@@ -1581,6 +1581,13 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_start_date DATE`.catch(() => {});
       await sql`UPDATE deals SET production_start_date = ${trimOrNull(body.productionStartDate)}, updated_at = NOW() WHERE id = ${id}`;
     }
+    // Production schedule (the doc-style plan; one JSON blob per project).
+    // Self-heal the column so the edit works on a workspace that hasn't hit a
+    // production path yet. Stored whole; read back via SELECT * on detail.
+    if ('productionSchedule' in body) {
+      await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_schedule JSONB`.catch(() => {});
+      await sql`UPDATE deals SET production_schedule = ${body.productionSchedule ? JSON.stringify(body.productionSchedule) : null}::jsonb, updated_at = NOW() WHERE id = ${id}`;
+    }
     const rows = await sql`
       SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
              value, vat_rate, expected_close_at, lost_reason, notes, overview_video_url, last_activity_at, created_at, updated_at, producer_email
@@ -1690,6 +1697,7 @@ export function serialiseDeal(r) {
     out.deliveryDeadline           = r.delivery_deadline || null;
     out.textDirectionDeadline      = r.text_direction_deadline || null;
     out.videoLength                = r.video_length || null;
+    out.productionSchedule         = r.production_schedule || null;
   }
   return out;
 }

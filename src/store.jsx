@@ -2234,6 +2234,18 @@ export function StoreProvider({ children }) {
       );
     },
 
+    // Reconcile a deal's production schedule into milestone-flagged tasks
+    // (server-side upsert-by-key, no duplicates). Reload the deal so its Tasks
+    // card + schedule syncedAt refresh. Returns { created, updated, removed }.
+    syncMilestones(dealId) {
+      // Send the browser's UTC offset so wall-clock schedule times map to the
+      // correct instant server-side (milestone due times display consistently).
+      const tzOffsetMinutes = new Date().getTimezoneOffset();
+      return api.post('/api/crm/tasks/sync-milestones', { dealId, tzOffsetMinutes })
+        .then((resp) => actions.loadDealDetail(dealId).then(() => resp))
+        .catch((err) => { showMsg('Failed to move schedule to milestones'); throw err; });
+    },
+
     // ---------- Deal comments ----------
     createDealComment(dealId, body, parentId, mentions) {
       return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/comments', { body, parentId: parentId || null, mentions: mentions || [] })

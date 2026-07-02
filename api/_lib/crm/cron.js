@@ -565,7 +565,57 @@ export async function cronTaskReminders(res) {
     sent++;
   }
 
-  return res.status(200).json({ ok: true, found: due.length, sent });
+  // Milestone "heads-up" pre-reminder. Schedule-derived milestone tasks get an
+  // extra nudge ~1 working day before they're due (in addition to the at-due
+  // reminder above), so producers see the deadline coming. pre_reminded_at gates
+  // it to once. Self-heal the milestone columns so this is safe pre-sync.
+  let preSent = 0;
+  try {
+    await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS is_milestone BOOLEAN NOT NULL DEFAULT false`;
+    await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS pre_reminded_at TIMESTAMPTZ`;
+    const soon = await sql`
+      SELECT t.id, t.title, t.due_at, t.assignee_email, t.deal_id, t.notes,
+             d.title AS deal_title,
+             (SELECT COALESCE(ARRAY_AGG(ta.user_email), '{}')
+              FROM task_assignees ta WHERE ta.task_id = t.id) AS assignees
+      FROM tasks t
+      LEFT JOIN deals d ON d.id = t.deal_id
+      WHERE t.is_milestone = true
+        AND t.done_at IS NULL
+        AND t.pre_reminded_at IS NULL
+        AND t.due_at IS NOT NULL
+        AND t.due_at > NOW() + INTERVAL '15 minutes'
+        AND t.due_at <= NOW() + INTERVAL '1 day'
+      ORDER BY t.due_at ASC
+      LIMIT 200
+    `;
+    for (const t of soon) {
+      const joined = Array.isArray(t.assignees) ? t.assignees.filter(Boolean) : [];
+      const recipients = joined.length ? joined : (t.assignee_email ? [t.assignee_email] : []);
+      if (!recipients.length) { await sql`UPDATE tasks SET pre_reminded_at = NOW() WHERE id = ${t.id}`; continue; }
+      const dueLabel = new Date(t.due_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+      const subject = `Coming up: ${t.title}`;
+      const inAppRecipients = await resolveRecipients('task.reminder', { assigneeEmails: recipients });
+      if (inAppRecipients.length) {
+        const inAppLink = t.deal_id ? `#/deal/${t.deal_id}` : '#/tasks/mine';
+        await persistInApp('task.reminder', inAppRecipients, {
+          subject,
+          inApp: {
+            title: `Milestone coming up: ${t.title}`,
+            body: `Due ${dueLabel}${t.deal_title ? ` — ${t.deal_title}` : ''}`,
+            link: inAppLink,
+            tag: `milestone-pre-${t.id}`,
+          },
+        });
+      }
+      await sql`UPDATE tasks SET pre_reminded_at = NOW() WHERE id = ${t.id}`;
+      preSent++;
+    }
+  } catch (err) {
+    console.error('[cron task-reminders] milestone pre-reminder failed', { err: err.message });
+  }
+
+  return res.status(200).json({ ok: true, found: due.length, sent, preSent });
 }
 
 // Morning digest — runs once a day (vercel.json) as the heads-up counterpart to

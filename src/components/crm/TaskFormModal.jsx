@@ -243,23 +243,23 @@ export function AssigneePicker({ users, selected, onToggle, emptyLabel = 'No one
 const DTP_WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 const DTP_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-function parseLocalDT(value) {
+export function parseLocalDT(value) {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value || '');
   if (!m) return null;
   return { y: +m[1], mo: +m[2] - 1, d: +m[3], h: +m[4], mi: +m[5] };
 }
-function fmtLocalDT({ y, mo, d, h, mi }) {
+export function fmtLocalDT({ y, mo, d, h, mi }) {
   const pad = (n) => String(n).padStart(2, '0');
   return `${y}-${pad(mo + 1)}-${pad(d)}T${pad(h)}:${pad(mi)}`;
 }
-function formatDTDisplay(value) {
+export function formatDTDisplay(value) {
   const p = parseLocalDT(value);
   if (!p) return '';
   const pad = (n) => String(n).padStart(2, '0');
   return `${pad(p.d)}/${pad(p.mo + 1)}/${p.y} ${pad(p.h)}:${pad(p.mi)}`;
 }
 
-function DateTimePicker({ value, onChange, defaultHour = 8 }) {
+export function DateTimePicker({ value, onChange, defaultHour = 8 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null); // { left, top } for the portalled popover
   const ref = useRef(null);     // the trigger (anchor)
@@ -460,7 +460,7 @@ function Row({ label, children }) {
 
 // Convert an ISO timestamp into a value the <input type="datetime-local">
 // accepts (YYYY-MM-DDTHH:mm in local time).
-function isoToLocalInput(iso) {
+export function isoToLocalInput(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   const pad = (n) => String(n).padStart(2, '0');

@@ -10,6 +10,7 @@ import { Badge, Modal } from '../ui.jsx';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
 import { TaskFormModal, AssigneePicker } from './TaskFormModal.jsx';
+import { ScheduleCard, ScheduleModal } from './ScheduleModal.jsx';
 import { Card, Empty } from './Card.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { OrderSummaryCard } from './OrderSummaryCard.jsx';
@@ -98,6 +99,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   const [orderRefresh, setOrderRefresh] = useState(0);
   const [creatingTask, setCreatingTask] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   // The composer itself is mounted at App level (see EmailComposerHost) so
   // it survives navigation. Opening it is now a store action.
   const openComposerForDeal = () => actions.openComposer({
@@ -200,9 +202,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
     return set;
   }, [state.session?.email, contact?.email, detail?.secondaryContacts]);
 
-  const overdueTasks  = tasks.filter(t => isTaskOverdue(t));
-  const upcomingTasks = tasks.filter(t => !t.doneAt && !isTaskOverdue(t));
-  const doneTasks     = tasks.filter(t => !!t.doneAt);
+  // Milestone-flagged tasks (created from the production schedule) get their own
+  // group and are kept out of the ordinary overdue/upcoming/done buckets — done
+  // milestones stay in the Milestones group (struck through) rather than jumping
+  // to Done.
+  const milestoneTasks = tasks.filter(t => t.isMilestone);
+  const overdueTasks  = tasks.filter(t => !t.isMilestone && isTaskOverdue(t));
+  const upcomingTasks = tasks.filter(t => !t.isMilestone && !t.doneAt && !isTaskOverdue(t));
+  const doneTasks     = tasks.filter(t => !t.isMilestone && !!t.doneAt);
 
   const timeline = useMemo(() =>
     [...events]
@@ -597,12 +604,24 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           ))}
         </Card>
 
+        {projectVideos.length > 0 && (
+          <ScheduleCard deal={deal} onOpen={() => setScheduleOpen(true)} />
+        )}
+
         <Card title="Tasks" count={tasks.filter(t => !t.doneAt).length}>
           <QuickAddTask
             dealId={dealId}
             onSchedule={(title) => { setPrefillTitle(title); setCreatingTask(true); }}
           />
           {tasks.length === 0 && <Empty text="No tasks yet" />}
+          {milestoneTasks.length > 0 && (
+            <>
+              <TaskSection label="Milestones" color={BRAND.blue} />
+              {milestoneTasks.map(t => (
+                <TaskRow key={t.id} task={t} onToggle={() => actions.toggleTask(t.id)} onEdit={() => setEditingTask(t)} />
+              ))}
+            </>
+          )}
           {overdueTasks.length > 0 && (
             <>
               <TaskSection label="Overdue" color="#DC2626" />
@@ -777,6 +796,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           task={editingTask}
           onClose={() => setEditingTask(null)}
           onSaved={() => { setEditingTask(null); actions.loadDealDetail(dealId); }}
+        />
+      )}
+      {scheduleOpen && (
+        <ScheduleModal
+          deal={deal}
+          dealId={dealId}
+          company={company}
+          onClose={() => setScheduleOpen(false)}
         />
       )}
       {/* Composer lives at the App root now (see EmailComposerHost) so it
