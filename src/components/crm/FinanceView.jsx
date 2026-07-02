@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote, CalendarCheck, TrendingUp, Plus, Pencil, StickyNote } from 'lucide-react';
+import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote, CalendarCheck, TrendingUp, Plus, Pencil, StickyNote, Archive, ArchiveRestore } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -1035,6 +1035,7 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
               isMobile={isMobile}
             />
           )}
+          <ArchivedPendingButton actions={actions} onChanged={onChanged} refreshSignal={pps} />
           <PartnersPanel partners={partners} total={partnerTotal} onOpenPartner={onOpenPartner} isMobile={isMobile} />
           <OtherPanel rows={pending.other || []} total={pending.totals?.other || 0} actions={actions} onChanged={onChanged} isMobile={isMobile} />
         </div>
@@ -1461,6 +1462,75 @@ function EditOtherModal({ row, actions, onClose, onSaved, isMobile }) {
 const MANUAL_PP_COLS = '1fr 92px 80px 92px 92px';
 const MANUAL_PP_COLS_M = '1fr 64px 72px 76px';
 
+// Access point for archived imported pending payments. Hidden entirely when
+// nothing is archived (no clutter); appears with a count once rows are archived.
+// refreshSignal changes whenever the outstanding list reloads, so archiving a
+// row from the main list re-counts here. Works even when the outstanding group
+// is empty (all archived), since it fetches independently.
+function ArchivedPendingButton({ actions, onChanged, refreshSignal }) {
+  const [rows, setRows] = useState(null);
+  const [open, setOpen] = useState(false);
+  const load = () => {
+    if (!actions?.getArchivedPendingPayments) return;
+    actions.getArchivedPendingPayments().then((r) => setRows(r || [])).catch(() => setRows([]));
+  };
+  useEffect(() => { load(); /* refetch when the outstanding list changes */ // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal]);
+  const count = rows ? rows.length : 0;
+  if (!open && count === 0) return null;
+  return (
+    <>
+      <div style={{ textAlign: 'center', margin: '2px 0 4px' }}>
+        <button className="btn-ghost" style={{ fontSize: 12, color: BRAND.muted }} onClick={() => { setOpen(true); load(); }}>
+          <Archive size={13} /> Archived pending payments{count ? ` (${count})` : ''}
+        </button>
+      </div>
+      {open && (
+        <ArchivedPendingModal
+          rows={rows || []}
+          onRestore={(r) => actions.markPendingPaymentArchived(r.id, false).then(() => { load(); onChanged && onChanged(); })}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function ArchivedPendingModal({ rows, onRestore, onClose }) {
+  return (
+    <Modal onClose={onClose} maxWidth={640}>
+      <div style={{ padding: 4 }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: BRAND.ink }}>Archived pending payments</h3>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 12 }}>
+          Archived items are hidden from the outstanding list and excluded from the pending total. Restore one to put it back.
+        </div>
+        {rows.length === 0 ? (
+          <div style={{ padding: '16px 0', fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>No archived pending payments.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {rows.map((r) => {
+              const subtitle = [r.invoiceType, r.poNumber, r.description, r.note].filter(Boolean).join(' · ');
+              const gross = (Number(r.amountExVat) || 0) + (Number(r.vat) || 0);
+              return (
+                <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || r.description || 'Pending payment'}</div>
+                    {subtitle && <div style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{subtitle}</div>}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>{formatGBP(gross)}</span>
+                    <button className="btn" style={{ fontSize: 12 }} onClick={() => onRestore(r)}><ArchiveRestore size={13} /> Restore</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', accent = '#0E7490', rows, total, actions, onChanged, onOpenDeal, onOpenCompany, companies, isMobile, bare = false }) {
   const predict = usePredict();
   const canManage = predict?.canManage !== false;
@@ -1527,6 +1597,19 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
       });
     });
   };
+  // Archive a row — drops it off the outstanding list but keeps it retrievable
+  // in the archive view. Undoable, and distinct from Remove (which hard-deletes).
+  const archive = (r) => {
+    if (!actions) return;
+    actions.markPendingPaymentArchived(r.id, true).then(() => {
+      if (onChanged) onChanged();
+      actions.recordUndo && actions.recordUndo({
+        label: `Archive ${r.company || noun}`,
+        undo: () => actions.markPendingPaymentArchived(r.id, false).then(() => onChanged && onChanged()),
+        redo: () => actions.markPendingPaymentArchived(r.id, true).then(() => onChanged && onChanged()),
+      });
+    });
+  };
   const remove = (r) => {
     if (!actions) return;
     if (window.confirm(`Remove "${r.company || r.description || 'this item'}" from pending payments?\n\nIt will drop off the outstanding list and lower the pending total — use this for duplicates or mistakes. It is NOT recorded as paid; to bank a payment use "Mark paid" instead.`)) {
@@ -1583,6 +1666,7 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
                 companies={companies}
                 onOpenDeal={onOpenDeal}
                 onOpenCompany={onOpenCompany}
+                onArchive={() => archive(r)}
                 onRemove={() => remove(r)}
                 onChanged={onChanged}
               />
@@ -1620,7 +1704,7 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
   );
 }
 
-function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onPaid, onInvoice, onUninvoice, onLink, onLinkCompany, companies, onOpenDeal, onOpenCompany, onRemove, onChanged }) {
+function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onPaid, onInvoice, onUninvoice, onLink, onLinkCompany, companies, onOpenDeal, onOpenCompany, onArchive, onRemove, onChanged }) {
   const predict = usePredict();
   const [linkOpen, setLinkOpen] = useState(false);
   const [payingInvoice, setPayingInvoice] = useState(false);
@@ -1657,6 +1741,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
     canManage && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => onPaid('bacs') },
     canManage && onLink && { label: linked ? 'Edit link' : 'Link to deal / customer', icon: Link2, onClick: () => setLinkOpen(true) },
     canOpen && { label: linkedCompany ? 'Open customer' : `Open ${dealNoun}`, icon: ExternalLink, onClick: openLinked },
+    canManage && onArchive && { label: 'Archive', icon: Archive, onClick: onArchive },
     canManage && { label: 'Remove', icon: Trash2, danger: true, onClick: onRemove },
   ];
   const predictKey = predictKeyForManual(r);

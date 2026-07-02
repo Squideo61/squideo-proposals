@@ -1337,6 +1337,18 @@ export function StoreProvider({ children }) {
         return data;
       });
     },
+    // Archive an imported pending payment (drops it off the outstanding list but
+    // keeps it retrievable), or restore it with archived=false. Refreshes pending.
+    markPendingPaymentArchived(id, archived = true) {
+      return api.patch('/api/crm/stats/pending-manual/' + id, { archived }).then((data) => {
+        api.get('/api/crm/stats/pending').then((p) => setState(s => ({ ...s, pendingPayments: p || null }))).catch(() => {});
+        return data;
+      });
+    },
+    // Fetch archived imported pending payments for the archive view.
+    getArchivedPendingPayments() {
+      return api.get('/api/crm/stats/pending-manual?archived=1').then((d) => (d?.rows || []));
+    },
     // Mark an imported pending payment paid (→ income) or back to pending, with
     // how it was paid (stripe/bacs). The caller refreshes pending + income.
     markPendingPaymentPaid(id, paid = true, method = null) {

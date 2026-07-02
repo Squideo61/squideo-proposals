@@ -237,6 +237,9 @@ function ensureManualPendingPayments() {
     // A row can instead be linked to a customer (company) directly — used for
     // one-off imported items that belong to a client but not a specific deal.
     await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS company_id TEXT`;
+    // Archived rows drop off the outstanding list but stay retrievable (distinct
+    // from Remove, which hard-deletes into the recycle bin).
+    await sql`ALTER TABLE manual_pending_payments ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false`;
 
     // Remove accidental duplicate seed rows from a concurrent-cold-start race
     // (two instances both saw an empty table and both inserted). Keep the
@@ -410,19 +413,29 @@ function serialiseManualPP(r) {
     dealId: r.deal_id || null,
     companyId: r.company_id || null,
     linkedCompanyName: r.linked_company_name || null,
+    archived: r.archived === true,
   };
 }
 
 // Outstanding (unpaid) manual pending payments (robust to a missing table → []).
-async function fetchManualPending() {
+// Pass { archived: true } for the archive view — otherwise archived rows are
+// hidden from the live outstanding list.
+async function fetchManualPending({ archived = false } = {}) {
   try {
     await ensureManualPendingPayments();
-    const rows = await sql`
-      SELECT m.*, c.name AS linked_company_name
-        FROM manual_pending_payments m
-        LEFT JOIN companies c ON c.id = m.company_id
-       WHERE m.status <> 'paid'
-       ORDER BY m.sort_order ASC NULLS LAST, m.created_at ASC`;
+    const rows = archived
+      ? await sql`
+          SELECT m.*, c.name AS linked_company_name
+            FROM manual_pending_payments m
+            LEFT JOIN companies c ON c.id = m.company_id
+           WHERE m.status <> 'paid' AND m.archived = true
+           ORDER BY m.sort_order ASC NULLS LAST, m.created_at ASC`
+      : await sql`
+          SELECT m.*, c.name AS linked_company_name
+            FROM manual_pending_payments m
+            LEFT JOIN companies c ON c.id = m.company_id
+           WHERE m.status <> 'paid' AND m.archived = false
+           ORDER BY m.sort_order ASC NULLS LAST, m.created_at ASC`;
     return rows.map(serialiseManualPP);
   } catch {
     return [];
@@ -1448,7 +1461,8 @@ async function pendingManualRoute(req, res, action, user) {
   await ensureManualPendingPayments();
 
   if (req.method === 'GET') {
-    return res.status(200).json({ rows: await fetchManualPending() });
+    const wantArchived = req.query?.archived === '1' || /[?&]archived=1(?:&|$)/.test(req.url || '');
+    return res.status(200).json({ rows: await fetchManualPending({ archived: wantArchived }) });
   }
 
   if (req.method === 'DELETE') {
@@ -1480,6 +1494,13 @@ async function pendingManualRoute(req, res, action, user) {
     if ('companyId' in body) {
       const companyId = trimOrNull(body.companyId);
       await sql`UPDATE manual_pending_payments SET company_id = ${companyId}, deal_id = NULL WHERE id = ${action}`;
+      return res.status(200).json({ ok: true, rows: await fetchManualPending() });
+    }
+    // Archive (or restore) the row. Archived rows drop off the outstanding list
+    // but remain retrievable in the archive view — distinct from Remove.
+    if ('archived' in body) {
+      const archived = body.archived !== false; // default → archived
+      await sql`UPDATE manual_pending_payments SET archived = ${archived} WHERE id = ${action}`;
       return res.status(200).json({ ok: true, rows: await fetchManualPending() });
     }
     if ('invoiced' in body) {
