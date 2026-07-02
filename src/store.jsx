@@ -1856,9 +1856,15 @@ export function StoreProvider({ children }) {
           return Promise.all([actions.loadDealDetail(dealId), actions.loadProductionVideos()]);
         });
     },
-    addProjectVideo(dealId, title, { fromCredit = false } = {}) {
-      return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/videos', { title, fromCredit })
+    addProjectVideo(dealId, title, { fromCredit = false, credits } = {}) {
+      return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/videos', { title, fromCredit, credits })
         .then((video) => Promise.all([actions.loadDealDetail(dealId), actions.loadProductionVideos()]).then(() => video));
+    },
+    // "Add credits" on a credit-based project: create-or-top-up the deal's single
+    // credit pool. Reloads the deal detail so the Videos panel's balance updates.
+    addCreditProjectCredits(dealId, credits) {
+      return api.post('/api/crm/retainers/credits', { dealId, credits })
+        .then((resp) => actions.loadDealDetail(dealId).then(() => resp));
     },
     deleteProjectVideo(dealId, videoId) {
       const done = () => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadProductionVideos()]);

@@ -13,6 +13,7 @@ import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { enterProduction } from '../production.js';
 import { sendNotification } from '../notifications.js';
+import { getDealCreditProject } from './retainers.js';
 import { APP_URL } from '../email.js';
 
 // Self-heal for db/migrations/20260604_deal_files_drive.sql — Drive-backed
@@ -1417,9 +1418,14 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       if (opt) { paymentOption = opt; break; }
     }
 
+    // The deal's credit project (single active credits-type retainer), or null.
+    // Drives the Videos panel's per-video credit deduction on credit-based deals.
+    const creditProject = await getDealCreditProject(id).catch(() => null);
+
     return res.status(200).json({
       ...deal,
       paymentOption,
+      creditProject,
       // First-touch marketing attribution for the lead that became this deal
       // (null if it didn't come from the quote form), incl. a returning-client flag.
       leadSource,

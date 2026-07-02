@@ -2,6 +2,27 @@ import sql from '../db.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { isVideoSignedOff } from '../productionStages.js';
+
+// A deal's "credit project" is its single active credits-type retainer — the one
+// pool videos are drawn against. Returns { id, allocationAmount, used, remaining }
+// or null. Reused by the deal-detail payload and the add-video credit deduction.
+export async function getDealCreditProject(dealId) {
+  const [r] = await sql`
+    SELECT id, allocation_amount
+      FROM project_retainers
+     WHERE deal_id = ${dealId} AND allocation_type = 'credits' AND status = 'active'
+     ORDER BY created_at ASC
+     LIMIT 1
+  `;
+  if (!r) return null;
+  const [{ used }] = await sql`
+    SELECT COALESCE(SUM(value), 0) AS used FROM project_retainer_entries WHERE retainer_id = ${r.id}
+  `;
+  const allocationAmount = Number(r.allocation_amount);
+  const usedNum = Number(used);
+  return { id: r.id, allocationAmount, used: usedNum, remaining: allocationAmount - usedNum };
+}
 
 export async function retainersRoute(req, res, id, action, user) {
   // --- GET /api/crm/retainers?dealId=
@@ -25,8 +46,10 @@ export async function retainersRoute(req, res, id, action, user) {
     const retainerIds = retainers.map(r => r.id);
     const entries = await sql`
       SELECT e.id, e.retainer_id, e.description, e.value, e.worked_at,
-             e.created_by, e.created_at
+             e.created_by, e.created_at, e.video_id,
+             v.production_phase, v.production_stage
         FROM project_retainer_entries e
+        LEFT JOIN project_videos v ON v.id = e.video_id
        WHERE e.retainer_id = ANY(${retainerIds})
        ORDER BY e.worked_at DESC, e.created_at DESC
     `;
@@ -56,6 +79,47 @@ export async function retainersRoute(req, res, id, action, user) {
     }));
 
     return res.status(200).json(out);
+  }
+
+  // --- POST /api/crm/retainers/credits — "Add credits" top-up.
+  // Creates the deal's credit project on first use, then increments its balance.
+  if (id === 'credits' && !action && req.method === 'POST') {
+    const body = req.body || {};
+    const dealId  = trimOrNull(body.dealId);
+    const credits = numberOrNull(body.credits);
+    if (!dealId) return res.status(400).json({ error: 'dealId required' });
+    if (credits == null || credits <= 0) return res.status(400).json({ error: 'credits must be positive' });
+
+    const [existing] = await sql`
+      SELECT id, allocation_amount FROM project_retainers
+       WHERE deal_id = ${dealId} AND allocation_type = 'credits' AND status = 'active'
+       ORDER BY created_at ASC LIMIT 1
+    `;
+
+    if (existing) {
+      await sql`
+        UPDATE project_retainers
+           SET allocation_amount = allocation_amount + ${credits}, updated_at = NOW()
+         WHERE id = ${existing.id}
+      `;
+    } else {
+      const [deal] = await sql`
+        SELECT d.title, co.name AS company_name
+          FROM deals d LEFT JOIN companies co ON co.id = d.company_id
+         WHERE d.id = ${dealId}
+      `;
+      if (!deal) return res.status(404).json({ error: 'Deal not found' });
+      const title = trimOrNull(deal.company_name) || trimOrNull(deal.title) || 'Credits';
+      const newId = makeId('ret');
+      await sql`
+        INSERT INTO project_retainers
+          (id, deal_id, title, allocation_type, allocation_amount, currency, created_by)
+        VALUES
+          (${newId}, ${dealId}, ${title}, 'credits', ${credits}, 'GBP', ${user.email})
+      `;
+    }
+
+    return res.status(200).json(await getDealCreditProject(dealId));
   }
 
   // --- POST /api/crm/retainers — create retainer
@@ -183,6 +247,7 @@ export async function retainersRoute(req, res, id, action, user) {
 }
 
 function normaliseEntry(e) {
+  const videoId = e.video_id || null;
   return {
     id: e.id,
     retainerId: e.retainer_id,
@@ -191,5 +256,9 @@ function normaliseEntry(e) {
     workedAt: e.worked_at,
     createdBy: e.created_by,
     createdAt: e.created_at,
+    videoId,
+    // Video-linked entries carry a derived status so the credit-project list can
+    // badge each video Active until it's Signed Off. Manual entries have none.
+    status: videoId ? (isVideoSignedOff(e.production_phase, e.production_stage) ? 'signed_off' : 'active') : null,
   };
 }

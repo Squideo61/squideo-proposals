@@ -60,6 +60,16 @@ export function isValidProductionStage(phaseId, stageId) {
   return !!phase && phase.stages.some(s => s.id === stageId);
 }
 
+// A video counts as "signed off" (for credit-based project line items) once it
+// reaches Signed Off / Pending Group Sign Off, or anything in the Completed
+// phase (Delivered / Invoiced). Everything earlier — and holding stages like
+// On Hold / Back-up — is still "active". Mirror of the copy in
+// src/lib/productionStages.js.
+export function isVideoSignedOff(phaseId, stageId) {
+  return phaseId === 'completed' ||
+    (phaseId === 'production' && (stageId === 'signed_off' || stageId === 'pending_group_sign_off'));
+}
+
 export const VIDEO_STATUSES = [
   { id: 'not_started', label: 'Not started', color: '#94A3B8' },
   { id: 'scripting',   label: 'Scripting',   color: '#7C3AED' },

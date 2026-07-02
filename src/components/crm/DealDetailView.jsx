@@ -646,7 +646,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <RetainersCard dealId={dealId} contacts={Object.values(state.contacts || {})} />
+          <RetainersCard
+            dealId={dealId}
+            contacts={Object.values(state.contacts || {})}
+            onOpenVideo={onOpenVideo}
+            refreshKey={`${projectVideos.length}:${detail?.creditProject?.used ?? ''}`}
+          />
         </div>
 
         {dealDrafts.length > 0 && (
@@ -670,7 +675,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         </>)}
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} isMobile={isMobile} onOpenVideo={onOpenVideo} />
+          <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} creditProject={detail?.creditProject || null} isMobile={isMobile} onOpenVideo={onOpenVideo} />
         </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>

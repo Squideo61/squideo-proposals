@@ -27,6 +27,7 @@ import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, isVali
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { archiveRecord } from './recycleBin.js';
+import { getDealCreditProject } from './retainers.js';
 
 // Where scripts live inside a deal's Drive folder (from the FOLDER_TEMPLATE in
 // googleDrive.js).
@@ -295,14 +296,24 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     return res.status(200).json({ ok: true, productionCredits: row.production_credits });
   }
 
-  // Add a video (lands at Pre-Production / New Project), optionally from credit.
+  // Add a video (lands at Pre-Production / New Project). On credit-based deals it
+  // costs credits from the deal's credit project (a linked work-log entry is
+  // created, which draws the balance down); otherwise the legacy per-deal
+  // production_credits counter applies.
   if (action === 'videos') {
     if (req.method !== 'POST') return res.status(405).end();
     const body = req.body || {};
     const [{ next }] = await sql`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM project_videos WHERE deal_id = ${dealId}`;
     const title = trimOrNull(body.title) || ('Video ' + (Number(next) + 1));
 
-    if (body.fromCredit === true) {
+    // Credit-based deals: deduct from the single credit project.
+    const creditProject = await getDealCreditProject(dealId);
+    let videoCredits = null;
+    if (creditProject) {
+      videoCredits = numberOrNull(body.credits) ?? 0;
+      if (videoCredits < 0) return res.status(400).json({ error: 'Credits cannot be negative' });
+      if (videoCredits > creditProject.remaining) return res.status(400).json({ error: 'Not enough credits' });
+    } else if (body.fromCredit === true) {
       const dec = await sql`
         UPDATE deals SET production_credits = production_credits - 1, updated_at = NOW()
          WHERE id = ${dealId} AND production_credits > 0
@@ -318,6 +329,17 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       VALUES
         (${vid}, ${dealId}, ${title}, 'not_started', ${next}, ${FIRST_PRODUCTION.phase}, ${FIRST_PRODUCTION.stage}, NOW(), ${user.email || null})
     `;
+
+    // Log the video against the credit project so it shows as a line item
+    // (Active until Signed Off) and its credits are consumed from the balance.
+    if (creditProject) {
+      await sql`
+        INSERT INTO project_retainer_entries
+          (id, retainer_id, description, value, worked_at, video_id, created_by)
+        VALUES
+          (${makeId('rte')}, ${creditProject.id}, ${title}, ${videoCredits}, CURRENT_DATE, ${vid}, ${user.email})
+      `;
+    }
     // Second and later videos get their own "V2", "V3", … folder in the deal's
     // Drive (the first video uses the standard template). Best-effort and
     // detached so a Drive blip never blocks adding the video.
