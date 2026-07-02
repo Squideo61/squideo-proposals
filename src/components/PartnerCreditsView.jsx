@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Coins, Plus, FolderOpen, CalendarClock, Building2, Check, Search, Trash2 } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
@@ -40,8 +40,15 @@ export function PartnerCreditsView({ onBack, onOpen, onOpenDeal }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [filter, setFilter] = useState('all'); // 'all' | 'active' | 'credits_only'
   const [projectCredits, setProjectCredits] = useState(null);
+  const [showNewProject, setShowNewProject] = useState(false);
   const isMobile = useIsMobile();
   const isAdmin = permissionsInclude(state.session?.permissions, 'users.manage');
+
+  const loadProjectCredits = useCallback(() => (
+    api.get('/api/partner/project-credits')
+      .then((rows) => setProjectCredits(rows || []))
+      .catch(() => setProjectCredits([]))
+  ), []);
 
   // Delete a manual partner client straight from the list. Admin-only, warns
   // first, and is undoable (the server archives the sub + its credit entries).
@@ -63,13 +70,7 @@ export function PartnerCreditsView({ onBack, onOpen, onOpenDeal }) {
 
   // Deal "credit based projects" (credits-type) mirrored from across all deals,
   // shown as a separate section below the partner clients.
-  useEffect(() => {
-    let active = true;
-    api.get('/api/partner/project-credits')
-      .then((rows) => { if (active) setProjectCredits(rows || []); })
-      .catch(() => { if (active) setProjectCredits([]); });
-    return () => { active = false; };
-  }, []);
+  useEffect(() => { loadProjectCredits(); }, [loadProjectCredits]);
 
   const list = state.partnerCreditsList || [];
   const counts = {
@@ -255,22 +256,47 @@ export function PartnerCreditsView({ onBack, onOpen, onOpenDeal }) {
         </Card>
       )}
 
-      <ProjectCreditsSection projects={projectCredits} isMobile={isMobile} onOpenDeal={onOpenDeal} />
+      <ProjectCreditsSection
+        projects={projectCredits}
+        isMobile={isMobile}
+        onOpenDeal={onOpenDeal}
+        onNew={() => setShowNewProject(true)}
+      />
+
+      {showNewProject && (
+        <NewCreditsProjectModal
+          onClose={() => setShowNewProject(false)}
+          onCreated={async () => { setShowNewProject(false); await loadProjectCredits(); showMsg('Credits project created'); }}
+          showMsg={showMsg}
+        />
+      )}
     </div>
   );
 }
 
 // Deal credit-based projects (credits-type), mirrored from the deal pages so the
-// whole credit picture lives here. Read-only — click a row to open its deal.
-function ProjectCreditsSection({ projects, isMobile, onOpenDeal }) {
-  if (!projects || projects.length === 0) return null;
+// whole credit picture lives here. Click a row to open its deal; "New credits
+// project" creates one against a chosen deal.
+function ProjectCreditsSection({ projects, isMobile, onOpenDeal, onNew }) {
+  const list = projects || [];
   return (
     <div style={{ marginTop: 32 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <FolderOpen size={18} color={BRAND.blue} />
         <h2 style={{ fontSize: 17, fontWeight: 600, margin: 0 }}>Current Projects</h2>
-        <span style={{ fontSize: 12, color: BRAND.muted }}>({projects.length})</span>
+        <span style={{ fontSize: 12, color: BRAND.muted }}>({list.length})</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={onNew} className="btn-ghost" style={{ fontSize: 13 }}>
+          <Plus size={14} /> New credits project
+        </button>
       </div>
+      {list.length === 0 ? (
+        <Card>
+          <div style={{ padding: 40, textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>
+            No credit-based projects yet. Create one against a deal to start tracking credits.
+          </div>
+        </Card>
+      ) : (
       <Card>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -284,7 +310,7 @@ function ProjectCreditsSection({ projects, isMobile, onOpenDeal }) {
               </tr>
             </thead>
             <tbody>
-              {projects.map(p => {
+              {list.map(p => {
                 const issued = Number(p.creditsIssued) || 0;
                 const used = Number(p.creditsUsed) || 0;
                 const pct = issued > 0 ? Math.min(100, Math.round((used / issued) * 100)) : 0;
@@ -323,6 +349,7 @@ function ProjectCreditsSection({ projects, isMobile, onOpenDeal }) {
           </table>
         </div>
       </Card>
+      )}
     </div>
   );
 }
@@ -666,6 +693,142 @@ function AddManualClientModal({ onClose, onCreated, showMsg, createManualSubscri
         </div>
       </form>
     </Modal>
+  );
+}
+
+// Create a credit-based project (credits-type project_retainer) against a deal.
+// Reuses the deal retainer create endpoint; the project then shows in Current
+// Projects and on the deal page (videos draw credits from this pool).
+function NewCreditsProjectModal({ onClose, onCreated, showMsg }) {
+  const { state } = useStore();
+  const deals = Object.values(state.deals || {});
+  const companies = state.companies || {};
+  const [deal, setDeal] = useState(null);
+  const [title, setTitle] = useState('');
+  const [credits, setCredits] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const pickDeal = (d) => {
+    setDeal(d);
+    if (!title.trim()) setTitle(d.title || companies[d.companyId]?.name || '');
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!deal) { showMsg('Pick a deal for the project'); return; }
+    const amt = parseFloat(credits);
+    if (!Number.isFinite(amt) || amt <= 0) { showMsg('Enter a positive number of credits'); return; }
+    const finalTitle = title.trim() || deal.title || companies[deal.companyId]?.name || 'Credits';
+    setSubmitting(true);
+    try {
+      await api.post('/api/crm/retainers', {
+        dealId: deal.id,
+        title: finalTitle,
+        allocationType: 'credits',
+        allocationAmount: amt,
+        currency: 'GBP',
+      });
+      onCreated();
+    } catch (err) {
+      showMsg(err?.message || 'Failed to create project');
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700 }}>New credits project</h3>
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
+        Create a credit-based project against a deal. Videos on that deal draw credits from this pool, and the balance shows here under Current Projects.
+      </p>
+      <form onSubmit={submit} style={{ display: 'grid', gap: 12 }}>
+        <Field label="Deal">
+          {deal ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8, background: BRAND.paper }}>
+              <FolderOpen size={15} color={BRAND.blue} style={{ flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{deal.title || 'Untitled deal'}</div>
+                {companies[deal.companyId]?.name && <div style={{ fontSize: 11, color: BRAND.muted }}>{companies[deal.companyId].name}</div>}
+              </div>
+              <button type="button" onClick={() => setDeal(null)} className="btn-ghost" style={{ padding: '2px 8px', fontSize: 11, color: BRAND.muted }}>Change</button>
+            </div>
+          ) : (
+            <DealPicker deals={deals} companies={companies} onPick={pickDeal} />
+          )}
+        </Field>
+        <Field label="Project name">
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. WhatUni" />
+        </Field>
+        <Field label="Credits" hint="The starting credit balance for this project. Top it up later from the deal page.">
+          <input className="input" type="number" step="1" min="1" value={credits} onChange={(e) => setCredits(e.target.value)} placeholder="e.g. 40" required />
+        </Field>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+          <button type="submit" disabled={submitting} className="btn">{submitting ? 'Creating…' : 'Create project'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// Searchable dropdown over deals (by deal title or company name).
+function DealPicker({ deals, companies, onPick }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const rows = deals.map(d => ({ d, company: companies[d.companyId]?.name || '' }));
+    rows.sort((a, b) => (a.d.title || '').localeCompare(b.d.title || ''));
+    const list = q
+      ? rows.filter(r => (r.d.title || '').toLowerCase().includes(q) || r.company.toLowerCase().includes(q))
+      : rows;
+    return list.slice(0, 30);
+  }, [deals, companies, query]);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }}>
+        <Search size={14} color={BRAND.muted} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+        <input
+          className="input"
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          placeholder="Search deals…"
+          style={{ paddingLeft: 30 }}
+        />
+      </div>
+      {open && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', zIndex: 50, maxHeight: 260, overflow: 'auto' }}>
+          {results.length === 0 ? (
+            <div style={{ padding: 12, fontSize: 12, color: BRAND.muted, textAlign: 'center' }}>No deals match.</div>
+          ) : results.map(({ d, company }) => (
+            <button
+              key={d.id}
+              type="button"
+              onClick={() => { onPick(d); setOpen(false); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 12px', background: 'white', border: 'none', borderBottom: '1px solid ' + BRAND.border, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#F1F5F9'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'white'}
+            >
+              <FolderOpen size={14} color={BRAND.muted} style={{ flexShrink: 0 }} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.title || 'Untitled deal'}</div>
+                {company && <div style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company}</div>}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
