@@ -655,15 +655,25 @@ async function createManualSubscription(req, res) {
   const autoCredit = body.autoCredit !== false; // default true
   const initialBalance = Number(body.initialBalance);
 
+  // Optional Xero link (from picking an existing organisation). Linking the sub
+  // to the org's Xero contact turns on the Xero-invoice webhook auto-credit and
+  // ties the sub to the company for credit mirroring. Ignore an id we don't have
+  // mirrored locally rather than erroring.
+  let xeroContactId = body.xeroContactId ? String(body.xeroContactId).trim() : null;
+  if (xeroContactId) {
+    const [xc] = await sql`SELECT 1 FROM xero_contacts WHERE id = ${xeroContactId} LIMIT 1`;
+    if (!xc) xeroContactId = null;
+  }
+
   const subId = newManualSubId();
 
   await sql`
     INSERT INTO partner_subscriptions
       (stripe_subscription_id, proposal_id, client_key, client_name,
-       credits_per_month, status, start_date, auto_credit)
+       credits_per_month, status, start_date, auto_credit, xero_contact_id)
     VALUES
       (${subId}, NULL, ${clientKey}, ${clientName},
-       ${creditsPerMonth}, 'active', ${startDate}, ${autoCredit})
+       ${creditsPerMonth}, 'active', ${startDate}, ${autoCredit}, ${xeroContactId})
   `;
 
   if (Number.isFinite(initialBalance) && initialBalance !== 0) {

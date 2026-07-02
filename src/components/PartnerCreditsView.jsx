@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Coins, Plus, FolderOpen, CalendarClock } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, Coins, Plus, FolderOpen, CalendarClock, Building2, Check, Search } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, useIsMobile } from '../utils.js';
 import { api } from '../api.js';
 import { Modal } from './ui.jsx';
+import { XeroContactPicker } from './crm/XeroContactPicker.jsx';
 import { PartnerMeetingsButton } from './PartnerMeetingsButton.jsx';
 import { thisMonthStr, shiftMonth } from './crm/dateRange.jsx';
 
@@ -429,9 +430,13 @@ function Card({ children }) {
 }
 
 function AddManualClientModal({ onClose, onCreated, showMsg, createManualSubscription }) {
+  const { state, actions } = useStore();
   const today = new Date().toISOString().slice(0, 10);
   const [type, setType] = useState('subscription'); // 'subscription' | 'credits_only'
+  const [org, setOrg] = useState(null);              // selected CRM company, or null (free-text)
   const [clientName, setClientName] = useState('');
+  const [xeroContactId, setXeroContactId] = useState(null); // resolved link to send
+  const [linking, setLinking] = useState(false);            // saving a new Xero link to the org
   const [creditsPerMonth, setCreditsPerMonth] = useState('5');
   const [startDate, setStartDate] = useState(today);
   const [autoCredit, setAutoCredit] = useState(true);
@@ -440,6 +445,31 @@ function AddManualClientModal({ onClose, onCreated, showMsg, createManualSubscri
   const [submitting, setSubmitting] = useState(false);
 
   const creditsOnly = type === 'credits_only';
+
+  // Pick / clear an existing organisation. Selecting one seeds the client name
+  // and captures its Xero contact link (so the sub auto-syncs with Xero).
+  const pickOrg = (c) => {
+    setOrg(c);
+    setClientName(c.name || '');
+    setXeroContactId(c.xeroContactId || null);
+  };
+  const clearOrg = () => { setOrg(null); setXeroContactId(null); };
+
+  // Link a Xero contact to an org that isn't linked yet — persist it back to the
+  // company (so it's remembered everywhere) and use it for this subscription.
+  const linkXero = async (contact) => {
+    if (!org || !contact) { setXeroContactId(contact ? contact.id : null); return; }
+    setLinking(true);
+    try {
+      await actions.saveCompany(org.id, { xeroContactId: contact.id });
+      setOrg((o) => (o ? { ...o, xeroContactId: contact.id } : o));
+      setXeroContactId(contact.id);
+    } catch (err) {
+      showMsg(err?.message || 'Could not link Xero contact');
+    } finally {
+      setLinking(false);
+    }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -473,6 +503,7 @@ function AddManualClientModal({ onClose, onCreated, showMsg, createManualSubscri
           initialBalance: Number.isFinite(ib) && ib !== 0 ? ib : undefined,
         };
       }
+      if (xeroContactId) payload.xeroContactId = xeroContactId;
       const row = await createManualSubscription(payload);
       onCreated(row?.clientKey);
     } catch (err) {
@@ -505,6 +536,41 @@ function AddManualClientModal({ onClose, onCreated, showMsg, createManualSubscri
             >Credits only</button>
           </div>
         </Field>
+        <Field label="Organisation" hint="Pick an existing organisation to link this client — a Xero-linked org syncs automatically. Or leave blank and type a one-off name below.">
+          {org ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8, background: BRAND.paper }}>
+              <Building2 size={15} color={BRAND.blue} style={{ flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {org.name}
+              </div>
+              <button type="button" onClick={clearOrg} className="btn-ghost" style={{ padding: '2px 8px', fontSize: 11, color: BRAND.muted }}>Clear</button>
+            </div>
+          ) : (
+            <OrgPicker companies={Object.values(state.companies || {})} onPick={pickOrg} />
+          )}
+        </Field>
+
+        {/* Xero sync status for the selected org. */}
+        {org && (
+          org.xeroContactId ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, fontSize: 12.5, color: '#15803D', fontWeight: 600 }}>
+              <Check size={14} color="#16A34A" /> Syncs with Xero automatically
+            </div>
+          ) : (
+            <Field label="Link Xero contact" hint="This organisation isn’t linked to Xero yet. Link its contact so paid recurring invoices auto-credit this client.">
+              <XeroContactPicker
+                value={null}
+                initialQuery={org.name}
+                onChange={(c) => c && linkXero(c)}
+                placeholder="Search Xero contacts…"
+                size="sm"
+                allowClear={false}
+                creatingNew={linking}
+              />
+            </Field>
+          )
+        )}
+
         <Field label="Client name">
           <input
             className="input"
@@ -575,6 +641,65 @@ function AddManualClientModal({ onClose, onCreated, showMsg, createManualSubscri
         </div>
       </form>
     </Modal>
+  );
+}
+
+// Searchable dropdown over the CRM organisations already loaded in state.
+// Flags which orgs are Xero-linked so it's obvious which will auto-sync.
+function OrgPicker({ companies, onPick }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const sorted = [...companies].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const list = q ? sorted.filter(c => (c.name || '').toLowerCase().includes(q)) : sorted;
+    return list.slice(0, 30);
+  }, [companies, query]);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }}>
+        <Search size={14} color={BRAND.muted} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+        <input
+          className="input"
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          placeholder="Search organisations…"
+          style={{ paddingLeft: 30 }}
+        />
+      </div>
+      {open && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', zIndex: 50, maxHeight: 260, overflow: 'auto' }}>
+          {results.length === 0 ? (
+            <div style={{ padding: 12, fontSize: 12, color: BRAND.muted, textAlign: 'center' }}>No organisations match.</div>
+          ) : results.map(c => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => { onPick(c); setOpen(false); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 12px', background: 'white', border: 'none', borderBottom: '1px solid ' + BRAND.border, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#F1F5F9'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'white'}
+            >
+              <Building2 size={14} color={BRAND.muted} style={{ flexShrink: 0 }} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</div>
+                {c.xeroContactId && <div style={{ fontSize: 10.5, color: '#15803D', fontWeight: 600 }}>Xero linked</div>}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
