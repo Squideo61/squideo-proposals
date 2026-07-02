@@ -17,7 +17,7 @@ function fmt(local) {
   return d.toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-export function buildScheduleHTML(schedule, deal, company) {
+export function buildScheduleHTML(schedule, deal, company, primaryContact) {
   const rows = enabledRows(schedule);
   // Which date columns appear at all (union across enabled rows), in fixed order.
   const activeFields = FIELD_ORDER.filter(f => rows.some(({ row }) => row.fields.includes(f)));
@@ -51,6 +51,7 @@ export function buildScheduleHTML(schedule, deal, company) {
   }).join('');
 
   const clientName = company?.name || deal?.title || '';
+  const contactName = primaryContact?.name || '';
   const kickOff = schedule?.kickOff ? fmt(schedule.kickOff) : null;
 
   return `<!DOCTYPE html>
@@ -84,6 +85,7 @@ export function buildScheduleHTML(schedule, deal, company) {
     <h1 style="font-size:26px;font-weight:700;margin:0 0 14px;line-height:1.2;">Production Schedule</h1>
     <div style="font-size:15px;line-height:1.6;opacity:0.95;">
       ${clientName ? `<div>Prepared for <strong>${esc(clientName)}</strong></div>` : ''}
+      ${contactName ? `<div>Primary contact: <strong>${esc(contactName)}</strong></div>` : ''}
       ${deal?.title ? `<div>${esc(deal.title)}</div>` : ''}
       ${kickOff ? `<div style="margin-top:6px;font-size:13px;opacity:0.9;">Kick Off: <strong>${esc(kickOff)}</strong></div>` : ''}
     </div>
@@ -91,18 +93,23 @@ export function buildScheduleHTML(schedule, deal, company) {
 
   ${sectionsHTML || '<p class="muted">No schedule stages selected.</p>'}
 
+  <!-- Disclaimer -->
+  <div style="margin-top:32px;font-size:12px;font-style:italic;color:#6B7785;line-height:1.5;">
+    Dates are subject to change depending on changes to schedules, or overall progress being halted and causing a delay.
+  </div>
+
   <!-- Footer -->
-  <div style="margin-top:40px;padding-top:16px;border-top:1px solid #E5E9EE;font-size:11px;color:#6B7785;text-align:center;">
+  <div style="margin-top:24px;padding-top:16px;border-top:1px solid #E5E9EE;font-size:11px;color:#6B7785;text-align:center;">
     ${esc(CONFIG.company.name)} · ${esc(CONFIG.company.website)} · ${esc(CONFIG.company.phone)}
   </div>
 </body>
 </html>`;
 }
 
-export function openSchedulePrintWindow(schedule, deal, company) {
+export function openSchedulePrintWindow(schedule, deal, company, primaryContact) {
   const w = window.open('', '_blank');
   if (!w) return false;
-  w.document.write(buildScheduleHTML(schedule, deal, company));
+  w.document.write(buildScheduleHTML(schedule, deal, company, primaryContact));
   w.document.close();
   return true;
 }

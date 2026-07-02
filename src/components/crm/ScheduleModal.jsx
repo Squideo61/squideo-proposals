@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Calendar, Wand2, ListChecks, FileDown, Check } from 'lucide-react';
+import { Calendar, Eraser, ListChecks, FileDown, Check } from 'lucide-react';
 import { Modal } from '../ui.jsx';
 import { Card, Empty } from './Card.jsx';
 import { DateTimePicker, formatDTDisplay } from './TaskFormModal.jsx';
@@ -64,7 +64,7 @@ export function ScheduleCard({ deal, onOpen }) {
 function fmt(local) { return local ? formatDTDisplay(local) : ''; }
 
 // ── The editable, doc-like popout ──
-export function ScheduleModal({ deal, dealId, company, onClose }) {
+export function ScheduleModal({ deal, dealId, company, primaryContact, onClose }) {
   const { actions, showMsg } = useStore();
   const [schedule, setSchedule] = useState(() => deal.productionSchedule || seedSchedule(deal));
   const [saving, setSaving] = useState(false);
@@ -80,12 +80,14 @@ export function ScheduleModal({ deal, dealId, company, onClose }) {
     s.autoFill = !s.autoFill;
     return s.autoFill ? autofillFromKickOff(s) : s;
   });
-  const regenerate = () => update(s => {
-    // Wipe row dates then re-derive them all from Kick Off.
+  const clearDates = () => update(s => {
+    // Reset every stage date back to unassigned. Turn off auto-fill so they
+    // stay blank (otherwise the next Kick Off change would re-derive them).
     for (const section of s.sections) for (const row of section.rows) {
-      row.deliveredBy = ''; row.feedbackBy = ''; row.revisedBy = ''; row.approvedBy = '';
+      row.deliveredBy = ''; row.feedbackBy = ''; row.revisedBy = '';
     }
-    return autofillFromKickOff(s);
+    s.autoFill = false;
+    return s;
   });
   const setSection = (sid, patch) => update(s => {
     const sec = s.sections.find(x => x.id === sid); if (sec) Object.assign(sec, patch);
@@ -122,7 +124,7 @@ export function ScheduleModal({ deal, dealId, company, onClose }) {
 
   const exportDoc = async () => {
     await persist();
-    const ok = openSchedulePrintWindow(schedule, deal, company);
+    const ok = openSchedulePrintWindow(schedule, deal, company, primaryContact);
     if (!ok) showMsg('Pop-up blocked — allow pop-ups to export the schedule.');
   };
 
@@ -143,8 +145,8 @@ export function ScheduleModal({ deal, dealId, company, onClose }) {
           <input type="checkbox" checked={!!schedule.autoFill} onChange={toggleAutoFill} />
           Auto-fill dates from Kick Off (working days)
         </label>
-        <button type="button" className="btn-ghost" onClick={regenerate} disabled={!schedule.kickOff} title="Clear all stage dates and recalculate from Kick Off">
-          <Wand2 size={14} /> Regenerate
+        <button type="button" className="btn-ghost" onClick={clearDates} title="Clear all stage dates back to unassigned">
+          <Eraser size={14} /> Clear dates
         </button>
       </div>
 

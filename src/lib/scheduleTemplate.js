@@ -12,13 +12,13 @@
 const SCHEDULE_VERSION = 1;
 
 // Per-field labels used in the modal columns, export doc, and milestone titles.
+// ("Approved by" was retired — the sign-off date added clutter without value.)
 export const FIELD_LABELS = {
   deliveredBy: 'Delivered by',
   feedbackBy: 'Feedback by',
   revisedBy: 'Revised by',
-  approvedBy: 'Approved by',
 };
-export const FIELD_ORDER = ['deliveredBy', 'feedbackBy', 'revisedBy', 'approvedBy'];
+export const FIELD_ORDER = ['deliveredBy', 'feedbackBy', 'revisedBy'];
 
 // The canonical section/row layout, mirroring the Word doc. Row ids line up with
 // VIDEO_MILESTONES (script / storyboard / video) so labels stay in lockstep.
@@ -32,11 +32,11 @@ export const SCHEDULE_TEMPLATE = [
     label: 'Pre-Production: Script / Text Direction',
     rows: [
       { id: 'style_examples', label: 'Style examples', enabled: false,
-        fields: ['deliveredBy', 'feedbackBy', 'approvedBy'],
-        offsets: { deliveredBy: 2, feedbackBy: 3, approvedBy: 4 } },
+        fields: ['deliveredBy', 'feedbackBy'],
+        offsets: { deliveredBy: 2, feedbackBy: 3 } },
       { id: 'script_text_direction', label: 'Script & Text Direction', enabled: true,
-        fields: ['deliveredBy', 'feedbackBy', 'approvedBy'],
-        offsets: { deliveredBy: 5, feedbackBy: 3, approvedBy: 4 } },
+        fields: ['deliveredBy', 'feedbackBy'],
+        offsets: { deliveredBy: 5, feedbackBy: 3 } },
     ],
   },
   {
@@ -106,7 +106,7 @@ export function seedSchedule(deal) {
         label: r.label,
         enabled: r.enabled,
         fields: [...r.fields],
-        deliveredBy: '', feedbackBy: '', revisedBy: '', approvedBy: '',
+        deliveredBy: '', feedbackBy: '', revisedBy: '',
       })),
     })),
   };
@@ -114,8 +114,8 @@ export function seedSchedule(deal) {
 
 // Return a new schedule with dates suggested from kickOff using the template's
 // working-day offsets. Only fills fields that are currently blank (manual edits
-// are preserved). deliveredBy is measured from Kick Off; feedbackBy/revisedBy/
-// approvedBy chain off that row's deliveredBy. No-op if kickOff isn't set.
+// are preserved). deliveredBy is measured from Kick Off; feedbackBy/revisedBy
+// chain off that row's deliveredBy. No-op if kickOff isn't set.
 export function autofillFromKickOff(schedule) {
   const kick = fromLocal(schedule?.kickOff);
   if (!kick) return schedule;
@@ -133,7 +133,7 @@ export function autofillFromKickOff(schedule) {
         if (deliveredDate) deliveredDate.setHours(17, 0, 0, 0);
         if (!next.deliveredBy && deliveredDate) next.deliveredBy = toLocal(deliveredDate);
         const base = fromLocal(next.deliveredBy) || deliveredDate || kick;
-        for (const f of ['feedbackBy', 'revisedBy', 'approvedBy']) {
+        for (const f of ['feedbackBy', 'revisedBy']) {
           if (offsets[f] != null && !next[f] && base) {
             const d = addWorkingDays(base, offsets[f]);
             d.setHours(17, 0, 0, 0);

@@ -79,12 +79,42 @@ export async function tasksRoute(req, res, id, action, user) {
     if (!dealRows.length) return res.status(404).json({ error: 'Deal not found' });
     const deal = dealRows[0];
 
-    // Assignees for every milestone = deal owner + all producers (team), deduped.
+    // Per-stage milestone assignment (see the Notes brief):
+    //  • EVERY milestone → the Production Managers (role id 'member').
+    //  • Script / Text Direction stages → also the copywriting/creative team,
+    //    matched by first name (Chloe & Hannah) so it tracks their sign-up
+    //    accounts without hard-coded emails.
+    //  • Storyboard stage onward → also the producer(s) working the project.
+    // Each pool is best-effort: a lookup failure just narrows the assignees
+    // rather than 500-ing the sync.
+    let productionManagers = [];
+    try {
+      const pmRows = await sql`SELECT email FROM users WHERE role = 'member'`;
+      productionManagers = pmRows.map(r => r.email).filter(Boolean);
+    } catch { /* best-effort */ }
+    // Fall back to the deal owner so milestones are never left unassigned.
+    if (!productionManagers.length && deal.owner_email) productionManagers = [deal.owner_email];
+
+    let scriptTeam = [];
+    try {
+      const scriptRows = await sql`
+        SELECT email FROM users WHERE name ILIKE 'chloe%' OR name ILIKE 'hannah%'
+      `;
+      scriptTeam = scriptRows.map(r => r.email).filter(Boolean);
+    } catch { /* best-effort */ }
+
     const producerRows = await sql`SELECT user_email FROM deal_assignees WHERE deal_id = ${dealId} ORDER BY assigned_at`;
     const producers = producerRows.length
       ? producerRows.map(r => r.user_email)
       : (deal.producer_email ? [deal.producer_email] : []);
-    const assignees = Array.from(new Set([deal.owner_email, ...producers].filter(Boolean)));
+
+    // Resolve the assignee list for one milestone from its stage group.
+    const assigneesForGroup = (group) => {
+      const set = new Set(productionManagers);
+      if (group === 'script') scriptTeam.forEach(e => e && set.add(e));
+      else if (group === 'production') producers.forEach(e => e && set.add(e));
+      return Array.from(set).filter(Boolean);
+    };
 
     // The client passes its UTC offset so wall-clock schedule times map to the
     // right instant (see scheduleLocalToISO).
@@ -100,6 +130,7 @@ export async function tasksRoute(req, res, id, action, user) {
     let created = 0, updated = 0, removed = 0;
 
     for (const m of desired) {
+      const assignees = assigneesForGroup(m.assignGroup);
       const prev = existingByKey.get(m.scheduleKey);
       if (prev) {
         const dateChanged = (prev.due_at ? new Date(prev.due_at).toISOString() : null) !== m.dueAt;

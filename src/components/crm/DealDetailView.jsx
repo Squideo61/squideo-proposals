@@ -803,6 +803,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           deal={deal}
           dealId={dealId}
           company={company}
+          primaryContact={contact}
           onClose={() => setScheduleOpen(false)}
         />
       )}
