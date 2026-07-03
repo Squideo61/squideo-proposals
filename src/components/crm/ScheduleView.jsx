@@ -282,7 +282,9 @@ function LeavePanel({ sched, canManage, me, actions }) {
 
 // ── Allowance tracker ──
 function AllowancePanel({ sched, canManage, me, onEdit }) {
-  const rows = (sched.allowances || []).filter(a => canManage || a.userEmail === me);
+  const all = (sched.allowances || []).filter(a => canManage || a.userEmail === me);
+  const rows = all.filter(a => a.active !== false);
+  const hidden = all.filter(a => a.active === false);
   const columns = [
     { key: 'name', label: 'Team member', render: r => r.name },
     { key: 'annualAllowance', label: 'Allowance', align: 'right', render: r => r.annualAllowance },
@@ -297,8 +299,20 @@ function AllowancePanel({ sched, canManage, me, onEdit }) {
     <Section title="Annual-leave allowance" icon={CalendarDays} color="#0EA5E9"
       badge={<span style={{ fontSize: 12, color: BRAND.muted }}>Default 20 days · 6 compulsory (Christmas)</span>}>
       <ResponsiveTable columns={columns} rows={rows} keyField="userEmail"
-        onRowClick={canManage ? onEdit : undefined} empty="No allowances yet." />
-      {canManage && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>Tap a row to edit allowance, compulsory days or the renewal anniversary.</div>}
+        onRowClick={canManage ? onEdit : undefined} empty="No one is tracked yet." />
+      {canManage && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>Tap a row to edit allowance, compulsory days, the renewal anniversary, or to stop tracking someone.</div>}
+      {canManage && hidden.length > 0 && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed ' + BRAND.border }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Not tracked</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {hidden.map(h => (
+              <button key={h.userEmail} className="btn-ghost" onClick={() => onEdit(h)} style={{ fontSize: 12 }}>
+                {h.name} · re-add
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </Section>
   );
 }
@@ -415,15 +429,20 @@ function AllowanceModal({ row, onClose, onSave }) {
   const [allowance, setAllowance] = useState(row.annualAllowance);
   const [compulsory, setCompulsory] = useState(row.compulsoryDays);
   const [anniversary, setAnniversary] = useState(row.anniversary || '');
+  const [active, setActive] = useState(row.active !== false);
   const [busy, setBusy] = useState(false);
   const save = () => {
     setBusy(true);
-    onSave({ annualAllowance: Number(allowance), compulsoryDays: Number(compulsory), anniversary: anniversary || null })
+    onSave({ annualAllowance: Number(allowance), compulsoryDays: Number(compulsory), anniversary: anniversary || null, active })
       .catch(() => setBusy(false));
   };
   return (
     <Modal onClose={onClose} dismissible={false} maxWidth={400}>
       <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>{row.name}</h3>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, fontSize: 14, cursor: 'pointer' }}>
+        <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} />
+        Track annual leave for this person
+      </label>
       <Field label="Annual allowance (days, incl. compulsory)"><input type="number" step="0.5" className="input" value={allowance} onChange={e => setAllowance(e.target.value)} style={selStyle} /></Field>
       <Field label="Compulsory days (Christmas)"><input type="number" step="0.5" className="input" value={compulsory} onChange={e => setCompulsory(e.target.value)} style={selStyle} /></Field>
       <Field label="Renewal anniversary (join date)"><input type="date" className="input" value={anniversary} onChange={e => setAnniversary(e.target.value)} style={selStyle} /></Field>
