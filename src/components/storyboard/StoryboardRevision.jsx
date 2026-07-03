@@ -375,10 +375,18 @@ export function StoryboardRevision({ token, data }) {
         {data.clientName && <span style={{ color: BRAND.muted, fontSize: 13 }}>· {data.clientName}</span>}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {storyboards.length > 1 && (
-            <select value={storyboardId} onChange={e => selectStoryboard(e.target.value)}
-              style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`, fontSize: 13, fontWeight: 600 }}>
-              {storyboards.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
-            </select>
+            <div title="This project has more than one storyboard — switch between them here"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 8px 5px 12px',
+                borderRadius: 10, border: `2px solid ${BRAND.blue}`, background: '#EAF6FB' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: BRAND.blue, whiteSpace: 'nowrap' }}>
+                <Images size={14} /> Storyboard {storyboards.findIndex(s => s.id === activeStoryboard.id) + 1} of {storyboards.length}
+              </span>
+              <select value={storyboardId} onChange={e => selectStoryboard(e.target.value)}
+                style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${BRAND.blue}`, fontSize: 14,
+                  fontWeight: 700, color: BRAND.ink, background: '#fff', cursor: 'pointer' }}>
+                {storyboards.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
+              </select>
+            </div>
           )}
           {versions.length > 1 && (
             <select value={version.id} onChange={e => selectVersion(e.target.value)}

@@ -222,7 +222,9 @@ function ProjectDetail({ projectId, onBack }) {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <AssigneeSelect value={detail.assigneeEmail} users={state.users}
             onChange={(email) => actions.assignStoryboardProject(projectId, email)} />
-          <DealLinkSummary dealId={detail.dealId} dealTitle={detail.dealTitle} />
+          <DealLinkSummary dealId={detail.dealId} dealTitle={detail.dealTitle}
+            projectId={projectId} kind="storyboard"
+            onLinked={() => actions.loadStoryboardDetail(projectId)} />
           <button onClick={addStoryboard} className="btn-ghost"><Plus size={14} /> Add storyboard</button>
           <CopyLinkButton token={detail.shareToken} showMsg={showMsg} />
         </div>

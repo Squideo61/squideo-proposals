@@ -261,6 +261,15 @@ function VideoRow({ dealId, video, onOpen }) {
       .finally(() => setBusy(false));
   };
 
+  // Move the video straight from the project page (no need to open it). Confirm
+  // first so a stray click doesn't silently jump the stage. `label` is the
+  // step's friendly name (e.g. "Storyboard Revisions").
+  const moveStage = (phase, stage, label) => {
+    if (phase === video.productionPhase && stage === video.productionStage) return;
+    if (!window.confirm(`Move "${video.title}" to ${label}?`)) return;
+    actions.moveVideoStage(video.id, phase, stage);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -284,12 +293,13 @@ function VideoRow({ dealId, video, onOpen }) {
         ><Trash2 size={13} /></button>
       </div>
 
-      {/* At-a-glance production progress for this video (read-only here; open the
-          video to move it through the stages). */}
+      {/* At-a-glance production progress for this video. Clickable here too so a
+          PM can advance the stage without opening the video (confirms first). */}
       <VideoProgressBar
         phaseId={video.productionPhase}
         stageId={video.productionStage}
         revisionRound={video.revisionRound}
+        onMove={moveStage}
       />
     </div>
   );

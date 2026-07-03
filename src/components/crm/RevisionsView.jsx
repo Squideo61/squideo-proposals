@@ -38,33 +38,150 @@ export function DealLinkSelect({ projectId, value, kind = 'revision', onLinked }
   );
 }
 
-// Read-only summary of which CRM deal this revision project belongs to.
-// Replaces the old <DealLinkSelect> dropdown — the linkage now lives in the
-// admin/migration code only; this just tells the producer what they're in.
-export function DealLinkSummary({ dealId, dealTitle }) {
+// Summary of which project (deal in production) this revision/storyboard
+// belongs to. When `projectId` is supplied the pill is interactive: click it to
+// search for and link a project in production (or change/unlink an existing
+// link). `kind` picks the right link action; `onLinked` refreshes the detail.
+export function DealLinkSummary({ dealId, dealTitle, projectId, kind = 'revision', onLinked }) {
+  const { actions, showMsg } = useStore();
+  const [picking, setPicking] = useState(false);
+  const interactive = !!projectId;
+  const link = kind === 'storyboard' ? actions.linkStoryboardDeal : actions.linkRevisionDeal;
+
+  const choose = async (id) => {
+    try {
+      await link(projectId, id);
+      setPicking(false);
+      onLinked && onLinked(id);
+      showMsg(id ? 'Linked to project' : 'Unlinked from project');
+    } catch (err) {
+      showMsg(err.message || 'Could not update the project link');
+    }
+  };
+
   if (dealId && dealTitle) {
     return (
-      <a
-        href={'#/project/' + encodeURIComponent(dealId)}
-        title="Open the linked project page"
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink,
-          padding: '7px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: '#F8FAFC',
-          textDecoration: 'none', cursor: 'pointer' }}
-        onMouseEnter={e => { e.currentTarget.style.background = '#EFF6FF'; e.currentTarget.style.borderColor = BRAND.blue; }}
-        onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = BRAND.border; }}
-      >
-        <Link2 size={14} color={BRAND.muted} />
-        <span style={{ color: BRAND.muted }}>Linked to</span>
-        <strong style={{ color: BRAND.ink }}>{dealTitle}</strong>
-      </a>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <a
+          href={'#/project/' + encodeURIComponent(dealId)}
+          title="Open the linked project page"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: BRAND.ink,
+            padding: '7px 10px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: '#F8FAFC',
+            textDecoration: 'none', cursor: 'pointer' }}
+          onMouseEnter={e => { e.currentTarget.style.background = '#EFF6FF'; e.currentTarget.style.borderColor = BRAND.blue; }}
+          onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = BRAND.border; }}
+        >
+          <Link2 size={14} color={BRAND.muted} />
+          <span style={{ color: BRAND.muted }}>Linked to</span>
+          <strong style={{ color: BRAND.ink }}>{dealTitle}</strong>
+        </a>
+        {interactive && (
+          <button type="button" className="btn-ghost" onClick={() => setPicking(true)} title="Change or remove the linked project">
+            Change
+          </button>
+        )}
+        {picking && <ProjectLinkPickerModal currentId={dealId} onChoose={choose} onClose={() => setPicking(false)} />}
+      </span>
     );
   }
+
+  const pillStyle = {
+    display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#92400E',
+    padding: '7px 10px', borderRadius: 8, border: '1px solid #FCD34D', background: '#FFFBEB',
+    fontFamily: 'inherit', cursor: interactive ? 'pointer' : 'default',
+  };
   return (
-    <span title="No CRM deal is linked to this revision project"
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#92400E',
-        padding: '7px 10px', borderRadius: 8, border: '1px solid #FCD34D', background: '#FFFBEB' }}>
-      <Link2 size={14} /> Not linked to a deal
-    </span>
+    <>
+      {interactive ? (
+        <button type="button" onClick={() => setPicking(true)} style={pillStyle}
+          title="Link this to a project in production">
+          <Link2 size={14} /> Not linked to a deal
+        </button>
+      ) : (
+        <span title="No project is linked" style={pillStyle}>
+          <Link2 size={14} /> Not linked to a deal
+        </span>
+      )}
+      {picking && <ProjectLinkPickerModal currentId={null} onChoose={choose} onClose={() => setPicking(false)} />}
+    </>
+  );
+}
+
+// Searchable picker over projects currently in production (derived from the
+// board's video list, deduped by deal). Lets a producer manually attach a
+// revision/storyboard to the right project.
+function ProjectLinkPickerModal({ currentId, onChoose, onClose }) {
+  const { state, actions } = useStore();
+  const [q, setQ] = useState('');
+
+  useEffect(() => { if (state.productionVideos === undefined) actions.loadProductionVideos(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loading = state.productionVideos === undefined;
+  const projects = useMemo(() => {
+    const map = new Map();
+    for (const v of (state.productionVideos || [])) {
+      if (!v.dealId || map.has(v.dealId)) continue;
+      map.set(v.dealId, {
+        dealId: v.dealId,
+        title: v.projectTitle || v.companyName || v.dealId,
+        company: v.companyName || '',
+      });
+    }
+    return Array.from(map.values()).sort((a, b) => a.title.localeCompare(b.title));
+  }, [state.productionVideos]);
+
+  const needle = q.trim().toLowerCase();
+  const filtered = needle
+    ? projects.filter(p => (p.title + ' ' + p.company).toLowerCase().includes(needle))
+    : projects;
+
+  return (
+    <Modal onClose={onClose} maxWidth={480} showClose>
+      <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Link to a project</h2>
+      <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 14 }}>
+        Search the projects in production and pick the one this belongs to.
+      </div>
+      <input
+        autoFocus
+        value={q}
+        onChange={e => setQ(e.target.value)}
+        placeholder="Search projects…"
+        style={{ width: '100%', padding: '9px 12px', fontSize: 14, border: '1px solid ' + BRAND.border, borderRadius: 8, marginBottom: 12 }}
+      />
+      <div style={{ maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {loading ? (
+          <div style={{ color: BRAND.muted, fontSize: 13, padding: '10px 2px' }}>Loading projects…</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ color: BRAND.muted, fontSize: 13, padding: '10px 2px' }}>No matching projects in production.</div>
+        ) : filtered.map(p => {
+          const isCurrent = p.dealId === currentId;
+          return (
+            <button
+              key={p.dealId}
+              type="button"
+              onClick={() => (isCurrent ? onClose() : onChoose(p.dealId))}
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, textAlign: 'left',
+                padding: '9px 12px', borderRadius: 8, border: '1px solid ' + (isCurrent ? BRAND.blue : BRAND.border),
+                background: isCurrent ? '#EFF6FF' : 'white', cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              <span style={{ fontSize: 13.5, fontWeight: 600, color: BRAND.ink }}>
+                {p.title}{isCurrent ? ' · linked' : ''}
+              </span>
+              {p.company && p.company !== p.title && (
+                <span style={{ fontSize: 12, color: BRAND.muted }}>{p.company}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {currentId && (
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid ' + BRAND.border }}>
+          <button type="button" className="btn-ghost" onClick={() => onChoose(null)}>
+            <Link2 size={14} /> Unlink from project
+          </button>
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -400,7 +517,9 @@ function ProjectDetail({ projectId, onBack }) {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <AssigneeSelect value={detail.assigneeEmail} users={state.users}
             onChange={(email) => actions.assignRevisionProject(projectId, email)} />
-          <DealLinkSummary dealId={detail.dealId} dealTitle={detail.dealTitle} />
+          <DealLinkSummary dealId={detail.dealId} dealTitle={detail.dealTitle}
+            projectId={projectId} kind="revision"
+            onLinked={() => actions.loadRevisionDetail(projectId)} />
           <button onClick={addVideo} className="btn-ghost"><Plus size={14} /> Add video</button>
           <CopyLinkButton token={detail.shareToken} showMsg={showMsg} />
         </div>

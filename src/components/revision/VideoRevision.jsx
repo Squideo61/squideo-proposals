@@ -419,10 +419,18 @@ export function VideoRevision({ token, data }) {
         {data.clientName && <span style={{ color: BRAND.muted, fontSize: 13 }}>· {data.clientName}</span>}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {videos.length > 1 && (
-            <select value={videoId} onChange={e => selectVideo(e.target.value)}
-              style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`, fontSize: 13, fontWeight: 600 }}>
-              {videos.map(v => <option key={v.id} value={v.id}>{v.title}</option>)}
-            </select>
+            <div title="This project has more than one video — switch between them here"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 8px 5px 12px',
+                borderRadius: 10, border: `2px solid ${BRAND.blue}`, background: '#EAF6FB' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: BRAND.blue, whiteSpace: 'nowrap' }}>
+                <Clapperboard size={14} /> Video {videos.findIndex(v => v.id === activeVideo.id) + 1} of {videos.length}
+              </span>
+              <select value={videoId} onChange={e => selectVideo(e.target.value)}
+                style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${BRAND.blue}`, fontSize: 14,
+                  fontWeight: 700, color: BRAND.ink, background: '#fff', cursor: 'pointer' }}>
+                {videos.map(v => <option key={v.id} value={v.id}>{v.title}</option>)}
+              </select>
+            </div>
           )}
           {versions.length > 1 && (
             <select value={version.id} onChange={e => setVersionId(e.target.value)}

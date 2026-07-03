@@ -60,11 +60,11 @@ export function ProductionProgressBar({ phaseId, onPhaseChange = null, subtitle 
 // between stage (e.g. Amends 1) lights the step it follows and the exact stage
 // shows in the caption beneath.
 const VIDEO_STEPS = [
-  { label: 'New Project',     phase: 'pre_production', stage: 'new_project' },
-  { label: 'Script',          phase: 'pre_production', stage: 'script' },
-  { label: 'Storyboard',      phase: 'pre_production', stage: 'storyboard' },
-  { label: 'Project Started', phase: 'pre_production', stage: 'project_started' },
-  { label: 'Production',      phase: 'production',     stage: 'in_production' },
+  { label: 'New Project',         phase: 'pre_production', stage: 'new_project' },
+  { label: 'Script',              phase: 'pre_production', stage: 'script' },
+  { label: 'Storyboard',          phase: 'pre_production', stage: 'storyboard' },
+  { label: 'Storyboard Revisions', phase: 'pre_production', stage: 'amends_1' },
+  { label: 'Production',          phase: 'production',     stage: 'in_production' },
   { label: 'Revisions',       phase: 'production',     stage: 'amends_2', key: 'revisions' },
   { label: 'Signed Off',      phase: 'production',     stage: 'signed_off' },
   { label: 'Delivered',       phase: 'completed',      stage: 'delivered' },
@@ -89,7 +89,7 @@ export function VideoProgressBar({ phaseId, stageId, onMove = null, revisionRoun
         return (
           <Tag
             key={s.label}
-            onClick={clickable ? () => onMove(s.phase, s.stage) : undefined}
+            onClick={clickable ? () => onMove(s.phase, s.stage, label) : undefined}
             title={clickable ? `Move to ${label}` : label}
             style={{
               flex: '1 1 auto',
