@@ -1515,6 +1515,7 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
   const outbound = message.outbound || (message.fromEmail && message.fromEmail.toLowerCase() === myEmail);
   const hasHtml = !!(message.html && message.html.trim());
   const who = displayName(message.from) || message.fromEmail || (outbound ? 'me' : '—');
+  const hasAttach = message.attachments?.length > 0;
 
   // Clip the quoted reply history (Gmail-style) so only the new content shows.
   const { main, quoted, hasQuote } = useMemo(
@@ -1544,7 +1545,16 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
             <TrackingEye tracking={message.tracking} />
           </span>
         )}
-        <span style={{ marginLeft: message.tracking ? 0 : 'auto', flexShrink: 0, fontSize: 11, color: BRAND.muted }}>{formatDateLabel(message.date)}</span>
+        {/* Paperclip so an attachment is obvious even with the message collapsed. */}
+        {hasAttach && (
+          <span
+            title={`${message.attachments.length} attachment${message.attachments.length > 1 ? 's' : ''}`}
+            style={{ marginLeft: (open && !message.tracking) ? 'auto' : 0, flexShrink: 0, display: 'inline-flex', alignItems: 'center' }}
+          >
+            <Paperclip size={13} color={BRAND.muted} />
+          </span>
+        )}
+        <span style={{ marginLeft: (message.tracking || hasAttach) ? 0 : 'auto', flexShrink: 0, fontSize: 11, color: BRAND.muted }}>{formatDateLabel(message.date)}</span>
         <ChevronDown size={14} color={BRAND.muted} style={{ flexShrink: 0, transition: 'transform 150ms', transform: open ? 'none' : 'rotate(-90deg)' }} />
       </button>
       {open && (
