@@ -6,7 +6,7 @@ import { hasPermission } from '../permissions.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { allCompanyBalances } from './companies.js';
 import { outstandingExtrasByDeal, ensureDealExtrasTable } from './extras.js';
-import { reconcileProposalBillingPaid } from './invoices.js';
+import { reconcileProposalBillingPaid, ensureInvoiceExcludeColumn } from './invoices.js';
 import { archiveRecord } from './recycleBin.js';
 import { sendNotification } from '../notifications.js';
 import { ensureDealPo } from './deals.js';
@@ -865,12 +865,16 @@ async function fetchExtraRows(since, until, withMeta) {
 // wouldn't otherwise know about (a signed deal's value is counted by signature,
 // and its deposit/final invoices must NOT double-count). Bucketed by issue date.
 // Used by the sales reports + trend so an invoice raised without a proposal still
-// counts as sales. Robust to the table not existing → [].
-async function fetchStandaloneInvoiceRows(since, until) {
+// counts as sales. Invoices an admin has flagged `exclude_from_stats` (e.g. a
+// legacy debt, not new business) are dropped unless `includeExcluded` is set —
+// the ledger passes it so it can list them separately with a re-include toggle.
+// Robust to the table not existing → [].
+async function fetchStandaloneInvoiceRows(since, until, includeExcluded = false) {
   try {
+    await ensureInvoiceExcludeColumn();
     return await sql`
       SELECT mi.id, mi.invoice_number, mi.amount, mi.subtotal_ex_vat, mi.tax_amount,
-             mi.status,
+             mi.status, COALESCE(mi.exclude_from_stats, false) AS exclude_from_stats,
              COALESCE(mi.issued_at, mi.created_at) AS at,
              COALESCE(mi.deal_id, pr.deal_id) AS deal_id,
              COALESCE(c.name, ddc.name, dpc.name) AS company
@@ -882,6 +886,7 @@ async function fetchStandaloneInvoiceRows(since, until) {
         LEFT JOIN companies ddc ON ddc.id = dd.company_id
         LEFT JOIN companies dpc ON dpc.id = dp.company_id
        WHERE mi.status IN ('issued', 'paid')
+         AND (${includeExcluded} OR NOT COALESCE(mi.exclude_from_stats, false))
          AND COALESCE(mi.issued_at, mi.created_at) >= ${since}
          AND COALESCE(mi.issued_at, mi.created_at) <  ${until}
          AND NOT EXISTS (
@@ -1021,8 +1026,11 @@ async function salesLedgerReport(action) {
       number: null,
     });
   }
-  // Ad-hoc invoices with no signed proposal — counted as sales at their issue date.
-  const invRows = await fetchStandaloneInvoiceRows(since, until);
+  // Ad-hoc invoices with no signed proposal — counted as sales at their issue
+  // date. Excluded ones are still listed (with `excluded: true`) so the ledger
+  // can show them under a re-includable "excluded" section, but they don't count
+  // toward the total or any other sales figure.
+  const invRows = await fetchStandaloneInvoiceRows(since, until, true);
   for (const r of invRows) {
     if (!r.at) continue;
     const { net, vat, gross } = invoiceSplit(r);
@@ -1033,11 +1041,13 @@ async function salesLedgerReport(action) {
       company: r.company || null,
       dealId: r.deal_id || null,
       number: null,
+      invoiceId: r.id,
+      excluded: !!r.exclude_from_stats,
     });
   }
 
   rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
-  const total = round2(rows.reduce((s, r) => s + r.net, 0));
+  const total = round2(rows.filter((r) => !r.excluded).reduce((s, r) => s + r.net, 0));
   return { period, rows, total };
 }
 

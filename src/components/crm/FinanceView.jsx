@@ -202,7 +202,7 @@ function buildFinanceView(fin, { mode, qIdx, monthKey, isCurrentYear, monthIdx, 
 }
 
 export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }) {
-  const { state, actions } = useStore();
+  const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   // Project/Production Managers reach this page with finance.pending_payments
   // only — they see just the Pending Payments tab and can flag predictions, but
@@ -301,6 +301,24 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
     actions.loadFinanceStats(effectiveYear);
     actions.loadTrend(36);
     actions.bumpFinanceRefresh(); // nudges the Performance panel (its own period)
+  };
+
+  // Exclude / re-include a standalone invoice from the sales ("cash generated")
+  // figures — e.g. a legacy debt we were owed, not new business. Refreshes the
+  // sales panels it feeds (ledger + card/chart + trend).
+  const toggleInvoiceExcluded = (r) => {
+    if (!r?.invoiceId) return;
+    const next = !r.excluded;
+    actions.setInvoiceExcluded(r.invoiceId, next)
+      .then(() => {
+        actions.loadSalesLedger(periodParam);
+        actions.loadSalesFinanceStats(effectiveYear);
+        actions.loadTrend(36);
+        showMsg?.(next
+          ? `Excluded ${r.company || r.label || 'invoice'} from cash generated`
+          : `Included ${r.company || r.label || 'invoice'} in cash generated`);
+      })
+      .catch((err) => showMsg?.(err?.message || 'Could not update invoice'));
   };
 
   // Back-date (or re-date) an income-ledger payment, then refresh + make undoable.
@@ -504,7 +522,7 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
 
           {/* Itemised ledger — payments received (Income) or signings + extras (Sales). */}
           {isSales ? (
-            <SalesLedgerPanel ledger={salesLedger} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={firstTab.view.periodLabel} />
+            <SalesLedgerPanel ledger={salesLedger} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={firstTab.view.periodLabel} onToggleExclude={toggleInvoiceExcluded} />
           ) : (
             <IncomePayments income={income} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={firstTab.view.periodLabel} onSetDate={setIncomeDate} />
           )}
@@ -2283,7 +2301,10 @@ function SalesSourceBadge({ source }) {
 // Sales — a flat, newest-first ledger of cash GENERATED in the period: one row
 // per deal signed (its net signed value) and one per extra. Mirrors the Income
 // ledger so the two breakdowns read identically.
-function SalesLedgerPanel({ ledger, onOpenDeal, isMobile, periodLabel }) {
+function SalesLedgerPanel({ ledger, onOpenDeal, isMobile, periodLabel, onToggleExclude }) {
+  const [showExcluded, setShowExcluded] = useState(false);
+  const included = ledger ? ledger.rows.filter((r) => !r.excluded) : [];
+  const excluded = ledger ? ledger.rows.filter((r) => r.excluded) : [];
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 4 }}>
       <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -2294,33 +2315,58 @@ function SalesLedgerPanel({ ledger, onOpenDeal, isMobile, periodLabel }) {
       </p>
       {!ledger ? (
         <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
-      ) : ledger.rows.length === 0 ? (
+      ) : included.length === 0 ? (
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>
           No sales in this period.
         </div>
       ) : (
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
           <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + BRAND.border, borderLeft: `3px solid ${BRAND.blue}`, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{ fontSize: 12, color: BRAND.muted }}>{ledger.rows.length} {ledger.rows.length === 1 ? 'item' : 'items'}</span>
+            <span style={{ fontSize: 12, color: BRAND.muted }}>{included.length} {included.length === 1 ? 'item' : 'items'}</span>
             <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(ledger.total)}</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {ledger.rows.map((r, i) => (
-              <SalesRow key={i} r={r} onOpenDeal={onOpenDeal} />
+            {included.map((r, i) => (
+              <SalesRow key={i} r={r} onOpenDeal={onOpenDeal} onToggleExclude={onToggleExclude} />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Invoices set aside as "not new business" (e.g. a legacy debt). Kept on
+          record but not counted — collapsed by default, one click to re-include. */}
+      {excluded.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <button
+            type="button"
+            onClick={() => setShowExcluded((v) => !v)}
+            style={{ background: 'transparent', border: 'none', padding: '2px 0', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 6, color: BRAND.muted, fontSize: 12 }}
+          >
+            <ChevronDown size={14} style={{ transition: 'transform 150ms', transform: showExcluded ? 'none' : 'rotate(-90deg)' }} />
+            {excluded.length} excluded from cash generated
+          </button>
+          {showExcluded && (
+            <div style={{ border: '1px dashed ' + BRAND.border, borderRadius: 10, overflow: 'hidden', marginTop: 8 }}>
+              {excluded.map((r, i) => (
+                <SalesRow key={i} r={r} onOpenDeal={onOpenDeal} onToggleExclude={onToggleExclude} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function SalesRow({ r, onOpenDeal }) {
+function SalesRow({ r, onOpenDeal, onToggleExclude }) {
   const name = r.company || ((r.source === 'extra' || r.source === 'invoice') ? (r.label || (r.source === 'invoice' ? 'Invoice' : 'Extra')) : 'Unattributed');
   const number = r.number ? formatProposalNumber(r.number) : '';
   const date = r.at ? new Date(r.at).toLocaleDateString('en-GB') : '';
   const canOpen = !!(onOpenDeal && r.dealId);
   const open = () => { if (canOpen) onOpenDeal(r.dealId); };
+  // Only standalone invoices can be set aside from the sales figures.
+  const canExclude = !!(onToggleExclude && r.source === 'invoice' && r.invoiceId);
+  const muted = !!r.excluded;
   return (
     <div
       role={canOpen ? 'button' : undefined}
@@ -2328,12 +2374,12 @@ function SalesRow({ r, onOpenDeal }) {
       onClick={open}
       onKeyDown={(e) => { if (canOpen && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } }}
       onMouseEnter={(e) => { if (canOpen) e.currentTarget.style.background = BRAND.paper; }}
-      onMouseLeave={(e) => { if (canOpen) e.currentTarget.style.background = 'white'; }}
-      style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: canOpen ? 'pointer' : 'default', padding: '8px 14px' }}
+      onMouseLeave={(e) => { if (canOpen) e.currentTarget.style.background = muted ? '#FAFBFC' : 'white'; }}
+      style={{ borderTop: '1px solid ' + BRAND.border, background: muted ? '#FAFBFC' : 'white', cursor: canOpen ? 'pointer' : 'default', padding: '8px 14px' }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: muted ? BRAND.muted : BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {name}
           </span>
           {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
@@ -2345,7 +2391,18 @@ function SalesRow({ r, onOpenDeal }) {
           )}
           {date && <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0 }}>{date}</span>}
         </div>
-        <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(r.net)}</div>
+        {canExclude && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onToggleExclude(r); }}
+            title={muted ? 'Include in cash generated' : 'Exclude from cash generated (e.g. a legacy debt, not new business)'}
+            aria-label={muted ? 'Include in cash generated' : 'Exclude from cash generated'}
+            style={{ flexShrink: 0, background: 'transparent', border: 'none', padding: 4, cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
+          >
+            {muted ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+          </button>
+        )}
+        <div style={{ fontSize: 14, fontWeight: 700, color: muted ? BRAND.muted : BRAND.ink, flexShrink: 0, textDecoration: muted ? 'line-through' : 'none' }}>{formatGBP(r.net)}</div>
       </div>
     </div>
   );

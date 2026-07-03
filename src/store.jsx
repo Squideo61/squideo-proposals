@@ -1037,6 +1037,13 @@ export function StoreProvider({ children }) {
         return data;
       }).catch(() => null);
     },
+    // Flag/unflag a standalone invoice as excluded from the sales / "cash
+    // generated" figures (e.g. a legacy debt we were owed). The caller reloads
+    // whichever Finance panels it owns afterwards (it has the period/year).
+    setInvoiceExcluded(invoiceId, excluded) {
+      const rawId = String(invoiceId).replace(/^manual:/, '');
+      return api.patch('/api/crm/invoices/' + encodeURIComponent(rawId), { excludeFromStats: !!excluded });
+    },
     // Signal that finance data changed so period-scoped panels (Performance)
     // refetch even though their own selector hasn't moved.
     bumpFinanceRefresh() {

@@ -28,6 +28,19 @@ import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { pendingExtrasForDeal, markExtrasInvoiced, markExtrasPaidForXeroInvoice, releaseExtrasForVoidedInvoice } from './extras.js';
 
+// Self-heal for db/migrations/20260703_manual_invoices_exclude_flag.sql so the
+// exclude_from_stats column exists even where the migration hasn't been run by
+// hand. Idempotent + cached so it runs at most once per cold start.
+let excludeColumnEnsured = null;
+export function ensureInvoiceExcludeColumn() {
+  if (excludeColumnEnsured) return excludeColumnEnsured;
+  excludeColumnEnsured = sql`
+    ALTER TABLE manual_invoices
+      ADD COLUMN IF NOT EXISTS exclude_from_stats BOOLEAN NOT NULL DEFAULT false
+  `.catch((err) => { excludeColumnEnsured = null; throw err; });
+  return excludeColumnEnsured;
+}
+
 // Create a Xero ACCREC invoice for a deal/proposal/company from explicit line
 // items, store it in manual_invoices, and (optionally) flip the given extras to
 // 'invoiced'. Extracted from the JSON POST handler so other flows (an extra
@@ -860,6 +873,7 @@ export async function invoicesRoute(req, res, id, action, user) {
   if (id && req.method === 'PATCH') {
     const manualId = stripManualPrefix(id);
     const body = req.body || {};
+    await ensureInvoiceExcludeColumn();
     const cur = (await sql`SELECT * FROM manual_invoices WHERE id = ${manualId}`)[0];
     if (!cur) return res.status(404).json({ error: 'Not found' });
     if (cur.uploaded_by !== user.email && !hasPermission(await getRole(user.role), 'invoices.manage')) {
@@ -874,6 +888,9 @@ export async function invoicesRoute(req, res, id, action, user) {
       notes:          'notes'         in body ? trimOrNull(body.notes)         : cur.notes,
       paid_at:        'paidAt'        in body ? trimOrNull(body.paidAt)        : cur.paid_at,
       payment_method: 'paymentMethod' in body ? trimOrNull(body.paymentMethod) : cur.payment_method,
+      // Exclude from the Finance sales / "cash generated" figures without
+      // deleting the invoice (e.g. a legacy debt we were owed).
+      exclude_from_stats: 'excludeFromStats' in body ? !!body.excludeFromStats : cur.exclude_from_stats,
     };
     await sql`
       UPDATE manual_invoices
@@ -885,6 +902,7 @@ export async function invoicesRoute(req, res, id, action, user) {
              notes           = ${next.notes},
              paid_at         = ${next.paid_at},
              payment_method  = ${next.payment_method},
+             exclude_from_stats = ${next.exclude_from_stats},
              recorded_by     = COALESCE(recorded_by, ${user.email || null}),
              updated_at      = NOW()
        WHERE id = ${manualId}
