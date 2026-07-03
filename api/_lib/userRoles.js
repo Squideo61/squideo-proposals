@@ -95,6 +95,35 @@ export function ensureSystemRoles() {
            SET notification_defaults = notification_defaults || '{"project.good_to_go": true}'::jsonb, updated_at = NOW()
          WHERE id IN ('admin', 'director', 'member') AND NOT (notification_defaults ? 'project.good_to_go')
       `;
+
+      // ── Producer schedule + annual leave ──
+      // Everyone who works production can see their own calendar and book leave;
+      // only Admins + Directors manage the master schedule and approve leave.
+      const schedAccess = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["schedule.access"]'::jsonb, updated_at = NOW()
+         WHERE id IN ('producer', 'copywriter', 'member', 'director') AND NOT (permissions @> '["schedule.access"]'::jsonb)
+      `;
+      if ((schedAccess.count || schedAccess.rowCount || 0) > 0) invalidateRoleCache();
+      const schedManage = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["schedule.manage"]'::jsonb, updated_at = NOW()
+         WHERE id = 'director' AND NOT (permissions @> '["schedule.manage"]'::jsonb)
+      `;
+      if ((schedManage.count || schedManage.rowCount || 0) > 0) invalidateRoleCache('director');
+      // Leave-request approvals + schedule clashes → Admins & Directors.
+      await sql`
+        UPDATE roles
+           SET notification_defaults = notification_defaults || '{"leave.requested": true, "schedule.conflict": true}'::jsonb, updated_at = NOW()
+         WHERE id IN ('admin', 'director') AND NOT (notification_defaults ? 'leave.requested')
+      `;
+      // A leave decision reaches the requester — default ON for every role that
+      // can book leave (plus Admin, covered by '*').
+      await sql`
+        UPDATE roles
+           SET notification_defaults = notification_defaults || '{"leave.decided": true}'::jsonb, updated_at = NOW()
+         WHERE id IN ('producer', 'copywriter', 'member', 'director', 'admin') AND NOT (notification_defaults ? 'leave.decided')
+      `;
     } catch (err) {
       systemRolesEnsured = null;
       console.warn('[roles] ensure system roles failed', err.message);

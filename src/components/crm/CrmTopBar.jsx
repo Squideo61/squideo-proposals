@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Gauge, Globe, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, PoundSterling, Search, Settings, Square, Undo2, Redo2, UserCog, X } from 'lucide-react';
+import { BarChart3, CalendarDays, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Gauge, Globe, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, PoundSterling, Search, Settings, Square, Undo2, Redo2, UserCog, X } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -72,6 +72,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
 
   const canRevisions = permissionsInclude(perms, 'revisions.access');
   const canProduction = permissionsInclude(perms, 'production.access');
+  // Producer scheduling calendar (own calendar + book leave; managers see the
+  // master view). Producers & copywriters have it too.
+  const canSchedule = permissionsInclude(perms, 'schedule.access');
   // Quote Requests page is API-gated by quote_requests.manage; hide the nav item
   // for roles without it (e.g. producers, copywriters) so they don't land on a
   // page that 403s and looks empty/broken.
@@ -128,10 +131,11 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     {
       key: 'projects',
       label: 'Projects',
-      views: ['production', 'projects', 'project', 'video', 'storyboards', 'revisions', 'partner-credits', 'partner-credit-detail'],
+      views: ['production', 'projects', 'project', 'video', 'storyboards', 'revisions', 'schedule', 'prod-dashboard', 'partner-credits', 'partner-credit-detail'],
       items: [
         ...(canProduction ? [{ label: 'Projects', icon: LayoutGrid, go: () => navigate('projects') }] : []),
         ...(canProduction ? [{ label: 'Production board', icon: KanbanSquare, go: () => navigate('production') }] : []),
+        ...(canSchedule ? [{ label: 'Schedule', icon: CalendarDays, go: () => navigate('schedule') }] : []),
         ...(canRevisions ? [{ label: 'Storyboard Revisions', icon: Images, go: () => navigate('storyboards') }] : []),
         ...(canRevisions ? [{ label: 'Video Revisions', icon: Clapperboard, go: () => navigate('revisions') }] : []),
         { label: 'Partners & Credits', icon: Coins, go: () => navigate('partner-credits') },
@@ -146,7 +150,10 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   const producerSections = producer
     ? sections
         .filter((s) => s.key === 'projects')
-        .map((s) => ({ ...s, items: s.items.filter((i) => i.label !== 'Partners & Credits') }))
+        .map((s) => ({ ...s, items: [
+          { label: 'Dashboard', icon: LayoutDashboard, go: () => navigate('prod-dashboard') },
+          ...s.items.filter((i) => i.label !== 'Partners & Credits'),
+        ] }))
         .filter((s) => s.items.length > 0)
     : [];
   // The sections actually shown in the desktop dropdowns / mobile drawer.
@@ -174,10 +181,10 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       ]
     : producer
     ? [
+        tab('prod-dashboard', 'Home', LayoutDashboard, () => navigate('prod-dashboard'), ['prod-dashboard']),
         tab('production', 'Board', KanbanSquare, () => navigate('production'), ['production']),
-        tab('projects', 'Projects', LayoutGrid, () => navigate('projects'), ['projects', 'project', 'video']),
+        tab('schedule', 'Schedule', CalendarDays, () => navigate('schedule'), ['schedule']),
         tab('tasks', 'Tasks', CheckSquare, () => navigate('tasks'), ['tasks'], openTasksDue),
-        tab('emails', 'Inbox', Mail, () => navigate('emails'), ['emails', 'email', 'triage'], inboxUnread),
         tab('more', 'More', Menu, openMore),
       ]
     : [

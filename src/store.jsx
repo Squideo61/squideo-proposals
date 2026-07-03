@@ -130,6 +130,8 @@ function emptyStore() {
     bankHolidays: null,
     partnerCreditsList: null,
     partnerCreditDetail: {},
+    // Producer scheduling calendar + annual leave (the "Schedule" section).
+    schedule: { producers: [], assignments: [], leave: [], allowances: [], amends: [], canManage: false, me: '', loaded: false },
     // In-app notification feed (the bells). The feed is split into two channels
     // — 'finance' (the £ bell) and 'general' (the standard bell). Each holds a
     // newest-first `items` list + server-reported `unread` count.
@@ -1786,6 +1788,60 @@ export function StoreProvider({ children }) {
           if (resp?.deal) setState(s => applyOne(s, { kind: 'deal', id: resp.deal.id, patch: resp.deal }));
           return Promise.all([actions.loadDealDetail(dealId), actions.loadProductionVideos()]).then(() => resp);
         });
+    },
+
+    // ---------- Producer schedule + annual leave ----------
+    _applySchedule(payload) {
+      if (!payload || typeof payload !== 'object') return payload;
+      setState(s => ({ ...s, schedule: {
+        producers: payload.producers || [],
+        assignments: payload.assignments || [],
+        leave: payload.leave || [],
+        allowances: payload.allowances || [],
+        amends: payload.amends || [],
+        canManage: !!payload.canManage,
+        me: payload.me || s.schedule.me,
+        loaded: true,
+      } }));
+      return payload;
+    },
+    loadSchedule() {
+      return api.get('/api/crm/schedule').then((p) => actions._applySchedule(p)).catch(() => {});
+    },
+    syncDealSchedule(dealId) {
+      return api.post('/api/crm/schedule/sync', { dealId })
+        .then((p) => actions._applySchedule(p))
+        .catch((err) => { showMsg(err.message || 'Failed to sync schedule'); throw err; });
+    },
+    moveAssignment(assignmentId, fields) {
+      return api.patch('/api/crm/schedule/assignment/' + encodeURIComponent(assignmentId), fields)
+        .then((p) => actions._applySchedule(p))
+        .catch((err) => { showMsg(err.message || 'Failed to move block'); throw err; });
+    },
+    deleteAssignment(assignmentId) {
+      return api.delete('/api/crm/schedule/assignment/' + encodeURIComponent(assignmentId))
+        .then((p) => actions._applySchedule(p))
+        .catch((err) => { showMsg(err.message || 'Failed to remove block'); throw err; });
+    },
+    requestLeave(fields) {
+      return api.post('/api/crm/schedule/leave', fields)
+        .then((p) => { actions._applySchedule(p); if (p?.leaveConflict) showMsg('Heads up: this overlaps scheduled production work.'); return p; })
+        .catch((err) => { showMsg(err.message || 'Failed to book leave'); throw err; });
+    },
+    decideLeave(leaveId, status) {
+      return api.patch('/api/crm/schedule/leave/' + encodeURIComponent(leaveId), { status })
+        .then((p) => { actions._applySchedule(p); if (p?.leaveConflict) showMsg('There is a conflict in dates due to annual leave — please rearrange the schedule, or re-assign the project.'); return p; })
+        .catch((err) => { showMsg(err.message || 'Failed to update leave'); throw err; });
+    },
+    cancelLeave(leaveId) {
+      return api.delete('/api/crm/schedule/leave/' + encodeURIComponent(leaveId))
+        .then((p) => actions._applySchedule(p))
+        .catch((err) => { showMsg(err.message || 'Failed to cancel leave'); throw err; });
+    },
+    updateAllowance(email, fields) {
+      return api.patch('/api/crm/schedule/allowance/' + encodeURIComponent(email), fields)
+        .then((p) => actions._applySchedule(p))
+        .catch((err) => { showMsg(err.message || 'Failed to update allowance'); throw err; });
     },
 
     // ---------- Production board (videos move through stages) ----------

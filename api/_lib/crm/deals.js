@@ -12,6 +12,7 @@ import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, fo
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { enterProduction } from '../production.js';
+import { syncDealSchedule } from './schedule.js';
 import { sendNotification } from '../notifications.js';
 import { getDealCreditProject } from './retainers.js';
 import { APP_URL } from '../email.js';
@@ -560,6 +561,9 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     if (result.entered) {
       try { await notifyGoodToGo(d, user); }
       catch (err) { console.error('[deals] good-to-go notify failed', err); }
+      // Seed the producer calendar for the new project (best-effort).
+      try { await syncDealSchedule(id); }
+      catch (err) { console.error('[deals] schedule sync failed', err); }
     }
     const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
     const [deal] = await annotateDeals(rows);

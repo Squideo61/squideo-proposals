@@ -21,7 +21,7 @@ const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: 
 const NO_TOPBAR_VIEWS = new Set(['builder', 'template-builder', 'client']);
 // Board views that read better edge-to-edge — they opt out of the centred
 // max-width cap and stay full width (their columns/rows can use the room).
-const FULL_WIDTH_VIEWS = new Set(['production']);
+const FULL_WIDTH_VIEWS = new Set(['production', 'schedule']);
 
 const ListView = lazyNamed(() => import('./components/ListView.jsx'), 'ListView');
 const BuilderView = lazyNamed(() => import('./components/BuilderView.jsx'), 'BuilderView');
@@ -53,6 +53,8 @@ const FinanceView = lazyNamed(() => import('./components/crm/FinanceView.jsx'), 
 const MarketingView = lazyNamed(() => import('./components/crm/MarketingView.jsx'), 'MarketingView');
 const SalesInsightsView = lazyNamed(() => import('./components/crm/SalesInsightsView.jsx'), 'SalesInsightsView');
 const BusinessOverviewView = lazyNamed(() => import('./components/crm/BusinessOverviewView.jsx'), 'BusinessOverviewView');
+const ScheduleView = lazyNamed(() => import('./components/crm/ScheduleView.jsx'), 'ScheduleView');
+const ProductionDashboardView = lazyNamed(() => import('./components/crm/ProductionDashboardView.jsx'), 'ProductionDashboardView');
 
 function ViewFallback() {
   return (
@@ -109,9 +111,15 @@ function AppShell() {
   // fires for producers (own shell) or deep links.
   useEffect(() => {
     if (didDefaultLandRef.current || !landedAtRootRef.current) return;
-    if (!user || producerOnly) return;
+    if (!user) return;
     didDefaultLandRef.current = true;
-    if (marketingOnly) {
+    if (producerOnly) {
+      // Producers land on their production dashboard (shortcuts to the calendar,
+      // their tasks/notifications and amends to do).
+      window.history.replaceState(null, '', buildHash('prod-dashboard', null));
+      setView('prod-dashboard');
+      setActiveId(null);
+    } else if (marketingOnly) {
       // Marketing accounts land on the Marketing dashboard.
       window.history.replaceState(null, '', buildHash('marketing', 'overview'));
       setView('marketing');
@@ -372,7 +380,7 @@ function AppShell() {
   if (producerOnly) {
     // The production board (the fall-through case) stays full width; the detail
     // pages a producer opens are centred at the cap like the rest of the app.
-    const producerBoard = !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards' || view === 'tasks' || view === 'emails' || view === 'email' || view === 'triage' || (view === 'client' && activeId));
+    const producerBoard = !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards' || view === 'tasks' || view === 'emails' || view === 'email' || view === 'triage' || view === 'prod-dashboard' || (view === 'client' && activeId));
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <DesktopNotifier onOpenLink={openLink} />
@@ -393,6 +401,15 @@ function AppShell() {
             <VideoDetailView videoId={activeId} onBack={() => goBack('production')} onOpenProject={(id) => navigate('project', id)} />
           ) : (view === 'project' || view === 'deal') && activeId ? (
             <DealDetailView dealId={activeId} productionOnly onBack={() => goBack('production')} onOpenVideo={(id) => navigate('video', id)} />
+          ) : view === 'schedule' ? (
+            <ScheduleView onOpenProject={(id) => navigate('project', id)} onOpenVideo={(id) => navigate('video', id)} />
+          ) : view === 'prod-dashboard' ? (
+            <ProductionDashboardView
+              onOpenSchedule={() => navigate('schedule')}
+              onOpenTasks={() => navigate('tasks')}
+              onOpenVideo={(id) => navigate('video', id)}
+              onOpenLink={openLink}
+            />
           ) : view === 'projects' ? (
             <ProjectsOverviewView onBack={() => navigate('production')} onOpenProject={(id) => navigate('project', id)} />
           ) : view === 'revisions' ? (
@@ -630,6 +647,20 @@ function AppShell() {
           onOpenDeal={(id) => navigate('deal', id)}
           onOpenVideo={(id) => navigate('video', id)}
           onOpenPartner={(key) => navigate('partner-credit-detail', key)}
+        />
+      )}
+      {view === 'schedule' && (
+        <ScheduleView
+          onOpenProject={(id) => navigate('project', id)}
+          onOpenVideo={(id) => navigate('video', id)}
+        />
+      )}
+      {view === 'prod-dashboard' && (
+        <ProductionDashboardView
+          onOpenSchedule={() => navigate('schedule')}
+          onOpenTasks={() => navigate('tasks')}
+          onOpenVideo={(id) => navigate('video', id)}
+          onOpenLink={openLink}
         />
       )}
       {(view === 'finance' || view === 'performance') && (

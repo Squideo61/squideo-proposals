@@ -192,6 +192,10 @@ export async function tasksRoute(req, res, id, action, user) {
     `;
     await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${dealId}`;
 
+    // Push the fresh schedule dates onto the producer calendar (best-effort).
+    try { const { syncDealSchedule } = await import('./schedule.js'); await syncDealSchedule(dealId); }
+    catch (err) { console.warn('[tasks] schedule sync failed', err.message); }
+
     const tasks = await sql`
       SELECT t.*,
         (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')

@@ -29,6 +29,7 @@ import { analyticsRoute } from '../_lib/crm/analytics.js';
 import { salesInsightsRoute } from '../_lib/crm/salesInsights.js';
 import { restoreRoute } from '../_lib/crm/recycleBin.js';
 import { introCallsRoute } from '../_lib/crm/introCalls.js';
+import { scheduleRoute } from '../_lib/crm/schedule.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -117,6 +118,7 @@ export default async function handler(req, res) {
       case 'sales-insights': return await salesInsightsRoute(req, res, id, action, user);
       case 'restore':   return await restoreRoute(req, res, id, user);
       case 'intro-calls': return await introCallsRoute(req, res, id, action, user);
+      case 'schedule':  return await scheduleRoute(req, res, id, action, user);
       default:           return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {

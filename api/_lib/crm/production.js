@@ -867,6 +867,11 @@ async function updateVideo(req, res, videoId) {
      WHERE id = ${videoId}
   `;
   if (producerKeyPresent) await setVideoAssignees(videoId, nextProducers);
+  // Producer or length change alters the calendar — resync the deal's blocks.
+  if (producerKeyPresent || 'videoLength' in body) {
+    try { const { syncDealSchedule } = await import('./schedule.js'); await syncDealSchedule(cur.deal_id); }
+    catch (err) { console.warn('[production] schedule resync failed', err.message); }
+  }
   const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
   return res.status(200).json(serialiseVideo(row));
 }
