@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
-import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe, Users, UserCheck, FileText, Trophy, PoundSterling, Wallet, Target, Coins, Clock, Gauge, XCircle } from 'lucide-react';
+import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe, Users, UserCheck, FileText, Trophy, PoundSterling, Wallet, Target, Coins, Clock, Gauge, XCircle, Ban, ChevronLeft, ChevronRight } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
@@ -514,6 +514,7 @@ const STATUS_STYLE = {
   new: { bg: '#EEF2FF', fg: '#3730A3', label: 'New' },
   qualified: { bg: '#DCFCE7', fg: '#166534', label: 'Qualified' },
   disqualified: { bg: '#FEE2E2', fg: '#991B1B', label: 'Disqualified' },
+  spam: { bg: '#F1E9E9', fg: '#7F1D1D', label: 'Spam' },
 };
 
 // Sales-pipeline stage shown per lead (deal stage). Colour-grouped: won = green,
@@ -530,8 +531,13 @@ const STAGE_STYLE = {
   lost:          { bg: '#FEE2E2', fg: '#991B1B', label: 'Lost' },
 };
 
-function LeadsTab({ data, loading, onOpenDeal, onRetry }) {
-  const [filter, setFilter] = useState('all'); // all | new | qualified | disqualified
+function LeadsTab({ data, loading, onOpenDeal, onOpenCompany, onRetry }) {
+  const { actions } = useStore();
+  const [filter, setFilter] = useState('all'); // all | new | qualified | disqualified | spam
+  const [selectedId, setSelectedId] = useState(null);
+  // Selection is scoped to the active tab, so dropping it on a filter change
+  // keeps Prev/Next paging within whatever section you're looking at.
+  useEffect(() => { setSelectedId(null); }, [filter]);
   if (loading && !data) return <Loading />;
   if (!data) return <LoadFailed onRetry={onRetry} />;
   const allLeads = data?.leads || [];
@@ -541,14 +547,27 @@ function LeadsTab({ data, loading, onOpenDeal, onRetry }) {
     new: allLeads.filter((l) => (l.status || 'new') === 'new').length,
     qualified: allLeads.filter((l) => l.status === 'qualified').length,
     disqualified: allLeads.filter((l) => l.status === 'disqualified').length,
+    spam: allLeads.filter((l) => l.status === 'spam').length,
   };
   const FILTERS = [
     { key: 'all', label: 'All' },
     { key: 'new', label: 'New' },
     { key: 'qualified', label: 'Qualified' },
     { key: 'disqualified', label: 'Disqualified' },
+    { key: 'spam', label: 'Spam' },
   ];
   const leads = filter === 'all' ? allLeads : allLeads.filter((l) => (l.status || 'new') === filter);
+  const selIdx = selectedId ? leads.findIndex((l) => l.id === selectedId) : -1;
+  const selectedLead = selIdx >= 0 ? leads[selIdx] : null;
+
+  const handleSpam = async (lead) => {
+    // Advance to a neighbour before the row leaves the current filter.
+    const idx = leads.findIndex((l) => l.id === lead.id);
+    const nextId = leads[idx + 1]?.id ?? leads[idx - 1]?.id ?? null;
+    await actions.markQuoteRequestSpam(lead.id);
+    setSelectedId(nextId);
+  };
+
   return (
     <div>
       <div style={{ display: 'inline-flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -570,12 +589,11 @@ function LeadsTab({ data, loading, onOpenDeal, onRetry }) {
           {leads.map((l) => {
             const st = STATUS_STYLE[l.status] || STATUS_STYLE.new;
             const stg = l.dealStage ? STAGE_STYLE[l.dealStage] : null;
-            const clickable = !!l.dealId && !!onOpenDeal;
             return (
               <tr
                 key={l.id}
-                onClick={clickable ? () => onOpenDeal(l.dealId) : undefined}
-                style={{ borderTop: '1px solid ' + BRAND.border, cursor: clickable ? 'pointer' : 'default' }}
+                onClick={() => setSelectedId(l.id)}
+                style={{ borderTop: '1px solid ' + BRAND.border, cursor: 'pointer', background: l.id === selectedId ? BRAND.paper : undefined }}
               >
                 <Td>{new Date(l.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</Td>
                 <Td>
@@ -596,6 +614,165 @@ function LeadsTab({ data, loading, onOpenDeal, onRetry }) {
       </table>
       </div>
       )}
+      {selectedLead && (
+        <LeadDetailPanel
+          lead={selectedLead}
+          index={selIdx}
+          total={leads.length}
+          onPrev={selIdx > 0 ? () => setSelectedId(leads[selIdx - 1].id) : null}
+          onNext={selIdx < leads.length - 1 ? () => setSelectedId(leads[selIdx + 1].id) : null}
+          onClose={() => setSelectedId(null)}
+          onSpam={() => handleSpam(selectedLead)}
+          onOpenDeal={onOpenDeal}
+          onOpenCompany={onOpenCompany}
+        />
+      )}
+    </div>
+  );
+}
+
+// Right-hand slide-over showing the full quote request for a Marketing lead, with
+// Prev/Next paging scoped to the current filter tab. Esc / ✕ close it; clicking
+// the scrim intentionally does NOT (matches the app's modal-behaviour rule).
+function LeadDetailPanel({ lead, index, total, onPrev, onNext, onClose, onSpam, onOpenDeal, onOpenCompany }) {
+  const isMobile = useIsMobile();
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowLeft') onPrev?.();
+      else if (e.key === 'ArrowRight') onNext?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, onPrev, onNext]);
+
+  const st = STATUS_STYLE[lead.status] || STATUS_STYLE.new;
+  const stg = lead.dealStage ? STAGE_STYLE[lead.dealStage] : null;
+  const isSpam = lead.status === 'spam';
+  const handleSpamClick = async () => {
+    if (busy) return;
+    if (!window.confirm(`Mark ${lead.name || lead.email || 'this lead'} as spam? This deletes the request and any provisional contact; it stays here as a spam lead.`)) return;
+    setBusy(true);
+    await onSpam();
+    setBusy(false);
+  };
+
+  return (
+    <>
+      <div onClick={undefined} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 1000 }} />
+      <div
+        style={{
+          position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 1001,
+          width: isMobile ? '100%' : 440, maxWidth: '100%',
+          background: 'white', boxShadow: '-8px 0 30px rgba(0,0,0,0.12)',
+          display: 'flex', flexDirection: 'column',
+        }}
+      >
+        {/* Header + paging */}
+        <div style={{ padding: '14px 16px', borderBottom: '1px solid ' + BRAND.border, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button onClick={onPrev} disabled={!onPrev} className="btn-ghost" style={{ padding: '4px 8px', opacity: onPrev ? 1 : 0.4 }} title="Previous (←)"><ChevronLeft size={16} /></button>
+            <span style={{ fontSize: 12, color: BRAND.muted }}>{index + 1} of {total}</span>
+            <button onClick={onNext} disabled={!onNext} className="btn-ghost" style={{ padding: '4px 8px', opacity: onNext ? 1 : 0.4 }} title="Next (→)"><ChevronRight size={16} /></button>
+            <button onClick={onClose} className="btn-ghost" style={{ padding: 4, marginLeft: 'auto' }} title="Close (Esc)"><XCircle size={18} /></button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+            <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {lead.name || lead.email || 'Anonymous'}
+            </h2>
+            <span style={{ background: st.bg, color: st.fg, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, flexShrink: 0 }}>{st.label}</span>
+          </div>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 3 }}>
+            Submitted {new Date(lead.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: 16, overflowY: 'auto', flex: 1 }}>
+          <PanelSection title="Contact">
+            {lead.email && <PanelField label="Email"><a href={`mailto:${lead.email}`} style={{ color: BRAND.blue }}>{lead.email}</a></PanelField>}
+            {lead.phone && <PanelField label="Phone"><a href={`tel:${lead.phone.replace(/[^+\d]/g, '')}`} style={{ color: BRAND.blue }}>{lead.phone}</a></PanelField>}
+            {lead.company && <PanelField label="Company">{onOpenCompany && lead.companyId ? <button onClick={() => onOpenCompany(lead.companyId)} className="btn-link" style={{ color: BRAND.blue, background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit' }}>{lead.company}</button> : lead.company}</PanelField>}
+            {lead.country && <PanelField label="Country">{lead.country}</PanelField>}
+            <PanelField label="Marketing opt-in">{lead.optIn ? 'Yes' : 'No'}</PanelField>
+          </PanelSection>
+
+          {(lead.timeline || lead.budget) && (
+            <PanelSection title="Enquiry">
+              {lead.timeline && <PanelField label="Timeline">{lead.timeline}</PanelField>}
+              {lead.budget && <PanelField label="Budget">{lead.budget}</PanelField>}
+            </PanelSection>
+          )}
+          {lead.projectDetails ? (
+            <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.55, background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '10px 12px', marginBottom: 16 }}>
+              {lead.projectDetails}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 16, fontStyle: 'italic' }}>No message provided{isSpam || lead.status === 'disqualified' ? ' (or purged with the request).' : '.'}</div>
+          )}
+
+          {lead.files?.length > 0 && (
+            <PanelSection title={`Attachments (${lead.files.length})`}>
+              <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13 }}>
+                {lead.files.map((f, i) => (
+                  <li key={i} style={{ padding: '5px 0', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <FileText size={13} color={BRAND.muted} />
+                    <span>{f.filename}</span>
+                    {Number.isFinite(f.sizeBytes) && <span style={{ color: BRAND.muted, fontSize: 11 }}>· {Math.round(f.sizeBytes / 1024)} KB</span>}
+                  </li>
+                ))}
+              </ul>
+            </PanelSection>
+          )}
+
+          <PanelSection title="Attribution">
+            <PanelField label="Channel"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: CHANNEL_COLORS[lead.channel] || BRAND.muted, marginRight: 6 }} />{prettyChannel(lead.channel)}</PanelField>
+            {lead.campaign && <PanelField label="Campaign">{lead.campaign}</PanelField>}
+            {lead.keyword && <PanelField label="Keyword">{lead.keyword}</PanelField>}
+            {lead.source && <PanelField label="Source">{lead.source}</PanelField>}
+            {lead.landingUrl && <PanelField label="Landing page"><a href={lead.landingUrl} target="_blank" rel="noopener noreferrer" style={{ color: BRAND.blue, wordBreak: 'break-all' }}>{lead.landingUrl}</a></PanelField>}
+          </PanelSection>
+
+          {lead.dealId && (
+            <div style={{ marginTop: 4, padding: 12, border: '1px solid ' + BRAND.border, borderRadius: 8, background: '#F8FAFB' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                {stg && <span style={{ background: stg.bg, color: stg.fg, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999 }}>{stg.label}</span>}
+                {lead.won && <span style={{ color: '#16A34A', fontWeight: 700, fontSize: 13 }}>{formatGBP(lead.revenue)} won</span>}
+                {!lead.won && lead.proposalValue != null && <span style={{ fontSize: 13, color: BRAND.muted }}>Proposal {formatGBP(lead.proposalValue)}</span>}
+              </div>
+              {onOpenDeal && <button onClick={() => onOpenDeal(lead.dealId)} className="btn">Open deal →</button>}
+            </div>
+          )}
+        </div>
+
+        {/* Footer actions */}
+        {!isSpam && (
+          <div style={{ padding: '12px 16px', borderTop: '1px solid ' + BRAND.border, flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
+            <button onClick={handleSpamClick} disabled={busy} className="btn-ghost is-danger" title="Mark as spam — deletes the request; kept here as a spam lead">
+              <Ban size={14} /> {busy ? 'Marking…' : 'Mark as spam'}
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function PanelSection({ title, children }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <h3 style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>{title}</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px' }}>{children}</div>
+    </div>
+  );
+}
+
+function PanelField({ label, children }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 13, color: BRAND.ink, wordBreak: 'break-word' }}>{children}</div>
     </div>
   );
 }

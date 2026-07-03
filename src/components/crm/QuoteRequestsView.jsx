@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Check, FileText, Mail, MailQuestion, Paperclip, Phone, X } from 'lucide-react';
+import { ArrowLeft, Ban, Check, FileText, Mail, MailQuestion, Paperclip, Phone, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatRelativeTime, useIsMobile } from '../../utils.js';
@@ -108,6 +108,20 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
     }
   };
 
+  const handleSpam = async (req) => {
+    if (busyId) return;
+    if (!window.confirm(`Mark ${req.name || req.email || 'this lead'} as spam? This deletes the request, any provisional contact and uploaded files — it stays in Marketing as a spam lead.`)) return;
+    setBusyId(req.id);
+    const ok = await actions.markQuoteRequestSpam(req.id);
+    setBusyId(null);
+    if (ok) {
+      showMsg('Marked as spam');
+      setActive(null);
+    } else {
+      showMsg('Could not mark as spam');
+    }
+  };
+
   const openDetail = async (req) => {
     setActive(req);
     setReviewedContact(null);
@@ -143,7 +157,7 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
               {busyId === 'all' ? 'Clearing…' : 'Clear all'}
             </button>
           )}
-          {['new', 'qualified', 'all'].map((f) => (
+          {['new', 'qualified', 'spam', 'all'].map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -178,6 +192,7 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
               onOpen={() => openDetail(r)}
               onQualify={() => handleQualify(r)}
               onDisqualify={() => handleDisqualify(r)}
+              onSpam={() => handleSpam(r)}
               onClear={() => handleClear(r)}
               canClear={isAdmin}
               onOpenDeal={onOpenDeal}
@@ -195,6 +210,7 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
           onClose={() => setActive(null)}
           onQualify={() => handleQualify(active)}
           onDisqualify={() => handleDisqualify(active)}
+          onSpam={() => handleSpam(active)}
           onClear={() => handleClear(active)}
           canClear={isAdmin}
           onOpenContact={onOpenContact}
@@ -205,10 +221,11 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
   );
 }
 
-function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onClear, canClear, onOpenDeal }) {
+function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onSpam, onClear, canClear, onOpenDeal }) {
   const isQualified = request.status === 'qualified';
   const isCleared = request.status === 'cleared';
   const isDisqualified = request.status === 'disqualified';
+  const isSpam = request.status === 'spam';
   return (
     <div
       style={{
@@ -245,6 +262,11 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onC
               Disqualified
             </span>
           )}
+          {isSpam && (
+            <span style={{ background: '#7F1D1D22', color: '#7F1D1D', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              Spam
+            </span>
+          )}
         </div>
         {request.email && (
           <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -278,6 +300,11 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onC
                 <X size={14} /> Disqualify
               </button>
             )}
+            {!isSpam && (
+              <button onClick={onSpam} disabled={busy} className="btn-ghost is-danger" title="Mark as spam — deletes the request + any provisional contact; kept in Marketing as a spam lead">
+                <Ban size={14} /> Spam
+              </button>
+            )}
             {canClear && !isCleared && (
               <button onClick={onClear} disabled={busy} className="btn-ghost" title="Clear from inbox (keeps the lead; not marked disqualified)">
                 Clear
@@ -290,9 +317,10 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onC
   );
 }
 
-function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClose, onQualify, onDisqualify, onClear, canClear, onOpenContact, onOpenDeal }) {
+function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClose, onQualify, onDisqualify, onSpam, onClear, canClear, onOpenContact, onOpenDeal }) {
   const isQualified = request.status === 'qualified';
   const isCleared = request.status === 'cleared';
+  const isSpam = request.status === 'spam';
   const fullPhone = request.phone
     ? `${request.countryCode ? request.countryCode + ' ' : ''}${request.phone}`
     : null;
@@ -374,6 +402,11 @@ function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClo
           {canClear && !isCleared && (
             <button onClick={onClear} disabled={busy} className="btn-ghost" title="Remove from inbox without disqualifying — keeps the lead">
               Clear
+            </button>
+          )}
+          {!isSpam && (
+            <button onClick={onSpam} disabled={busy} className="btn-ghost is-danger" title="Mark as spam — deletes the request; kept in Marketing as a spam lead">
+              <Ban size={14} /> Spam
             </button>
           )}
           <button onClick={onDisqualify} disabled={busy} className="btn-ghost">

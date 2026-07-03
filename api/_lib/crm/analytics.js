@@ -196,6 +196,9 @@ async function leadsLog(req) {
   const { fromDate, toExcl, fromStr, toStr } = await leadRange(req);
   const rows = await sql`
     SELECT qr.id, qr.created_at, qr.name, qr.email, qr.company,
+           qr.phone, qr.country_code, qr.country_name,
+           qr.project_details, qr.timeline, qr.budget, qr.opt_in, qr.source_url,
+           qr.reviewed_at,
            qr.attr_channel, qr.attr_source, qr.attr_medium, qr.attr_campaign,
            qr.attr_campaign_id, qr.attr_keyword, qr.attr_term, qr.attr_landing_url,
            qr.status, qr.deal_id,
@@ -206,6 +209,22 @@ async function leadsLog(req) {
      ORDER BY qr.created_at DESC`;
   const info = await dealInfoMap(rows.map((r) => r.deal_id));
   const names = await campaignNameMap();
+  // Attach uploaded files so the Marketing lead panel can list them. Rows that
+  // were disqualified/spam have had their files purged, so this comes back empty
+  // for those — expected.
+  const ids = rows.map((r) => r.id);
+  const fileRows = ids.length
+    ? await sql`
+        SELECT quote_request_id, filename, mime_type, size_bytes
+        FROM quote_request_files
+        WHERE quote_request_id = ANY(${ids})
+        ORDER BY created_at ASC`
+    : [];
+  const filesByReq = new Map();
+  for (const f of fileRows) {
+    if (!filesByReq.has(f.quote_request_id)) filesByReq.set(f.quote_request_id, []);
+    filesByReq.get(f.quote_request_id).push({ filename: f.filename, mimeType: f.mime_type, sizeBytes: f.size_bytes });
+  }
   const leads = rows.map((r) => {
     const dv = r.deal_id ? info.get(r.deal_id) : null;
     const isSale = !!(dv && dv.isSale);
@@ -215,6 +234,14 @@ async function leadsLog(req) {
       name: r.name || null,
       email: r.email || null,
       company: r.company || null,
+      phone: r.phone ? `${r.country_code || ''} ${r.phone}`.trim() : null,
+      country: r.country_name || null,
+      projectDetails: r.project_details || null,
+      timeline: r.timeline || null,
+      budget: r.budget || null,
+      optIn: r.opt_in === true,
+      sourceUrl: r.source_url || null,
+      reviewedAt: r.reviewed_at || null,
       channel: r.attr_channel || null,
       source: r.attr_source || null,
       medium: r.attr_medium || null,
@@ -231,6 +258,7 @@ async function leadsLog(req) {
       won: isSale,
       saleAt: (dv && dv.saleAt) || null,
       revenue: isSale && dv ? round2(dv.value) : 0,
+      files: filesByReq.get(r.id) || [],
     };
   });
   return { from: fromStr, to: toStr, count: leads.length, leads };
@@ -276,7 +304,7 @@ async function reports(req, groupBy) {
     if (!g) { g = { key, label, campaignId: campaignId || null, leads: 0, qualified: 0, disqualified: 0, proposals: 0, sales: 0, revenue: 0, proposalValue: 0 }; groups.set(key, g); }
     g.leads += 1;
     if (r.status === 'qualified') g.qualified += 1;
-    else if (r.status === 'disqualified') g.disqualified += 1;
+    else if (r.status === 'disqualified' || r.status === 'spam') g.disqualified += 1;
     const dv = r.deal_id ? info.get(r.deal_id) : null;
     if (dv) {
       if (dv.proposalValue != null) { g.proposals += 1; g.proposalValue += dv.proposalValue; }
@@ -330,7 +358,7 @@ async function reports(req, groupBy) {
   // Totals across every lead in range (spend = whole-account spend in range).
   const tLeads = rows.length;
   const tQualified = rows.filter((r) => r.status === 'qualified').length;
-  const tDisqualified = rows.filter((r) => r.status === 'disqualified').length;
+  const tDisqualified = rows.filter((r) => r.status === 'disqualified' || r.status === 'spam').length;
   const tReviewed = tQualified + tDisqualified;
   let tSales = 0, tRevenue = 0, tProposalValue = 0, tProposals = 0;
   for (const r of rows) {

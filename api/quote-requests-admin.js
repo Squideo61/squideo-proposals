@@ -6,7 +6,7 @@ import { serialiseCompany } from './_lib/crm/companies.js';
 import { serialiseDeal } from './_lib/crm/deals.js';
 import { getRole } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
-import { qualifyQuoteRequest, disqualifyQuoteRequest, clearQuoteRequest, clearNewQuoteRequests } from './_lib/quoteRequestActions.js';
+import { qualifyQuoteRequest, disqualifyQuoteRequest, markQuoteRequestSpam, clearQuoteRequest, clearNewQuoteRequests } from './_lib/quoteRequestActions.js';
 
 function serialiseQuoteRequest(r, files = []) {
   return {
@@ -148,6 +148,16 @@ export default async function handler(req, res) {
     // ── Disqualify (DELETE) ────────────────────────────────────────────────
     if (req.method === 'DELETE') {
       const result = await disqualifyQuoteRequest(id);
+      if (result.status === 'not_found') return res.status(404).json({ error: 'Not found' });
+      if (result.status === 'already_qualified') {
+        return res.status(409).json({ error: 'Already qualified — open the deal instead' });
+      }
+      return res.status(200).json({ ok: true });
+    }
+
+    // ── Spam (POST /:id/spam) — mark as junk, purge like disqualify ────────
+    if (req.method === 'POST' && action === 'spam') {
+      const result = await markQuoteRequestSpam(id);
       if (result.status === 'not_found') return res.status(404).json({ error: 'Not found' });
       if (result.status === 'already_qualified') {
         return res.status(409).json({ error: 'Already qualified — open the deal instead' });

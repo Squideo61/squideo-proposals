@@ -2732,6 +2732,35 @@ export function StoreProvider({ children }) {
           return false;
         });
     },
+    markQuoteRequestSpam(id) {
+      // Same purge as disqualify (drop the inbox row + any provisional contact),
+      // but the row is kept server-side as status='spam' for Marketing. Also
+      // reflect it in the loaded marketing leads so the Marketing view updates
+      // instantly (keep the lead there — the All/Spam tabs still show it — just
+      // flip its status and clear the now-purged files).
+      let provContactId = null;
+      setState(s => {
+        const req = s.quoteRequests.find(r => r.id === id);
+        provContactId = req?.contactId || null;
+        const contacts = provContactId ? { ...s.contacts } : s.contacts;
+        if (provContactId) delete contacts[provContactId];
+        const marketingLeads = s.marketingLeads
+          ? { ...s.marketingLeads, leads: (s.marketingLeads.leads || []).map(l => l.id === id ? { ...l, status: 'spam', files: [] } : l) }
+          : s.marketingLeads;
+        return {
+          ...s,
+          quoteRequests: s.quoteRequests.filter(r => r.id !== id),
+          contacts,
+          marketingLeads,
+        };
+      });
+      return api.post('/api/quote-requests-admin/' + encodeURIComponent(id) + '/spam', {})
+        .then(() => true)
+        .catch(() => {
+          fetchAllRef.current?.();
+          return false;
+        });
+    },
 
     // ---------- Email body lookup (lazy-loaded for the viewer modal) ----------
     loadEmailBody(gmailMessageId) {

@@ -269,14 +269,28 @@ export async function clearNewQuoteRequests() {
   return { status: 'ok', clearedIds: rows.map((r) => r.id) };
 }
 
-// Disqualifies a quote request. Soft delete: we keep the quote_requests row
-// (flipped to status='disqualified') so Marketing can report on disqualified
-// leads and compute a qualified-vs-disqualified quality rate. We still purge the
-// bits we don't need for metrics — the provisional contact we created, plus the
-// uploaded files and their blobs (PII + storage). Returns 'already_qualified' if
-// the request has already been promoted to a deal — that'd lose work, so we
-// refuse. The row leaves the "new" inbox because that view filters on status.
+// Disqualifies a quote request. Soft delete via purgeAndSetStatus: we keep the
+// quote_requests row (flipped to status='disqualified') so Marketing can report
+// on disqualified leads and compute a qualified-vs-disqualified quality rate.
 export async function disqualifyQuoteRequest(id) {
+  return purgeAndSetStatus(id, 'disqualified');
+}
+
+// Marks a quote request as spam. Same soft-delete + purge as disqualify (we
+// keep the row so Marketing can report on it, but drop the provisional contact,
+// files and blobs), just with status='spam' so it shows as its own category.
+// Spam counts as a disqualified lead in the quality maths.
+export async function markQuoteRequestSpam(id) {
+  return purgeAndSetStatus(id, 'spam');
+}
+
+// Shared soft-delete used by disqualify + spam: keeps the quote_requests row
+// (flipped to the given status) for Marketing metrics, but purges the bits we
+// don't need — the provisional contact we created, plus the uploaded files and
+// their blobs (PII + storage). Returns 'already_qualified' if the request has
+// already been promoted to a deal — that'd lose work, so we refuse. The row
+// leaves the "new" inbox because that view filters on status.
+async function purgeAndSetStatus(id, newStatus) {
   const loaded = await loadQuoteRequestForAction(id);
   if (!loaded) return { status: 'not_found' };
   if (loaded.row.status === 'qualified') {
@@ -302,7 +316,7 @@ export async function disqualifyQuoteRequest(id) {
   await sql`DELETE FROM quote_request_files WHERE quote_request_id = ${id}`;
   await sql`
     UPDATE quote_requests
-       SET status = 'disqualified',
+       SET status = ${newStatus},
            contact_id = NULL,
            reviewed_at = COALESCE(reviewed_at, NOW())
      WHERE id = ${id}
