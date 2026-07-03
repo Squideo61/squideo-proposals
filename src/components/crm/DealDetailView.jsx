@@ -1503,8 +1503,17 @@ function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = f
               {decodeHtmlEntities(email.snippet)}
             </span>
           )}
+          {/* Paperclip so an attachment is obvious with the message collapsed. */}
+          {hasAttachments && (
+            <span
+              title={`${attachments.length} attachment${attachments.length > 1 ? 's' : ''}`}
+              style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex', alignItems: 'center', color: BRAND.muted }}
+            >
+              <Paperclip size={12} />
+            </span>
+          )}
           <span
-            style={{ marginLeft: 'auto', fontSize: 11, color: BRAND.muted, flexShrink: 0 }}
+            style={{ marginLeft: hasAttachments ? 0 : 'auto', fontSize: 11, color: BRAND.muted, flexShrink: 0 }}
             title={email.sentAt ? new Date(email.sentAt).toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' }) : undefined}
           >
             {formatRelativeTime(email.sentAt)}
