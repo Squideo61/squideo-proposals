@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
-import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe, Users, UserCheck, FileText, Trophy, PoundSterling, Wallet, Target, Coins, Clock, Gauge, XCircle, Ban, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe, Users, UserCheck, FileText, Trophy, PoundSterling, Wallet, Target, Coins, Clock, Gauge, XCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
@@ -560,14 +560,6 @@ function LeadsTab({ data, loading, onOpenDeal, onOpenCompany, onRetry }) {
   const selIdx = selectedId ? leads.findIndex((l) => l.id === selectedId) : -1;
   const selectedLead = selIdx >= 0 ? leads[selIdx] : null;
 
-  const handleSpam = async (lead) => {
-    // Advance to a neighbour before the row leaves the current filter.
-    const idx = leads.findIndex((l) => l.id === lead.id);
-    const nextId = leads[idx + 1]?.id ?? leads[idx - 1]?.id ?? null;
-    await actions.markQuoteRequestSpam(lead.id);
-    setSelectedId(nextId);
-  };
-
   return (
     <div>
       <div style={{ display: 'inline-flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -622,7 +614,6 @@ function LeadsTab({ data, loading, onOpenDeal, onOpenCompany, onRetry }) {
           onPrev={selIdx > 0 ? () => setSelectedId(leads[selIdx - 1].id) : null}
           onNext={selIdx < leads.length - 1 ? () => setSelectedId(leads[selIdx + 1].id) : null}
           onClose={() => setSelectedId(null)}
-          onSpam={() => handleSpam(selectedLead)}
           onOpenDeal={onOpenDeal}
           onOpenCompany={onOpenCompany}
         />
@@ -634,9 +625,8 @@ function LeadsTab({ data, loading, onOpenDeal, onOpenCompany, onRetry }) {
 // Right-hand slide-over showing the full quote request for a Marketing lead, with
 // Prev/Next paging scoped to the current filter tab. Esc / ✕ close it; clicking
 // the scrim intentionally does NOT (matches the app's modal-behaviour rule).
-function LeadDetailPanel({ lead, index, total, onPrev, onNext, onClose, onSpam, onOpenDeal, onOpenCompany }) {
+function LeadDetailPanel({ lead, index, total, onPrev, onNext, onClose, onOpenDeal, onOpenCompany }) {
   const isMobile = useIsMobile();
-  const [busy, setBusy] = useState(false);
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') onClose();
@@ -650,13 +640,6 @@ function LeadDetailPanel({ lead, index, total, onPrev, onNext, onClose, onSpam, 
   const st = STATUS_STYLE[lead.status] || STATUS_STYLE.new;
   const stg = lead.dealStage ? STAGE_STYLE[lead.dealStage] : null;
   const isSpam = lead.status === 'spam';
-  const handleSpamClick = async () => {
-    if (busy) return;
-    if (!window.confirm(`Mark ${lead.name || lead.email || 'this lead'} as spam? This deletes the request and any provisional contact; it stays here as a spam lead.`)) return;
-    setBusy(true);
-    await onSpam();
-    setBusy(false);
-  };
 
   return (
     <>
@@ -745,15 +728,6 @@ function LeadDetailPanel({ lead, index, total, onPrev, onNext, onClose, onSpam, 
             </div>
           )}
         </div>
-
-        {/* Footer actions */}
-        {!isSpam && (
-          <div style={{ padding: '12px 16px', borderTop: '1px solid ' + BRAND.border, flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
-            <button onClick={handleSpamClick} disabled={busy} className="btn-ghost is-danger" title="Mark as spam — deletes the request; kept here as a spam lead">
-              <Ban size={14} /> {busy ? 'Marking…' : 'Mark as spam'}
-            </button>
-          </div>
-        )}
       </div>
     </>
   );
