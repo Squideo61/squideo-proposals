@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
+import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -22,6 +22,7 @@ import { TrackingEye } from './EmailTracking.jsx';
 import { ContactModal } from './ContactsView.jsx';
 import { LostReasonModal } from './LostReasonModal.jsx';
 import { ConversationView } from './EmailsView.jsx';
+import { EmailAttachmentCard } from './EmailAttachment.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
 import { ViewAnalyticsModal } from '../ViewAnalyticsModal.jsx';
 
@@ -1005,7 +1006,7 @@ export function EventRow({ event, users }) {
   );
 }
 
-function EmailRow({ email, onOpen, threadCount, expandable, expanded, dealTitle, onLinkAnother, onCreateNewDeal, onUnlink }) {
+function EmailRow({ email, onOpen, threadCount, hasAttachments, expandable, expanded, dealTitle, onLinkAnother, onCreateNewDeal, onUnlink }) {
   const inbound = email.direction === 'inbound';
   const arrow = inbound ? '↓' : '↑';
   const accent = inbound ? '#16A34A' : '#2BB8E6';
@@ -1092,6 +1093,11 @@ function EmailRow({ email, onOpen, threadCount, expandable, expanded, dealTitle,
         )}
         <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span>{formatRelativeTime(email.sentAt)}{counterparty ? ` · ${inbound ? 'from' : 'to'} ${counterparty}` : ''}</span>
+          {hasAttachments && (
+            <span title="Has attachments" style={{ display: 'inline-flex', alignItems: 'center', color: BRAND.muted }}>
+              <Paperclip size={12} />
+            </span>
+          )}
           {/* Reflect THIS (latest) email's own open state when it is itself a
               tracked send — so an unopened follow-up reads "Not opened" rather
               than inheriting the thread's earlier green opens. Falls back to the
@@ -1359,6 +1365,7 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
         email={latest}
         onOpen={handleHeaderClick}
         threadCount={isMulti ? messages.length : null}
+        hasAttachments={messages.some(m => Array.isArray(m.attachments) && m.attachments.length > 0)}
         expandable
         expanded={expanded}
         dealTitle={dealTitle}
@@ -1379,6 +1386,7 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
             <ExpandedMessage
               key={m.gmailMessageId}
               email={m}
+              dealId={dealId}
               defaultOpen={i === messages.length - 1}
               isLast={i === messages.length - 1}
               onOpenFull={() => onOpenMessage(m.gmailMessageId)}
@@ -1414,8 +1422,9 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
 // One message inside an expanded thread. Loads its body on mount (cached in
 // the store so re-opens are free), sanitises HTML, and falls back to plain
 // text. Click the header to open the standalone modal.
-function ExpandedMessage({ email, defaultOpen = false, isLast = false, onOpenFull }) {
+function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = false, onOpenFull }) {
   const { state, actions } = useStore();
+  const connected = !!(state.gmailAccount && state.gmailAccount.connected);
   const cached = state.emailBodies?.[email.gmailMessageId] || null;
   // Collapsed by default for every message except the latest, so opening a
   // thread shows only the newest email's body (older ones are one click away).
@@ -1460,6 +1469,12 @@ function ExpandedMessage({ email, defaultOpen = false, isLast = false, onOpenFul
   const inbound = email.direction === 'inbound';
   const accent = inbound ? '#16A34A' : '#2BB8E6';
   const counterparty = inbound ? email.fromEmail : (email.toEmails?.[0] || '');
+
+  // Attachments ride along on the thread payload; the lazily-loaded full body
+  // carries them too. Prefer whichever is populated so the cards appear as soon
+  // as the message opens.
+  const attachments = (data?.attachments?.length ? data.attachments : email.attachments) || [];
+  const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
 
   return (
     <div style={{ background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12 }}>
@@ -1537,6 +1552,13 @@ function ExpandedMessage({ email, defaultOpen = false, isLast = false, onOpenFul
               : data.bodyText
                 ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{data.bodyText}</pre>
                 : <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 12 }}>(no body stored — open in Gmail to read)</div>
+          )}
+          {hasAttachments && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              {attachments.map((a, i) => (
+                <EmailAttachmentCard key={i} att={a} messageId={email.gmailMessageId} connected={connected} dealId={dealId} />
+              ))}
+            </div>
           )}
         </div>
       )}

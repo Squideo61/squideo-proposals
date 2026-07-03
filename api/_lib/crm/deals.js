@@ -1284,7 +1284,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       sql`
         SELECT em.gmail_message_id, em.gmail_thread_id, em.from_email,
                em.to_emails, em.cc_emails, em.subject, em.snippet,
-               em.direction, em.sent_at, em.user_email,
+               em.direction, em.sent_at, em.user_email, em.gmail_attachments,
                MIN(etd.resolved_by) AS thread_resolved_by,
                BOOL_OR(emd.deal_id IS NOT NULL) AS message_linked
         FROM email_messages em
@@ -1301,7 +1301,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
           AND em.gmail_message_id NOT LIKE '%-stub'
         GROUP BY em.gmail_message_id, em.gmail_thread_id, em.from_email,
                  em.to_emails, em.cc_emails, em.subject, em.snippet,
-                 em.direction, em.sent_at, em.user_email
+                 em.direction, em.sent_at, em.user_email, em.gmail_attachments
         ORDER BY em.sent_at DESC
         LIMIT 200
       `,
@@ -1477,6 +1477,10 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         direction: em.direction,
         sentAt: em.sent_at,
         userEmail: em.user_email,
+        // Gmail attachment metadata (filename/mimeType/size/attachmentId) so the
+        // expanded thread can render download cards and the row can flag a clip
+        // without a second fetch.
+        attachments: em.gmail_attachments || [],
         // Manual link: the user explicitly attached this message/thread to
         // this deal via the inbox "Add to another deal" flow. Auto link: the
         // inbound resolver picked it up (header / contact / domain match).
