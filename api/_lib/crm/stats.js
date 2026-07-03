@@ -789,15 +789,18 @@ async function performanceReport(action) {
   return { period, spanMonths, since, until, days };
 }
 
-// Sales performance: new business sold in the period, valued at the net (ex-VAT)
-// total — "the cash each sale generates" — bucketed by day. Counts the same
-// sources as salesFinanceReport so the pace graph + "signed so far" headline
-// agree with the Finance Sales cards: signed proposals (by signature date),
-// ad-hoc extras (by created date) and standalone ad-hoc invoices with no signed
-// proposal (by issue date). `count` is the number of sale events that day.
+// Sales performance: new business *signed* in the period, valued at the net
+// (ex-VAT) total — "the cash each sale generates" — bucketed by day. This is the
+// "signed so far" pace headline (Sales-performance tab + Business Overview), so
+// it counts genuinely-signed business only: signed proposals (by signature date)
+// and ad-hoc extras added to signed deals (by created date). Standalone ad-hoc
+// invoices with no signed proposal are deliberately NOT counted here — they're a
+// raised invoice, not a signing — even though salesFinanceReport (the Finance
+// "cash generated" card + trend) still includes them. `count` is the number of
+// sale events that day.
 async function salesReport(action) {
   const { period, spanMonths, since, until } = parsePerformancePeriod(action);
-  const [sigRows, extraRows, invRows] = await Promise.all([
+  const [sigRows, extraRows] = await Promise.all([
     sql`
       SELECT s.signed_at, (s.data->>'total')::numeric AS total, pr.data->>'vatRate' AS rate
         FROM signatures s
@@ -806,7 +809,6 @@ async function salesReport(action) {
          AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
     `,
     fetchExtraRows(since, until, false),
-    fetchStandaloneInvoiceRows(since, until),
   ]);
 
   const byDay = {};
@@ -819,7 +821,6 @@ async function salesReport(action) {
   };
   for (const r of sigRows) add(r.signed_at, splitVat(r.total, r.rate).net);
   for (const r of extraRows) add(r.created_at, extraSplit(r.amount, r.vat_rate).net);
-  for (const r of invRows) add(r.at, invoiceSplit(r).net);
 
   const days = Object.entries(byDay)
     .sort(([a], [b]) => (a < b ? -1 : 1))
