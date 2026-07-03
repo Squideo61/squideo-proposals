@@ -165,7 +165,7 @@ export function PerformancePanel({
   const savedTargets = (targetSource && targetSource.length) ? targetSource : FALLBACK_TARGETS;
   const cfTargets = state.cashflowTargets;
   const targets = useMemo(() => {
-    if (isSales) return savedTargets; // Sales keeps its 3 targets
+    if (isSales) return savedTargets.slice(0, 1); // Sales works to the single Minimum target (mirrors Income)
     return resolveIncomeTargets(state.financeTargets, cfTargets); // income → single Minimum
   }, [savedTargets, cfTargets, isSales, state.financeTargets]);
   const holidays = useMemo(
@@ -301,11 +301,11 @@ export function PerformancePanel({
         />
       )}
 
-      {/* Pace strip: current position, plus (Sales only) each target's expected
-          pace. The per-target pace cards were dropped from Income performance —
-          "Remaining to make targets" below covers target progress there. */}
+      {/* Pace strip: current position only. Sales and Income both work to a single
+          target now, so the per-target pace cards were dropped — "Remaining to make
+          targets" below covers target progress. */}
       {!isComparison && !isCashflow && !isDirectors && (<>
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${isSales ? targets.length + 1 : 1}, 1fr)`, gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginBottom: 16 }}>
         <PaceCard
           title={model.status === 'future' ? 'Upcoming period' : `Working day ${model.lastActualIdx} of ${model.N}`}
           big={formatGBP(model.netSoFar)}
@@ -321,22 +321,6 @@ export function PerformancePanel({
           })()}
           color={BRAND.blue}
         />
-        {isSales && targets.map((t) => {
-          const target = (Number(t.amount) || 0) * model.spanMonths;
-          const expected = target * (model.lastActualIdx / model.N);
-          const delta = model.netSoFar - expected;
-          const ahead = delta >= 0;
-          return (
-            <PaceCard
-              key={t.key}
-              title={`${t.label} · ${formatGBP(target)}`}
-              big={(ahead ? '+' : '−') + formatGBP(Math.abs(delta))}
-              sub={`${ahead ? 'ahead of' : 'behind'} pace · expected ${formatGBP(expected)}`}
-              color={ahead ? '#10B981' : '#EF4444'}
-              accent={t.color}
-            />
-          );
-        })}
       </div>
 
       {/* Once this month's banked cash clears the minimum, the surplus is
