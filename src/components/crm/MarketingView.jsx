@@ -50,7 +50,7 @@ const dash = (v, fmt) => (v == null ? '—' : fmt(v));
 const gbp0 = (n) => '£' + Math.round(Number(n) || 0).toLocaleString('en-GB');
 const fmtRoas = (v) => (v == null ? '—' : (Number(v) || 0).toFixed(2) + '×');
 
-export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpenCompany }) {
+export function MarketingView({ section: sectionProp, onBack, onOpenCompany }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const [section, setSection] = useState(sectionProp || marketingViewMemory.section);
@@ -192,7 +192,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenDeal, onOpen
           onRetry={() => setReload((n) => n + 1)}
         />
       )}
-      {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenDeal={onOpenDeal} onOpenCompany={onOpenCompany} onRetry={() => setReload((n) => n + 1)} />}
+      {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenCompany={onOpenCompany} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'search' && <SearchTab data={search} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'traffic' && <TrafficTab data={traffic} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'settings' && <SettingsTab snippet={snippet} onSync={() => actions.syncAdSpend()} cutoff={cutoff} onCutoffChange={onCutoffChange} />}
@@ -531,7 +531,7 @@ const STAGE_STYLE = {
   lost:          { bg: '#FEE2E2', fg: '#991B1B', label: 'Lost' },
 };
 
-function LeadsTab({ data, loading, onOpenDeal, onOpenCompany, onRetry }) {
+function LeadsTab({ data, loading, onOpenCompany, onRetry }) {
   const { actions } = useStore();
   const [filter, setFilter] = useState('all'); // all | new | qualified | disqualified | spam
   const [selectedId, setSelectedId] = useState(null);
@@ -614,7 +614,6 @@ function LeadsTab({ data, loading, onOpenDeal, onOpenCompany, onRetry }) {
           onPrev={selIdx > 0 ? () => setSelectedId(leads[selIdx - 1].id) : null}
           onNext={selIdx < leads.length - 1 ? () => setSelectedId(leads[selIdx + 1].id) : null}
           onClose={() => setSelectedId(null)}
-          onOpenDeal={onOpenDeal}
           onOpenCompany={onOpenCompany}
         />
       )}
@@ -625,7 +624,7 @@ function LeadsTab({ data, loading, onOpenDeal, onOpenCompany, onRetry }) {
 // Right-hand slide-over showing the full quote request for a Marketing lead, with
 // Prev/Next paging scoped to the current filter tab. Esc / ✕ close it; clicking
 // the scrim intentionally does NOT (matches the app's modal-behaviour rule).
-function LeadDetailPanel({ lead, index, total, onPrev, onNext, onClose, onOpenDeal, onOpenCompany }) {
+function LeadDetailPanel({ lead, index, total, onPrev, onNext, onClose, onOpenCompany }) {
   const isMobile = useIsMobile();
   useEffect(() => {
     const onKey = (e) => {
@@ -719,12 +718,11 @@ function LeadDetailPanel({ lead, index, total, onPrev, onNext, onClose, onOpenDe
 
           {lead.dealId && (
             <div style={{ marginTop: 4, padding: 12, border: '1px solid ' + BRAND.border, borderRadius: 8, background: '#F8FAFB' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 {stg && <span style={{ background: stg.bg, color: stg.fg, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999 }}>{stg.label}</span>}
                 {lead.won && <span style={{ color: '#16A34A', fontWeight: 700, fontSize: 13 }}>{formatGBP(lead.revenue)} won</span>}
                 {!lead.won && lead.proposalValue != null && <span style={{ fontSize: 13, color: BRAND.muted }}>Proposal {formatGBP(lead.proposalValue)}</span>}
               </div>
-              {onOpenDeal && <button onClick={() => onOpenDeal(lead.dealId)} className="btn">Open deal →</button>}
             </div>
           )}
         </div>
