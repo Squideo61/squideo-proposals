@@ -300,7 +300,7 @@ function AllowancePanel({ sched, canManage, me, onEdit }) {
       badge={<span style={{ fontSize: 12, color: BRAND.muted }}>Default 20 days · 6 compulsory (Christmas)</span>}>
       <ResponsiveTable columns={columns} rows={rows} keyField="userEmail"
         onRowClick={canManage ? onEdit : undefined} empty="No one is tracked yet." />
-      {canManage && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>Tap a row to edit allowance, compulsory days, the renewal anniversary, or to stop tracking someone.</div>}
+      {canManage && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>Tap a row to edit allowance, compulsory days, the renewal anniversary, or to remove someone from the schedule. Admins are never shown.</div>}
       {canManage && hidden.length > 0 && (
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed ' + BRAND.border }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Not tracked</div>
@@ -441,7 +441,7 @@ function AllowanceModal({ row, onClose, onSave }) {
       <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>{row.name}</h3>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, fontSize: 14, cursor: 'pointer' }}>
         <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} />
-        Track annual leave for this person
+        On the schedule &amp; tracked for annual leave
       </label>
       <Field label="Annual allowance (days, incl. compulsory)"><input type="number" step="0.5" className="input" value={allowance} onChange={e => setAllowance(e.target.value)} style={selStyle} /></Field>
       <Field label="Compulsory days (Christmas)"><input type="number" step="0.5" className="input" value={compulsory} onChange={e => setCompulsory(e.target.value)} style={selStyle} /></Field>

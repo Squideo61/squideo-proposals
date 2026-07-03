@@ -99,13 +99,16 @@ function roleHasAny(role, slugs) {
 async function canManage(user) {
   return hasPermission(await getRole(user.role), 'schedule.manage');
 }
-// The production team shown on the master calendar: everyone whose role can be
-// assigned production work (has schedule.access, or the wildcard admin).
+// The production team eligible for the schedule: users whose role can be
+// assigned production work (has schedule.access), EXCLUDING admins — a wildcard
+// (admin) account manages the workspace but isn't a producer on the rota.
+// Individual managers/directors can still be dropped from the schedule via the
+// leave_allowances.active toggle (handled by the caller).
 async function teamMembers() {
   const roles = await sql`SELECT id, permissions FROM roles`;
   const ok = new Set(
     roles
-      .filter(r => Array.isArray(r.permissions) && (r.permissions.includes('*') || r.permissions.includes('schedule.access')))
+      .filter(r => Array.isArray(r.permissions) && !r.permissions.includes('*') && r.permissions.includes('schedule.access'))
       .map(r => r.id)
   );
   if (!ok.size) return [];
@@ -375,7 +378,14 @@ async function buildPayload(user, manage) {
   const email = (user.email || '').toLowerCase();
   const today = todayStr();
   const members = await teamMembers();
-  const scopeEmails = manage ? members.map(m => m.email) : [email];
+  // Members explicitly dropped from the schedule (leave_allowances.active=false)
+  // are hidden from the calendar roster but kept in `members` so they still show
+  // in the allowance panel's re-addable "Not tracked" list.
+  const inactive = new Set(
+    (await sql`SELECT user_email FROM leave_allowances WHERE active = false`).map(r => String(r.user_email).toLowerCase())
+  );
+  const roster = members.filter(m => !inactive.has(m.email));
+  const scopeEmails = manage ? roster.map(m => m.email) : [email];
 
   // Assignments
   const asg = scopeEmails.length
@@ -419,9 +429,9 @@ async function buildPayload(user, manage) {
   return {
     canManage: manage,
     me: email,
-    // Managers see the whole team on the master calendar; a producer only needs
-    // (and only gets) their own row.
-    producers: manage ? members : members.filter(m => m.email === email),
+    // Managers see the whole active roster on the master calendar; a producer
+    // only needs (and only gets) their own row.
+    producers: manage ? roster : roster.filter(m => m.email === email),
     assignments,
     leave: leave.map(serialiseLeave),
     allowances,
