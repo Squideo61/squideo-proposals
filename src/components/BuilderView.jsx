@@ -11,20 +11,22 @@ import { extraHasVariants, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 
-// Fetch a Vimeo video's title + thumbnail via the public oEmbed endpoint
-// (CORS-enabled, no auth). Returns { title, thumbnail } or null.
+// Fetch a Vimeo video's title + thumbnail via our /api/vimeo-oembed proxy
+// (the app CSP blocks calling vimeo.com from the browser). Returns
+// { title, thumbnail } or null.
 async function fetchVimeoMeta(url) {
   const clean = String(url || '').trim();
   if (!/vimeo\.com\/\d+/.test(clean)) return null;
   try {
-    // Pass the FULL url so unlisted videos keep their privacy hash
-    // (vimeo.com/ID/HASH) — reconstructing from the ID alone gets a 403.
-    const res = await fetch('https://vimeo.com/api/oembed.json?width=640&url=' + encodeURIComponent(clean));
+    // Go through our same-origin proxy — the app CSP (connect-src 'self')
+    // blocks fetching vimeo.com directly. The proxy forwards the full url so
+    // unlisted videos keep their privacy hash (vimeo.com/ID/HASH).
+    const res = await fetch('/api/vimeo-oembed?url=' + encodeURIComponent(clean));
     if (!res.ok) return null;
     const json = await res.json();
     return {
       title: json && json.title ? String(json.title) : null,
-      thumbnail: json && json.thumbnail_url ? String(json.thumbnail_url) : null,
+      thumbnail: json && json.thumbnail ? String(json.thumbnail) : null,
     };
   } catch {
     return null;

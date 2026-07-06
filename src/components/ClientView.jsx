@@ -349,7 +349,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   };
 
   // Backfill posters for any notable example that has no stored thumbnail
-  // (Vimeo public oEmbed, CORS-enabled). Examples added via the builder already
+  // (via our /api/vimeo-oembed proxy). Examples added via the builder already
   // carry a thumbnail; this covers older ones and non-Vimeo links gracefully.
   const examplesKey = (data?.notableExamples || []).map(e => e?.url || '').join('|');
   useEffect(() => {
@@ -358,10 +358,10 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
     list.forEach((ex) => {
       const url = ex.url.trim();
       if (!/vimeo\.com\/\d+/.test(url) || exampleThumbs[ex.url]) return;
-      // Full url preserves the privacy hash of unlisted videos (vimeo.com/ID/HASH).
-      fetch('https://vimeo.com/api/oembed.json?width=640&url=' + encodeURIComponent(url))
+      // Same-origin proxy — the app CSP (connect-src 'self') blocks vimeo.com.
+      fetch('/api/vimeo-oembed?url=' + encodeURIComponent(url))
         .then(r => r.ok ? r.json() : null)
-        .then(j => { if (!cancelled && j && j.thumbnail_url) setExampleThumbs(prev => ({ ...prev, [ex.url]: j.thumbnail_url })); })
+        .then(j => { if (!cancelled && j && j.thumbnail) setExampleThumbs(prev => ({ ...prev, [ex.url]: j.thumbnail })); })
         .catch(() => {});
     });
     return () => { cancelled = true; };
