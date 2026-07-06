@@ -108,7 +108,9 @@ export function ScheduleModal({ deal, dealId, company, primaryContact, onClose }
     return s;
   });
 
-  const persist = () => actions.saveDeal(dealId, { productionSchedule: schedule });
+  // Pass the browser's UTC offset so the server maps the wall-clock schedule
+  // times correctly when it reconciles milestones on save.
+  const persist = () => actions.saveDeal(dealId, { productionSchedule: schedule, tzOffsetMinutes: new Date().getTimezoneOffset() });
 
   const save = async () => {
     setSaving(true);

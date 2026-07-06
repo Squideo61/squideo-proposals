@@ -22,6 +22,105 @@ function ensureMilestoneColumns() {
   return milestoneColumnsEnsured;
 }
 
+// Reconcile a deal's production schedule into milestone-flagged tasks.
+// Idempotent: upsert by schedule_key, delete rows whose schedule field was
+// removed/disabled, so re-running never duplicates and clearing dates removes
+// the tasks. Also pushes the fresh dates onto the producer rota. Returns
+// { created, updated, removed } or { notFound: true }. Shared by the
+// "Move to milestones" endpoint AND the deal-save hook (so editing/clearing
+// dates keeps the milestones + rota in step). `existingOnly` skips creating new
+// milestone rows — used by the save hook so a plain save never conjures
+// milestones the user hasn't opted into.
+export async function reconcileDealMilestones(dealId, { tzOffsetMinutes = 0, actorEmail = null, existingOnly = false } = {}) {
+  await ensureMilestoneColumns();
+  await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_schedule JSONB`.catch(() => {});
+
+  const dealRows = await sql`SELECT id, owner_email, producer_email, production_schedule FROM deals WHERE id = ${dealId}`;
+  if (!dealRows.length) return { notFound: true };
+  const deal = dealRows[0];
+
+  // Per-stage milestone assignment: every milestone → Production Managers
+  // (role 'member'); Script stages → also the copywriting team (Chloe/Hannah);
+  // Storyboard onward → also the project's producer(s). Best-effort.
+  let productionManagers = [];
+  try {
+    const pmRows = await sql`SELECT email FROM users WHERE role = 'member'`;
+    productionManagers = pmRows.map(r => r.email).filter(Boolean);
+  } catch { /* best-effort */ }
+  if (!productionManagers.length && deal.owner_email) productionManagers = [deal.owner_email];
+
+  let scriptTeam = [];
+  try {
+    const scriptRows = await sql`SELECT email FROM users WHERE name ILIKE 'chloe%' OR name ILIKE 'hannah%'`;
+    scriptTeam = scriptRows.map(r => r.email).filter(Boolean);
+  } catch { /* best-effort */ }
+
+  const producerRows = await sql`SELECT user_email FROM deal_assignees WHERE deal_id = ${dealId} ORDER BY assigned_at`;
+  const producers = producerRows.length ? producerRows.map(r => r.user_email) : (deal.producer_email ? [deal.producer_email] : []);
+
+  const assigneesForGroup = (group) => {
+    const set = new Set(productionManagers);
+    if (group === 'script') scriptTeam.forEach(e => e && set.add(e));
+    else if (group === 'production') producers.forEach(e => e && set.add(e));
+    return Array.from(set).filter(Boolean);
+  };
+
+  const desired = scheduleMilestones(deal.production_schedule, dealId, tzOffsetMinutes);
+  const desiredKeys = new Set(desired.map(d => d.scheduleKey));
+  const existing = await sql`SELECT id, schedule_key, due_at FROM tasks WHERE deal_id = ${dealId} AND is_milestone = true`;
+  const existingByKey = new Map(existing.filter(e => e.schedule_key).map(e => [e.schedule_key, e]));
+
+  let created = 0, updated = 0, removed = 0;
+  for (const m of desired) {
+    const assignees = assigneesForGroup(m.assignGroup);
+    const prev = existingByKey.get(m.scheduleKey);
+    if (prev) {
+      const dateChanged = (prev.due_at ? new Date(prev.due_at).toISOString() : null) !== m.dueAt;
+      if (dateChanged) {
+        await sql`UPDATE tasks SET title = ${m.title}, due_at = ${m.dueAt}, assignee_email = ${assignees[0] || null}, reminded_at = NULL, pre_reminded_at = NULL WHERE id = ${prev.id}`;
+      } else {
+        await sql`UPDATE tasks SET title = ${m.title}, due_at = ${m.dueAt}, assignee_email = ${assignees[0] || null} WHERE id = ${prev.id}`;
+      }
+      await setTaskAssignees(prev.id, assignees);
+      updated += 1;
+    } else if (!existingOnly) {
+      const newId = makeId('task');
+      await sql`INSERT INTO tasks (id, deal_id, contact_id, title, notes, due_at, assignee_email, created_by, is_milestone, schedule_key)
+        VALUES (${newId}, ${dealId}, ${null}, ${m.title}, ${'Auto-generated from the project schedule.'}, ${m.dueAt}, ${assignees[0] || null}, ${actorEmail}, true, ${m.scheduleKey})`;
+      await setTaskAssignees(newId, assignees);
+      created += 1;
+    }
+  }
+
+  // Remove milestone tasks whose schedule field no longer exists (row disabled
+  // or date cleared). Archive so the removal is restorable, like a delete.
+  for (const e of existing) {
+    if (!e.schedule_key || desiredKeys.has(e.schedule_key)) continue;
+    const [taskRow] = await sql`SELECT * FROM tasks WHERE id = ${e.id}`;
+    const assigneeRows = await sql`SELECT * FROM task_assignees WHERE task_id = ${e.id}`;
+    if (taskRow) {
+      await archiveRecord('task', e.id, [
+        { table: 'tasks', row: taskRow },
+        ...assigneeRows.map((a) => ({ table: 'task_assignees', row: a })),
+      ], actorEmail);
+    }
+    await sql`DELETE FROM tasks WHERE id = ${e.id}`;
+    removed += 1;
+  }
+
+  // Only stamp "milestones last synced" on an explicit sync, not a plain save.
+  if (!existingOnly) {
+    await sql`UPDATE deals SET production_schedule = jsonb_set(COALESCE(production_schedule, '{}'::jsonb), '{syncedAt}', to_jsonb(NOW()), true) WHERE id = ${dealId}`;
+  }
+  await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${dealId}`;
+
+  // Push the fresh schedule dates onto the producer rota (best-effort).
+  try { const { syncDealSchedule } = await import('./schedule.js'); await syncDealSchedule(dealId); }
+  catch (err) { console.warn('[tasks] schedule sync failed', err.message); }
+
+  return { created, updated, removed };
+}
+
 // Accept either the new array field (`assigneeEmails`) or the legacy single
 // (`assigneeEmail`) for one release so old clients don't break mid-deploy.
 function readAssigneeEmails(body, fallback) {
@@ -66,136 +165,9 @@ export async function tasksRoute(req, res, id, action, user) {
     if (req.method !== 'POST') return res.status(405).end();
     const dealId = trimOrNull((req.body || {}).dealId);
     if (!dealId) return res.status(400).json({ error: 'dealId is required' });
-    await ensureMilestoneColumns();
-    // Defensive: the schedule column is normally created when the modal first
-    // saves, but self-heal here too so a direct call can't 500 on a workspace
-    // that has never persisted a schedule.
-    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_schedule JSONB`.catch(() => {});
-
-    const dealRows = await sql`
-      SELECT id, owner_email, producer_email, production_schedule
-      FROM deals WHERE id = ${dealId}
-    `;
-    if (!dealRows.length) return res.status(404).json({ error: 'Deal not found' });
-    const deal = dealRows[0];
-
-    // Per-stage milestone assignment (see the Notes brief):
-    //  • EVERY milestone → the Production Managers (role id 'member').
-    //  • Script / Text Direction stages → also the copywriting/creative team,
-    //    matched by first name (Chloe & Hannah) so it tracks their sign-up
-    //    accounts without hard-coded emails.
-    //  • Storyboard stage onward → also the producer(s) working the project.
-    // Each pool is best-effort: a lookup failure just narrows the assignees
-    // rather than 500-ing the sync.
-    let productionManagers = [];
-    try {
-      const pmRows = await sql`SELECT email FROM users WHERE role = 'member'`;
-      productionManagers = pmRows.map(r => r.email).filter(Boolean);
-    } catch { /* best-effort */ }
-    // Fall back to the deal owner so milestones are never left unassigned.
-    if (!productionManagers.length && deal.owner_email) productionManagers = [deal.owner_email];
-
-    let scriptTeam = [];
-    try {
-      const scriptRows = await sql`
-        SELECT email FROM users WHERE name ILIKE 'chloe%' OR name ILIKE 'hannah%'
-      `;
-      scriptTeam = scriptRows.map(r => r.email).filter(Boolean);
-    } catch { /* best-effort */ }
-
-    const producerRows = await sql`SELECT user_email FROM deal_assignees WHERE deal_id = ${dealId} ORDER BY assigned_at`;
-    const producers = producerRows.length
-      ? producerRows.map(r => r.user_email)
-      : (deal.producer_email ? [deal.producer_email] : []);
-
-    // Resolve the assignee list for one milestone from its stage group.
-    const assigneesForGroup = (group) => {
-      const set = new Set(productionManagers);
-      if (group === 'script') scriptTeam.forEach(e => e && set.add(e));
-      else if (group === 'production') producers.forEach(e => e && set.add(e));
-      return Array.from(set).filter(Boolean);
-    };
-
-    // The client passes its UTC offset so wall-clock schedule times map to the
-    // right instant (see scheduleLocalToISO).
     const tzOffsetMinutes = Number((req.body || {}).tzOffsetMinutes) || 0;
-    const desired = scheduleMilestones(deal.production_schedule, dealId, tzOffsetMinutes);
-    const desiredKeys = new Set(desired.map(d => d.scheduleKey));
-
-    const existing = await sql`
-      SELECT id, schedule_key, due_at FROM tasks WHERE deal_id = ${dealId} AND is_milestone = true
-    `;
-    const existingByKey = new Map(existing.filter(e => e.schedule_key).map(e => [e.schedule_key, e]));
-
-    let created = 0, updated = 0, removed = 0;
-
-    for (const m of desired) {
-      const assignees = assigneesForGroup(m.assignGroup);
-      const prev = existingByKey.get(m.scheduleKey);
-      if (prev) {
-        const dateChanged = (prev.due_at ? new Date(prev.due_at).toISOString() : null) !== m.dueAt;
-        // When the date moves, re-arm both reminders (clear the guards) so the
-        // assignees are notified afresh for the new deadline.
-        if (dateChanged) {
-          await sql`
-            UPDATE tasks SET title = ${m.title}, due_at = ${m.dueAt},
-              assignee_email = ${assignees[0] || null}, reminded_at = NULL, pre_reminded_at = NULL
-            WHERE id = ${prev.id}
-          `;
-        } else {
-          await sql`
-            UPDATE tasks SET title = ${m.title}, due_at = ${m.dueAt},
-              assignee_email = ${assignees[0] || null}
-            WHERE id = ${prev.id}
-          `;
-        }
-        await setTaskAssignees(prev.id, assignees);
-        updated += 1;
-      } else {
-        const newId = makeId('task');
-        await sql`
-          INSERT INTO tasks (id, deal_id, contact_id, title, notes, due_at, assignee_email, created_by, is_milestone, schedule_key)
-          VALUES (
-            ${newId}, ${dealId}, ${null}, ${m.title},
-            ${'Auto-generated from the project schedule.'},
-            ${m.dueAt}, ${assignees[0] || null}, ${user.email || null}, true, ${m.scheduleKey}
-          )
-        `;
-        await setTaskAssignees(newId, assignees);
-        created += 1;
-      }
-    }
-
-    // Remove milestone tasks whose schedule field no longer exists (row disabled
-    // or date cleared). Archive so the removal is restorable, like a delete.
-    for (const e of existing) {
-      // Skip rows still wanted, and never touch an un-keyed milestone (only the
-      // schedule owns keyed rows — an un-keyed one came from elsewhere).
-      if (!e.schedule_key || desiredKeys.has(e.schedule_key)) continue;
-      const [taskRow] = await sql`SELECT * FROM tasks WHERE id = ${e.id}`;
-      const assigneeRows = await sql`SELECT * FROM task_assignees WHERE task_id = ${e.id}`;
-      if (taskRow) {
-        await archiveRecord('task', e.id, [
-          { table: 'tasks', row: taskRow },
-          ...assigneeRows.map((a) => ({ table: 'task_assignees', row: a })),
-        ], user.email);
-      }
-      await sql`DELETE FROM tasks WHERE id = ${e.id}`;
-      removed += 1;
-    }
-
-    // Stamp when the schedule was last pushed to milestones.
-    await sql`
-      UPDATE deals
-         SET production_schedule = jsonb_set(COALESCE(production_schedule, '{}'::jsonb), '{syncedAt}', to_jsonb(NOW()), true)
-       WHERE id = ${dealId}
-    `;
-    await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${dealId}`;
-
-    // Push the fresh schedule dates onto the producer calendar (best-effort).
-    try { const { syncDealSchedule } = await import('./schedule.js'); await syncDealSchedule(dealId); }
-    catch (err) { console.warn('[tasks] schedule sync failed', err.message); }
-
+    const result = await reconcileDealMilestones(dealId, { tzOffsetMinutes, actorEmail: user.email || null });
+    if (result.notFound) return res.status(404).json({ error: 'Deal not found' });
     const tasks = await sql`
       SELECT t.*,
         (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')
@@ -203,7 +175,7 @@ export async function tasksRoute(req, res, id, action, user) {
       FROM tasks t WHERE t.deal_id = ${dealId} AND t.is_milestone = true
       ORDER BY t.due_at ASC NULLS LAST
     `;
-    return res.status(200).json({ created, updated, removed, tasks: tasks.map(serialiseTask) });
+    return res.status(200).json({ created: result.created, updated: result.updated, removed: result.removed, tasks: tasks.map(serialiseTask) });
   }
 
   if (!id) {

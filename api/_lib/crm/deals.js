@@ -1595,6 +1595,13 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     if ('productionSchedule' in body) {
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_schedule JSONB`.catch(() => {});
       await sql`UPDATE deals SET production_schedule = ${body.productionSchedule ? JSON.stringify(body.productionSchedule) : null}::jsonb, updated_at = NOW() WHERE id = ${id}`;
+      // Keep any existing milestone tasks + the producer rota in step with the
+      // edited/cleared dates (existingOnly: a plain save never conjures new
+      // milestones — that's still the explicit "Move to milestones" action).
+      try {
+        const { reconcileDealMilestones } = await import('./tasks.js');
+        await reconcileDealMilestones(id, { tzOffsetMinutes: Number(body.tzOffsetMinutes) || 0, actorEmail: user.email || null, existingOnly: true });
+      } catch (err) { console.warn('[deals] schedule reconcile failed', err.message); }
     }
     const rows = await sql`
       SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
