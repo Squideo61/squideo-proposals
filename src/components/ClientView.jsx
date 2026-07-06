@@ -356,9 +356,10 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
     const list = (data?.notableExamples || []).filter(e => e?.url?.trim() && !e.thumbnail);
     let cancelled = false;
     list.forEach((ex) => {
-      const m = ex.url.match(/vimeo\.com\/(\d+)/);
-      if (!m || exampleThumbs[ex.url]) return;
-      fetch('https://vimeo.com/api/oembed.json?width=640&url=' + encodeURIComponent('https://vimeo.com/' + m[1]))
+      const url = ex.url.trim();
+      if (!/vimeo\.com\/\d+/.test(url) || exampleThumbs[ex.url]) return;
+      // Full url preserves the privacy hash of unlisted videos (vimeo.com/ID/HASH).
+      fetch('https://vimeo.com/api/oembed.json?width=640&url=' + encodeURIComponent(url))
         .then(r => r.ok ? r.json() : null)
         .then(j => { if (!cancelled && j && j.thumbnail_url) setExampleThumbs(prev => ({ ...prev, [ex.url]: j.thumbnail_url })); })
         .catch(() => {});
@@ -835,7 +836,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                         </div>
                       </div>
                       {ex.title && ex.title.trim() && (
-                        <div style={{ fontSize: 14, fontWeight: 600, marginTop: 8, lineHeight: 1.4 }}>{ex.title}</div>
+                        <div style={{ fontSize: 14, fontWeight: 600, marginTop: 8, lineHeight: 1.4, textAlign: 'center' }}>{ex.title}</div>
                       )}
                     </button>
                   );

@@ -14,10 +14,12 @@ import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 // Fetch a Vimeo video's title + thumbnail via the public oEmbed endpoint
 // (CORS-enabled, no auth). Returns { title, thumbnail } or null.
 async function fetchVimeoMeta(url) {
-  const m = String(url || '').match(/vimeo\.com\/(\d+)/);
-  if (!m) return null;
+  const clean = String(url || '').trim();
+  if (!/vimeo\.com\/\d+/.test(clean)) return null;
   try {
-    const res = await fetch('https://vimeo.com/api/oembed.json?width=640&url=' + encodeURIComponent('https://vimeo.com/' + m[1]));
+    // Pass the FULL url so unlisted videos keep their privacy hash
+    // (vimeo.com/ID/HASH) — reconstructing from the ID alone gets a 403.
+    const res = await fetch('https://vimeo.com/api/oembed.json?width=640&url=' + encodeURIComponent(clean));
     if (!res.ok) return null;
     const json = await res.json();
     return {
