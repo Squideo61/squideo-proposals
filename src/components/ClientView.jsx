@@ -806,12 +806,12 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                       onClick={() => setActiveExample(ex)}
                       style={{ display: 'block', textAlign: 'left', padding: 0, border: 'none', background: 'none', cursor: 'pointer', width: '100%' }}
                     >
-                      <div style={{ position: 'relative', paddingBottom: '56.25%', borderRadius: 10, overflow: 'hidden', background: poster ? '#000' : BRAND.ink }}>
+                      <div style={{ position: 'relative', paddingBottom: '56.25%', borderRadius: 10, overflow: 'hidden', background: poster ? 'transparent' : BRAND.ink }}>
                         {poster && (
                           <img
                             src={poster}
                             alt={ex.title || ('Example ' + (i + 1))}
-                            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', borderRadius: 10, display: 'block' }}
                           />
                         )}
                         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
