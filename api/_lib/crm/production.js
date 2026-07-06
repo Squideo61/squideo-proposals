@@ -867,6 +867,17 @@ async function updateVideo(req, res, videoId) {
      WHERE id = ${videoId}
   `;
   if (producerKeyPresent) await setVideoAssignees(videoId, nextProducers);
+  // Per-video production schedule (each video schedules its own visuals/production).
+  if ('productionSchedule' in body) {
+    await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS production_schedule JSONB`.catch(() => {});
+    await sql`UPDATE project_videos SET production_schedule = ${body.productionSchedule ? JSON.stringify(body.productionSchedule) : null}::jsonb, updated_at = NOW() WHERE id = ${videoId}`;
+    // Keep any existing video milestones + the rota in step (existingOnly: a
+    // plain save never conjures milestones — that's the explicit sync action).
+    try {
+      const { reconcileVideoMilestones } = await import('./tasks.js');
+      await reconcileVideoMilestones(videoId, { tzOffsetMinutes: Number(body.tzOffsetMinutes) || 0, actorEmail: (req.user && req.user.email) || null, existingOnly: true });
+    } catch (err) { console.warn('[production] video schedule reconcile failed', err.message); }
+  }
   // Producer or length change alters the calendar — resync the deal's blocks.
   if (producerKeyPresent || 'videoLength' in body) {
     try { const { syncDealSchedule } = await import('./schedule.js'); await syncDealSchedule(cur.deal_id); }
@@ -1097,6 +1108,7 @@ export function serialiseVideo(r) {
     productionStageChangedAt: r.production_stage_changed_at || null,
     paymentTerms: r.payment_terms || null,
     videoLength: r.video_length || null,
+    productionSchedule: ('production_schedule' in r) ? (r.production_schedule || null) : undefined,
     deliveryDeadline: r.delivery_deadline || null,
     textDirectionDeadline: r.text_direction_deadline || null,
     producerEmail: r.producer_email || null,

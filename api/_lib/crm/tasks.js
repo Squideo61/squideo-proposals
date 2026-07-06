@@ -121,6 +121,82 @@ export async function reconcileDealMilestones(dealId, { tzOffsetMinutes = 0, act
   return { created, updated, removed };
 }
 
+// Same as reconcileDealMilestones but for a single VIDEO's own schedule
+// (multi-video deals schedule each video separately). Milestone keys are
+// prefixed with the videoId and titles with the video name so they don't
+// collide with the deal-level ones. Tasks still hang off the parent deal.
+export async function reconcileVideoMilestones(videoId, { tzOffsetMinutes = 0, actorEmail = null, existingOnly = false } = {}) {
+  await ensureMilestoneColumns();
+  await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS production_schedule JSONB`.catch(() => {});
+  const [video] = await sql`SELECT pv.id, pv.deal_id, pv.title, pv.production_schedule,
+      (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}') FROM video_assignees va WHERE va.video_id = pv.id) AS producers
+    FROM project_videos pv WHERE pv.id = ${videoId}`;
+  if (!video) return { notFound: true };
+  const dealId = video.deal_id;
+
+  let productionManagers = [];
+  try { const pm = await sql`SELECT email FROM users WHERE role = 'member'`; productionManagers = pm.map(r => r.email).filter(Boolean); } catch { /* best-effort */ }
+  let scriptTeam = [];
+  try { const st = await sql`SELECT email FROM users WHERE name ILIKE 'chloe%' OR name ILIKE 'hannah%'`; scriptTeam = st.map(r => r.email).filter(Boolean); } catch { /* best-effort */ }
+  const producers = (video.producers || []).filter(Boolean);
+  const assigneesForGroup = (group) => {
+    const set = new Set(productionManagers);
+    if (group === 'script') scriptTeam.forEach(e => e && set.add(e));
+    else if (group === 'production') producers.forEach(e => e && set.add(e));
+    return Array.from(set).filter(Boolean);
+  };
+
+  const desired = scheduleMilestones(video.production_schedule, videoId, tzOffsetMinutes)
+    .map(m => ({ ...m, title: `${video.title}: ${m.title}` }));
+  const desiredKeys = new Set(desired.map(d => d.scheduleKey));
+  const existing = await sql`SELECT id, schedule_key, due_at FROM tasks
+    WHERE deal_id = ${dealId} AND is_milestone = true AND starts_with(schedule_key, ${videoId + ':'})`;
+  const existingByKey = new Map(existing.filter(e => e.schedule_key).map(e => [e.schedule_key, e]));
+
+  let created = 0, updated = 0, removed = 0;
+  for (const m of desired) {
+    const assignees = assigneesForGroup(m.assignGroup);
+    const prev = existingByKey.get(m.scheduleKey);
+    if (prev) {
+      const dateChanged = (prev.due_at ? new Date(prev.due_at).toISOString() : null) !== m.dueAt;
+      if (dateChanged) {
+        await sql`UPDATE tasks SET title = ${m.title}, due_at = ${m.dueAt}, assignee_email = ${assignees[0] || null}, reminded_at = NULL, pre_reminded_at = NULL WHERE id = ${prev.id}`;
+      } else {
+        await sql`UPDATE tasks SET title = ${m.title}, due_at = ${m.dueAt}, assignee_email = ${assignees[0] || null} WHERE id = ${prev.id}`;
+      }
+      await setTaskAssignees(prev.id, assignees);
+      updated += 1;
+    } else if (!existingOnly) {
+      const newId = makeId('task');
+      await sql`INSERT INTO tasks (id, deal_id, contact_id, title, notes, due_at, assignee_email, created_by, is_milestone, schedule_key)
+        VALUES (${newId}, ${dealId}, ${null}, ${m.title}, ${'Auto-generated from the video schedule.'}, ${m.dueAt}, ${assignees[0] || null}, ${actorEmail}, true, ${m.scheduleKey})`;
+      await setTaskAssignees(newId, assignees);
+      created += 1;
+    }
+  }
+  for (const e of existing) {
+    if (!e.schedule_key || desiredKeys.has(e.schedule_key)) continue;
+    const [taskRow] = await sql`SELECT * FROM tasks WHERE id = ${e.id}`;
+    const assigneeRows = await sql`SELECT * FROM task_assignees WHERE task_id = ${e.id}`;
+    if (taskRow) {
+      await archiveRecord('task', e.id, [
+        { table: 'tasks', row: taskRow },
+        ...assigneeRows.map((a) => ({ table: 'task_assignees', row: a })),
+      ], actorEmail);
+    }
+    await sql`DELETE FROM tasks WHERE id = ${e.id}`;
+    removed += 1;
+  }
+
+  if (!existingOnly) {
+    await sql`UPDATE project_videos SET production_schedule = jsonb_set(COALESCE(production_schedule, '{}'::jsonb), '{syncedAt}', to_jsonb(NOW()), true) WHERE id = ${videoId}`;
+  }
+  await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${dealId}`;
+  try { const { syncDealSchedule } = await import('./schedule.js'); await syncDealSchedule(dealId); }
+  catch (err) { console.warn('[tasks] schedule sync failed', err.message); }
+  return { created, updated, removed };
+}
+
 // Accept either the new array field (`assigneeEmails`) or the legacy single
 // (`assigneeEmail`) for one release so old clients don't break mid-deploy.
 function readAssigneeEmails(body, fallback) {
@@ -163,9 +239,21 @@ export async function tasksRoute(req, res, id, action, user) {
   // whose schedule field was removed/disabled, so re-clicking never duplicates.
   if (id === 'sync-milestones') {
     if (req.method !== 'POST') return res.status(405).end();
+    const tzOffsetMinutes = Number((req.body || {}).tzOffsetMinutes) || 0;
+    const videoId = trimOrNull((req.body || {}).videoId);
+    // A video schedule reconciles just that video's milestones; otherwise the
+    // deal's overall schedule.
+    if (videoId) {
+      const result = await reconcileVideoMilestones(videoId, { tzOffsetMinutes, actorEmail: user.email || null });
+      if (result.notFound) return res.status(404).json({ error: 'Video not found' });
+      const tasks = await sql`
+        SELECT t.*, (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}') FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
+        FROM tasks t WHERE t.is_milestone = true AND starts_with(t.schedule_key, ${videoId + ':'})
+        ORDER BY t.due_at ASC NULLS LAST`;
+      return res.status(200).json({ created: result.created, updated: result.updated, removed: result.removed, tasks: tasks.map(serialiseTask) });
+    }
     const dealId = trimOrNull((req.body || {}).dealId);
     if (!dealId) return res.status(400).json({ error: 'dealId is required' });
-    const tzOffsetMinutes = Number((req.body || {}).tzOffsetMinutes) || 0;
     const result = await reconcileDealMilestones(dealId, { tzOffsetMinutes, actorEmail: user.email || null });
     if (result.notFound) return res.status(404).json({ error: 'Deal not found' });
     const tasks = await sql`

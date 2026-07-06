@@ -12,8 +12,9 @@ import { openSchedulePrintWindow } from '../../utils/printSchedule.js';
 
 // ── Summary card shown on the deal/project page ──
 // Compact read-only view of the enabled schedule; the whole card opens the modal.
-export function ScheduleCard({ deal, onOpen }) {
-  const schedule = deal.productionSchedule;
+export function ScheduleCard({ deal, video, onOpen }) {
+  const source = video || deal;
+  const schedule = source.productionSchedule;
   const rows = schedule ? enabledRows(schedule) : [];
   const kickOff = schedule?.kickOff ? formatDTDisplay(schedule.kickOff) : null;
 
@@ -64,9 +65,11 @@ export function ScheduleCard({ deal, onOpen }) {
 function fmt(local) { return local ? formatDTDisplay(local) : ''; }
 
 // ── The editable, doc-like popout ──
-export function ScheduleModal({ deal, dealId, company, primaryContact, onClose }) {
+export function ScheduleModal({ deal, dealId, video, videoId, company, primaryContact, onClose }) {
   const { state, actions, showMsg } = useStore();
-  const [schedule, setSchedule] = useState(() => deal.productionSchedule || seedSchedule(deal));
+  const isVideo = !!videoId;
+  const source = isVideo ? video : deal;
+  const [schedule, setSchedule] = useState(() => source.productionSchedule || seedSchedule(source));
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
@@ -110,7 +113,9 @@ export function ScheduleModal({ deal, dealId, company, primaryContact, onClose }
 
   // Pass the browser's UTC offset so the server maps the wall-clock schedule
   // times correctly when it reconciles milestones on save.
-  const persist = () => actions.saveDeal(dealId, { productionSchedule: schedule, tzOffsetMinutes: new Date().getTimezoneOffset() });
+  const persist = () => isVideo
+    ? actions.updateVideo(videoId, { productionSchedule: schedule, tzOffsetMinutes: new Date().getTimezoneOffset() })
+    : actions.saveDeal(dealId, { productionSchedule: schedule, tzOffsetMinutes: new Date().getTimezoneOffset() });
 
   const save = async () => {
     setSaving(true);
@@ -122,7 +127,7 @@ export function ScheduleModal({ deal, dealId, company, primaryContact, onClose }
     setSyncing(true);
     try {
       await persist();
-      const resp = await actions.syncMilestones(dealId);
+      const resp = isVideo ? await actions.syncVideoMilestones(videoId) : await actions.syncMilestones(dealId);
       const parts = [];
       if (resp?.created) parts.push(`${resp.created} created`);
       if (resp?.updated) parts.push(`${resp.updated} updated`);
@@ -135,7 +140,7 @@ export function ScheduleModal({ deal, dealId, company, primaryContact, onClose }
 
   const exportDoc = async () => {
     await persist();
-    const ok = openSchedulePrintWindow(schedule, deal, company, primaryContact);
+    const ok = openSchedulePrintWindow(schedule, source, company, primaryContact);
     if (!ok) showMsg('Pop-up blocked — allow pop-ups to export the schedule.');
   };
 
@@ -143,8 +148,8 @@ export function ScheduleModal({ deal, dealId, company, primaryContact, onClose }
 
   return (
     <Modal onClose={onClose} maxWidth={900} showClose>
-      <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 700 }}>Production Schedule</h2>
-      <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 18 }}>{company?.name || deal.title}</div>
+      <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 700 }}>Production Schedule{isVideo ? ` — ${video.title}` : ''}</h2>
+      <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 18 }}>{isVideo ? (video.projectTitle || company?.name || 'Video') : (company?.name || deal.title)}</div>
 
       {/* Kick Off + auto-fill controls */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 16, padding: '14px 16px', background: BRAND.paper, borderRadius: 10, marginBottom: 18 }}>

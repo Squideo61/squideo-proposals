@@ -2324,6 +2324,13 @@ export function StoreProvider({ children }) {
         .then((resp) => actions.loadDealDetail(dealId).then(() => resp))
         .catch((err) => { showMsg('Failed to move schedule to milestones'); throw err; });
     },
+    // Same, for a single video's own schedule.
+    syncVideoMilestones(videoId) {
+      const tzOffsetMinutes = new Date().getTimezoneOffset();
+      return api.post('/api/crm/tasks/sync-milestones', { videoId, tzOffsetMinutes })
+        .then((resp) => actions.loadVideo(videoId).then(() => resp))
+        .catch((err) => { showMsg('Failed to move schedule to milestones'); throw err; });
+    },
 
     // ---------- Deal comments ----------
     createDealComment(dealId, body, parentId, mentions) {

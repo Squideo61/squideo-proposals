@@ -8,6 +8,7 @@ import {
   VIDEO_MILESTONES, STAGE_LABEL, VIDEO_LENGTH_OPTIONS, VIDEO_LENGTH_VALUES,
 } from '../../lib/productionStages.js';
 import { VideoProgressBar } from './ProductionProgressBar.jsx';
+import { ScheduleCard, ScheduleModal } from './ScheduleModal.jsx';
 import { DealConversation } from './DealConversation.jsx';
 import { AssigneePicker } from './TaskFormModal.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
@@ -36,6 +37,7 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
   useEffect(() => { if (videoId) actions.loadVideo(videoId); }, [videoId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const video = state.videoDetail?.[videoId];
+  const [showSchedule, setShowSchedule] = useState(false);
 
   if (!video) {
     return (
@@ -176,6 +178,9 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
         </div>
       </div>
 
+          <div style={{ marginTop: 18 }}>
+            <ScheduleCard video={video} onOpen={() => setShowSchedule(true)} />
+          </div>
           <MilestonesCard video={video} videoId={videoId} />
           {/* Emails + Comments sit side-by-side, full width, growing with their
               content — so the team can read a long comment thread without the
@@ -215,6 +220,9 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           </div>
         </div>
       </div>
+      {showSchedule && (
+        <ScheduleModal video={video} videoId={videoId} onClose={() => setShowSchedule(false)} />
+      )}
     </div>
   );
 }

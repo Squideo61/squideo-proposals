@@ -217,10 +217,9 @@ export async function syncDealSchedule(dealId, { notify = true } = {}) {
   const [deal] = await sql`SELECT id, title, production_schedule, production_start_date
     FROM deals WHERE id = ${dealId}`;
   if (!deal) return { blocks: 0, conflicts: 0 };
-  const deadlines = scheduleDeadlines(deal.production_schedule);
   const floor = laterDate(todayStr(), asDateStr(deal.production_start_date));
 
-  const videos = await sql`SELECT pv.id, pv.title, pv.video_length,
+  const videos = await sql`SELECT pv.id, pv.title, pv.video_length, pv.production_schedule,
       (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
          FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails
     FROM project_videos pv
@@ -231,29 +230,28 @@ export async function syncDealSchedule(dealId, { notify = true } = {}) {
   const existingByKey = new Map(existing.map(r => [`${r.video_id}:${r.kind}`, r]));
   const existingByFullKey = new Map(existing.map(r => [`${r.video_id}:${r.kind}:${String(r.user_email).toLowerCase()}`, r]));
 
-  // Per-stage producers assigned on the Production Schedule (storyboard /
-  // production). These win over the video's own assignee so Callum can route
-  // each stage to a specific producer. Fall back to the video assignee.
-  const schedProducers = (deal.production_schedule && deal.production_schedule.producers) || {};
-  const stageProducer = (kind, video) => {
-    const fromSchedule = schedProducers[kind] ? String(schedProducers[kind]).toLowerCase() : null;
-    const fromVideo = (video.producer_emails || []).map(e => String(e).toLowerCase()).filter(Boolean)[0] || null;
+  // Each video uses its OWN production schedule (deadlines + per-stage producers)
+  // if it has one, else the deal's overall schedule. Per-stage producers win
+  // over the video's assignee so Callum can route each stage to a specific
+  // person; fall back to the video assignee.
+  const dealSched = deal.production_schedule || null;
+  const schedFor = (v) => v.production_schedule || dealSched;
+  const producersFor = (v) => (schedFor(v) && schedFor(v).producers) || {};
+  const stageProducer = (kind, v) => {
+    const sp = producersFor(v);
+    const fromSchedule = sp[kind] ? String(sp[kind]).toLowerCase() : null;
+    const fromVideo = (v.producer_emails || []).map(e => String(e).toLowerCase()).filter(Boolean)[0] || null;
     return fromSchedule || fromVideo;
   };
 
   const producerEmails = [...new Set([
     ...videos.flatMap(v => (v.producer_emails || []).map(e => String(e).toLowerCase())),
-    ...['storyboard', 'production'].map(k => schedProducers[k] ? String(schedProducers[k]).toLowerCase() : null),
+    ...videos.flatMap(v => ['storyboard', 'production'].map(k => { const sp = producersFor(v); return sp[k] ? String(sp[k]).toLowerCase() : null; })),
   ].filter(Boolean))];
   const occupancy = await loadOccupancy(producerEmails, dealId);
 
   const touchedIds = new Set();    // row ids we (re)generated or preserved
   const newConflicts = [];         // blocks that newly became conflicting
-
-  const STAGES = [
-    { kind: 'storyboard', deadline: deadlines.storyboard },
-    { kind: 'production', deadline: deadlines.production },
-  ];
 
   const occupiedFor = (email) => {
     if (!occupancy.has(email)) occupancy.set(email, new Set());
@@ -262,6 +260,11 @@ export async function syncDealSchedule(dealId, { notify = true } = {}) {
 
   for (const v of videos) {
     const baseDays = durationDaysForLength(v.video_length);
+    const vDeadlines = scheduleDeadlines(schedFor(v));
+    const STAGES = [
+      { kind: 'storyboard', deadline: vDeadlines.storyboard },
+      { kind: 'production', deadline: vDeadlines.production },
+    ];
 
     let prevEnd = null; // production must follow storyboard for the same video
     for (const stage of STAGES) {
