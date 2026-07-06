@@ -505,7 +505,16 @@ function DealRow({ deal, onOpen }) {
   ].filter(Boolean);
 
   const due = nextTask?.dueAt ? new Date(nextTask.dueAt) : null;
-  const overdue = due && due.getTime() < Date.now();
+  // Compare on calendar day, so a task dated today never counts as overdue and
+  // gets its own "due today" highlight instead.
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const dueToday = due && due.getFullYear() === now.getFullYear() && due.getMonth() === now.getMonth() && due.getDate() === now.getDate();
+  const overdue = due && due.getTime() < startOfToday;
+  // Pill colours: overdue = red, due today = amber (stands out), else neutral.
+  const taskColor = overdue ? '#B91C1C' : dueToday ? '#B45309' : '#475569';
+  const taskBg = overdue ? '#FEF2F2' : dueToday ? '#FFFBEB' : '#F1F5F9';
+  const taskBorder = overdue ? '#FECACA' : dueToday ? '#FDE68A' : BRAND.border;
   const lastEmail = deal.lastEmailAt ? new Date(deal.lastEmailAt) : null;
 
   const hotBtn = (
@@ -551,11 +560,11 @@ function DealRow({ deal, onOpen }) {
           <SaleStatusPills deal={deal} />
           {nextTask && (
             <span
-              title={`Next due task: ${nextTask.title}${due ? ' · ' + shortDate(due) : ''}`}
+              title={`Next due task: ${nextTask.title}${due ? ' · ' + shortDate(due) : ''}${dueToday ? ' (today)' : ''}`}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap',
-                color: overdue ? '#B91C1C' : '#475569',
-                background: overdue ? '#FEF2F2' : '#F1F5F9',
-                border: '1px solid ' + (overdue ? '#FECACA' : BRAND.border) }}
+                color: taskColor,
+                background: taskBg,
+                border: '1px solid ' + taskBorder }}
             >
               <CheckSquare size={12} style={{ flexShrink: 0 }} />
               <span style={{ color: BRAND.muted, fontWeight: 500 }}>Next task</span>
@@ -611,11 +620,11 @@ function DealRow({ deal, onOpen }) {
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 2, minWidth: 0 }}>
               {nextTask && (
                 <span
-                  title={`Next due task: ${nextTask.title}${due ? ' · ' + shortDate(due) : ''}`}
+                  title={`Next due task: ${nextTask.title}${due ? ' · ' + shortDate(due) : ''}${dueToday ? ' (today)' : ''}`}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
-                    color: overdue ? '#B91C1C' : '#475569',
-                    background: overdue ? '#FEF2F2' : '#F1F5F9',
-                    border: '1px solid ' + (overdue ? '#FECACA' : BRAND.border) }}
+                    color: taskColor,
+                    background: taskBg,
+                    border: '1px solid ' + taskBorder }}
                 >
                   <CheckSquare size={12} style={{ flexShrink: 0 }} />
                   <span style={{ color: BRAND.muted, fontWeight: 500, flexShrink: 0 }}>Next task</span>
