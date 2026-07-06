@@ -77,8 +77,13 @@ export function ensureScheduleTables() {
       compulsory_days NUMERIC NOT NULL DEFAULT 6,
       anniversary DATE,
       active BOOLEAN NOT NULL DEFAULT TRUE,
+      track_allowance BOOLEAN NOT NULL DEFAULT TRUE,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`;
+    // `active` = on the schedule roster (calendar column + can enter days off).
+    // `track_allowance` = show an annual-leave allowance + count leave against it.
+    // Directors/owners who produce sit active=true, track_allowance=false.
+    await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS track_allowance BOOLEAN NOT NULL DEFAULT TRUE`;
   })().catch((err) => { schemaReady = null; throw err; });
   return schemaReady;
 }
@@ -102,21 +107,41 @@ async function canManage(user) {
 async function canApproveLeave(user) {
   return hasPermission(await getRole(user.role), 'schedule.approve_leave');
 }
-// The production team eligible for the schedule: users whose role can be
-// assigned production work (has schedule.access), EXCLUDING admins — a wildcard
-// (admin) account manages the workspace but isn't a producer on the rota.
-// Individual managers/directors can still be dropped from the schedule via the
-// leave_allowances.active toggle (handled by the caller).
+// Every user eligible for the schedule (role has schedule.access, or is an
+// admin via the '*' wildcard), each annotated with their leave_allowances flags.
+//   onRoster  = shown as a calendar column / assignable / can enter days off.
+//               Defaults ON for non-admins, OFF for admins; the `active` flag
+//               overrides either way (so an admin can be opted in, a director
+//               opted out).
+//   trackAllowance = has an annual-leave allowance counted in the tracker.
+async function scheduleUsers() {
+  const rows = await sql`
+    SELECT u.email, u.name, u.avatar,
+           (r.permissions @> '["*"]'::jsonb) AS is_admin,
+           la.active AS active, la.track_allowance AS track_allowance
+      FROM users u
+      JOIN roles r ON r.id = u.role
+      LEFT JOIN leave_allowances la ON la.user_email = u.email
+     WHERE r.permissions @> '["schedule.access"]'::jsonb OR r.permissions @> '["*"]'::jsonb
+     ORDER BY u.name NULLS LAST, u.email`;
+  return rows.map(r => {
+    const isAdmin = !!r.is_admin;
+    const onRoster = (r.active == null ? !isAdmin : r.active) === true;
+    return {
+      email: String(r.email).toLowerCase(),
+      name: r.name || r.email,
+      avatar: r.avatar || null,
+      isAdmin,
+      hasRow: r.active != null || r.track_allowance != null,
+      active: r.active,
+      trackAllowance: r.track_allowance !== false, // null (no row) → true
+      onRoster,
+    };
+  });
+}
+// Just the roster (calendar columns / assignable people).
 async function teamMembers() {
-  const roles = await sql`SELECT id, permissions FROM roles`;
-  const ok = new Set(
-    roles
-      .filter(r => Array.isArray(r.permissions) && !r.permissions.includes('*') && r.permissions.includes('schedule.access'))
-      .map(r => r.id)
-  );
-  if (!ok.size) return [];
-  const rows = await sql`SELECT email, name, avatar FROM users WHERE role = ANY(${[...ok]}) ORDER BY name NULLS LAST, email`;
-  return rows.map(r => ({ email: String(r.email).toLowerCase(), name: r.name || r.email, avatar: r.avatar || null }));
+  return (await scheduleUsers()).filter(u => u.onRoster).map(u => ({ email: u.email, name: u.name, avatar: u.avatar }));
 }
 
 // ── Deadlines from the deal's production schedule JSON ──
@@ -391,14 +416,8 @@ function serialiseLeave(r) {
 async function buildPayload(user, manage, approve = false) {
   const email = (user.email || '').toLowerCase();
   const today = todayStr();
-  const members = await teamMembers();
-  // Members explicitly dropped from the schedule (leave_allowances.active=false)
-  // are hidden from the calendar roster but kept in `members` so they still show
-  // in the allowance panel's re-addable "Not tracked" list.
-  const inactive = new Set(
-    (await sql`SELECT user_email FROM leave_allowances WHERE active = false`).map(r => String(r.user_email).toLowerCase())
-  );
-  const roster = members.filter(m => !inactive.has(m.email));
+  const candidates = await scheduleUsers();
+  const roster = candidates.filter(u => u.onRoster).map(u => ({ email: u.email, name: u.name, avatar: u.avatar }));
   const scopeEmails = manage ? roster.map(m => m.email) : [email];
 
   // Assignments
@@ -434,8 +453,8 @@ async function buildPayload(user, manage, approve = false) {
   const ctx = { today, videoMeta, milestones, leaveByUser };
   const assignments = asg.map(a => serialiseAssignment(a, ctx));
 
-  // Allowances (self-provision a row per member on demand)
-  const allowances = await buildAllowances(members, manage ? null : email, today);
+  // Allowances (self-provision a row per roster member on demand)
+  const allowances = await buildAllowances(candidates, manage ? null : email, today);
 
   // Amends-to-do: videos currently in a revisions stage, mapped to their producer.
   const amends = await buildAmends(scopeEmails, manage);
@@ -454,13 +473,17 @@ async function buildPayload(user, manage, approve = false) {
   };
 }
 
-async function buildAllowances(members, onlyEmail, today) {
-  const emails = onlyEmail ? [onlyEmail] : members.map(m => m.email);
-  if (!emails.length) return [];
-  // Ensure a row exists for each (default 20 / 6, anniversary from join date).
-  const existing = await sql`SELECT * FROM leave_allowances WHERE user_email = ANY(${emails})`;
-  const have = new Set(existing.map(r => String(r.user_email).toLowerCase()));
-  const missing = emails.filter(e => !have.has(e));
+// `candidates` are scheduleUsers() rows. Provisions an allowance row for roster
+// members lacking one, then returns one entry per person who is either on the
+// roster or has an explicit row (so removed people still surface for re-adding).
+// `onlyEmail` scopes to a single person (non-manager view).
+async function buildAllowances(candidates, onlyEmail, today) {
+  let pool = candidates;
+  if (onlyEmail) pool = candidates.filter(c => c.email === onlyEmail);
+  if (!pool.length) return [];
+
+  // Provision a default row for roster members who don't have one yet.
+  const missing = pool.filter(c => c.onRoster && !c.hasRow).map(c => c.email);
   if (missing.length) {
     const joins = await sql`SELECT email, created_at FROM users WHERE email = ANY(${missing})`;
     const joinMap = new Map(joins.map(j => [String(j.email).toLowerCase(), asDateStr(j.created_at)]));
@@ -469,27 +492,36 @@ async function buildAllowances(members, onlyEmail, today) {
         ON CONFLICT (user_email) DO NOTHING`;
     }
   }
-  const rows = await sql`SELECT * FROM leave_allowances WHERE user_email = ANY(${emails})`;
-  const nameMap = new Map(members.map(m => [m.email, m.name]));
+  const rows = await sql`SELECT * FROM leave_allowances WHERE user_email = ANY(${pool.map(c => c.email)})`;
+  const rowByEmail = new Map(rows.map(r => [String(r.user_email).toLowerCase(), r]));
+
   const out = [];
-  for (const r of rows) {
-    const e = String(r.user_email).toLowerCase();
-    const win = leaveYearWindow(r.anniversary, today);
-    const [taken] = await sql`SELECT COALESCE(SUM(days),0) AS d FROM leave_requests
-      WHERE user_email = ${e} AND status = 'approved' AND kind = 'annual'
-        AND start_date >= ${win.start} AND start_date < ${win.next}`;
-    const takenDays = Number(taken?.d || 0);
-    const allowance = Number(r.annual_allowance);
-    const compulsory = Number(r.compulsory_days);
+  for (const c of pool) {
+    const r = rowByEmail.get(c.email);
+    if (!c.onRoster && !r) continue; // admins with no row aren't shown at all
+    const allowance = r ? Number(r.annual_allowance) : 20;
+    const compulsory = r ? Number(r.compulsory_days) : 6;
+    const track = r ? r.track_allowance !== false : true;
+    const win = leaveYearWindow(r?.anniversary, today);
+    let taken = 0, remaining = null;
+    if (track) {
+      const [t] = await sql`SELECT COALESCE(SUM(days),0) AS d FROM leave_requests
+        WHERE user_email = ${c.email} AND status = 'approved' AND kind = 'annual'
+          AND start_date >= ${win.start} AND start_date < ${win.next}`;
+      taken = Number(t?.d || 0);
+      remaining = Math.round((allowance - compulsory - taken) * 10) / 10;
+    }
     out.push({
-      userEmail: e,
-      name: nameMap.get(e) || e,
+      userEmail: c.email,
+      name: c.name,
+      isAdmin: c.isAdmin,
+      onRoster: c.onRoster,
+      trackAllowance: track,
       annualAllowance: allowance,
       compulsoryDays: compulsory,
-      anniversary: r.anniversary ? asDateStr(r.anniversary) : null,
-      active: r.active,
-      taken: takenDays,
-      remaining: Math.round((allowance - compulsory - takenDays) * 10) / 10,
+      anniversary: r?.anniversary ? asDateStr(r.anniversary) : null,
+      taken,
+      remaining,
       renewal: win.next,
     });
   }
@@ -618,10 +650,19 @@ export async function scheduleRoute(req, res, id, action, user) {
       const days = countWorkingDays(startStr, endStr);
       const kind = b.kind === 'compulsory' ? 'compulsory' : 'annual';
       const lid = makeId('leave');
-      await sql`INSERT INTO leave_requests (id, user_email, start_date, end_date, days, kind, note, status)
-        VALUES (${lid}, ${target}, ${startStr}, ${endStr}, ${days}, ${kind}, ${trimOrNull(b.note)}, 'pending')`;
-      try { await notifyLeaveRequested(user, target, startStr, endStr, days); }
-      catch (err) { console.warn('[schedule] leave notify failed', err.message); }
+      // People without an allowance tracked (directors/owners) just log days off —
+      // no approval, it's their own record. Everyone else needs sign-off.
+      const [al] = await sql`SELECT track_allowance FROM leave_allowances WHERE user_email = ${target}`;
+      const autoApprove = al && al.track_allowance === false;
+      if (autoApprove) {
+        await sql`INSERT INTO leave_requests (id, user_email, start_date, end_date, days, kind, note, status, decided_by, decided_at)
+          VALUES (${lid}, ${target}, ${startStr}, ${endStr}, ${days}, ${kind}, ${trimOrNull(b.note)}, 'approved', ${email}, NOW())`;
+      } else {
+        await sql`INSERT INTO leave_requests (id, user_email, start_date, end_date, days, kind, note, status)
+          VALUES (${lid}, ${target}, ${startStr}, ${endStr}, ${days}, ${kind}, ${trimOrNull(b.note)}, 'pending')`;
+        try { await notifyLeaveRequested(user, target, startStr, endStr, days); }
+        catch (err) { console.warn('[schedule] leave notify failed', err.message); }
+      }
       const clash = await leaveClashes(target, startStr, endStr);
       return res.status(201).json({ leaveConflict: clash, ...(await reload()) });
     }
@@ -668,6 +709,7 @@ export async function scheduleRoute(req, res, id, action, user) {
     if (b.compulsoryDays != null) await sql`UPDATE leave_allowances SET compulsory_days = ${Number(b.compulsoryDays)}, updated_at = NOW() WHERE user_email = ${target}`;
     if (b.anniversary !== undefined) await sql`UPDATE leave_allowances SET anniversary = ${asDateStr(b.anniversary)}, updated_at = NOW() WHERE user_email = ${target}`;
     if (b.active != null) await sql`UPDATE leave_allowances SET active = ${!!b.active}, updated_at = NOW() WHERE user_email = ${target}`;
+    if (b.trackAllowance != null) await sql`UPDATE leave_allowances SET track_allowance = ${!!b.trackAllowance}, updated_at = NOW() WHERE user_email = ${target}`;
     void sets;
     return res.status(200).json(await reload());
   }
