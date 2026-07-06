@@ -755,29 +755,14 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           </div>
         </div>
 
-        <PageTitle>Your Requirement</PageTitle>
-        {videoOptions ? (
-          <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden', marginBottom: 16 }}>
-            {videoOptions.map((opt, i) => (
-              <label key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', borderBottom: i < videoOptions.length - 1 ? '1px solid ' + BRAND.border : 'none', cursor: signed ? 'default' : 'pointer', background: selectedVideoOptionIdx === i ? '#F0F9FF' : 'white' }}>
-                <input
-                  type="radio"
-                  name="videoOption"
-                  checked={selectedVideoOptionIdx === i}
-                  onChange={() => setSelectedVideoOptionIdx(i)}
-                  disabled={!!signed}
-                  style={{ marginTop: 3, flexShrink: 0 }}
-                />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, marginBottom: opt.description ? 6 : 0 }}>{opt.label || `Option ${i + 1}`}</div>
-                  {opt.description && <p style={{ fontSize: 14, lineHeight: 1.7, margin: 0, whiteSpace: 'pre-wrap', color: BRAND.text }}>{opt.description}</p>}
-                </div>
-                <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0, paddingTop: 2 }}>{formatGBP(opt.price)}{showVat && <span style={{ fontWeight: 400, fontSize: 12, color: BRAND.muted }}> + VAT</span>}</span>
-              </label>
-            ))}
-          </div>
-        ) : (
-          <p style={{ fontSize: 14, lineHeight: 1.7, marginBottom: 12, fontWeight: 500, whiteSpace: 'pre-wrap' }}>{data.requirement}</p>
+        {/* In option mode the selectable options are moved below the "What's
+            included" list (see the Your Quote section). Only the plain
+            single-requirement text shows up here. */}
+        {!videoOptions && (
+          <>
+            <PageTitle>Your Requirement</PageTitle>
+            <p style={{ fontSize: 14, lineHeight: 1.7, marginBottom: 12, fontWeight: 500, whiteSpace: 'pre-wrap' }}>{data.requirement}</p>
+          </>
         )}
         {data.projectVision && (
           <>
@@ -883,6 +868,31 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             );
           })}
         </div>
+
+        {videoOptions && (
+          <div style={{ marginBottom: 16 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Choose your option:</h3>
+            <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
+              {videoOptions.map((opt, i) => (
+                <label key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', borderBottom: i < videoOptions.length - 1 ? '1px solid ' + BRAND.border : 'none', cursor: signed ? 'default' : 'pointer', background: selectedVideoOptionIdx === i ? '#F0F9FF' : 'white' }}>
+                  <input
+                    type="radio"
+                    name="videoOption"
+                    checked={selectedVideoOptionIdx === i}
+                    onChange={() => setSelectedVideoOptionIdx(i)}
+                    disabled={!!signed}
+                    style={{ marginTop: 3, flexShrink: 0 }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, marginBottom: opt.description ? 6 : 0 }}>{opt.label || `Option ${i + 1}`}</div>
+                    {opt.description && <p style={{ fontSize: 14, lineHeight: 1.7, margin: 0, whiteSpace: 'pre-wrap', color: BRAND.text }}>{opt.description}</p>}
+                  </div>
+                  <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0, paddingTop: 2 }}>{formatGBP(opt.price)}{showVat && <span style={{ fontWeight: 400, fontSize: 12, color: BRAND.muted }}> + VAT</span>}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 16px', border: '1px solid ' + BRAND.border, borderRadius: 10, fontSize: 16, fontWeight: 700 }}>
           <span>
