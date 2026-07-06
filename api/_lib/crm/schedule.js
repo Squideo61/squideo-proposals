@@ -99,6 +99,9 @@ function roleHasAny(role, slugs) {
 async function canManage(user) {
   return hasPermission(await getRole(user.role), 'schedule.manage');
 }
+async function canApproveLeave(user) {
+  return hasPermission(await getRole(user.role), 'schedule.approve_leave');
+}
 // The production team eligible for the schedule: users whose role can be
 // assigned production work (has schedule.access), EXCLUDING admins — a wildcard
 // (admin) account manages the workspace but isn't a producer on the rota.
@@ -198,9 +201,20 @@ export async function syncDealSchedule(dealId, { notify = true } = {}) {
   const existingByKey = new Map(existing.map(r => [`${r.video_id}:${r.kind}`, r]));
   const existingByFullKey = new Map(existing.map(r => [`${r.video_id}:${r.kind}:${String(r.user_email).toLowerCase()}`, r]));
 
-  const producerEmails = [...new Set(
-    videos.flatMap(v => (v.producer_emails || []).map(e => String(e).toLowerCase())).filter(Boolean)
-  )];
+  // Per-stage producers assigned on the Production Schedule (storyboard /
+  // production). These win over the video's own assignee so Callum can route
+  // each stage to a specific producer. Fall back to the video assignee.
+  const schedProducers = (deal.production_schedule && deal.production_schedule.producers) || {};
+  const stageProducer = (kind, video) => {
+    const fromSchedule = schedProducers[kind] ? String(schedProducers[kind]).toLowerCase() : null;
+    const fromVideo = (video.producer_emails || []).map(e => String(e).toLowerCase()).filter(Boolean)[0] || null;
+    return fromSchedule || fromVideo;
+  };
+
+  const producerEmails = [...new Set([
+    ...videos.flatMap(v => (v.producer_emails || []).map(e => String(e).toLowerCase())),
+    ...['storyboard', 'production'].map(k => schedProducers[k] ? String(schedProducers[k]).toLowerCase() : null),
+  ].filter(Boolean))];
   const occupancy = await loadOccupancy(producerEmails, dealId);
 
   const touchedIds = new Set();    // row ids we (re)generated or preserved
@@ -217,8 +231,6 @@ export async function syncDealSchedule(dealId, { notify = true } = {}) {
   };
 
   for (const v of videos) {
-    const producer = (v.producer_emails || []).map(e => String(e).toLowerCase()).filter(Boolean)[0];
-    if (!producer) continue; // nobody assigned → nothing to schedule
     const baseDays = durationDaysForLength(v.video_length);
 
     let prevEnd = null; // production must follow storyboard for the same video
@@ -235,6 +247,8 @@ export async function syncDealSchedule(dealId, { notify = true } = {}) {
         continue;
       }
 
+      const producer = stageProducer(stage.kind, v);
+      if (!producer) continue; // nobody assigned for this stage → skip
       const occupied = occupiedFor(producer);
       const earliest = stage.kind === 'production' && prevEnd
         ? nextWorkingDay(addDays(prevEnd, 1))
@@ -374,7 +388,7 @@ function serialiseLeave(r) {
 }
 
 // ── The GET payload ──
-async function buildPayload(user, manage) {
+async function buildPayload(user, manage, approve = false) {
   const email = (user.email || '').toLowerCase();
   const today = todayStr();
   const members = await teamMembers();
@@ -428,6 +442,7 @@ async function buildPayload(user, manage) {
 
   return {
     canManage: manage,
+    canApproveLeave: approve,
     me: email,
     // Managers see the whole active roster on the master calendar; a producer
     // only needs (and only gets) their own row.
@@ -485,15 +500,31 @@ async function buildAllowances(members, onlyEmail, today) {
 async function buildAmends(scopeEmails, manage) {
   if (!scopeEmails.length) return [];
   // amends_1 = storyboard revisions, amends_2 = revisions after production.
+  // Resolve the owning producer from (in priority) the Production Schedule's
+  // per-stage producer, the video's assignees, its legacy producer_email, then
+  // the deal's assignees — so a project assigned any of those ways still lands
+  // in the right producer's Amends-to-do list.
   const rows = await sql`SELECT pv.id, pv.title, pv.production_stage, pv.production_stage_changed_at,
-      d.id AS deal_id, d.title AS project_title,
-      (SELECT COALESCE(ARRAY_AGG(va.user_email), '{}') FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails
+      pv.producer_email AS legacy_producer, d.id AS deal_id, d.title AS project_title,
+      d.production_schedule AS production_schedule,
+      (SELECT COALESCE(ARRAY_AGG(va.user_email), '{}') FROM video_assignees va WHERE va.video_id = pv.id) AS video_producers,
+      (SELECT COALESCE(ARRAY_AGG(da.user_email), '{}') FROM deal_assignees da WHERE da.deal_id = d.id) AS deal_producers
     FROM project_videos pv JOIN deals d ON d.id = pv.deal_id
     WHERE pv.production_stage IN ('amends_1','amends_2')
     ORDER BY pv.production_stage_changed_at DESC NULLS LAST`;
   const out = [];
   for (const r of rows) {
-    const producers = (r.producer_emails || []).map(e => String(e).toLowerCase());
+    const sp = (r.production_schedule && r.production_schedule.producers) || {};
+    const revisionsProducer = sp.revisions ? String(sp.revisions).toLowerCase() : null;
+    const stageProducer = r.production_stage === 'amends_1'
+      ? (sp.storyboard ? String(sp.storyboard).toLowerCase() : null)
+      : (sp.production ? String(sp.production).toLowerCase() : null);
+    const producers = [...new Set([
+      revisionsProducer, stageProducer,
+      ...(r.video_producers || []).map(e => String(e).toLowerCase()),
+      r.legacy_producer ? String(r.legacy_producer).toLowerCase() : null,
+      ...(r.deal_producers || []).map(e => String(e).toLowerCase()),
+    ].filter(Boolean))];
     const owner = producers[0] || null;
     if (!manage) {
       const mine = producers.some(p => scopeEmails.includes(p));
@@ -516,16 +547,19 @@ async function buildAmends(scopeEmails, manage) {
 
 // ── Route ──
 export async function scheduleRoute(req, res, id, action, user) {
-  if (!roleHasAny(await getRole(user.role), ['schedule.access', 'schedule.manage'])) {
+  if (!roleHasAny(await getRole(user.role), ['schedule.access', 'schedule.manage', 'schedule.approve_leave'])) {
     return res.status(403).json({ error: 'You do not have access to the schedule' });
   }
   await ensureScheduleTables();
-  const manage = await canManage(user);
+  const role = await getRole(user.role);
+  const manage = hasPermission(role, 'schedule.manage');
+  const approve = hasPermission(role, 'schedule.approve_leave');
   const email = (user.email || '').toLowerCase();
+  const reload = () => buildPayload(user, manage, approve);
 
   // GET /api/crm/schedule
   if (!id) {
-    if (req.method === 'GET') return res.status(200).json(await buildPayload(user, manage));
+    if (req.method === 'GET') return res.status(200).json(await reload());
     return res.status(405).end();
   }
 
@@ -535,7 +569,7 @@ export async function scheduleRoute(req, res, id, action, user) {
     const dealId = trimOrNull((req.body || {}).dealId);
     if (!dealId) return res.status(400).json({ error: 'dealId is required' });
     const result = await syncDealSchedule(dealId);
-    return res.status(200).json({ ...result, ...(await buildPayload(user, manage)) });
+    return res.status(200).json({ ...result, ...(await reload()) });
   }
 
   // /api/crm/schedule/assignment/:aid
@@ -562,11 +596,11 @@ export async function scheduleRoute(req, res, id, action, user) {
       await sql`UPDATE schedule_assignments SET start_date = ${startStr}, end_date = ${endStr},
           extended_days = ${extended}, user_email = ${newUser}, auto_generated = FALSE, conflict = FALSE,
           conflict_reason = NULL, updated_at = NOW() WHERE id = ${aid}`;
-      return res.status(200).json(await buildPayload(user, manage));
+      return res.status(200).json(await reload());
     }
     if (req.method === 'DELETE') {
       await sql`DELETE FROM schedule_assignments WHERE id = ${aid}`;
-      return res.status(200).json(await buildPayload(user, manage));
+      return res.status(200).json(await reload());
     }
     return res.status(405).end();
   }
@@ -589,7 +623,7 @@ export async function scheduleRoute(req, res, id, action, user) {
       try { await notifyLeaveRequested(user, target, startStr, endStr, days); }
       catch (err) { console.warn('[schedule] leave notify failed', err.message); }
       const clash = await leaveClashes(target, startStr, endStr);
-      return res.status(201).json({ leaveConflict: clash, ...(await buildPayload(user, manage)) });
+      return res.status(201).json({ leaveConflict: clash, ...(await reload()) });
     }
     const lid = action;
     if (!lid) return res.status(400).json({ error: 'leave id required' });
@@ -597,9 +631,9 @@ export async function scheduleRoute(req, res, id, action, user) {
     if (!lr) return res.status(404).json({ error: 'Not found' });
     const owner = String(lr.user_email).toLowerCase();
 
-    // PATCH decide (managers only)
+    // PATCH decide (leave approvers only — Admins & Directors)
     if (req.method === 'PATCH') {
-      if (!manage) return res.status(403).json({ error: 'Only managers can approve leave' });
+      if (!approve) return res.status(403).json({ error: 'Only admins and directors can approve leave' });
       const status = (req.body || {}).status;
       if (!['approved', 'denied'].includes(status)) return res.status(400).json({ error: 'status must be approved or denied' });
       await sql`UPDATE leave_requests SET status = ${status}, decided_by = ${email}, decided_at = NOW() WHERE id = ${lid}`;
@@ -610,20 +644,20 @@ export async function scheduleRoute(req, res, id, action, user) {
       }
       try { await notifyLeaveDecided(user, lr, status, clash); }
       catch (err) { console.warn('[schedule] leave decision notify failed', err.message); }
-      return res.status(200).json({ leaveConflict: clash, ...(await buildPayload(user, manage)) });
+      return res.status(200).json({ leaveConflict: clash, ...(await reload()) });
     }
     // DELETE cancel (own request, or manager)
     if (req.method === 'DELETE') {
       if (!manage && owner !== email) return res.status(403).json({ error: 'Not your request' });
       await sql`DELETE FROM leave_requests WHERE id = ${lid}`;
-      return res.status(200).json(await buildPayload(user, manage));
+      return res.status(200).json(await reload());
     }
     return res.status(405).end();
   }
 
-  // /api/crm/schedule/allowance/:email  (managers)
+  // /api/crm/schedule/allowance/:email  (leave approvers — Admins & Directors)
   if (id === 'allowance') {
-    if (!manage) return res.status(403).json({ error: 'Only managers can edit allowances' });
+    if (!approve) return res.status(403).json({ error: 'Only admins and directors can edit allowances' });
     if (req.method !== 'PATCH') return res.status(405).end();
     const target = String(action || '').toLowerCase();
     if (!target) return res.status(400).json({ error: 'user email required' });
@@ -635,7 +669,7 @@ export async function scheduleRoute(req, res, id, action, user) {
     if (b.anniversary !== undefined) await sql`UPDATE leave_allowances SET anniversary = ${asDateStr(b.anniversary)}, updated_at = NOW() WHERE user_email = ${target}`;
     if (b.active != null) await sql`UPDATE leave_allowances SET active = ${!!b.active}, updated_at = NOW() WHERE user_email = ${target}`;
     void sets;
-    return res.status(200).json(await buildPayload(user, manage));
+    return res.status(200).json(await reload());
   }
 
   return res.status(404).json({ error: 'Unknown schedule route' });

@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Check, X, AlertTriangle, Plane, Users } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Check, X, AlertTriangle, Plane, LayoutGrid } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { Modal, ResponsiveTable, Badge, Section, Field } from '../ui.jsx';
 import {
   weekStart, addDays, addWorkingDays, workingDaysBetween, fmtDayLabel,
-  todayStr, blockColors,
+  todayStr, blockColors, parseDate, fmtDate, isWeekend,
 } from '../../lib/scheduleCalendar.js';
 
 const KIND_LABEL = { storyboard: 'Storyboard / Visuals', production: 'Production' };
@@ -17,13 +17,33 @@ function initials(name, email) {
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return src.slice(0, 2).toUpperCase();
 }
+function addMonths(dateStr, n) {
+  const d = parseDate(dateStr);
+  return fmtDate(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)));
+}
+// Full month grid (Mon-start weeks) covering the month of `cursor`.
+function monthCells(cursor) {
+  const d = parseDate(cursor);
+  const mon = d.getUTCMonth();
+  const first = fmtDate(new Date(Date.UTC(d.getUTCFullYear(), mon, 1)));
+  const last = fmtDate(new Date(Date.UTC(d.getUTCFullYear(), mon + 1, 0)));
+  const stop = addDays(weekStart(last), 7);
+  const cells = [];
+  let cur = weekStart(first);
+  while (cur < stop) {
+    cells.push({ day: cur, inMonth: parseDate(cur).getUTCMonth() === mon });
+    cur = addDays(cur, 1);
+  }
+  return cells;
+}
 
 export function ScheduleView({ onOpenProject, onOpenVideo }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const sched = state.schedule || {};
-  const [weekMonday, setWeekMonday] = useState(() => weekStart(todayStr()));
-  const [scope, setScope] = useState('team');
+  const [cursor, setCursor] = useState(() => todayStr());
+  const [viewMode, setViewMode] = useState('week'); // 'week' | 'month'
+  const [selected, setSelected] = useState('master'); // 'master' | producer email
   const [leaveModal, setLeaveModal] = useState(false);
   const [blockModal, setBlockModal] = useState(null);
   const [allowanceModal, setAllowanceModal] = useState(null);
@@ -31,16 +51,24 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
   useEffect(() => { actions.loadSchedule(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const canManage = !!sched.canManage;
+  const canApprove = !!sched.canApproveLeave;
   const me = sched.me || (state.session?.email || '').toLowerCase();
   const allProducers = sched.producers && sched.producers.length
     ? sched.producers
     : [{ email: me, name: state.session?.name || me, avatar: null }];
-  const showTeam = canManage && scope === 'team';
-  const producers = showTeam ? allProducers : allProducers.filter(p => p.email === me);
+  // Non-managers only ever see themselves; managers switch between staff + Master.
+  const effectiveSelected = canManage ? selected : me;
+  let visibleProducers = effectiveSelected === 'master'
+    ? allProducers
+    : allProducers.filter(p => p.email === effectiveSelected);
+  if (!visibleProducers.length) visibleProducers = allProducers;
+  const single = visibleProducers.length === 1;
+
+  const weekMonday = weekStart(cursor);
   const weekDays = [0, 1, 2, 3, 4].map(i => addWorkingDays(weekMonday, i));
+  const cells = viewMode === 'month' ? monthCells(cursor) : [];
   const today = todayStr();
 
-  // Index assignments + leave by (user, day).
   const { asgByCell, leaveByCell } = useMemo(() => {
     const a = new Map(), l = new Map();
     for (const as of sched.assignments || []) {
@@ -56,7 +84,10 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
   const conflicts = (sched.assignments || []).filter(a =>
     (canManage || a.userEmail === me) && (a.conflict || a.leaveConflict));
 
-  const weekLabel = `${fmtDayLabel(weekDays[0], { weekday: undefined })} – ${fmtDayLabel(weekDays[4], { weekday: undefined })}`;
+  const periodLabel = viewMode === 'week'
+    ? `${fmtDayLabel(weekDays[0], { weekday: undefined })} – ${fmtDayLabel(weekDays[4], { weekday: undefined })}`
+    : parseDate(cursor).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const shift = (dir) => setCursor(c => viewMode === 'week' ? addDays(c, dir * 7) : addMonths(c, dir));
 
   const onDropCell = (producerEmail, day, e) => {
     e.preventDefault();
@@ -65,35 +96,58 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
     actions.moveAssignment(id, { startDate: day, userEmail: producerEmail });
   };
 
+  const tabBtn = (key, label) => (
+    <button key={key} onClick={() => setSelected(key)} className="btn-ghost"
+      style={{ borderRadius: 999, fontWeight: 600, whiteSpace: 'nowrap',
+        background: effectiveSelected === key ? BRAND.blue : 'white',
+        color: effectiveSelected === key ? 'white' : BRAND.ink,
+        border: '1px solid ' + (effectiveSelected === key ? BRAND.blue : BRAND.border) }}>
+      {label}
+    </button>
+  );
+
   return (
     <div style={{ padding: isMobile ? '14px 12px 40px' : '20px 24px 60px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
         <h1 style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: isMobile ? 20 : 26, fontWeight: 800, margin: 0 }}>
-          <CalendarDays size={isMobile ? 22 : 28} color={BRAND.blue} /> Schedule
+          <CalendarDays size={isMobile ? 22 : 28} color={BRAND.blue} /> Weekly Schedule
         </h1>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {canManage && (
-            <div style={{ display: 'inline-flex', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
-              {['team', 'mine'].map(s => (
-                <button key={s} onClick={() => setScope(s)} className="btn-ghost"
-                  style={{ border: 'none', borderRadius: 0, fontWeight: 600, background: scope === s ? BRAND.blue : 'white', color: scope === s ? 'white' : BRAND.ink }}>
-                  {s === 'team' ? <><Users size={14} /> Team</> : 'Just me'}
-                </button>
-              ))}
-            </div>
-          )}
+          <div style={{ display: 'inline-flex', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
+            {['week', 'month'].map(m => (
+              <button key={m} onClick={() => setViewMode(m)} className="btn-ghost"
+                style={{ border: 'none', borderRadius: 0, fontWeight: 600, textTransform: 'capitalize', background: viewMode === m ? BRAND.blue : 'white', color: viewMode === m ? 'white' : BRAND.ink }}>
+                {m}
+              </button>
+            ))}
+          </div>
           <button className="btn-ghost" onClick={() => setLeaveModal(true)} style={{ fontWeight: 600 }}>
             <Plane size={14} /> Book leave
           </button>
         </div>
       </div>
 
-      {/* Week nav */}
+      {/* Producer switcher (managers) */}
+      {canManage && allProducers.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, overflowX: 'auto', paddingBottom: 4 }}>
+          {allProducers.map(p => tabBtn(p.email, p.name || p.email))}
+          <div style={{ width: 1, background: BRAND.border, margin: '2px 2px' }} />
+          <button onClick={() => setSelected('master')} className="btn-ghost"
+            style={{ borderRadius: 999, fontWeight: 700, whiteSpace: 'nowrap',
+              background: effectiveSelected === 'master' ? BRAND.ink : 'white',
+              color: effectiveSelected === 'master' ? 'white' : BRAND.ink,
+              border: '1px solid ' + (effectiveSelected === 'master' ? BRAND.ink : BRAND.border) }}>
+            <LayoutGrid size={14} /> Master
+          </button>
+        </div>
+      )}
+
+      {/* Period nav */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-        <button className="btn-ghost" onClick={() => setWeekMonday(addDays(weekMonday, -7))} aria-label="Previous week"><ChevronLeft size={16} /></button>
-        <button className="btn-ghost" onClick={() => setWeekMonday(weekStart(todayStr()))} style={{ fontWeight: 600 }}>This week</button>
-        <button className="btn-ghost" onClick={() => setWeekMonday(addDays(weekMonday, 7))} aria-label="Next week"><ChevronRight size={16} /></button>
-        <span style={{ fontWeight: 700, color: BRAND.ink }}>{weekLabel}</span>
+        <button className="btn-ghost" onClick={() => shift(-1)} aria-label="Previous"><ChevronLeft size={16} /></button>
+        <button className="btn-ghost" onClick={() => setCursor(todayStr())} style={{ fontWeight: 600 }}>Today</button>
+        <button className="btn-ghost" onClick={() => shift(1)} aria-label="Next"><ChevronRight size={16} /></button>
+        <span style={{ fontWeight: 700, color: BRAND.ink }}>{periodLabel}</span>
       </div>
 
       {conflicts.length > 0 && (
@@ -110,16 +164,20 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
         </div>
       )}
 
-      {/* Calendar grid (desktop) / agenda (mobile) */}
-      {isMobile
-        ? <AgendaList weekDays={weekDays} producers={producers} asgByCell={asgByCell} leaveByCell={leaveByCell} today={today} onBlock={setBlockModal} />
-        : <CalendarGrid weekDays={weekDays} producers={producers} asgByCell={asgByCell} leaveByCell={leaveByCell}
-            today={today} canManage={canManage} me={me} onBlock={setBlockModal} onDropCell={onDropCell} />}
+      {/* Calendar */}
+      {viewMode === 'month'
+        ? (isMobile
+            ? <AgendaList days={cells.filter(c => c.inMonth && !isWeekend(c.day)).map(c => c.day)} producers={visibleProducers} asgByCell={asgByCell} leaveByCell={leaveByCell} today={today} onBlock={setBlockModal} />
+            : <MonthGrid cells={cells} producers={visibleProducers} single={single} asgByCell={asgByCell} leaveByCell={leaveByCell} today={today} canManage={canManage} me={me} onBlock={setBlockModal} onDropCell={onDropCell} />)
+        : (isMobile
+            ? <AgendaList days={weekDays} producers={visibleProducers} asgByCell={asgByCell} leaveByCell={leaveByCell} today={today} onBlock={setBlockModal} />
+            : <CalendarGrid weekDays={weekDays} producers={visibleProducers} asgByCell={asgByCell} leaveByCell={leaveByCell}
+                today={today} canManage={canManage} me={me} onBlock={setBlockModal} onDropCell={onDropCell} />)}
 
       {/* Leave requests + allowances + amends */}
       <div style={{ marginTop: 28 }}>
-        <LeavePanel sched={sched} canManage={canManage} me={me} actions={actions} />
-        <AllowancePanel sched={sched} canManage={canManage} me={me} onEdit={setAllowanceModal} />
+        <LeavePanel sched={sched} canManage={canManage} canApprove={canApprove} me={me} actions={actions} />
+        <AllowancePanel sched={sched} canManage={canManage} canApprove={canApprove} me={me} onEdit={setAllowanceModal} />
         <AmendsPanel sched={sched} onOpenVideo={onOpenVideo} />
       </div>
 
@@ -130,6 +188,58 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
         onClose={() => setBlockModal(null)} actions={actions} />}
       {allowanceModal && <AllowanceModal row={allowanceModal} onClose={() => setAllowanceModal(null)}
         onSave={(f) => actions.updateAllowance(allowanceModal.userEmail, f).then(() => setAllowanceModal(null))} />}
+    </div>
+  );
+}
+
+// ── Month grid: 7-day weeks; each cell lists blocks for the visible producers ──
+function MonthGrid({ cells, producers, single, asgByCell, leaveByCell, today, canManage, me, onBlock, onDropCell }) {
+  const head = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 12, background: 'white', overflow: 'hidden' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+        {head.map(w => (
+          <div key={w} style={{ padding: '8px 10px', background: BRAND.paper, borderBottom: '1px solid ' + BRAND.border, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{w}</div>
+        ))}
+        {cells.map(({ day, inMonth }) => {
+          const weekend = isWeekend(day);
+          const dropOk = single && inMonth && !weekend;
+          return (
+            <div key={day}
+              onDragOver={dropOk ? (e) => e.preventDefault() : undefined}
+              onDrop={dropOk ? (e) => onDropCell(producers[0].email, day, e) : undefined}
+              style={{ minHeight: 84, padding: 4, borderTop: '1px solid ' + BRAND.paper, borderLeft: '1px solid ' + BRAND.paper,
+                background: day === today ? '#EFF6FF' : weekend ? '#FAFBFC' : 'white', opacity: inMonth ? 1 : 0.45 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: day === today ? BRAND.blue : BRAND.muted, marginBottom: 2 }}>{parseDate(day).getUTCDate()}</div>
+              {producers.map(p => {
+                const asg = asgByCell.get(p.email + '|' + day);
+                const leave = leaveByCell.get(p.email + '|' + day);
+                if (!asg && !leave) return null;
+                const prefix = single ? '' : initials(p.name, p.email) + ' · ';
+                return (
+                  <React.Fragment key={p.email}>
+                    {leave && <MiniChip label={prefix + 'Leave'} leave />}
+                    {asg && <MiniChip label={prefix + asg.projectTitle} asg={asg} onClick={() => onBlock(asg)} draggable={dropOk && (canManage || asg.userEmail === me)} />}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MiniChip({ label, asg, leave, onClick, draggable }) {
+  const c = asg ? blockColors(asg) : { bg: '#FEF3C7', fg: '#92400E', border: '#FCD34D' };
+  return (
+    <div draggable={draggable}
+      onDragStart={draggable ? (e) => e.dataTransfer.setData('text/plain', asg.id) : undefined}
+      onClick={onClick}
+      title={label}
+      style={{ background: c.bg, color: c.fg, border: '1px solid ' + c.border, borderRadius: 6, padding: '2px 5px', fontSize: 10, fontWeight: 600, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: onClick ? 'pointer' : 'default' }}>
+      {label}{asg && (asg.conflict || asg.leaveConflict) ? ' ⚠' : ''}
     </div>
   );
 }
@@ -208,10 +318,10 @@ function LeaveChip({ leave }) {
 }
 
 // ── Mobile agenda ──
-function AgendaList({ weekDays, producers, asgByCell, leaveByCell, today, onBlock }) {
+function AgendaList({ days, producers, asgByCell, leaveByCell, today, onBlock }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {weekDays.map(day => {
+      {days.map(day => {
         const items = producers.map(p => ({ p, asg: asgByCell.get(p.email + '|' + day), leave: leaveByCell.get(p.email + '|' + day) }))
           .filter(x => x.asg || x.leave);
         return (
@@ -237,7 +347,7 @@ function AgendaList({ weekDays, producers, asgByCell, leaveByCell, today, onBloc
 }
 
 // ── Leave requests / bookings ──
-function LeavePanel({ sched, canManage, me, actions }) {
+function LeavePanel({ sched, canManage, canApprove, me, actions }) {
   const leave = sched.leave || [];
   const pending = leave.filter(l => l.status === 'pending');
   const nameFor = (email) => (sched.producers || []).find(p => p.email === email)?.name || email;
@@ -246,7 +356,7 @@ function LeavePanel({ sched, canManage, me, actions }) {
 
   return (
     <Section title="Annual leave" icon={Plane} color="#D97706">
-      {canManage && (
+      {canApprove && (
         <>
           <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>Awaiting approval</div>
           {pending.length === 0 && <div style={{ color: BRAND.muted, fontSize: 13, marginBottom: 12 }}>No requests to approve.</div>}
@@ -281,7 +391,7 @@ function LeavePanel({ sched, canManage, me, actions }) {
 }
 
 // ── Allowance tracker ──
-function AllowancePanel({ sched, canManage, me, onEdit }) {
+function AllowancePanel({ sched, canManage, canApprove, me, onEdit }) {
   const all = (sched.allowances || []).filter(a => canManage || a.userEmail === me);
   const rows = all.filter(a => a.active !== false);
   const hidden = all.filter(a => a.active === false);
@@ -299,9 +409,9 @@ function AllowancePanel({ sched, canManage, me, onEdit }) {
     <Section title="Annual-leave allowance" icon={CalendarDays} color="#0EA5E9"
       badge={<span style={{ fontSize: 12, color: BRAND.muted }}>Default 20 days · 6 compulsory (Christmas)</span>}>
       <ResponsiveTable columns={columns} rows={rows} keyField="userEmail"
-        onRowClick={canManage ? onEdit : undefined} empty="No one is tracked yet." />
-      {canManage && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>Tap a row to edit allowance, compulsory days, the renewal anniversary, or to remove someone from the schedule. Admins are never shown.</div>}
-      {canManage && hidden.length > 0 && (
+        onRowClick={canApprove ? onEdit : undefined} empty="No one is tracked yet." />
+      {canApprove && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>Tap a row to edit allowance, compulsory days, the renewal anniversary, or to remove someone from the schedule. Admins are never shown.</div>}
+      {canApprove && hidden.length > 0 && (
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed ' + BRAND.border }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Not tracked</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>

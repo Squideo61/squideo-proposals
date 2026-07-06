@@ -118,6 +118,25 @@ export const PAYMENT_TERMS_LABEL = Object.fromEntries(PAYMENT_TERMS.map(t => [t.
 // Read-only on the video/board — the proposal is the source of truth.
 export const PAYMENT_OPTION_LABEL = { '5050': '50/50', full: 'Full up-front', po: 'PO' };
 
+// Video-length presets for the card dropdown. The stored value is the label
+// string; `days` is what the weekly scheduler assigns per stage (also derived
+// by durationDaysForLength in scheduleCalendar.js — keep the two consistent).
+// "Other" lets Callum type a custom length; if he adds "… N days" the scheduler
+// honours it, otherwise it defaults to 1 day and he tweaks it on the calendar.
+// Mirror of the copy in api/_lib/productionStages.js.
+export const VIDEO_LENGTH_OPTIONS = [
+  { value: '30 seconds (70w)',  words: 70,  days: 1 },
+  { value: '1 minute (140w)',   words: 140, days: 1 },
+  { value: '1.5 minutes (210w)', words: 210, days: 2 },
+  { value: '2 minutes (280w)',  words: 280, days: 2 },
+  { value: '2.5 minutes (350w)', words: 350, days: 3 },
+  { value: '3 minutes (420w)',  words: 420, days: 3 },
+  { value: '3.5 minutes (490w)', words: 490, days: 4 },
+  { value: '4 minutes (560w)',  words: 560, days: 4 },
+  { value: '5 minutes (700w)',  words: 700, days: 5 },
+];
+export const VIDEO_LENGTH_VALUES = new Set(VIDEO_LENGTH_OPTIONS.map(o => o.value));
+
 // ── Per-video milestones (Script & Text Direction → Storyboard → Video). Each
 // approval advances the video card to a mapped board stage (forward-only).
 // Script and text/visual direction are sent to the client together, so they

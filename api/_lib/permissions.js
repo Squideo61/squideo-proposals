@@ -34,7 +34,8 @@ export const PERMISSIONS = [
 
   { slug: 'production.access',    group: 'Projects',   label: 'Access the production board' },
   { slug: 'schedule.access',      group: 'Projects',   label: 'See own producer calendar + book annual leave' },
-  { slug: 'schedule.manage',      group: 'Projects',   label: 'Manage the master schedule + approve annual leave' },
+  { slug: 'schedule.manage',      group: 'Projects',   label: 'Manage the weekly schedule — see all producers, Master view, drag/assign/durations' },
+  { slug: 'schedule.approve_leave', group: 'Projects', label: 'Approve annual leave + edit allowances' },
 ];
 
 const VALID_SLUGS = new Set(PERMISSIONS.map(p => p.slug));

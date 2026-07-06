@@ -135,7 +135,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       items: [
         ...(canProduction ? [{ label: 'Projects', icon: LayoutGrid, go: () => navigate('projects') }] : []),
         ...(canProduction ? [{ label: 'Production board', icon: KanbanSquare, go: () => navigate('production') }] : []),
-        ...(canSchedule ? [{ label: 'Schedule', icon: CalendarDays, go: () => navigate('schedule') }] : []),
+        ...(canSchedule ? [{ label: 'Weekly Schedule', icon: CalendarDays, go: () => navigate('schedule') }] : []),
         ...(canRevisions ? [{ label: 'Storyboard Revisions', icon: Images, go: () => navigate('storyboards') }] : []),
         ...(canRevisions ? [{ label: 'Video Revisions', icon: Clapperboard, go: () => navigate('revisions') }] : []),
         { label: 'Partners & Credits', icon: Coins, go: () => navigate('partner-credits') },

@@ -6,11 +6,16 @@
 // server at api/_lib/scheduleCalendar.js (src/ and api/ can't cross-import).
 // Keep them in lockstep. The colour helpers at the bottom are UI-only.
 
-// Video length → days assigned for a single production stage.
-//   30 seconds / 1 minute      = 1 day
-//   1.5 minutes / 2 minutes    = 2 days
-//   2.5 minutes / 3 minutes    = 3 days   … and so on.  days = max(1, ceil(minutes)).
+// Video length → days for a stage. Handles presets ("1 minute (140w)"), word
+// counts ("140w"), durations ("90 seconds"), Other-project day overrides
+// ("4 days"), or bare numbers. days = max(1, ceil(words/140)) or ceil(minutes).
+// Mirror of api/_lib/scheduleCalendar.js — keep in lockstep.
 export function durationDaysForLength(videoLength) {
+  const s = String(videoLength == null ? '' : videoLength).toLowerCase();
+  const dm = /(\d+(?:\.\d+)?)\s*(?:days?|d)\b/.exec(s);
+  if (dm) return Math.max(1, Math.round(+dm[1]));
+  const wm = /(\d+)\s*w\b/.exec(s);
+  if (wm) return Math.max(1, Math.ceil(+wm[1] / 140));
   const minutes = lengthToMinutes(videoLength);
   if (minutes == null) return 1;
   return Math.max(1, Math.ceil(minutes - 1e-9));

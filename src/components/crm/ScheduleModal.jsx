@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Calendar, Eraser, ListChecks, FileDown, Check } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Calendar, Eraser, ListChecks, FileDown, Check, Users } from 'lucide-react';
 import { Modal } from '../ui.jsx';
 import { Card, Empty } from './Card.jsx';
 import { DateTimePicker, formatDTDisplay } from './TaskFormModal.jsx';
@@ -33,7 +33,7 @@ export function ScheduleCard({ deal, onOpen }) {
 
   return (
     <Card
-      title="Schedule"
+      title="Production Schedule"
       action={<button className="btn-ghost" onClick={onOpen}><Calendar size={14} /> {schedule ? 'Edit schedule' : 'Set up schedule'}</button>}
     >
       {!schedule ? (
@@ -65,10 +65,19 @@ function fmt(local) { return local ? formatDTDisplay(local) : ''; }
 
 // ── The editable, doc-like popout ──
 export function ScheduleModal({ deal, dealId, company, primaryContact, onClose }) {
-  const { actions, showMsg } = useStore();
+  const { state, actions, showMsg } = useStore();
   const [schedule, setSchedule] = useState(() => deal.productionSchedule || seedSchedule(deal));
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+
+  // Producer options for the per-stage assignment (drives the weekly schedule).
+  useEffect(() => { if (!state.schedule?.loaded) actions.loadSchedule(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const producerOptions = state.schedule?.producers || [];
+  const producers = schedule.producers || {};
+  const setProducer = (kind, email) => update(s => {
+    s.producers = { ...(s.producers || {}), [kind]: email || null };
+    return s;
+  });
 
   const update = (fn) => setSchedule(prev => fn(structuredClone(prev)));
 
@@ -148,6 +157,33 @@ export function ScheduleModal({ deal, dealId, company, primaryContact, onClose }
         <button type="button" className="btn-ghost" onClick={clearDates} title="Clear all stage dates back to unassigned">
           <Eraser size={14} /> Clear dates
         </button>
+      </div>
+
+      {/* Per-stage producer assignment — drives who each block lands on in the
+          Weekly Schedule. Leave blank to fall back to the video's own producer. */}
+      <div style={{ padding: '14px 16px', background: BRAND.paper, borderRadius: 10, marginBottom: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, marginBottom: 10 }}>
+          <Users size={15} color={BRAND.blue} /> Assign producers <span style={{ fontWeight: 400, color: BRAND.muted }}>— populates the Weekly Schedule</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+          {[
+            { kind: 'storyboard', label: 'Storyboard / Visuals' },
+            { kind: 'revisions', label: 'Revisions (Amends)' },
+            { kind: 'production', label: 'Production' },
+          ].map(({ kind, label }) => (
+            <div key={kind}>
+              <div style={{ fontSize: 11, color: BRAND.muted, marginBottom: 3 }}>{label}</div>
+              <select
+                value={producers[kind] || ''}
+                onChange={e => setProducer(kind, e.target.value)}
+                style={{ width: '100%', padding: '8px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8, fontSize: 13, background: 'white' }}
+              >
+                <option value="">Video’s producer</option>
+                {producerOptions.map(p => <option key={p.email} value={p.email}>{p.name || p.email}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Sections */}

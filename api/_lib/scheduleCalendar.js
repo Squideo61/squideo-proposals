@@ -9,13 +9,24 @@
 // The greedy packer that turns these into a producer's calendar blocks lives in
 // api/_lib/crm/schedule.js — it's server-only.
 
-// Video length → days assigned for a single production stage.
-//   30 seconds / 1 minute      = 1 day
-//   1.5 minutes / 2 minutes    = 2 days
-//   2.5 minutes / 3 minutes    = 3 days   … and so on.
-// i.e. days = max(1, ceil(minutes)). Length is free text on the video
-// ("1 minute", "90 seconds", "1.5 mins", or a bare number of minutes).
+// Video length → days assigned for a single production stage. The video-length
+// field may be a preset ("1 minute (140w)"), a word count ("140w"), a duration
+// ("90 seconds", "1.5 mins"), an explicit day override for Other projects
+// ("… 4 days"), or a bare number. Mapping (matches the brief):
+//   70w / 140w      = 1 day        30s / 1 min    = 1 day
+//   210w / 280w     = 2 days       1.5 / 2 min    = 2 days
+//   350w / 420w     = 3 days       2.5 / 3 min    = 3 days
+//   490w / 560w     = 4 days       3.5 / 4 min    = 4 days
+//   700w            = 5 days       5 min          = 5 days
+// i.e. days = max(1, ceil(words/140)) or max(1, ceil(minutes)).
 export function durationDaysForLength(videoLength) {
+  const s = String(videoLength == null ? '' : videoLength).toLowerCase();
+  // Explicit day override (Other projects): "4 days" / "4d".
+  const dm = /(\d+(?:\.\d+)?)\s*(?:days?|d)\b/.exec(s);
+  if (dm) return Math.max(1, Math.round(+dm[1]));
+  // Word count: "(140w)" or "140w" → 140 words ≈ 1 minute of script.
+  const wm = /(\d+)\s*w\b/.exec(s);
+  if (wm) return Math.max(1, Math.ceil(+wm[1] / 140));
   const minutes = lengthToMinutes(videoLength);
   if (minutes == null) return 1; // unknown → assume a day so it still schedules
   return Math.max(1, Math.ceil(minutes - 1e-9));

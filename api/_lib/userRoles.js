@@ -105,17 +105,34 @@ export function ensureSystemRoles() {
          WHERE id IN ('producer', 'copywriter', 'member', 'director') AND NOT (permissions @> '["schedule.access"]'::jsonb)
       `;
       if ((schedAccess.count || schedAccess.rowCount || 0) > 0) invalidateRoleCache();
+      // Weekly-schedule management (see all producers + Master + drag/assign/
+      // durations) → Directors AND Project/Production Managers (role 'member',
+      // e.g. Callum). Admins get it via '*'.
       const schedManage = await sql`
         UPDATE roles
            SET permissions = permissions || '["schedule.manage"]'::jsonb, updated_at = NOW()
-         WHERE id = 'director' AND NOT (permissions @> '["schedule.manage"]'::jsonb)
+         WHERE id IN ('director', 'member') AND NOT (permissions @> '["schedule.manage"]'::jsonb)
       `;
-      if ((schedManage.count || schedManage.rowCount || 0) > 0) invalidateRoleCache('director');
-      // Leave-request approvals + schedule clashes → Admins & Directors.
+      if ((schedManage.count || schedManage.rowCount || 0) > 0) invalidateRoleCache();
+      // Approving annual leave + editing allowances stays tighter: Directors only
+      // (Admins via '*').
+      const schedApprove = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["schedule.approve_leave"]'::jsonb, updated_at = NOW()
+         WHERE id = 'director' AND NOT (permissions @> '["schedule.approve_leave"]'::jsonb)
+      `;
+      if ((schedApprove.count || schedApprove.rowCount || 0) > 0) invalidateRoleCache('director');
+      // Leave-request approvals → Admins & Directors; schedule clashes also reach
+      // Project/Production Managers (member) who run the weekly schedule.
       await sql`
         UPDATE roles
-           SET notification_defaults = notification_defaults || '{"leave.requested": true, "schedule.conflict": true}'::jsonb, updated_at = NOW()
+           SET notification_defaults = notification_defaults || '{"leave.requested": true}'::jsonb, updated_at = NOW()
          WHERE id IN ('admin', 'director') AND NOT (notification_defaults ? 'leave.requested')
+      `;
+      await sql`
+        UPDATE roles
+           SET notification_defaults = notification_defaults || '{"schedule.conflict": true}'::jsonb, updated_at = NOW()
+         WHERE id IN ('admin', 'director', 'member') AND NOT (notification_defaults ? 'schedule.conflict')
       `;
       // A leave decision reaches the requester — default ON for every role that
       // can book leave (plus Admin, covered by '*').
