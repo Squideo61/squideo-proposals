@@ -8,7 +8,10 @@ import { XeroContactPicker } from './XeroContactPicker.jsx';
 import { api } from '../../api.js';
 import {
   PRODUCTION_PHASES, PHASE_BY_ID, STAGE_LABEL, PAYMENT_OPTION_LABEL,
+  VIDEO_LENGTH_OPTIONS, VIDEO_LENGTH_VALUES,
 } from '../../lib/productionStages.js';
+
+const inlineSel = { width: '100%', padding: '4px 6px', border: '1px solid ' + BRAND.blue, borderRadius: 6, fontSize: 12, background: 'white' };
 
 const PRODUCER_FILTER_STORAGE_KEY = 'squideo.production.producerFilter';
 const PHASE_STORAGE_KEY = 'squideo.production.phase';
@@ -255,12 +258,32 @@ function StageGroup({ stage, color, videos, onDrop, onOpenVideo }) {
 }
 
 function VideoRow({ video, onOpen, showStage }) {
-  const { state } = useStore();
+  const { state, actions } = useStore();
   const producers = (video.producerEmails && video.producerEmails.length)
     ? video.producerEmails : (video.producerEmail ? [video.producerEmail] : []);
+  const memberOptions = useMemo(() => Object.entries(state.users || {})
+    .map(([email, u]) => ({ email, name: u.name || email }))
+    .sort((a, b) => a.name.localeCompare(b.name)), [state.users]);
+  // Inline field editing (Callum fills the card straight from the board).
+  const [editing, setEditing] = useState(null); // 'length' | 'producer' | null
+  const stop = (e) => e.stopPropagation();
+  const saveLength = (value) => {
+    if (value === '__other__') {
+      const custom = window.prompt('Custom video length (e.g. "6 minutes (840w)"). Add "N days" to set the schedule duration:', video.videoLength || '');
+      setEditing(null);
+      if (custom != null) actions.updateVideo(video.id, { videoLength: custom.trim() || null });
+      return;
+    }
+    setEditing(null);
+    actions.updateVideo(video.id, { videoLength: value || null });
+  };
+  const saveProducer = (email) => {
+    setEditing(null);
+    actions.updateVideo(video.id, { producerEmails: email ? [email] : [] });
+  };
   return (
     <div
-      draggable
+      draggable={!editing}
       onDragStart={(e) => e.dataTransfer.setData('application/json', JSON.stringify(video))}
       onClick={onOpen}
       role="button"
@@ -285,36 +308,61 @@ function VideoRow({ video, onOpen, showStage }) {
       <div>{video.paymentOption
         ? <span style={chip}>{PAYMENT_OPTION_LABEL[video.paymentOption] || video.paymentOption}</span>
         : <span style={{ color: BRAND.muted }}>—</span>}</div>
-      {/* Length */}
-      <div style={{ color: video.videoLength ? BRAND.ink : BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{video.videoLength || '—'}</div>
+      {/* Length — click to pick from the preset dropdown */}
+      <div onClick={stop} style={{ minWidth: 0 }}>
+        {editing === 'length' ? (
+          <select autoFocus value={VIDEO_LENGTH_VALUES.has(video.videoLength) ? video.videoLength : (video.videoLength || '')}
+            onChange={(e) => saveLength(e.target.value)} onBlur={() => setEditing(null)} onClick={stop} style={inlineSel}>
+            <option value="">—</option>
+            {video.videoLength && !VIDEO_LENGTH_VALUES.has(video.videoLength) && <option value={video.videoLength}>{video.videoLength}</option>}
+            {VIDEO_LENGTH_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.value}</option>)}
+            <option value="__other__">Other…</option>
+          </select>
+        ) : (
+          <span onClick={(e) => { stop(e); setEditing('length'); }} title="Set video length"
+            style={{ cursor: 'pointer', borderBottom: '1px dashed ' + BRAND.border, color: video.videoLength ? BRAND.ink : BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '100%' }}>
+            {video.videoLength || '—'}
+          </span>
+        )}
+      </div>
       {/* Text direction */}
       <div style={{ color: video.textDirectionDeadline ? BRAND.ink : BRAND.muted }}>{video.textDirectionDeadline ? formatDate(video.textDirectionDeadline) : '—'}</div>
       {/* Delivery */}
       <div style={{ color: video.deliveryDeadline ? BRAND.ink : BRAND.muted }}>{video.deliveryDeadline ? formatDate(video.deliveryDeadline) : '—'}</div>
-      {/* Producers */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-        {producers.length === 0 ? (
-          <span style={{ color: BRAND.muted }}>Unassigned</span>
-        ) : producers.length === 1 ? (
-          <>
-            <Avatar user={state.users[producers[0]]} fallback={producers[0]} />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {state.users[producers[0]]?.name || producers[0]}
-            </span>
-          </>
+      {/* Producers — click to assign */}
+      <div onClick={stop} style={{ minWidth: 0 }}>
+        {editing === 'producer' ? (
+          <select autoFocus value={producers[0] || ''} onChange={(e) => saveProducer(e.target.value)} onBlur={() => setEditing(null)} onClick={stop} style={inlineSel}>
+            <option value="">Unassigned</option>
+            {memberOptions.map(m => <option key={m.email} value={m.email}>{m.name}</option>)}
+          </select>
         ) : (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              {producers.slice(0, 3).map((e, i) => (
-                <span key={e} style={{ marginLeft: i === 0 ? 0 : -8 }}>
-                  <Avatar user={state.users[e]} fallback={e} />
+          <div onClick={(e) => { stop(e); setEditing('producer'); }} title="Assign producer"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, cursor: 'pointer' }}>
+            {producers.length === 0 ? (
+              <span style={{ color: BRAND.muted, borderBottom: '1px dashed ' + BRAND.border }}>Unassigned</span>
+            ) : producers.length === 1 ? (
+              <>
+                <Avatar user={state.users[producers[0]]} fallback={producers[0]} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {state.users[producers[0]]?.name || producers[0]}
                 </span>
-              ))}
-            </div>
-            <span style={{ color: BRAND.muted, fontSize: 12, whiteSpace: 'nowrap' }}>
-              {producers.length} producers{producers.length > 3 ? ` (+${producers.length - 3})` : ''}
-            </span>
-          </>
+              </>
+            ) : (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  {producers.slice(0, 3).map((e, i) => (
+                    <span key={e} style={{ marginLeft: i === 0 ? 0 : -8 }}>
+                      <Avatar user={state.users[e]} fallback={e} />
+                    </span>
+                  ))}
+                </div>
+                <span style={{ color: BRAND.muted, fontSize: 12, whiteSpace: 'nowrap' }}>
+                  {producers.length} producers{producers.length > 3 ? ` (+${producers.length - 3})` : ''}
+                </span>
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>

@@ -5,7 +5,7 @@ import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
 import {
   PRODUCTION_PHASES, PHASE_BY_ID, PAYMENT_OPTION_LABEL,
-  VIDEO_MILESTONES, STAGE_LABEL,
+  VIDEO_MILESTONES, STAGE_LABEL, VIDEO_LENGTH_OPTIONS, VIDEO_LENGTH_VALUES,
 } from '../../lib/productionStages.js';
 import { VideoProgressBar } from './ProductionProgressBar.jsx';
 import { DealConversation } from './DealConversation.jsx';
@@ -146,7 +146,22 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           </div>
           <div>
             <label style={labelStyle}>Video length</label>
-            <InlineText value={video.videoLength} placeholder="e.g. 90s, 1.5m, 606w" onSave={(v) => update({ videoLength: v })} />
+            <select style={ctrl}
+              value={VIDEO_LENGTH_VALUES.has(video.videoLength) ? video.videoLength : (video.videoLength || '')}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '__other__') {
+                  const c = window.prompt('Custom video length (e.g. "6 minutes (840w)"). Add "N days" to set the schedule duration:', video.videoLength || '');
+                  if (c != null) update({ videoLength: c.trim() || null });
+                  return;
+                }
+                update({ videoLength: v || null });
+              }}>
+              <option value="">— Select length —</option>
+              {video.videoLength && !VIDEO_LENGTH_VALUES.has(video.videoLength) && <option value={video.videoLength}>{video.videoLength}</option>}
+              {VIDEO_LENGTH_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.value}</option>)}
+              <option value="__other__">Other…</option>
+            </select>
           </div>
           <div>
             <label style={labelStyle}>Delivery deadline</label>

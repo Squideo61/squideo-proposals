@@ -21,6 +21,24 @@ describe('durationDaysForLength', () => {
     expect(durationDaysForLength('')).toBe(1);
     expect(durationDaysForLength(null)).toBe(1);
   });
+  it('maps word-count presets per the brief', () => {
+    expect(durationDaysForLength('30 seconds (70w)')).toBe(1);
+    expect(durationDaysForLength('1 minute (140w)')).toBe(1);
+    expect(durationDaysForLength('1.5 minutes (210w)')).toBe(2);
+    expect(durationDaysForLength('2 minutes (280w)')).toBe(2);
+    expect(durationDaysForLength('2.5 minutes (350w)')).toBe(3);
+    expect(durationDaysForLength('3 minutes (420w)')).toBe(3);
+    expect(durationDaysForLength('3.5 minutes (490w)')).toBe(4);
+    expect(durationDaysForLength('4 minutes (560w)')).toBe(4);
+    expect(durationDaysForLength('5 minutes (700w)')).toBe(5);
+    expect(durationDaysForLength('140w')).toBe(1);
+    expect(durationDaysForLength('90s (210w)')).toBe(2);
+    expect(durationDaysForLength('420w')).toBe(3);
+  });
+  it('honours an explicit day override for Other projects', () => {
+    expect(durationDaysForLength('Custom explainer — 6 days')).toBe(6);
+    expect(durationDaysForLength('Other (2 days)')).toBe(2);
+  });
 });
 
 describe('working-day arithmetic', () => {
