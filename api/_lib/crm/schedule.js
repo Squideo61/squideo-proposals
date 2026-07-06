@@ -57,6 +57,11 @@ export function ensureScheduleTables() {
       ON schedule_assignments (video_id, kind, user_email)`;
     await sql`CREATE INDEX IF NOT EXISTS schedule_assignments_user_idx ON schedule_assignments (user_email)`;
     await sql`CREATE INDEX IF NOT EXISTS schedule_assignments_deal_idx ON schedule_assignments (deal_id)`;
+    // Manual ad-hoc blocks (Callum's "+" button) aren't tied to a video/deal and
+    // carry their own title. Relax the FKs and add the title column.
+    await sql`ALTER TABLE schedule_assignments ADD COLUMN IF NOT EXISTS title TEXT`;
+    await sql`ALTER TABLE schedule_assignments ALTER COLUMN video_id DROP NOT NULL`.catch(() => {});
+    await sql`ALTER TABLE schedule_assignments ALTER COLUMN deal_id DROP NOT NULL`.catch(() => {});
     await sql`CREATE TABLE IF NOT EXISTS leave_requests (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -367,18 +372,20 @@ function serialiseAssignment(r, ctx) {
   const start = asDateStr(r.start_date);
   const end = asDateStr(r.end_date);
   const today = ctx.today;
+  const manual = r.kind === 'manual' || !r.video_id;
   const daysUntilStart = start >= today ? countWorkingDays(today, start) - 1 : -(countWorkingDays(start, today) - 1);
   const approved = ctx.milestones.get(r.video_id) || new Set();
-  const ready = r.kind === 'storyboard' ? approved.has('script') : approved.has('storyboard');
+  const ready = manual ? false : (r.kind === 'storyboard' ? approved.has('script') : approved.has('storyboard'));
   // Leave booked over this block after it was placed → live clash.
   const leaveDays = ctx.leaveByUser.get(String(r.user_email).toLowerCase()) || new Set();
   const leaveConflict = workingDaysBetween(start, end).some(d => leaveDays.has(d));
   return {
     id: r.id,
-    videoId: r.video_id,
-    dealId: r.deal_id,
+    videoId: r.video_id || null,
+    dealId: r.deal_id || null,
     userEmail: String(r.user_email).toLowerCase(),
     kind: r.kind,
+    manual,
     startDate: start,
     endDate: end,
     durationDays: r.duration_days,
@@ -389,10 +396,11 @@ function serialiseAssignment(r, ctx) {
     leaveConflict,
     ready,
     daysUntilStart,
-    projectTitle: ctx.videoMeta.get(r.video_id)?.projectTitle || null,
-    videoTitle: ctx.videoMeta.get(r.video_id)?.title || null,
-    videoLength: ctx.videoMeta.get(r.video_id)?.videoLength || null,
-    productionStage: ctx.videoMeta.get(r.video_id)?.stage || null,
+    projectTitle: manual ? (r.title || 'Manual block') : (ctx.videoMeta.get(r.video_id)?.projectTitle || null),
+    videoTitle: manual ? null : (ctx.videoMeta.get(r.video_id)?.title || null),
+    videoLength: manual ? null : (ctx.videoMeta.get(r.video_id)?.videoLength || null),
+    productionStage: manual ? null : (ctx.videoMeta.get(r.video_id)?.stage || null),
+    title: r.title || null,
   };
 }
 
@@ -424,7 +432,7 @@ async function buildPayload(user, manage, approve = false) {
   const asg = scopeEmails.length
     ? await sql`SELECT * FROM schedule_assignments WHERE user_email = ANY(${scopeEmails}) ORDER BY start_date`
     : [];
-  const videoIds = [...new Set(asg.map(a => a.video_id))];
+  const videoIds = [...new Set(asg.map(a => a.video_id).filter(Boolean))];
   const videoMeta = new Map();
   const milestones = new Map();
   if (videoIds.length) {
@@ -604,6 +612,26 @@ export async function scheduleRoute(req, res, id, action, user) {
     return res.status(200).json({ ...result, ...(await reload()) });
   }
 
+  // POST /api/crm/schedule/block { userEmail, title, startDate, endDate }
+  // Manual ad-hoc block for a producer (Callum fills random jobs / days).
+  if (id === 'block') {
+    if (req.method !== 'POST') return res.status(405).end();
+    if (!manage) return res.status(403).json({ error: 'Only schedule managers can add blocks' });
+    const b = req.body || {};
+    const target = String(b.userEmail || '').toLowerCase();
+    const startStr = nextWorkingDay(asDateStr(b.startDate) || '');
+    const endInput = asDateStr(b.endDate);
+    if (!target) return res.status(400).json({ error: 'userEmail is required' });
+    if (!startStr) return res.status(400).json({ error: 'startDate is required' });
+    const endStr = endInput && endInput >= startStr ? endInput : startStr;
+    const days = Math.max(1, countWorkingDays(startStr, endStr));
+    const bid = makeId('sched');
+    await sql`INSERT INTO schedule_assignments
+        (id, video_id, deal_id, user_email, kind, title, start_date, end_date, duration_days, extended_days, auto_generated, conflict)
+      VALUES (${bid}, ${null}, ${null}, ${target}, 'manual', ${trimOrNull(b.title) || 'Manual block'}, ${startStr}, ${endStr}, ${days}, 0, FALSE, FALSE)`;
+    return res.status(201).json(await reload());
+  }
+
   // /api/crm/schedule/assignment/:aid
   if (id === 'assignment') {
     const aid = action;
@@ -616,18 +644,30 @@ export async function scheduleRoute(req, res, id, action, user) {
     }
     if (req.method === 'PATCH') {
       const b = req.body || {};
-      let { start_date, end_date, duration_days, user_email } = row;
-      let startStr = asDateStr(start_date);
-      let dur = row.duration_days;
+      let startStr = asDateStr(row.start_date);
       if (b.startDate) startStr = nextWorkingDay(asDateStr(b.startDate));
-      if (b.extendedDays != null) dur = row.duration_days + Math.max(0, Math.round(Number(b.extendedDays) || 0));
-      else if (b.durationDays != null) dur = Math.max(1, Math.round(Number(b.durationDays)));
+      let newDuration, newExtended, endStr;
+      if (b.endDate) {
+        // Explicit end date (manual block resize): duration is the span itself.
+        const e = asDateStr(b.endDate);
+        endStr = e && e >= startStr ? e : startStr;
+        newDuration = Math.max(1, countWorkingDays(startStr, endStr));
+        newExtended = 0;
+      } else {
+        // Move / extend: keep the base duration, carry the extension. Default to
+        // the current total so a plain move doesn't drop an existing extension.
+        let total = row.duration_days + (row.extended_days || 0);
+        if (b.extendedDays != null) total = row.duration_days + Math.max(0, Math.round(Number(b.extendedDays) || 0));
+        else if (b.durationDays != null) total = Math.max(1, Math.round(Number(b.durationDays)));
+        newDuration = row.duration_days;
+        newExtended = Math.max(0, total - row.duration_days);
+        endStr = addWorkingDays(startStr, Math.max(1, total) - 1);
+      }
       const newUser = b.userEmail && manage ? String(b.userEmail).toLowerCase() : String(row.user_email).toLowerCase();
-      const endStr = addWorkingDays(startStr, Math.max(1, dur) - 1);
-      const extended = Math.max(0, dur - row.duration_days);
+      const title = b.title != null ? (trimOrNull(b.title) || row.title) : row.title;
       await sql`UPDATE schedule_assignments SET start_date = ${startStr}, end_date = ${endStr},
-          extended_days = ${extended}, user_email = ${newUser}, auto_generated = FALSE, conflict = FALSE,
-          conflict_reason = NULL, updated_at = NOW() WHERE id = ${aid}`;
+          duration_days = ${newDuration}, extended_days = ${newExtended}, user_email = ${newUser}, title = ${title},
+          auto_generated = FALSE, conflict = FALSE, conflict_reason = NULL, updated_at = NOW() WHERE id = ${aid}`;
       return res.status(200).json(await reload());
     }
     if (req.method === 'DELETE') {

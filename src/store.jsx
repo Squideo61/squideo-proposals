@@ -1813,6 +1813,11 @@ export function StoreProvider({ children }) {
         .then((p) => actions._applySchedule(p))
         .catch((err) => { showMsg(err.message || 'Failed to sync schedule'); throw err; });
     },
+    createBlock(fields) {
+      return api.post('/api/crm/schedule/block', fields)
+        .then((p) => actions._applySchedule(p))
+        .catch((err) => { showMsg(err.message || 'Failed to add block'); throw err; });
+    },
     moveAssignment(assignmentId, fields) {
       return api.patch('/api/crm/schedule/assignment/' + encodeURIComponent(assignmentId), fields)
         .then((p) => actions._applySchedule(p))

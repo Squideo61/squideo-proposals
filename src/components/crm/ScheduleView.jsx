@@ -46,6 +46,7 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
   const [selected, setSelected] = useState('master'); // 'master' | producer email
   const [leaveModal, setLeaveModal] = useState(false);
   const [blockModal, setBlockModal] = useState(null);
+  const [newBlock, setNewBlock] = useState(false);
   const [allowanceModal, setAllowanceModal] = useState(null);
 
   useEffect(() => { actions.loadSchedule(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -121,6 +122,11 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
               </button>
             ))}
           </div>
+          {canManage && (
+            <button className="btn" onClick={() => setNewBlock(true)} style={{ fontWeight: 600 }}>
+              <Plus size={14} /> Add block
+            </button>
+          )}
           <button className="btn-ghost" onClick={() => setLeaveModal(true)} style={{ fontWeight: 600 }}>
             <Plane size={14} /> Book leave
           </button>
@@ -181,6 +187,8 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
         <AmendsPanel sched={sched} onOpenVideo={onOpenVideo} />
       </div>
 
+      {newBlock && <NewBlockModal producers={allProducers} onClose={() => setNewBlock(false)}
+        onSubmit={(f) => actions.createBlock(f).then(() => setNewBlock(false))} />}
       {leaveModal && <LeaveModal producers={allProducers} canManage={canManage} onClose={() => setLeaveModal(false)}
         onSubmit={(f) => actions.requestLeave(f).then(() => setLeaveModal(false))} />}
       {blockModal && <BlockModal assignment={blockModal} producers={allProducers} canManage={canManage} me={me}
@@ -496,7 +504,10 @@ function LeaveModal({ producers, canManage, onClose, onSubmit }) {
 }
 
 function BlockModal({ assignment, producers, canManage, me, onClose, onOpenProject, onOpenVideo, actions }) {
+  const manual = assignment.manual;
   const [start, setStart] = useState(assignment.startDate);
+  const [end, setEnd] = useState(assignment.endDate);
+  const [title, setTitle] = useState(assignment.title || '');
   const [extra, setExtra] = useState(assignment.extendedDays || 0);
   const [producer, setProducer] = useState(assignment.userEmail);
   const [busy, setBusy] = useState(false);
@@ -504,14 +515,16 @@ function BlockModal({ assignment, producers, canManage, me, onClose, onOpenProje
   const totalDays = assignment.durationDays + Math.max(0, extra);
   const save = () => {
     setBusy(true);
-    actions.moveAssignment(assignment.id, { startDate: start, extendedDays: Math.max(0, extra), ...(canManage ? { userEmail: producer } : {}) })
-      .then(onClose).catch(() => setBusy(false));
+    const fields = manual
+      ? { startDate: start, endDate: end, title, ...(canManage ? { userEmail: producer } : {}) }
+      : { startDate: start, extendedDays: Math.max(0, extra), ...(canManage ? { userEmail: producer } : {}) };
+    actions.moveAssignment(assignment.id, fields).then(onClose).catch(() => setBusy(false));
   };
   return (
     <Modal onClose={onClose} dismissible={false} maxWidth={440}>
-      <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>{assignment.projectTitle}</h3>
+      <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>{manual ? (assignment.title || 'Manual block') : assignment.projectTitle}</h3>
       <div style={{ color: BRAND.muted, fontSize: 14, marginBottom: 14 }}>
-        {assignment.videoTitle}{assignment.videoLength ? ' · ' + assignment.videoLength : ''} · {KIND_LABEL[assignment.kind] || assignment.kind}
+        {manual ? 'Manual block' : `${assignment.videoTitle}${assignment.videoLength ? ' · ' + assignment.videoLength : ''} · ${KIND_LABEL[assignment.kind] || assignment.kind}`}
       </div>
       {(assignment.conflict || assignment.leaveConflict) && (
         <div style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#7F1D1D', borderRadius: 8, padding: '8px 10px', fontSize: 13, marginBottom: 14 }}>
@@ -520,14 +533,19 @@ function BlockModal({ assignment, producers, canManage, me, onClose, onOpenProje
       )}
       {canEdit ? (
         <>
+          {manual && <Field label="Card name"><input className="input" value={title} onChange={e => setTitle(e.target.value)} style={selStyle} /></Field>}
           <Field label="Start date"><input type="date" className="input" value={start} onChange={e => setStart(e.target.value)} style={selStyle} /></Field>
-          <Field label={`Extra days (complexity buffer) — total ${totalDays} day${totalDays === 1 ? '' : 's'}`}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button className="btn-ghost" onClick={() => setExtra(x => Math.max(0, x - 1))}>−</button>
-              <span style={{ fontWeight: 700, minWidth: 24, textAlign: 'center' }}>{extra}</span>
-              <button className="btn-ghost" onClick={() => setExtra(x => x + 1)}><Plus size={14} /></button>
-            </div>
-          </Field>
+          {manual ? (
+            <Field label="End date"><input type="date" className="input" value={end} min={start} onChange={e => setEnd(e.target.value)} style={selStyle} /></Field>
+          ) : (
+            <Field label={`Extra days (complexity buffer) — total ${totalDays} day${totalDays === 1 ? '' : 's'}`}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button className="btn-ghost" onClick={() => setExtra(x => Math.max(0, x - 1))}>−</button>
+                <span style={{ fontWeight: 700, minWidth: 24, textAlign: 'center' }}>{extra}</span>
+                <button className="btn-ghost" onClick={() => setExtra(x => x + 1)}><Plus size={14} /></button>
+              </div>
+            </Field>
+          )}
           {canManage && (
             <Field label="Assigned producer">
               <select className="input" value={producer} onChange={e => setProducer(e.target.value)} style={selStyle}>
@@ -539,10 +557,41 @@ function BlockModal({ assignment, producers, canManage, me, onClose, onOpenProje
       ) : <div style={{ fontSize: 13, color: BRAND.muted }}>Scheduled {assignment.startDate} → {assignment.endDate}.</div>}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 16 }}>
         <div style={{ display: 'flex', gap: 6 }}>
-          {onOpenVideo && <button className="btn-ghost" onClick={() => { onOpenVideo(assignment.videoId); onClose(); }}>Open video</button>}
+          {!manual && onOpenVideo && assignment.videoId && <button className="btn-ghost" onClick={() => { onOpenVideo(assignment.videoId); onClose(); }}>Open video</button>}
           {canEdit && <button className="btn-ghost" onClick={() => actions.deleteAssignment(assignment.id).then(onClose)} title="Remove from calendar" style={{ color: '#DC2626' }}><Trash2 size={14} /></button>}
         </div>
         {canEdit && <button className="btn" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>}
+      </div>
+    </Modal>
+  );
+}
+
+function NewBlockModal({ producers, onClose, onSubmit }) {
+  const [title, setTitle] = useState('');
+  const [producer, setProducer] = useState(producers[0]?.email || '');
+  const [start, setStart] = useState(todayStr());
+  const [end, setEnd] = useState(todayStr());
+  const [busy, setBusy] = useState(false);
+  const submit = () => {
+    if (!producer || !start) return;
+    setBusy(true);
+    onSubmit({ userEmail: producer, title: title.trim() || 'Manual block', startDate: start, endDate: end || start })
+      .catch(() => setBusy(false));
+  };
+  return (
+    <Modal onClose={onClose} dismissible={false} maxWidth={420}>
+      <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Add a block to the rota</h3>
+      <Field label="Card name"><input className="input" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Ad-hoc edit, filming day" style={selStyle} /></Field>
+      <Field label="Producer">
+        <select className="input" value={producer} onChange={e => setProducer(e.target.value)} style={selStyle}>
+          {producers.map(p => <option key={p.email} value={p.email}>{p.name || p.email}</option>)}
+        </select>
+      </Field>
+      <Field label="From"><input type="date" className="input" value={start} onChange={e => setStart(e.target.value)} style={selStyle} /></Field>
+      <Field label="To"><input type="date" className="input" value={end} min={start} onChange={e => setEnd(e.target.value)} style={selStyle} /></Field>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+        <button className="btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn" onClick={submit} disabled={busy}>{busy ? 'Adding…' : 'Add block'}</button>
       </div>
     </Modal>
   );

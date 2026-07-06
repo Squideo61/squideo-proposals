@@ -108,6 +108,9 @@ export function blockColorState(assignment) {
 }
 
 export function blockColors(assignment) {
+  // Manual ad-hoc blocks get a neutral slate look so they read distinctly from
+  // the colour-coded production blocks.
+  if (assignment.manual) return { bg: '#475569', fg: '#fff', border: '#334155' };
   const state = blockColorState(assignment);
   if (state === 'ready') return { bg: '#16A34A', fg: '#fff', border: '#15803D' };
   const reds = {
