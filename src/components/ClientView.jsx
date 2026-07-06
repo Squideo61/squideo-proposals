@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Archive, Award, CalendarClock, Calendar, Captions, Check, ChevronLeft, Download,
   FileDown, FileText, Globe, LayoutGrid, Link2, Mic, Music, Palette, PenLine, Phone,
-  RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
+  Play, RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
 } from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants } from '../defaults.js';
@@ -10,7 +10,7 @@ import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile, computeBaseDiscount } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
 import { startStripeCheckout } from '../utils/stripeCheckout.js';
-import { Field, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
+import { Field, Modal, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
 import { SignedBlock } from './SignedBlock.jsx';
 import { SignaturePad } from './SignaturePad.jsx';
 import { StripeSimModal } from './StripeSimModal.jsx';
@@ -334,6 +334,11 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   const [paymentChoice, setPaymentChoice] = useState(null);
   const isMobile = useIsMobile();
   const signRef = useRef(null);
+  // Notable-examples lightbox: the example currently playing in a modal, plus a
+  // fallback thumbnail cache for any example missing a stored poster (e.g. added
+  // before we captured thumbnails — fetched from Vimeo's public oEmbed).
+  const [activeExample, setActiveExample] = useState(null);
+  const [exampleThumbs, setExampleThumbs] = useState({});
 
   const scrollToSign = () => {
     if (!signRef.current) return;
@@ -342,6 +347,24 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
       : false;
     signRef.current.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
   };
+
+  // Backfill posters for any notable example that has no stored thumbnail
+  // (Vimeo public oEmbed, CORS-enabled). Examples added via the builder already
+  // carry a thumbnail; this covers older ones and non-Vimeo links gracefully.
+  const examplesKey = (data?.notableExamples || []).map(e => e?.url || '').join('|');
+  useEffect(() => {
+    const list = (data?.notableExamples || []).filter(e => e?.url?.trim() && !e.thumbnail);
+    let cancelled = false;
+    list.forEach((ex) => {
+      const m = ex.url.match(/vimeo\.com\/(\d+)/);
+      if (!m || exampleThumbs[ex.url]) return;
+      fetch('https://vimeo.com/api/oembed.json?width=640&url=' + encodeURIComponent('https://vimeo.com/' + m[1]))
+        .then(r => r.ok ? r.json() : null)
+        .then(j => { if (!cancelled && j && j.thumbnail_url) setExampleThumbs(prev => ({ ...prev, [ex.url]: j.thumbnail_url })); })
+        .catch(() => {});
+    });
+    return () => { cancelled = true; };
+  }, [examplesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!data) {
     if (state.loading) {
@@ -781,30 +804,62 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           );
         })()}
 
-        {data.showNotableExamples && (data.notableExamples || []).some(ex => ex?.url?.trim()) && (
-          <div style={{ marginBottom: 32 }}>
-            <PageTitle>Notable Examples</PageTitle>
-            <p style={{ fontSize: 14, color: BRAND.muted, marginBottom: 16, lineHeight: 1.6 }}>A few examples of our recent work:</p>
-            {(data.notableExamples || []).filter(ex => ex?.url?.trim()).map((ex, i) => {
-              const embedUrl = getEmbedUrl(ex.url);
-              return (
-                <div key={ex.id || i} style={{ marginBottom: 24 }}>
-                  {ex.title && ex.title.trim() && (
-                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 10 }}>{ex.title}</h3>
-                  )}
-                  <div style={{ position: 'relative', paddingBottom: '56.25%', borderRadius: 10, overflow: 'hidden' }}>
-                    <iframe
-                      src={embedUrl}
-                      title={ex.title || ('Example ' + (i + 1))}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+        {data.showNotableExamples && (data.notableExamples || []).some(ex => ex?.url?.trim()) && (() => {
+          const examples = (data.notableExamples || []).filter(ex => ex?.url?.trim());
+          return (
+            <div style={{ marginBottom: 32 }}>
+              <PageTitle>Notable Examples</PageTitle>
+              <p style={{ fontSize: 14, color: BRAND.muted, marginBottom: 16, lineHeight: 1.6 }}>A few examples of our recent work — click to play:</p>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${Math.min(examples.length, 3)}, 1fr)`, gap: 16 }}>
+                {examples.map((ex, i) => {
+                  const poster = ex.thumbnail || exampleThumbs[ex.url] || null;
+                  return (
+                    <button
+                      key={ex.id || i}
+                      type="button"
+                      onClick={() => setActiveExample(ex)}
+                      style={{ display: 'block', textAlign: 'left', padding: 0, border: 'none', background: 'none', cursor: 'pointer', width: '100%' }}
+                    >
+                      <div style={{ position: 'relative', paddingBottom: '56.25%', borderRadius: 10, overflow: 'hidden', background: poster ? '#000' : BRAND.ink }}>
+                        {poster && (
+                          <img
+                            src={poster}
+                            alt={ex.title || ('Example ' + (i + 1))}
+                            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        )}
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15, 42, 61, 0.28)' }}>
+                          <div style={{ width: 54, height: 54, borderRadius: '50%', background: 'rgba(255,255,255,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 14px rgba(0,0,0,0.3)' }}>
+                            <Play size={22} fill={BRAND.ink} color={BRAND.ink} style={{ marginLeft: 3 }} />
+                          </div>
+                        </div>
+                      </div>
+                      {ex.title && ex.title.trim() && (
+                        <div style={{ fontSize: 14, fontWeight: 600, marginTop: 8, lineHeight: 1.4 }}>{ex.title}</div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
+        {activeExample && (
+          <Modal onClose={() => setActiveExample(null)} maxWidth={900} overflow="hidden" fullScreenOnMobile={false}>
+            {activeExample.title && activeExample.title.trim() && (
+              <h3 style={{ fontSize: 16, fontWeight: 600, margin: '0 40px 12px 0' }}>{activeExample.title}</h3>
+            )}
+            <div style={{ position: 'relative', paddingBottom: '56.25%', borderRadius: 8, overflow: 'hidden', background: '#000' }}>
+              <iframe
+                src={getEmbedUrl(activeExample.url) + (getEmbedUrl(activeExample.url).includes('?') ? '&' : '?') + 'autoplay=1'}
+                title={activeExample.title || 'Example video'}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
+              />
+            </div>
+          </Modal>
         )}
 
         <PageTitle>Your Quote</PageTitle>

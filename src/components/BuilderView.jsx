@@ -11,16 +11,19 @@ import { extraHasVariants, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 
-// Fetch a Vimeo video's title via the public oEmbed endpoint (CORS-enabled,
-// no auth). Returns the title string, or null if it can't be resolved.
-async function fetchVimeoTitle(url) {
+// Fetch a Vimeo video's title + thumbnail via the public oEmbed endpoint
+// (CORS-enabled, no auth). Returns { title, thumbnail } or null.
+async function fetchVimeoMeta(url) {
   const m = String(url || '').match(/vimeo\.com\/(\d+)/);
   if (!m) return null;
   try {
-    const res = await fetch('https://vimeo.com/api/oembed.json?url=' + encodeURIComponent('https://vimeo.com/' + m[1]));
+    const res = await fetch('https://vimeo.com/api/oembed.json?width=640&url=' + encodeURIComponent('https://vimeo.com/' + m[1]));
     if (!res.ok) return null;
     const json = await res.json();
-    return json && json.title ? String(json.title) : null;
+    return {
+      title: json && json.title ? String(json.title) : null,
+      thumbnail: json && json.thumbnail_url ? String(json.thumbnail_url) : null,
+    };
   } catch {
     return null;
   }
@@ -303,13 +306,18 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
     update({ notableExamples: arr });
   };
 
-  // On blur of an example's URL, pull the Vimeo title only when the title is
-  // still blank — never clobber a title the user has adjusted.
-  const autofillExampleTitle = async (i, url) => {
+  // On blur of an example's URL, pull the Vimeo thumbnail (for the proposal's
+  // clickable poster) and the title. Title is only filled when still blank so
+  // we never clobber one the user has adjusted; the thumbnail always refreshes.
+  const autofillExampleMeta = async (i, url) => {
+    const meta = await fetchVimeoMeta(url);
+    if (!meta) return;
     const current = (data.notableExamples || [])[i];
-    if (!current || (current.title && current.title.trim())) return;
-    const title = await fetchVimeoTitle(url);
-    if (title) updateExample(i, { title });
+    if (!current) return;
+    const patch = {};
+    if (meta.thumbnail) patch.thumbnail = meta.thumbnail;
+    if (meta.title && !(current.title && current.title.trim())) patch.title = meta.title;
+    if (Object.keys(patch).length) updateExample(i, patch);
   };
 
   // £0 base price is allowed when the Partner Programme is enabled — lets us
@@ -770,7 +778,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                 className="input"
                 value={ex.url || ''}
                 onChange={(e) => updateExample(i, { url: e.target.value })}
-                onBlur={(e) => autofillExampleTitle(i, e.target.value)}
+                onBlur={(e) => autofillExampleMeta(i, e.target.value)}
                 placeholder="https://vimeo.com/123456789"
               />
             </Field>
