@@ -572,6 +572,16 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         collapsedHint={sectionMeta.find(s => s.id === 'vision')?.hint}
         {...sectionProps('vision')}
       >
+        <Field label="Your Requirement">
+          <textarea
+            className="input"
+            style={{ minHeight: isMobile ? 80 : 110, resize: 'vertical' }}
+            value={data.requirementSummary || ''}
+            onChange={(e) => update({ requirementSummary: e.target.value })}
+            placeholder="A short summary of what the client needs — shown as 'Your Requirement' above Your Quote on the proposal."
+          />
+        </Field>
+        <p style={{ fontSize: 12, color: BRAND.muted, margin: '4px 0 18px' }}>Free text shown to the client above the quote. Leave blank to hide it{(data.videoOptions || []).length === 0 ? ' (the single requirement below is used as a fallback)' : ''}.</p>
         {(data.videoOptions || []).length > 0 ? (
           <>
             {data.videoOptions.map((opt, i) => (

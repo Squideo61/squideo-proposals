@@ -755,15 +755,8 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           </div>
         </div>
 
-        {/* In option mode the selectable options are moved below the "What's
-            included" list (see the Your Quote section). Only the plain
-            single-requirement text shows up here. */}
-        {!videoOptions && (
-          <>
-            <PageTitle>Your Requirement</PageTitle>
-            <p style={{ fontSize: 14, lineHeight: 1.7, marginBottom: 12, fontWeight: 500, whiteSpace: 'pre-wrap' }}>{data.requirement}</p>
-          </>
-        )}
+        {/* "Your Requirement" now renders just above Your Quote (see below) so
+            it sits consistently in both single and option mode. */}
         {data.projectVision && (
           <>
             <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 20, marginBottom: 8 }}>Project Vision</h3>
@@ -847,6 +840,19 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             </div>
           </Modal>
         )}
+
+        {(() => {
+          // Prefer the dedicated free-text brief; fall back to the single-mode
+          // requirement so existing proposals still show their requirement.
+          const reqText = (data.requirementSummary || '').trim() || (!videoOptions ? (data.requirement || '').trim() : '');
+          if (!reqText) return null;
+          return (
+            <div style={{ marginBottom: 32 }}>
+              <PageTitle>Your Requirement</PageTitle>
+              <p style={{ fontSize: 14, lineHeight: 1.7, whiteSpace: 'pre-wrap', fontWeight: 500, margin: 0 }}>{reqText}</p>
+            </div>
+          );
+        })()}
 
         <PageTitle>Your Quote</PageTitle>
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>What's included:</h3>

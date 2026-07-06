@@ -17,7 +17,7 @@ const PUBLIC_PROPOSAL_FIELDS = [
   'clientName', 'contactBusinessName', 'clientLogo',
   'proposalTitle', 'date', 'expiryDate', 'validityDays',
   'preparedBy', 'preparedByTitle', 'preparedByEmail',
-  'showIntro', 'introHeading', 'intro', 'team', 'requirement', 'projectVision',
+  'showIntro', 'introHeading', 'intro', 'team', 'requirement', 'requirementSummary', 'projectVision',
   'basePrice', 'videoOptions', 'baseInclusions', 'optionalExtras',
   'partnerProgramme',
   'processVideoUrl', 'showProcessVideo',

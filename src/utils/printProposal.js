@@ -415,8 +415,11 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   </div>
 
   <!-- Requirement -->
-  <h2 class="page-title">Your Requirement</h2>
-  <p style="font-size:13px;font-weight:500;line-height:1.7;white-space:pre-wrap;">${esc(data.requirement)}</p>
+  ${(() => {
+    const reqText = (data.requirementSummary || '').trim() || (data.requirement || '').trim();
+    return reqText ? `<h2 class="page-title">Your Requirement</h2>
+  <p style="font-size:13px;font-weight:500;line-height:1.7;white-space:pre-wrap;">${esc(reqText)}</p>` : '';
+  })()}
   ${data.projectVision ? `<h3 style="font-size:15px;font-weight:600;margin:18px 0 6px;">Project Vision</h3><p style="font-size:13px;line-height:1.7;white-space:pre-wrap;">${esc(data.projectVision)}</p>` : ''}
 
   <!-- Quote -->

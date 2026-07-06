@@ -28,6 +28,9 @@ export const DEFAULT_PROPOSAL = {
   intro: "Squideo is a UK-based animation studio with over a decade of experience delivering engaging, results-driven video content. Having produced more than 5,000 videos, we've earned a reputation for combining creativity with clarity, helping leading organisations communicate complex ideas with precision and impact.\n\nOur clients include the NHS, UK government departments, and global brands.\n\nThis proposal outlines how we'll apply that expertise to bring your message to life with strategic storytelling, design, and seamless production.",
   team: CONFIG.defaultTeam.map(m => ({ ...m })),
   requirement: '1 x HD Animated explainer video - up to 60 seconds in length',
+  // Free-text brief shown as "Your Requirement" just above Your Quote on the
+  // proposal (works in both single and option mode). Empty by default.
+  requirementSummary: '',
   projectVision: '',
   basePrice: 1250,
   videoOptions: [],
