@@ -6,6 +6,12 @@ import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 import { LostReasonModal } from './LostReasonModal.jsx';
+import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
+import { PHASE_BY_ID, STAGE_LABEL as PROD_STAGE_LABEL } from '../../lib/productionStages.js';
+
+// Deal stages that count as "won" — a signed/paid/long-term deal is a live
+// company project even before it's been moved onto the production board.
+const WON_STAGES = new Set(['signed', 'paid', 'long_term']);
 
 const STAGE_LABEL = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s.label]));
 
@@ -249,6 +255,8 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
         </div>
       </div>
 
+      <ProjectOverview detail={detail} />
+
       {detail.leadSource && <LeadSourceMini src={detail.leadSource} />}
 
       {unknownParticipants.length > 0 && (
@@ -312,6 +320,70 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
         </>
       )}
     </>
+  );
+}
+
+// Project + status overview, shown once a deal is won. A deal that's been moved
+// onto the production board renders the aggregate production progress bar (the
+// same one as the deal/project page — least-advanced video wins) plus each
+// video's current stage. A won deal not yet on the board shows a lightweight
+// "in production soon" line so the panel still reflects that the deal is live.
+function ProjectOverview({ detail }) {
+  const videos = detail.videos || [];
+  const inProduction = videos.length > 0 || !!detail.productionPhase;
+  const isWon = WON_STAGES.has(detail.stage);
+  const agg = useMemo(() => aggregateProjectPhase(videos), [videos]);
+  const producerEmails = detail.producerEmails || [];
+
+  // Nothing to show until the deal is at least won.
+  if (!inProduction && !isWon) return null;
+
+  if (!inProduction) {
+    return (
+      <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12, marginBottom: 14 }}>
+        <Label>Project</Label>
+        <Muted style={{ marginTop: 6 }}>Won — not yet moved into production.</Muted>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12, marginBottom: 14 }}>
+      <Label>Project</Label>
+      <div style={{ margin: '8px 0 2px' }}>
+        <ProductionProgressBar
+          phaseId={agg.phaseId}
+          subtitle={agg.total > 1
+            ? `${agg.delivered} of ${agg.total} videos delivered`
+            : (agg.delivered ? 'Video delivered' : 'In production')}
+        />
+      </div>
+      {videos.length > 0 && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {videos.map(v => {
+            const phase = PHASE_BY_ID[v.productionPhase];
+            const stageLabel = v.productionPhase
+              ? (PROD_STAGE_LABEL[v.productionPhase]?.[v.productionStage] || v.productionStage)
+              : null;
+            return (
+              <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                <span style={{ flexShrink: 0, width: 6, height: 6, borderRadius: '50%', background: phase?.color || BRAND.muted }} />
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: BRAND.ink }} title={v.title}>{v.title}</span>
+                {stageLabel && (
+                  <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: phase?.color || BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>{stageLabel}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {producerEmails.length > 0 && (
+        <Row>
+          <DealMetaKey>Producer</DealMetaKey>
+          <AvatarGroup emails={producerEmails} max={3} size={20} />
+        </Row>
+      )}
+    </div>
   );
 }
 
