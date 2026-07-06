@@ -74,6 +74,11 @@ export const DEFAULT_PROPOSAL = {
   ],
   processVideoUrl: 'https://vimeo.com/625502459',
   showProcessVideo: true,
+  // Notable examples — up to 3 Vimeo links shown on the proposal between the
+  // production-process video and pricing. Off by default. Each entry:
+  // { id, url, title }. Title auto-fills from Vimeo but is editable.
+  showNotableExamples: false,
+  notableExamples: [],
   vatRate: 0.20,
   // Simple manual discount on the project base price (extras stay full price).
   // Applies only on the standard flow — ignored when the client opts into the

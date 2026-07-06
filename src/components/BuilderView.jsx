@@ -11,6 +11,21 @@ import { extraHasVariants, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 
+// Fetch a Vimeo video's title via the public oEmbed endpoint (CORS-enabled,
+// no auth). Returns the title string, or null if it can't be resolved.
+async function fetchVimeoTitle(url) {
+  const m = String(url || '').match(/vimeo\.com\/(\d+)/);
+  if (!m) return null;
+  try {
+    const res = await fetch('https://vimeo.com/api/oembed.json?url=' + encodeURIComponent('https://vimeo.com/' + m[1]));
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json && json.title ? String(json.title) : null;
+  } catch {
+    return null;
+  }
+}
+
 function reorderArray(arr, from, to) {
   const next = [...arr];
   const [item] = next.splice(from, 1);
@@ -95,6 +110,14 @@ function buildSectionMeta(data, isTemplate, issues) {
       id: 'process',
       label: 'Process',
       hint: data.processVideoUrl ? truncate(data.processVideoUrl, 50) : 'No process video',
+      hasIssues: false,
+    },
+    {
+      id: 'examples',
+      label: 'Examples',
+      hint: data.showNotableExamples
+        ? `${(data.notableExamples || []).filter(e => e?.url?.trim()).length} example${(data.notableExamples || []).filter(e => e?.url?.trim()).length === 1 ? '' : 's'}`
+        : 'Off',
       hasIssues: false,
     },
     {
@@ -272,6 +295,21 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
     const arr = [...data.optionalExtras];
     arr[i] = { ...arr[i], ...patch };
     update({ optionalExtras: arr });
+  };
+
+  const updateExample = (i, patch) => {
+    const arr = [...(data.notableExamples || [])];
+    arr[i] = { ...arr[i], ...patch };
+    update({ notableExamples: arr });
+  };
+
+  // On blur of an example's URL, pull the Vimeo title only when the title is
+  // still blank — never clobber a title the user has adjusted.
+  const autofillExampleTitle = async (i, url) => {
+    const current = (data.notableExamples || [])[i];
+    if (!current || (current.title && current.title.trim())) return;
+    const title = await fetchVimeoTitle(url);
+    if (title) updateExample(i, { title });
   };
 
   // £0 base price is allowed when the Partner Programme is enabled — lets us
@@ -694,6 +732,66 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
           />
         </Field>
         <p style={{ fontSize: 12, color: BRAND.muted, margin: '4px 0 0' }}>Paste a YouTube or Vimeo link. The section appears on the proposal only when this is set <em>and</em> the checkbox above is ticked.</p>
+      </Section>
+
+      {/* ── Notable Examples ── */}
+      <Section
+        title="Notable Examples"
+        color="#7c3aed"
+        icon={Star}
+        collapsible
+        defaultCollapsed
+        collapsedHint={isMobile ? sectionMeta.find(s => s.id === 'examples')?.hint : 'Click to expand and add up to 3 example videos'}
+        {...sectionProps('examples')}
+      >
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={!!data.showNotableExamples}
+            onChange={(e) => update({ showNotableExamples: e.target.checked })}
+          />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Show notable examples on this proposal</span>
+        </label>
+        <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 16px' }}>Paste up to 3 Vimeo links. The title is pulled from Vimeo automatically — tweak it if you like.</p>
+        {(data.notableExamples || []).map((ex, i) => (
+          <div key={ex.id || i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted }}>Example {i + 1}</span>
+              <button
+                onClick={() => update({ notableExamples: (data.notableExamples || []).filter((_, idx) => idx !== i) })}
+                className="btn-ghost"
+                style={{ padding: '4px 8px' }}
+              >
+                <X size={14} /> Remove
+              </button>
+            </div>
+            <Field label="Vimeo URL">
+              <input
+                className="input"
+                value={ex.url || ''}
+                onChange={(e) => updateExample(i, { url: e.target.value })}
+                onBlur={(e) => autofillExampleTitle(i, e.target.value)}
+                placeholder="https://vimeo.com/123456789"
+              />
+            </Field>
+            <Field label="Title (shown on the proposal)">
+              <input
+                className="input"
+                value={ex.title || ''}
+                onChange={(e) => updateExample(i, { title: e.target.value })}
+                placeholder="Auto-filled from Vimeo — edit as needed"
+              />
+            </Field>
+          </div>
+        ))}
+        {(data.notableExamples || []).length < 3 && (
+          <button
+            onClick={() => update({ notableExamples: [...(data.notableExamples || []), { id: 'ex_' + Date.now(), url: '', title: '' }] })}
+            className="btn-ghost"
+          >
+            <Plus size={14} /> Add example
+          </button>
+        )}
       </Section>
 
       {/* ── Pricing ── */}

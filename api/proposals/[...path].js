@@ -21,6 +21,7 @@ const PUBLIC_PROPOSAL_FIELDS = [
   'basePrice', 'videoOptions', 'baseInclusions', 'optionalExtras',
   'partnerProgramme',
   'processVideoUrl', 'showProcessVideo',
+  'notableExamples', 'showNotableExamples',
   'vatRate', 'paymentOptions', 'paymentOptionDescs',
 ];
 

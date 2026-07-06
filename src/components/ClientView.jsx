@@ -781,6 +781,32 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           );
         })()}
 
+        {data.showNotableExamples && (data.notableExamples || []).some(ex => ex?.url?.trim()) && (
+          <div style={{ marginBottom: 32 }}>
+            <PageTitle>Notable Examples</PageTitle>
+            <p style={{ fontSize: 14, color: BRAND.muted, marginBottom: 16, lineHeight: 1.6 }}>A few examples of our recent work:</p>
+            {(data.notableExamples || []).filter(ex => ex?.url?.trim()).map((ex, i) => {
+              const embedUrl = getEmbedUrl(ex.url);
+              return (
+                <div key={ex.id || i} style={{ marginBottom: 24 }}>
+                  {ex.title && ex.title.trim() && (
+                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 10 }}>{ex.title}</h3>
+                  )}
+                  <div style={{ position: 'relative', paddingBottom: '56.25%', borderRadius: 10, overflow: 'hidden' }}>
+                    <iframe
+                      src={embedUrl}
+                      title={ex.title || ('Example ' + (i + 1))}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         <PageTitle>Your Quote</PageTitle>
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>What's included:</h3>
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 16 }}>
