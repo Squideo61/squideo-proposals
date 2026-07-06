@@ -894,17 +894,23 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           </div>
         )}
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 16px', border: '1px solid ' + BRAND.border, borderRadius: 10, fontSize: 16, fontWeight: 700 }}>
-          <span>
-            {videoOptions ? (videoOptions[selectedVideoOptionIdx]?.label || `Option ${selectedVideoOptionIdx + 1}`) : 'Project base price'}
-          </span>
-          <span>
-            {manualDiscount > 0 && (
-              <span style={{ fontWeight: 500, fontSize: 14, color: BRAND.muted, textDecoration: 'line-through', marginRight: 8 }}>{formatGBP(effectiveBasePrice)}</span>
-            )}
-            {formatGBP(netBasePrice)}{showVat && <span style={{ fontWeight: 500, fontSize: 13, color: BRAND.muted }}> + VAT</span>}
-          </span>
-        </div>
+        {/* In option mode the selector above already states the chosen option +
+            price, so this summary row would just repeat it — only show it for
+            the single-price flow, or when a manual discount needs the
+            strikethrough/discounted total. */}
+        {(!videoOptions || manualDiscount > 0) && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 16px', border: '1px solid ' + BRAND.border, borderRadius: 10, fontSize: 16, fontWeight: 700 }}>
+            <span>
+              {videoOptions ? (videoOptions[selectedVideoOptionIdx]?.label || `Option ${selectedVideoOptionIdx + 1}`) : 'Project base price'}
+            </span>
+            <span>
+              {manualDiscount > 0 && (
+                <span style={{ fontWeight: 500, fontSize: 14, color: BRAND.muted, textDecoration: 'line-through', marginRight: 8 }}>{formatGBP(effectiveBasePrice)}</span>
+              )}
+              {formatGBP(netBasePrice)}{showVat && <span style={{ fontWeight: 500, fontSize: 13, color: BRAND.muted }}> + VAT</span>}
+            </span>
+          </div>
+        )}
         {manualDiscount > 0 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '8px 16px', fontSize: 13, color: '#15803d', fontWeight: 600 }}>
             <span>{discountLabel}{(signed?.discountApplied?.type ?? data.discount?.type) !== 'amount' && (Number(signed?.discountApplied?.value ?? data.discount?.value) > 0) ? ` (${Number(signed?.discountApplied?.value ?? data.discount?.value)}% off)` : ''}</span>
