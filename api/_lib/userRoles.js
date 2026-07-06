@@ -122,17 +122,30 @@ export function ensureSystemRoles() {
          WHERE id = 'director' AND NOT (permissions @> '["schedule.approve_leave"]'::jsonb)
       `;
       if ((schedApprove.count || schedApprove.rowCount || 0) > 0) invalidateRoleCache('director');
-      // Leave-request approvals → Admins & Directors; schedule clashes also reach
-      // Project/Production Managers (member) who run the weekly schedule.
+      // Leave-request approvals → Admins & Directors.
       await sql`
         UPDATE roles
            SET notification_defaults = notification_defaults || '{"leave.requested": true}'::jsonb, updated_at = NOW()
          WHERE id IN ('admin', 'director') AND NOT (notification_defaults ? 'leave.requested')
       `;
+      // Schedule clashes go to Project/Production Managers (role 'member') only —
+      // they run the weekly schedule and are the ones who rearrange it. Seed the
+      // default ON for them.
       await sql`
         UPDATE roles
            SET notification_defaults = notification_defaults || '{"schedule.conflict": true}'::jsonb, updated_at = NOW()
-         WHERE id IN ('admin', 'director', 'member') AND NOT (notification_defaults ? 'schedule.conflict')
+         WHERE id = 'member' AND NOT (notification_defaults ? 'schedule.conflict')
+      `;
+      // Admins & Directors were previously defaulted ON for schedule clashes.
+      // Turn the default OFF for them, once. Guarded by a sentinel key so an
+      // admin who later re-enables it on the role in the UI isn't overridden on
+      // the next cold start.
+      await sql`
+        UPDATE roles
+           SET notification_defaults = notification_defaults
+                                     || '{"schedule.conflict": false, "_schedule_conflict_pm_only": true}'::jsonb,
+               updated_at = NOW()
+         WHERE id IN ('admin', 'director') AND NOT (notification_defaults ? '_schedule_conflict_pm_only')
       `;
       // A leave decision reaches the requester — default ON for every role that
       // can book leave (plus Admin, covered by '*').
