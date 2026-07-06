@@ -110,7 +110,7 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
     <div style={{ padding: isMobile ? '14px 12px 40px' : '20px 24px 60px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
         <h1 style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: isMobile ? 20 : 26, fontWeight: 800, margin: 0 }}>
-          <CalendarDays size={isMobile ? 22 : 28} color={BRAND.blue} /> Weekly Schedule
+          <CalendarDays size={isMobile ? 22 : 28} color={BRAND.blue} /> Staff Production Rota
         </h1>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ display: 'inline-flex', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
