@@ -40,22 +40,25 @@ function CommentAttachment({ url, name, type }) {
   );
 }
 
-export function StoryboardsView({ onBack }) {
+export function StoryboardsView({ onBack, projectId, onOpenProject, onCloseProject }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
-  const [selectedId, setSelectedId] = useState(null);
   const [creating, setCreating] = useState(false);
   const [analyticsProject, setAnalyticsProject] = useState(null);
 
   const [loaded, setLoaded] = useState(false);
 
+  // The selected project lives in the route (activeId), so navigating here from
+  // the header — which clears activeId — always returns to the list. Reload the
+  // list whenever we're showing it (initial mount and after backing out).
   useEffect(() => {
+    if (projectId) return;
     actions.loadStoryboards().finally(() => setLoaded(true));
     actions.refreshDeals?.();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (selectedId) {
-    return <ProjectDetail projectId={selectedId} onBack={() => { setSelectedId(null); actions.loadStoryboards(); }} />;
+  if (projectId) {
+    return <ProjectDetail projectId={projectId} onBack={onCloseProject} />;
   }
 
   const projects = state.storyboards || [];
@@ -84,7 +87,7 @@ export function StoryboardsView({ onBack }) {
             <div key={p.id} style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16,
               display: 'flex', alignItems: 'center', gap: 14 }}>
               <FileText size={20} color={BRAND.blue} />
-              <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setSelectedId(p.id)}>
+              <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => onOpenProject(p.id)}>
                 <div style={{ fontWeight: 600, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
                   {p.title}
                   {(p.storyboardCount || 0) > 0 && (p.approvedStoryboardCount || 0) === (p.storyboardCount || 0) &&
@@ -107,7 +110,7 @@ export function StoryboardsView({ onBack }) {
               </div>
               <button onClick={() => setAnalyticsProject(p)} className="btn-ghost" title="Engagement analytics"><BarChart3 size={14} /> Analytics</button>
               <CopyLinkButton token={p.shareToken} showMsg={showMsg} />
-              <button onClick={() => setSelectedId(p.id)} className="btn-ghost">Open</button>
+              <button onClick={() => onOpenProject(p.id)} className="btn-ghost">Open</button>
               <button
                 onClick={() => { if (window.confirm('Delete this project and all its storyboards?')) actions.deleteStoryboardProject(p.id); }}
                 className="btn-ghost" title="Delete project"><Trash2 size={14} /></button>
@@ -119,7 +122,7 @@ export function StoryboardsView({ onBack }) {
       {creating && (
         <NewProjectModal
           onClose={() => setCreating(false)}
-          onCreated={(proj) => { setCreating(false); setSelectedId(proj.id); }}
+          onCreated={(proj) => { setCreating(false); onOpenProject(proj.id); }}
         />
       )}
 

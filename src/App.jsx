@@ -415,7 +415,10 @@ function AppShell() {
           ) : view === 'revisions' ? (
             <RevisionsView onBack={() => navigate('production')} />
           ) : view === 'storyboards' ? (
-            <StoryboardsView onBack={() => navigate('production')} />
+            <StoryboardsView onBack={() => navigate('production')}
+              projectId={activeId}
+              onOpenProject={(id) => navigate('storyboards', id)}
+              onCloseProject={() => navigate('storyboards')} />
           ) : view === 'tasks' ? (
             <TasksView onBack={() => navigate('production')} onOpenDeal={(id) => navigate('deal', id)} forceMine={activeId === 'mine'} />
           ) : (view === 'emails' || view === 'triage' || view === 'email') ? (() => {
@@ -611,7 +614,10 @@ function AppShell() {
         <RevisionsView onBack={() => navigate('list')} />
       )}
       {view === 'storyboards' && (
-        <StoryboardsView onBack={() => navigate('list')} />
+        <StoryboardsView onBack={() => navigate('list')}
+          projectId={activeId}
+          onOpenProject={(id) => navigate('storyboards', id)}
+          onCloseProject={() => navigate('storyboards')} />
       )}
       {view === 'production' && (
         <ProductionView
