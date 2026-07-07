@@ -296,6 +296,42 @@ function LoadFailed({ onRetry }) {
   );
 }
 
+// Relative "time ago" for a sync timestamp (e.g. "3 hours ago", "just now").
+function timeAgo(iso) {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return null;
+  const s = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.round(s / 60); if (m < 60) return `${m} minute${m === 1 ? '' : 's'} ago`;
+  const h = Math.round(m / 60); if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`;
+  const d = Math.round(h / 24); return `${d} day${d === 1 ? '' : 's'} ago`;
+}
+
+// Persistent "last sync" indicator for a Marketing data source. `status` is the
+// { ok, message, rowCount, ranAt } object the API returns as `lastSync` — written
+// by both the daily cron and the manual "Sync now", so a silently-failing sync is
+// always visible. Renders nothing until a sync has ever run.
+function LastSync({ status, name }) {
+  if (!status || !status.ranAt) return null;
+  const when = timeAgo(status.ranAt);
+  const ok = status.ok;
+  const rows = status.rowCount;
+  const prefix = name ? `${name} · ` : '';
+  return (
+    <div style={{
+      display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 500,
+      color: ok ? '#166534' : '#991B1B', background: ok ? '#F0FDF4' : '#FEF2F2',
+      border: '1px solid ' + (ok ? '#BBF7D0' : '#FECACA'), padding: '5px 11px', borderRadius: 999,
+    }}>
+      {ok ? <Check size={13} /> : <XCircle size={13} />}
+      {ok
+        ? <span>{prefix}Last synced {when}{rows != null ? ` · ${fmtNum(rows)} rows` : ''}</span>
+        : <span>{prefix}Last sync failed{when ? ` (${when})` : ''}: {status.message || 'unknown error'}</span>}
+    </div>
+  );
+}
+
 // ---- Dashboard -----------------------------------------------------------
 
 function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry, isMobile }) {
@@ -798,6 +834,9 @@ function SearchTab({ data, loading, onOpenSettings, onRetry }) {
   const queries = data.queries || [];
   return (
     <div>
+      {data.lastSync && (
+        <div style={{ marginBottom: 16 }}><LastSync status={data.lastSync} /></div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
         <Card label="Clicks" value={fmtNum(t.clicks)} accent={BRAND.blue} />
         <Card label="Impressions" value={fmtNum(t.impressions)} />
@@ -845,6 +884,9 @@ function TrafficTab({ data, loading, onOpenSettings, onRetry }) {
   const channels = data.channels || [];
   return (
     <div>
+      {data.lastSync && (
+        <div style={{ marginBottom: 16 }}><LastSync status={data.lastSync} /></div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
         <Card label="Sessions" value={fmtNum(t.sessions)} accent={BRAND.blue} />
         <Card label="Users" value={fmtNum(t.users)} />
@@ -853,7 +895,13 @@ function TrafficTab({ data, loading, onOpenSettings, onRetry }) {
       <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 12px' }}>Sessions over time</h2>
       <DailyBars data={data.series} dataKey="sessions" color={BRAND.blue} />
       <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 12px' }}>By channel</h2>
-      {channels.length === 0 ? <Empty>No traffic data for this period yet.</Empty> : (
+      {channels.length === 0 ? (
+        <Empty>
+          {data.lastSync && !data.lastSync.ok
+            ? <>No traffic yet — the last GA4 sync failed. See the banner above, or check Settings.</>
+            : <>No traffic data for this period yet.</>}
+        </Empty>
+      ) : (
         <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -980,6 +1028,13 @@ function SettingsTab({ snippet, onSync, cutoff, onCutoffChange }) {
           <span style={{ fontSize: 12, color: BRAND.muted, marginLeft: 10 }}>
             Pulls the latest Ads spend, Search Console and GA4 data. Syncs automatically every day at 6am.
           </span>
+          {snippet.lastSync && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+              {snippet.ga4Configured && <LastSync status={snippet.lastSync.ga4} name="GA4" />}
+              {snippet.gscConfigured && <LastSync status={snippet.lastSync.gsc} name="Search Console" />}
+              {snippet.adsConfigured && <LastSync status={snippet.lastSync.ads} name="Google Ads" />}
+            </div>
+          )}
           {syncResult && <SyncResult result={syncResult} />}
         </div>
       )}

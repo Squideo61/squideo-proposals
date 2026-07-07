@@ -16,6 +16,7 @@ import { ensureLeadAttribution } from '../leadAttribution.js';
 import { adsConfigured, ensureAdSpend, runAdSpendSync } from './googleAds.js';
 import { gscConfigured, runGscSync, searchReport } from './googleSearch.js';
 import { ga4Configured, runGa4Sync, trafficReport } from './googleAnalytics.js';
+import { getSyncStatus, recordSyncStatus } from './marketingSyncStatus.js';
 import { isSignedSale } from './signedSale.js';
 
 // A "sale" uses the shared signed-sale definition (./signedSale.js): an actual
@@ -440,6 +441,11 @@ export async function analyticsRoute(req, res, id, action, user) {
       gscConfigured() ? runSafe(runGscSync, 'Search Console sync') : { ok: false, skipped: 'not_configured' },
       ga4Configured() ? runSafe(runGa4Sync, 'GA4 sync') : { ok: false, skipped: 'not_configured' },
     ]);
+    await Promise.all([
+      recordSyncStatus('ads', ads),
+      recordSyncStatus('gsc', gsc),
+      recordSyncStatus('ga4', ga4),
+    ]);
     const ok = [ads, gsc, ga4].some((r) => r?.ok);
     return res.status(200).json({ ok, ads, gsc, ga4 });
   }
@@ -463,14 +469,14 @@ export async function analyticsRoute(req, res, id, action, user) {
 
   if (id === 'leads') return res.status(200).json(await leadsLog(req));
   if (id === 'reports') return res.status(200).json(await reports(req, action));
-  if (id === 'snippet') return res.status(200).json(snippetConfig());
+  if (id === 'snippet') return res.status(200).json({ ...snippetConfig(), lastSync: await getSyncStatus() });
   if (id === 'search') {
     const { fromStr, toStr } = parseRange(req);
-    return res.status(200).json({ from: fromStr, to: toStr, ...(await searchReport(fromStr, toStr)) });
+    return res.status(200).json({ from: fromStr, to: toStr, ...(await searchReport(fromStr, toStr)), lastSync: await getSyncStatus('gsc') });
   }
   if (id === 'traffic') {
     const { fromStr, toStr } = parseRange(req);
-    return res.status(200).json({ from: fromStr, to: toStr, ...(await trafficReport(fromStr, toStr)) });
+    return res.status(200).json({ from: fromStr, to: toStr, ...(await trafficReport(fromStr, toStr)), lastSync: await getSyncStatus('ga4') });
   }
   return res.status(404).json({ error: 'Unknown analytics report' });
 }

@@ -9,6 +9,7 @@
 // present, the cron no-ops and the report renders empty with a "connect" hint.
 import sql, { batchWrite } from '../db.js';
 import { googleOAuthConfigured, getGoogleApiToken, fetchWithTimeout } from './googleOAuth.js';
+import { recordSyncStatus } from './marketingSyncStatus.js';
 
 const digits = (s) => String(s || '').replace(/[^0-9]/g, '');
 const propertyId = () => digits(process.env.GA4_PROPERTY_ID);
@@ -132,8 +133,11 @@ export async function trafficReport(fromStr, toStr) {
 
 export async function cronGa4Sync(res) {
   try {
-    return res.status(200).json(await runGa4Sync());
+    const r = await runGa4Sync();
+    await recordSyncStatus('ga4', r);
+    return res.status(200).json(r);
   } catch (err) {
+    await recordSyncStatus('ga4', err);
     console.error('[cron ga4-sync]', err?.message);
     return res.status(200).json({ ok: false, error: err?.message || 'sync failed' });
   }

@@ -10,6 +10,7 @@
 // attribution needs none of this.
 import sql, { batchWrite } from '../db.js';
 import { fetchWithTimeout } from './googleOAuth.js';
+import { recordSyncStatus } from './marketingSyncStatus.js';
 
 // Google Ads API versions are sunset ~12 months after release, which 404s the
 // request path. Default to a current version; overridable via env var so a
@@ -209,8 +210,11 @@ export async function runAdSpendSync() {
 // trip Vercel's cron-failure alerting (the detail is in the body + logs).
 export async function cronAdSpendSync(res) {
   try {
-    return res.status(200).json(await runAdSpendSync());
+    const r = await runAdSpendSync();
+    await recordSyncStatus('ads', r);
+    return res.status(200).json(r);
   } catch (err) {
+    await recordSyncStatus('ads', err);
     console.error('[cron ad-spend-sync]', err?.message);
     return res.status(200).json({ ok: false, error: err?.message || 'sync failed' });
   }

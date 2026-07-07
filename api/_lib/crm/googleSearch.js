@@ -12,6 +12,7 @@
 // the cron no-ops and the report renders empty with a "connect" hint.
 import sql, { batchWrite } from '../db.js';
 import { googleOAuthConfigured, getGoogleApiToken, fetchWithTimeout } from './googleOAuth.js';
+import { recordSyncStatus } from './marketingSyncStatus.js';
 
 // The verified Search Console property. Domain properties are 'sc-domain:squideo.com';
 // URL-prefix properties are 'https://squideo.com/'. Either works verbatim.
@@ -175,8 +176,11 @@ export async function searchReport(fromStr, toStr) {
 
 export async function cronGscSync(res) {
   try {
-    return res.status(200).json(await runGscSync());
+    const r = await runGscSync();
+    await recordSyncStatus('gsc', r);
+    return res.status(200).json(r);
   } catch (err) {
+    await recordSyncStatus('gsc', err);
     console.error('[cron gsc-sync]', err?.message);
     return res.status(200).json({ ok: false, error: err?.message || 'sync failed' });
   }
