@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Images, Copy, MessageSquare, Plus, Trash2, Upload, FileText, FileDown, CheckCircle2, ChevronDown, ChevronRight, MapPin, BarChart3, Link2, Check } from 'lucide-react';
+import { ArrowLeft, Images, Copy, MessageSquare, Plus, Trash2, Upload, FileText, FileDown, CheckCircle2, ChevronDown, ChevronRight, ChevronLeft, MapPin, BarChart3, Link2, Check, Flag } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
@@ -345,18 +345,30 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
           return new Date(a.createdAt) - new Date(b.createdAt);
         });
         const isOpen = isDraftOpen(v.id);
+        const doneCount = comments.filter(c => c.completedAt).length;
+        const flaggedCount = comments.filter(c => c.producerNote).length;
         return (
           <div key={v.id} style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 12, marginTop: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: isOpen ? 8 : 0 }}>
               <button onClick={() => toggle(v.id)}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: 'none',
-                  cursor: 'pointer', padding: 0, flex: 1, textAlign: 'left' }}>
+                  cursor: 'pointer', padding: 0, flex: 1, textAlign: 'left', flexWrap: 'wrap' }}>
                 {isOpen ? <ChevronDown size={16} color={BRAND.muted} /> : <ChevronRight size={16} color={BRAND.muted} />}
                 <strong style={{ color: BRAND.ink, fontSize: 14 }}>{draftLabel(v)}</strong>
                 {v.pageCount != null && <span style={{ fontSize: 12, color: BRAND.muted }}>{v.pageCount} slide{v.pageCount === 1 ? '' : 's'}</span>}
                 <span style={{ fontSize: 12, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 4 }}>
                   <MessageSquare size={13} /> {comments.length}
                 </span>
+                {doneCount > 0 && (
+                  <span title={`${doneCount} marked done`} style={{ fontSize: 12, color: '#16A34A', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <Check size={13} /> {doneCount}
+                  </span>
+                )}
+                {flaggedCount > 0 && (
+                  <span title={`${flaggedCount} flagged`} style={{ fontSize: 12, color: '#B45309', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <Flag size={13} /> {flaggedCount}
+                  </span>
+                )}
               </button>
               <a href={v.pdfUrl} target="_blank" rel="noreferrer" className="btn-ghost" title="Open PDF"><FileDown size={14} /></a>
               <button
@@ -392,6 +404,24 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
 // where each note points.
 function DraftComments({ projectId, version, comments }) {
   const { actions } = useStore();
+  // Which comment the prev/next navigator is currently focused on (index into
+  // the flat, slide-ordered `comments` list). -1 = none focused yet.
+  const [navIndex, setNavIndex] = useState(-1);
+  const itemRefs = useRef({});
+
+  // Keep the focus valid as comments come/go (poll refreshes the list).
+  useEffect(() => {
+    if (navIndex >= comments.length) setNavIndex(comments.length ? comments.length - 1 : -1);
+  }, [comments.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function goToComment(idx) {
+    if (!comments.length) return;
+    const clamped = (idx + comments.length) % comments.length; // wrap around
+    setNavIndex(clamped);
+    const el = itemRefs.current[comments[clamped].id];
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
   if (comments.length === 0) {
     return (
       <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
@@ -400,6 +430,9 @@ function DraftComments({ projectId, version, comments }) {
       </div>
     );
   }
+
+  const doneCount = comments.filter(c => c.completedAt).length;
+  const flaggedCount = comments.filter(c => c.producerNote).length;
 
   // Group by slide, preserving slide order.
   const byPage = comments.reduce((m, c) => {
@@ -411,6 +444,31 @@ function DraftComments({ projectId, version, comments }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* Comment summary + next/previous navigator */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 2, display: 'flex', alignItems: 'center',
+        gap: 10, flexWrap: 'wrap', padding: '8px 12px', background: '#F8FAFC',
+        border: '1px solid ' + BRAND.border, borderRadius: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <MessageSquare size={14} color={BRAND.blue} /> {comments.length} comment{comments.length === 1 ? '' : 's'}
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: '#16A34A', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Check size={13} /> {doneCount} done
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: '#B45309', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Flag size={13} /> {flaggedCount} flagged
+        </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button onClick={() => goToComment(navIndex < 0 ? comments.length - 1 : navIndex - 1)}
+            className="btn-ghost" title="Previous comment"
+            style={{ padding: '4px 8px' }}><ChevronLeft size={14} /></button>
+          <span style={{ fontSize: 12, color: BRAND.muted, minWidth: 44, textAlign: 'center' }}>
+            {navIndex < 0 ? '–' : navIndex + 1} / {comments.length}
+          </span>
+          <button onClick={() => goToComment(navIndex < 0 ? 0 : navIndex + 1)}
+            className="btn-ghost" title="Next comment"
+            style={{ padding: '4px 8px' }}><ChevronRight size={14} /></button>
+        </div>
+      </div>
       {pageNumbers.map(p => {
         const list = byPage[p];
         let pinNo = 0;
@@ -428,8 +486,15 @@ function DraftComments({ projectId, version, comments }) {
             <div style={{ flex: 1, minWidth: 240 }}>
               {list.map(c => {
                 const no = pinNumberByComment[c.id];
+                const focused = navIndex >= 0 && comments[navIndex]?.id === c.id;
                 return (
-                  <div key={c.id} style={{ marginBottom: 12, opacity: c.completedAt ? 0.55 : 1 }}>
+                  <div key={c.id} ref={el => { itemRefs.current[c.id] = el; }}
+                    style={{ marginBottom: 12, opacity: c.completedAt ? 0.55 : 1,
+                      borderRadius: 8, padding: focused ? '8px 10px' : 0,
+                      margin: focused ? '0 -10px 12px' : '0 0 12px',
+                      background: focused ? '#EEF7FB' : 'transparent',
+                      boxShadow: focused ? `0 0 0 1px ${BRAND.blue}` : 'none',
+                      transition: 'background .2s' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {no != null ? (
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
