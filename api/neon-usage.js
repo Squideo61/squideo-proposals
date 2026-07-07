@@ -13,9 +13,18 @@
 // Optional env NEON_PROJECT_ID — otherwise all projects in the org are summed.
 import { cors, requirePermission } from './_lib/middleware.js';
 
-// Launch plan unit prices (https://neon.com/pricing, 2026). Adjust here if Neon
+// Neon Launch unit prices (https://neon.com/pricing, 2026). Adjust here if Neon
 // changes pricing or you move to a different plan.
-const COMPUTE_USD_PER_CU_HOUR = 0.14;
+const envNum = (v, dflt) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : dflt; };
+
+// Compute rate. Neon's LIST price is ~$0.106/CU-hour, but the Squideo org's
+// actual invoice bills far below that — e.g. Jul 2026: 79.72 CU-hours → $0.25,
+// an effective ~$0.0031/CU-hour, ~33x under list — because of account credits /
+// promo pricing. Applying the list rate overstates the real bill by ~33x, so the
+// default here is the *observed effective* rate. Override via env when Neon
+// billing changes: read (compute $ ÷ compute-hours) off your Neon billing page.
+// For the un-discounted list-price upper bound instead, set this to 0.106.
+const COMPUTE_USD_PER_CU_HOUR = envNum(process.env.NEON_COMPUTE_USD_PER_CU_HOUR, 0.0031);
 const STORAGE_USD_PER_GB_MONTH = 0.35;
 const EGRESS_INCLUDED_GB = 500;
 const EGRESS_USD_PER_GB = 0.10;
