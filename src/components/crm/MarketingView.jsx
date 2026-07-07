@@ -195,7 +195,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany }) {
       {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenCompany={onOpenCompany} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'search' && <SearchTab data={search} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'traffic' && <TrafficTab data={traffic} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
-      {section === 'settings' && <SettingsTab snippet={snippet} onSync={() => actions.syncAdSpend()} cutoff={cutoff} onCutoffChange={onCutoffChange} />}
+      {section === 'settings' && <SettingsTab snippet={snippet} onSync={() => actions.syncAdSpend()} onReloadStatus={() => actions.loadMarketingSnippet().then((d) => d && setSnippet(d))} cutoff={cutoff} onCutoffChange={onCutoffChange} />}
     </div>
   );
 }
@@ -928,7 +928,7 @@ function TrafficTab({ data, loading, onOpenSettings, onRetry }) {
 
 // ---- Settings ------------------------------------------------------------
 
-function SettingsTab({ snippet, onSync, cutoff, onCutoffChange }) {
+function SettingsTab({ snippet, onSync, onReloadStatus, cutoff, onCutoffChange }) {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
   if (!snippet) return <Loading />;
@@ -937,6 +937,9 @@ function SettingsTab({ snippet, onSync, cutoff, onCutoffChange }) {
     const r = await onSync();
     setSyncing(false);
     setSyncResult(r || { ok: false, error: 'No response' });
+    // Refresh the persistent "last sync" pills from the just-recorded status so
+    // they don't keep showing the stale pre-sync state.
+    if (onReloadStatus) onReloadStatus();
   };
   return (
     <div style={{ maxWidth: 760 }}>
