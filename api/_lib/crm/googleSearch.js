@@ -10,8 +10,8 @@
 //                          re-aggregate over the report range on read)
 // Gated behind gscConfigured(): until the OAuth token + GSC_SITE_URL are present,
 // the cron no-ops and the report renders empty with a "connect" hint.
-import sql from '../db.js';
-import { googleOAuthConfigured, getGoogleApiToken } from './googleOAuth.js';
+import sql, { batchWrite } from '../db.js';
+import { googleOAuthConfigured, getGoogleApiToken, fetchWithTimeout } from './googleOAuth.js';
 
 // The verified Search Console property. Domain properties are 'sc-domain:squideo.com';
 // URL-prefix properties are 'https://squideo.com/'. Either works verbatim.
@@ -53,7 +53,7 @@ export function ensureGscTables() {
 async function runQuery({ startDate, endDate, dimensions, rowLimit = 25000 }) {
   const token = await getGoogleApiToken();
   const site = encodeURIComponent(siteUrl());
-  const r = await fetch(
+  const r = await fetchWithTimeout(
     `https://searchconsole.googleapis.com/webmasters/v3/sites/${site}/searchAnalytics/query`,
     {
       method: 'POST',
@@ -83,31 +83,31 @@ export async function runGscSync({ days = 30 } = {}) {
   const endDate = ymd(0);
 
   const totals = await runQuery({ startDate, endDate, dimensions: ['date'] });
-  for (const row of totals) {
+  await batchWrite(totals.map((row) => {
     const day = row.keys?.[0];
-    if (!day) continue;
-    await sql`
+    if (!day) return null;
+    return sql`
       INSERT INTO gsc_totals_daily (day, clicks, impressions, ctr, position, updated_at)
       VALUES (${day}, ${Math.round(row.clicks) || 0}, ${Math.round(row.impressions) || 0},
               ${Number(row.ctr) || 0}, ${Number(row.position) || 0}, NOW())
       ON CONFLICT (day) DO UPDATE SET
         clicks = EXCLUDED.clicks, impressions = EXCLUDED.impressions,
         ctr = EXCLUDED.ctr, position = EXCLUDED.position, updated_at = NOW()`;
-  }
+  }));
 
   const queries = await runQuery({ startDate, endDate, dimensions: ['date', 'query'] });
-  for (const row of queries) {
+  await batchWrite(queries.map((row) => {
     const day = row.keys?.[0];
     const query = row.keys?.[1];
-    if (!day || query == null) continue;
-    await sql`
+    if (!day || query == null) return null;
+    return sql`
       INSERT INTO gsc_query_daily (day, query, clicks, impressions, position, updated_at)
       VALUES (${day}, ${query}, ${Math.round(row.clicks) || 0}, ${Math.round(row.impressions) || 0},
               ${Number(row.position) || 0}, NOW())
       ON CONFLICT (day, query) DO UPDATE SET
         clicks = EXCLUDED.clicks, impressions = EXCLUDED.impressions,
         position = EXCLUDED.position, updated_at = NOW()`;
-  }
+  }));
 
   return { ok: true, days, totalRows: totals.length, queryRows: queries.length };
 }

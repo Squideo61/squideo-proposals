@@ -5,6 +5,25 @@
 // Ads OAuth client credentials unless explicitly overridden. Mirrors the
 // refresh-token flow in googleAds.js / gmail.js.
 
+// fetch() with an abort-based timeout, so a hung upstream (Google's OAuth / data
+// APIs) fails fast with a clear message instead of silently consuming the whole
+// serverless function budget and returning a non-JSON gateway timeout.
+export async function fetchWithTimeout(url, opts = {}, ms = 20000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      let host = url; try { host = new URL(url).host; } catch { /* keep raw */ }
+      throw new Error(`request to ${host} timed out after ${ms / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 const clientId = () => process.env.GOOGLE_OAUTH_CLIENT_ID || process.env.GOOGLE_ADS_CLIENT_ID;
 const clientSecret = () => process.env.GOOGLE_OAUTH_CLIENT_SECRET || process.env.GOOGLE_ADS_CLIENT_SECRET;
 const refreshToken = () => process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
@@ -30,7 +49,7 @@ export async function getGoogleApiToken() {
     client_secret: clientSecret(),
     refresh_token: rt,
   });
-  const r = await fetch('https://oauth2.googleapis.com/token', {
+  const r = await fetchWithTimeout('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,

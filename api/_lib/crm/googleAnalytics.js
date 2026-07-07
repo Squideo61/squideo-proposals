@@ -7,8 +7,8 @@
 //
 // Gated behind ga4Configured(): until the OAuth token + GA4_PROPERTY_ID are
 // present, the cron no-ops and the report renders empty with a "connect" hint.
-import sql from '../db.js';
-import { googleOAuthConfigured, getGoogleApiToken } from './googleOAuth.js';
+import sql, { batchWrite } from '../db.js';
+import { googleOAuthConfigured, getGoogleApiToken, fetchWithTimeout } from './googleOAuth.js';
 
 const digits = (s) => String(s || '').replace(/[^0-9]/g, '');
 const propertyId = () => digits(process.env.GA4_PROPERTY_ID);
@@ -39,7 +39,7 @@ export function ensureGa4Tables() {
 // Run a GA4 Data API report. Returns the raw rows array.
 async function runReport(body) {
   const token = await getGoogleApiToken();
-  const r = await fetch(
+  const r = await fetchWithTimeout(
     `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId()}:runReport`,
     {
       method: 'POST',
@@ -70,22 +70,21 @@ export async function runGa4Sync({ days = 30 } = {}) {
     limit: 100000,
   });
 
-  let upserts = 0;
-  for (const row of rows) {
+  const writes = rows.map((row) => {
     const day = dashDate(row.dimensionValues?.[0]?.value);
     const channel = row.dimensionValues?.[1]?.value || '(other)';
-    if (!day) continue;
+    if (!day) return null;
     const m = row.metricValues || [];
-    await sql`
+    return sql`
       INSERT INTO ga4_channel_daily (day, channel, sessions, users, key_events, updated_at)
       VALUES (${day}, ${channel}, ${Math.round(Number(m[0]?.value)) || 0},
               ${Math.round(Number(m[1]?.value)) || 0}, ${Number(m[2]?.value) || 0}, NOW())
       ON CONFLICT (day, channel) DO UPDATE SET
         sessions = EXCLUDED.sessions, users = EXCLUDED.users,
         key_events = EXCLUDED.key_events, updated_at = NOW()`;
-    upserts++;
-  }
-  return { ok: true, days, rows: upserts };
+  }).filter(Boolean);
+  await batchWrite(writes);
+  return { ok: true, days, rows: writes.length };
 }
 
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));

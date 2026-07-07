@@ -8,7 +8,8 @@
 // present (the developer token in particular can take days to be approved),
 // the cron no-ops and the reports simply render spend/CPL/ROAS as "—". Revenue
 // attribution needs none of this.
-import sql from '../db.js';
+import sql, { batchWrite } from '../db.js';
+import { fetchWithTimeout } from './googleOAuth.js';
 
 // Google Ads API versions are sunset ~12 months after release, which 404s the
 // request path. Default to a current version; overridable via env var so a
@@ -79,7 +80,7 @@ async function getAccessToken() {
     client_secret: process.env.GOOGLE_ADS_CLIENT_SECRET,
     refresh_token: process.env.GOOGLE_ADS_REFRESH_TOKEN,
   });
-  const r = await fetch('https://oauth2.googleapis.com/token', {
+  const r = await fetchWithTimeout('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
@@ -100,7 +101,7 @@ async function getAccessToken() {
 async function runGaql(query) {
   const token = await getAccessToken();
   const customerId = digits(process.env.GOOGLE_ADS_CUSTOMER_ID);
-  const r = await fetch(
+  const r = await fetchWithTimeout(
     `https://googleads.googleapis.com/${API_VERSION}/customers/${customerId}/googleAds:searchStream`,
     {
       method: 'POST',
@@ -177,15 +178,15 @@ const CAMPAIGN_NAMES_QUERY = `
 
 async function syncCampaignNames(customerId) {
   const rows = await runGaql(CAMPAIGN_NAMES_QUERY);
-  for (const r of rows) {
+  await batchWrite(rows.map((r) => {
     const id = String(r.campaign?.id ?? '');
-    if (!id) continue;
-    await sql`
+    if (!id) return null;
+    return sql`
       INSERT INTO ad_campaigns (campaign_id, customer_id, name, status, updated_at)
       VALUES (${id}, ${customerId}, ${r.campaign?.name ?? null}, ${r.campaign?.status ?? null}, NOW())
       ON CONFLICT (campaign_id) DO UPDATE SET
         name = EXCLUDED.name, status = EXCLUDED.status, updated_at = NOW()`;
-  }
+  }));
   return rows.length;
 }
 
@@ -197,9 +198,9 @@ export async function runAdSpendSync() {
   await ensureAdSpend();
   const customerId = digits(process.env.GOOGLE_ADS_CUSTOMER_ID);
   const keywordRows = await runGaql(KEYWORD_QUERY);
-  for (const r of keywordRows) { const q = upsertRow(customerId, r, false); if (q) await q; }
+  await batchWrite(keywordRows.map((r) => upsertRow(customerId, r, false)));
   const campaignRows = await runGaql(CAMPAIGN_QUERY);
-  for (const r of campaignRows) { const q = upsertRow(customerId, r, true); if (q) await q; }
+  await batchWrite(campaignRows.map((r) => upsertRow(customerId, r, true)));
   const namedCampaigns = await syncCampaignNames(customerId);
   return { ok: true, keywordRows: keywordRows.length, campaignRows: campaignRows.length, namedCampaigns };
 }
