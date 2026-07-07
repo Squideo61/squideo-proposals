@@ -425,8 +425,10 @@ export async function analyticsRoute(req, res, id, action, user) {
     }
     // Cap each source so one hanging upstream (esp. the Google Ads API) can't
     // burn the whole 60s function budget and return a non-JSON timeout page.
-    // Sources run in parallel, so worst case ~this bound, well under maxDuration.
-    const PER_SOURCE_MS = 25000;
+    // Sources run in parallel, so worst case ~this bound, kept under maxDuration
+    // (60s). Generous enough for a healthy GSC pull (~20k rows) which was
+    // borderline at 25s under contention with the other two sources.
+    const PER_SOURCE_MS = 45000;
     const runSafe = async (fn, label) => {
       try {
         return await Promise.race([
