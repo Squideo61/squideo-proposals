@@ -422,11 +422,23 @@ export async function analyticsRoute(req, res, id, action, user) {
     if (!adsConfigured() && !gscConfigured() && !ga4Configured()) {
       return res.status(400).json({ ok: false, error: 'Nothing connected yet — add the Google Ads / GA4 / Search Console environment variables.' });
     }
-    const runSafe = async (fn) => { try { return await fn(); } catch (err) { return { ok: false, error: err?.message || 'failed' }; } };
+    // Cap each source so one hanging upstream (esp. the Google Ads API) can't
+    // burn the whole 60s function budget and return a non-JSON timeout page.
+    // Sources run in parallel, so worst case ~this bound, well under maxDuration.
+    const PER_SOURCE_MS = 25000;
+    const runSafe = async (fn, label) => {
+      try {
+        return await Promise.race([
+          Promise.resolve().then(fn),
+          new Promise((_, rej) => setTimeout(
+            () => rej(new Error(`${label} timed out after ${PER_SOURCE_MS / 1000}s`)), PER_SOURCE_MS)),
+        ]);
+      } catch (err) { return { ok: false, error: err?.message || 'failed' }; }
+    };
     const [ads, gsc, ga4] = await Promise.all([
-      adsConfigured() ? runSafe(runAdSpendSync) : { ok: false, skipped: 'not_configured' },
-      gscConfigured() ? runSafe(runGscSync) : { ok: false, skipped: 'not_configured' },
-      ga4Configured() ? runSafe(runGa4Sync) : { ok: false, skipped: 'not_configured' },
+      adsConfigured() ? runSafe(runAdSpendSync, 'Google Ads sync') : { ok: false, skipped: 'not_configured' },
+      gscConfigured() ? runSafe(runGscSync, 'Search Console sync') : { ok: false, skipped: 'not_configured' },
+      ga4Configured() ? runSafe(runGa4Sync, 'GA4 sync') : { ok: false, skipped: 'not_configured' },
     ]);
     const ok = [ads, gsc, ga4].some((r) => r?.ok);
     return res.status(200).json({ ok, ads, gsc, ga4 });
