@@ -1014,7 +1014,14 @@ function SyncResult({ result }) {
     return { name, ok: false, detail: r.error || 'failed' };
   };
   const lines = [describe('Ads', result.ads), describe('Search Console', result.gsc), describe('GA4', result.ga4)].filter(Boolean);
-  if (!lines.length) return null;
+  if (!lines.length) {
+    // No per-source lines means either nothing is connected, or the POST itself
+    // failed (non-2xx / timeout) and came back as a bare { ok:false, error } with
+    // no ads/gsc/ga4 keys. Surface that instead of silently rendering nothing.
+    lines.push(result?.error
+      ? { name: 'Sync failed', ok: false, detail: result.error }
+      : { name: 'Sync', ok: true, detail: 'Nothing to sync — no data sources are connected.' });
+  }
   return (
     <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
       {lines.map((l) => (
