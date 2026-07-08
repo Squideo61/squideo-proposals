@@ -477,9 +477,14 @@ function LeavePanel({ sched, canManage, canApprove, me, actions }) {
             {canManage && <strong>{nameFor(l.userEmail)} · </strong>}{l.startDate} → {l.endDate} · {l.days}d{' '}
             <Badge color={l.status === 'approved' ? 'green' : l.status === 'denied' ? 'grey' : 'yellow'}>{l.status}</Badge>
           </div>
-          {(canManage || (l.userEmail === me && l.status === 'pending')) && (
-            <button className="btn-ghost" onClick={() => actions.cancelLeave(l.id)} title="Cancel"><Trash2 size={14} /></button>
-          )}
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {l.status === 'pending' && canApprove && (
+              <button className="btn" onClick={() => setReview(l)}><CalendarDays size={14} /> Review &amp; approve</button>
+            )}
+            {(canManage || (l.userEmail === me && l.status === 'pending')) && (
+              <button className="btn-ghost" onClick={() => actions.cancelLeave(l.id)} title="Cancel"><Trash2 size={14} /></button>
+            )}
+          </div>
         </div>
       ))}
     </Section>
