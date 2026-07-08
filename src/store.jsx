@@ -1889,6 +1889,9 @@ export function StoreProvider({ children }) {
         .then((p) => { actions._applySchedule(p); if (p?.leaveConflict) showMsg('Heads up: this overlaps scheduled production work.'); return p; })
         .catch((err) => { showMsg(err.message || 'Failed to book leave'); throw err; });
     },
+    loadLeaveImpact(leaveId) {
+      return api.get('/api/crm/schedule/leave/' + encodeURIComponent(leaveId));
+    },
     decideLeave(leaveId, status) {
       return api.patch('/api/crm/schedule/leave/' + encodeURIComponent(leaveId), { status })
         .then((p) => { actions._applySchedule(p); if (p?.leaveConflict) showMsg('There is a conflict in dates due to annual leave — please rearrange the schedule, or re-assign the project.'); return p; })

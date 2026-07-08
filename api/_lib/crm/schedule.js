@@ -763,6 +763,12 @@ export async function scheduleRoute(req, res, id, action, user) {
     if (!lr) return res.status(404).json({ error: 'Not found' });
     const owner = String(lr.user_email).toLowerCase();
 
+    // GET impact — how this leave hits production + suggested fixes (approvers).
+    if (req.method === 'GET') {
+      if (!approve) return res.status(403).json({ error: 'Only admins and directors can review leave' });
+      return res.status(200).json(await analyseLeaveImpact(lr));
+    }
+
     // PATCH decide (leave approvers only — Admins & Directors)
     if (req.method === 'PATCH') {
       if (!approve) return res.status(403).json({ error: 'Only admins and directors can approve leave' });
@@ -848,6 +854,95 @@ async function applyLeaveCoverage(leaveRow) {
 
 async function removeLeaveCoverage(leaveId) {
   await sql`DELETE FROM schedule_assignments WHERE cover_leave_id = ${leaveId}`;
+}
+
+// ── Leave impact + resolution suggestions ──
+// For a (usually pending) leave request, find the production/storyboard blocks
+// it would clash with and, per block, suggest how to keep delivery on track —
+// in the order the production manager asked for:
+//   1. keep the SAME producer, moved to their next free slot before the deadline
+//   2. hand it to ANOTHER producer who's free before the deadline
+//   3. neither fits → flag for manual review (freelancer and/or push delivery)
+async function analyseLeaveImpact(leaveRow) {
+  const target = String(leaveRow.user_email).toLowerCase();
+  const startStr = asDateStr(leaveRow.start_date);
+  const endStr = asDateStr(leaveRow.end_date);
+  const leaveDays = new Set(workingDaysBetween(startStr, endStr));
+  const today = todayStr();
+
+  const rows = await sql`SELECT * FROM schedule_assignments
+    WHERE user_email = ${target} AND kind IN ('storyboard','production')`;
+  const clashBlocks = rows.filter(r =>
+    workingDaysBetween(asDateStr(r.start_date), asDateStr(r.end_date)).some(d => leaveDays.has(d)));
+  if (!clashBlocks.length) return { clashes: [] };
+
+  const videoIds = [...new Set(clashBlocks.map(b => b.video_id).filter(Boolean))];
+  const vids = videoIds.length ? await sql`SELECT pv.id, pv.title, pv.production_schedule,
+      d.title AS project_title, d.production_schedule AS deal_schedule
+    FROM project_videos pv JOIN deals d ON d.id = pv.deal_id WHERE pv.id = ANY(${videoIds})` : [];
+  const vmeta = new Map(vids.map(v => [v.id, v]));
+
+  const roster = await teamMembers();
+  const rosterEmails = roster.map(r => r.email);
+  // Occupancy already folds in this leave (loadOccupancy counts pending+approved
+  // leave), so free-slot searches naturally avoid the leave dates.
+  const occ = await loadOccupancy(rosterEmails, null);
+  const nameByEmail = new Map(roster.map(r => [r.email, r.name]));
+
+  // Earliest run of `duration` free days from `earliest` that also finishes on
+  // or before `latestEnd` (null = no deadline). null if nothing fits in time.
+  const fittingRun = (occupied, duration, earliest, latestEnd) => {
+    const run = firstFreeRun(occupied, duration, earliest);
+    if (!run) return null;
+    if (latestEnd && run[run.length - 1] > latestEnd) return null;
+    return { start: run[0], end: run[run.length - 1] };
+  };
+
+  const clashes = [];
+  for (const b of clashBlocks) {
+    const v = vmeta.get(b.video_id) || {};
+    const sched = v.production_schedule || v.deal_schedule || null;
+    const dl = scheduleDeadlines(sched);
+    const deadline = b.kind === 'storyboard' ? dl.storyboard : dl.production;
+    const latestEnd = deadline ? addWorkingDays(deadline, -INTERNAL_REVIEW_BUFFER_DAYS) : null;
+    const duration = Math.max(1, b.duration_days + (b.extended_days || 0));
+
+    // Same producer: free their own current (non-leave) days so the block can
+    // reuse part of its slot, but keep the leave blocked.
+    const selfOcc = new Set(occ.get(target) || []);
+    for (const d of workingDaysBetween(asDateStr(b.start_date), asDateStr(b.end_date))) {
+      if (!leaveDays.has(d)) selfOcc.delete(d);
+    }
+    const sameProducer = fittingRun(selfOcc, duration, today, latestEnd);
+
+    // Alternative producer: the one who can finish it earliest, in time.
+    let altProducer = null;
+    for (const m of roster) {
+      if (m.email === target) continue;
+      const run = fittingRun(occ.get(m.email) || new Set(), duration, today, latestEnd);
+      if (run && (!altProducer || run.start < altProducer.start)) {
+        altProducer = { email: m.email, name: m.name, start: run.start, end: run.end };
+      }
+    }
+
+    clashes.push({
+      assignmentId: b.id,
+      videoId: b.video_id,
+      projectTitle: v.project_title || null,
+      videoTitle: v.title || null,
+      kind: b.kind,
+      producerEmail: target,
+      producerName: nameByEmail.get(target) || target,
+      currentStart: asDateStr(b.start_date),
+      currentEnd: asDateStr(b.end_date),
+      duration,
+      deadline: deadline || null,
+      sameProducer,               // { start, end } or null
+      altProducer,                // { email, name, start, end } or null
+      needsReview: !sameProducer && !altProducer,
+    });
+  }
+  return { clashes };
 }
 
 // True if the user has scheduled production work overlapping [start,end].

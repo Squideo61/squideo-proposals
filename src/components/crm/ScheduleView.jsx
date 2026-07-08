@@ -444,6 +444,7 @@ function AgendaList({ days, producers, asgByCell, leaveByCell, today, onBlock })
 function LeavePanel({ sched, canManage, canApprove, me, actions }) {
   const leave = sched.leave || [];
   const pending = leave.filter(l => l.status === 'pending');
+  const [review, setReview] = useState(null);
   const nameFor = (email) => (sched.producers || []).find(p => p.email === email)?.name || email;
   const upcoming = leave.filter(l => l.status !== 'denied' && l.endDate >= todayStr())
     .sort((a, b) => a.startDate.localeCompare(b.startDate));
@@ -460,13 +461,14 @@ function LeavePanel({ sched, canManage, canApprove, me, actions }) {
                 <strong>{nameFor(l.userEmail)}</strong> · {l.startDate} → {l.endDate} · {l.days}d{l.note ? ' · ' + l.note : ''}
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
-                <button className="btn" onClick={() => actions.decideLeave(l.id, 'approved')} style={{ background: '#16A34A' }}><Check size={14} /> Approve</button>
+                <button className="btn" onClick={() => setReview(l)}><CalendarDays size={14} /> Review impact</button>
                 <button className="btn-ghost" onClick={() => actions.decideLeave(l.id, 'denied')}><X size={14} /> Deny</button>
               </div>
             </div>
           ))}
         </>
       )}
+      {review && <LeaveReviewModal leave={review} nameFor={nameFor} actions={actions} onClose={() => setReview(null)} />}
       <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, margin: '14px 0 8px' }}>Upcoming leave</div>
       {upcoming.length === 0 && <div style={{ color: BRAND.muted, fontSize: 13 }}>No upcoming leave booked.</div>}
       {upcoming.map(l => (
@@ -586,6 +588,104 @@ function LeaveModal({ producers, canManage, onClose, onSubmit }) {
         <button className="btn" onClick={submit} disabled={busy}>{busy ? 'Submitting…' : 'Submit request'}</button>
       </div>
     </Modal>
+  );
+}
+
+// ── Review a pending leave request: what it clashes with + how to resolve ──
+function LeaveReviewModal({ leave, nameFor, actions, onClose }) {
+  const [impact, setImpact] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const load = () => {
+    setLoading(true);
+    actions.loadLeaveImpact(leave.id)
+      .then(r => setImpact(r || { clashes: [] }))
+      .catch(() => setImpact({ clashes: [] }))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, [leave.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const clashes = impact?.clashes || [];
+  const fmt = (d) => (d ? fmtDayLabel(d, { weekday: 'short' }) : '—');
+
+  const applyMove = (fields, assignmentId) => {
+    setBusy(true);
+    actions.moveAssignment(assignmentId, fields).then(load).finally(() => setBusy(false));
+  };
+  const decide = (status) => {
+    setBusy(true);
+    actions.decideLeave(leave.id, status).then(onClose).catch(() => setBusy(false));
+  };
+
+  return (
+    <Modal onClose={onClose} dismissible={false} maxWidth={640}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Review leave — {nameFor(leave.userEmail)}</h3>
+      <div style={{ color: BRAND.muted, fontSize: 14, marginBottom: 16 }}>
+        {leave.startDate} → {leave.endDate} · {leave.days} day{leave.days === 1 ? '' : 's'}{leave.note ? ' · ' + leave.note : ''}
+      </div>
+
+      {loading ? (
+        <div style={{ color: BRAND.muted, fontSize: 14, padding: '12px 0' }}>Checking production impact…</div>
+      ) : clashes.length === 0 ? (
+        <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', borderRadius: 10, padding: '12px 14px', fontSize: 14, display: 'flex', gap: 10, alignItems: 'center' }}>
+          <Check size={18} /> No production work clashes with these dates — safe to approve.
+        </div>
+      ) : (
+        <>
+          <div style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#7F1D1D', borderRadius: 10, padding: '10px 14px', fontSize: 14, marginBottom: 14, display: 'flex', gap: 10 }}>
+            <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>This leave overlaps <strong>{clashes.length}</strong> production block{clashes.length === 1 ? '' : 's'}. Resolve each below, then approve.</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {clashes.map(c => (
+              <div key={c.assignmentId} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '12px 14px' }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{c.projectTitle || 'Project'}{c.videoTitle ? ' — ' + c.videoTitle : ''}</div>
+                <div style={{ fontSize: 12.5, color: BRAND.muted, marginTop: 2 }}>
+                  {KIND_LABEL[c.kind] || c.kind} · {c.duration}d · currently {fmt(c.currentStart)} → {fmt(c.currentEnd)}
+                  {c.deadline ? ` · delivery ${fmt(c.deadline)}` : ''}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+                  {c.sameProducer && (
+                    <SuggestionRow color="#16A34A" bg="#ECFDF5" border="#A7F3D0"
+                      label={<>Keep <strong>{c.producerName}</strong> — move to {fmt(c.sameProducer.start)} → {fmt(c.sameProducer.end)}</>}
+                      cta="Reschedule" busy={busy}
+                      onApply={() => applyMove({ startDate: c.sameProducer.start, endDate: c.sameProducer.end }, c.assignmentId)} />
+                  )}
+                  {c.altProducer && (
+                    <SuggestionRow color="#0369A1" bg="#EFF6FF" border="#BFDBFE"
+                      label={<>Reassign to <strong>{c.altProducer.name}</strong> — {fmt(c.altProducer.start)} → {fmt(c.altProducer.end)}</>}
+                      cta="Reassign" busy={busy}
+                      onApply={() => applyMove({ startDate: c.altProducer.start, endDate: c.altProducer.end, userEmail: c.altProducer.email }, c.assignmentId)} />
+                  )}
+                  {c.needsReview && (
+                    <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#92400E', borderRadius: 8, padding: '8px 10px', fontSize: 13 }}>
+                      No producer has a free slot before the delivery date. Consider a <strong>freelancer</strong>, or <strong>push back the delivery date</strong> — this is project-dependent, so review it manually.
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18, paddingTop: 14, borderTop: '1px solid ' + BRAND.border }}>
+        <button className="btn-ghost" onClick={onClose} disabled={busy}>Close</button>
+        <button className="btn-ghost" onClick={() => decide('denied')} disabled={busy}><X size={14} /> Deny</button>
+        <button className="btn" onClick={() => decide('approved')} disabled={busy || loading} style={{ background: '#16A34A' }}>
+          <Check size={14} /> {clashes.length ? 'Approve anyway' : 'Approve'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function SuggestionRow({ color, bg, border, label, cta, onApply, busy }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, background: bg, border: '1px solid ' + border, borderRadius: 8, padding: '8px 10px' }}>
+      <span style={{ fontSize: 13, color }}>{label}</span>
+      <button className="btn" onClick={onApply} disabled={busy} style={{ background: color, flexShrink: 0 }}>{cta}</button>
+    </div>
   );
 }
 
