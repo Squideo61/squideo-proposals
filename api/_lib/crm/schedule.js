@@ -116,7 +116,7 @@ function seedLeaveCorrectionsOnce() {
   correctionsSeeded = (async () => {
     const CORRECTIONS = [
       { name: 'chloe wong',    allowance: 10.5, renewal: '2020-12-01', used: 2 },
-      { name: 'callum majors', allowance: 20,   renewal: '2020-03-01', used: 7 },
+      { name: 'callum major',  allowance: 20,   renewal: '2020-03-01', used: 7 },
       { name: 'hannah bales',  allowance: 20,   renewal: '2020-02-01', used: 14 },
       { name: 'adam leveson',  allowance: 20,   renewal: '2020-05-01', used: 4 },
     ];
@@ -466,7 +466,7 @@ function serialiseLeave(r) {
 }
 
 // ── The GET payload ──
-async function buildPayload(user, manage, approve = false) {
+async function buildPayload(user, manage, approve = false, manageAllowance = false) {
   const email = (user.email || '').toLowerCase();
   const today = todayStr();
   const candidates = await scheduleUsers();
@@ -515,6 +515,7 @@ async function buildPayload(user, manage, approve = false) {
   return {
     canManage: manage,
     canApproveLeave: approve,
+    canManageAllowance: manageAllowance,
     me: email,
     // Managers see the whole active roster on the master calendar; a producer
     // only needs (and only gets) their own row.
@@ -642,8 +643,9 @@ export async function scheduleRoute(req, res, id, action, user) {
   const role = await getRole(user.role);
   const manage = hasPermission(role, 'schedule.manage');
   const approve = hasPermission(role, 'schedule.approve_leave');
+  const manageAllowance = hasPermission(role, 'schedule.manage_allowance');
   const email = (user.email || '').toLowerCase();
-  const reload = () => buildPayload(user, manage, approve);
+  const reload = () => buildPayload(user, manage, approve, manageAllowance);
 
   // GET /api/crm/schedule
   if (!id) {
@@ -799,9 +801,9 @@ export async function scheduleRoute(req, res, id, action, user) {
     return res.status(405).end();
   }
 
-  // /api/crm/schedule/allowance/:email  (leave approvers — Admins & Directors)
+  // /api/crm/schedule/allowance/:email  (allowance editors — Admins & Directors)
   if (id === 'allowance') {
-    if (!approve) return res.status(403).json({ error: 'Only admins and directors can edit allowances' });
+    if (!manageAllowance) return res.status(403).json({ error: 'Only admins and directors can edit allowances' });
     if (req.method !== 'PATCH') return res.status(405).end();
     const target = String(action || '').toLowerCase();
     if (!target) return res.status(400).json({ error: 'user email required' });

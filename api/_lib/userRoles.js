@@ -114,14 +114,23 @@ export function ensureSystemRoles() {
          WHERE id IN ('director', 'member') AND NOT (permissions @> '["schedule.manage"]'::jsonb)
       `;
       if ((schedManage.count || schedManage.rowCount || 0) > 0) invalidateRoleCache();
-      // Approving annual leave + editing allowances stays tighter: Directors only
-      // (Admins via '*').
+      // Approving annual leave → Directors AND Project/Production Managers (role
+      // 'member', e.g. Callum), since they run the rota. Admins via '*'.
       const schedApprove = await sql`
         UPDATE roles
            SET permissions = permissions || '["schedule.approve_leave"]'::jsonb, updated_at = NOW()
-         WHERE id = 'director' AND NOT (permissions @> '["schedule.approve_leave"]'::jsonb)
+         WHERE id IN ('director', 'member') AND NOT (permissions @> '["schedule.approve_leave"]'::jsonb)
       `;
-      if ((schedApprove.count || schedApprove.rowCount || 0) > 0) invalidateRoleCache('director');
+      if ((schedApprove.count || schedApprove.rowCount || 0) > 0) invalidateRoleCache();
+      // Editing allowances (entitlements, renewal dates, days used) stays tighter:
+      // Directors only (Admins via '*'). Production managers approve leave but
+      // don't set holiday entitlements.
+      const schedAllowance = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["schedule.manage_allowance"]'::jsonb, updated_at = NOW()
+         WHERE id = 'director' AND NOT (permissions @> '["schedule.manage_allowance"]'::jsonb)
+      `;
+      if ((schedAllowance.count || schedAllowance.rowCount || 0) > 0) invalidateRoleCache('director');
       // Leave-request approvals → Admins & Directors.
       await sql`
         UPDATE roles

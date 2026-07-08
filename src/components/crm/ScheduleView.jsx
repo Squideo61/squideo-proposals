@@ -59,6 +59,7 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
 
   const canManage = !!sched.canManage;
   const canApprove = !!sched.canApproveLeave;
+  const canManageAllowance = !!sched.canManageAllowance;
   const me = sched.me || (state.session?.email || '').toLowerCase();
   const allProducers = sched.producers && sched.producers.length
     ? sched.producers
@@ -191,7 +192,7 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
       {/* Leave requests + allowances + amends */}
       <div style={{ marginTop: 28 }}>
         <LeavePanel sched={sched} canManage={canManage} canApprove={canApprove} me={me} actions={actions} />
-        <AllowancePanel sched={sched} canManage={canManage} canApprove={canApprove} me={me} onEdit={setAllowanceModal} />
+        <AllowancePanel sched={sched} canManage={canManage} canManageAllowance={canManageAllowance} me={me} onEdit={setAllowanceModal} />
         <AmendsPanel sched={sched} onOpenVideo={onOpenVideo} />
       </div>
 
@@ -498,7 +499,7 @@ function LeavePanel({ sched, canManage, canApprove, me, actions }) {
 }
 
 // ── Allowance tracker ──
-function AllowancePanel({ sched, canManage, canApprove, me, onEdit }) {
+function AllowancePanel({ sched, canManage, canManageAllowance, me, onEdit }) {
   const all = (sched.allowances || []).filter(a => canManage || a.userEmail === me);
   const rows = all.filter(a => a.onRoster && a.trackAllowance);
   const untracked = all.filter(a => a.onRoster && !a.trackAllowance);
@@ -517,9 +518,9 @@ function AllowancePanel({ sched, canManage, canApprove, me, onEdit }) {
     <Section title="Annual-leave allowance" icon={CalendarDays} color="#0EA5E9"
       badge={<span style={{ fontSize: 12, color: BRAND.muted }}>Default 20 days · 6 compulsory (Christmas)</span>}>
       <ResponsiveTable columns={columns} rows={rows} keyField="userEmail"
-        onRowClick={canApprove ? onEdit : undefined} empty="No one is tracked yet." />
-      {canApprove && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>Tap a row to edit allowance, compulsory days or the renewal anniversary. Use it to remove someone, or to keep them on the schedule without tracking an allowance. Admins are hidden by default.</div>}
-      {canApprove && untracked.length > 0 && (
+        onRowClick={canManageAllowance ? onEdit : undefined} empty="No one is tracked yet." />
+      {canManageAllowance && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>Tap a row to edit allowance, compulsory days, days used or the renewal date. Use it to remove someone, or to keep them on the schedule without tracking an allowance. Admins are hidden by default.</div>}
+      {canManageAllowance && untracked.length > 0 && (
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed ' + BRAND.border }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>On the schedule · allowance not tracked</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -531,7 +532,7 @@ function AllowancePanel({ sched, canManage, canApprove, me, onEdit }) {
           </div>
         </div>
       )}
-      {canApprove && removed.length > 0 && (
+      {canManageAllowance && removed.length > 0 && (
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed ' + BRAND.border }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Off the schedule</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
