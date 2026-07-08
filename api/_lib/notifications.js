@@ -25,6 +25,33 @@ export { NOTIFICATIONS, isValidNotificationKey, getNotificationMeta };
 
 const NOTIFICATIONS_BY_KEY = Object.fromEntries(NOTIFICATIONS.map(n => [n.key, n]));
 
+// Delivery channel for a notification: in-app bell only, email only, or both.
+// Stored per role (roles.notification_channel_defaults) and overridable per
+// user (user_notification_overrides.channel). Anything unset resolves to
+// 'both', which is exactly the historical behaviour (bell + email together).
+function normChannel(c) {
+  return c === 'in_app' || c === 'email' ? c : 'both';
+}
+
+// Self-heal the schema for the per-notification delivery channel so the feature
+// works before its migration lands (mirrors the ensure*Default helpers). All
+// three statements are idempotent, so this is safe to run once per warm
+// instance ahead of any read/write that touches the channel columns.
+let channelSchemaReady = false;
+export async function ensureNotificationChannelColumns() {
+  if (channelSchemaReady) return;
+  try {
+    await sql`ALTER TABLE user_notification_overrides ADD COLUMN IF NOT EXISTS channel TEXT`;
+    // A channel-only override (keep enabled at the role default, just change
+    // delivery) needs enabled to be nullable.
+    await sql`ALTER TABLE user_notification_overrides ALTER COLUMN enabled DROP NOT NULL`;
+    await sql`ALTER TABLE roles ADD COLUMN IF NOT EXISTS notification_channel_defaults JSONB NOT NULL DEFAULT '{}'::jsonb`;
+    channelSchemaReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureNotificationChannelColumns failed', err.message);
+  }
+}
+
 // Resolve recipients for a notification key.
 //   opts.ownerEmail      — required for audience:'owner', ignored otherwise
 //   opts.assigneeEmails  — required for audience:'assignee'
@@ -34,6 +61,27 @@ const NOTIFICATIONS_BY_KEY = Object.fromEntries(NOTIFICATIONS.map(n => [n.key, n
 // Returns deduplicated, lowercased email strings. Empty array means nobody
 // is subscribed — caller should still consider env-var fallbacks if any.
 export async function resolveRecipients(key, opts = {}) {
+  return (await resolveRecipientsDetailed(key, opts)).map(r => r.email);
+}
+
+// Same resolution as resolveRecipients, but each entry carries the recipient's
+// effective delivery channel ({ email, channel }). sendNotification uses this to
+// route the in-app write and the email independently per person.
+export async function resolveRecipientsDetailed(key, opts = {}) {
+  // The channel columns/queries are new. If they're somehow missing (migration
+  // not applied AND the self-heal DDL failed), never break notifications — fall
+  // back to the original enabled-only resolution and deliver via 'both'.
+  try {
+    await ensureNotificationChannelColumns();
+    return await _resolveWithChannel(key, opts);
+  } catch (err) {
+    console.warn('[notifications] channel resolve failed; delivering via both', err.message);
+    const emails = await _resolveLegacy(key, opts);
+    return emails.map((email) => ({ email, channel: 'both' }));
+  }
+}
+
+async function _resolveWithChannel(key, opts = {}) {
   const meta = NOTIFICATIONS_BY_KEY[key];
   if (!meta) {
     console.warn('[notifications] unknown key', key);
@@ -44,8 +92,17 @@ export async function resolveRecipients(key, opts = {}) {
   if (meta.audience === 'owner') {
     const email = (opts.ownerEmail || '').toLowerCase();
     if (!email || exclude.has(email)) return [];
-    const enabled = await isEnabledForUser(email, key);
-    return enabled ? [email] : [];
+    const rows = await sql`
+      SELECT COALESCE(o.enabled, (r.notification_defaults->>${key})::boolean, false) AS enabled,
+             COALESCE(o.channel, r.notification_channel_defaults->>${key}, 'both') AS channel
+        FROM users u
+        LEFT JOIN roles r ON r.id = u.role
+        LEFT JOIN user_notification_overrides o
+               ON o.user_email = u.email AND o.notification_key = ${key}
+       WHERE u.email = ${email}
+       LIMIT 1`;
+    if (!rows[0] || !rows[0].enabled) return [];
+    return [{ email, channel: normChannel(rows[0].channel) }];
   }
 
   if (meta.audience === 'assignee') {
@@ -54,12 +111,24 @@ export async function resolveRecipients(key, opts = {}) {
       .map(e => e.toLowerCase())
       .filter(e => !exclude.has(e));
     if (emails.length === 0) return [];
-    const filtered = [];
+    const out = [];
+    const seen = new Set();
     for (const e of emails) {
+      if (seen.has(e)) continue;
+      seen.add(e);
       // eslint-disable-next-line no-await-in-loop
-      if (await isEnabledForUser(e, key)) filtered.push(e);
+      const rows = await sql`
+        SELECT COALESCE(o.enabled, (r.notification_defaults->>${key})::boolean, false) AS enabled,
+               COALESCE(o.channel, r.notification_channel_defaults->>${key}, 'both') AS channel
+          FROM users u
+          LEFT JOIN roles r ON r.id = u.role
+          LEFT JOIN user_notification_overrides o
+                 ON o.user_email = u.email AND o.notification_key = ${key}
+         WHERE u.email = ${e}
+         LIMIT 1`;
+      if (rows[0] && rows[0].enabled) out.push({ email: e, channel: normChannel(rows[0].channel) });
     }
-    return Array.from(new Set(filtered));
+    return out;
   }
 
   // broadcast: every user where role default OR override resolves to true —
@@ -69,13 +138,54 @@ export async function resolveRecipients(key, opts = {}) {
   // (the owner/assignee audiences), never team broadcasts.
   const rows = await sql`
     SELECT u.email,
-           COALESCE(o.enabled, (r.notification_defaults->>${key})::boolean, false) AS enabled
+           COALESCE(o.enabled, (r.notification_defaults->>${key})::boolean, false) AS enabled,
+           COALESCE(o.channel, r.notification_channel_defaults->>${key}, 'both') AS channel
       FROM users u
       LEFT JOIN roles r ON r.id = u.role
       LEFT JOIN user_notification_overrides o
              ON o.user_email = u.email AND o.notification_key = ${key}
      WHERE u.role IS DISTINCT FROM 'freelancer'
   `;
+  const out = [];
+  const seen = new Set();
+  for (const row of rows) {
+    if (!row.enabled) continue;
+    const e = String(row.email).toLowerCase();
+    if (exclude.has(e) || seen.has(e)) continue;
+    seen.add(e);
+    out.push({ email: e, channel: normChannel(row.channel) });
+  }
+  return out;
+}
+
+// Original enabled-only resolution (no channel columns). Used as the safety-net
+// fallback so a missing channel column can never stop notifications going out.
+async function _resolveLegacy(key, opts = {}) {
+  const meta = NOTIFICATIONS_BY_KEY[key];
+  if (!meta) return [];
+  const exclude = new Set((opts.excludeEmails || []).filter(Boolean).map(e => e.toLowerCase()));
+
+  if (meta.audience === 'owner') {
+    const email = (opts.ownerEmail || '').toLowerCase();
+    if (!email || exclude.has(email)) return [];
+    return (await isEnabledForUser(email, key)) ? [email] : [];
+  }
+  if (meta.audience === 'assignee') {
+    const emails = (opts.assigneeEmails || []).filter(Boolean).map(e => e.toLowerCase()).filter(e => !exclude.has(e));
+    if (emails.length === 0) return [];
+    const filtered = [];
+    for (const e of emails) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await isEnabledForUser(e, key)) filtered.push(e);
+    }
+    return Array.from(new Set(filtered));
+  }
+  const rows = await sql`
+    SELECT u.email, COALESCE(o.enabled, (r.notification_defaults->>${key})::boolean, false) AS enabled
+      FROM users u
+      LEFT JOIN roles r ON r.id = u.role
+      LEFT JOIN user_notification_overrides o ON o.user_email = u.email AND o.notification_key = ${key}
+     WHERE u.role IS DISTINCT FROM 'freelancer'`;
   const out = [];
   for (const row of rows) {
     if (!row.enabled) continue;
@@ -217,29 +327,42 @@ export async function isEnabledForUser(email, key) {
 // UI to render the AccountSettings notification editor without a query per
 // row. Returns { [key]: { enabled: bool, source: 'override' | 'role' } }.
 export async function getEffectivePrefs(email) {
+  await ensureNotificationChannelColumns();
   const rows = await sql`
     SELECT u.role,
            r.notification_defaults,
-           COALESCE(json_object_agg(o.notification_key, o.enabled) FILTER (WHERE o.notification_key IS NOT NULL), '{}'::json) AS overrides
+           r.notification_channel_defaults,
+           COALESCE(json_object_agg(o.notification_key, o.enabled) FILTER (WHERE o.notification_key IS NOT NULL), '{}'::json) AS overrides,
+           COALESCE(json_object_agg(o.notification_key, o.channel) FILTER (WHERE o.notification_key IS NOT NULL AND o.channel IS NOT NULL), '{}'::json) AS channel_overrides
       FROM users u
       LEFT JOIN roles r ON r.id = u.role
       LEFT JOIN user_notification_overrides o ON o.user_email = u.email
      WHERE u.email = ${email}
-     GROUP BY u.role, r.notification_defaults
+     GROUP BY u.role, r.notification_defaults, r.notification_channel_defaults
      LIMIT 1
   `;
   const row = rows[0];
   const defaults = row?.notification_defaults || {};
+  const channelDefaults = row?.notification_channel_defaults || {};
   const overrides = row?.overrides || {};
+  const channelOverrides = row?.channel_overrides || {};
   const out = {};
   for (const n of NOTIFICATIONS) {
-    if (Object.prototype.hasOwnProperty.call(overrides, n.key)) {
-      out[n.key] = { enabled: !!overrides[n.key], source: 'override' };
-    } else if (Object.prototype.hasOwnProperty.call(defaults, n.key)) {
-      out[n.key] = { enabled: !!defaults[n.key], source: 'role' };
-    } else {
-      out[n.key] = { enabled: false, source: 'role' };
-    }
+    // enabled: a NULL override value means "channel-only override" → fall back
+    // to the role default for enabled.
+    const hasEnabledOverride = Object.prototype.hasOwnProperty.call(overrides, n.key) && overrides[n.key] !== null;
+    const enabled = hasEnabledOverride
+      ? !!overrides[n.key]
+      : (Object.prototype.hasOwnProperty.call(defaults, n.key) ? !!defaults[n.key] : false);
+    const roleChannel = normChannel(channelDefaults[n.key]);
+    const hasChannelOverride = Object.prototype.hasOwnProperty.call(channelOverrides, n.key) && channelOverrides[n.key] != null;
+    out[n.key] = {
+      enabled,
+      source: hasEnabledOverride ? 'override' : 'role',
+      channel: hasChannelOverride ? normChannel(channelOverrides[n.key]) : roleChannel,
+      channelSource: hasChannelOverride ? 'override' : 'role',
+      roleChannel,
+    };
   }
   return out;
 }
@@ -263,26 +386,31 @@ export async function sendNotification(key, {
   inApp = null,
   inAppOnly = false,
 } = {}) {
-  const recipients = await resolveRecipients(key, { ownerEmail, assigneeEmails, excludeEmails });
+  const detailed = await resolveRecipientsDetailed(key, { ownerEmail, assigneeEmails, excludeEmails });
+  const recipients = detailed.map(r => r.email);
+  // Split by each recipient's chosen delivery channel. 'both' (the default)
+  // lands in both lists, exactly reproducing the old bell-and-email behaviour.
+  const inAppRecipients = detailed.filter(r => r.channel === 'in_app' || r.channel === 'both').map(r => r.email);
+  const emailRecipients = detailed.filter(r => r.channel === 'email' || r.channel === 'both').map(r => r.email);
 
-  // Persist an in-app feed entry for every pref-resolved recipient so the bell
-  // mirrors the email. These are always real workspace users (the resolver
-  // only returns users), so the FK holds. `extraRecipients` (env-var fallbacks
-  // that may not be users) are intentionally excluded — they only get email.
+  // Persist an in-app feed entry for every recipient whose channel includes the
+  // bell. These are always real workspace users (the resolver only returns
+  // users), so the FK holds. `extraRecipients` (env-var fallbacks that may not
+  // be users) are intentionally excluded — they only get email.
   // Best-effort: an in-app write must never stop the email going out.
-  if (recipients.length) {
-    await persistInApp(key, recipients, { subject, text, inApp });
+  if (inAppRecipients.length) {
+    await persistInApp(key, inAppRecipients, { subject, text, inApp });
   }
 
   // In-app-only alerts (e.g. ticking a pending payment paid) skip email entirely
   // so frequent manual actions don't spam inboxes — the bell is enough.
-  if (inAppOnly) return { sent: 0, recipients, inApp: recipients.length };
+  if (inAppOnly) return { sent: 0, recipients, inApp: inAppRecipients.length };
 
   const extras = (extraRecipients || [])
     .filter(Boolean)
     .map(e => e.toLowerCase())
     .filter(e => !(excludeEmails || []).map(x => (x || '').toLowerCase()).includes(e));
-  const to = Array.from(new Set([...recipients, ...extras]));
+  const to = Array.from(new Set([...emailRecipients, ...extras]));
   if (to.length === 0) return { sent: 0, recipients: [] };
   await sendMail({ to, subject, html, text, throwOnError });
   return { sent: to.length, recipients: to };

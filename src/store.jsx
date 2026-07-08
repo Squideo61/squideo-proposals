@@ -3921,8 +3921,8 @@ export function StoreProvider({ children }) {
     getUserNotifications(email) {
       return api.get('/api/users?_kind=notifications&email=' + encodeURIComponent(email));
     },
-    saveUserNotifications(email, overrides) {
-      return api.put('/api/users?_kind=notifications&email=' + encodeURIComponent(email), { overrides });
+    saveUserNotifications(email, overrides, channels) {
+      return api.put('/api/users?_kind=notifications&email=' + encodeURIComponent(email), { overrides, channels });
     },
 
     // ---------- In-app notification feed (the bells) ----------

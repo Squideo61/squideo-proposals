@@ -11,7 +11,7 @@ import { bumpTokenVersion } from './_lib/sessions.js';
 import { sendMail, inviteHtml, APP_URL } from './_lib/email.js';
 import { getRole } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
-import { getEffectivePrefs } from './_lib/notifications.js';
+import { getEffectivePrefs, ensureNotificationChannelColumns } from './_lib/notifications.js';
 import { NOTIFICATIONS, isValidNotificationKey } from './_lib/notificationsCatalog.js';
 
 const INVITE_EXPIRY_DAYS = 7;
@@ -156,43 +156,63 @@ async function notificationsHandler(req, res) {
   if (!targetRows[0]) return res.status(404).json({ error: 'User not found' });
 
   if (req.method === 'GET') {
+    await ensureNotificationChannelColumns();
     const effective = await getEffectivePrefs(targetEmail);
-    const overrideRows = await sql`SELECT notification_key, enabled FROM user_notification_overrides WHERE user_email = ${targetEmail}`;
+    const overrideRows = await sql`SELECT notification_key, enabled, channel FROM user_notification_overrides WHERE user_email = ${targetEmail}`;
     const overrides = {};
-    for (const row of overrideRows) overrides[row.notification_key] = row.enabled;
+    const channels = {};
+    for (const row of overrideRows) {
+      if (row.enabled !== null) overrides[row.notification_key] = row.enabled;
+      if (row.channel != null) channels[row.notification_key] = row.channel;
+    }
     return res.status(200).json({
       email: targetEmail,
       role: targetRows[0].role,
       effective,
       overrides,
+      channels,
     });
   }
 
   if (req.method === 'PUT') {
-    const { overrides } = req.body || {};
-    if (!overrides || typeof overrides !== 'object') {
-      return res.status(400).json({ error: 'Expected `overrides` object' });
+    const { overrides, channels } = req.body || {};
+    if ((!overrides || typeof overrides !== 'object') && (!channels || typeof channels !== 'object')) {
+      return res.status(400).json({ error: 'Expected `overrides` and/or `channels` object' });
     }
     // The contract is: caller sends the full set of overrides they want to
-    // exist. Anything missing is removed; anything `null` is removed; the
-    // rest is upserted. This makes the PUT idempotent.
-    const keep = {}; // key -> bool
-    for (const key of Object.keys(overrides)) {
+    // exist. A key may carry an enabled override (true/false), a channel
+    // override ('in_app'|'email'|'both'), or both. Anything absent is removed,
+    // making the PUT idempotent. A row with a channel but no enabled override
+    // keeps enabled = NULL (inherit the role default).
+    const keys = new Set([
+      ...Object.keys(overrides && typeof overrides === 'object' ? overrides : {}),
+      ...Object.keys(channels && typeof channels === 'object' ? channels : {}),
+    ]);
+    const rows = [];
+    const keptOverrides = {};
+    const keptChannels = {};
+    for (const key of keys) {
       if (!isValidNotificationKey(key)) continue;
-      const v = overrides[key];
-      if (v === null || v === undefined) continue;
-      keep[key] = !!v;
+      let enabled = null;
+      const ov = overrides ? overrides[key] : undefined;
+      if (ov !== null && ov !== undefined) { enabled = !!ov; keptOverrides[key] = enabled; }
+      let channel = null;
+      const ch = channels ? channels[key] : undefined;
+      if (ch === 'in_app' || ch === 'email' || ch === 'both') { channel = ch; keptChannels[key] = ch; }
+      if (enabled === null && channel === null) continue;
+      rows.push({ key, enabled, channel });
     }
+    await ensureNotificationChannelColumns();
     await sql`DELETE FROM user_notification_overrides WHERE user_email = ${targetEmail}`;
-    for (const [key, val] of Object.entries(keep)) {
+    for (const r of rows) {
       // eslint-disable-next-line no-await-in-loop
       await sql`
-        INSERT INTO user_notification_overrides (user_email, notification_key, enabled, updated_at)
-        VALUES (${targetEmail}, ${key}, ${val}, NOW())
+        INSERT INTO user_notification_overrides (user_email, notification_key, enabled, channel, updated_at)
+        VALUES (${targetEmail}, ${r.key}, ${r.enabled}, ${r.channel}, NOW())
       `;
     }
     const effective = await getEffectivePrefs(targetEmail);
-    return res.status(200).json({ ok: true, effective, overrides: keep });
+    return res.status(200).json({ ok: true, effective, overrides: keptOverrides, channels: keptChannels });
   }
 
   return res.status(405).end();

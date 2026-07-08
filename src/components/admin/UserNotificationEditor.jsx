@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, Save } from 'lucide-react';
+import { X, Save, Bell, Mail, BellRing } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
+import { useIsMobile } from '../../utils.js';
 import { Modal } from '../ui.jsx';
 import { NOTIFICATIONS } from '../../lib/notifications.js';
 
@@ -15,15 +16,24 @@ function groupBy(list, key) {
   return out;
 }
 
-// Editor for one user's notification preferences. Each notification has a
-// tri-state value: "default" (use the role's default), "on" (force on for
-// this user), or "off" (force off for this user).
+const CHANNELS = [
+  { value: 'in_app', label: 'In-app', icon: Bell },
+  { value: 'email', label: 'Email', icon: Mail },
+  { value: 'both', label: 'Both', icon: BellRing },
+];
+
+// Editor for one user's notification preferences. Each notification has:
+//  - an enabled tri-state: "default" (use the role's default), "on" (force on),
+//    "off" (force off);
+//  - a delivery channel (in-app bell / email / both) that defaults to the
+//    role's channel and can be overridden per user.
 export function UserNotificationEditor({ email, onClose, inline = false }) {
   const { state, actions, showMsg } = useStore();
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [data, setData] = useState(null); // { role, effective, overrides }
-  // Working state: key -> 'default' | 'on' | 'off'
+  const [data, setData] = useState(null); // { role, effective, overrides, channels }
+  // Working state: key -> { mode: 'default'|'on'|'off', channel: 'in_app'|'email'|'both' }
   const [working, setWorking] = useState({});
 
   const groups = useMemo(() => groupBy(NOTIFICATIONS, 'group'), []);
@@ -35,11 +45,12 @@ export function UserNotificationEditor({ email, onClose, inline = false }) {
       if (cancelled) return;
       const w = {};
       for (const n of NOTIFICATIONS) {
-        if (Object.prototype.hasOwnProperty.call(r.overrides || {}, n.key)) {
-          w[n.key] = r.overrides[n.key] ? 'on' : 'off';
-        } else {
-          w[n.key] = 'default';
-        }
+        const hasEnabledOverride = Object.prototype.hasOwnProperty.call(r.overrides || {}, n.key);
+        const mode = hasEnabledOverride ? (r.overrides[n.key] ? 'on' : 'off') : 'default';
+        // Start from the effective channel (override or role default) so the
+        // control shows what's actually happening today.
+        const channel = r.effective?.[n.key]?.channel || 'both';
+        w[n.key] = { mode, channel };
       }
       setData(r);
       setWorking(w);
@@ -55,20 +66,26 @@ export function UserNotificationEditor({ email, onClose, inline = false }) {
 
   const roleName = state.roles?.[data?.role]?.name || data?.role || 'Member';
 
-  const setMode = (key, mode) => {
-    setWorking(prev => ({ ...prev, [key]: mode }));
-  };
+  const setMode = (key, mode) => setWorking(prev => ({ ...prev, [key]: { ...prev[key], mode } }));
+  const setChannel = (key, channel) => setWorking(prev => ({ ...prev, [key]: { ...prev[key], channel } }));
 
   const save = async () => {
     setSaving(true);
     try {
       const overrides = {};
-      for (const [key, mode] of Object.entries(working)) {
-        if (mode === 'on') overrides[key] = true;
-        else if (mode === 'off') overrides[key] = false;
-        // 'default' → omit (server treats missing as "use role default")
+      const channels = {};
+      for (const n of NOTIFICATIONS) {
+        const w = working[n.key] || { mode: 'default', channel: 'both' };
+        if (w.mode === 'on') overrides[n.key] = true;
+        else if (w.mode === 'off') overrides[n.key] = false;
+        // 'default' → omit (server uses the role default for enabled)
+
+        // Only persist a channel override when it differs from the role default,
+        // so the setting keeps inheriting the role unless explicitly changed.
+        const roleChannel = data?.effective?.[n.key]?.roleChannel || 'both';
+        if (w.channel && w.channel !== roleChannel) channels[n.key] = w.channel;
       }
-      await actions.saveUserNotifications(email, overrides);
+      await actions.saveUserNotifications(email, overrides, channels);
       showMsg('Notification preferences saved');
       if (!inline) onClose && onClose();
     } catch (err) {
@@ -81,11 +98,11 @@ export function UserNotificationEditor({ email, onClose, inline = false }) {
   const Body = (
     <>
       {!inline && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, minWidth: 0, overflowWrap: 'anywhere' }}>
             Notifications for {email}
           </h3>
-          <button onClick={onClose} aria-label="Close" className="btn-icon"><X size={14} /></button>
+          <button onClick={onClose} aria-label="Close" className="btn-icon" style={{ flexShrink: 0 }}><X size={14} /></button>
         </div>
       )}
       {loading ? (
@@ -93,8 +110,9 @@ export function UserNotificationEditor({ email, onClose, inline = false }) {
       ) : (
         <>
           <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 16 }}>
-            Defaults come from the <strong>{roleName}</strong> role. Override
-            any notification on or off for this user specifically.
+            Defaults come from the <strong>{roleName}</strong> role. Override any
+            notification for this user — turn it on/off and choose how it's
+            delivered (in-app bell, email, or both).
           </div>
 
           <div style={{ display: 'grid', gap: 16 }}>
@@ -103,31 +121,52 @@ export function UserNotificationEditor({ email, onClose, inline = false }) {
                 <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
                   {group}
                 </div>
-                <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ display: 'grid', gap: 8 }}>
                   {items.map(n => {
-                    const mode = working[n.key] || 'default';
-                    const roleDefault = !!data?.effective?.[n.key]?.enabled && data.effective[n.key].source === 'role';
-                    const effective = data?.effective?.[n.key]?.enabled;
+                    const w = working[n.key] || { mode: 'default', channel: 'both' };
+                    const roleDefaultOn = !!data?.effective?.[n.key]?.enabled && data.effective[n.key].source === 'role';
+                    // Is the notification effectively ON (so the channel picker matters)?
+                    const effectivelyOn = w.mode === 'on' || (w.mode === 'default' && roleDefaultOn);
                     return (
                       <div key={n.key} style={{
                         background: 'white',
                         border: '1px solid ' + BRAND.border,
-                        borderRadius: 8,
+                        borderRadius: 10,
                         padding: 12,
-                        display: 'grid',
-                        gridTemplateColumns: '1fr auto',
-                        gap: 12,
-                        alignItems: 'center',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 10,
                       }}>
-                        <div>
-                          <div style={{ fontSize: 13, fontWeight: 600 }}>{n.label}</div>
-                          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>{n.description}</div>
+                        {/* Label + enabled control. Stacks on mobile so the
+                            buttons never crush the text into a narrow column. */}
+                        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center', justifyContent: 'space-between', gap: isMobile ? 8 : 12 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13.5, fontWeight: 600 }}>{n.label}</div>
+                            <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>{n.description}</div>
+                          </div>
+                          <Seg
+                            fill={isMobile}
+                            options={[
+                              { value: 'default', label: `Default (${roleDefaultOn ? 'on' : 'off'})` },
+                              { value: 'on', label: 'On' },
+                              { value: 'off', label: 'Off' },
+                            ]}
+                            value={w.mode}
+                            onChange={(v) => setMode(n.key, v)}
+                          />
                         </div>
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <SegBtn label={`Default (${roleDefault ? 'on' : 'off'})`} active={mode === 'default'} onClick={() => setMode(n.key, 'default')} />
-                          <SegBtn label="Force on" active={mode === 'on'} onClick={() => setMode(n.key, 'on')} />
-                          <SegBtn label="Force off" active={mode === 'off'} onClick={() => setMode(n.key, 'off')} />
-                        </div>
+                        {/* Delivery channel — only shown when the alert will fire. */}
+                        {effectivelyOn && (
+                          <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center', gap: isMobile ? 6 : 10, paddingTop: 8, borderTop: '1px dashed ' + BRAND.border }}>
+                            <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, flexShrink: 0 }}>Deliver via</span>
+                            <Seg
+                              fill={isMobile}
+                              options={CHANNELS}
+                              value={w.channel}
+                              onChange={(v) => setChannel(n.key, v)}
+                            />
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -151,23 +190,40 @@ export function UserNotificationEditor({ email, onClose, inline = false }) {
   return <Modal onClose={onClose} maxWidth={720} showClose={false}>{Body}</Modal>;
 }
 
-function SegBtn({ label, active, onClick }) {
+// A compact segmented control. `fill` makes the buttons share the full width
+// (used on mobile so they're comfortable tap targets instead of a cramped row).
+function Seg({ options, value, onChange, fill = false }) {
   return (
-    <button
-      onClick={onClick}
-      style={{
-        background: active ? BRAND.blue : 'transparent',
-        color: active ? 'white' : BRAND.ink,
-        border: '1px solid ' + (active ? BRAND.blue : BRAND.border),
-        borderRadius: 6,
-        padding: '6px 10px',
-        fontSize: 12,
-        fontWeight: active ? 700 : 500,
-        cursor: 'pointer',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {label}
-    </button>
+    <div style={{ display: 'flex', gap: 4, flexShrink: 0, width: fill ? '100%' : undefined }}>
+      {options.map((o) => {
+        const active = value === o.value;
+        const Icon = o.icon;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            style={{
+              flex: fill ? 1 : undefined,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+              background: active ? BRAND.blue : 'transparent',
+              color: active ? 'white' : BRAND.ink,
+              border: '1px solid ' + (active ? BRAND.blue : BRAND.border),
+              borderRadius: 6,
+              padding: '7px 10px',
+              minHeight: 38,
+              fontSize: 12,
+              fontWeight: active ? 700 : 500,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              fontFamily: 'inherit',
+            }}
+          >
+            {Icon && <Icon size={13} />}
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
