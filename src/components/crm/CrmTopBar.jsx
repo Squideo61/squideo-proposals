@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, CalendarDays, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Gauge, Globe, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, PoundSterling, Search, Settings, Square, Undo2, Redo2, UserCog, X } from 'lucide-react';
+import { BarChart3, Bell, CalendarDays, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Gauge, Globe, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, PoundSterling, Search, Settings, Square, Undo2, Redo2, UserCog, X } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -323,7 +323,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
           {!marketing && !producer && !isMobile && <GlobalSearch navigate={navigate} isMobile={false} />}
         </div>
 
-        {!marketing && !producer && isMobile && <GlobalSearch navigate={navigate} isMobile />}
+        {/* Mobile: search, notifications and the account menu all fold into one
+            burger (rendered near the end of the bar) so the phone header is just
+            logo + burger. */}
 
         {/* CRM-wide undo / redo. Tooltips name the next reversible action.
             Moved into the mobile nav drawer below 640px to reclaim bar width. */}
@@ -413,9 +415,22 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         {!marketing && !isMobile && canFinanceBell && <NotificationBell onOpenLink={onOpenLink} inline channel="finance" />}
         {!marketing && !isMobile && <NotificationBell onOpenLink={onOpenLink} inline />}
 
-        {/* Mobile: the three bells above fold into one sheet with channel tabs. */}
-        {!marketing && isMobile && <MobileNotifications onOpenLink={onOpenLink} channels={mobileBellChannels} />}
+        {/* Mobile: search + the three bells + account all live in one burger,
+            rendered below. (On the marketing shell there's no search/bells, but
+            the burger still carries the account menu.) */}
+        {isMobile && (
+          <MobileUtilityMenu
+            navigate={navigate}
+            onOpenLink={onOpenLink}
+            onManageAccount={onManageAccount}
+            canAdmin={canAdmin}
+            channels={mobileBellChannels}
+            showSearch={!marketing && !producer}
+            showNotifications={!marketing}
+          />
+        )}
 
+        {!isMobile && (
         <div ref={accountRef} style={{ position: 'relative' }}>
           <button
             type="button"
@@ -469,6 +484,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
 
@@ -491,6 +507,97 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
 
     {isMobile && mobileTabs.length > 0 && <MobileTabBar tabs={mobileTabs} view={view} />}
     </>
+  );
+}
+
+// The phone header's single "burger" on the right: folds the old search icon,
+// the notification bell and the account avatar into one menu, so the top bar is
+// just logo + burger. Search and Notifications reuse their existing overlays
+// (kept mounted here and popped via a bumped `openSignal`, so closing this menu
+// never tears down an open sheet); Account settings / Admin route directly. The
+// burger carries the combined unread badge so alerts stay glanceable.
+function MobileUtilityMenu({ navigate, onOpenLink, onManageAccount, canAdmin, channels, showSearch, showNotifications }) {
+  const { state } = useStore();
+  const [open, setOpen] = useState(false);
+  const [searchSignal, setSearchSignal] = useState(0);
+  const [notifSignal, setNotifSignal] = useState(0);
+  const ref = useRef(null);
+
+  const byChannel = state.notificationsByChannel || {};
+  const totalUnread = showNotifications ? channels.reduce((n, ch) => n + (byChannel[ch]?.unread || 0), 0) : 0;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+
+  const rows = [
+    showSearch && { label: 'Search', icon: Search, onClick: () => setSearchSignal((n) => n + 1) },
+    showNotifications && { label: 'Notifications', icon: Bell, badge: totalUnread, onClick: () => setNotifSignal((n) => n + 1) },
+    { label: 'Account settings', icon: UserCog, onClick: () => onManageAccount() },
+    canAdmin && { label: 'Admin', icon: Settings, onClick: () => navigate('admin', 'users') },
+  ].filter(Boolean);
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="btn-ghost"
+        title="Menu"
+        aria-label="Menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        style={{ position: 'relative', padding: '6px 8px' }}
+      >
+        <Menu size={22} />
+        {totalUnread > 0 && (
+          <span style={{
+            position: 'absolute', top: 1, right: 1, minWidth: 16, height: 16, padding: '0 4px',
+            borderRadius: 999, background: '#EF4444', color: 'white', fontSize: 9.5, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid white',
+          }}>{totalUnread > 99 ? '99+' : totalUnread}</span>
+        )}
+      </button>
+      {open && (
+        <div role="menu" style={{
+          position: 'absolute', top: 'calc(100% + 6px)', right: 0, background: 'white',
+          border: '1px solid ' + BRAND.border, borderRadius: 10, boxShadow: '0 8px 24px rgba(15,42,61,0.12)',
+          minWidth: 220, padding: 6, zIndex: 300, display: 'flex', flexDirection: 'column', gap: 2,
+        }}>
+          {rows.map((r) => (
+            <button
+              key={r.label}
+              type="button"
+              role="menuitem"
+              onClick={() => { setOpen(false); r.onClick(); }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 10px',
+                border: 'none', background: 'transparent', borderRadius: 8, cursor: 'pointer',
+                fontSize: 14, color: BRAND.ink, textAlign: 'left', minHeight: 44,
+              }}
+            >
+              <r.icon size={16} color={BRAND.muted} />
+              <span style={{ flex: 1 }}>{r.label}</span>
+              {r.badge > 0 && (
+                <span style={{ background: BADGE, color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999 }}>
+                  {r.badge > 99 ? '99+' : r.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {showSearch && <GlobalSearch navigate={navigate} isMobile hideTrigger openSignal={searchSignal} />}
+      {showNotifications && <MobileNotifications onOpenLink={onOpenLink} channels={channels} hideTrigger openSignal={notifSignal} />}
+    </div>
   );
 }
 

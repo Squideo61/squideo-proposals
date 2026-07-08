@@ -14,6 +14,7 @@ import { EmailAttachmentCard } from './EmailAttachment.jsx';
 import { DealContextPanel } from './DealContextPanel.jsx';
 import { EmailComposerModal } from './DealDetailView.jsx';
 import { TrackingEye, TrackingBanner } from './EmailTracking.jsx';
+import { ActionMenu } from '../ui.jsx';
 import { STAGE_COLOURS, STAGE_LABEL } from '../../lib/stages.js';
 
 // 'deals' + 'triage' are DB-backed (CRM-aware); the rest proxy live to Gmail
@@ -496,7 +497,7 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
   );
 
   return (
-    <div style={{ padding: isMobile ? '10px 10px' : '12px 24px' }}>
+    <div style={{ padding: isMobile ? '8px 6px' : '12px 24px' }}>
       {isMobile && headerEl}
 
       <div style={{ display: 'flex', gap: isMobile ? 0 : 18, alignItems: 'flex-start', flexDirection: isMobile ? 'column' : 'row' }}>
@@ -1069,6 +1070,17 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
   const rowBg = selected ? '#FEF9E7' : row.unread ? '#F4FAFE' : stageC ? stageC.fg + '12' : 'white';
   const canArchive = folder !== 'trash' && folder !== 'spam' && folder !== 'sent' && folder !== 'drafts';
 
+  // Per-row actions live behind one "⋮" menu (shared by the mobile card and the
+  // desktop row) so each line stays compact instead of carrying a strip of
+  // icon buttons.
+  const rowMenuItems = [
+    row.unread && { label: 'Mark read', icon: MailOpen, onClick: () => onAction('markRead', row.id) },
+    canArchive && { label: 'Archive', icon: Archive, onClick: () => onAction('archive', row.id) },
+    folder === 'trash'
+      ? { label: 'Restore', icon: RefreshCw, onClick: () => onAction('untrash', row.id) }
+      : { label: 'Delete', icon: Trash2, danger: true, onClick: () => onAction('trash', row.id) },
+  ];
+
   // On a phone the desktop's single-row layout (fixed-width sender + flex
   // subject + inline date + action cluster) overflows and the pieces collide.
   // Mobile gets a stacked, tappable card: sender + date on top, subject and a
@@ -1127,16 +1139,8 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
             </div>
           )}
         </a>
-        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, flexShrink: 0 }}>
-          {row.unread && (
-            <button onClick={() => onAction('markRead', row.id)} className="btn-icon" style={mBtn} title="Mark read" aria-label="Mark read"><MailOpen size={16} /></button>
-          )}
-          {canArchive && (
-            <button onClick={() => onAction('archive', row.id)} className="btn-icon" style={mBtn} title="Archive" aria-label="Archive"><Archive size={16} /></button>
-          )}
-          {folder === 'trash'
-            ? <button onClick={() => onAction('untrash', row.id)} className="btn-icon" style={mBtn} title="Restore" aria-label="Restore"><RefreshCw size={16} /></button>
-            : <button onClick={() => onAction('trash', row.id)} className="btn-icon" style={mBtn} title="Delete" aria-label="Delete"><Trash2 size={16} /></button>}
+        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+          <ActionMenu align="right" items={rowMenuItems} triggerProps={{ style: mBtn }} />
         </div>
       </div>
     );
@@ -1202,17 +1206,7 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
       <TrackingEye tracking={row.tracking} />
       {row.hasAttachments && <Paperclip size={13} color={BRAND.muted} style={{ flexShrink: 0 }} title="Has attachment" />}
       <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: BRAND.muted, width: 78, textAlign: 'right' }}>{formatMailDate(row.date)}</span>
-      <div style={{ flexShrink: 0, display: 'flex', gap: 2 }}>
-        {row.unread && (
-          <button onClick={() => onAction('markRead', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Mark read" aria-label="Mark read"><MailOpen size={14} /></button>
-        )}
-        {folder !== 'trash' && folder !== 'spam' && folder !== 'sent' && folder !== 'drafts' && (
-          <button onClick={() => onAction('archive', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Archive" aria-label="Archive"><Archive size={14} /></button>
-        )}
-        {folder === 'trash'
-          ? <button onClick={() => onAction('untrash', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Restore" aria-label="Restore"><RefreshCw size={14} /></button>
-          : <button onClick={() => onAction('trash', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Delete" aria-label="Delete"><Trash2 size={14} /></button>}
-      </div>
+      <ActionMenu align="right" items={rowMenuItems} triggerProps={{ style: SLIM_ROW_BTN }} />
     </div>
   );
 }
@@ -1408,17 +1402,21 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
           {/* Action bar — folder management (Gmail folders only). Reply /
               Forward live at the foot of the thread, Gmail-style. */}
           {latest && isGmail && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingBottom: 12, marginBottom: 12, borderBottom: '1px solid ' + BRAND.border }}>
-              {folder !== 'sent' && folder !== 'drafts' && folder !== 'trash' && folder !== 'spam' && (
-                <button onClick={() => act('archive')} className="btn-icon" title="Archive" aria-label="Archive"><Archive size={16} /></button>
-              )}
-              {folder === 'trash'
-                ? <button onClick={() => act('untrash')} className="btn-icon" title="Restore" aria-label="Restore"><RefreshCw size={16} /></button>
-                : <button onClick={() => act('trash')} className="btn-icon" title="Delete" aria-label="Delete"><Trash2 size={16} /></button>}
-              {folder !== 'spam' && folder !== 'drafts' && <button onClick={() => act('spam')} className="btn-icon" title="Mark as spam" aria-label="Mark as spam"><ShieldAlert size={16} /></button>}
-              {folder === 'spam' && <button onClick={() => act('unspam')} className="btn-icon" title="Not spam" aria-label="Not spam"><ShieldAlert size={16} /></button>}
-              {folder !== 'drafts' && <button onClick={() => act('markUnread')} className="btn-icon" title="Mark unread" aria-label="Mark unread"><Mail size={16} /></button>}
-              {gmailWeb && <a href={gmailWeb} target="_blank" rel="noreferrer" className="btn-icon" title="Open in Gmail" aria-label="Open in Gmail" style={{ textDecoration: 'none' }}><ExternalLink size={16} /></a>}
+            <div style={{ paddingBottom: 12, marginBottom: 12, borderBottom: '1px solid ' + BRAND.border }}>
+              <ActionMenu
+                align="left"
+                triggerTitle="Message actions"
+                items={[
+                  folder !== 'sent' && folder !== 'drafts' && folder !== 'trash' && folder !== 'spam' && { label: 'Archive', icon: Archive, onClick: () => act('archive') },
+                  folder === 'trash'
+                    ? { label: 'Restore', icon: RefreshCw, onClick: () => act('untrash') }
+                    : { label: 'Delete', icon: Trash2, danger: true, onClick: () => act('trash') },
+                  folder !== 'spam' && folder !== 'drafts' && { label: 'Mark as spam', icon: ShieldAlert, onClick: () => act('spam') },
+                  folder === 'spam' && { label: 'Not spam', icon: ShieldAlert, onClick: () => act('unspam') },
+                  folder !== 'drafts' && { label: 'Mark unread', icon: Mail, onClick: () => act('markUnread') },
+                  gmailWeb && { label: 'Open in Gmail', icon: ExternalLink, onClick: () => window.open(gmailWeb, '_blank', 'noopener') },
+                ]}
+              />
             </div>
           )}
 
@@ -1510,6 +1508,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
 // One message inside a conversation. Collapsed shows a one-line header; click
 // to expand the full sanitised body + attachments.
 function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealId = null }) {
+  const isMobile = useIsMobile();
   const [open, setOpen] = useState(!!defaultExpanded);
   const [showQuoted, setShowQuoted] = useState(false);
   const outbound = message.outbound || (message.fromEmail && message.fromEmail.toLowerCase() === myEmail);
@@ -1558,7 +1557,7 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
         <ChevronDown size={14} color={BRAND.muted} style={{ flexShrink: 0, transition: 'transform 150ms', transform: open ? 'none' : 'rotate(-90deg)' }} />
       </button>
       {open && (
-        <div style={{ padding: 12 }}>
+        <div style={{ padding: isMobile ? '10px 8px' : 12 }}>
           <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5 }}>
             {message.to?.length ? <div>to {message.to.join(', ')}</div> : null}
             {message.cc?.length ? <div>cc {message.cc.join(', ')}</div> : null}

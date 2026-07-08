@@ -1,5 +1,6 @@
-import React, { useEffect, useId, useState } from 'react';
-import { Check, ChevronDown, Mail, Phone, X } from 'lucide-react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Check, ChevronDown, Mail, MoreVertical, Phone, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { formatGBP, useIsMobile } from '../utils.js';
@@ -395,5 +396,123 @@ export function Toast({ msg }) {
     <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: BRAND.ink, color: 'white', padding: '12px 20px', borderRadius: 8, fontSize: 14, fontWeight: 500, zIndex: 3000, maxWidth: '90vw', textAlign: 'center' }}>
       {msg}
     </div>
+  );
+}
+
+// Shared "⋮" overflow (burger) menu — one compact trigger that pops a list of
+// row actions, so each row stays tight instead of carrying a strip of icon
+// buttons. `items` is [{ label, icon, onClick, danger, disabled, badge }]; falsy
+// items are skipped so callers can inline conditionals. `align` picks which edge
+// the panel lines up with. `trigger` swaps the ⋮ glyph; `triggerProps` merges
+// styles/aria onto the button.
+//
+// The panel is portalled to <body> and fixed-positioned from the trigger's rect,
+// so it's never clipped by an `overflow: hidden` ancestor (email/task lists,
+// card bodies) and never fights their z-index. It flips above the trigger when
+// there isn't room below, and closes on scroll/resize/outside-tap/Escape.
+export function ActionMenu({ items, align = 'right', trigger, triggerTitle = 'More actions', triggerProps = {}, menuMinWidth = 190 }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+  const list = (items || []).filter(Boolean);
+
+  const place = () => {
+    const b = btnRef.current;
+    if (!b) return;
+    const r = b.getBoundingClientRect();
+    const gap = 6;
+    const spaceBelow = window.innerHeight - r.bottom;
+    const flipUp = spaceBelow < 240 && r.top > spaceBelow;
+    setPos({
+      top: flipUp ? undefined : r.bottom + gap,
+      bottom: flipUp ? window.innerHeight - r.top + gap : undefined,
+      left: align === 'left' ? r.left : undefined,
+      right: align === 'right' ? window.innerWidth - r.right : undefined,
+    });
+  };
+
+  useLayoutEffect(() => { if (open) place(); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      if (btnRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const reposition = () => setOpen(false); // simplest: close if the page moves under it
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    };
+  }, [open]);
+
+  if (!list.length) return null;
+  const { style: trigStyle, ...trigRest } = triggerProps;
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        className="btn-icon"
+        title={triggerTitle}
+        aria-label={triggerTitle}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        style={{ flexShrink: 0, ...trigStyle }}
+        {...trigRest}
+      >
+        {trigger || <MoreVertical size={16} />}
+      </button>
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          role="menu"
+          style={{
+            position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, right: pos.right,
+            background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(15, 42, 61, 0.16)',
+            minWidth: menuMinWidth, maxHeight: '60vh', overflowY: 'auto', padding: 4, zIndex: 4000,
+          }}
+        >
+          {list.map((item, i) => (
+            <button
+              key={i}
+              type="button"
+              role="menuitem"
+              disabled={item.disabled}
+              onClick={(e) => { e.stopPropagation(); setOpen(false); item.onClick?.(); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                padding: '10px 10px', background: 'transparent', border: 'none', borderRadius: 6,
+                cursor: item.disabled ? 'default' : 'pointer', fontSize: 13.5, fontWeight: 500,
+                color: item.disabled ? BRAND.muted : item.danger ? '#D32F2F' : BRAND.ink,
+                opacity: item.disabled ? 0.6 : 1, textAlign: 'left', fontFamily: 'inherit',
+              }}
+              onMouseEnter={(e) => { if (!item.disabled) e.currentTarget.style.background = item.danger ? '#FFEBEE' : '#F1F5F9'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              {item.icon && <item.icon size={15} />}
+              <span style={{ flex: 1 }}>{item.label}</span>
+              {item.badge > 0 && (
+                <span style={{ background: '#FB923C', color: 'white', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999 }}>
+                  {item.badge > 99 ? '99+' : item.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }

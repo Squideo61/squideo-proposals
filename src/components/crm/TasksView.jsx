@@ -5,6 +5,7 @@ import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { AvatarGroup } from '../Avatar.jsx';
+import { ActionMenu } from '../ui.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 
 const TASK_FILTER_STORAGE_KEY = 'tasks_team_filter';
@@ -288,23 +289,18 @@ function TaskRow({ task, actions, state, onOpenDeal, onEdit }) {
           <AvatarGroup emails={assignees} max={3} size={24} />
         </div>
       )}
-      <button
-        onClick={(e) => { stop(e); onEdit?.(task); }}
-        className="btn-icon"
-        aria-label="Edit task"
-        title="Edit task"
-        style={{ padding: 6 }}
-      >
-        <Pencil size={14} />
-      </button>
-      <button
-        onClick={(e) => { stop(e); if (window.confirm('Delete this task?')) actions.deleteTask(task.id); }}
-        className="btn-icon is-danger"
-        aria-label="Delete task"
-        style={{ padding: 6 }}
-      >
-        <Trash2 size={14} />
-      </button>
+      {/* Edit / delete fold into one "⋮" menu so the row stays compact and the
+          actions are consistent on desktop and mobile (the old inline pencil +
+          trash pair crowded the phone layout). */}
+      <div style={{ flexShrink: 0, alignSelf: 'center' }}>
+        <ActionMenu
+          triggerProps={{ style: { padding: 6 } }}
+          items={[
+            { label: 'Edit task', icon: Pencil, onClick: () => onEdit?.(task) },
+            { label: 'Delete task', icon: Trash2, danger: true, onClick: () => { if (window.confirm('Delete this task?')) actions.deleteTask(task.id); } },
+          ]}
+        />
+      </div>
     </div>
   );
 }

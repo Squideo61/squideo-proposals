@@ -18,9 +18,14 @@ export function MobileTabBar({ tabs, view }) {
   }, []);
 
   // Portalled to <body> so no transformed/overflow ancestor can become its
-  // containing block and let it drift up the page. `translateZ(0)` + backface
-  // promote it to its own compositor layer, which stops iOS Safari "parking" the
-  // bar mid-page during momentum scroll — it stays pinned to the viewport floor.
+  // containing block and let it drift up the page.
+  //
+  // NB: we deliberately do NOT put a `transform` on this fixed element. On iOS
+  // WebKit a transform (even `translateZ(0)`) turns a position:fixed element
+  // into its own containing block and makes it track the *document* rather than
+  // the viewport during momentum scroll — which is exactly the "bar slides up
+  // into the middle of the page while scrolling" bug. Plain position:fixed pins
+  // it to the viewport floor on modern iOS without any layer-promotion hack.
   const bar = (
     <nav
       aria-label="Primary"
@@ -29,7 +34,6 @@ export function MobileTabBar({ tabs, view }) {
         display: 'flex', background: 'white', borderTop: '1px solid ' + BRAND.border,
         boxShadow: '0 -1px 8px rgba(15,42,61,0.06)',
         paddingBottom: 'env(safe-area-inset-bottom)',
-        transform: 'translateZ(0)', WebkitBackfaceVisibility: 'hidden',
       }}
     >
       {tabs.map((t) => {

@@ -29,7 +29,11 @@ function scoreFields(fields, q) {
   return best;
 }
 
-export function GlobalSearch({ navigate, isMobile }) {
+// `hideTrigger` + `openSignal` let a parent (the mobile header burger menu) own
+// the launch button and pop the search overlay itself: bumping `openSignal`
+// opens the mobile overlay, and the component renders overlay-only (no magnifier
+// button of its own).
+export function GlobalSearch({ navigate, isMobile, hideTrigger = false, openSignal = 0 }) {
   const { state } = useStore();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -144,6 +148,9 @@ export function GlobalSearch({ navigate, isMobile }) {
   // Focus the input when the mobile overlay opens.
   useEffect(() => { if (mobileOpen) setTimeout(() => inputRef.current?.focus(), 30); }, [mobileOpen]);
 
+  // Parent-driven open (mobile header burger). Ignore the initial 0.
+  useEffect(() => { if (openSignal) setMobileOpen(true); }, [openSignal]);
+
   const choose = (r) => {
     if (!r) return;
     r.go();
@@ -200,9 +207,11 @@ export function GlobalSearch({ navigate, isMobile }) {
   if (isMobile) {
     return (
       <>
-        <button type="button" onClick={() => setMobileOpen(true)} className="btn-icon" title="Search" aria-label="Search">
-          <Search size={18} />
-        </button>
+        {!hideTrigger && (
+          <button type="button" onClick={() => setMobileOpen(true)} className="btn-icon" title="Search" aria-label="Search">
+            <Search size={18} />
+          </button>
+        )}
         {mobileOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(15,42,61,0.35)' }} onClick={() => setMobileOpen(false)}>
             {/* paddingTop carries the iOS safe-area inset so the input + close

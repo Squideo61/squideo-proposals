@@ -13,7 +13,10 @@ const TAB_LABEL = { general: 'Updates', finance: 'Finance', tracking: 'Tracking'
 // general / finance / tracking feeds (the three separate desktop bells) into a
 // single sheet with channel tabs. Frees the cramped phone header. `channels` is
 // the ordered list of feeds this user can see (finance is permission-gated).
-export function MobileNotifications({ onOpenLink, channels }) {
+// `hideTrigger` + `openSignal` let the mobile header burger menu own the launch
+// button and pop this sheet itself: bumping `openSignal` opens it, and with
+// `hideTrigger` the component renders the sheet only (no bell of its own).
+export function MobileNotifications({ onOpenLink, channels, hideTrigger = false, openSignal = 0 }) {
   const { state, actions } = useStore();
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(channels[0] || 'general');
@@ -38,6 +41,9 @@ export function MobileNotifications({ onOpenLink, channels }) {
   // Refresh whenever opened so the sheet is current (mirrors NotificationBell).
   useEffect(() => { if (open) actions.loadNotifications().catch(() => {}); }, [open, actions]);
 
+  // Parent-driven open (mobile header burger). Ignore the initial 0.
+  useEffect(() => { if (openSignal) setOpen(true); }, [openSignal]);
+
   const onItemClick = (n) => {
     if (!n.read) actions.markNotificationsRead([n.id], active);
     if (n.link) { setOpen(false); onOpenLink?.(n.link); }
@@ -45,6 +51,7 @@ export function MobileNotifications({ onOpenLink, channels }) {
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
+      {!hideTrigger && (
       <button
         onClick={() => setOpen((o) => !o)}
         aria-label={totalUnread > 0 ? `Notifications (${totalUnread} unread)` : 'Notifications'}
@@ -65,6 +72,7 @@ export function MobileNotifications({ onOpenLink, channels }) {
           }}>{totalUnread > 99 ? '99+' : totalUnread}</span>
         )}
       </button>
+      )}
 
       {open && (
         <div style={{

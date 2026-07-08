@@ -202,12 +202,15 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany }) {
 
 // ---- shared bits ---------------------------------------------------------
 
-function Card({ label, value, sub, accent }) {
+// `compact` shrinks the tile so three of them sit comfortably on one row (used
+// by the Traffic tab, which only has three metrics); the four-metric tabs keep
+// the roomier default and wrap to two lines on a phone.
+function Card({ label, value, sub, accent, compact = false }) {
   return (
-    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: '16px 18px', minWidth: 0 }}>
-      <div style={{ fontSize: 12, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 700, marginTop: 6, color: accent || BRAND.ink }}>{value}</div>
-      {sub != null && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>{sub}</div>}
+    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: compact ? '11px 12px' : '16px 18px', minWidth: 0 }}>
+      <div style={{ fontSize: compact ? 10.5 : 12, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
+      <div style={{ fontSize: compact ? 20 : 24, fontWeight: 700, marginTop: compact ? 3 : 6, color: accent || BRAND.ink }}>{value}</div>
+      {sub != null && <div style={{ fontSize: compact ? 10.5 : 12, color: BRAND.muted, marginTop: compact ? 2 : 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>}
     </div>
   );
 }
@@ -887,10 +890,13 @@ function TrafficTab({ data, loading, onOpenSettings, onRetry }) {
       {data.lastSync && (
         <div style={{ marginBottom: 16 }}><LastSync status={data.lastSync} /></div>
       )}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
-        <Card label="Sessions" value={fmtNum(t.sessions)} accent={BRAND.blue} />
-        <Card label="Users" value={fmtNum(t.users)} />
-        <Card label="Key events" value={fmtNum(t.keyEvents)} sub="GA4 conversions" accent="#16A34A" />
+      {/* Three metrics → always one row (even on a phone), and compact so they
+          don't dwarf the chart below. The four-metric tabs keep the auto-fit
+          grid and are allowed to wrap. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 24 }}>
+        <Card label="Sessions" value={fmtNum(t.sessions)} accent={BRAND.blue} compact />
+        <Card label="Users" value={fmtNum(t.users)} compact />
+        <Card label="Key events" value={fmtNum(t.keyEvents)} sub="GA4 conversions" accent="#16A34A" compact />
       </div>
       <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 12px' }}>Sessions over time</h2>
       <DailyBars data={data.series} dataKey="sessions" color={BRAND.blue} />
