@@ -511,7 +511,10 @@ export function BusinessOverviewView({
       {/* ── Tasks / Quote requests / Partners / Recent activity ── */}
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: sectionGap, marginTop: sectionGap }}>
         <Panel title="Today's workload" icon={CheckSquare} delay={11}>
-          <div style={{ display: 'grid', gridTemplateColumns: canQuoteRequests ? '1fr 1fr' : '1fr', gap: 12 }}>
+          {/* One column on a phone: two side-by-side tiles won't shrink below
+              their content (grid tracks default to min-width:auto) and overflow
+              the viewport. Desktop keeps the two-up layout. */}
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : (canQuoteRequests ? '1fr 1fr' : '1fr'), gap: 12 }}>
             <ActionTile icon={CheckSquare} label="Tasks due" value={tasksDue} accent={tasksDue > 0 ? AMBER : GREEN} onClick={onOpenTasks} wide={!canQuoteRequests} />
             {canQuoteRequests && (
               <ActionTile icon={MailQuestion} label="New quote requests" value={newQuotes} accent={newQuotes > 0 ? BRAND.blue : BRAND.muted} onClick={onOpenQuoteRequests} />
@@ -543,9 +546,12 @@ export function BusinessOverviewView({
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                 >
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: r.color, flexShrink: 0 }} />
-                  <span style={{ flex: 1, fontSize: 13.5, color: BRAND.ink, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.title}</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: r.color, textTransform: 'uppercase', letterSpacing: 0.4 }}>{r.meta}</span>
-                  <span style={{ fontSize: 12, color: BRAND.muted, minWidth: 56, textAlign: 'right' }}>{daysAgoLabel(r.at)}</span>
+                  {/* minWidth:0 lets this flex item shrink so the ellipsis kicks
+                      in — without it a long title keeps its full width and pushes
+                      the meta/date columns off the right edge. */}
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, color: BRAND.ink, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.title}</span>
+                  <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: r.color, textTransform: 'uppercase', letterSpacing: 0.4 }}>{r.meta}</span>
+                  <span style={{ flexShrink: 0, fontSize: 12, color: BRAND.muted, minWidth: 56, textAlign: 'right' }}>{daysAgoLabel(r.at)}</span>
                 </button>
               ))}
             </div>
@@ -580,7 +586,7 @@ function ActionTile({ icon: Icon, label, value, accent, onClick, wide }) {
       <span style={{ width: 38, height: 38, borderRadius: 10, background: (accent || BRAND.blue) + '18', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         <Icon size={18} color={accent || BRAND.blue} />
       </span>
-      <span style={{ flex: 1 }}>
+      <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: 'block', fontSize: 24, fontWeight: 800, color: BRAND.ink, lineHeight: 1.1 }}>{value}</span>
         <span style={{ display: 'block', fontSize: 12.5, color: BRAND.muted, marginTop: 2 }}>{label}</span>
       </span>
@@ -607,9 +613,9 @@ function PartnersBody({ activePartners, partnerTotal, onOpenPartner }) {
           onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
         >
-          <Coins size={14} color={PURPLE} />
-          <span style={{ flex: 1, fontSize: 13.5, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.clientName || 'Partner'}</span>
-          <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{gbp0(p.outstanding)}</span>
+          <Coins size={14} color={PURPLE} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.clientName || 'Partner'}</span>
+          <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{gbp0(p.outstanding)}</span>
         </button>
       ))}
     </div>
@@ -636,8 +642,8 @@ function TopOutstanding({ pending, onOpenDeal }) {
           onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
         >
-          <span style={{ flex: 1, fontSize: 13.5, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.company || d.title || 'Untitled deal'}</span>
-          <span style={{ fontSize: 13, fontWeight: 700, color: AMBER }}>{gbp0(d.outstanding)}</span>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.company || d.title || 'Untitled deal'}</span>
+          <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 700, color: AMBER }}>{gbp0(d.outstanding)}</span>
         </button>
       ))}
     </div>
