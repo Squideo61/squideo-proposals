@@ -118,9 +118,12 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
   }, {});
   const totalEntries = Object.entries(totalsByCurrency).filter(([, v]) => v > 0);
 
-  // 'quoted' PO-route extras live in their own Purchase Orders section, not the
-  // "to invoice" list.
-  const pendingExtras = (extras || []).filter((e) => e.status !== 'paid' && e.status !== 'quoted');
+  // Only extras still awaiting invoicing. Once an extra has been invoiced it's
+  // already represented by its invoice row below — its own "invoice now"/PO
+  // invoice, or the final invoice it rode on — so listing it here too would show
+  // the same charge twice. 'quoted' PO-route extras live in the Purchase Orders
+  // section; 'paid' ones settle with their invoice.
+  const pendingExtras = (extras || []).filter((e) => e.status === 'pending');
   const poExtras = (extras || []).filter((e) => e.paymentType === 'po' && e.status === 'quoted');
   const [busyExtraId, setBusyExtraId] = useState(null);
 
@@ -209,21 +212,10 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
                   <span style={{ fontSize: 10, fontWeight: 700, color: '#C2410C', background: '#FFEDD5', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, flexShrink: 0 }}>Extra</span>
                   <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.description}</span>
                   <span style={{ fontSize: 13, color: '#9A3412', flexShrink: 0 }}>· {formatGBP(e.amount)}{vatSuffix}</span>
-                  {e.status === 'invoiced' && (
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, flexShrink: 0 }} title={e.invoiceNumber ? 'On invoice ' + e.invoiceNumber : 'On the final invoice'}>
-                      Invoiced{e.invoiceNumber ? ' · ' + e.invoiceNumber : ''}
-                    </span>
-                  )}
                 </div>
-                {e.status === 'pending' ? (
-                  <button onClick={() => deleteExtra(e.id)} className="btn-icon" aria-label="Remove extra" title="Remove extra">
-                    <Trash2 size={14} />
-                  </button>
-                ) : (
-                  <button className="btn-icon" disabled aria-label="On an invoice — void it to remove" title="On an invoice — void or delete that invoice to remove this extra" style={{ opacity: 0.45, cursor: 'not-allowed' }}>
-                    <Trash2 size={14} />
-                  </button>
-                )}
+                <button onClick={() => deleteExtra(e.id)} className="btn-icon" aria-label="Remove extra" title="Remove extra">
+                  <Trash2 size={14} />
+                </button>
               </div>
             ))}
           </div>
