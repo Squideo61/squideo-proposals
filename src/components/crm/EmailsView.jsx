@@ -1304,7 +1304,19 @@ function GmailThreadRow({ row, folder, first, density, onOpen, onAction, selecte
       <TrackingEye tracking={row.tracking} />
       {row.hasAttachments && <Paperclip size={13} color={BRAND.muted} style={{ flexShrink: 0 }} title="Has attachment" />}
       <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: BRAND.muted, width: 78, textAlign: 'right' }}>{formatMailDate(row.date)}</span>
-      <ActionMenu align="right" items={rowMenuItems} triggerProps={{ style: SLIM_ROW_BTN }} />
+      {/* Desktop keeps the inline action buttons (plenty of room); the mobile
+          card above collapses them into a ⋮ menu to keep each row compact. */}
+      <div style={{ flexShrink: 0, display: 'flex', gap: 2 }}>
+        {row.unread && (
+          <button onClick={() => onAction('markRead', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Mark read" aria-label="Mark read"><MailOpen size={14} /></button>
+        )}
+        {folder !== 'trash' && folder !== 'spam' && folder !== 'sent' && folder !== 'drafts' && (
+          <button onClick={() => onAction('archive', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Archive" aria-label="Archive"><Archive size={14} /></button>
+        )}
+        {folder === 'trash'
+          ? <button onClick={() => onAction('untrash', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Restore" aria-label="Restore"><RefreshCw size={14} /></button>
+          : <button onClick={() => onAction('trash', row.id)} className="btn-icon" style={SLIM_ROW_BTN} title="Delete" aria-label="Delete"><Trash2 size={14} /></button>}
+      </div>
     </div>
   );
 }
@@ -1504,22 +1516,39 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
           {/* Action bar — folder management (Gmail folders only). Reply /
               Forward live at the foot of the thread, Gmail-style. */}
           {latest && isGmail && !isCustomFolder && (
-            <div style={{ paddingBottom: 12, marginBottom: 12, borderBottom: '1px solid ' + BRAND.border }}>
-              <ActionMenu
-                align="left"
-                triggerTitle="Message actions"
-                items={[
-                  folder !== 'sent' && folder !== 'drafts' && folder !== 'trash' && folder !== 'spam' && { label: 'Archive', icon: Archive, onClick: () => act('archive') },
-                  folder === 'trash'
-                    ? { label: 'Restore', icon: RefreshCw, onClick: () => act('untrash') }
-                    : { label: 'Delete', icon: Trash2, danger: true, onClick: () => act('trash') },
-                  folder !== 'spam' && folder !== 'drafts' && { label: 'Mark as spam', icon: ShieldAlert, onClick: () => act('spam') },
-                  folder === 'spam' && { label: 'Not spam', icon: ShieldAlert, onClick: () => act('unspam') },
-                  folder !== 'drafts' && { label: 'Mark unread', icon: Mail, onClick: () => act('markUnread') },
-                  gmailWeb && { label: 'Open in Gmail', icon: ExternalLink, onClick: () => window.open(gmailWeb, '_blank', 'noopener') },
-                ]}
-              />
-            </div>
+            isMobile ? (
+              // Phone: fold the folder actions into one ⋮ menu to keep the header compact.
+              <div style={{ paddingBottom: 12, marginBottom: 12, borderBottom: '1px solid ' + BRAND.border }}>
+                <ActionMenu
+                  align="left"
+                  triggerTitle="Message actions"
+                  items={[
+                    folder !== 'sent' && folder !== 'drafts' && folder !== 'trash' && folder !== 'spam' && { label: 'Archive', icon: Archive, onClick: () => act('archive') },
+                    folder === 'trash'
+                      ? { label: 'Restore', icon: RefreshCw, onClick: () => act('untrash') }
+                      : { label: 'Delete', icon: Trash2, danger: true, onClick: () => act('trash') },
+                    folder !== 'spam' && folder !== 'drafts' && { label: 'Mark as spam', icon: ShieldAlert, onClick: () => act('spam') },
+                    folder === 'spam' && { label: 'Not spam', icon: ShieldAlert, onClick: () => act('unspam') },
+                    folder !== 'drafts' && { label: 'Mark unread', icon: Mail, onClick: () => act('markUnread') },
+                    gmailWeb && { label: 'Open in Gmail', icon: ExternalLink, onClick: () => window.open(gmailWeb, '_blank', 'noopener') },
+                  ]}
+                />
+              </div>
+            ) : (
+              // Desktop: the folder actions as inline icon buttons (plenty of room).
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingBottom: 12, marginBottom: 12, borderBottom: '1px solid ' + BRAND.border }}>
+                {folder !== 'sent' && folder !== 'drafts' && folder !== 'trash' && folder !== 'spam' && (
+                  <button onClick={() => act('archive')} className="btn-icon" title="Archive" aria-label="Archive"><Archive size={16} /></button>
+                )}
+                {folder === 'trash'
+                  ? <button onClick={() => act('untrash')} className="btn-icon" title="Restore" aria-label="Restore"><RefreshCw size={16} /></button>
+                  : <button onClick={() => act('trash')} className="btn-icon" title="Delete" aria-label="Delete"><Trash2 size={16} /></button>}
+                {folder !== 'spam' && folder !== 'drafts' && <button onClick={() => act('spam')} className="btn-icon" title="Mark as spam" aria-label="Mark as spam"><ShieldAlert size={16} /></button>}
+                {folder === 'spam' && <button onClick={() => act('unspam')} className="btn-icon" title="Not spam" aria-label="Not spam"><ShieldAlert size={16} /></button>}
+                {folder !== 'drafts' && <button onClick={() => act('markUnread')} className="btn-icon" title="Mark unread" aria-label="Mark unread"><Mail size={16} /></button>}
+                {gmailWeb && <a href={gmailWeb} target="_blank" rel="noreferrer" className="btn-icon" title="Open in Gmail" aria-label="Open in Gmail" style={{ textDecoration: 'none' }}><ExternalLink size={16} /></a>}
+              </div>
+            )
           )}
 
           {loading && <div style={{ color: BRAND.muted, fontSize: 13, padding: 20, textAlign: 'center' }}>Loading…</div>}
