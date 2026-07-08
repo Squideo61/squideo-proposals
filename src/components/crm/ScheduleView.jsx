@@ -103,6 +103,21 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
     : parseDate(cursor).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
   const shift = (dir) => setCursor(c => viewMode === 'week' ? addDays(c, dir * 7) : addMonths(c, dir));
 
+  // Left/right arrow keys page the calendar back/forward a week (or month in
+  // month view) — ignored while typing in a field or when a modal is open.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (leaveModal || blockModal || newBlock || allowanceModal) return;
+      const el = document.activeElement;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+      shift(e.key === 'ArrowLeft' ? -1 : 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [viewMode, leaveModal, blockModal, newBlock, allowanceModal]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const onDropCell = (producerEmail, day, e) => {
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain');
