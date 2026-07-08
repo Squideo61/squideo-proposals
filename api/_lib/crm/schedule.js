@@ -62,6 +62,10 @@ export function ensureScheduleTables() {
     await sql`ALTER TABLE schedule_assignments ADD COLUMN IF NOT EXISTS title TEXT`;
     await sql`ALTER TABLE schedule_assignments ALTER COLUMN video_id DROP NOT NULL`.catch(() => {});
     await sql`ALTER TABLE schedule_assignments ALTER COLUMN deal_id DROP NOT NULL`.catch(() => {});
+    // Auto-generated cover blocks (e.g. Hannah covering Callum's leave) are tied
+    // to the leave request that spawned them so they can be cleaned up if it's
+    // denied / cancelled. kind = 'cover'.
+    await sql`ALTER TABLE schedule_assignments ADD COLUMN IF NOT EXISTS cover_leave_id TEXT`;
     await sql`CREATE TABLE IF NOT EXISTS leave_requests (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -89,8 +93,46 @@ export function ensureScheduleTables() {
     // `track_allowance` = show an annual-leave allowance + count leave against it.
     // Directors/owners who produce sit active=true, track_allowance=false.
     await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS track_allowance BOOLEAN NOT NULL DEFAULT TRUE`;
+    // `taken_adjustment` = days already used this leave year BEFORE the system
+    // started tracking (historic leave not logged here). Added to the computed
+    // "taken" so Days-left is right from day one. `corrections_applied` guards
+    // the one-time seed of the production manager's opening figures.
+    await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS taken_adjustment NUMERIC NOT NULL DEFAULT 0`;
+    await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS corrections_applied BOOLEAN NOT NULL DEFAULT FALSE`;
+    await seedLeaveCorrectionsOnce();
   })().catch((err) => { schemaReady = null; throw err; });
   return schemaReady;
+}
+
+// One-time seed of the opening annual-leave figures supplied by the production
+// manager (allowance, yearly renewal date, days already used). Matched to users
+// by exact name and guarded per-row by `corrections_applied`, so it applies once
+// and never clobbers a later admin edit. A user whose name isn't found is
+// skipped. The anniversary year is arbitrary — only its MM-DD drives the renewal
+// (see leaveYearWindow).
+let correctionsSeeded = null;
+function seedLeaveCorrectionsOnce() {
+  if (correctionsSeeded) return correctionsSeeded;
+  correctionsSeeded = (async () => {
+    const CORRECTIONS = [
+      { name: 'chloe wong',    allowance: 10.5, renewal: '2020-12-01', used: 2 },
+      { name: 'callum majors', allowance: 20,   renewal: '2020-03-01', used: 7 },
+      { name: 'hannah bales',  allowance: 20,   renewal: '2020-02-01', used: 14 },
+      { name: 'adam leveson',  allowance: 20,   renewal: '2020-05-01', used: 4 },
+    ];
+    for (const c of CORRECTIONS) {
+      const [u] = await sql`SELECT email FROM users WHERE LOWER(name) = ${c.name} LIMIT 1`;
+      if (!u) continue;
+      const email = String(u.email).toLowerCase();
+      await sql`INSERT INTO leave_allowances (user_email) VALUES (${email}) ON CONFLICT (user_email) DO NOTHING`;
+      await sql`UPDATE leave_allowances
+          SET annual_allowance = ${c.allowance}, anniversary = ${c.renewal},
+              taken_adjustment = ${c.used}, active = TRUE, track_allowance = TRUE,
+              corrections_applied = TRUE, updated_at = NOW()
+        WHERE user_email = ${email} AND corrections_applied = FALSE`;
+    }
+  })().catch((err) => { correctionsSeeded = null; console.warn('[schedule] leave corrections seed failed', err.message); });
+  return correctionsSeeded;
 }
 
 function asDateStr(v) {
@@ -512,6 +554,7 @@ async function buildAllowances(candidates, onlyEmail, today) {
     if (!c.onRoster && !r) continue; // admins with no row aren't shown at all
     const allowance = r ? Number(r.annual_allowance) : 20;
     const compulsory = r ? Number(r.compulsory_days) : 6;
+    const adjustment = r ? Number(r.taken_adjustment || 0) : 0;
     const track = r ? r.track_allowance !== false : true;
     const win = leaveYearWindow(r?.anniversary, today);
     let taken = 0, remaining = null;
@@ -519,7 +562,8 @@ async function buildAllowances(candidates, onlyEmail, today) {
       const [t] = await sql`SELECT COALESCE(SUM(days),0) AS d FROM leave_requests
         WHERE user_email = ${c.email} AND status = 'approved' AND kind = 'annual'
           AND start_date >= ${win.start} AND start_date < ${win.next}`;
-      taken = Number(t?.d || 0);
+      // Opening balance (days used before tracking) + leave logged this year.
+      taken = Math.round((adjustment + Number(t?.d || 0)) * 10) / 10;
       remaining = Math.round((allowance - compulsory - taken) * 10) / 10;
     }
     out.push({
@@ -530,6 +574,7 @@ async function buildAllowances(candidates, onlyEmail, today) {
       trackAllowance: track,
       annualAllowance: allowance,
       compulsoryDays: compulsory,
+      takenAdjustment: adjustment,
       anniversary: r?.anniversary ? asDateStr(r.anniversary) : null,
       taken,
       remaining,
@@ -700,6 +745,9 @@ export async function scheduleRoute(req, res, id, action, user) {
       if (autoApprove) {
         await sql`INSERT INTO leave_requests (id, user_email, start_date, end_date, days, kind, note, status, decided_by, decided_at)
           VALUES (${lid}, ${target}, ${startStr}, ${endStr}, ${days}, ${kind}, ${trimOrNull(b.note)}, 'approved', ${email}, NOW())`;
+        // Approved on booking → fill any cover person's rota immediately.
+        try { await applyLeaveCoverage({ id: lid, user_email: target, start_date: startStr, end_date: endStr }); }
+        catch (err) { console.warn('[schedule] leave coverage failed', err.message); }
       } else {
         await sql`INSERT INTO leave_requests (id, user_email, start_date, end_date, days, kind, note, status)
           VALUES (${lid}, ${target}, ${startStr}, ${endStr}, ${days}, ${kind}, ${trimOrNull(b.note)}, 'pending')`;
@@ -725,6 +773,11 @@ export async function scheduleRoute(req, res, id, action, user) {
       if (status === 'approved') {
         // Any producer work already booked over these dates?
         clash = await leaveClashes(owner, asDateStr(lr.start_date), asDateStr(lr.end_date));
+        // Fill the cover person's rota (e.g. Hannah covers Callum).
+        try { await applyLeaveCoverage(lr); } catch (err) { console.warn('[schedule] leave coverage failed', err.message); }
+      } else {
+        // Denied → drop any cover blocks created for it.
+        try { await removeLeaveCoverage(lid); } catch (err) { console.warn('[schedule] leave coverage cleanup failed', err.message); }
       }
       try { await notifyLeaveDecided(user, lr, status, clash); }
       catch (err) { console.warn('[schedule] leave decision notify failed', err.message); }
@@ -733,6 +786,7 @@ export async function scheduleRoute(req, res, id, action, user) {
     // DELETE cancel (own request, or manager)
     if (req.method === 'DELETE') {
       if (!manage && owner !== email) return res.status(403).json({ error: 'Not your request' });
+      try { await removeLeaveCoverage(lid); } catch (err) { console.warn('[schedule] leave coverage cleanup failed', err.message); }
       await sql`DELETE FROM leave_requests WHERE id = ${lid}`;
       return res.status(200).json(await reload());
     }
@@ -750,6 +804,7 @@ export async function scheduleRoute(req, res, id, action, user) {
     const sets = [];
     if (b.annualAllowance != null) await sql`UPDATE leave_allowances SET annual_allowance = ${Number(b.annualAllowance)}, updated_at = NOW() WHERE user_email = ${target}`;
     if (b.compulsoryDays != null) await sql`UPDATE leave_allowances SET compulsory_days = ${Number(b.compulsoryDays)}, updated_at = NOW() WHERE user_email = ${target}`;
+    if (b.takenAdjustment != null) await sql`UPDATE leave_allowances SET taken_adjustment = ${Number(b.takenAdjustment)}, updated_at = NOW() WHERE user_email = ${target}`;
     if (b.anniversary !== undefined) await sql`UPDATE leave_allowances SET anniversary = ${asDateStr(b.anniversary)}, updated_at = NOW() WHERE user_email = ${target}`;
     if (b.active != null) await sql`UPDATE leave_allowances SET active = ${!!b.active}, updated_at = NOW() WHERE user_email = ${target}`;
     if (b.trackAllowance != null) await sql`UPDATE leave_allowances SET track_allowance = ${!!b.trackAllowance}, updated_at = NOW() WHERE user_email = ${target}`;
@@ -758,6 +813,41 @@ export async function scheduleRoute(req, res, id, action, user) {
   }
 
   return res.status(404).json({ error: 'Unknown schedule route' });
+}
+
+// ── Leave coverage ──
+// When a named team member takes annual leave, someone else's rota is auto-
+// filled for those dates with a labelled "cover" block (e.g. Hannah covers
+// Callum). Matched by exact name so it tracks whoever holds those accounts.
+const LEAVE_COVER_RULES = [
+  { taker: 'callum majors', cover: 'hannah bales', label: 'Covering Callum' },
+];
+
+// (Re)create the cover blocks for a leave request. Clears any prior blocks for
+// the same leave first so a re-approval / date change doesn't duplicate.
+async function applyLeaveCoverage(leaveRow) {
+  await sql`DELETE FROM schedule_assignments WHERE cover_leave_id = ${leaveRow.id}`;
+  const takerEmail = String(leaveRow.user_email).toLowerCase();
+  const [taker] = await sql`SELECT LOWER(name) AS name FROM users WHERE email = ${takerEmail} LIMIT 1`;
+  const takerName = taker?.name || '';
+  const startStr = asDateStr(leaveRow.start_date);
+  const endStr = asDateStr(leaveRow.end_date);
+  for (const rule of LEAVE_COVER_RULES) {
+    if (takerName !== rule.taker) continue;
+    const [cover] = await sql`SELECT email FROM users WHERE LOWER(name) = ${rule.cover} LIMIT 1`;
+    if (!cover) continue;
+    const coverEmail = String(cover.email).toLowerCase();
+    if (coverEmail === takerEmail) continue; // never cover yourself
+    const days = Math.max(1, countWorkingDays(startStr, endStr));
+    const cid = makeId('sched');
+    await sql`INSERT INTO schedule_assignments
+        (id, video_id, deal_id, user_email, kind, title, start_date, end_date, duration_days, extended_days, auto_generated, conflict, cover_leave_id)
+      VALUES (${cid}, ${null}, ${null}, ${coverEmail}, 'cover', ${rule.label}, ${startStr}, ${endStr}, ${days}, 0, FALSE, FALSE, ${leaveRow.id})`;
+  }
+}
+
+async function removeLeaveCoverage(leaveId) {
+  await sql`DELETE FROM schedule_assignments WHERE cover_leave_id = ${leaveId}`;
 }
 
 // True if the user has scheduled production work overlapping [start,end].

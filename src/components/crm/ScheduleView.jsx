@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Check, X, AlertTriangle, Plane, LayoutGrid } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Check, X, AlertTriangle, Plane, LayoutGrid, CheckCircle2, Gauge } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { Modal, ResponsiveTable, Badge, Section, Field } from '../ui.jsx';
 import {
-  weekStart, addDays, addWorkingDays, workingDaysBetween, fmtDayLabel,
+  weekStart, addDays, addWorkingDays, workingDaysBetween, countWorkingDays, fmtDayLabel,
   todayStr, blockColors, parseDate, fmtDate, isWeekend,
 } from '../../lib/scheduleCalendar.js';
 
@@ -20,6 +20,12 @@ function initials(name, email) {
 function addMonths(dateStr, n) {
   const d = parseDate(dateStr);
   return fmtDate(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)));
+}
+// Same calendar day, n months on (used for rolling capacity windows). JS rolls
+// day overflow forward (e.g. 31 Jan +1mo → 3 Mar), which is fine for a window edge.
+function addMonthsSameDay(dateStr, n) {
+  const d = parseDate(dateStr);
+  return fmtDate(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, d.getUTCDate())));
 }
 // Full month grid (Mon-start weeks) covering the month of `cursor`.
 function monthCells(cursor) {
@@ -170,6 +176,8 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
         </div>
       )}
 
+      {canManage && <CapacityBar sched={sched} />}
+
       {/* Calendar */}
       {viewMode === 'month'
         ? (isMobile
@@ -196,6 +204,82 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
         onClose={() => setBlockModal(null)} actions={actions} />}
       {allowanceModal && <AllowanceModal row={allowanceModal} onClose={() => setAllowanceModal(null)}
         onSave={(f) => actions.updateAllowance(allowanceModal.userEmail, f).then(() => setAllowanceModal(null))} />}
+    </div>
+  );
+}
+
+// ── Rota capacity summary ──
+// A quick read on the whole rota: how many projects are ready to work on now,
+// how many are delayed (schedule/leave clash), and how full every producer's
+// diary is over the next month and next three months.
+function CapacityBar({ sched }) {
+  const rosterEmails = (sched.producers || []).map(p => p.email);
+  const assignments = sched.assignments || [];
+  const stats = useMemo(() => {
+    const today = todayStr();
+    const roster = new Set(rosterEmails);
+    const ready = new Set(), delayed = new Set();
+    for (const a of assignments) {
+      const key = a.dealId || a.id;
+      if (a.conflict || a.leaveConflict) delayed.add(key);
+      else if (!a.manual && a.ready && a.endDate >= today) ready.add(key);
+    }
+    const capacity = (months) => {
+      const end = addDays(addMonthsSameDay(today, months), -1);
+      const windowDays = new Set(workingDaysBetween(today, end));
+      const denom = rosterEmails.length * windowDays.size;
+      if (!denom) return { pct: 0, used: 0, capacity: denom };
+      const perUser = new Map();
+      for (const a of assignments) {
+        if (!roster.has(a.userEmail)) continue;
+        let s = perUser.get(a.userEmail);
+        if (!s) { s = new Set(); perUser.set(a.userEmail, s); }
+        for (const d of workingDaysBetween(a.startDate, a.endDate)) if (windowDays.has(d)) s.add(d);
+      }
+      let used = 0; for (const s of perUser.values()) used += s.size;
+      return { pct: Math.round((used / denom) * 100), used, capacity: denom };
+    };
+    return { ready: ready.size, delayed: delayed.size, m1: capacity(1), m3: capacity(3) };
+  }, [assignments, rosterEmails.join(','), sched.leave]);
+
+  return (
+    <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 16 }}>
+      <StatTile icon={CheckCircle2} color="#16A34A" label="Ready for work" value={stats.ready}
+        sub={`project${stats.ready === 1 ? '' : 's'} ready to start`} />
+      <StatTile icon={AlertTriangle} color="#DC2626" label="Delayed" value={stats.delayed}
+        sub={`project${stats.delayed === 1 ? '' : 's'} with a clash`} />
+      <MeterTile label="Capacity · next month" meter={stats.m1} />
+      <MeterTile label="Capacity · next 3 months" meter={stats.m3} />
+    </div>
+  );
+}
+
+function StatTile({ icon: Icon, color, label, value, sub }) {
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 12, background: 'white', padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+        <Icon size={14} color={color} /> {label}
+      </div>
+      <div style={{ fontSize: 28, fontWeight: 800, color: BRAND.ink, lineHeight: 1.1, marginTop: 6 }}>{value}</div>
+      <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{sub}</div>
+    </div>
+  );
+}
+
+// A utilisation meter. Green when there's slack, amber when busy, red when full.
+function MeterTile({ label, meter }) {
+  const pct = Math.min(100, meter.pct);
+  const color = pct >= 95 ? '#DC2626' : pct >= 80 ? '#D97706' : '#16A34A';
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 12, background: 'white', padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+        <Gauge size={14} color={color} /> {label}
+      </div>
+      <div style={{ fontSize: 28, fontWeight: 800, color: BRAND.ink, lineHeight: 1.1, marginTop: 6 }}>{meter.pct}%</div>
+      <div style={{ height: 7, borderRadius: 999, background: '#EEF2F6', overflow: 'hidden', marginTop: 8 }}>
+        <div style={{ width: pct + '%', height: '100%', background: color, borderRadius: 999 }} />
+      </div>
+      <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 6 }}>{meter.used} of {meter.capacity} producer-days booked</div>
     </div>
   );
 }
@@ -302,14 +386,16 @@ function BlockChip({ asg, draggable, onClick }) {
       draggable={draggable}
       onDragStart={(e) => e.dataTransfer.setData('text/plain', asg.id)}
       onClick={onClick}
-      title={`${asg.projectTitle} — ${asg.videoTitle} (${KIND_LABEL[asg.kind] || asg.kind})`}
+      title={asg.manual ? asg.projectTitle : `${asg.projectTitle} — ${asg.videoTitle} (${KIND_LABEL[asg.kind] || asg.kind})`}
       style={{ background: c.bg, color: c.fg, border: '1px solid ' + c.border, borderRadius: 8, padding: '6px 8px', cursor: 'pointer', fontSize: 12, lineHeight: 1.3 }}>
       <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{asg.projectTitle}</div>
-      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>
-        {asg.videoTitle}{asg.videoLength ? ' · ' + asg.videoLength : ''}
-      </div>
+      {!asg.manual && (
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>
+          {asg.videoTitle}{asg.videoLength ? ' · ' + asg.videoLength : ''}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 2, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>
-        <span>{asg.kind === 'storyboard' ? 'Visuals' : 'Production'} · {dur}d</span>
+        <span>{asg.manual ? `${dur}d` : `${asg.kind === 'storyboard' ? 'Visuals' : 'Production'} · ${dur}d`}</span>
         {(asg.conflict || asg.leaveConflict) && <AlertTriangle size={11} />}
       </div>
     </div>
@@ -320,7 +406,7 @@ function LeaveChip({ leave }) {
   const approved = leave.status === 'approved';
   return (
     <div style={{ background: approved ? '#FEF3C7' : '#FDF2F8', color: approved ? '#92400E' : '#9D174D', border: '1px dashed ' + (approved ? '#FCD34D' : '#F9A8D4'), borderRadius: 8, padding: '4px 8px', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-      <Plane size={11} /> {approved ? 'Annual leave' : 'Leave (pending)'}
+      <Plane size={11} /> {approved ? 'Annual Leave' : 'Leave (pending)'}
     </div>
   );
 }
@@ -508,16 +594,27 @@ function BlockModal({ assignment, producers, canManage, me, onClose, onOpenProje
   const [start, setStart] = useState(assignment.startDate);
   const [end, setEnd] = useState(assignment.endDate);
   const [title, setTitle] = useState(assignment.title || '');
-  const [extra, setExtra] = useState(assignment.extendedDays || 0);
   const [producer, setProducer] = useState(assignment.userEmail);
   const [busy, setBusy] = useState(false);
   const canEdit = canManage || assignment.userEmail === me;
-  const totalDays = assignment.durationDays + Math.max(0, extra);
+  // The block spans exactly the chosen start→end days. `base` (from the video
+  // length) is what the auto-scheduler allotted; "extra days" is anything the
+  // producer added on top, kept in sync with the end date so the two controls
+  // never disagree.
+  const base = Math.max(1, assignment.durationDays || 1);
+  const totalDays = Math.max(1, countWorkingDays(start, end));
+  const extra = Math.max(0, totalDays - base);
+  const setStartD = (v) => { setStart(v); if (v && end < v) setEnd(v); };
+  const setEndD = (v) => setEnd(v && v < start ? start : v);
+  const bumpExtra = (delta) => {
+    const next = Math.max(0, extra + delta);
+    setEnd(addWorkingDays(start, base + next - 1));
+  };
   const save = () => {
     setBusy(true);
-    const fields = manual
-      ? { startDate: start, endDate: end, title, ...(canManage ? { userEmail: producer } : {}) }
-      : { startDate: start, extendedDays: Math.max(0, extra), ...(canManage ? { userEmail: producer } : {}) };
+    // Both manual and production blocks now save an explicit span; the server
+    // derives the duration and marks the block hand-edited so re-syncs respect it.
+    const fields = { startDate: start, endDate: end, ...(manual ? { title } : {}), ...(canManage ? { userEmail: producer } : {}) };
     actions.moveAssignment(assignment.id, fields).then(onClose).catch(() => setBusy(false));
   };
   return (
@@ -534,15 +631,17 @@ function BlockModal({ assignment, producers, canManage, me, onClose, onOpenProje
       {canEdit ? (
         <>
           {manual && <Field label="Card name"><input className="input" value={title} onChange={e => setTitle(e.target.value)} style={selStyle} /></Field>}
-          <Field label="Start date"><input type="date" className="input" value={start} onChange={e => setStart(e.target.value)} style={selStyle} /></Field>
-          {manual ? (
-            <Field label="End date"><input type="date" className="input" value={end} min={start} onChange={e => setEnd(e.target.value)} style={selStyle} /></Field>
-          ) : (
-            <Field label={`Extra days (complexity buffer) — total ${totalDays} day${totalDays === 1 ? '' : 's'}`}>
+          <Field label="Start date"><input type="date" className="input" value={start} onChange={e => setStartD(e.target.value)} style={selStyle} /></Field>
+          <Field label={`End date — total ${totalDays} working day${totalDays === 1 ? '' : 's'}`}>
+            <input type="date" className="input" value={end} min={start} onChange={e => setEndD(e.target.value)} style={selStyle} />
+          </Field>
+          {!manual && (
+            <Field label="Extra days (complexity buffer)">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button className="btn-ghost" onClick={() => setExtra(x => Math.max(0, x - 1))}>−</button>
+                <button className="btn-ghost" onClick={() => bumpExtra(-1)} disabled={extra <= 0}>−</button>
                 <span style={{ fontWeight: 700, minWidth: 24, textAlign: 'center' }}>{extra}</span>
-                <button className="btn-ghost" onClick={() => setExtra(x => x + 1)}><Plus size={14} /></button>
+                <button className="btn-ghost" onClick={() => bumpExtra(1)}><Plus size={14} /></button>
+                <span style={{ fontSize: 12, color: BRAND.muted }}>on top of the {base}-day base</span>
               </div>
             </Field>
           )}
@@ -600,13 +699,14 @@ function NewBlockModal({ producers, onClose, onSubmit }) {
 function AllowanceModal({ row, onClose, onSave }) {
   const [allowance, setAllowance] = useState(row.annualAllowance ?? 20);
   const [compulsory, setCompulsory] = useState(row.compulsoryDays ?? 6);
+  const [used, setUsed] = useState(row.takenAdjustment ?? 0);
   const [anniversary, setAnniversary] = useState(row.anniversary || '');
   const [onRoster, setOnRoster] = useState(row.onRoster !== false);
   const [track, setTrack] = useState(row.trackAllowance !== false);
   const [busy, setBusy] = useState(false);
   const save = () => {
     setBusy(true);
-    onSave({ annualAllowance: Number(allowance), compulsoryDays: Number(compulsory), anniversary: anniversary || null, active: onRoster, trackAllowance: track })
+    onSave({ annualAllowance: Number(allowance), compulsoryDays: Number(compulsory), takenAdjustment: Number(used) || 0, anniversary: anniversary || null, active: onRoster, trackAllowance: track })
       .catch(() => setBusy(false));
   };
   return (
@@ -623,7 +723,9 @@ function AllowanceModal({ row, onClose, onSave }) {
       <div style={{ opacity: track ? 1 : 0.5, pointerEvents: track ? 'auto' : 'none' }}>
         <Field label="Annual allowance (days, incl. compulsory)"><input type="number" step="0.5" className="input" value={allowance} onChange={e => setAllowance(e.target.value)} style={selStyle} /></Field>
         <Field label="Compulsory days (Christmas)"><input type="number" step="0.5" className="input" value={compulsory} onChange={e => setCompulsory(e.target.value)} style={selStyle} /></Field>
-        <Field label="Renewal anniversary (join date)"><input type="date" className="input" value={anniversary} onChange={e => setAnniversary(e.target.value)} style={selStyle} /></Field>
+        <Field label="Days already taken this leave year"><input type="number" step="0.5" className="input" value={used} onChange={e => setUsed(e.target.value)} style={selStyle} /></Field>
+        <div style={{ fontSize: 12, color: BRAND.muted, margin: '-6px 0 12px' }}>Opening balance for leave taken before it was tracked here. Leave booked in the app is added on top.</div>
+        <Field label="Renewal date (renews yearly on this day)"><input type="date" className="input" value={anniversary} onChange={e => setAnniversary(e.target.value)} style={selStyle} /></Field>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
         <button className="btn-ghost" onClick={onClose}>Cancel</button>
