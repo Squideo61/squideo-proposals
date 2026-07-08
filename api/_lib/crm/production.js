@@ -28,6 +28,7 @@ import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { archiveRecord } from './recycleBin.js';
 import { getDealCreditProject } from './retainers.js';
+import { isFreelancer, userOnDeal, userOnVideo } from './access.js';
 
 // Where scripts live inside a deal's Drive folder (from the FOLDER_TEMPLATE in
 // googleDrive.js).
@@ -128,9 +129,13 @@ async function paymentOptionMap(dealIds) {
 }
 
 export async function productionRoute(req, res, id, action, user, subaction = null) {
-  if (!hasPermission(await getRole(user.role), 'production.access')) {
+  const role = await getRole(user.role);
+  if (!hasPermission(role, 'production.access')) {
     return res.status(403).json({ error: 'You do not have permission to access production' });
   }
+  // Freelancers only ever see the projects they're assigned to.
+  const freelancer = isFreelancer(role);
+  const meEmail = (user.email || '').toLowerCase();
   await ensureProductionSchema();
   // The board query selects deals.drive_folder_id — make sure the column exists.
   await ensureDealFileDriveColumns();
@@ -153,6 +158,11 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
           JOIN deals d ON d.id = pv.deal_id
           LEFT JOIN companies c ON c.id = d.company_id
          WHERE pv.production_phase IS NOT NULL
+           AND (NOT ${freelancer} OR (
+                 LOWER(d.producer_email) = ${meEmail}
+                 OR EXISTS (SELECT 1 FROM deal_assignees da WHERE da.deal_id = d.id AND LOWER(da.user_email) = ${meEmail})
+                 OR EXISTS (SELECT 1 FROM video_assignees va WHERE va.video_id = pv.id AND LOWER(va.user_email) = ${meEmail})
+               ))
          ORDER BY pv.sort_order, pv.created_at
       `;
       const videos = rows.map(serialiseVideo);
@@ -188,6 +198,9 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
   if (id === 'video') {
     const videoId = action;
     if (!videoId) return res.status(400).json({ error: 'videoId required' });
+    if (freelancer && !(await userOnVideo(meEmail, videoId))) {
+      return res.status(403).json({ error: 'You are not assigned to this project' });
+    }
 
     if (subaction === 'send-for-review') {
       if (req.method !== 'POST') return res.status(405).end();
@@ -273,6 +286,9 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
   const dealId = id;
   const deal = (await sql`SELECT id FROM deals WHERE id = ${dealId}`)[0];
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
+  if (freelancer && !(await userOnDeal(meEmail, dealId))) {
+    return res.status(403).json({ error: 'You are not assigned to this project' });
+  }
 
   // Manual "Add to production" for a paid deal that wasn't auto-added.
   if (action === 'enter') {

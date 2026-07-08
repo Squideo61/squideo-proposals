@@ -9,7 +9,7 @@ import { Modal } from '../ui.jsx';
 // The project's videos + pre-paid credit balance. Each video moves through the
 // board independently and is edited on its own page (onOpenVideo); this panel
 // is the project-level container — add videos, manage credits, jump in.
-export function ProductionPanel({ dealId, deal, videos, creditProject, isMobile, onOpenVideo }) {
+export function ProductionPanel({ dealId, deal, videos, creditProject, hideCredits = false, isMobile, onOpenVideo }) {
   const { actions, showMsg } = useStore();
   const inProduction = !!deal.productionPhase;
   // Credit-based deals draw each video from the Credit Based Project pool; the
@@ -68,7 +68,7 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, isMobile,
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
         <PanelHeader />
         <div style={{ flex: 1 }} />
-        {creditMode ? (
+        {hideCredits ? null : creditMode ? (
           // Credit-based deal: the pool lives in the Credit Based Project card, so
           // just show the balance here (topping up happens over there).
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#92400E', background: '#FEF3C7', borderRadius: 999, padding: '3px 10px' }}>

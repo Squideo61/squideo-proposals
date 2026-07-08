@@ -21,6 +21,8 @@ import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendNotification, resolveDealTeamEmails } from '../_lib/notifications.js';
 import { revisionFeedbackHtml, APP_URL } from '../_lib/email.js';
+import { getRole } from '../_lib/userRoles.js';
+import { isFreelancer, freelancerRevisionProjectIds } from '../_lib/crm/access.js';
 
 // Self-heal for db/migrations/20260605_revision_feedback.sql. Idempotent +
 // cached so we only run the ALTERs once per warm lambda.
@@ -127,7 +129,7 @@ export default async function handler(req, res) {
     if (!user) return;
 
     if (action === 'projects') {
-      if (req.method === 'GET')    return await listProjects(res);
+      if (req.method === 'GET')    return await listProjects(res, user);
       if (req.method === 'POST')   return await createProject(req, res, user);
       if (req.method === 'DELETE') {
         const id = req.query.id ? String(req.query.id) : null;
@@ -141,6 +143,10 @@ export default async function handler(req, res) {
       if (req.method !== 'GET') return res.status(405).end();
       const id = req.query.id ? String(req.query.id) : null;
       if (!id) return res.status(400).json({ error: 'id required' });
+      if (isFreelancer(await getRole(user.role))) {
+        const ids = await freelancerRevisionProjectIds((user.email || '').toLowerCase());
+        if (!ids.includes(id)) return res.status(403).json({ error: 'You are not assigned to this project' });
+      }
       return await projectDetail(res, id);
     }
 
@@ -228,7 +234,7 @@ export default async function handler(req, res) {
 
 // ─── Producer: projects ───────────────────────────────────────────────────────
 
-async function listProjects(res) {
+async function listProjects(res, user) {
   const rows = await sql`
     SELECT
       rp.id, rp.title, rp.client_name, rp.share_token, rp.created_by,
@@ -264,7 +270,13 @@ async function listProjects(res) {
     ) vv ON vv.project_id = rp.id
     ORDER BY rp.updated_at DESC
   `;
-  return res.status(200).json(rows.map(projectRow));
+  // Freelancers only see revision projects for work they're assigned to.
+  let visible = rows;
+  if (user && isFreelancer(await getRole(user.role))) {
+    const ids = new Set(await freelancerRevisionProjectIds((user.email || '').toLowerCase()));
+    visible = rows.filter(r => ids.has(r.id));
+  }
+  return res.status(200).json(visible.map(projectRow));
 }
 
 async function createProject(req, res, user) {

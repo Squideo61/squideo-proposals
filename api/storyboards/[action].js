@@ -29,6 +29,8 @@ import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendNotification, resolveDealTeamEmails } from '../_lib/notifications.js';
 import { revisionFeedbackHtml, APP_URL } from '../_lib/email.js';
+import { getRole } from '../_lib/userRoles.js';
+import { isFreelancer, freelancerStoryboardProjectIds } from '../_lib/crm/access.js';
 
 // Storyboard PDFs share the PUBLIC revision Blob store (so clients can fetch the
 // bytes directly via the share link), reading REVISION_BLOB_READ_WRITE_TOKEN
@@ -210,7 +212,7 @@ export default async function handler(req, res) {
     if (!user) return;
 
     if (action === 'projects') {
-      if (req.method === 'GET')    return await listProjects(res);
+      if (req.method === 'GET')    return await listProjects(res, user);
       if (req.method === 'POST')   return await createProject(req, res, user);
       if (req.method === 'DELETE') {
         const id = req.query.id ? String(req.query.id) : null;
@@ -224,6 +226,10 @@ export default async function handler(req, res) {
       if (req.method !== 'GET') return res.status(405).end();
       const id = req.query.id ? String(req.query.id) : null;
       if (!id) return res.status(400).json({ error: 'id required' });
+      if (isFreelancer(await getRole(user.role))) {
+        const ids = await freelancerStoryboardProjectIds((user.email || '').toLowerCase());
+        if (!ids.includes(id)) return res.status(403).json({ error: 'You are not assigned to this project' });
+      }
       return await projectDetail(res, id);
     }
 
@@ -310,7 +316,7 @@ export default async function handler(req, res) {
 
 // ─── Producer: projects ───────────────────────────────────────────────────────
 
-async function listProjects(res) {
+async function listProjects(res, user) {
   const rows = await sql`
     SELECT
       sp.id, sp.title, sp.client_name, sp.share_token, sp.created_by,
@@ -346,7 +352,13 @@ async function listProjects(res) {
     ) vv ON vv.project_id = sp.id
     ORDER BY sp.updated_at DESC
   `;
-  return res.status(200).json(rows.map(projectRow));
+  // Freelancers only see storyboard projects for work they're assigned to.
+  let visible = rows;
+  if (user && isFreelancer(await getRole(user.role))) {
+    const ids = new Set(await freelancerStoryboardProjectIds((user.email || '').toLowerCase()));
+    visible = rows.filter(r => ids.has(r.id));
+  }
+  return res.status(200).json(visible.map(projectRow));
 }
 
 async function createProject(req, res, user) {

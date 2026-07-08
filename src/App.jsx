@@ -82,8 +82,11 @@ function AppShell() {
   const user = state.session;
   // "Producer" (and "Copywriter", same scope for now) accounts are limited to
   // the production board, the project (deal) pages they work on, and the
-  // Revisions section — no sales/admin nav.
-  const producerOnly = user?.role === 'producer' || user?.role === 'copywriter';
+  // Revisions section — no sales/admin nav. "Freelancer" accounts share this
+  // stripped shell but are further narrowed server-side to ONLY their assigned
+  // projects, with all financial details hidden and no board.
+  const producerOnly = user?.role === 'producer' || user?.role === 'copywriter' || user?.role === 'freelancer';
+  const freelancer = user?.role === 'freelancer';
   // "Marketing" accounts are scoped to the Marketing section only — no sales,
   // finance, projects or admin nav.
   const marketingOnly = user?.role === 'marketing';
@@ -380,7 +383,8 @@ function AppShell() {
   if (producerOnly) {
     // The production board (the fall-through case) stays full width; the detail
     // pages a producer opens are centred at the cap like the rest of the app.
-    const producerBoard = !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards' || view === 'tasks' || view === 'emails' || view === 'email' || view === 'triage' || view === 'prod-dashboard' || (view === 'client' && activeId));
+    // Freelancers have no board, so everything is centred for them.
+    const producerBoard = !freelancer && !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards' || view === 'tasks' || view === 'emails' || view === 'email' || view === 'triage' || view === 'prod-dashboard' || (view === 'client' && activeId));
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <DesktopNotifier onOpenLink={openLink} />
@@ -389,6 +393,7 @@ function AppShell() {
             Sales/Business/Projects nav — producers stay scoped to production. */}
         <CrmTopBar
           producer
+          freelancer={freelancer}
           view={view}
           fullWidth={producerBoard}
           navigate={navigate}
@@ -400,7 +405,7 @@ function AppShell() {
           {view === 'video' && activeId ? (
             <VideoDetailView videoId={activeId} onBack={() => goBack('production')} onOpenProject={(id) => navigate('project', id)} />
           ) : (view === 'project' || view === 'deal') && activeId ? (
-            <DealDetailView dealId={activeId} productionOnly onBack={() => goBack('production')} onOpenVideo={(id) => navigate('video', id)} />
+            <DealDetailView dealId={activeId} productionOnly hideFinancials={freelancer} onBack={() => goBack(freelancer ? 'projects' : 'production')} onOpenVideo={(id) => navigate('video', id)} />
           ) : view === 'schedule' ? (
             <ScheduleView onOpenProject={(id) => navigate('project', id)} onOpenVideo={(id) => navigate('video', id)} />
           ) : view === 'prod-dashboard' ? (
@@ -442,6 +447,9 @@ function AppShell() {
             );
           })() : view === 'client' && activeId ? (
             <ClientView id={activeId} onBack={() => goBack('production')} onEdit={() => navigate('builder', activeId)} />
+          ) : freelancer ? (
+            // Freelancers have no board — the catch-all is their "My Projects" list.
+            <ProjectsOverviewView onBack={null} onOpenProject={(id) => navigate('project', id)} />
           ) : (
             <ProductionView onBack={null} onOpenVideo={(id) => navigate('video', id)} onOpenProject={(id) => navigate('project', id)} onOpenProjects={() => navigate('projects')} />
           )}

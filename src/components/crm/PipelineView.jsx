@@ -46,7 +46,7 @@ export function PipelineView({ onBack, onOpenDeal }) {
   // roles (producers/copywriters), who never own deals. Plus anyone who
   // actually owns a deal, regardless of role, so no owner is ever hidden.
   const memberOptions = useMemo(() => {
-    const PRODUCTION_ROLES = new Set(['producer', 'copywriter']);
+    const PRODUCTION_ROLES = new Set(['producer', 'copywriter', 'freelancer']);
     const map = new Map();
     for (const [email, u] of Object.entries(state.users || {})) {
       if (!PRODUCTION_ROLES.has(u.role)) map.set(email, u.name || email);

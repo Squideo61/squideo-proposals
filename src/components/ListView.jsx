@@ -38,7 +38,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
   // that only sees the Marketing section). Plus anyone who actually prepared
   // one, regardless of role, so no owner is hidden.
   const memberOptions = useMemo(() => {
-    const NON_PROPOSAL_ROLES = new Set(['producer', 'copywriter', 'marketing']);
+    const NON_PROPOSAL_ROLES = new Set(['producer', 'copywriter', 'marketing', 'freelancer']);
     const map = new Map();
     for (const [email, u] of Object.entries(state.users || {})) {
       if (!NON_PROPOSAL_ROLES.has(u.role)) map.set(email, u.name || email);

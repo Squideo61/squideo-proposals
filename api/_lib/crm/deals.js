@@ -15,6 +15,7 @@ import { enterProduction } from '../production.js';
 import { syncDealSchedule } from './schedule.js';
 import { sendNotification } from '../notifications.js';
 import { getDealCreditProject } from './retainers.js';
+import { isFreelancer, userOnDeal } from './access.js';
 import { APP_URL } from '../email.js';
 
 // Self-heal for db/migrations/20260604_deal_files_drive.sql — Drive-backed
@@ -1230,7 +1231,15 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
   if (req.method === 'GET') {
     const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    // Freelancers may only open a project they're assigned to, and never see its
+    // money. Guard access here; the financial fields are stripped from the
+    // response below.
+    const freelancer = isFreelancer(await getRole(user.role));
+    if (freelancer && !(await userOnDeal((user.email || '').toLowerCase(), id))) {
+      return res.status(403).json({ error: 'You are not assigned to this project' });
+    }
     const deal = serialiseDeal(rows[0]);
+    if (freelancer) { deal.value = null; deal.vatRate = null; deal.poNumber = null; deal.poReceivedAt = null; }
     // The emails query below joins on email_message_deals which is created by
     // a manual migration — self-heal so workspaces that skipped it still load
     // deals without 'relation does not exist'. Likewise deal_contacts and the
@@ -1407,9 +1416,9 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       Array.from(new Set(emails.map(e => e.gmail_message_id).filter(Boolean)))
     );
 
-    // Marketing lead source is for sales/management — never send it to producer
-    // or copywriter accounts (they don't see marketing attribution).
-    const isProducerRole = user?.role === 'producer' || user?.role === 'copywriter';
+    // Marketing lead source is for sales/management — never send it to producer,
+    // copywriter or freelancer accounts (they don't see marketing attribution).
+    const isProducerRole = user?.role === 'producer' || user?.role === 'copywriter' || freelancer;
     const leadSource = isProducerRole ? null : await dealLeadSource(deal);
 
     // Payment plan from the signed proposal ('5050' | 'full' | 'po') — labels the
@@ -1429,7 +1438,8 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     return res.status(200).json({
       ...deal,
       paymentOption,
-      creditProject,
+      // Money is hidden from freelancers (credit balances + proposal pricing).
+      creditProject: freelancer ? null : creditProject,
       // First-touch marketing attribution for the lead that became this deal
       // (null if it didn't come from the quote form), incl. a returning-client flag.
       leadSource,
@@ -1440,7 +1450,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       driveFolderId: rows[0].drive_folder_id || null,
       producerEmails: dealProducerEmails,
       videos,
-      proposals: proposals.map(p => ({
+      proposals: freelancer ? [] : proposals.map(p => ({
         id: p.id,
         clientName: p.data?.clientName || null,
         contactBusinessName: p.data?.contactBusinessName || null,

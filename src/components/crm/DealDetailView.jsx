@@ -92,7 +92,7 @@ function toEmbedSrc(raw) {
 // `productionOnly` strips the sales/financial chrome (pipeline, order summary,
 // proposals, invoices, edit/delete…) so producers/copywriters get a focused
 // project view — the deal page doubles as the project page once signed.
-export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposal, onOpenVideo, onOpenCompany, productionOnly = false }) {
+export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposal, onOpenVideo, onOpenCompany, productionOnly = false, hideFinancials = false }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
@@ -381,26 +381,28 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               );
             })() : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
-          <Field label="Value (ex VAT)">
-            {dealValueInfo.value != null
-              ? (() => {
-                  const rate = deal.vatRate != null ? deal.vatRate : 0.2;
-                  return (
-                    <>
-                      <strong title={dealValueInfo.source === 'signed' ? 'Signed sale value (incl. extras)'
-                        : dealValueInfo.source === 'proposal' ? 'From the latest proposal (not yet signed)'
-                        : 'Set manually'}>{formatGBP(dealValueInfo.value)}</strong>
-                      {rate > 0 && (
-                        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
-                          {formatGBP(dealValueInfo.value * (1 + rate))} inc VAT ({+(rate * 100).toFixed(2)}%)
-                        </div>
-                      )}
-                    </>
-                  );
-                })()
-              : <span style={{ color: BRAND.muted }}>—</span>}
-          </Field>
-          {projectVideos.length > 0 && deal.productionEnteredAt && (
+          {!hideFinancials && (
+            <Field label="Value (ex VAT)">
+              {dealValueInfo.value != null
+                ? (() => {
+                    const rate = deal.vatRate != null ? deal.vatRate : 0.2;
+                    return (
+                      <>
+                        <strong title={dealValueInfo.source === 'signed' ? 'Signed sale value (incl. extras)'
+                          : dealValueInfo.source === 'proposal' ? 'From the latest proposal (not yet signed)'
+                          : 'Set manually'}>{formatGBP(dealValueInfo.value)}</strong>
+                        {rate > 0 && (
+                          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
+                            {formatGBP(dealValueInfo.value * (1 + rate))} inc VAT ({+(rate * 100).toFixed(2)}%)
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()
+                : <span style={{ color: BRAND.muted }}>—</span>}
+            </Field>
+          )}
+          {!hideFinancials && projectVideos.length > 0 && deal.productionEnteredAt && (
             <Field icon={Calendar} label={deal.paymentOption === '5050' ? 'Deposit paid' : deal.paymentOption === 'po' ? 'PO confirmed' : 'Paid'}>
               {new Date(deal.productionEnteredAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
             </Field>
@@ -695,7 +697,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         </>)}
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} creditProject={detail?.creditProject || null} isMobile={isMobile} onOpenVideo={onOpenVideo} />
+          <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} creditProject={detail?.creditProject || null} hideCredits={hideFinancials} isMobile={isMobile} onOpenVideo={onOpenVideo} />
         </div>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>

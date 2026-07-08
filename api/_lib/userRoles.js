@@ -47,6 +47,15 @@ export function ensureSystemRoles() {
         VALUES ('marketing', 'Marketing', '["marketing.access"]'::jsonb, '{}'::jsonb, true)
         ON CONFLICT (id) DO NOTHING
       `;
+      // Freelancer role: an external contractor scoped to ONLY the projects they're
+      // assigned to. Own rota + assigned project pages (no money) + those projects'
+      // revisions/storyboards + their own tasks. No finance permission → every money
+      // endpoint 403s. Server-side ownership scoping lives in api/_lib/crm/access.js.
+      await sql`
+        INSERT INTO roles (id, name, permissions, notification_defaults, is_system)
+        VALUES ('freelancer', 'Freelancer', '["schedule.access", "revisions.access", "production.access"]'::jsonb, '{}'::jsonb, true)
+        ON CONFLICT (id) DO NOTHING
+      `;
       // Back-fill finance.manage on a Director role that pre-dates the permission
       // (the 20260609 migration is ON CONFLICT DO NOTHING, so it won't update an
       // existing role). Without this, Directors can't reach the Finance section.

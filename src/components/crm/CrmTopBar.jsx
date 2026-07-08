@@ -19,7 +19,7 @@ const BADGE = '#FB923C';
 // Tasks + notification bells + Account, with no Sales/Business/Projects nav or
 // Emails (those views don't exist in that shell). Gives producers the header and
 // notification bells they'd otherwise be missing entirely.
-export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLink, producer = false, marketing = false }) {
+export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLink, producer = false, freelancer = false, marketing = false }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const undoStack = state.undoStack || [];
@@ -152,7 +152,11 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         .filter((s) => s.key === 'projects')
         .map((s) => ({ ...s, items: [
           { label: 'Dashboard', icon: LayoutDashboard, go: () => navigate('prod-dashboard') },
-          ...s.items.filter((i) => i.label !== 'Partners & Credits'),
+          ...s.items
+            .filter((i) => i.label !== 'Partners & Credits')
+            // Freelancers have no board — just their assigned "My Projects" list.
+            .filter((i) => !freelancer || i.label !== 'Production board')
+            .map((i) => (freelancer && i.label === 'Projects' ? { ...i, label: 'My Projects' } : i)),
         ] }))
         .filter((s) => s.items.length > 0)
     : [];
@@ -182,7 +186,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     : producer
     ? [
         tab('prod-dashboard', 'Home', LayoutDashboard, () => navigate('prod-dashboard'), ['prod-dashboard']),
-        tab('production', 'Board', KanbanSquare, () => navigate('production'), ['production']),
+        freelancer
+          ? tab('projects', 'Projects', LayoutGrid, () => navigate('projects'), ['projects', 'project'])
+          : tab('production', 'Board', KanbanSquare, () => navigate('production'), ['production']),
         tab('schedule', 'Rota', CalendarDays, () => navigate('schedule'), ['schedule']),
         tab('tasks', 'Tasks', CheckSquare, () => navigate('tasks'), ['tasks'], openTasksDue),
         tab('more', 'More', Menu, openMore),
@@ -369,8 +375,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
           />
         )}
 
-        {/* Emails is available to producers too (their project comms inbox). */}
-        {!marketing && !isMobile && [
+        {/* Emails is available to producers too (their project comms inbox), but
+            not to freelancers — they don't get the client-comms inbox. */}
+        {!marketing && !freelancer && !isMobile && [
           { label: 'Emails', icon: Mail, route: 'emails', views: ['emails', 'triage', 'email'], go: () => navigate('emails'), count: inboxUnread },
         ].map((item) => {
           const Icon = item.icon;
