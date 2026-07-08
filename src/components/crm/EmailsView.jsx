@@ -1698,7 +1698,7 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
 // HTML is sanitised first as defence-in-depth. Height auto-fits the content.
 function EmailFrame({ html, messageId = null }) {
   const ref = useRef(null);
-  const [height, setHeight] = useState(360);
+  const [height, setHeight] = useState(80);
 
   const srcDoc = useMemo(() => {
     const clean = sanitizeEmailBody(html || '', FRAME_SANITIZE, { messageId });
@@ -1721,7 +1721,14 @@ function EmailFrame({ html, messageId = null }) {
     if (!f || !f.contentWindow) return;
     try {
       const doc = f.contentWindow.document;
-      const h = Math.max(doc.body?.scrollHeight || 0, doc.documentElement?.scrollHeight || 0);
+      // Measure the BODY only. documentElement.scrollHeight can never report
+      // less than the iframe's own height, so mixing it in (via Math.max) meant
+      // a short email could never shrink below the default height — leaving a
+      // tall blank frame under a two-line message. body.scrollHeight tracks the
+      // actual content, growing for long emails and shrinking for short ones.
+      const b = doc.body;
+      let h = b ? b.scrollHeight : 0;
+      if (!h && doc.documentElement) h = doc.documentElement.scrollHeight;
       if (h) setHeight(h + 4);
     } catch { /* cross-origin guard — shouldn't happen with srcDoc */ }
   };
