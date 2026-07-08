@@ -1433,6 +1433,12 @@ export function StoreProvider({ children }) {
     linkPendingPaymentCompany(id, companyId) {
       return api.patch('/api/crm/stats/pending-manual/' + id, { companyId: companyId || null });
     },
+    // Ad-hoc edit of an imported pending payment's own fields (label,
+    // description, net, VAT…). Pass a partial { company, description,
+    // amountExVat, vat, ... }; omitted keys keep their current value.
+    updatePendingPayment(id, fields) {
+      return api.patch('/api/crm/stats/pending-manual/' + id, { fields });
+    },
     // ── "Other" recurring revenue (Pending Payments → Other). Small ongoing
     // monthly income outside deals/partners (e.g. web hosting); auto-predicted.
     // Mint the id client-side so add is reversible (undo deletes that row, redo

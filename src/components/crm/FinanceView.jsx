@@ -1628,6 +1628,20 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
       });
     });
   };
+  // Ad-hoc edit of an imported row's own figures/labels. Undoable — the undo
+  // restores the pre-edit snapshot of just the fields we changed.
+  const editRow = (r, fields) => {
+    if (!actions) return Promise.resolve();
+    const before = { company: r.company || null, description: r.description || null, amountExVat: r.amountExVat, vat: r.vat };
+    return actions.updatePendingPayment(r.id, fields).then(() => {
+      if (onChanged) onChanged();
+      actions.recordUndo && actions.recordUndo({
+        label: `Edit ${r.company || noun}`,
+        undo: () => actions.updatePendingPayment(r.id, before).then(() => onChanged && onChanged()),
+        redo: () => actions.updatePendingPayment(r.id, fields).then(() => onChanged && onChanged()),
+      });
+    });
+  };
   const remove = (r) => {
     if (!actions) return;
     if (window.confirm(`Remove "${r.company || r.description || 'this item'}" from pending payments?\n\nIt will drop off the outstanding list and lower the pending total — use this for duplicates or mistakes. It is NOT recorded as paid; to bank a payment use "Mark paid" instead.`)) {
@@ -1681,6 +1695,7 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
                 onUninvoice={() => setInvoiced(r, false)}
                 onLink={(dealId) => setLink(r, dealId)}
                 onLinkCompany={(companyId) => setCompanyLink(r, companyId)}
+                onEdit={(fields) => editRow(r, fields)}
                 companies={companies}
                 onOpenDeal={onOpenDeal}
                 onOpenCompany={onOpenCompany}
@@ -1722,11 +1737,68 @@ function ManualPendingGroup({ title, note, kind = 'pp', variant = 'pending', acc
   );
 }
 
-function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onPaid, onInvoice, onUninvoice, onLink, onLinkCompany, companies, onOpenDeal, onOpenCompany, onArchive, onRemove, onChanged }) {
+// Ad-hoc edit of an imported PP/PO row: correct its label, description, and
+// ex-VAT figures. Typing Net auto-fills VAT at 20% until VAT is edited by hand.
+function EditManualRowModal({ row, onClose, onSave }) {
+  const isPo = row.kind === 'po';
+  const [company, setCompany] = useState(row.company || '');
+  const [description, setDescription] = useState(row.description || '');
+  const [net, setNet] = useState(row.amountExVat != null ? String(row.amountExVat) : '');
+  const [vat, setVat] = useState(row.vat != null ? String(row.vat) : '');
+  const [vatTouched, setVatTouched] = useState(!!Number(row.vat));
+  const [saving, setSaving] = useState(false);
+
+  const onNet = (v) => {
+    setNet(v);
+    if (!vatTouched) {
+      const n = parseFloat(v);
+      setVat(Number.isFinite(n) ? (Math.round(n * 0.2 * 100) / 100).toString() : '');
+    }
+  };
+  const netNum = parseFloat(net);
+  const canSave = Number.isFinite(netNum) && netNum >= 0 && !saving;
+  const submit = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    try {
+      await onSave({
+        company: company.trim() || null,
+        description: description.trim() || null,
+        amountExVat: parseFloat(net) || 0,
+        vat: parseFloat(vat) || 0,
+      });
+    } finally { setSaving(false); }
+  };
+  const input = { padding: '8px 10px', borderRadius: 7, border: '1px solid ' + BRAND.border, fontSize: 13, color: BRAND.ink, width: '100%', boxSizing: 'border-box' };
+  const label = { fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4, display: 'block' };
+
+  return (
+    <Modal onClose={onClose} maxWidth={420}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: BRAND.ink }}>Edit {isPo ? 'purchase order' : 'pending payment'}</h3>
+      <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>Ad-hoc correction to this imported row. Net + VAT are ex-VAT figures, as on the sheet.</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div><span style={label}>Customer / item</span><input style={input} value={company} autoFocus onChange={(e) => setCompany(e.target.value)} /></div>
+        <div><span style={label}>Description</span><input style={input} value={description} onChange={(e) => setDescription(e.target.value)} /></div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><span style={label}>Net £</span><input style={{ ...input, textAlign: 'right' }} inputMode="decimal" value={net} onChange={(e) => onNet(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} /></div>
+          <div><span style={label}>VAT £</span><input style={{ ...input, textAlign: 'right' }} inputMode="decimal" value={vat} onChange={(e) => { setVatTouched(true); setVat(e.target.value); }} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} /></div>
+        </div>
+        <div style={{ fontSize: 12, color: BRAND.muted, textAlign: 'right' }}>Total <strong style={{ color: BRAND.ink }}>{formatGBP((parseFloat(net) || 0) + (parseFloat(vat) || 0))}</strong></div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+        <button onClick={onClose} className="btn-ghost" disabled={saving}>Cancel</button>
+        <button onClick={submit} className="btn-primary" disabled={!canSave}>{saving ? 'Saving…' : 'Save changes'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onPaid, onInvoice, onUninvoice, onLink, onLinkCompany, onEdit, companies, onOpenDeal, onOpenCompany, onArchive, onRemove, onChanged }) {
   const predict = usePredict();
   const [linkOpen, setLinkOpen] = useState(false);
   const [payingInvoice, setPayingInvoice] = useState(false);
   const [predictingDate, setPredictingDate] = useState(false);
+  const [editing, setEditing] = useState(false);
   const isInvoicedGroup = variant === 'invoiced';
   const isCompanyInvoice = r.kind === 'company-invoice';
   const linkedDeal = !!r.dealId;
@@ -1758,6 +1830,7 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
     canManage && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => onPaid('stripe') },
     canManage && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => onPaid('bacs') },
     canManage && onLink && { label: linked ? 'Edit link' : 'Link to deal / customer', icon: Link2, onClick: () => setLinkOpen(true) },
+    canManage && onEdit && { label: 'Edit details…', icon: Pencil, onClick: () => setEditing(true) },
     canOpen && { label: linkedCompany ? 'Open customer' : `Open ${dealNoun}`, icon: ExternalLink, onClick: openLinked },
     canManage && onArchive && { label: 'Archive', icon: Archive, onClick: onArchive },
     canManage && { label: 'Remove', icon: Trash2, danger: true, onClick: onRemove },
@@ -1849,6 +1922,13 @@ function ManualPendingRow({ r, cols, isMobile, variant = 'pending', actions, onP
         amount={(Number(r.amountExVat) || 0) + (Number(r.vat) || 0)}
         onClose={() => setPayingInvoice(false)}
         onMarked={() => { setPayingInvoice(false); if (onChanged) onChanged(); }}
+      />
+    )}
+    {editing && (
+      <EditManualRowModal
+        row={r}
+        onClose={() => setEditing(false)}
+        onSave={async (fields) => { await onEdit(fields); setEditing(false); }}
       />
     )}
     {predictingDate && (

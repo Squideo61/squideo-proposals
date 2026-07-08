@@ -1492,6 +1492,28 @@ async function pendingManualRoute(req, res, action, user) {
   if (req.method === 'PATCH') {
     if (!action) return res.status(400).json({ error: 'id required' });
     const body = req.body || {};
+    // Ad-hoc edit of the row's own fields (correct an imported figure/label) —
+    // { fields: { company?, invoiceType?, description?, note?, poNumber?,
+    // amountExVat?, vat? } }. Only the keys present are changed; the rest keep
+    // their current value. Money fields are ex-VAT, coerced to numbers.
+    if (body.fields && typeof body.fields === 'object') {
+      const f = body.fields;
+      const [cur] = await sql`SELECT * FROM manual_pending_payments WHERE id = ${action}`;
+      if (!cur) return res.status(404).json({ error: 'Row not found' });
+      const company     = 'company' in f ? trimOrNull(f.company) : cur.company;
+      const invoiceType = 'invoiceType' in f ? trimOrNull(f.invoiceType) : cur.invoice_type;
+      const description = 'description' in f ? trimOrNull(f.description) : cur.description;
+      const note        = 'note' in f ? trimOrNull(f.note) : cur.note;
+      const poNumber    = 'poNumber' in f ? trimOrNull(f.poNumber) : cur.po_number;
+      const amount      = 'amountExVat' in f ? (numberOrNull(f.amountExVat) || 0) : Number(cur.amount_ex_vat) || 0;
+      const vat         = 'vat' in f ? (numberOrNull(f.vat) || 0) : Number(cur.vat) || 0;
+      await sql`
+        UPDATE manual_pending_payments
+           SET company = ${company}, invoice_type = ${invoiceType}, description = ${description},
+               note = ${note}, po_number = ${poNumber}, amount_ex_vat = ${amount}, vat = ${vat}
+         WHERE id = ${action}`;
+      return res.status(200).json({ ok: true, rows: await fetchManualPending() });
+    }
     // Link (or unlink) the row to a CRM deal. { dealId: '<id>' | null }.
     // A row links to a deal OR a company, never both — picking a deal clears
     // any company link.
