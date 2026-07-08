@@ -32,6 +32,15 @@ import {
 // so it can be checked internally first.
 const INTERNAL_REVIEW_BUFFER_DAYS = 1;
 
+// People/roles kept OFF the schedulable rota — they don't produce scheduled
+// content, so they get no calendar column, aren't assignable, and don't count
+// toward production capacity. Their annual leave + allowance are still tracked
+// (they stay on the roster for leave). Copywriters as a ROLE (they write
+// scripts — not a scheduled stage); Callum as a specific PERSON (a production
+// manager who doesn't produce), matched by name so other managers stay on.
+const OFF_ROTA_ROLES = new Set(['copywriter']);
+const OFF_ROTA_NAMES = new Set(['callum major']);
+
 // ── Schema self-heal (mirrors db/migrations/20260703_producer_schedule.sql) ──
 let schemaReady = null;
 export function ensureScheduleTables() {
@@ -177,6 +186,10 @@ async function scheduleUsers() {
     // project. They appear on the rota (so managers see their assigned blocks)
     // but never carry an annual-leave allowance, and are excluded from capacity.
     const isFreelancer = r.role_id === 'freelancer';
+    // `producesContent` = a schedulable producer (calendar column, assignable,
+    // counts toward capacity). Copywriters + Callum are on the roster for leave
+    // tracking but don't produce scheduled content, so they're off the calendar.
+    const producesContent = !OFF_ROTA_ROLES.has(r.role_id) && !OFF_ROTA_NAMES.has((r.name || '').toLowerCase());
     const onRoster = (r.active == null ? !isAdmin : r.active) === true;
     return {
       email: String(r.email).toLowerCase(),
@@ -184,6 +197,7 @@ async function scheduleUsers() {
       avatar: r.avatar || null,
       isAdmin,
       isFreelancer,
+      producesContent,
       hasRow: r.active != null || r.track_allowance != null,
       active: r.active,
       trackAllowance: !isFreelancer && r.track_allowance !== false, // null (no row) → true; never for freelancers
@@ -191,9 +205,11 @@ async function scheduleUsers() {
     };
   });
 }
-// Just the roster (calendar columns / assignable people).
+// Just the schedulable producers (calendar columns / assignable people).
 async function teamMembers() {
-  return (await scheduleUsers()).filter(u => u.onRoster).map(u => ({ email: u.email, name: u.name, avatar: u.avatar, isFreelancer: u.isFreelancer }));
+  return (await scheduleUsers())
+    .filter(u => u.onRoster && u.producesContent)
+    .map(u => ({ email: u.email, name: u.name, avatar: u.avatar, isFreelancer: u.isFreelancer }));
 }
 
 // ── Deadlines from the deal's production schedule JSON ──
@@ -475,7 +491,10 @@ async function buildPayload(user, manage, approve = false, manageAllowance = fal
   const email = (user.email || '').toLowerCase();
   const today = todayStr();
   const candidates = await scheduleUsers();
-  const roster = candidates.filter(u => u.onRoster).map(u => ({ email: u.email, name: u.name, avatar: u.avatar, isFreelancer: u.isFreelancer }));
+  const roster = candidates.filter(u => u.onRoster).map(u => ({ email: u.email, name: u.name, avatar: u.avatar, isFreelancer: u.isFreelancer, producesContent: u.producesContent }));
+  // Scope covers everyone on the roster (so their leave still loads + can be
+  // reviewed), but the calendar columns/assignable list below is only the
+  // schedulable producers.
   const scopeEmails = manage ? roster.map(m => m.email) : [email];
 
   // Assignments
@@ -522,9 +541,10 @@ async function buildPayload(user, manage, approve = false, manageAllowance = fal
     canApproveLeave: approve,
     canManageAllowance: manageAllowance,
     me: email,
-    // Managers see the whole active roster on the master calendar; a producer
-    // only needs (and only gets) their own row.
-    producers: manage ? roster : roster.filter(m => m.email === email),
+    // Managers see the whole roster of schedulable producers on the master
+    // calendar; a producer only needs (and only gets) their own row. Copywriters
+    // + Callum are excluded here (not schedulable) but keep their leave/allowance.
+    producers: (manage ? roster : roster.filter(m => m.email === email)).filter(m => m.producesContent),
     assignments,
     leave: leave.map(serialiseLeave),
     allowances,
