@@ -370,7 +370,9 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               // The email is a click-to-compose button (opens the email box
               // pre-addressed to this contact), not just plain text.
               const emailBtn = contact.email ? (
-                <button type="button" onClick={() => openComposerForDeal()} title="Email this contact" style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: BRAND.blue, cursor: 'pointer' }}>{contact.email}</button>
+                state.session?.role === 'freelancer'
+                  ? <span>{contact.email}</span>
+                  : <button type="button" onClick={() => openComposerForDeal()} title="Email this contact" style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: BRAND.blue, cursor: 'pointer' }}>{contact.email}</button>
               ) : null;
               return (
                 <>
@@ -700,6 +702,8 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} creditProject={detail?.creditProject || null} hideCredits={hideFinancials} isMobile={isMobile} onOpenVideo={onOpenVideo} />
         </div>
 
+        {/* Freelancers don't use the CRM inbox / send client emails. */}
+        {state.session?.role !== 'freelancer' && (
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <Card title="Emails" count={totalEmails} action={
             <button onClick={() => openComposerForDeal()} className="btn-ghost"><Mail size={12} /> Send email</button>
@@ -732,6 +736,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             </div>
           </Card>
         </div>
+        )}
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <FilesCard dealId={dealId} files={detail?.files || []} driveEnabled={!!detail?.driveFiles} driveFolderId={detail?.driveFolderId || null} />

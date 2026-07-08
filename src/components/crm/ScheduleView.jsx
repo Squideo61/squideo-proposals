@@ -57,6 +57,9 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
 
   useEffect(() => { actions.loadSchedule(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Freelancers are external contractors — annual leave / allowance don't apply
+  // to them, so hide the whole leave apparatus on their own view.
+  const isFreelancer = state.session?.role === 'freelancer';
   const canManage = !!sched.canManage;
   // Anyone who can manage the rota can review + approve leave (matches the
   // server rule). Deriving it from canManage too means the Review button can't
@@ -137,9 +140,11 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
               <Plus size={14} /> Add block
             </button>
           )}
-          <button className="btn-ghost" onClick={() => setLeaveModal(true)} style={{ fontWeight: 600 }}>
-            <Plane size={14} /> Book leave
-          </button>
+          {!isFreelancer && (
+            <button className="btn-ghost" onClick={() => setLeaveModal(true)} style={{ fontWeight: 600 }}>
+              <Plane size={14} /> Book leave
+            </button>
+          )}
         </div>
       </div>
 
@@ -192,10 +197,11 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
             : <CalendarGrid weekDays={weekDays} producers={visibleProducers} asgByCell={asgByCell} leaveByCell={leaveByCell}
                 today={today} canManage={canManage} me={me} onBlock={setBlockModal} onDropCell={onDropCell} />)}
 
-      {/* Leave requests + allowances + amends */}
+      {/* Leave requests + allowances + amends. Annual leave / allowance don't
+          apply to freelancers, so they only see their Amends to do. */}
       <div style={{ marginTop: 28 }}>
-        <LeavePanel sched={sched} canManage={canManage} canApprove={canApprove} me={me} actions={actions} />
-        <AllowancePanel sched={sched} canManage={canManage} canManageAllowance={canManageAllowance} me={me} onEdit={setAllowanceModal} />
+        {!isFreelancer && <LeavePanel sched={sched} canManage={canManage} canApprove={canApprove} me={me} actions={actions} />}
+        {!isFreelancer && <AllowancePanel sched={sched} canManage={canManage} canManageAllowance={canManageAllowance} me={me} onEdit={setAllowanceModal} />}
         <AmendsPanel sched={sched} onOpenVideo={onOpenVideo} />
       </div>
 
@@ -217,7 +223,9 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
 // how many are delayed (schedule/leave clash), and how full every producer's
 // diary is over the next month and next three months.
 function CapacityBar({ sched }) {
-  const rosterEmails = (sched.producers || []).map(p => p.email);
+  // Freelancers are additional, separately-sourced capacity — exclude them from
+  // the rota's utilisation figures (both the denominator and their booked days).
+  const rosterEmails = (sched.producers || []).filter(p => !p.isFreelancer).map(p => p.email);
   const assignments = sched.assignments || [];
   const stats = useMemo(() => {
     const today = todayStr();

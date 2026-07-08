@@ -7,6 +7,20 @@
 
 import sql from './db.js';
 
+// Notification defaults for the Freelancer role — only their-own-work alerts
+// (all assignee/owner audiences), each ON so they fire via email AND in-app.
+// Broadcasts are excluded for freelancers in resolveRecipients regardless.
+const FREELANCER_NOTIF_DEFAULTS = JSON.stringify({
+  'revision.feedback_submitted': true,
+  'storyboard.feedback_submitted': true,
+  'task.reminder': true,
+  'task.reminder_email': true,
+  'task.digest': true,
+  'task.digest_email': true,
+  'comment.mention': true,
+  'intro_call.booked': true,
+});
+
 // Module-level cache. Fine because Vercel serverless instances are
 // short-lived; the cache vacuums itself on cold start. Roles change rarely
 // (only via the admin UI) so a 60s TTL is plenty even on warm instances.
@@ -51,10 +65,24 @@ export function ensureSystemRoles() {
       // assigned to. Own rota + assigned project pages (no money) + those projects'
       // revisions/storyboards + their own tasks. No finance permission → every money
       // endpoint 403s. Server-side ownership scoping lives in api/_lib/crm/access.js.
+      // Notification defaults: ONLY their-own-work alerts (assignee/owner audiences),
+      // each ON so they fire via email AND in-app — freelancers are less likely to
+      // watch the web app, and broadcasts are excluded for them entirely (see
+      // resolveRecipients in notifications.js).
       await sql`
         INSERT INTO roles (id, name, permissions, notification_defaults, is_system)
-        VALUES ('freelancer', 'Freelancer', '["schedule.access", "revisions.access", "production.access"]'::jsonb, '{}'::jsonb, true)
+        VALUES ('freelancer', 'Freelancer',
+          '["schedule.access", "revisions.access", "production.access"]'::jsonb,
+          ${FREELANCER_NOTIF_DEFAULTS}::jsonb, true)
         ON CONFLICT (id) DO NOTHING
+      `;
+      // Back-fill the notification defaults onto an already-seeded freelancer role
+      // (it originally shipped with '{}'). Guarded by a sentinel key so a later
+      // admin edit isn't reverted.
+      await sql`
+        UPDATE roles
+           SET notification_defaults = notification_defaults || ${FREELANCER_NOTIF_DEFAULTS}::jsonb, updated_at = NOW()
+         WHERE id = 'freelancer' AND NOT (notification_defaults ? 'revision.feedback_submitted')
       `;
       // Back-fill finance.manage on a Director role that pre-dates the permission
       // (the 20260609 migration is ON CONFLICT DO NOTHING, so it won't update an

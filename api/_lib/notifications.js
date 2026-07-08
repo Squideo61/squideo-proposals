@@ -62,7 +62,11 @@ export async function resolveRecipients(key, opts = {}) {
     return Array.from(new Set(filtered));
   }
 
-  // broadcast: every user where role default OR override resolves to true.
+  // broadcast: every user where role default OR override resolves to true —
+  // EXCEPT freelancers. Broadcasts are team-wide announcements (proposals,
+  // payments, leads, good-to-go, leave, schedule clashes); a freelancer is an
+  // external contractor who only ever hears about their own assigned work
+  // (the owner/assignee audiences), never team broadcasts.
   const rows = await sql`
     SELECT u.email,
            COALESCE(o.enabled, (r.notification_defaults->>${key})::boolean, false) AS enabled
@@ -70,6 +74,7 @@ export async function resolveRecipients(key, opts = {}) {
       LEFT JOIN roles r ON r.id = u.role
       LEFT JOIN user_notification_overrides o
              ON o.user_email = u.email AND o.notification_key = ${key}
+     WHERE u.role IS DISTINCT FROM 'freelancer'
   `;
   const out = [];
   for (const row of rows) {

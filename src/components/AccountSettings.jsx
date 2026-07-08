@@ -129,10 +129,14 @@ export function AccountSettings({ onClose, onLogout }) {
         <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>JPG or PNG. Max 5MB. Will be resized to 200×200px.</div>
       </div>
 
-      <div style={{ borderTop: '1px solid ' + BRAND.border, marginBottom: 24 }} />
-
-      {/* Gmail connection */}
-      <GmailConnectSection />
+      {/* Gmail connection — not for freelancers (they don't send client emails
+          through the CRM). */}
+      {sessionUser?.role !== 'freelancer' && (
+        <>
+          <div style={{ borderTop: '1px solid ' + BRAND.border, marginBottom: 24 }} />
+          <GmailConnectSection />
+        </>
+      )}
 
       <div style={{ borderTop: '1px solid ' + BRAND.border, marginBottom: 24 }} />
 

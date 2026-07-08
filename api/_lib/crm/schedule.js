@@ -163,7 +163,7 @@ async function canApproveLeave(user) {
 //   trackAllowance = has an annual-leave allowance counted in the tracker.
 async function scheduleUsers() {
   const rows = await sql`
-    SELECT u.email, u.name, u.avatar,
+    SELECT u.email, u.name, u.avatar, u.role AS role_id,
            (r.permissions @> '["*"]'::jsonb) AS is_admin,
            la.active AS active, la.track_allowance AS track_allowance
       FROM users u
@@ -173,22 +173,27 @@ async function scheduleUsers() {
      ORDER BY u.name NULLS LAST, u.email`;
   return rows.map(r => {
     const isAdmin = !!r.is_admin;
+    // Freelancers are external contractors — extra capacity brought in per
+    // project. They appear on the rota (so managers see their assigned blocks)
+    // but never carry an annual-leave allowance, and are excluded from capacity.
+    const isFreelancer = r.role_id === 'freelancer';
     const onRoster = (r.active == null ? !isAdmin : r.active) === true;
     return {
       email: String(r.email).toLowerCase(),
       name: r.name || r.email,
       avatar: r.avatar || null,
       isAdmin,
+      isFreelancer,
       hasRow: r.active != null || r.track_allowance != null,
       active: r.active,
-      trackAllowance: r.track_allowance !== false, // null (no row) → true
+      trackAllowance: !isFreelancer && r.track_allowance !== false, // null (no row) → true; never for freelancers
       onRoster,
     };
   });
 }
 // Just the roster (calendar columns / assignable people).
 async function teamMembers() {
-  return (await scheduleUsers()).filter(u => u.onRoster).map(u => ({ email: u.email, name: u.name, avatar: u.avatar }));
+  return (await scheduleUsers()).filter(u => u.onRoster).map(u => ({ email: u.email, name: u.name, avatar: u.avatar, isFreelancer: u.isFreelancer }));
 }
 
 // ── Deadlines from the deal's production schedule JSON ──
@@ -470,7 +475,7 @@ async function buildPayload(user, manage, approve = false, manageAllowance = fal
   const email = (user.email || '').toLowerCase();
   const today = todayStr();
   const candidates = await scheduleUsers();
-  const roster = candidates.filter(u => u.onRoster).map(u => ({ email: u.email, name: u.name, avatar: u.avatar }));
+  const roster = candidates.filter(u => u.onRoster).map(u => ({ email: u.email, name: u.name, avatar: u.avatar, isFreelancer: u.isFreelancer }));
   const scopeEmails = manage ? roster.map(m => m.email) : [email];
 
   // Assignments
@@ -532,8 +537,10 @@ async function buildPayload(user, manage, approve = false, manageAllowance = fal
 // roster or has an explicit row (so removed people still surface for re-adding).
 // `onlyEmail` scopes to a single person (non-manager view).
 async function buildAllowances(candidates, onlyEmail, today) {
-  let pool = candidates;
-  if (onlyEmail) pool = candidates.filter(c => c.email === onlyEmail);
+  // Freelancers never carry an annual-leave allowance — leave them out of the
+  // tracker entirely (they're external, additional capacity).
+  let pool = candidates.filter(c => !c.isFreelancer);
+  if (onlyEmail) pool = pool.filter(c => c.email === onlyEmail);
   if (!pool.length) return [];
 
   // Provision a default row for roster members who don't have one yet.
