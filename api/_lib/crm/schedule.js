@@ -642,7 +642,11 @@ export async function scheduleRoute(req, res, id, action, user) {
   await ensureScheduleTables();
   const role = await getRole(user.role);
   const manage = hasPermission(role, 'schedule.manage');
-  const approve = hasPermission(role, 'schedule.approve_leave');
+  // Anyone who can manage the schedule can review + approve leave (Admins,
+  // Directors, Production Managers). The explicit approve_leave permission still
+  // counts, but managing the rota implies it — so approval never depends on a
+  // role-id back-fill landing.
+  const approve = manage || hasPermission(role, 'schedule.approve_leave');
   const manageAllowance = hasPermission(role, 'schedule.manage_allowance');
   const email = (user.email || '').toLowerCase();
   const reload = () => buildPayload(user, manage, approve, manageAllowance);
