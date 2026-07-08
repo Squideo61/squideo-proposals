@@ -527,7 +527,20 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
             </h3>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, minWidth: 0 }}>
-            {statusBadge}
+            {statusBadge && (opened ? (
+              // Tapping the status pill opens the full view-analytics modal (the
+              // desktop card has a separate eye button; on mobile the pill is the
+              // tap target). Only when there are opens to show.
+              <button
+                type="button"
+                onClick={(e) => { stop(e); onAnalytics(); }}
+                title="View analytics"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0 }}
+              >
+                {statusBadge}
+                <BarChart3 size={12} color={BRAND.muted} />
+              </button>
+            ) : statusBadge)}
             <span style={{ fontSize: 11.5, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
               {proposal.contactBusinessName || '—'}{proposal.date ? ` · ${proposal.date}` : ''}
             </span>

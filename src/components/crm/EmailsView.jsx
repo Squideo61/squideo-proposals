@@ -1697,6 +1697,7 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
 // allow-scripts in the sandbox, so nothing in the email can execute JS; the
 // HTML is sanitised first as defence-in-depth. Height auto-fits the content.
 function EmailFrame({ html, messageId = null }) {
+  const isMobile = useIsMobile();
   const ref = useRef(null);
   const [height, setHeight] = useState(80);
 
@@ -1707,7 +1708,7 @@ function EmailFrame({ html, messageId = null }) {
       + '<base target="_blank">'
       + '<style>'
       + 'html,body{margin:0;padding:0;max-width:100%;}'
-      + "body{font-family:-apple-system,system-ui,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.6;color:#0F2A3D;word-break:break-word;overflow-wrap:anywhere;overflow-x:auto;}"
+      + "body{font-family:-apple-system,system-ui,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.6;color:#0F2A3D;word-break:break-word;overflow-wrap:anywhere;overflow-x:auto;padding-bottom:6px;}"
       + 'img{max-width:100%!important;height:auto!important;}'
       // Nudge wide fixed-width signature/footer tables to reflow within the phone
       // frame instead of forcing a horizontal scroll that clips the text.
@@ -1721,20 +1722,24 @@ function EmailFrame({ html, messageId = null }) {
     if (!f || !f.contentWindow) return;
     try {
       const doc = f.contentWindow.document;
-      // Measure the BODY only. documentElement.scrollHeight can never report
-      // less than the iframe's own height, so mixing it in (via Math.max) meant
-      // a short email could never shrink below the default height — leaving a
-      // tall blank frame under a two-line message. body.scrollHeight tracks the
-      // actual content, growing for long emails and shrinking for short ones.
+      // Measure the BODY, not documentElement: documentElement.scrollHeight can
+      // never report less than the iframe's own height, so it could never shrink
+      // a short email back down (left a tall blank frame). getBoundingClientRect
+      // catches sub-pixel content the integer scrollHeight rounds away, so the
+      // last line isn't clipped.
       const b = doc.body;
-      let h = b ? b.scrollHeight : 0;
+      let h = 0;
+      if (b) h = Math.max(b.scrollHeight || 0, Math.ceil(b.getBoundingClientRect().height) || 0);
       if (!h && doc.documentElement) h = doc.documentElement.scrollHeight;
-      if (h) setHeight(h + 4);
+      if (h) setHeight(h + 8);
     } catch { /* cross-origin guard — shouldn't happen with srcDoc */ }
   };
 
   const onLoad = () => {
     resize();
+    // Re-measure after the browser has laid the content out (onLoad can fire a
+    // hair early), so a short email lands on its exact height first paint.
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(resize);
     // Images usually finish loading after the document, changing the height.
     try {
       const doc = ref.current.contentWindow.document;
@@ -1747,14 +1752,21 @@ function EmailFrame({ html, messageId = null }) {
     setTimeout(resize, 1000);
   };
 
+  // On a phone, cap the frame at ~72% of the screen and let the email scroll
+  // INSIDE it, so a long email is a tidy phone-width viewport you scroll down
+  // rather than a metres-tall card. Short emails stay at their exact height.
+  const cap = isMobile ? Math.round((typeof window !== 'undefined' ? window.innerHeight : 800) * 0.72) : null;
+  const displayH = cap ? Math.min(height, cap) : height;
+
   return (
     <iframe
       ref={ref}
       title="Email message"
       onLoad={onLoad}
       srcDoc={srcDoc}
+      scrolling="yes"
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      style={{ width: '100%', border: 'none', height: height + 'px', display: 'block' }}
+      style={{ width: '100%', border: 'none', height: displayH + 'px', display: 'block' }}
     />
   );
 }
