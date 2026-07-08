@@ -451,6 +451,12 @@ function LeavePanel({ sched, canManage, canApprove, me, actions }) {
 
   return (
     <Section title="Annual leave" icon={Plane} color="#D97706">
+      {!canApprove && pending.length > 0 && (
+        <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#92400E', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, display: 'flex', gap: 8 }}>
+          <Plane size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>{pending.length} leave request{pending.length === 1 ? '' : 's'} awaiting approval — annual leave is reviewed and approved by an <strong>Admin or Director</strong>.</span>
+        </div>
+      )}
       {canApprove && (
         <>
           <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>Awaiting approval</div>
