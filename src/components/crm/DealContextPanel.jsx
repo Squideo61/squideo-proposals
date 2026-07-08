@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, Plus, X, Search, FileText, ChevronDown, Check, Pencil } from 'lucide-react';
+import { ExternalLink, Plus, X, Search, FileText, ChevronDown, Check, Pencil, Folder } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
+import { FolderTaskList } from './FolderView.jsx';
 import { LostReasonModal } from './LostReasonModal.jsx';
 import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
 import { PHASE_BY_ID, STAGE_LABEL as PROD_STAGE_LABEL } from '../../lib/productionStages.js';
@@ -19,7 +20,27 @@ const STAGE_LABEL = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s.label])
 // in-app twin of the Chrome extension's Gmail sidebar. Tells you which deal(s)
 // a thread is on (or suggests/lets you attach one) and surfaces the deal's
 // stage, value, owner, open tasks and recent activity.
-export function DealContextPanel({ gmailThreadId, counterpartyEmail, onOpenDeal, onOpenProposal }) {
+export function DealContextPanel({ gmailThreadId, counterpartyEmail, onOpenDeal, onOpenProposal, threadSubject }) {
+  return (
+    <>
+      <DealSection
+        gmailThreadId={gmailThreadId}
+        counterpartyEmail={counterpartyEmail}
+        onOpenDeal={onOpenDeal}
+        onOpenProposal={onOpenProposal}
+      />
+      <div style={{ borderTop: '1px solid ' + BRAND.border, marginTop: 16, paddingTop: 14 }}>
+        <FolderSection
+          gmailThreadId={gmailThreadId}
+          counterpartyEmail={counterpartyEmail}
+          threadSubject={threadSubject}
+        />
+      </div>
+    </>
+  );
+}
+
+function DealSection({ gmailThreadId, counterpartyEmail, onOpenDeal, onOpenProposal }) {
   const { state, actions } = useStore();
   const links = state.threadDeals?.[gmailThreadId]; // undefined = not resolved yet
 
@@ -567,6 +588,171 @@ function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], l
           <Plus size={13} style={{ flexShrink: 0 }} />
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {busy ? 'Creating…' : <>Create new deal “<strong>{q}</strong>”</>}
+          </span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---- Email folders (non-deal filing + tasks) ----
+
+// The folder half of the side panel: which folder(s) this email is filed in
+// (with unfile), a "File in a folder" picker (search yours or create one), and
+// the first filed folder's tasks. Parallel to the deal half above.
+function FolderSection({ gmailThreadId, counterpartyEmail, threadSubject }) {
+  const { state, actions } = useStore();
+  const filed = state.threadFolders?.[gmailThreadId]; // undefined = not resolved
+
+  useEffect(() => {
+    if (filed === undefined) actions.resolveThreadFolders(gmailThreadId);
+    if (!state.emailFolders || state.emailFolders.length === 0) actions.loadEmailFolders();
+  }, [gmailThreadId, filed === undefined]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (filed === undefined) return <Wrap><Muted>Loading folders…</Muted></Wrap>;
+
+  const list = filed || [];
+
+  return (
+    <Wrap>
+      {list.length > 0 ? (
+        <>
+          <Label>Filed in</Label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 12px' }}>
+            {list.map(f => (
+              <FolderChip key={f.id} folder={f} gmailThreadId={gmailThreadId} />
+            ))}
+          </div>
+          {list.map(f => (
+            <div key={f.id} style={{ marginBottom: 12 }}>
+              {list.length > 1 && <div style={{ fontSize: 11, fontWeight: 600, color: BRAND.ink, marginBottom: 4 }}>{f.name}</div>}
+              <FolderTaskList folderId={f.id} />
+            </div>
+          ))}
+          <FolderFilePicker
+            gmailThreadId={gmailThreadId}
+            counterpartyEmail={counterpartyEmail}
+            threadSubject={threadSubject}
+            excludeIds={list.map(f => f.id)}
+            label="File in another folder"
+            collapsedLabel="+ File in another folder"
+          />
+        </>
+      ) : (
+        <>
+          <Label>Folders</Label>
+          <Muted style={{ margin: '4px 0 10px' }}>File this email into one of your folders to keep it — and set tasks against it — separate from deals.</Muted>
+          <FolderFilePicker
+            gmailThreadId={gmailThreadId}
+            counterpartyEmail={counterpartyEmail}
+            threadSubject={threadSubject}
+            excludeIds={[]}
+            label="File in a folder"
+            alwaysOpen
+          />
+        </>
+      )}
+    </Wrap>
+  );
+}
+
+function FolderChip({ folder, gmailThreadId }) {
+  const { actions, showMsg } = useStore();
+  const [busy, setBusy] = useState(false);
+  const c = folder.color || BRAND.blue;
+  const remove = async () => {
+    setBusy(true);
+    try { await actions.unfileThreadFromFolder({ folderId: folder.id, gmailThreadId }); showMsg('Removed from folder'); }
+    catch (e) { showMsg(e?.message || 'Could not remove'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 6px 3px 8px', borderRadius: 999, background: c + '1A', color: BRAND.ink, fontSize: 11, fontWeight: 600, maxWidth: 220 }}>
+      <Folder size={11} color={c} style={{ flexShrink: 0 }} />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{folder.name}</span>
+      <button onClick={remove} disabled={busy} title="Remove from folder" style={{ background: 'transparent', border: 'none', color: BRAND.muted, cursor: 'pointer', padding: 0, lineHeight: 1, display: 'flex', opacity: 0.7 }}>
+        <X size={12} />
+      </button>
+    </span>
+  );
+}
+
+function FolderFilePicker({ gmailThreadId, counterpartyEmail, threadSubject, excludeIds = [], label, collapsedLabel, alwaysOpen = false }) {
+  const { state, actions, showMsg } = useStore();
+  const [open, setOpen] = useState(alwaysOpen);
+  const [query, setQuery] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const q = query.trim();
+  const filtered = useMemo(() => {
+    const needle = q.toLowerCase();
+    const exclude = new Set(excludeIds);
+    return (state.emailFolders || [])
+      .filter(f => f && !exclude.has(f.id))
+      .filter(f => !needle || (f.name || '').toLowerCase().includes(needle))
+      .slice(0, 8);
+  }, [state.emailFolders, q, excludeIds]);
+
+  const exactExists = useMemo(
+    () => !!q && (state.emailFolders || []).some(f => f && (f.name || '').toLowerCase() === q.toLowerCase()),
+    [state.emailFolders, q],
+  );
+  const canCreate = !!q && !exactExists;
+
+  const fileInto = async (folderId) => {
+    setBusy(true);
+    try {
+      await actions.fileThreadInFolder({ folderId, gmailThreadId, subject: threadSubject, participantEmail: counterpartyEmail });
+      showMsg('Filed in folder');
+      setQuery('');
+    } catch (e) { showMsg(e?.message || 'Could not file email'); }
+    finally { setBusy(false); }
+  };
+
+  const createAndFile = async () => {
+    if (!q) return;
+    setBusy(true);
+    try {
+      const folder = await actions.createEmailFolder({ name: q });
+      if (folder?.id) {
+        await actions.fileThreadInFolder({ folderId: folder.id, gmailThreadId, subject: threadSubject, participantEmail: counterpartyEmail });
+      }
+      showMsg('Folder created');
+      setQuery('');
+    } catch (e) { showMsg(e?.message || 'Could not create folder'); }
+    finally { setBusy(false); }
+  };
+
+  if (!open) {
+    return <button onClick={() => setOpen(true)} className="btn-ghost" style={{ fontSize: 12 }}>{collapsedLabel || label}</button>;
+  }
+
+  return (
+    <div>
+      <Label>{label}</Label>
+      <div style={{ position: 'relative', margin: '6px 0' }}>
+        <Search size={13} color={BRAND.muted} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+        <input
+          className="input"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && canCreate) { e.preventDefault(); createAndFile(); } }}
+          placeholder="Search or type a new folder name…"
+          style={{ paddingLeft: 30, fontSize: 12 }}
+        />
+      </div>
+      {filtered.map(f => (
+        <button key={f.id} onClick={() => fileInto(f.id)} disabled={busy} style={pickerRow}>
+          <Folder size={13} color={f.color || BRAND.muted} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+        </button>
+      ))}
+      {filtered.length === 0 && !canCreate && <Muted>{q ? 'No matching folders.' : 'No folders yet — type a name to create one.'}</Muted>}
+      {canCreate && (
+        <button onClick={createAndFile} disabled={busy} style={createRow} title="Create a new folder with this name and file the email into it">
+          <Plus size={13} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {busy ? 'Creating…' : <>Create folder “<strong>{q}</strong>”</>}
           </span>
         </button>
       )}

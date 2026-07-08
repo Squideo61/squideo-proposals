@@ -65,6 +65,13 @@ function emptyStore() {
     companies: {},
     tasks: [],
     dealDetail: {},
+    // Email folders — a non-deal home for filing emails + setting tasks.
+    // emailFolders: [{ id, name, color, ownerEmail, memberEmails, threadCount,
+    // openTaskCount, isOwner }]. folderDetail keyed by id → { ...folder, threads,
+    // tasks }. threadFolders keyed by gmailThreadId → [{ id, name, color }].
+    emailFolders: [],
+    folderDetail: {},
+    threadFolders: {},
     // Pending scheduled emails, keyed by deal id (for the deal-page card).
     scheduledEmails: {},
     // Reusable email templates (composer "Templates" menu).
@@ -3137,6 +3144,94 @@ export function StoreProvider({ children }) {
       return api.delete('/api/crm/threads/' + encodeURIComponent(gmailThreadId) + '?dealId=' + encodeURIComponent(dealId))
         .then((r) => {
           setState(s => { const t = { ...s.threadDeals }; delete t[gmailThreadId]; return { ...s, threadDeals: t }; });
+          return r;
+        });
+    },
+
+    // ---------- Email folders (non-deal home for filing emails + tasks) ----------
+    loadEmailFolders() {
+      return api.get('/api/crm/folders')
+        .then((list) => { setState(s => ({ ...s, emailFolders: Array.isArray(list) ? list : [] })); return list; })
+        .catch(() => []);
+    },
+    createEmailFolder(input) {
+      return api.post('/api/crm/folders', input).then((f) => {
+        if (f && f.id) setState(s => ({
+          ...s,
+          emailFolders: [...s.emailFolders.filter(x => x.id !== f.id), f]
+            .sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+        }));
+        return f;
+      });
+    },
+    updateEmailFolder(id, patch) {
+      return api.patch('/api/crm/folders/' + encodeURIComponent(id), patch).then((f) => {
+        if (f && f.id) setState(s => ({
+          ...s,
+          emailFolders: s.emailFolders.map(x => x.id === id ? f : x)
+            .sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+          folderDetail: s.folderDetail[id]
+            ? { ...s.folderDetail, [id]: { ...s.folderDetail[id], ...f } }
+            : s.folderDetail,
+        }));
+        return f;
+      });
+    },
+    deleteEmailFolder(id) {
+      return api.delete('/api/crm/folders/' + encodeURIComponent(id)).then((r) => {
+        setState(s => {
+          const fd = { ...s.folderDetail }; delete fd[id];
+          return { ...s, emailFolders: s.emailFolders.filter(x => x.id !== id), folderDetail: fd };
+        });
+        return r;
+      });
+    },
+    loadFolderDetail(id) {
+      return api.get('/api/crm/folders/' + encodeURIComponent(id)).then((d) => {
+        if (d && d.id) setState(s => ({ ...s, folderDetail: { ...s.folderDetail, [id]: d } }));
+        return d;
+      });
+    },
+    // Which folders a thread is filed in (drives the email side panel).
+    resolveThreadFolders(gmailThreadId) {
+      if (!gmailThreadId) return Promise.resolve([]);
+      return api.get('/api/crm/folders/for-thread?gmailThreadId=' + encodeURIComponent(gmailThreadId))
+        .then((list) => {
+          const arr = Array.isArray(list) ? list : [];
+          setState(s => ({ ...s, threadFolders: { ...s.threadFolders, [gmailThreadId]: arr } }));
+          return arr;
+        })
+        .catch(() => {
+          setState(s => ({ ...s, threadFolders: { ...s.threadFolders, [gmailThreadId]: [] } }));
+          return [];
+        });
+    },
+    fileThreadInFolder({ folderId, gmailThreadId, subject, participantEmail, lastMessageAt }) {
+      return api.post('/api/crm/folders/' + encodeURIComponent(folderId) + '/file',
+        { gmailThreadId, subject: subject || null, participantEmail: participantEmail || null, lastMessageAt: lastMessageAt || null }
+      ).then((r) => {
+        // Drop the cache so the panel re-resolves with the new link and refresh
+        // the sidebar counts. (An open FolderView reloads its own detail.)
+        setState(s => {
+          const tf = { ...s.threadFolders }; delete tf[gmailThreadId];
+          const fd = s.folderDetail[folderId] ? (() => { const c = { ...s.folderDetail }; delete c[folderId]; return c; })() : s.folderDetail;
+          return { ...s, threadFolders: tf, folderDetail: fd };
+        });
+        actions.loadEmailFolders();
+        return r;
+      });
+    },
+    unfileThreadFromFolder({ folderId, gmailThreadId }) {
+      return api.delete('/api/crm/folders/' + encodeURIComponent(folderId) + '/file?gmailThreadId=' + encodeURIComponent(gmailThreadId))
+        .then((r) => {
+          setState(s => {
+            const tf = { ...s.threadFolders }; delete tf[gmailThreadId];
+            const fd = s.folderDetail[folderId]
+              ? { ...s.folderDetail, [folderId]: { ...s.folderDetail[folderId], threads: (s.folderDetail[folderId].threads || []).filter(t => t.gmailThreadId !== gmailThreadId) } }
+              : s.folderDetail;
+            return { ...s, threadFolders: tf, folderDetail: fd };
+          });
+          actions.loadEmailFolders();
           return r;
         });
     },

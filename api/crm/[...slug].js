@@ -9,6 +9,7 @@ import { tasksRoute, taskDoneLinkRoute } from '../_lib/crm/tasks.js';
 import { triageRoute } from '../_lib/crm/triage.js';
 import { emailsRoute } from '../_lib/crm/emails.js';
 import { threadsRoute } from '../_lib/crm/threads.js';
+import { emailFoldersRoute } from '../_lib/crm/emailFolders.js';
 import { templatesRoute } from '../_lib/crm/templates.js';
 import { commentsRoute } from '../_lib/crm/comments.js';
 import { paymentsRoute } from '../_lib/crm/payments.js';
@@ -102,6 +103,7 @@ export default async function handler(req, res) {
       case 'triage':    return await triageRoute(req, res, id, action, user);
       case 'emails':    return await emailsRoute(req, res, id, action, user);
       case 'threads':   return await threadsRoute(req, res, id, action, user);
+      case 'folders':   return await emailFoldersRoute(req, res, id, action, user);
       case 'templates': return await templatesRoute(req, res, id, action, user);
       case 'comments':  return await commentsRoute(req, res, id, action, user);
       case 'payments':  return await paymentsRoute(req, res, id, action, user);

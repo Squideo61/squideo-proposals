@@ -38,6 +38,8 @@ export function TaskFormModal({ task, defaults, onClose, onSaved, onSubmitValues
   }, [task, editing, state.session?.email]);
   const [assigneeEmails, setAssigneeEmails] = useState(initialAssignees);
   const [dealId, setDealId] = useState(task?.dealId || defaults?.dealId || '');
+  // Folder-scoped tasks (Email Folders) carry a folderId instead of a deal.
+  const folderId = task?.folderId || defaults?.folderId || null;
   const [submitting, setSubmitting] = useState(false);
 
   // Always include the signed-in user in the pickable list, so a new task that
@@ -52,7 +54,7 @@ export function TaskFormModal({ task, defaults, onClose, onSaved, onSubmitValues
     return list;
   }, [state.users, state.session]);
   const deals = Object.values(state.deals || {});
-  const showDealPicker = !(defaults?.dealId);
+  const showDealPicker = !(defaults?.dealId) && !(defaults?.folderId) && !folderId;
 
   const toggleAssignee = (email) => {
     setAssigneeEmails(prev =>
@@ -70,6 +72,7 @@ export function TaskFormModal({ task, defaults, onClose, onSaved, onSubmitValues
       dueAt: dueAt ? new Date(dueAt).toISOString() : null,
       assigneeEmails,
       dealId: dealId || null,
+      folderId: folderId || null,
     };
     // Deferred-create mode: hand the values back and let the caller persist
     // them on its own schedule (no server write here).

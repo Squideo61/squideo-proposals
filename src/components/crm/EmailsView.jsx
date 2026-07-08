@@ -3,7 +3,7 @@ import {
   ArrowLeft, Mail, Inbox, Send, FileText, Star, ShieldAlert, Trash2, Archive,
   Search, X, RefreshCw, MailOpen, Reply, ReplyAll, Forward, Paperclip,
   Briefcase, PenSquare, ExternalLink, ChevronDown, CircleDot,
-  Users, Info, MessagesSquare, Tag, Settings,
+  Users, Info, MessagesSquare, Tag, Settings, Folder, FolderPlus,
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
@@ -12,6 +12,7 @@ import { formatMailDate, formatRelativeTime, useIsMobile, decodeHtmlEntities } f
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { EmailAttachmentCard } from './EmailAttachment.jsx';
 import { DealContextPanel } from './DealContextPanel.jsx';
+import { FolderView } from './FolderView.jsx';
 import { EmailComposerModal } from './DealDetailView.jsx';
 import { TrackingEye, TrackingBanner } from './EmailTracking.jsx';
 import { ActionMenu } from '../ui.jsx';
@@ -239,8 +240,34 @@ function QuoteToggle({ shown, onToggle }) {
 export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOpenDeal, onOpenProposal, onSelectFolder, onOpenThread, onCloseThread, onOpenTracking }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
-  const active = FOLDER_BY_ID[folder] ? folder : 'inbox';
-  const def = FOLDER_BY_ID[active];
+  // A custom Email Folder (user-created, non-deal) is selected when the folder
+  // id isn't one of the built-ins. Recognise it by a matching loaded folder or
+  // by its id shape (so a cold deep-link renders the folder while it loads).
+  const customFolder = useMemo(
+    () => (state.emailFolders || []).find(f => f.id === folder) || null,
+    [state.emailFolders, folder],
+  );
+  const looksCustom = !!folder && !FOLDER_BY_ID[folder] && (customFolder != null || folder.startsWith('emlfolder_'));
+  const active = FOLDER_BY_ID[folder] ? folder : (looksCustom ? folder : 'inbox');
+  const def = FOLDER_BY_ID[active]
+    || { id: active, label: customFolder?.name || 'Folder', icon: Folder, kind: 'custom' };
+  const folderSummary = customFolder || (looksCustom ? { id: folder, name: def.label, memberEmails: [] } : null);
+
+  // Keep the sidebar's folder list fresh.
+  useEffect(() => { actions.loadEmailFolders(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Inline "new folder" composer state (sidebar).
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const createFolder = async () => {
+    const name = newFolderName.trim();
+    if (!name) return;
+    try {
+      const f = await actions.createEmailFolder({ name });
+      setNewFolderName(''); setNewFolderOpen(false);
+      if (f?.id) onSelectFolder?.(f.id);
+    } catch (e) { showMsg(e?.message || 'Could not create folder'); }
+  };
 
   // Gmail's smart categories appear only when the account actually uses them
   // (any category label carries mail). Otherwise the mailbox is unchanged.
@@ -310,7 +337,9 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
   // link, which is fine.
   useEffect(() => {
     if (!openThreadId) { setOpenRef(null); return; }
-    const kind = def.kind === 'gmail' ? 'gmail' : 'db';
+    // Deals/Triage carry DB-backed threads; Gmail folders AND custom Email
+    // Folders (whose filed items are live Gmail threads) open as 'gmail'.
+    const kind = (def.kind === 'deals' || def.kind === 'triage') ? 'db' : 'gmail';
     const unread = kind === 'gmail'
       ? !!(state.mailbox?.[active]?.rows || []).find((r) => r.id === openThreadId)?.unread
       : false;
@@ -549,6 +578,68 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               </button>
             );
           })}
+          {/* Custom Email Folders — a non-deal home for filing emails + tasks. */}
+          <div style={{
+            display: 'flex', flexDirection: isMobile ? 'row' : 'column', gap: 2,
+            marginTop: isMobile ? 0 : 8, marginLeft: isMobile ? 8 : 0,
+            paddingTop: isMobile ? 0 : 8, borderTop: isMobile ? 'none' : '1px solid ' + BRAND.border,
+            alignItems: isMobile ? 'center' : 'stretch',
+          }}>
+            {!isMobile && (
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, padding: '2px 12px 4px' }}>Folders</div>
+            )}
+            {(state.emailFolders || []).map((f) => {
+              const isActive = f.id === active;
+              return (
+                <button
+                  key={f.id}
+                  onClick={() => onSelectFolder?.(f.id)}
+                  title={f.name}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
+                    border: 'none', borderLeft: isMobile ? 'none' : '3px solid ' + (isActive ? BRAND.blue : 'transparent'),
+                    background: isActive ? BRAND.blue + '14' : 'transparent',
+                    color: isActive ? BRAND.ink : BRAND.muted,
+                    fontWeight: isActive ? 700 : 500, fontSize: 13,
+                    fontFamily: 'inherit', whiteSpace: 'nowrap', textAlign: 'left',
+                    width: isMobile ? 'auto' : '100%',
+                  }}
+                >
+                  <Folder size={15} color={f.color || (isActive ? BRAND.blue : BRAND.muted)} />
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: isMobile ? 120 : 'none' }}>{f.name}</span>
+                  {f.openTaskCount ? (
+                    <span style={{ background: '#EEF2F6', color: '#475569', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999 }}>{f.openTaskCount}</span>
+                  ) : null}
+                </button>
+              );
+            })}
+            {newFolderOpen ? (
+              <input
+                autoFocus
+                className="input"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); if (e.key === 'Escape') { setNewFolderOpen(false); setNewFolderName(''); } }}
+                onBlur={() => { if (!newFolderName.trim()) setNewFolderOpen(false); }}
+                placeholder="Folder name…"
+                style={{ fontSize: 12.5, margin: isMobile ? 0 : '2px 4px', width: isMobile ? 150 : 'auto' }}
+              />
+            ) : (
+              <button
+                onClick={() => setNewFolderOpen(true)}
+                title="Create a new folder"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '8px 12px', borderRadius: 8, cursor: 'pointer', border: 'none',
+                  background: 'transparent', color: BRAND.muted, fontWeight: 500, fontSize: 13,
+                  fontFamily: 'inherit', whiteSpace: 'nowrap', textAlign: 'left', width: isMobile ? 'auto' : '100%',
+                }}
+              >
+                <FolderPlus size={15} /> <span>New folder</span>
+              </button>
+            )}
+          </div>
           {!isMobile && (
             <>
               <div style={{ flex: 1, minHeight: 12 }} />
@@ -571,6 +662,13 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               onOpenDeal={onOpenDeal}
               onOpenProposal={onOpenProposal}
               onOpenTracking={onOpenTracking}
+            />
+          ) : def.kind === 'custom' && folderSummary ? (
+            // A custom Email Folder — its filed emails + tasks, kept out of deals.
+            <FolderView
+              folder={folderSummary}
+              onOpenThread={onOpenThread}
+              onDeleted={() => onSelectFolder?.('inbox')}
             />
           ) : (
           <>
@@ -1224,10 +1322,14 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
   const isMobile = useIsMobile();
 
   const isGmail = openRef.kind === 'gmail';
+  // A custom Email Folder isn't a real Gmail label — its filed items are live
+  // Gmail threads, so we open them but hide the Gmail folder-management actions
+  // (archive/spam/etc.), which only make sense against actual mailbox folders.
+  const isCustomFolder = !!folder && !FOLDER_BY_ID[folder];
   const thread = state.threadCache?.[openRef.threadId];
   const messages = thread?.messages || [];
   const myEmail = (state.gmailAccount?.gmailAddress || '').toLowerCase();
-  const folderLabel = FOLDER_BY_ID[folder]?.label || 'list';
+  const folderLabel = FOLDER_BY_ID[folder]?.label || (isCustomFolder ? 'folder' : 'list');
 
   useEffect(() => {
     let cancelled = false;
@@ -1401,7 +1503,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Action bar — folder management (Gmail folders only). Reply /
               Forward live at the foot of the thread, Gmail-style. */}
-          {latest && isGmail && (
+          {latest && isGmail && !isCustomFolder && (
             <div style={{ paddingBottom: 12, marginBottom: 12, borderBottom: '1px solid ' + BRAND.border }}>
               <ActionMenu
                 align="left"
@@ -1493,6 +1595,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
           <DealContextPanel
             gmailThreadId={openRef.threadId}
             counterpartyEmail={counterparty}
+            threadSubject={subject}
             // Navigate straight to the deal. (Don't call onBack first — it now
             // triggers history.back(), which races the navigate and cancels it.)
             onOpenDeal={onOpenDeal}

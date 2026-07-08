@@ -22,6 +22,20 @@ function ensureMilestoneColumns() {
   return milestoneColumnsEnsured;
 }
 
+// Self-heal for the tasks.folder_id column (Email Folders). Kept independent of
+// the folders route's own ensure so the tasks list/create paths never depend on
+// the folder tables existing — they only reference tasks.folder_id. Module-level
+// cached like ensureMilestoneColumns.
+let folderColumnEnsured = null;
+function ensureTaskFolderColumn() {
+  if (folderColumnEnsured) return folderColumnEnsured;
+  folderColumnEnsured = (async () => {
+    await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS folder_id TEXT`;
+    await sql`CREATE INDEX IF NOT EXISTS tasks_folder_id_idx ON tasks(folder_id) WHERE folder_id IS NOT NULL`;
+  })().catch((err) => { folderColumnEnsured = null; throw err; });
+  return folderColumnEnsured;
+}
+
 // Reconcile a deal's production schedule into milestone-flagged tasks.
 // Idempotent: upsert by schedule_key, delete rows whose schedule field was
 // removed/disabled, so re-running never duplicates and clearing dates removes
@@ -234,6 +248,9 @@ async function loadTask(id) {
 }
 
 export async function tasksRoute(req, res, id, action, user) {
+  // Every path below either reads or writes tasks.folder_id, so make sure the
+  // column exists (idempotent, module-cached — negligible after the first call).
+  await ensureTaskFolderColumn();
   // "Move to milestones" — reconcile a deal's production schedule into
   // milestone-flagged tasks. Idempotent: upsert by schedule_key, delete rows
   // whose schedule field was removed/disabled, so re-clicking never duplicates.
@@ -284,7 +301,7 @@ export async function tasksRoute(req, res, id, action, user) {
               (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')
                FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
             FROM tasks t
-            WHERE (${canSeeAll}
+            WHERE ((t.folder_id IS NULL AND ${canSeeAll})
                    OR LOWER(t.created_by) = ${email}
                    OR LOWER(t.assignee_email) = ${email}
                    OR EXISTS (SELECT 1 FROM task_assignees tm WHERE tm.task_id = t.id AND LOWER(tm.user_email) = ${email}))
@@ -298,7 +315,7 @@ export async function tasksRoute(req, res, id, action, user) {
                FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
             FROM tasks t
             WHERE done_at IS NULL AND due_at IS NOT NULL AND due_at < NOW()
-              AND (${canSeeAll}
+              AND ((t.folder_id IS NULL AND ${canSeeAll})
                    OR LOWER(t.created_by) = ${email}
                    OR LOWER(t.assignee_email) = ${email}
                    OR EXISTS (SELECT 1 FROM task_assignees tm WHERE tm.task_id = t.id AND LOWER(tm.user_email) = ${email}))
@@ -311,7 +328,7 @@ export async function tasksRoute(req, res, id, action, user) {
                FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
             FROM tasks t
             WHERE done_at IS NULL AND due_at::date = CURRENT_DATE
-              AND (${canSeeAll}
+              AND ((t.folder_id IS NULL AND ${canSeeAll})
                    OR LOWER(t.created_by) = ${email}
                    OR LOWER(t.assignee_email) = ${email}
                    OR EXISTS (SELECT 1 FROM task_assignees tm WHERE tm.task_id = t.id AND LOWER(tm.user_email) = ${email}))
@@ -323,7 +340,7 @@ export async function tasksRoute(req, res, id, action, user) {
                FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
             FROM tasks t
             WHERE done_at IS NULL
-              AND (${canSeeAll}
+              AND ((t.folder_id IS NULL AND ${canSeeAll})
                    OR LOWER(t.created_by) = ${email}
                    OR LOWER(t.assignee_email) = ${email}
                    OR EXISTS (SELECT 1 FROM task_assignees tm WHERE tm.task_id = t.id AND LOWER(tm.user_email) = ${email}))
@@ -341,12 +358,22 @@ export async function tasksRoute(req, res, id, action, user) {
       // Keep the legacy column populated with the first assignee for one
       // release so older code paths (e.g. cached UIs) still see a value.
       const legacyAssignee = assignees[0] || null;
+      const folderId = trimOrNull(body.folderId);
+      // Only owners/members of a folder may set tasks in it — mirror the access
+      // gate the folders route enforces (the tasks route is a separate entry).
+      if (folderId) {
+        const { userCanAccessFolder } = await import('./emailFolders.js');
+        if (!(await userCanAccessFolder(folderId, user.email))) {
+          return res.status(403).json({ error: 'No access to that folder' });
+        }
+      }
       await sql`
-        INSERT INTO tasks (id, deal_id, contact_id, title, notes, due_at, assignee_email, created_by)
+        INSERT INTO tasks (id, deal_id, contact_id, folder_id, title, notes, due_at, assignee_email, created_by)
         VALUES (
           ${newId},
           ${trimOrNull(body.dealId) || null},
           ${trimOrNull(body.contactId) || null},
+          ${folderId},
           ${title},
           ${trimOrNull(body.notes)},
           ${body.dueAt ? new Date(body.dueAt).toISOString() : null},
@@ -544,6 +571,7 @@ export function serialiseTask(r) {
   return {
     id: r.id,
     dealId: r.deal_id || null,
+    folderId: r.folder_id || null,
     contactId: r.contact_id || null,
     title: r.title,
     notes: r.notes || null,
