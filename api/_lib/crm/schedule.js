@@ -186,10 +186,14 @@ async function scheduleUsers() {
     // project. They appear on the rota (so managers see their assigned blocks)
     // but never carry an annual-leave allowance, and are excluded from capacity.
     const isFreelancer = r.role_id === 'freelancer';
-    // `producesContent` = a schedulable producer (calendar column, assignable,
-    // counts toward capacity). Copywriters + Callum are on the roster for leave
-    // tracking but don't produce scheduled content, so they're off the calendar.
-    const producesContent = !OFF_ROTA_ROLES.has(r.role_id) && !OFF_ROTA_NAMES.has((r.name || '').toLowerCase());
+    // `producesContent` = a core schedulable producer (calendar column on the
+    // Master rota, assignable, counts toward capacity). Freelancers are separate
+    // additional capacity (they only get their OWN view); copywriters + Callum are
+    // on the roster for leave tracking but don't produce scheduled content. All
+    // are kept off the Master rota columns.
+    const producesContent = !isFreelancer
+      && !OFF_ROTA_ROLES.has(r.role_id)
+      && !OFF_ROTA_NAMES.has((r.name || '').toLowerCase());
     const onRoster = (r.active == null ? !isAdmin : r.active) === true;
     return {
       email: String(r.email).toLowerCase(),
