@@ -65,13 +65,22 @@ export function AdminView({ tab = 'users', onBack, onChangeTab }) {
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Admin</h1>
       </div>
 
-      <div style={{
-        background: 'white',
-        borderBottom: '1px solid ' + BRAND.border,
-        padding: '0 24px',
-        display: 'flex',
-        gap: 4,
-      }}>
+      <div
+        className="hide-scrollbar"
+        style={{
+          background: 'white',
+          borderBottom: '1px solid ' + BRAND.border,
+          padding: '0 16px',
+          display: 'flex',
+          gap: 4,
+          // Scroll the tab strip itself instead of the whole page: without this
+          // the five buttons lay out wider than a phone and drag the entire page
+          // sideways. flexShrink:0 + nowrap on the buttons keep them full-size.
+          overflowX: 'auto',
+          flexWrap: 'nowrap',
+          WebkitOverflowScrolling: 'touch',
+        }}
+      >
         {visibleTabs.map((t) => {
           const Icon = t.icon;
           const isActive = active?.id === t.id;
@@ -92,6 +101,8 @@ export function AdminView({ tab = 'users', onBack, onChangeTab }) {
                 alignItems: 'center',
                 gap: 8,
                 marginBottom: -1,
+                flexShrink: 0,
+                whiteSpace: 'nowrap',
               }}
             >
               <Icon size={16} />

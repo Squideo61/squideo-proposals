@@ -480,9 +480,9 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             <Card
               title="Project overview"
               action={!productionOnly ? (
-                <button onClick={editOverview} className="btn-ghost"
-                  title={overviewUrl ? 'Replace or remove the overview video link' : 'Add a project overview video link (e.g. Loom)'}>
-                  <Video size={12} /> {overviewUrl ? 'Edit' : 'Add'}
+                <button onClick={editOverview} className="btn"
+                  title={overviewUrl ? 'Replace or remove the overview video link' : 'Embed a project overview video link (e.g. Loom)'}>
+                  <Video size={12} /> {overviewUrl ? 'Edit' : 'Embed overview video'}
                 </button>
               ) : undefined}
             >
@@ -514,11 +514,11 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   <Play size={14} /> Watch overview
                 </a>
               ) : (
-                <div style={{ textAlign: 'center', padding: '4px' }}>
-                  <Empty text="No overview video yet — add a quick walkthrough for producers" />
-                  <button onClick={editOverview} className="btn" style={{ marginTop: 8 }}>
-                    <Video size={14} /> Add overview video
-                  </button>
+                // No duplicate body button — the top-right "Embed overview
+                // video" button is the single entry point, keeping this empty
+                // card compact.
+                <div style={{ fontSize: 12.5, color: BRAND.muted, padding: '2px 0' }}>
+                  No overview video yet — add a quick walkthrough for producers.
                 </div>
               )}
             </Card>
@@ -554,10 +554,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           {proposals.map(p => (
             <div
               key={p.id}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%', padding: '8px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, marginBottom: 6 }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', padding: '10px 12px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, marginBottom: 6 }}
             >
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              {/* Header: number + client name + status pill on the left, price
+                  pinned top-right. */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                <div style={{ minWidth: 0, flex: 1, fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   {p.number ? <span style={{ color: BRAND.muted, fontSize: 11 }}>{formatProposalNumber(p.number)}</span> : null}
                   <span>{p.clientName || p.contactBusinessName || 'Untitled'}</span>
                   {p.signed
@@ -565,45 +567,52 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                     : <Badge color="grey">Unsigned</Badge>}
                 </div>
                 {(p.totalExVat ?? p.basePrice) != null && (
-                  <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
-                    {formatGBP(p.totalExVat ?? p.basePrice)} ex VAT
+                  <div style={{ flexShrink: 0, textAlign: 'right', fontSize: 12.5, fontWeight: 700, color: BRAND.ink }}>
+                    {formatGBP(p.totalExVat ?? p.basePrice)}
+                    <span style={{ fontWeight: 400, color: BRAND.muted }}> ex VAT</span>
                     {p.signed && p.totalExVat != null && p.basePrice != null && p.totalExVat !== p.basePrice && (
-                      <span style={{ marginLeft: 4 }} title="Includes selected extras">(inc. extras)</span>
+                      <span style={{ display: 'block', fontSize: 11, fontWeight: 400, color: BRAND.muted }} title="Includes selected extras">(inc. extras)</span>
                     )}
                   </div>
                 )}
-                {(p._views?.opens || 0) > 0 && (
+              </div>
+              {/* Footer: analytics pill on the left, in line with Edit/Preview
+                  on the right. */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 0 }}>
+                  {(p._views?.opens || 0) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setAnalyticsProposal({ ...p, _number: p.number })}
+                      title="View analytics"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid ' + BRAND.border, borderRadius: 999, background: '#FFFBEB', color: '#92400E', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
+                    >
+                      <Eye size={11} />
+                      <span>{p._views.opens} {p._views.opens === 1 ? 'view' : 'views'}</span>
+                      <span style={{ opacity: 0.6 }}>·</span>
+                      <Clock size={11} />
+                      <span>{formatDuration(p._views.duration)}</span>
+                      {p._views.lastActiveAt && (
+                        <>
+                          <span style={{ opacity: 0.6 }}>·</span>
+                          <span>{formatRelativeTime(p._views.lastActiveAt)}</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginLeft: 'auto' }}>
                   <button
                     type="button"
-                    onClick={() => setAnalyticsProposal({ ...p, _number: p.number })}
-                    title="View analytics"
-                    style={{ marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid ' + BRAND.border, borderRadius: 999, background: '#FFFBEB', color: '#92400E', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}
-                  >
-                    <Eye size={11} />
-                    <span>{p._views.opens} {p._views.opens === 1 ? 'view' : 'views'}</span>
-                    <span style={{ opacity: 0.6 }}>·</span>
-                    <Clock size={11} />
-                    <span>{formatDuration(p._views.duration)}</span>
-                    {p._views.lastActiveAt && (
-                      <>
-                        <span style={{ opacity: 0.6 }}>·</span>
-                        <span>{formatRelativeTime(p._views.lastActiveAt)}</span>
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                <button
-                  type="button"
-                  onClick={() => onOpenProposal?.(p.id, 'edit')}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: BRAND.ink }}
-                ><Edit2 size={13} /> Edit</button>
-                <button
-                  type="button"
-                  onClick={() => onOpenProposal?.(p.id, 'preview')}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: BRAND.blue, border: '1px solid ' + BRAND.blue, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: 'white' }}
-                ><Eye size={13} /> Preview</button>
+                    onClick={() => onOpenProposal?.(p.id, 'edit')}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: BRAND.ink }}
+                  ><Edit2 size={13} /> Edit</button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenProposal?.(p.id, 'preview')}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: BRAND.blue, border: '1px solid ' + BRAND.blue, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: 'white' }}
+                  ><Eye size={13} /> Preview</button>
+                </div>
               </div>
             </div>
           ))}
@@ -2950,7 +2959,9 @@ function EditDealModal({ deal, onClose }) {
         <FormRow label="Deal Owner">
           <select className="input" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)}>
             <option value="">—</option>
-            {users.map(u => <option key={u.email} value={u.email}>{u.name || u.email}</option>)}
+            {/* Marketers never own deals — keep them out of the picker (but never
+                drop a marketer who's somehow already the set owner). */}
+            {users.filter(u => u.role !== 'marketing' || u.email === ownerEmail).map(u => <option key={u.email} value={u.email}>{u.name || u.email}</option>)}
           </select>
         </FormRow>
         <FormRow label="Notes"><textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ fontFamily: 'inherit', resize: 'vertical' }} /></FormRow>

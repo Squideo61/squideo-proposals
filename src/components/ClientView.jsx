@@ -71,16 +71,18 @@ function FutureRateCell({ label, value, muted, highlight, strike }) {
       background: highlight ? '#FFFAEB' : '#F8FAFC',
       border: '1px solid ' + (highlight ? '#FDE68A' : '#E5E9EE'),
       borderRadius: 8,
-      padding: '8px 10px',
+      padding: '8px 6px',
       textAlign: 'center',
+      minWidth: 0,
     }}>
       <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#6B7785', marginBottom: 4 }}>{label}</div>
       <div style={{
-        fontSize: 14,
+        fontSize: 13,
         fontWeight: 700,
         color: highlight ? '#92400E' : (muted ? '#6B7785' : '#0F2A3D'),
         textDecoration: strike ? 'line-through' : 'none',
         textDecorationColor: '#94A3B8',
+        overflowWrap: 'anywhere',
       }}>
         {value}
       </div>
@@ -992,9 +994,14 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         })()}
 
         {data.partnerProgramme.enabled && (
-          <div style={{ position: 'relative', marginTop: 24, marginBottom: 16, background: '#FFFAEB', border: '1px solid #C9A227', borderRadius: 12, padding: 16 }}>
+          <div style={{ position: 'relative', marginTop: partnerDiscount > 0 && !isMobile ? 24 : 16, marginBottom: 16, background: '#FFFAEB', border: '1px solid #C9A227', borderRadius: 12, padding: isMobile ? 12 : 16 }}>
             {partnerDiscount > 0 && (
-              <span style={{ position: 'absolute', top: -16, right: 16, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', fontSize: 14, fontWeight: 700, padding: '6px 14px', borderRadius: 999, boxShadow: '0 2px 8px rgba(146, 64, 14, 0.35), inset 0 1px 0 rgba(255,255,255,0.3)', textShadow: '0 1px 2px rgba(0,0,0,0.35)', letterSpacing: 0.3 }}>
+              // Desktop floats the "save" badge over the top-right corner. On a
+              // phone that badge wraps to 2-3 lines and covers the logo/heading,
+              // so it sits inline as a full-width pill above the header instead.
+              <span style={isMobile
+                ? { display: 'block', marginBottom: 12, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', fontSize: 13, fontWeight: 700, padding: '8px 12px', borderRadius: 8, textShadow: '0 1px 2px rgba(0,0,0,0.35)', letterSpacing: 0.3, textAlign: 'center' }
+                : { position: 'absolute', top: -16, right: 16, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', fontSize: 14, fontWeight: 700, padding: '6px 14px', borderRadius: 999, boxShadow: '0 2px 8px rgba(146, 64, 14, 0.35), inset 0 1px 0 rgba(255,255,255,0.3)', textShadow: '0 1px 2px rgba(0,0,0,0.35)', letterSpacing: 0.3 }}>
                 Opt in today and save {formatGBP(partnerDiscount)} on this project
               </span>
             )}
@@ -1037,7 +1044,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                       <div style={{ fontSize: 13, color: '#78350F', marginBottom: 12, lineHeight: 1.5 }}>
                         {formatGBP(savingPerMin)} less per minute than the standard rate - locked in as long as you stay subscribed.
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6, marginBottom: 8 }}>
                         <FutureRateCell label="Standard" value={formatGBP(standardRate) + '/min'} muted strike />
                         <FutureRateCell label="Partner rate" value={formatGBP(futureRate) + '/min'} highlight />
                         <FutureRateCell label="You save" value={futurePct + '% · ' + formatGBP(savingPerMin)} highlight />

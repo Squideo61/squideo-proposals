@@ -1639,7 +1639,7 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
           flexShrink: 0, padding: '1px 5px', borderRadius: 3, fontSize: 10, fontWeight: 700,
           background: (outbound ? '#2BB8E6' : '#16A34A') + '22', color: outbound ? '#2BB8E6' : '#16A34A',
         }}>{outbound ? 'OUT' : 'IN'}</span>
-        <span style={{ fontWeight: 600, fontSize: 13, color: BRAND.ink, flexShrink: 0, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
+        <span style={{ fontWeight: 600, fontSize: 13, color: BRAND.ink, flexShrink: 0, maxWidth: isMobile ? 120 : 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
         {!open && <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{decodeHtmlEntities(message.snippet)}</span>}
         {/* Per-email open/click state — the eye on the right of each sent email. */}
         {message.tracking && (
@@ -1661,21 +1661,21 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
       </button>
       {open && (
         <div style={{ padding: isMobile ? '10px 8px' : 12 }}>
-          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
             {message.to?.length ? <div>to {message.to.join(', ')}</div> : null}
             {message.cc?.length ? <div>cc {message.cc.join(', ')}</div> : null}
           </div>
-          <div className="email-body" style={{ fontSize: 13.5, lineHeight: 1.6, wordBreak: 'break-word' }}>
+          <div className="email-body" style={{ fontSize: 13.5, lineHeight: 1.6, wordBreak: 'break-word', overflowWrap: 'anywhere', maxWidth: '100%' }}>
             {hasHtml
               ? <EmailFrame html={main} messageId={message.id} />
               : message.text
-                ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{main}</pre>
+                ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily: 'inherit', margin: 0, maxWidth: '100%' }}>{main}</pre>
                 : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body)</div>}
             {hasQuote && <QuoteToggle shown={showQuoted} onToggle={() => setShowQuoted(s => !s)} />}
             {hasQuote && showQuoted && (
               hasHtml
                 ? <EmailFrame html={quoted} messageId={message.id} />
-                : <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0, color: BRAND.muted }}>{quoted}</pre>
+                : <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily: 'inherit', margin: 0, maxWidth: '100%', color: BRAND.muted }}>{quoted}</pre>
             )}
           </div>
           {message.attachments?.length > 0 && (
@@ -1706,10 +1706,13 @@ function EmailFrame({ html, messageId = null }) {
       + '<meta name="viewport" content="width=device-width, initial-scale=1">'
       + '<base target="_blank">'
       + '<style>'
-      + 'html,body{margin:0;padding:0;}'
-      + "body{font-family:-apple-system,system-ui,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.6;color:#0F2A3D;word-break:break-word;overflow-x:auto;}"
-      + 'img{max-width:100%;height:auto;}'
-      + 'a{color:#2BB8E6;}'
+      + 'html,body{margin:0;padding:0;max-width:100%;}'
+      + "body{font-family:-apple-system,system-ui,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.6;color:#0F2A3D;word-break:break-word;overflow-wrap:anywhere;overflow-x:auto;}"
+      + 'img{max-width:100%!important;height:auto!important;}'
+      // Nudge wide fixed-width signature/footer tables to reflow within the phone
+      // frame instead of forcing a horizontal scroll that clips the text.
+      + 'table{max-width:100%!important;}'
+      + 'a{color:#2BB8E6;word-break:break-word;}'
       + '</style></head><body>' + clean + '</body></html>';
   }, [html, messageId]);
 

@@ -105,17 +105,17 @@ function KpiCard({ icon: Icon, label, value, format = gbp0, sub, accent, onClick
       onMouseLeave={clickable ? (e) => liftHandlers(e, false) : undefined}
       style={{
         background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${accent || BRAND.blue}`,
-        borderRadius: 12, padding: 16, cursor: clickable ? 'pointer' : 'default',
+        borderRadius: 12, padding: 16, cursor: clickable ? 'pointer' : 'default', minWidth: 0,
         boxShadow: '0 1px 2px rgba(15,42,61,0.04)', transition: 'transform 140ms ease, box-shadow 140ms ease',
         ...riseStyle(delay),
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
         {Icon && <Icon size={14} color={accent || BRAND.muted} />}
-        <span style={{ flex: 1 }}>{label}</span>
-        {clickable && <ArrowUpRight size={14} color={BRAND.muted} style={{ opacity: 0.5 }} />}
+        <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
+        {clickable && <ArrowUpRight size={14} color={BRAND.muted} style={{ opacity: 0.5, flexShrink: 0 }} />}
       </div>
-      <div style={{ fontSize: 26, fontWeight: 800, color: BRAND.ink, letterSpacing: -0.5 }}>{format(animated)}</div>
+      <div style={{ fontSize: 26, fontWeight: 800, color: BRAND.ink, letterSpacing: -0.5, overflow: 'hidden', textOverflow: 'ellipsis' }}>{format(animated)}</div>
       {sub && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>{sub}</div>}
       {spark && spark.length > 1 && (
         <div style={{ height: 34, margin: '8px -4px -4px' }}>
@@ -420,7 +420,7 @@ export function BusinessOverviewView({
 
       {/* ── KPI row (finance-gated) ── */}
       {canBusiness && (
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12, marginBottom: sectionGap }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'minmax(0, 1fr) minmax(0, 1fr)' : 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12, marginBottom: sectionGap }}>
           <KpiCard icon={Wallet} accent={GREEN} label={`Cash banked · ${monthName}`} value={cashBankedMTD} sub="Net received this month" onClick={onOpenFinance} spark={perfSpark} delay={1} />
           <KpiCard icon={TrendingUp} accent={BRAND.blue} label={`Signed · ${monthName}`} value={netSignedMTD} sub="New business (ex-VAT)" onClick={onOpenFinance} delay={2} />
           <KpiCard icon={PoundSterling} accent={AMBER} label="Outstanding to collect" value={outstanding} sub="Across all pending payments" onClick={onOpenFinance} delay={3} />
@@ -498,7 +498,7 @@ export function BusinessOverviewView({
       {/* ── Pending payments (finance-gated) ── */}
       {canBusiness && pending && (
         <Panel title="Pending payments" icon={PiggyBank} onOpen={onOpenFinance} delay={10}>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: 12, marginBottom: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'minmax(0, 1fr) minmax(0, 1fr)' : 'repeat(4, 1fr)', gap: 12, marginBottom: 14 }}>
             <MiniStat label="Invoiced — awaiting" value={pending.totals?.invoiced} accent={AMBER} />
             <MiniStat label="Not yet invoiced" value={pending.totals?.notInvoiced} accent={BRAND.ink} />
             <MiniStat label="Imported PP / PO" value={pending.totals?.manual} accent={BRAND.muted} />
@@ -564,9 +564,9 @@ export function BusinessOverviewView({
 
 function MiniStat({ label, value, accent }) {
   return (
-    <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '12px 14px' }}>
+    <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '12px 14px', minWidth: 0 }}>
       <div style={{ fontSize: 10.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 19, fontWeight: 800, color: accent || BRAND.ink }}>{gbp0(value)}</div>
+      <div style={{ fontSize: 19, fontWeight: 800, color: accent || BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis' }}>{gbp0(value)}</div>
     </div>
   );
 }

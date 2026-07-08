@@ -128,6 +128,11 @@ body {
 .email-body img { max-width: 100%; height: auto; }
 .email-body table { max-width: 100%; }
 
+/* Horizontal scroll container that hides its scrollbar (tab strips etc.) so the
+   strip scrolls on its own instead of dragging the whole page sideways. */
+.hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+
 /* ---------- Proposal cards ---------- */
 .proposal-card {
   transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;

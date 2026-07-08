@@ -46,10 +46,13 @@ export function PipelineView({ onBack, onOpenDeal }) {
   // roles (producers/copywriters), who never own deals. Plus anyone who
   // actually owns a deal, regardless of role, so no owner is ever hidden.
   const memberOptions = useMemo(() => {
-    const PRODUCTION_ROLES = new Set(['producer', 'copywriter', 'freelancer']);
+    // Roles that never own deals — producers/copywriters/freelancers, and
+    // marketers (they live in the marketing-only shell and can't own deals), so
+    // they don't clutter the owner filter.
+    const NON_OWNER_ROLES = new Set(['producer', 'copywriter', 'freelancer', 'marketing']);
     const map = new Map();
     for (const [email, u] of Object.entries(state.users || {})) {
-      if (!PRODUCTION_ROLES.has(u.role)) map.set(email, u.name || email);
+      if (!NON_OWNER_ROLES.has(u.role)) map.set(email, u.name || email);
     }
     for (const d of allDeals) {
       const email = d.ownerEmail;
@@ -547,6 +550,9 @@ function DealRow({ deal, onOpen }) {
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
         style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer', padding: '11px 12px' }}
       >
+        {/* Row 1 keeps the owner avatar + age pinned top-right on every card, so
+            they never drop onto their own line when the pills below wrap — that
+            floating was what made cards look randomly different heights. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {hotBtn}
           <span style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>
@@ -555,31 +561,33 @@ function DealRow({ deal, onOpen }) {
           <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
             {shownValue != null ? formatGBP(shownValue) : <span style={{ color: BRAND.muted, fontWeight: 400 }}>—</span>}
           </span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-          <SaleStatusPills deal={deal} />
-          {nextTask && (
-            <span
-              title={`Next due task: ${nextTask.title}${due ? ' · ' + shortDate(due) : ''}${dueToday ? ' (today)' : ''}`}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap',
-                color: taskColor,
-                background: taskBg,
-                border: '1px solid ' + taskBorder }}
-            >
-              <CheckSquare size={12} style={{ flexShrink: 0 }} />
-              <span style={{ color: BRAND.muted, fontWeight: 500 }}>Next task</span>
-              {due && <span>· {shortDate(due)}</span>}
-            </span>
+          {ageDays != null && (
+            <span style={{ fontSize: 10, color: ageDays > 14 ? '#92400E' : BRAND.muted, flexShrink: 0 }} title={`${ageDays} days in stage`}>{ageDays}d</span>
           )}
-          <EmailMetaPill lastEmailAt={deal.lastEmailAt} opens={t.emailOpens || 0} lastOpenedAt={t.lastEmailOpenAt} />
-          <TrackingEyeChip icon={FileText} channel="Proposal" sent={proposalSent} opened={t.proposalOpens > 0} lastOpenedAt={t.lastProposalOpenAt} lines={propLines} />
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexShrink: 0 }}>
-            {ageDays != null && (
-              <span style={{ fontSize: 10, color: ageDays > 14 ? '#92400E' : BRAND.muted }} title={`${ageDays} days in stage`}>{ageDays}d</span>
-            )}
-            <Avatar user={owner} fallback={deal.ownerEmail} />
-          </span>
+          <Avatar user={owner} fallback={deal.ownerEmail} />
         </div>
+        {/* Row 2: meta chips. Only rendered when there's at least one, so cards
+            with no chips stay short instead of carrying an empty gap. */}
+        {((deal.saleStatus && ['signed', 'paid'].includes(deal.stage)) || nextTask || deal.lastEmailAt || proposalSent) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+            <SaleStatusPills deal={deal} />
+            {nextTask && (
+              <span
+                title={`Next due task: ${nextTask.title}${due ? ' · ' + shortDate(due) : ''}${dueToday ? ' (today)' : ''}`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap',
+                  color: taskColor,
+                  background: taskBg,
+                  border: '1px solid ' + taskBorder }}
+              >
+                <CheckSquare size={12} style={{ flexShrink: 0 }} />
+                <span style={{ color: BRAND.muted, fontWeight: 500 }}>Next task</span>
+                {due && <span>· {shortDate(due)}</span>}
+              </span>
+            )}
+            <EmailMetaPill lastEmailAt={deal.lastEmailAt} opens={t.emailOpens || 0} lastOpenedAt={t.lastEmailOpenAt} />
+            <TrackingEyeChip icon={FileText} channel="Proposal" sent={proposalSent} opened={t.proposalOpens > 0} lastOpenedAt={t.lastProposalOpenAt} lines={propLines} />
+          </div>
+        )}
       </div>
     );
   }
