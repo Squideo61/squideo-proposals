@@ -364,6 +364,11 @@ export function StoreProvider({ children }) {
   // Session is rehydrated from /api/auth/me on mount (the JWT lives in an
   // HttpOnly cookie now). Until that resolves we render with loading: true.
   const [state, setState] = useState(() => ({ ...emptyStore(), session: null }));
+  // Always-current view of state for long-lived poll closures that would
+  // otherwise capture a stale snapshot (the notifications poll reads the live
+  // dealDetail cache to know which deal pages to refresh on new tracking alerts).
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const [toast, setToast] = useState(null);
   const saveTimers = useRef({});
   const fetchAllRef = useRef(null);
@@ -372,6 +377,12 @@ export function StoreProvider({ children }) {
   // signature from an in-flight /api/proposals read taken before the DELETE
   // committed — the unmark DELETE also voids the Xero invoice, so it's slow.
   const recentlyRemovedSigs = useRef(new Map());
+  // Ids of tracking-bell notifications seen on the last poll. When a new one
+  // lands (an email was opened/clicked) we reload any cached deal detail so its
+  // email rows flip from "Not opened" to opened live, instead of only the bell
+  // updating and the row staying stale until a manual page refresh. null until
+  // the first poll primes it, so we never treat the initial load as "all new".
+  const prevTrackingIds = useRef(null);
 
   const showMsg = useCallback((m) => {
     setToast(m);
@@ -477,7 +488,52 @@ export function StoreProvider({ children }) {
       }).catch(() => {});
       api.get('/api/notifications').then((r) => {
         if (cancelled || !r) return;
-        setState(s => ({ ...s, notificationsByChannel: normalizeNotificationChannels(r) }));
+        const normalized = normalizeNotificationChannels(r);
+        // Detect newly-arrived tracking-bell notifications (email opened/clicked).
+        // The deal page loads its email open-status once via loadDealDetail and
+        // never refreshes it, so a row keeps reading "Not opened" until a manual
+        // reload even though the bell already fired. When a new tracking item
+        // appears, reload any cached deal detail so the rows update in place.
+        // `actions` isn't safely referenceable from this effect (see the
+        // quote-request note below), so the reload is inlined.
+        const curItems = normalized.tracking.items || [];
+        const prevIds = prevTrackingIds.current;
+        const newItems = prevIds === null
+          ? []
+          : curItems.filter((n) => n && n.id != null && !prevIds.has(n.id));
+        prevTrackingIds.current = new Set(curItems.map((n) => n && n.id).filter((v) => v != null));
+        setState(s => ({ ...s, notificationsByChannel: normalized }));
+        if (newItems.length) {
+          // Map each new alert to the deal page it affects, then reload only
+          // those. A tracking link is either `#/deal/<id>` (direct) or
+          // `#/email-open/<threadId>` — for the latter we look up which cached
+          // deal detail carries that Gmail thread. Only reload deals we've
+          // already loaded (an open page); untouched deals stay untouched.
+          const cache = (stateRef.current || {}).dealDetail || {};
+          const targets = new Set();
+          for (const n of newItems) {
+            const link = n && n.link ? String(n.link) : '';
+            let m = link.match(/#\/deal\/([^/?#]+)/);
+            if (m && cache[m[1]]) { targets.add(m[1]); continue; }
+            m = link.match(/#\/email-open\/([^/?#]+)/);
+            if (m) {
+              const threadId = decodeURIComponent(m[1]);
+              for (const [did, det] of Object.entries(cache)) {
+                if ((det?.emails || []).some((e) => e && e.gmailThreadId === threadId)) targets.add(did);
+              }
+            }
+          }
+          targets.forEach((did) => {
+            api.get('/api/crm/deals/' + encodeURIComponent(did)).then((data) => {
+              if (cancelled || !data || data.error) return;
+              setState(s => ({
+                ...s,
+                dealDetail: { ...s.dealDetail, [did]: data },
+                deals: { ...s.deals, [did]: { ...(s.deals[did] || {}), ...stripDetail(data) } },
+              }));
+            }).catch(() => {});
+          });
+        }
       }).catch(() => {});
     };
     refresh(); // prime immediately so the bell badge is populated on load
