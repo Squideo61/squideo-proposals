@@ -197,7 +197,7 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
 
       {newBlock && <NewBlockModal producers={allProducers} onClose={() => setNewBlock(false)}
         onSubmit={(f) => actions.createBlock(f).then(() => setNewBlock(false))} />}
-      {leaveModal && <LeaveModal producers={allProducers} canManage={canManage} onClose={() => setLeaveModal(false)}
+      {leaveModal && <LeaveModal producers={allProducers} canManage={canManage} sched={sched} me={me} onClose={() => setLeaveModal(false)}
         onSubmit={(f) => actions.requestLeave(f).then(() => setLeaveModal(false))} />}
       {blockModal && <BlockModal assignment={blockModal} producers={allProducers} canManage={canManage} me={me}
         onOpenProject={onOpenProject} onOpenVideo={onOpenVideo}
@@ -557,12 +557,25 @@ function AmendsPanel({ sched, onOpenVideo }) {
 }
 
 // ── Modals ──
-function LeaveModal({ producers, canManage, onClose, onSubmit }) {
+function LeaveModal({ producers, canManage, sched, me, onClose, onSubmit }) {
   const [start, setStart] = useState(todayStr());
   const [end, setEnd] = useState(todayStr());
   const [note, setNote] = useState('');
   const [target, setTarget] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Warn the booker up-front if these dates land on work already booked for the
+  // person taking leave. Computed from the loaded schedule — a producer sees
+  // their own blocks, a manager sees whoever they're booking for.
+  const forEmail = (canManage && target) ? target : me;
+  const clashes = useMemo(() => {
+    if (!start) return [];
+    const days = new Set(workingDaysBetween(start, end || start));
+    return (sched?.assignments || []).filter(a =>
+      a.userEmail === forEmail &&
+      workingDaysBetween(a.startDate, a.endDate).some(d => days.has(d)));
+  }, [start, end, forEmail, sched?.assignments]);
+
   const submit = () => {
     if (!start) return;
     setBusy(true);
@@ -570,7 +583,7 @@ function LeaveModal({ producers, canManage, onClose, onSubmit }) {
       .catch(() => setBusy(false));
   };
   return (
-    <Modal onClose={onClose} dismissible={false} maxWidth={420}>
+    <Modal onClose={onClose} dismissible={false} maxWidth={440}>
       <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Book annual leave</h3>
       {canManage && (
         <Field label="Team member (leave blank for yourself)">
@@ -583,9 +596,27 @@ function LeaveModal({ producers, canManage, onClose, onSubmit }) {
       <Field label="From"><input type="date" className="input" value={start} onChange={e => setStart(e.target.value)} style={selStyle} /></Field>
       <Field label="To"><input type="date" className="input" value={end} min={start} onChange={e => setEnd(e.target.value)} style={selStyle} /></Field>
       <Field label="Note (optional)"><input className="input" value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. family holiday" style={selStyle} /></Field>
+
+      {clashes.length > 0 && (
+        <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#92400E', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginTop: 4, marginBottom: 4, display: 'flex', gap: 10 }}>
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>
+              This overlaps {clashes.length} scheduled job{clashes.length === 1 ? '' : 's'}.
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 16 }}>
+              {clashes.slice(0, 5).map(a => (
+                <li key={a.id}>{a.manual ? (a.projectTitle || a.title || 'Booked block') : `${a.projectTitle} — ${a.videoTitle}`}{a.kind && !a.manual ? ` (${KIND_LABEL[a.kind] || a.kind})` : ''}</li>
+              ))}
+            </ul>
+            <div style={{ marginTop: 5 }}>You can still request it — a manager will see the clash and re-plan the work when approving.</div>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
         <button className="btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn" onClick={submit} disabled={busy}>{busy ? 'Submitting…' : 'Submit request'}</button>
+        <button className="btn" onClick={submit} disabled={busy}>{busy ? 'Submitting…' : (clashes.length ? 'Request anyway' : 'Submit request')}</button>
       </div>
     </Modal>
   );
