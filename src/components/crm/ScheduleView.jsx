@@ -450,7 +450,9 @@ function LeavePanel({ sched, canManage, canApprove, me, actions }) {
   const pending = leave.filter(l => l.status === 'pending');
   const [review, setReview] = useState(null);
   const nameFor = (email) => (sched.producers || []).find(p => p.email === email)?.name || email;
-  const upcoming = leave.filter(l => l.status !== 'denied' && l.endDate >= todayStr())
+  // Approvers see pending requests in "Awaiting approval" above, so keep them out
+  // of "Upcoming leave" to avoid showing each pending request twice.
+  const upcoming = leave.filter(l => l.status !== 'denied' && l.endDate >= todayStr() && !(canApprove && l.status === 'pending'))
     .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
   return (
@@ -487,14 +489,9 @@ function LeavePanel({ sched, canManage, canApprove, me, actions }) {
             {canManage && <strong>{nameFor(l.userEmail)} · </strong>}{l.startDate} → {l.endDate} · {l.days}d{' '}
             <Badge color={l.status === 'approved' ? 'green' : l.status === 'denied' ? 'grey' : 'yellow'}>{l.status}</Badge>
           </div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            {l.status === 'pending' && canApprove && (
-              <button className="btn" onClick={() => setReview(l)}><CalendarDays size={14} /> Review &amp; approve</button>
-            )}
-            {(canManage || (l.userEmail === me && l.status === 'pending')) && (
-              <button className="btn-ghost" onClick={() => actions.cancelLeave(l.id)} title="Cancel"><Trash2 size={14} /></button>
-            )}
-          </div>
+          {(canManage || (l.userEmail === me && l.status === 'pending')) && (
+            <button className="btn-ghost" onClick={() => actions.cancelLeave(l.id)} title="Cancel"><Trash2 size={14} /></button>
+          )}
         </div>
       ))}
     </Section>
