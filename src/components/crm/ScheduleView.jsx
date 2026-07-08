@@ -58,7 +58,10 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
   useEffect(() => { actions.loadSchedule(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const canManage = !!sched.canManage;
-  const canApprove = !!sched.canApproveLeave;
+  // Anyone who can manage the rota can review + approve leave (matches the
+  // server rule). Deriving it from canManage too means the Review button can't
+  // be hidden by an older payload that only sends canApproveLeave.
+  const canApprove = !!sched.canApproveLeave || canManage;
   const canManageAllowance = !!sched.canManageAllowance;
   const me = sched.me || (state.session?.email || '').toLowerCase();
   const allProducers = sched.producers && sched.producers.length
