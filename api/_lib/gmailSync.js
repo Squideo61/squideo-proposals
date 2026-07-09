@@ -141,13 +141,13 @@ export async function ingestMessage({ userEmail, accessToken, messageId }) {
   // Internal-only filter: every participant is one of our team members.
   const allAddresses = Array.from(new Set([fromEmail, ...toEmails, ...ccEmails]
     .filter(Boolean).map(s => s.toLowerCase())));
+  // Internal when every participant is one of our own — a team login OR any
+  // address on one of our domains (so noreply@/notifications@ that aren't user
+  // records still count, instead of leaking out to the deal auto-linker).
   let internalOnly = false;
   if (allAddresses.length > 1) {
-    const internalRows = await sql`
-      SELECT LOWER(email) AS email FROM users WHERE LOWER(email) = ANY(${allAddresses})
-    `;
-    const internalSet = new Set(internalRows.map(r => r.email));
-    internalOnly = allAddresses.every(a => internalSet.has(a));
+    const identity = await loadInternalIdentity(userEmail);
+    internalOnly = allAddresses.every(a => isInternalAddress(a, identity));
   }
 
   const { html, text } = extractBody(msg.payload);
@@ -211,6 +211,34 @@ export async function ingestMessage({ userEmail, accessToken, messageId }) {
   return { messageId, threadId: msg.threadId, dealId: resolved.dealId, resolvedBy: resolved.resolvedBy };
 }
 
+// The addresses + domains we treat as "our own": every team login, every
+// connected mailbox, and our sending domain (MAIL_FROM). Any address on one of
+// these domains is internal — our noreply@/notification senders live here, and
+// an address that isn't a user record (e.g. noreply@squideo.co.uk, enquiries@…)
+// must still never drive deal auto-linking, or our own mail funnels onto a deal.
+export async function loadInternalIdentity(extraUserEmail) {
+  const rows = await sql`
+    SELECT LOWER(email) AS addr FROM users WHERE email IS NOT NULL
+    UNION
+    SELECT LOWER(gmail_address) AS addr FROM gmail_accounts WHERE gmail_address IS NOT NULL
+  `;
+  const addrs = new Set(rows.map(r => r.addr).filter(Boolean));
+  if (extraUserEmail) addrs.add(String(extraUserEmail).toLowerCase());
+  const domains = new Set();
+  for (const a of addrs) { const d = a.split('@')[1]; if (d) domains.add(d); }
+  const fromDom = (process.env.MAIL_FROM || 'noreply@squideo.co.uk').toLowerCase().match(/@([^>\s]+)/);
+  if (fromDom) domains.add(fromDom[1]);
+  return { addrs, domains };
+}
+
+export function isInternalAddress(email, identity) {
+  const e = String(email || '').toLowerCase();
+  if (!e) return false;
+  if (identity.addrs.has(e)) return true;
+  const d = e.split('@')[1];
+  return d ? identity.domains.has(d) : false;
+}
+
 // Auto-link rules in priority order. Returns { dealId, resolvedBy } or
 // { dealId: null } if no match.
 export async function resolveDealForMessage({
@@ -253,17 +281,13 @@ export async function resolveDealForMessage({
   // mail onto that deal — and the last_activity bump below then snowballs
   // every later message onto the same one. (userEmail is the CRM login, which
   // can differ from the real gmail_address, so filtering on it alone leaks.)
-  const internalRows = await sql`
-    SELECT LOWER(email) AS addr FROM users WHERE email IS NOT NULL
-    UNION
-    SELECT LOWER(gmail_address) AS addr FROM gmail_accounts WHERE gmail_address IS NOT NULL
-  `;
-  const internalAddrs = new Set(internalRows.map(r => r.addr));
-  if (userEmail) internalAddrs.add(userEmail.toLowerCase());
+  // Internal now means "on one of our domains" too, so non-user senders like
+  // noreply@/notifications@ can't match our own company domain onto a deal.
+  const identity = await loadInternalIdentity(userEmail);
   const otherEmails = [fromEmail, ...toEmails, ...ccEmails]
     .filter(Boolean)
     .map(s => s.toLowerCase())
-    .filter(e => !internalAddrs.has(e));
+    .filter(e => !isInternalAddress(e, identity));
   if (otherEmails.length) {
     const contactMatch = await sql`
       WITH matched_contacts AS (
