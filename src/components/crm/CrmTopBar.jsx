@@ -4,6 +4,7 @@ import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
+import { navFlags } from '../../lib/viewAccess.js';
 import { Logo } from '../ui.jsx';
 import { NotificationBell } from '../NotificationBell.jsx';
 import { MobileNotifications } from '../MobileNotifications.jsx';
@@ -70,25 +71,14 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   useEffect(() => { if (gmailConnected) actions.loadMailboxLabels(); }, [gmailConnected]); // eslint-disable-line react-hooks/exhaustive-deps
   const newQuoteRequestsCount = (state.quoteRequests || []).filter(q => q.status === 'new').length;
 
-  const canRevisions = permissionsInclude(perms, 'revisions.access');
-  const canProduction = permissionsInclude(perms, 'production.access');
-  // Producer scheduling calendar (own calendar + book leave; managers see the
-  // master view). Producers & copywriters have it too.
-  const canSchedule = permissionsInclude(perms, 'schedule.access');
-  // Quote Requests page is API-gated by quote_requests.manage; hide the nav item
-  // for roles without it (e.g. producers, copywriters) so they don't land on a
-  // page that 403s and looks empty/broken.
-  const canQuoteRequests = permissionsInclude(perms, 'quote_requests.manage');
-  const canAdmin = permissionsInclude(perms, 'users.manage')
-    || permissionsInclude(perms, 'roles.manage')
-    || permissionsInclude(perms, 'settings.manage');
-  // Whole-business finances — anyone with finance.manage (owner/admin + Director).
-  const canBusiness = permissionsInclude(perms, 'finance.manage');
-  // Pending-Payments-only access (Project/Production Managers) — reaches the
-  // Finance page but sees just the Pending Payments tab.
-  const canPendingPayments = canBusiness || permissionsInclude(perms, 'finance.pending_payments');
-  // Marketing (lead attribution + ad ROAS) — Admin / whoever's granted it.
-  const canMarketing = permissionsInclude(perms, 'marketing.access');
+  // Nav item visibility flags — shared with the App route guard (viewAccess.js)
+  // so a hidden nav item and a blocked route stay in lockstep. See navFlags for
+  // what each permission grants (Finance = pending-payments-or-manage, Quote
+  // Requests = quote_requests.manage, Projects/board = production.access, etc.).
+  const {
+    canRevisions, canProduction, canSchedule, canQuoteRequests,
+    canAdmin, canPendingPayments, canMarketing,
+  } = navFlags(perms);
   // The £ (sales & finance) notifications bell — Admin, Directors, Project Managers.
   const canFinanceBell = permissionsInclude(perms, 'finance.notifications');
 

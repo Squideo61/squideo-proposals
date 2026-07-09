@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 
 import { BRAND, APP_MAX_WIDTH } from './theme.js';
 import { DEFAULT_PROPOSAL } from './defaults.js';
 import { StoreProvider, useStore } from './store.jsx';
+import { canAccessView } from './lib/viewAccess.js';
 import { makeId } from './utils.js';
 import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 import { Toast } from './components/ui.jsx';
@@ -60,6 +61,24 @@ function ViewFallback() {
   return (
     <div style={{ minHeight: '100vh', background: BRAND.paper, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ fontSize: 14, color: BRAND.muted }}>Loading…</div>
+    </div>
+  );
+}
+
+// Shown when a signed-in user reaches a route their role isn't allowed to see
+// (typed URL / stale deep link). The page's data is protected server-side too;
+// this just keeps the UI honest so nobody lands on a shell they can't use.
+function AccessDenied({ onHome }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '80px 20px' }}>
+      <div style={{ maxWidth: 440, textAlign: 'center', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 32 }}>
+        <div style={{ fontSize: 40, marginBottom: 8 }}>🔒</div>
+        <h1 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: BRAND.ink }}>You don’t have access to this page</h1>
+        <p style={{ margin: '0 0 20px', fontSize: 14, color: BRAND.muted, lineHeight: 1.5 }}>
+          Your account doesn’t have permission to view this part of the CRM. If you think you should, ask an admin to update your role.
+        </p>
+        <button onClick={onHome} className="btn">Go to Overview</button>
+      </div>
     </div>
   );
 }
@@ -521,6 +540,11 @@ function AppShell() {
       )}
       <div style={(NO_TOPBAR_VIEWS.has(view) || FULL_WIDTH_VIEWS.has(view)) ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
       <Suspense fallback={<ViewFallback />}>
+      {!canAccessView(view, user?.permissions) ? (
+        // Deep-linked / typed a URL for a page this role can't see — block the
+        // route (matching what the nav hides) instead of rendering the shell.
+        <AccessDenied onHome={() => navigate('overview')} />
+      ) : (<>
       {view === 'list' && (
         <ListView
           onCreate={createNew}
@@ -738,6 +762,7 @@ function AppShell() {
           onEdit={() => navigate('builder', activeId)}
         />
       )}
+      </>)}
       </Suspense>
       </div>
       {modal && modal.type === 'templates' && (
