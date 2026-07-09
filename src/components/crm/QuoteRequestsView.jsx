@@ -222,6 +222,7 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
 }
 
 function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onSpam, onClear, canClear, onOpenDeal }) {
+  const isMobile = useIsMobile();
   const isQualified = request.status === 'qualified';
   const isCleared = request.status === 'cleared';
   const isDisqualified = request.status === 'disqualified';
@@ -230,7 +231,11 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onS
     <div
       style={{
         display: 'flex',
-        alignItems: 'flex-start',
+        // On a phone the content + the (non-shrinking) action buttons can't share
+        // one line — the buttons collided with the name/email/value. Stack them:
+        // details on top, the action buttons wrapping on their own row below.
+        flexDirection: isMobile ? 'column' : 'row',
+        alignItems: isMobile ? 'stretch' : 'flex-start',
         gap: 12,
         padding: '14px 16px',
         borderTop: first ? 'none' : '1px solid ' + BRAND.border,
@@ -285,7 +290,7 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onS
           )}
         </div>
       </button>
-      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
         {isQualified ? (
           request.dealId && (
             <button onClick={() => onOpenDeal?.(request.dealId)} className="btn">Open deal</button>
