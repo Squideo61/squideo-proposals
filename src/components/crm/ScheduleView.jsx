@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Check, X, AlertTriangle, Plane, LayoutGrid, CheckCircle2, Gauge } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Check, X, AlertTriangle, Plane, LayoutGrid, CheckCircle2, Gauge, RefreshCw } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -16,6 +16,23 @@ function initials(name, email) {
   const parts = src.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return src.slice(0, 2).toUpperCase();
+}
+// Producer's profile picture, falling back to their initials in a coloured disc.
+function ProducerAvatar({ producer, size = 26 }) {
+  const label = producer.name || producer.email;
+  const common = {
+    width: size, height: size, borderRadius: '50%', flexShrink: 0,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  };
+  if (producer.avatar) {
+    return <img src={producer.avatar} alt={label} title={label}
+      style={{ ...common, objectFit: 'cover' }} />;
+  }
+  return (
+    <span title={label} style={{ ...common, background: BRAND.blue, color: 'white', fontSize: Math.round(size * 0.42), fontWeight: 700 }}>
+      {initials(producer.name, producer.email)}
+    </span>
+  );
 }
 function addMonths(dateStr, n) {
   const d = parseDate(dateStr);
@@ -54,6 +71,7 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
   const [blockModal, setBlockModal] = useState(null);
   const [newBlock, setNewBlock] = useState(false);
   const [allowanceModal, setAllowanceModal] = useState(null);
+  const [reflowing, setReflowing] = useState(false);
 
   useEffect(() => { actions.loadSchedule(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -150,6 +168,18 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
               </button>
             ))}
           </div>
+          {canManage && (
+            <button className="btn-ghost" disabled={reflowing}
+              title="Push not-ready work back and pull ready work forward across the rota"
+              onClick={async () => {
+                if (!window.confirm('Update the schedule?\n\nWork that isn’t ready but is due within 24 hours will be pushed back, and the next ready job will be brought forward to fill the slot.')) return;
+                setReflowing(true);
+                try { await actions.reflowSchedule(); } finally { setReflowing(false); }
+              }}
+              style={{ fontWeight: 600 }}>
+              <RefreshCw size={14} style={reflowing ? { animation: 'spin 0.8s linear infinite' } : undefined} /> {reflowing ? 'Updating…' : 'Update schedule'}
+            </button>
+          )}
           {canManage && (
             <button className="btn" onClick={() => setNewBlock(true)} style={{ fontWeight: 600 }}>
               <Plus size={14} /> Add block
@@ -373,7 +403,7 @@ function CalendarGrid({ weekDays, producers, asgByCell, leaveByCell, today, canM
         <div style={{ borderBottom: '1px solid ' + BRAND.border, background: BRAND.paper }} />
         {producers.map(p => (
           <div key={p.email} style={{ padding: '10px 12px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '1px solid ' + BRAND.paper, background: BRAND.paper, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 13 }}>
-            <span style={{ width: 26, height: 26, borderRadius: '50%', background: BRAND.blue, color: 'white', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{initials(p.name, p.email)}</span>
+            <ProducerAvatar producer={p} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name || p.email}</span>
           </div>
         ))}

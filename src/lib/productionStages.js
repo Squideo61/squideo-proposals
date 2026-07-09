@@ -20,6 +20,7 @@ export const PRODUCTION_PHASES = [
       { id: 'scripts_completed', label: 'Scripts Completed' },
       { id: 'storyboard',        label: 'Storyboard' },
       { id: 'amends_1',          label: 'Amends 1' },
+      { id: 'awaiting_feedback_1', label: 'Awaiting Feedback' },
       { id: 'project_started',   label: 'Project Started / Pending client start' },
     ],
   },
@@ -28,6 +29,7 @@ export const PRODUCTION_PHASES = [
     stages: [
       { id: 'in_production',          label: 'Production' },
       { id: 'amends_2',               label: 'Amends 2' },
+      { id: 'awaiting_feedback_2',    label: 'Awaiting Feedback' },
       { id: 'signed_off',             label: 'Signed Off' },
       { id: 'pending_group_sign_off', label: 'Pending Group Sign Off' },
       { id: 'back_up',                label: 'Back-up' },
@@ -166,7 +168,7 @@ export function stageOrderIndex(phaseId, stageId) {
 // 'video' once it heads into production. Drives the stage-locked preview pane.
 export function previewKindForStage(phaseId, stageId) {
   if (phaseId === 'pre_production') {
-    if (stageId === 'storyboard' || stageId === 'amends_1') return 'storyboard';
+    if (stageId === 'storyboard' || stageId === 'amends_1' || stageId === 'awaiting_feedback_1') return 'storyboard';
     if (stageId === 'project_started') return 'video';
     return 'script'; // new_project, script, scripts_completed
   }

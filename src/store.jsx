@@ -1882,6 +1882,15 @@ export function StoreProvider({ children }) {
         .then((p) => actions._applySchedule(p))
         .catch((err) => { showMsg(err.message || 'Failed to sync schedule'); throw err; });
     },
+    reflowSchedule() {
+      return api.post('/api/crm/schedule/reflow', {})
+        .then((p) => {
+          actions._applySchedule(p);
+          showMsg(p.moved ? `Schedule updated — ${p.moved} block${p.moved === 1 ? '' : 's'} moved` : 'Schedule already up to date');
+          return p;
+        })
+        .catch((err) => { showMsg(err.message || 'Failed to update schedule'); throw err; });
+    },
     createBlock(fields) {
       return api.post('/api/crm/schedule/block', fields)
         .then((p) => actions._applySchedule(p))

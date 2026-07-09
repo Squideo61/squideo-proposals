@@ -419,6 +419,126 @@ async function notifyConflicts(deal, conflicts) {
   });
 }
 
+// ── "Update Schedule" reflow ──
+// A deliberate manual correction the Production Manager triggers from the rota.
+// For each producer, any production/storyboard block that is NOT ready (its
+// prerequisite milestone isn't approved) AND imminent (starts within ~24h or is
+// already overdue) is pushed to the BACK of that producer's queue; the ready
+// ("green") work that follows is pulled forward into the freed slots. Everything
+// else keeps its relative order. Leave + manual ad-hoc blocks are fixed
+// obstacles the repack flows around. Reflowed blocks are pinned
+// (auto_generated=FALSE) so a later per-deal auto-sync doesn't undo the reorder.
+const IMMINENT_DAYS = 1; // "24 hours before its scheduled date" (starts today/tomorrow, or overdue)
+
+export async function reflowSchedules(scopeEmails) {
+  await ensureScheduleTables();
+  const emails = [...new Set((scopeEmails || []).map(e => String(e).toLowerCase()).filter(Boolean))];
+  if (!emails.length) return { moved: 0, producers: 0 };
+  const today = todayStr();
+
+  const asg = await sql`SELECT * FROM schedule_assignments WHERE user_email = ANY(${emails})`;
+  const videoIds = [...new Set(asg.map(a => a.video_id).filter(Boolean))];
+  const approvedByVideo = new Map();  // video_id → Set(milestones) → readiness
+  const deadlineByVideo = new Map();  // video_id → { storyboard, production }
+  if (videoIds.length) {
+    const ms = await sql`SELECT video_id, milestone FROM video_milestones WHERE video_id = ANY(${videoIds})`;
+    for (const m of ms) {
+      if (!approvedByVideo.has(m.video_id)) approvedByVideo.set(m.video_id, new Set());
+      approvedByVideo.get(m.video_id).add(m.milestone);
+    }
+    const vids = await sql`SELECT pv.id, pv.production_schedule AS v_sched, d.production_schedule AS d_sched
+      FROM project_videos pv JOIN deals d ON d.id = pv.deal_id WHERE pv.id = ANY(${videoIds})`;
+    for (const v of vids) deadlineByVideo.set(v.id, scheduleDeadlines(v.v_sched || v.d_sched));
+  }
+
+  // Fixed obstacle days per producer: leave (pending/approved).
+  const leaveByUser = new Map(emails.map(e => [e, new Set()]));
+  const lv = await sql`SELECT user_email, start_date, end_date FROM leave_requests
+    WHERE user_email = ANY(${emails}) AND status IN ('pending','approved')`;
+  for (const l of lv) {
+    const set = leaveByUser.get(String(l.user_email).toLowerCase());
+    if (set) for (const d of workingDaysBetween(asDateStr(l.start_date), asDateStr(l.end_date))) set.add(d);
+  }
+
+  const byUser = new Map(emails.map(e => [e, []]));
+  for (const a of asg) {
+    const u = String(a.user_email).toLowerCase();
+    if (byUser.has(u)) byUser.get(u).push(a);
+  }
+
+  const updates = [];
+  let producersTouched = 0;
+  for (const email of emails) {
+    const rows = byUser.get(email) || [];
+    // Reflowable = colour-coded production/storyboard blocks tied to a video.
+    const reflowable = rows.filter(r => r.video_id && r.kind !== 'manual')
+      .sort((a, b) => asDateStr(a.start_date).localeCompare(asDateStr(b.start_date)));
+    if (reflowable.length < 2) continue; // nothing to reorder
+
+    // Fixed obstacles: leave + manual ad-hoc blocks (never moved by reflow).
+    const occupied = new Set(leaveByUser.get(email) || []);
+    for (const r of rows) {
+      if (r.kind === 'manual' || !r.video_id) {
+        for (const d of workingDaysBetween(asDateStr(r.start_date), asDateStr(r.end_date))) occupied.add(d);
+      }
+    }
+
+    const items = reflowable.map(r => {
+      const start = asDateStr(r.start_date);
+      const daysUntilStart = start >= today ? countWorkingDays(today, start) - 1 : -(countWorkingDays(start, today) - 1);
+      const approved = approvedByVideo.get(r.video_id) || new Set();
+      const ready = r.kind === 'storyboard' ? approved.has('script') : approved.has('storyboard');
+      return { r, start, end: asDateStr(r.end_date), daysUntilStart, ready };
+    });
+    const isStuck = (i) => !i.ready && i.daysUntilStart <= IMMINENT_DAYS;
+    const deferred = items.filter(isStuck);
+    if (!deferred.length) continue;                    // nothing stuck+imminent → no-op
+    const kept = items.filter(i => !isStuck(i));
+    if (!kept.some(i => i.ready)) continue;            // no green work to bring forward → leave as-is
+
+    const order = [...kept, ...deferred];              // both already chronological
+
+    // Repack from the earliest slot this producer's reflowable work currently
+    // uses (never in the past), flowing around leave + manual obstacles.
+    let cursor = nextWorkingDay(laterDate(today, items[0].start));
+    let movedHere = 0;
+    for (const it of order) {
+      const r = it.r;
+      const n = Math.max(1, r.duration_days + (r.extended_days || 0));
+      const run = firstFreeRun(occupied, n, cursor);
+      if (!run) break;                                 // guard window exhausted — leave the rest
+      const start = run[0], end = run[run.length - 1];
+      for (const d of run) occupied.add(d);
+      cursor = nextWorkingDay(addDays(end, 1));
+      if (start === it.start && end === it.end) continue; // didn't actually move
+      // Recompute the delivery-deadline conflict at the new position.
+      const dl = deadlineByVideo.get(r.video_id) || {};
+      const deadline = r.kind === 'storyboard' ? dl.storyboard : dl.production;
+      let conflict = false, reason = null;
+      if (deadline) {
+        const latestSafeEnd = addWorkingDays(deadline, -INTERNAL_REVIEW_BUFFER_DAYS);
+        if (end > latestSafeEnd) {
+          conflict = true;
+          reason = end > deadline
+            ? `Work finishes ${end}, after the ${deadline} delivery date.`
+            : `Work finishes ${end}, leaving no internal-review buffer before the ${deadline} delivery date.`;
+        }
+      }
+      updates.push({ id: r.id, start, end, conflict, reason });
+      movedHere++;
+    }
+    if (movedHere) producersTouched++;
+  }
+
+  for (const u of updates) {
+    await sql`UPDATE schedule_assignments
+      SET start_date = ${u.start}, end_date = ${u.end}, auto_generated = FALSE,
+          conflict = ${u.conflict}, conflict_reason = ${u.reason}, updated_at = NOW()
+      WHERE id = ${u.id}`;
+  }
+  return { moved: updates.length, producers: producersTouched };
+}
+
 // ── Leave-year maths ──
 function leaveYearWindow(anniversary, today) {
   // Window [start, nextStart) anchored on the joining anniversary. Falls back to
@@ -693,6 +813,16 @@ export async function scheduleRoute(req, res, id, action, user) {
     const dealId = trimOrNull((req.body || {}).dealId);
     if (!dealId) return res.status(400).json({ error: 'dealId is required' });
     const result = await syncDealSchedule(dealId);
+    return res.status(200).json({ ...result, ...(await reload()) });
+  }
+
+  // POST /api/crm/schedule/reflow — "Update Schedule": push imminent-but-not-ready
+  // blocks back, pull ready work forward across every producer's rota (managers).
+  if (id === 'reflow') {
+    if (req.method !== 'POST') return res.status(405).end();
+    if (!manage) return res.status(403).json({ error: 'Only schedule managers can update the schedule' });
+    const roster = (await scheduleUsers()).filter(u => u.onRoster && u.producesContent).map(u => u.email);
+    const result = await reflowSchedules(roster);
     return res.status(200).json({ ...result, ...(await reload()) });
   }
 

@@ -294,13 +294,15 @@ function VideoRow({ video, onOpen, showStage }) {
         padding: '9px 0', borderTop: '1px solid ' + BRAND.border, cursor: 'grab', fontSize: 13,
       }}
     >
-      {/* Video (+ its project / customer; stage chip when in search results) */}
+      {/* Project (prominent) + its video number / customer; stage chip in search results */}
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{video.title}</div>
+        <div style={{ fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {video.projectTitle || video.companyName || video.title}
+        </div>
         <div style={{ fontSize: 11, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', whiteSpace: 'nowrap' }}>
           {showStage && <StageChip phase={video.productionPhase} stage={video.productionStage} />}
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {[video.projectTitle, video.companyName].filter(Boolean).join(' · ') || '—'}
+            {[video.title, (video.companyName && video.companyName !== video.projectTitle) ? video.companyName : null].filter(Boolean).join(' · ') || '—'}
           </span>
         </div>
       </div>
