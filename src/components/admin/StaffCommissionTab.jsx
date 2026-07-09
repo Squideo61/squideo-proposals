@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Percent, Coins, UserPlus, Trash2, ChevronDown, ChevronRight, Check, X } from 'lucide-react';
+import { Percent, Coins, UserPlus, Trash2, ChevronDown, ChevronRight, Check, X, Pencil } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
@@ -104,49 +104,80 @@ export function StaffCommissionTab() {
 // Editable band config. Percentages are entered as whole numbers (5 = 5%); the
 // server accepts either a fraction or a percent.
 function BandConfigCard({ config, actions, showMsg, reload }) {
-  const [rateA, setRateA] = useState(String(Math.round((config.bandARate || 0) * 10000) / 100));
+  const toStr = (frac) => String(Math.round((frac || 0) * 10000) / 100);
+  const [editing, setEditing] = useState(false);
+  const [rateA, setRateA] = useState(toStr(config.bandARate));
   const [cap, setCap] = useState(String(config.bandACap ?? 0));
-  const [rateB, setRateB] = useState(String(Math.round((config.bandBRate || 0) * 10000) / 100));
+  const [rateB, setRateB] = useState(toStr(config.bandBRate));
   const [saving, setSaving] = useState(false);
 
-  // Re-sync when the loaded config changes (e.g. after a save/reload).
-  useEffect(() => {
-    setRateA(String(Math.round((config.bandARate || 0) * 10000) / 100));
+  // Reset the inputs to the saved config (used on load, cancel and after save).
+  const syncFromConfig = () => {
+    setRateA(toStr(config.bandARate));
     setCap(String(config.bandACap ?? 0));
-    setRateB(String(Math.round((config.bandBRate || 0) * 10000) / 100));
-  }, [config.bandARate, config.bandACap, config.bandBRate]);
+    setRateB(toStr(config.bandBRate));
+  };
+  // Re-sync when the loaded config changes — but not mid-edit, so we don't stomp
+  // the values the user is typing.
+  useEffect(() => { if (!editing) syncFromConfig(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [config.bandARate, config.bandACap, config.bandBRate]);
 
   const maxA = (parseFloat(cap) || 0) * ((parseFloat(rateA) || 0) / 100);
+  const cancel = () => { syncFromConfig(); setEditing(false); };
   const save = () => {
     setSaving(true);
     // Send explicit fractions (5% → 0.05) so there's no percent/fraction ambiguity.
     actions.updateCommissionConfig({ bandARate: (parseFloat(rateA) || 0) / 100, bandACap: parseFloat(cap) || 0, bandBRate: (parseFloat(rateB) || 0) / 100 })
-      .then(() => { showMsg('Commission bands saved'); return reload(); })
+      .then(() => { showMsg('Commission bands saved'); setEditing(false); return reload(); })
       .finally(() => setSaving(false));
   };
 
   return (
     <div style={CARD}>
-      <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6, display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Coins size={14} color="#CA8A04" /> Commission bands
-      </h3>
-      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <Field label="Band A rate" suffix="%">
-          <input type="number" step="0.1" min="0" value={rateA} onChange={(e) => setRateA(e.target.value)} style={inputStyle} />
-        </Field>
-        <Field label="up to (net sales)" prefix="£">
-          <input type="number" step="100" min="0" value={cap} onChange={(e) => setCap(e.target.value)} style={{ ...inputStyle, width: 110 }} />
-        </Field>
-        <Field label="Band B rate (thereafter)" suffix="%">
-          <input type="number" step="0.1" min="0" value={rateB} onChange={(e) => setRateB(e.target.value)} style={inputStyle} />
-        </Field>
-        <button onClick={save} disabled={saving} className="btn" style={{ height: 36 }}>{saving ? 'Saving…' : 'Save bands'}</button>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Coins size={14} color="#CA8A04" /> Commission bands
+        </h3>
+        {!editing && (
+          <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setEditing(true)}><Pencil size={13} /> Edit</button>
+        )}
       </div>
-      <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 10, lineHeight: 1.5 }}>
+
+      {editing ? (
+        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <Field label="Band A rate" suffix="%">
+            <input autoFocus type="number" step="0.1" min="0" value={rateA} onChange={(e) => setRateA(e.target.value)} style={inputStyle} />
+          </Field>
+          <Field label="up to (net sales)" prefix="£">
+            <input type="number" step="100" min="0" value={cap} onChange={(e) => setCap(e.target.value)} style={{ ...inputStyle, width: 110 }} />
+          </Field>
+          <Field label="Band B rate (thereafter)" suffix="%">
+            <input type="number" step="0.1" min="0" value={rateB} onChange={(e) => setRateB(e.target.value)} style={inputStyle} />
+          </Field>
+          <button onClick={save} disabled={saving} className="btn" style={{ height: 36 }}>{saving ? 'Saving…' : 'Save bands'}</button>
+          <button onClick={cancel} disabled={saving} className="btn-ghost" style={{ height: 36 }}>Cancel</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+          <ReadStat label="Band A rate" value={fmtPct(config.bandARate)} />
+          <ReadStat label="up to (net sales)" value={formatGBP(config.bandACap)} />
+          <ReadStat label="Band B rate (thereafter)" value={fmtPct(config.bandBRate)} />
+        </div>
+      )}
+
+      <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 12, lineHeight: 1.5 }}>
         Band A pays {fmtPct((parseFloat(rateA) || 0) / 100)} on the first {formatGBP(parseFloat(cap) || 0)} of net sales
         (max <strong>{formatGBP(maxA)}</strong>), then Band B pays {fmtPct((parseFloat(rateB) || 0) / 100)} on everything above — uncapped.
         {config.updatedBy ? ` · Last edited by ${config.updatedBy.split('@')[0]}.` : ''}
       </div>
+    </div>
+  );
+}
+
+function ReadStat({ label, value }) {
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: BRAND.muted, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 700, color: BRAND.ink, marginTop: 2 }}>{value}</div>
     </div>
   );
 }
