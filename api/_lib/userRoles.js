@@ -200,6 +200,24 @@ export function ensureSystemRoles() {
            SET notification_defaults = notification_defaults || '{"leave.decided": true}'::jsonb, updated_at = NOW()
          WHERE id IN ('producer', 'copywriter', 'member', 'director', 'admin') AND NOT (notification_defaults ? 'leave.decided')
       `;
+
+      // ── Staff Commission ──
+      // Managing the plan (see everyone, edit bands, toggle staff) → Directors
+      // (Admins via '*'). Back-filled so it applies without a migration.
+      const commManage = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["commission.manage"]'::jsonb, updated_at = NOW()
+         WHERE id = 'director' AND NOT (permissions @> '["commission.manage"]'::jsonb)
+      `;
+      if ((commManage.count || commManage.rowCount || 0) > 0) invalidateRoleCache('director');
+      // Seeing your OWN commission → Project/Production Managers (role 'member',
+      // e.g. Callum, who is on the plan). Directors/Admins see it via manage/'*'.
+      const commOwn = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["commission.view_own"]'::jsonb, updated_at = NOW()
+         WHERE id = 'member' AND NOT (permissions @> '["commission.view_own"]'::jsonb)
+      `;
+      if ((commOwn.count || commOwn.rowCount || 0) > 0) invalidateRoleCache('member');
     } catch (err) {
       systemRolesEnsured = null;
       console.warn('[roles] ensure system roles failed', err.message);

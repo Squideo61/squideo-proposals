@@ -16,9 +16,14 @@ export function navFlags(perms) {
     canProduction: permissionsInclude(perms, 'production.access'),
     canSchedule: permissionsInclude(perms, 'schedule.access'),
     canQuoteRequests: permissionsInclude(perms, 'quote_requests.manage'),
+    // Staff Commission lives under Admin. On-plan sales staff (commission.view_own)
+    // and managers (commission.manage) can open Admin to reach it — they just see
+    // the one tab (AdminView filters the rest by permission).
     canAdmin: permissionsInclude(perms, 'users.manage')
       || permissionsInclude(perms, 'roles.manage')
-      || permissionsInclude(perms, 'settings.manage'),
+      || permissionsInclude(perms, 'settings.manage')
+      || permissionsInclude(perms, 'commission.manage')
+      || permissionsInclude(perms, 'commission.view_own'),
     canBusiness,
     // Pending-Payments-only access (Project/Production Managers) still reaches
     // the Finance page (they just see the one tab).

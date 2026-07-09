@@ -10,6 +10,7 @@ import { reconcileProposalBillingPaid, ensureInvoiceExcludeColumn } from './invo
 import { archiveRecord } from './recycleBin.js';
 import { sendNotification } from '../notifications.js';
 import { ensureDealPo } from './deals.js';
+import { commissionTotalsForMonths } from './commission.js';
 import { zipStore } from '../zip.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
@@ -563,37 +564,54 @@ async function fetchPaidPartnerFees(sinceISO, untilISO) {
 }
 
 // Every paid-money row across all customers with paid_at in [sinceISO, untilISO).
-// Returns [{ paidAt: Date, net, vat, gross }]. Dates are bucketed in UTC.
-async function fetchPaidRows(sinceISO, untilISO) {
+// Returns [{ paidAt: Date, net, vat, gross, proposalId, ownerEmail, dealId }].
+// Dates are bucketed in UTC. ownerEmail/dealId are the deal's sales owner (via
+// proposal→deal, or the manual invoice's own deal_id) so Staff Commission can
+// attribute received cash to a salesperson; they're null for proposal-less
+// sources (imported PPs, partner fees, recurring "Other") and ignored by every
+// other caller, which only reads net/vat/gross/paidAt.
+export async function fetchPaidRows(sinceISO, untilISO) {
   const [stripeR, partnerR, manualR, invR, pbR] = await Promise.all([
-    sql`SELECT pay.amount AS inc, pay.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id
+    sql`SELECT pay.amount AS inc, pay.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
+               d.owner_email, d.id AS deal_id
           FROM payments pay JOIN proposals pr ON pr.id = pay.proposal_id
+          LEFT JOIN deals d ON d.id = pr.deal_id
          WHERE pay.paid_at >= ${sinceISO} AND pay.paid_at < ${untilISO}`,
-    sql`SELECT pi.amount AS inc, pi.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id
+    sql`SELECT pi.amount AS inc, pi.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
+               d.owner_email, d.id AS deal_id
           FROM partner_invoices pi JOIN proposals pr ON pr.id = pi.proposal_id
+          LEFT JOIN deals d ON d.id = pr.deal_id
          WHERE pi.paid_at >= ${sinceISO} AND pi.paid_at < ${untilISO}`,
-    sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id
+    sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
+               d.owner_email, d.id AS deal_id
           FROM manual_payments mp JOIN proposals pr ON pr.id = mp.proposal_id
+          LEFT JOIN deals d ON d.id = pr.deal_id
          WHERE mp.manual_invoice_id IS NULL
            AND mp.paid_at >= ${sinceISO} AND mp.paid_at < ${untilISO}`,
     sql`SELECT mi.amount AS inc, mi.paid_at, mi.subtotal_ex_vat, mi.tax_amount,
-               pr.data->>'vatRate' AS rate, pr.id AS proposal_id
+               pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
+               d.owner_email, d.id AS deal_id
           FROM manual_invoices mi
           LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+          LEFT JOIN deals d ON d.id = COALESCE(mi.deal_id, pr.deal_id)
          WHERE mi.status = 'paid'
            AND mi.paid_at >= ${sinceISO} AND mi.paid_at < ${untilISO}`,
-    sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id
+    sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
+               d.owner_email, d.id AS deal_id
           FROM proposal_billing pb JOIN proposals pr ON pr.id = pb.proposal_id
+          LEFT JOIN deals d ON d.id = pr.deal_id
          WHERE pb.paid_amount IS NOT NULL
            AND pb.paid_at >= ${sinceISO} AND pb.paid_at < ${untilISO}`,
   ]);
 
   const rows = [];
-  const push = (paidAt, parts, proposalId = null) => { if (paidAt) rows.push({ paidAt: new Date(paidAt), proposalId: proposalId || null, ...parts }); };
+  const push = (paidAt, parts, proposalId = null, ownerEmail = null, dealId = null) => {
+    if (paidAt) rows.push({ paidAt: new Date(paidAt), proposalId: proposalId || null, ownerEmail: ownerEmail || null, dealId: dealId || null, ...parts });
+  };
 
-  for (const r of stripeR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id);
-  for (const r of partnerR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id);
-  for (const r of manualR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id);
+  for (const r of stripeR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id);
+  for (const r of partnerR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id);
+  for (const r of manualR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id);
   for (const r of invR) {
     // Prefer the invoice's own stored VAT breakdown (most accurate, incl.
     // company-level invoices with no linked proposal); fall back to the linked
@@ -602,12 +620,12 @@ async function fetchPaidRows(sinceISO, untilISO) {
     if (r.subtotal_ex_vat != null || r.tax_amount != null) {
       const net = r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : gross - (Number(r.tax_amount) || 0);
       const vat = r.tax_amount != null ? Number(r.tax_amount) : gross - net;
-      push(r.paid_at, { gross, net, vat }, r.proposal_id);
+      push(r.paid_at, { gross, net, vat }, r.proposal_id, r.owner_email, r.deal_id);
     } else {
-      push(r.paid_at, splitVat(gross, r.rate), r.proposal_id);
+      push(r.paid_at, splitVat(gross, r.rate), r.proposal_id, r.owner_email, r.deal_id);
     }
   }
-  for (const r of pbR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id);
+  for (const r of pbR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id);
 
   // Manual pending payments marked paid — net + stored VAT.
   const ppPaid = await fetchPaidManualPps(sinceISO, untilISO);
@@ -2366,6 +2384,12 @@ async function cashflowReport(action) {
   );
   const resolvedAmount = (r) => (r.auto_type === 'director_tax' ? autoDirectorTaxMonthly : monthlyAmountOf(r));
 
+  // Auto Staff Commission per month — calculated from paid sales for on-plan
+  // staff (cash basis, ex-VAT), resetting to £0 each month. A real, CT-deductible
+  // operating cost. Recomputes whenever the underlying paid sales change; there's
+  // no stored cost row. { 'YYYY-MM': total }.
+  const commByMonth = await commissionTotalsForMonths(keys);
+
   // Operating costs per month — everything EXCEPT the auto Corporation Tax line.
   const opCostsForMonth = (mk) => {
     let wages = 0, expenses = 0, freelancers = 0, marketing = 0, director = 0, allowance = 0, savings = 0;
@@ -2382,10 +2406,11 @@ async function cashflowReport(action) {
       else expenses += amt;
     }
     allowance += dirAllowanceForMonth(mk); // director allowance (£250/mo per director, rising to actual spend if over)
+    const commission = round2(commByMonth[mk] || 0); // auto staff commission (paid sales)
     // Savings is in the total (so it's part of the break-even target and comes out
     // of the drawable surplus), but it was excluded from the CT-deductible base
     // above — so Corporation Tax is still computed on the full pre-savings profit.
-    return { wages: round2(wages), expenses: round2(expenses), freelancers: round2(freelancers), marketing: round2(marketing), director: round2(director), allowance: round2(allowance), savings: round2(savings), total: round2(wages + expenses + freelancers + marketing + director + allowance + savings) };
+    return { wages: round2(wages), expenses: round2(expenses), freelancers: round2(freelancers), marketing: round2(marketing), director: round2(director), allowance: round2(allowance), savings: round2(savings), commission, total: round2(wages + expenses + freelancers + marketing + director + allowance + savings + commission) };
   };
 
   const opHistory = keys.map((mk) => {
@@ -2394,7 +2419,9 @@ async function cashflowReport(action) {
     // Director expenses are NOT treated as CT-deductible here on purpose — we'd
     // rather over-reserve Corporation Tax and let the accountant decide later, so
     // they're excluded from the taxable-profit base (but still in operating costs).
-    return { month: mk, c, cashIn, opProfit: round2(cashIn - c.total), taxProfit: round2(cashIn - deductibleCostTotalForMonth(costRows, mk)) };
+    // Commission is a genuine deductible cost (unlike savings), so it lowers the
+    // taxable-profit base as well as operating profit.
+    return { month: mk, c, cashIn, opProfit: round2(cashIn - c.total), taxProfit: round2(cashIn - deductibleCostTotalForMonth(costRows, mk) - c.commission) };
   });
 
   // Corporation Tax per month on TAXABLE profit (cash − the CT-deductible cost
@@ -2409,7 +2436,7 @@ async function cashflowReport(action) {
     const corpTax = monthlyCorpTax(h.taxProfit);
     const expenses = round2(h.c.expenses + corpTax);
     const costs = round2(h.c.total + corpTax);
-    return { month: h.month, cashIn: h.cashIn, wages: h.c.wages, expenses, freelancers: h.c.freelancers, marketing: h.c.marketing, director: h.c.director, allowance: h.c.allowance, savings: h.c.savings, corpTax, costs, profit: round2(h.cashIn - costs) };
+    return { month: h.month, cashIn: h.cashIn, wages: h.c.wages, expenses, freelancers: h.c.freelancers, marketing: h.c.marketing, director: h.c.director, allowance: h.c.allowance, savings: h.c.savings, commission: h.c.commission, corpTax, costs, profit: round2(h.cashIn - costs) };
   });
   const costs12 = round2(history.reduce((s, h) => s + h.costs, 0));
 
@@ -2485,6 +2512,17 @@ async function cashflowReport(action) {
       ? `Over the £${DIR_ALLOWANCE_BASE}/mo allowance — showing actual spend of £${dirSel.toFixed(2)}`
       : `£${DIRECTOR_ALLOWANCE}/mo per director; rises to actual spend if over`,
     autoType: 'director_allowance', taxBasis: false,
+    recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
+  });
+  // Auto Staff Commission for the month — calculated from on-plan staff's paid
+  // sales, resetting to £0 each month. Read-only (autoType) and managed in the
+  // Admin → Staff Commission tab; shown here so costs/profit/CT reconcile.
+  const commMonth = round2(commByMonth[month] || 0);
+  lines.push({
+    id: 'cfcommission', label: 'Staff Commission', category: 'commission',
+    amount: commMonth, frequency: 'monthly', monthlyAmount: commMonth,
+    note: 'Auto-calculated from on-plan staff’s paid sales; resets monthly (edit in Admin → Staff Commission)',
+    autoType: 'commission', taxBasis: false,
     recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
   });
   const activityRows = await sql`SELECT id, actor_email, action, summary, created_at FROM cashflow_activity ORDER BY created_at DESC LIMIT 40`;

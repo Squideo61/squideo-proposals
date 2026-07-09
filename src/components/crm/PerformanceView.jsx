@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download, Upload, Ban, Camera, ScanLine } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download, Upload, Ban, Camera, ScanLine, Percent } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -1524,11 +1524,15 @@ function CfCosts({ lines, month, monthLabel, actions, reload, isMobile }) {
   const directors = lines.filter((l) => l.category === 'director');
   const allowances = lines.filter((l) => l.category === 'allowance');
   const savings = lines.filter((l) => l.category === 'savings');
-  const expenses = lines.filter((l) => !['wages', 'freelancer', 'marketing', 'director', 'allowance', 'savings'].includes(l.category));
+  const commission = lines.filter((l) => l.category === 'commission');
+  const expenses = lines.filter((l) => !['wages', 'freelancer', 'marketing', 'director', 'allowance', 'savings', 'commission'].includes(l.category));
   return (
     <>
       <CfCostPanel title="Expenses" icon={Receipt} accent="#0E7490" category="expense"
         rows={expenses} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
+      <CfCostPanel title="Staff Commission" icon={Percent} accent="#0891B2" category="commission" readOnly
+        note="Auto-calculated from on-plan staff’s paid sales (cash basis, ex-VAT); resets to £0 each month. Add/remove staff and edit bands in Admin → Staff Commission."
+        rows={commission} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
       <CfCostPanel title="Marketing" icon={Megaphone} accent="#F97316" category="marketing"
         rows={marketing} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
       <CfCostPanel title="Staff Wages" icon={Users} accent={BRAND.blue} category="wages"
@@ -1546,7 +1550,7 @@ function CfCosts({ lines, month, monthLabel, actions, reload, isMobile }) {
   );
 }
 
-function CfCostPanel({ title, icon: Icon, accent, category, note, rows, month, monthLabel, actions, reload, isMobile }) {
+function CfCostPanel({ title, icon: Icon, accent, category, note, rows, month, monthLabel, actions, reload, isMobile, readOnly }) {
   const [adding, setAdding] = useState(false);
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
@@ -1573,7 +1577,7 @@ function CfCostPanel({ title, icon: Icon, accent, category, note, rows, month, m
         </h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 15, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}<span style={{ fontSize: 11, fontWeight: 500, color: BRAND.muted }}> /mo</span></span>
-          <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={13} /> Add</button>
+          {!readOnly && <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={13} /> Add</button>}
         </div>
       </div>
 
@@ -1628,7 +1632,8 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
   const isCorpTax = row.autoType === 'corp_tax';
   const isDirExp = row.autoType === 'director_expenses'; // synthetic Directors-tab total
   const isDirAllow = row.autoType === 'director_allowance'; // synthetic director-allowance line
-  const isReadOnly = isCorpTax || isDirExp || isDirAllow; // no drag / edit / remove
+  const isCommission = row.autoType === 'commission'; // synthetic staff-commission line
+  const isReadOnly = isCorpTax || isDirExp || isDirAllow || isCommission; // no drag / edit / remove
 
   const save = () => {
     const before = { label: row.label, amount: Number(row.amount) || 0, frequency: row.frequency || 'monthly', category: row.category || 'expense', note: row.note || '', taxBasis: !!row.taxBasis };
@@ -1695,6 +1700,8 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
           ? <span style={{ flexShrink: 0, color: '#D97706', display: 'flex', lineHeight: 0 }}><Coins size={14} /></span>
           : isDirExp
           ? <span style={{ flexShrink: 0, color: '#CA8A04', display: 'flex', lineHeight: 0 }}><Crown size={14} /></span>
+          : isCommission
+          ? <span style={{ flexShrink: 0, color: '#0891B2', display: 'flex', lineHeight: 0 }}><Percent size={14} /></span>
           : <span title="Drag to reorder" style={{ flexShrink: 0, cursor: 'grab', color: BRAND.muted, display: 'flex', lineHeight: 0 }}><GripVertical size={14} /></span>}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: isCorpTax ? 700 : 400, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1708,6 +1715,8 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
             ? <div title="Director allowance from the Directors tab (£250/mo per director), rising to actual spend if the directors go over. Counted in the costs and targets." style={{ fontSize: 11, color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — {row.note || 'director allowance from the Directors tab'}</div>
           : isDirExp
             ? <div title="Combined director expenses logged on the Directors tab for this month — counted in the costs and targets." style={{ fontSize: 11, color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — combined spend from the Directors tab; counted in the totals</div>
+            : isCommission
+            ? <div title="Staff commission on this month's paid sales (cash basis, ex-VAT) for on-plan staff. Resets to £0 each month. Manage staff + bands in Admin → Staff Commission." style={{ fontSize: 11, color: '#155E75', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — on-plan staff's paid sales; resets monthly (Admin → Staff Commission)</div>
             : isAuto
             ? <div title="Income tax + employee NI on each director's drawings marked “feeds director tax” (2025/26 rates), treating the figure as gross salary" style={{ fontSize: 11, color: '#CA8A04', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — income tax + NI on the director pay marked “feeds director tax” (current rates){row.note ? ` · ${row.note}` : ''}</div>
             : (row.note && <div title={row.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.note}</div>)}

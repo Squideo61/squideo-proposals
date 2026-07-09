@@ -1156,6 +1156,28 @@ export function StoreProvider({ children }) {
         return data;
       }).catch(() => null);
     },
+    // Admin → Staff Commission: per-member commission for a month ('YYYY-MM',
+    // default current). Server scopes the response by permission (managers see
+    // everyone; on-plan staff see only themselves).
+    loadCommission(month) {
+      const path = '/api/crm/commission' + (month ? '/' + month : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, commission: data || null }));
+        return data;
+      }).catch(() => null);
+    },
+    updateCommissionConfig(patch) {
+      return api.patch('/api/crm/commission/config', patch);
+    },
+    addCommissionMember(email, effectiveFrom) {
+      return api.post('/api/crm/commission/members', { email, ...(effectiveFrom ? { effectiveFrom } : {}) });
+    },
+    updateCommissionMember(email, patch) {
+      return api.patch('/api/crm/commission/members/' + encodeURIComponent(email), patch);
+    },
+    removeCommissionMember(email) {
+      return api.delete('/api/crm/commission/members/' + encodeURIComponent(email));
+    },
     // Just the current-month Cash Flow & Targets figures (minimum + £4k/£5k wage
     // targets), so the Income performance graph can mirror them live. Kept in its
     // own slice — independent of the month-specific `cashflow` the tab browses.
