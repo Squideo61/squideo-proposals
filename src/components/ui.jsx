@@ -517,6 +517,19 @@ export function ActionMenu({ items, align = 'right', trigger, triggerTitle = 'Mo
   );
 }
 
+// Turn a stored phone string into a clean dialable number. The key case: UK
+// numbers written "+44 (0)7926 838203" — the "(0)" is the national trunk prefix
+// and must be dropped for international dialling, else "+4407926838203" won't
+// connect. Also drops a plain trunk 0 sitting right after a "+CC " country code
+// (e.g. "+44 07926…"). Anything else just loses its spaces/punctuation.
+export function normalizeDialNumber(raw) {
+  let s = String(raw || '');
+  s = s.replace(/\(\s*0\s*\)/g, ''); // "+44 (0)7926" → "+44 7926"
+  // "+44 0 7926" / "+44 07926" → drop the trunk 0 after the country code.
+  s = s.replace(/^(\+\d{1,3})[\s-]*0(\d)/, '$1$2');
+  return s.replace(/[^+\d]/g, '');
+}
+
 // A phone number that, instead of dialling straight from the SIM, opens a small
 // menu so you can pick which app places the call — the native Phone app, Webex
 // (linked to a work line), or just copy the number. iOS/Android give no OS-level
@@ -524,12 +537,12 @@ export function ActionMenu({ items, align = 'right', trigger, triggerTitle = 'Mo
 // `display` is the human string shown; the schemes use the cleaned +digits.
 export function CallLink({ phone, style, title }) {
   const display = phone == null ? '' : String(phone);
-  const clean = display.replace(/[^+\d]/g, '');
+  const clean = normalizeDialNumber(display);
   if (!clean) return display ? <span style={style}>{display}</span> : null;
   const items = [
     { label: 'Call (Phone app)', icon: Phone, onClick: () => { window.location.href = 'tel:' + clean; } },
     { label: 'Call with Webex', icon: Video, onClick: () => { window.location.href = 'webextel://login?telephone=' + encodeURIComponent(clean); } },
-    { label: 'Copy number', icon: Copy, onClick: () => { try { navigator.clipboard?.writeText(display); } catch { /* ignore */ } } },
+    { label: 'Copy number', icon: Copy, onClick: () => { try { navigator.clipboard?.writeText(clean); } catch { /* ignore */ } } },
   ];
   return (
     <ActionMenu
