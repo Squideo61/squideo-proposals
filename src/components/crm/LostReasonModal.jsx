@@ -10,6 +10,10 @@ export const LOST_REASONS = ['Price', 'Timing', 'Competitor', 'Disengaged', 'Fun
 // reason string; the caller is responsible for moving the stage.
 export function LostReasonModal({ onClose, onSubmit }) {
   const [reason, setReason] = useState('Price');
+  const [otherText, setOtherText] = useState('');
+  // For "Other", submit the typed reason (falling back to "Other" if blank).
+  const finalReason = reason === 'Other' ? (otherText.trim() || 'Other') : reason;
+  const submit = () => onSubmit(finalReason);
   return (
     <Modal onClose={onClose}>
       <h2 style={{ margin: '0 0 12px', fontSize: 18, fontWeight: 700 }}>Mark deal as lost</h2>
@@ -21,10 +25,21 @@ export function LostReasonModal({ onClose, onSubmit }) {
             <span>{r}</span>
           </label>
         ))}
+        {reason === 'Other' && (
+          <input
+            className="input"
+            autoFocus
+            value={otherText}
+            onChange={(e) => setOtherText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+            placeholder="Type the reason…"
+            style={{ marginTop: 2, marginLeft: 26 }}
+          />
+        )}
       </div>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button onClick={onClose} className="btn-ghost">Cancel</button>
-        <button onClick={() => onSubmit(reason)} className="btn">Confirm lost</button>
+        <button onClick={submit} className="btn">Confirm lost</button>
       </div>
     </Modal>
   );
