@@ -4,6 +4,7 @@ import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, 
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
+import { CallLink } from './../ui.jsx';
 import { computeRange, rangeHeading, fmtRangeDates, segBtn, RangeControl, thisMonthStr } from './dateRange.jsx';
 
 // Remembers the Marketing page's view state across navigation (mirrors
@@ -713,7 +714,7 @@ function LeadDetailPanel({ lead, index, total, onPrev, onNext, onClose, onOpenCo
         <div style={{ padding: 16, overflowY: 'auto', flex: 1 }}>
           <PanelSection title="Contact">
             {lead.email && <PanelField label="Email"><a href={`mailto:${lead.email}`} style={{ color: BRAND.blue }}>{lead.email}</a></PanelField>}
-            {lead.phone && <PanelField label="Phone"><a href={`tel:${lead.phone.replace(/[^+\d]/g, '')}`} style={{ color: BRAND.blue }}>{lead.phone}</a></PanelField>}
+            {lead.phone && <PanelField label="Phone"><CallLink phone={lead.phone} /></PanelField>}
             {lead.company && <PanelField label="Company">{onOpenCompany && lead.companyId ? <button onClick={() => onOpenCompany(lead.companyId)} className="btn-link" style={{ color: BRAND.blue, background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit' }}>{lead.company}</button> : lead.company}</PanelField>}
             {lead.country && <PanelField label="Country">{lead.country}</PanelField>}
             <PanelField label="Marketing opt-in">{lead.optIn ? 'Yes' : 'No'}</PanelField>

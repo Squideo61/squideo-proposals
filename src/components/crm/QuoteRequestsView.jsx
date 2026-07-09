@@ -3,7 +3,7 @@ import { ArrowLeft, Ban, Check, FileText, Mail, MailQuestion, Paperclip, Phone, 
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatRelativeTime, useIsMobile } from '../../utils.js';
-import { Modal } from '../ui.jsx';
+import { CallLink, Modal } from '../ui.jsx';
 
 export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
   const { state, actions, showMsg } = useStore();
@@ -344,7 +344,7 @@ function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClo
 
       <FieldGrid>
         {request.email && <Field label="Email"><a href={`mailto:${request.email}`} style={{ color: BRAND.blue }}>{request.email}</a></Field>}
-        {fullPhone && <Field label="Phone"><a href={`tel:${fullPhone.replace(/[^+\d]/g, '')}`} style={{ color: BRAND.blue }}>{fullPhone}</a></Field>}
+        {fullPhone && <Field label="Phone"><CallLink phone={fullPhone} /></Field>}
         {request.company && <Field label="Company">{request.company}</Field>}
         {request.countryName && <Field label="Country">{request.countryName}</Field>}
         {request.timeline && <Field label="Timeline">{request.timeline}</Field>}

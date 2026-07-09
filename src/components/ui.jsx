@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, Mail, MoreVertical, Phone, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, Mail, MoreVertical, Phone, Video, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { formatGBP, useIsMobile } from '../utils.js';
@@ -410,7 +410,7 @@ export function Toast({ msg }) {
 // so it's never clipped by an `overflow: hidden` ancestor (email/task lists,
 // card bodies) and never fights their z-index. It flips above the trigger when
 // there isn't room below, and closes on scroll/resize/outside-tap/Escape.
-export function ActionMenu({ items, align = 'right', trigger, triggerTitle = 'More actions', triggerProps = {}, menuMinWidth = 190 }) {
+export function ActionMenu({ items, align = 'right', trigger, triggerTitle = 'More actions', triggerProps = {}, triggerClassName = 'btn-icon', menuMinWidth = 190 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const btnRef = useRef(null);
@@ -463,7 +463,7 @@ export function ActionMenu({ items, align = 'right', trigger, triggerTitle = 'Mo
         ref={btnRef}
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
-        className="btn-icon"
+        className={triggerClassName}
         title={triggerTitle}
         aria-label={triggerTitle}
         aria-haspopup="menu"
@@ -514,5 +514,32 @@ export function ActionMenu({ items, align = 'right', trigger, triggerTitle = 'Mo
         document.body,
       )}
     </>
+  );
+}
+
+// A phone number that, instead of dialling straight from the SIM, opens a small
+// menu so you can pick which app places the call — the native Phone app, Webex
+// (linked to a work line), or just copy the number. iOS/Android give no OS-level
+// "choose calling app" prompt for tel: links, so the app offers it here.
+// `display` is the human string shown; the schemes use the cleaned +digits.
+export function CallLink({ phone, style, title }) {
+  const display = phone == null ? '' : String(phone);
+  const clean = display.replace(/[^+\d]/g, '');
+  if (!clean) return display ? <span style={style}>{display}</span> : null;
+  const items = [
+    { label: 'Call (Phone app)', icon: Phone, onClick: () => { window.location.href = 'tel:' + clean; } },
+    { label: 'Call with Webex', icon: Video, onClick: () => { window.location.href = 'webextel://login?telephone=' + encodeURIComponent(clean); } },
+    { label: 'Copy number', icon: Copy, onClick: () => { try { navigator.clipboard?.writeText(display); } catch { /* ignore */ } } },
+  ];
+  return (
+    <ActionMenu
+      items={items}
+      align="left"
+      menuMinWidth={200}
+      triggerTitle={title || `Call ${display}`}
+      triggerClassName=""
+      trigger={<span style={{ color: BRAND.blue, ...style }}>{display}</span>}
+      triggerProps={{ style: { background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', textAlign: 'left', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }}
+    />
   );
 }

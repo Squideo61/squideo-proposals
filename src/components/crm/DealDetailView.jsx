@@ -6,7 +6,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, formatDuration, useIsMobile, formatProposalNumber, decodeHtmlEntities } from '../../utils.js';
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
-import { Badge, Modal } from '../ui.jsx';
+import { Badge, CallLink, Modal } from '../ui.jsx';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
 import { TaskFormModal, AssigneePicker } from './TaskFormModal.jsx';
@@ -378,7 +378,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                 <>
                   {contact.name || emailBtn}
                   {contact.email && contact.name ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {emailBtn}</span> : null}
-                  {contact.phone ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · <a href={`tel:${contact.phone.replace(/\s+/g, '')}`} style={{ color: BRAND.blue, textDecoration: 'none' }} title="Call this contact">{contact.phone}</a></span> : null}
+                  {contact.phone ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · <CallLink phone={contact.phone} title="Call this contact" /></span> : null}
                 </>
               );
             })() : <span style={{ color: BRAND.muted }}>—</span>}
