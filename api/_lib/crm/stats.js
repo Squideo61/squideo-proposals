@@ -2517,8 +2517,12 @@ async function cashflowReport(action) {
   // sales, resetting to £0 each month. Read-only (autoType) and managed in the
   // Admin → Staff Commission tab; shown here so costs/profit/CT reconcile.
   const commMonth = round2(commByMonth[month] || 0);
+  // Shown inside the Staff Wages group (category 'wages') so it reads as part of
+  // the staff cost — replacing any manual commission line. The amount is still
+  // added to the totals via the separate commission bucket in opCostsForMonth, so
+  // this display row never double-counts.
   lines.push({
-    id: 'cfcommission', label: 'Staff Commission', category: 'commission',
+    id: 'cfcommission', label: 'Staff Commission', category: 'wages',
     amount: commMonth, frequency: 'monthly', monthlyAmount: commMonth,
     note: 'Auto — full commission at deposit paid / PO signed, plus paid extras; resets monthly (Admin → Staff Commission)',
     autoType: 'commission', taxBasis: false,
