@@ -197,15 +197,56 @@ export async function annotateDeals(rows) {
     vidMap = new Map(videoCounts.map(r => [r.deal_id, r.n]));
   } catch (_) { /* project_videos not yet migrated */ }
 
-  // PO route: any signed proposal on the deal chose the PO payment option.
+  // Sale terms from signed proposals: PO route, the chosen payment plan
+  // ('5050' | 'full') and the committed inc-VAT total. The committed total lets
+  // us tell a 50/50 deal whose deposit is in (balance still outstanding) apart
+  // from one that's been paid in full. `total` is inc-VAT cash (same basis as
+  // the recorded payments below).
   let poRouteSet = new Set();
+  const planByDeal = new Map();      // did -> '5050' | 'full'
+  const committedByDeal = new Map(); // did -> inc-VAT signed total
   try {
-    const poRows = await sql`
-      SELECT p.deal_id AS did, bool_or(s.data->>'paymentOption' = 'po') AS is_po
+    const sigRows = await sql`
+      SELECT p.deal_id AS did, s.data->>'total' AS total, s.data->>'paymentOption' AS opt
         FROM signatures s JOIN proposals p ON p.id = s.proposal_id
-       WHERE p.deal_id = ANY(${ids}) GROUP BY p.deal_id`;
-    poRouteSet = new Set(poRows.filter(r => r.is_po).map(r => r.did));
+       WHERE p.deal_id = ANY(${ids})`;
+    for (const r of sigRows) {
+      if (r.opt === 'po') poRouteSet.add(r.did);
+      else if ((r.opt === '5050' || r.opt === 'full') && !planByDeal.has(r.did)) planByDeal.set(r.did, r.opt);
+      if (/^[0-9]+(\.[0-9]+)?$/.test(r.total || '')) committedByDeal.set(r.did, (committedByDeal.get(r.did) || 0) + Number(r.total));
+    }
   } catch (_) { /* no signatures table */ }
+
+  // Total collected (inc VAT) per deal across every payment source — mirrors the
+  // finance report's `paid` map. Used only to distinguish a deposit-paid 50/50
+  // deal from a fully-paid one; degrades to "no payments" if a table is absent.
+  let paidByDeal = new Map();
+  try {
+    const payRows = await sql`
+      SELECT did, SUM(v) AS v FROM (
+        SELECT p.deal_id AS did, COALESCE(SUM(pay.amount),0) AS v
+          FROM payments pay JOIN proposals p ON p.id=pay.proposal_id
+         WHERE p.deal_id = ANY(${ids}) GROUP BY p.deal_id
+        UNION ALL
+        SELECT p.deal_id AS did, COALESCE(SUM(pi.amount),0) AS v
+          FROM partner_invoices pi JOIN proposals p ON p.id=pi.proposal_id
+         WHERE p.deal_id = ANY(${ids}) GROUP BY p.deal_id
+        UNION ALL
+        SELECT p.deal_id AS did, COALESCE(SUM(mp.amount),0) AS v
+          FROM manual_payments mp JOIN proposals p ON p.id=mp.proposal_id
+         WHERE mp.manual_invoice_id IS NULL AND p.deal_id = ANY(${ids}) GROUP BY p.deal_id
+        UNION ALL
+        SELECT COALESCE(mi.deal_id, pr.deal_id) AS did, COALESCE(SUM(mi.amount),0) AS v
+          FROM manual_invoices mi LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+         WHERE mi.status='paid' AND COALESCE(mi.deal_id, pr.deal_id) = ANY(${ids})
+         GROUP BY COALESCE(mi.deal_id, pr.deal_id)
+        UNION ALL
+        SELECT p.deal_id AS did, COALESCE(SUM(pb.paid_amount),0) AS v
+          FROM proposal_billing pb JOIN proposals p ON p.id=pb.proposal_id
+         WHERE pb.paid_amount IS NOT NULL AND p.deal_id = ANY(${ids}) GROUP BY p.deal_id
+      ) q WHERE did IS NOT NULL GROUP BY did`;
+    paidByDeal = new Map(payRows.map(r => [r.did, Number(r.v) || 0]));
+  } catch (_) { /* payment tables not present */ }
 
   // Invoiced: a manual invoice (issued/paid), a raised proposal-billing invoice,
   // or a Xero invoice recorded on the payments row (direct Stripe checkout). The
@@ -348,6 +389,11 @@ export async function annotateDeals(rows) {
         poNumber: r.po_number || null,
         poReceivedAt: r.po_received_at || null,
         invoiced: invoicedSet.has(r.id),
+        // 50/50 deal with the deposit collected but the balance still to come —
+        // shows a "Deposit paid" pill in place of the invoiced state.
+        depositPaid: planByDeal.get(r.id) === '5050' && !poRouteSet.has(r.id)
+          && (paidByDeal.get(r.id) || 0) > 0.005
+          && (paidByDeal.get(r.id) || 0) < (committedByDeal.get(r.id) || 0) - 0.005,
       },
       tracking: {
         tracked: proposalOpens + emailOpens > 0,

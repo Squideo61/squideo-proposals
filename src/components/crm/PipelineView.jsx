@@ -319,6 +319,9 @@ function SaleStatusPills({ deal }) {
       ? <PipelinePill label={`PO ${s.poNumber || ''}`.trim()} tone="green" />
       : <PipelinePill label="Pending PO" tone="amber" />;
   }
+  // A 50/50 deal with the deposit in but the balance outstanding reads clearer as
+  // "Deposit paid" than the invoiced state (which looks fully settled).
+  if (s.depositPaid) return <PipelinePill label="Deposit paid" tone="teal" />;
   return s.invoiced ? <PipelinePill label="Invoiced" tone="green" /> : <PipelinePill label="Not invoiced" tone="amber" />;
 }
 
