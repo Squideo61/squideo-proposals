@@ -85,6 +85,9 @@ export function ensureDealExtrasTable() {
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS payment_type TEXT NOT NULL DEFAULT 'final'`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS xero_quote_id TEXT`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS quote_number TEXT`;
+    // Durable paid-date for Staff Commission (see 20260710_deal_extras_paid_at.sql).
+    await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`;
+    await sql`UPDATE deal_extras SET paid_at = updated_at WHERE status = 'paid' AND paid_at IS NULL`;
   })().catch((err) => { dealExtrasEnsured = null; throw err; });
   return dealExtrasEnsured;
 }
@@ -152,7 +155,7 @@ export async function markExtrasPaidForXeroInvoice(xeroInvoiceId) {
   await ensureDealExtrasTable();
   const rows = await sql`
     UPDATE deal_extras
-       SET status = 'paid', updated_at = NOW()
+       SET status = 'paid', paid_at = NOW(), updated_at = NOW()
      WHERE xero_invoice_id = ${xeroInvoiceId} AND status <> 'paid'
     RETURNING id`;
   return rows.length;
@@ -335,9 +338,13 @@ export async function extrasRoute(req, res, id, action, user) {
     if (!description) return res.status(400).json({ error: 'description required' });
     if (amount == null || amount <= 0) return res.status(400).json({ error: 'A positive amount is required' });
     if (!['pending', 'quoted', 'invoiced', 'paid'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    // Stamp paid_at the first time it becomes 'paid' (keep an existing one); clear
+    // it if moved back off 'paid'. Feeds Staff Commission's paid-extra bucketing.
+    const paidAt = status === 'paid' ? (cur.paid_at || new Date().toISOString()) : null;
     const [row] = await sql`
       UPDATE deal_extras
-         SET description = ${description}, amount = ${amount}, status = ${status}, updated_at = NOW()
+         SET description = ${description}, amount = ${amount}, status = ${status},
+             paid_at = ${paidAt}, updated_at = NOW()
        WHERE id = ${id}
       RETURNING *`;
     return res.status(200).json(serialiseExtra(row));

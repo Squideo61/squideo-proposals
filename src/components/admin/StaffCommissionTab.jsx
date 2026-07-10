@@ -63,9 +63,9 @@ export function StaffCommissionTab() {
         </select>
       </div>
       <p style={{ margin: '0 0 18px', fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
-        Commission is calculated automatically from cash received (ex-VAT) on each salesperson's deals — including
-        extras added to a sale — and resets to £0 at the start of every month. It feeds the Cash Flow "Staff Commission"
-        cost line for {monthLabelLong(month)}.
+        Commission (ex-VAT) is granted in full on a deal's whole proposal balance when its <strong>deposit is paid</strong>
+        {' '}— or when the proposal is <strong>signed</strong> for PO projects. Extras added afterwards are commissioned
+        when they're paid. It resets to £0 each month and feeds the Cash Flow "Staff Commission" cost line for {monthLabelLong(month)}.
       </p>
 
       {!data ? (
@@ -268,7 +268,7 @@ function MemberResult({ m, isMobile }) {
             <div style={{ fontSize: 12, color: BRAND.muted }}>
               {inactive
                 ? (m.enabled ? `Joins ${monthLabelShort(m.effectiveFrom)}` : 'Paused')
-                : `${m.sales.length} payment${m.sales.length === 1 ? '' : 's'} · ${formatGBP(m.qualifyingNet)} net qualifying`}
+                : `${m.sales.length} item${m.sales.length === 1 ? '' : 's'} · ${formatGBP(m.qualifyingNet)} net qualifying`}
             </div>
           </div>
         </button>
@@ -286,7 +286,8 @@ function MemberResult({ m, isMobile }) {
               <tr style={{ color: BRAND.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
                 <th style={{ textAlign: 'left', padding: '6px 8px' }}>Company</th>
                 <th style={{ textAlign: 'left', padding: '6px 8px' }}>Deal</th>
-                <th style={{ textAlign: 'right', padding: '6px 8px' }}>Paid</th>
+                <th style={{ textAlign: 'left', padding: '6px 8px' }}>Type</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px' }}>Recognised</th>
                 <th style={{ textAlign: 'right', padding: '6px 8px' }}>Net counted</th>
               </tr>
             </thead>
@@ -295,7 +296,8 @@ function MemberResult({ m, isMobile }) {
                 <tr key={i} style={{ borderTop: '1px solid ' + BRAND.border }}>
                   <td style={{ padding: '6px 8px' }}>{s.company || '—'}</td>
                   <td style={{ padding: '6px 8px', color: BRAND.muted }}>{s.title || '—'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: BRAND.muted, whiteSpace: 'nowrap' }}>{fmtDate(s.paidAt)}</td>
+                  <td style={{ padding: '6px 8px' }}><KindTag kind={s.kind} /></td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: BRAND.muted, whiteSpace: 'nowrap' }}>{fmtDate(s.date)}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>{formatGBP(s.net)}</td>
                 </tr>
               ))}
@@ -304,6 +306,20 @@ function MemberResult({ m, isMobile }) {
         </div>
       )}
     </div>
+  );
+}
+
+// deposit = full project recognised at deposit; signing = PO recognised at
+// signature; extra = a later extra recognised when paid.
+function KindTag({ kind }) {
+  const map = {
+    deposit: { label: 'Deposit', color: '#0891B2', bg: '#ECFEFF' },
+    signing: { label: 'PO signed', color: '#7C3AED', bg: '#F3E8FF' },
+    extra: { label: 'Extra', color: '#CA8A04', bg: '#FEF9C3' },
+  };
+  const s = map[kind] || { label: kind || '—', color: BRAND.muted, bg: BRAND.paper };
+  return (
+    <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, padding: '1px 6px', borderRadius: 999, color: s.color, background: s.bg, border: '1px solid ' + s.color + '33', whiteSpace: 'nowrap' }}>{s.label}</span>
   );
 }
 

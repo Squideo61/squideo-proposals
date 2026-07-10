@@ -1,20 +1,22 @@
 // Staff Commission — automatic sales commission for on-plan staff.
 //
-// Commission is calculated from real cash RECEIVED (cash basis, ex-VAT), per
-// member, per month, resetting to £0 at the start of each month. Cash is
-// attributed to a salesperson via the deal owner (deals.owner_email) on each
-// paid row — see fetchPaidRows in stats.js, which now carries ownerEmail/dealId.
-// Extras added to a sale flow through here automatically: 'final' extras ride
-// the deal's final invoice/proposal payment; 'invoice_now' / 'po' extras become
-// manual_invoices carrying deal_id — both are attributed to the deal owner.
+// Recognition is EVENT-based (ex-VAT), per member, per month, resetting to £0
+// each month. Commission on a deal's full proposal balance is granted in full at
+// a trigger event, attributed to the deal owner (deals.owner_email):
+//   • Normal deals — when the DEPOSIT (first payment) lands.
+//   • PO-route deals (signature paymentOption 'po') — when the proposal is SIGNED.
+// The base amount is the signed proposal net (computeProposalTotalExVat) plus any
+// extras already on the deal at the trigger. Extras added AFTER the trigger are
+// recognised individually when they're paid (deal_extras.paid_at). A deal with no
+// signed proposal earns nothing. See loadRecognitionEvents.
 //
 // Two admin-editable bands (commission_config):
 //   Band A: band_a_rate on net sales up to band_a_cap  (default 5% up to £5,000 → max £250)
 //   Band B: band_b_rate on everything above the cap     (default 2%, uncapped)
 
 import sql from '../db.js';
-import { fetchPaidRows } from './stats.js';
 import { EXCLUDED_IMPORT_DEAL_IDS } from './signedSale.js';
+import { computeProposalTotalExVat } from './deals.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
@@ -22,15 +24,7 @@ const round2 = (n) => Number((Number(n) || 0).toFixed(2));
 const monthKey = (d) => d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
 const curMonthKey = () => monthKey(new Date());
 const isMonth = (s) => /^\d{4}-\d{2}$/.test(s || '');
-
-// UTC [since, until) ISO bounds for a 'YYYY-MM' month.
-function monthBounds(month) {
-  const [y, m] = month.split('-').map(Number);
-  return {
-    since: new Date(Date.UTC(y, m - 1, 1)).toISOString(),
-    until: new Date(Date.UTC(y, m, 1)).toISOString(),
-  };
-}
+const lc = (s) => (s || '').toLowerCase();
 
 // ── Self-heal (mirrors db/migrations/20260709_staff_commission.sql) ──
 let commissionEnsured = null;
@@ -96,74 +90,132 @@ async function loadMembers() {
      ORDER BY u.name NULLS LAST, m.email`;
 }
 
-// Paid cash for a month, grouped by deal-owner email. Returns
-// Map(email -> { net, payments: [{ dealId, net, paidAt }] }). Rows with no owner
-// (proposal-less sources) and historical imported deals are excluded.
-async function paidByOwnerForMonth(month) {
-  const { since, until } = monthBounds(month);
-  const rows = await fetchPaidRows(since, until);
-  const byOwner = new Map();
-  for (const r of rows) {
-    const email = (r.ownerEmail || '').toLowerCase();
-    if (!email) continue;
-    if (r.dealId && EXCLUDED_IMPORT_DEAL_IDS.has(r.dealId)) continue;
-    const net = Number(r.net) || 0;
-    if (!byOwner.has(email)) byOwner.set(email, { net: 0, payments: [] });
-    const b = byOwner.get(email);
-    b.net += net;
-    b.payments.push({ dealId: r.dealId || null, net: round2(net), paidAt: r.paidAt });
-  }
-  return byOwner;
-}
-
-// Deal id -> { company, title } for a set of deal ids (for the "which sales
-// qualified" list). Empty set → empty map.
-async function dealLabels(dealIds) {
-  const ids = [...new Set(dealIds.filter(Boolean))];
-  const map = new Map();
-  if (!ids.length) return map;
-  const rows = await sql`
-    SELECT d.id, d.title, c.name AS company
-      FROM deals d LEFT JOIN companies c ON c.id = d.company_id
-     WHERE d.id = ANY(${ids})`;
-  for (const r of rows) map.set(r.id, { title: r.title || null, company: r.company || null });
-  return map;
-}
-
 // A member accrues in `month` when enabled and their effective_from is that
 // month or earlier (string compare works on 'YYYY-MM').
 const accruesIn = (m, month) => m.enabled !== false && String(m.effective_from) <= month;
+
+// ── Recognition events ──
+// Every commission-qualifying EVENT across all deals with a signed proposal:
+//   • BASE — the full proposal net (+ any extras already on the deal at the
+//     trigger), recognised in full when the DEPOSIT (first payment) lands for a
+//     normal deal, or when the proposal is SIGNED for a PO-route deal.
+//   • EXTRA — each PAID extra ADDED AFTER the trigger, recognised in the month
+//     its cash landed (deal_extras.paid_at). Extras that existed at/before the
+//     trigger are folded into BASE, so they're never counted twice.
+// Deals with NO signed proposal earn nothing (no proposal balance to base on).
+// Returns [{ ownerEmail, dealId, company, title, month, amount, kind, date }].
+async function loadRecognitionEvents() {
+  const [sigRows, payRows, extraRows] = await Promise.all([
+    // Signed proposals (base candidates). data columns are JSONB → parsed objects.
+    sql`SELECT d.id AS deal_id, d.owner_email, d.title, c.name AS company,
+               s.signed_at, s.data AS sig_data, p.data AS prop_data
+          FROM signatures s
+          JOIN proposals p ON p.id = s.proposal_id
+          JOIN deals d ON d.id = p.deal_id
+          LEFT JOIN companies c ON c.id = d.company_id`,
+    // Earliest payment per deal (the "deposit") across the proposal-linked money
+    // sources — the trigger date for non-PO deals.
+    sql`SELECT p.deal_id AS deal_id, MIN(x.paid_at) AS first_paid
+          FROM (
+            SELECT proposal_id, paid_at FROM payments WHERE paid_at IS NOT NULL
+            UNION ALL SELECT proposal_id, paid_at FROM manual_payments WHERE manual_invoice_id IS NULL AND paid_at IS NOT NULL
+            UNION ALL SELECT proposal_id, paid_at FROM proposal_billing WHERE paid_at IS NOT NULL
+            UNION ALL SELECT proposal_id, paid_at FROM partner_invoices WHERE paid_at IS NOT NULL
+          ) x
+          JOIN proposals p ON p.id = x.proposal_id
+         GROUP BY p.deal_id`,
+    // Extras (net amounts), with the durable paid date (falls back to updated_at).
+    sql`SELECT e.id, e.deal_id, e.amount, e.status, e.created_at,
+               COALESCE(e.paid_at, e.updated_at) AS paid_at,
+               d.owner_email, d.title, c.name AS company
+          FROM deal_extras e
+          JOIN deals d ON d.id = e.deal_id
+          LEFT JOIN companies c ON c.id = d.company_id`,
+  ]);
+
+  const firstPaid = new Map();
+  for (const r of payRows) if (r.first_paid) firstPaid.set(r.deal_id, new Date(r.first_paid));
+
+  // Aggregate signed proposals per deal (a deal can carry more than one).
+  const deals = new Map();
+  for (const r of sigRows) {
+    if (EXCLUDED_IMPORT_DEAL_IDS.has(r.deal_id)) continue;
+    let d = deals.get(r.deal_id);
+    if (!d) { d = { ownerEmail: r.owner_email, title: r.title, company: r.company, isPo: false, signedAt: null, net: 0 }; deals.set(r.deal_id, d); }
+    d.net += Number(computeProposalTotalExVat(r.prop_data, r.sig_data)) || 0;
+    if (r.sig_data && r.sig_data.paymentOption === 'po') d.isPo = true;
+    const signedAt = r.signed_at ? new Date(r.signed_at) : null;
+    if (signedAt && (!d.signedAt || signedAt < d.signedAt)) d.signedAt = signedAt;
+  }
+
+  const extrasByDeal = new Map();
+  for (const r of extraRows) {
+    if (!extrasByDeal.has(r.deal_id)) extrasByDeal.set(r.deal_id, []);
+    extrasByDeal.get(r.deal_id).push({
+      amount: Number(r.amount) || 0, status: r.status,
+      createdAt: r.created_at ? new Date(r.created_at) : null,
+      paidAt: r.paid_at ? new Date(r.paid_at) : null,
+    });
+  }
+
+  const events = [];
+  for (const [dealId, d] of deals) {
+    if (!d.ownerEmail) continue;
+    // Trigger: PO → when signed; else → the deposit (first payment). No trigger
+    // yet (non-PO, unpaid) → no base event, but a paid extra can still recognise.
+    const triggerDate = d.isPo ? d.signedAt : (firstPaid.get(dealId) || null);
+    const dealExtras = extrasByDeal.get(dealId) || [];
+
+    if (triggerDate) {
+      let base = d.net;
+      for (const x of dealExtras) if (x.createdAt && x.createdAt <= triggerDate) base += x.amount;
+      base = round2(base);
+      if (base > 0) {
+        events.push({ ownerEmail: d.ownerEmail, dealId, company: d.company, title: d.title,
+          month: monthKey(triggerDate), amount: base, kind: d.isPo ? 'signing' : 'deposit', date: triggerDate.toISOString() });
+      }
+    }
+
+    for (const x of dealExtras) {
+      if (x.status !== 'paid' || !x.paidAt || x.amount <= 0) continue;
+      if (triggerDate && x.createdAt && x.createdAt <= triggerDate) continue; // folded into BASE
+      events.push({ ownerEmail: d.ownerEmail, dealId, company: d.company, title: d.title,
+        month: monthKey(x.paidAt), amount: round2(x.amount), kind: 'extra', date: x.paidAt.toISOString() });
+    }
+  }
+  return events;
+}
 
 // Full per-member commission report for a month.
 //   opts.scopeEmail   — restrict `members` to this one email (own-view scoping)
 //   opts.includeCandidates — attach users not yet on the plan (manage picker)
 export async function commissionForMonth(month, opts = {}) {
   const mk = isMonth(month) ? month : curMonthKey();
-  const [cfg, memberRows, byOwner] = await Promise.all([loadConfig(), loadMembers(), paidByOwnerForMonth(month)]);
+  const [cfg, memberRows, events] = await Promise.all([loadConfig(), loadMembers(), loadRecognitionEvents()]);
 
   let members = memberRows;
-  if (opts.scopeEmail) {
-    const email = opts.scopeEmail.toLowerCase();
-    members = memberRows.filter((m) => (m.email || '').toLowerCase() === email);
-  }
+  if (opts.scopeEmail) members = memberRows.filter((m) => lc(m.email) === lc(opts.scopeEmail));
 
-  // Gather deal labels for every payment we'll show.
-  const dealIds = [];
-  for (const m of members) {
-    const b = byOwner.get((m.email || '').toLowerCase());
-    if (b) for (const p of b.payments) if (p.dealId) dealIds.push(p.dealId);
+  // Events recognised this month, grouped by owner.
+  const byOwner = new Map();
+  for (const e of events) {
+    if (e.month !== mk) continue;
+    const email = lc(e.ownerEmail);
+    if (!byOwner.has(email)) byOwner.set(email, { net: 0, items: [] });
+    const b = byOwner.get(email);
+    b.net += e.amount;
+    b.items.push(e);
   }
-  const labels = await dealLabels(dealIds);
 
   const out = members.map((m) => {
     const active = accruesIn(m, mk);
-    const b = byOwner.get((m.email || '').toLowerCase());
+    const b = byOwner.get(lc(m.email));
     const net = active && b ? b.net : 0;
     const commission = computeCommission(net, cfg);
     const sales = active && b
-      ? b.payments
-          .map((p) => ({ dealId: p.dealId, net: p.net, paidAt: p.paidAt, ...(labels.get(p.dealId) || { title: null, company: null }) }))
-          .sort((a, z) => (a.paidAt < z.paidAt ? 1 : -1))
+      ? b.items
+          .map((e) => ({ dealId: e.dealId, company: e.company, title: e.title, net: e.amount, date: e.date, kind: e.kind }))
+          .sort((a, z) => (a.date < z.date ? 1 : -1))
       : [];
     return {
       email: m.email,
@@ -187,18 +239,18 @@ export async function commissionForMonth(month, opts = {}) {
   };
 
   if (opts.includeCandidates) {
-    const onPlan = new Set(memberRows.map((m) => (m.email || '').toLowerCase()));
+    const onPlan = new Set(memberRows.map((m) => lc(m.email)));
     const users = await sql`SELECT email, name FROM users ORDER BY name NULLS LAST, email`;
     result.candidates = users
-      .filter((u) => !onPlan.has((u.email || '').toLowerCase()))
+      .filter((u) => !onPlan.has(lc(u.email)))
       .map((u) => ({ email: u.email, name: u.name || u.email }));
   }
   return result;
 }
 
 // Total commission (across ALL enabled members) for each of the given months —
-// used by the Cash Flow report. One windowed fetchPaidRows for the whole range,
-// then per-month band math. Returns { 'YYYY-MM': total }.
+// used by the Cash Flow report. One recognition pass, then per-month band math.
+// Returns { 'YYYY-MM': total }.
 export async function commissionTotalsForMonths(monthKeys) {
   const keys = (monthKeys || []).filter(isMonth);
   const zero = Object.fromEntries(keys.map((k) => [k, 0]));
@@ -207,20 +259,13 @@ export async function commissionTotalsForMonths(monthKeys) {
   const active = memberRows.filter((m) => m.enabled !== false);
   if (!active.length) return zero;
 
-  const sorted = [...keys].sort();
-  const { since } = monthBounds(sorted[0]);
-  const { until } = monthBounds(sorted[sorted.length - 1]);
-  const rows = await fetchPaidRows(since, until);
-
-  // net by `${ownerEmail}|${monthKey}`
-  const netBy = new Map();
-  for (const r of rows) {
-    const email = (r.ownerEmail || '').toLowerCase();
-    if (!email) continue;
-    if (r.dealId && EXCLUDED_IMPORT_DEAL_IDS.has(r.dealId)) continue;
-    const mk = monthKey(r.paidAt);
-    const key = `${email}|${mk}`;
-    netBy.set(key, (netBy.get(key) || 0) + (Number(r.net) || 0));
+  const wanted = new Set(keys);
+  const events = await loadRecognitionEvents();
+  const netBy = new Map(); // `${ownerEmail}|${monthKey}` -> net recognised
+  for (const e of events) {
+    if (!wanted.has(e.month)) continue;
+    const key = `${lc(e.ownerEmail)}|${e.month}`;
+    netBy.set(key, (netBy.get(key) || 0) + e.amount);
   }
 
   const totals = { ...zero };
@@ -228,7 +273,7 @@ export async function commissionTotalsForMonths(monthKeys) {
     let t = 0;
     for (const m of active) {
       if (String(m.effective_from) > mk) continue; // not yet enrolled
-      const net = netBy.get(`${(m.email || '').toLowerCase()}|${mk}`) || 0;
+      const net = netBy.get(`${lc(m.email)}|${mk}`) || 0;
       t += computeCommission(net, cfg).total;
     }
     totals[mk] = round2(t);

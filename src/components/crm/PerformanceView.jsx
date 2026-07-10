@@ -1531,7 +1531,7 @@ function CfCosts({ lines, month, monthLabel, actions, reload, isMobile }) {
       <CfCostPanel title="Expenses" icon={Receipt} accent="#0E7490" category="expense"
         rows={expenses} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
       <CfCostPanel title="Staff Commission" icon={Percent} accent="#0891B2" category="commission" readOnly
-        note="Auto-calculated from on-plan staff’s paid sales (cash basis, ex-VAT); resets to £0 each month. Add/remove staff and edit bands in Admin → Staff Commission."
+        note="Auto-calculated (ex-VAT): full commission when a deposit is paid / PO project is signed, plus extras when paid; resets to £0 each month. Add/remove staff and edit bands in Admin → Staff Commission."
         rows={commission} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
       <CfCostPanel title="Marketing" icon={Megaphone} accent="#F97316" category="marketing"
         rows={marketing} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
@@ -1716,7 +1716,7 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
           : isDirExp
             ? <div title="Combined director expenses logged on the Directors tab for this month — counted in the costs and targets." style={{ fontSize: 11, color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — combined spend from the Directors tab; counted in the totals</div>
             : isCommission
-            ? <div title="Staff commission on this month's paid sales (cash basis, ex-VAT) for on-plan staff. Resets to £0 each month. Manage staff + bands in Admin → Staff Commission." style={{ fontSize: 11, color: '#155E75', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — on-plan staff's paid sales; resets monthly (Admin → Staff Commission)</div>
+            ? <div title="Staff commission (ex-VAT) recognised this month: full commission when a deposit is paid or a PO project is signed, plus extras when paid. Resets to £0 each month. Manage staff + bands in Admin → Staff Commission." style={{ fontSize: 11, color: '#155E75', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — deposits / PO signings + paid extras; resets monthly (Admin → Staff Commission)</div>
             : isAuto
             ? <div title="Income tax + employee NI on each director's drawings marked “feeds director tax” (2025/26 rates), treating the figure as gross salary" style={{ fontSize: 11, color: '#CA8A04', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — income tax + NI on the director pay marked “feeds director tax” (current rates){row.note ? ` · ${row.note}` : ''}</div>
             : (row.note && <div title={row.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.note}</div>)}

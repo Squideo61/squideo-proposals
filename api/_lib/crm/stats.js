@@ -565,11 +565,10 @@ async function fetchPaidPartnerFees(sinceISO, untilISO) {
 
 // Every paid-money row across all customers with paid_at in [sinceISO, untilISO).
 // Returns [{ paidAt: Date, net, vat, gross, proposalId, ownerEmail, dealId }].
-// Dates are bucketed in UTC. ownerEmail/dealId are the deal's sales owner (via
-// proposal→deal, or the manual invoice's own deal_id) so Staff Commission can
-// attribute received cash to a salesperson; they're null for proposal-less
-// sources (imported PPs, partner fees, recurring "Other") and ignored by every
-// other caller, which only reads net/vat/gross/paidAt.
+// Dates are bucketed in UTC. ownerEmail/dealId carry the deal's sales owner (via
+// proposal→deal, or the manual invoice's own deal_id); they're null for
+// proposal-less sources (imported PPs, partner fees, recurring "Other") and are
+// ignored by callers that only read net/vat/gross/paidAt.
 export async function fetchPaidRows(sinceISO, untilISO) {
   const [stripeR, partnerR, manualR, invR, pbR] = await Promise.all([
     sql`SELECT pay.amount AS inc, pay.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
@@ -2521,7 +2520,7 @@ async function cashflowReport(action) {
   lines.push({
     id: 'cfcommission', label: 'Staff Commission', category: 'commission',
     amount: commMonth, frequency: 'monthly', monthlyAmount: commMonth,
-    note: 'Auto-calculated from on-plan staff’s paid sales; resets monthly (edit in Admin → Staff Commission)',
+    note: 'Auto — full commission at deposit paid / PO signed, plus paid extras; resets monthly (Admin → Staff Commission)',
     autoType: 'commission', taxBasis: false,
     recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
   });
