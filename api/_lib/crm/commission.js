@@ -281,6 +281,26 @@ export async function commissionTotalsForMonths(monthKeys) {
   return totals;
 }
 
+// Per-member commission for a single month, for the Cash Flow display (one cost
+// line each). Returns [{ email, name, total }] for every member accruing that
+// month (enabled + enrolled), including £0 so the plan members always show.
+export async function commissionByMemberForMonth(month) {
+  const mk = isMonth(month) ? month : curMonthKey();
+  const [cfg, memberRows, events] = await Promise.all([loadConfig(), loadMembers(), loadRecognitionEvents()]);
+  const netBy = new Map();
+  for (const e of events) {
+    if (e.month !== mk) continue;
+    netBy.set(lc(e.ownerEmail), (netBy.get(lc(e.ownerEmail)) || 0) + e.amount);
+  }
+  const out = [];
+  for (const m of memberRows) {
+    if (!accruesIn(m, mk)) continue;
+    const net = netBy.get(lc(m.email)) || 0;
+    out.push({ email: m.email, name: m.name || m.email, total: computeCommission(net, cfg).total });
+  }
+  return out;
+}
+
 // ── HTTP route ── /api/crm/commission/...
 //   GET    /                       → current-month report (scoped by permission)
 //   GET    /YYYY-MM                 → that month's report

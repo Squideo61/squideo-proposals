@@ -1524,7 +1524,8 @@ function CfCosts({ lines, month, monthLabel, actions, reload, isMobile }) {
   const directors = lines.filter((l) => l.category === 'director');
   const allowances = lines.filter((l) => l.category === 'allowance');
   const savings = lines.filter((l) => l.category === 'savings');
-  const expenses = lines.filter((l) => !['wages', 'freelancer', 'marketing', 'director', 'allowance', 'savings'].includes(l.category));
+  const commission = lines.filter((l) => l.category === 'commission');
+  const expenses = lines.filter((l) => !['wages', 'freelancer', 'marketing', 'director', 'allowance', 'savings', 'commission'].includes(l.category));
   return (
     <>
       <CfCostPanel title="Expenses" icon={Receipt} accent="#0E7490" category="expense"
@@ -1533,6 +1534,9 @@ function CfCosts({ lines, month, monthLabel, actions, reload, isMobile }) {
         rows={marketing} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
       <CfCostPanel title="Staff Wages" icon={Users} accent={BRAND.blue} category="wages"
         rows={wages} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
+      <CfCostPanel title="Staff Commission" icon={Percent} accent="#0891B2" category="commission" readOnly
+        note="Auto-calculated (ex-VAT), one line per salesperson: full commission when a deposit is paid / PO project is signed, plus extras when paid. Resets to £0 each month. Manage staff + bands in Admin → Staff Commission."
+        rows={commission} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
       <CfCostPanel title="Freelancer Costs" icon={Briefcase} accent="#8B5CF6" category="freelancer"
         rows={freelancers} month={month} monthLabel={monthLabel} actions={actions} reload={reload} isMobile={isMobile} />
       <CfCostPanel title="Directors" icon={Crown} accent="#CA8A04" category="director"

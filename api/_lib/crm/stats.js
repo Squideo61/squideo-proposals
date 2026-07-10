@@ -10,7 +10,7 @@ import { reconcileProposalBillingPaid, ensureInvoiceExcludeColumn } from './invo
 import { archiveRecord } from './recycleBin.js';
 import { sendNotification } from '../notifications.js';
 import { ensureDealPo } from './deals.js';
-import { commissionTotalsForMonths } from './commission.js';
+import { commissionTotalsForMonths, commissionByMemberForMonth } from './commission.js';
 import { zipStore } from '../zip.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
@@ -2516,18 +2516,34 @@ async function cashflowReport(action) {
   // Auto Staff Commission for the month — calculated from on-plan staff's paid
   // sales, resetting to £0 each month. Read-only (autoType) and managed in the
   // Admin → Staff Commission tab; shown here so costs/profit/CT reconcile.
-  const commMonth = round2(commByMonth[month] || 0);
-  // Shown inside the Staff Wages group (category 'wages') so it reads as part of
-  // the staff cost — replacing any manual commission line. The amount is still
-  // added to the totals via the separate commission bucket in opCostsForMonth, so
-  // this display row never double-counts.
-  lines.push({
-    id: 'cfcommission', label: 'Staff Commission', category: 'wages',
-    amount: commMonth, frequency: 'monthly', monthlyAmount: commMonth,
-    note: 'Auto — full commission at deposit paid / PO signed, plus paid extras; resets monthly (Admin → Staff Commission)',
-    autoType: 'commission', taxBasis: false,
-    recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
-  });
+  // One read-only line per commissioned staff member ("<first name>'s commission")
+  // in their own Staff Commission panel. The totals already include commission via
+  // the separate bucket in opCostsForMonth, so these display rows never
+  // double-count. Falls back to a single aggregate line if the per-member lookup
+  // fails for any reason.
+  try {
+    const commMembers = await commissionByMemberForMonth(month);
+    for (const cm of commMembers) {
+      const first = String(cm.name || '').trim().split(/\s+/)[0] || cm.name || 'Staff';
+      lines.push({
+        id: 'cfcommission_' + cm.email, label: `${first}’s commission`, category: 'commission',
+        amount: round2(cm.total), frequency: 'monthly', monthlyAmount: round2(cm.total),
+        note: 'Auto — full commission at deposit paid / PO signed, plus paid extras; resets monthly (Admin → Staff Commission)',
+        autoType: 'commission', taxBasis: false,
+        recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
+      });
+    }
+  } catch (err) {
+    console.warn('[cashflow] per-member commission lines failed', err.message);
+    const commMonth = round2(commByMonth[month] || 0);
+    lines.push({
+      id: 'cfcommission', label: 'Staff Commission', category: 'commission',
+      amount: commMonth, frequency: 'monthly', monthlyAmount: commMonth,
+      note: 'Auto — full commission at deposit paid / PO signed, plus paid extras; resets monthly (Admin → Staff Commission)',
+      autoType: 'commission', taxBasis: false,
+      recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
+    });
+  }
   const activityRows = await sql`SELECT id, actor_email, action, summary, created_at FROM cashflow_activity ORDER BY created_at DESC LIMIT 40`;
 
   return {
