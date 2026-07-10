@@ -10,6 +10,7 @@ import { NotificationBell } from '../NotificationBell.jsx';
 import { MobileNotifications } from '../MobileNotifications.jsx';
 import { MobileTabBar } from './MobileTabBar.jsx';
 import { GlobalSearch } from './GlobalSearch.jsx';
+import { TaskFormModal } from './TaskFormModal.jsx';
 
 const BADGE = '#FB923C';
 
@@ -740,6 +741,7 @@ function TasksMenu({ tasks, count, deals, active, navigate, actions, isMobile })
   const [open, setOpen] = useState(false);
   const [snapshot, setSnapshot] = useState([]);
   const [doneIds, setDoneIds] = useState(() => new Set());
+  const [editingTask, setEditingTask] = useState(null);
   const ref = useRef(null);
 
   // Freeze the list (and clear local "ticked" marks) each time the menu opens,
@@ -770,6 +772,10 @@ function TasksMenu({ tasks, count, deals, active, navigate, actions, isMobile })
   };
   const goAll = () => { setOpen(false); navigate('tasks'); };
   const openDeal = (dealId) => { setOpen(false); navigate('deal', dealId); };
+  // Clicking the row itself edits the task. The popover closes so that on
+  // reopen the snapshot is rebuilt — a rescheduled task then drops out of
+  // (or stays in) today's list on its own.
+  const editTask = (t) => { setOpen(false); setEditingTask(t); };
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
@@ -835,7 +841,14 @@ function TasksMenu({ tasks, count, deals, active, navigate, actions, isMobile })
                   >
                     <Icon size={16} color={done ? '#16A34A' : BRAND.muted} />
                   </button>
-                  <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => editTask(t)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); editTask(t); } }}
+                    title="Edit task"
+                    style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
+                  >
                     <div style={{ fontSize: 13.5, color: done ? BRAND.muted : BRAND.ink, textDecoration: done ? 'line-through' : 'none', wordBreak: 'break-word' }}>
                       {t.title}
                     </div>
@@ -844,7 +857,7 @@ function TasksMenu({ tasks, count, deals, active, navigate, actions, isMobile })
                         {dueLabel(t.dueAt)}
                       </span>
                       {deal && (
-                        <span role="link" onClick={() => openDeal(deal.id)} style={{ color: BRAND.blue, cursor: 'pointer' }}>
+                        <span role="link" onClick={(e) => { e.stopPropagation(); openDeal(deal.id); }} style={{ color: BRAND.blue, cursor: 'pointer' }}>
                           · {deal.title}
                         </span>
                       )}
@@ -869,6 +882,14 @@ function TasksMenu({ tasks, count, deals, active, navigate, actions, isMobile })
             Show all tasks
           </button>
         </div>
+      )}
+
+      {editingTask && (
+        <TaskFormModal
+          task={editingTask}
+          onClose={() => setEditingTask(null)}
+          onSaved={() => { setEditingTask(null); actions.syncOpenTasks(); }}
+        />
       )}
     </div>
   );
