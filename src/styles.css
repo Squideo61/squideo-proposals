@@ -68,6 +68,9 @@ body {
   padding: 10px 16px;
   font-weight: 600;
   font-size: 14px;
+  /* inline-flex defaults to flex-start, which left-aligns the label as soon as
+     a button is stretched (e.g. full-width portal form buttons). */
+  justify-content: center;
 }
 .btn:hover:not(:disabled) { background: var(--blue-hover); }
 .btn:active:not(:disabled) { background: var(--blue-active); transform: translateY(1px); }
