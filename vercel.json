@@ -1,7 +1,7 @@
 {
   "functions": {
     "api/**/*.js": { "maxDuration": 60 },
-    "api/portal/*.js": { "maxDuration": 300 }
+    "api/portal.js": { "maxDuration": 300 }
   },
   "rewrites": [
     { "source": "/api/invites", "destination": "/api/users?_kind=invites" },
@@ -11,6 +11,7 @@
     { "source": "/api/crm/:resource/:id/:action/:subaction", "destination": "/api/crm/:resource?_id=:id&_action=:action&_subaction=:subaction" },
     { "source": "/api/crm/:resource/:id/:action", "destination": "/api/crm/:resource?_id=:id&_action=:action" },
     { "source": "/api/crm/:resource/:id", "destination": "/api/crm/:resource?_id=:id" },
+    { "source": "/api/portal/:action", "destination": "/api/portal?action=:action" },
     { "source": "/api/quote-requests-admin/:id/:action", "destination": "/api/quote-requests-admin?_id=:id&_action=:action" },
     { "source": "/api/quote-requests-admin/:id", "destination": "/api/quote-requests-admin?_id=:id" },
     { "source": "/extension-auth", "destination": "/api/extension/auth-page" },

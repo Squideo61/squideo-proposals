@@ -4,7 +4,8 @@
 // organisation memberships. Responses go through the allowlist serialisers in
 // api/_lib/portal/serialisers.js — no SELECT * passthrough.
 //
-// Routes (via the /api/portal/[action] file segment):
+// Routes (flat file — /api/portal/:action is rewritten to ?action= in vercel.json
+// because Vercel's functions-config glob can't target bracketed filenames):
 //   auth            — login / magic link / invites / reset / logout (public)
 //   me              — profile (GET/PATCH)
 //   overview        — dashboard payload (projects + ball-in-court)
@@ -22,49 +23,49 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { put, del, getDownloadUrl } from '@vercel/blob';
-import sql from '../_lib/db.js';
-import { sendMail, APP_URL } from '../_lib/email.js';
+import sql from './_lib/db.js';
+import { sendMail, APP_URL } from './_lib/email.js';
 import {
   sendNotification,
   resolveRecipients,
   persistInApp,
   ensurePortalNotificationDefaults,
-} from '../_lib/notifications.js';
-import { signQuoteRequestActionToken } from '../_lib/auth.js';
-import { getRoleForUser } from '../_lib/userRoles.js';
-import { hasPermission } from '../_lib/permissions.js';
-import { makeId, trimOrNull, lowerOrNull } from '../_lib/crm/shared.js';
-import { ensureDealExtrasTable } from '../_lib/crm/extras.js';
-import { buildNotificationEmail } from '../quote-requests.js';
-import { ensurePortalTables } from '../_lib/portal/db.js';
+} from './_lib/notifications.js';
+import { signQuoteRequestActionToken } from './_lib/auth.js';
+import { getRoleForUser } from './_lib/userRoles.js';
+import { hasPermission } from './_lib/permissions.js';
+import { makeId, trimOrNull, lowerOrNull } from './_lib/crm/shared.js';
+import { ensureDealExtrasTable } from './_lib/crm/extras.js';
+import { buildNotificationEmail } from './quote-requests.js';
+import { ensurePortalTables } from './_lib/portal/db.js';
 import {
   signPortalToken,
   portalCookieHeader,
   clearPortalCookieHeader,
   createRawToken,
   hashToken,
-} from '../_lib/portal/auth.js';
-import { appendSetCookie } from '../_lib/middleware.js';
+} from './_lib/portal/auth.js';
+import { appendSetCookie } from './_lib/middleware.js';
 import {
   requirePortalAuth,
   resolveCompanyId,
   requireDealInOrg,
   clientIp,
-} from '../_lib/portal/middleware.js';
-import { deriveNextStep } from '../_lib/portal/nextStep.js';
+} from './_lib/portal/middleware.js';
+import { deriveNextStep } from './_lib/portal/nextStep.js';
 import {
   computePortalOffers,
   resolveOfferForAccept,
   extrasWindowOpen,
-} from '../_lib/portal/extrasOffers.js';
-import { sendTeamInvite } from '../_lib/portal/onboarding.js';
+} from './_lib/portal/extrasOffers.js';
+import { sendTeamInvite } from './_lib/portal/onboarding.js';
 import {
   PORTAL_URL,
   portalMagicLinkHtml,
   portalResetHtml,
   portalExtraConfirmHtml,
-} from '../_lib/portal/emails.js';
-import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from '../_lib/portal/drive.js';
+} from './_lib/portal/emails.js';
+import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from './_lib/portal/drive.js';
 import {
   serialisePortalDeal,
   serialisePortalVideo,
@@ -73,7 +74,7 @@ import {
   serialisePortalExtra,
   serialisePortalMember,
   serialisePortalInvite,
-} from '../_lib/portal/serialisers.js';
+} from './_lib/portal/serialisers.js';
 
 export const config = {
   api: { bodyParser: false }, // raw body needed for uploads; JSON parsed manually
