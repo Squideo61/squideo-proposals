@@ -7,6 +7,7 @@ import { serialiseDeal } from './_lib/crm/deals.js';
 import { getRole } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
 import { qualifyQuoteRequest, disqualifyQuoteRequest, markQuoteRequestSpam, clearQuoteRequest, clearNewQuoteRequests } from './_lib/quoteRequestActions.js';
+import { ensurePortalTables } from './_lib/portal/db.js';
 
 function serialiseQuoteRequest(r, files = []) {
   return {
@@ -24,6 +25,8 @@ function serialiseQuoteRequest(r, files = []) {
     optIn: r.opt_in === true,
     sourceUrl: r.source_url || null,
     status: r.status || 'new',
+    source: r.source || 'web',
+    portalDiscount: r.portal_discount === true,
     contactId: r.contact_id || null,
     dealId: r.deal_id || null,
     reviewedAt: r.reviewed_at || null,
@@ -42,7 +45,7 @@ async function loadRequest(id) {
   const rows = await sql`
     SELECT id, form_session_id, name, email, phone, country_code, country_name,
            company, project_details, timeline, budget, opt_in, source_url,
-           status, contact_id, deal_id, reviewed_at, created_at
+           status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount
     FROM quote_requests WHERE id = ${id}
   `;
   if (!rows[0]) return null;
@@ -93,6 +96,9 @@ export default async function handler(req, res) {
   // Clearing (single + bulk) is admin-only — the wildcard '*' role.
   const isAdmin = Array.isArray(role?.permissions) && role.permissions.includes('*');
 
+  // Self-heal the portal columns (source / portal_discount) read below.
+  await ensurePortalTables().catch((e) => console.warn('[quote-requests-admin] portal ensure failed', e?.message));
+
   try {
     // ── Bulk clear (POST, no id) — empties the "new" inbox non-destructively ──
     if (!id && req.method === 'POST' && action === 'clear-new') {
@@ -109,7 +115,7 @@ export default async function handler(req, res) {
         ? await sql`
             SELECT id, form_session_id, name, email, phone, country_code, country_name,
                    company, project_details, timeline, budget, opt_in, source_url,
-                   status, contact_id, deal_id, reviewed_at, created_at
+                   status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount
             FROM quote_requests
             ORDER BY created_at DESC
             LIMIT 500
@@ -117,7 +123,7 @@ export default async function handler(req, res) {
         : await sql`
             SELECT id, form_session_id, name, email, phone, country_code, country_name,
                    company, project_details, timeline, budget, opt_in, source_url,
-                   status, contact_id, deal_id, reviewed_at, created_at
+                   status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount
             FROM quote_requests
             WHERE status = ${status}
             ORDER BY created_at DESC

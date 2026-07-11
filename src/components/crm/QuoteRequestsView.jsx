@@ -252,6 +252,11 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onS
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {request.name || <span style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no name)</span>}
+          {request.source === 'portal' && (
+            <span style={{ background: '#2BB8E622', color: '#0B6E93', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              Portal{request.portalDiscount ? ' · 10%' : ''}
+            </span>
+          )}
           {isQualified && (
             <span style={{ background: '#16A34A22', color: '#16A34A', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
               Qualified
@@ -332,8 +337,13 @@ function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClo
   return (
     <Modal onClose={onClose} showClose={false}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {request.name || request.email || 'Quote request'}
+          {request.source === 'portal' && (
+            <span style={{ background: '#2BB8E622', color: '#0B6E93', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              Portal{request.portalDiscount ? ' · 10% discount' : ''}
+            </span>
+          )}
         </h2>
         <button onClick={onClose} className="btn-ghost" style={{ padding: 4 }}><X size={14} /></button>
       </div>

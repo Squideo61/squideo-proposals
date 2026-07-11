@@ -308,6 +308,41 @@ export async function ensureExtraAddedNotificationDefault() {
   }
 }
 
+// Self-heal role defaults for the customer-portal keys so portal alerts work
+// before a seed/migration lands. Each key inherits from the closest existing
+// staff alert: member_joined ← user.invite_accepted, doc_uploaded ←
+// project.good_to_go, extra_accepted ← extra.added (admin/director ON),
+// po_provided + partner_interest ← quote_request.new. Guarded to run at most
+// once per warm instance.
+let portalDefaultsReady = false;
+export async function ensurePortalNotificationDefaults() {
+  if (portalDefaultsReady) return;
+  try {
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{portal.member_joined}',
+      COALESCE(notification_defaults->'user.invite_accepted', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'portal.member_joined')`;
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{portal.doc_uploaded}',
+      COALESCE(notification_defaults->'project.good_to_go', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'portal.doc_uploaded')`;
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{portal.extra_accepted}', 'true'::jsonb, true)
+      WHERE id IN ('admin', 'director') AND NOT (notification_defaults ? 'portal.extra_accepted')`;
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{portal.po_provided}',
+      COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'portal.po_provided')`;
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{portal.partner_interest}',
+      COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'portal.partner_interest')`;
+    portalDefaultsReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensurePortalNotificationDefaults failed', err.message);
+  }
+}
+
 // Read the effective state of a single (user, key) — role default merged with
 // per-user override. Returns boolean. Unknown users → false.
 export async function isEnabledForUser(email, key) {

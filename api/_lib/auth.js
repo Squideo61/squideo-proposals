@@ -6,6 +6,9 @@ const CHALLENGE_AUD = '2fa-challenge';
 const ENROLMENT_AUD = '2fa-enrol';
 const TASK_ACTION_AUD = 'task-action';
 const QR_ACTION_AUD = 'quote-request-action';
+// Customer-portal sessions (api/_lib/portal/auth.js) share JWT_SECRET but are
+// a separate auth surface — a portal JWT must never pass as a staff session.
+const PORTAL_SESSION_AUD = 'portal-session';
 const SHORT_EXP = '5m';
 
 export async function signToken(payload) {
@@ -21,7 +24,8 @@ export async function verifyToken(token) {
     payload.aud === CHALLENGE_AUD ||
     payload.aud === ENROLMENT_AUD ||
     payload.aud === TASK_ACTION_AUD ||
-    payload.aud === QR_ACTION_AUD
+    payload.aud === QR_ACTION_AUD ||
+    payload.aud === PORTAL_SESSION_AUD
   ) {
     throw new Error('Restricted-scope token cannot be used as a session token');
   }

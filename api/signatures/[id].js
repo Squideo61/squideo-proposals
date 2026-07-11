@@ -7,6 +7,7 @@ import { sendNotification } from '../_lib/notifications.js';
 import { advanceStage, regressStage, dealIdForProposal, ensureDealForProposal } from '../_lib/dealStage.js';
 import { computeProposalTotalExVat } from '../_lib/crm/deals.js';
 import { voidInvoice } from '../_lib/xero.js';
+import { sendPortalWelcome } from '../_lib/portal/onboarding.js';
 
 // Allowlist of fields from `signatures.data` that the public client view
 // actually consumes (SignedBlock, ClientView post-sign branch, ThankYouView,
@@ -180,6 +181,24 @@ export default async function handler(req, res) {
       }
     } catch (err) {
       console.error('[signatures] broadcast email failed', err);
+    }
+
+    // Customer portal: invite the signer to set up their (org-scoped) portal
+    // account, with details prefilled from the contact/signature. Best-effort —
+    // a portal hiccup must never break signing; the CRM has a "Resend portal
+    // invite" action as the recovery path.
+    try {
+      if (dealId && email) {
+        const proposals = await sql`SELECT data FROM proposals WHERE id = ${id}`;
+        await sendPortalWelcome({
+          dealId,
+          proposalData: proposals[0]?.data || {},
+          signerName: name,
+          signerEmail: email,
+        });
+      }
+    } catch (err) {
+      console.error('[signatures] portal welcome failed', err);
     }
 
     return res.status(201).json({ ok: true });

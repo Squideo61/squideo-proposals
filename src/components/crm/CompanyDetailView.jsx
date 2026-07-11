@@ -6,6 +6,7 @@ import { useIsMobile, formatGBP, formatRelativeTime, effectiveAddress, formatAdd
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
 import { CompanyCreditsCard } from './CompanyCreditsCard.jsx';
+import { PortalMembersCard } from './PortalMembersCard.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
@@ -292,6 +293,11 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
           credit-based projects + matched partner credits). */}
       <div style={{ marginBottom: 16 }}>
         <CompanyCreditsCard companyId={companyId} />
+      </div>
+
+      {/* Customer-portal access for this organisation (members + invites). */}
+      <div style={{ marginBottom: 16 }}>
+        <PortalMembersCard companyId={companyId} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>

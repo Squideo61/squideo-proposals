@@ -16,6 +16,7 @@ import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { OrderSummaryCard } from './OrderSummaryCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
+import { PortalDealCard } from './PortalDealCard.jsx';
 import { IntroCallButton } from './IntroCallCard.jsx';
 import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
 import { TrackingEye } from './EmailTracking.jsx';
@@ -710,6 +711,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} creditProject={detail?.creditProject || null} hideCredits={hideFinancials} isMobile={isMobile} onOpenVideo={onOpenVideo} />
         </div>
+
+        {/* Customer-portal extras offers + invite management (money — hidden
+            from freelancers / finance-restricted views). */}
+        {state.session?.role !== 'freelancer' && !hideFinancials && (
+          <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+            <PortalDealCard dealId={dealId} />
+          </div>
+        )}
 
         {/* Freelancers don't use the CRM inbox / send client emails. */}
         {state.session?.role !== 'freelancer' && (
@@ -2227,6 +2236,11 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
                 <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.filename}</div>
                 <div style={{ fontSize: 11, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <span>{fileSizeLabel(f.sizeBytes)}{f.sizeBytes ? ' · ' : ''}{formatRelativeTime(f.createdAt)}{f.source === 'email' ? ' · from email' : ''}</span>
+                  {f.source === 'portal' && (
+                    <span style={{ background: '#2BB8E622', color: '#0B6E93', fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                      Portal
+                    </span>
+                  )}
                 </div>
               </div>
               {f.uploadedBy && <Avatar email={f.uploadedBy} size={20} />}

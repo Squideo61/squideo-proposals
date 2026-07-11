@@ -71,7 +71,10 @@ const trimOrNull = (v) => {
   return s ? s : null;
 };
 
-function buildNotificationEmail(qr, files, { qualifyUrl, disqualifyUrl, crmUrl, leadLabel = 'quote request' } = {}) {
+// Exported for reuse by the customer-portal request-a-video route
+// (api/portal/[action].js), which sends the same team alert with a
+// portal-discount subject line.
+export function buildNotificationEmail(qr, files, { qualifyUrl, disqualifyUrl, crmUrl, leadLabel = 'quote request' } = {}) {
   const rows = [
     ['Name', qr.name],
     ['Email', qr.email],
