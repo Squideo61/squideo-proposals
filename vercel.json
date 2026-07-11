@@ -1,46 +1,140 @@
 {
   "functions": {
-    "api/**/*.js": { "maxDuration": 60 },
-    "api/portal.js": { "maxDuration": 300 }
+    "api/portal.js": {
+      "maxDuration": 300
+    },
+    "api/**/*.js": {
+      "maxDuration": 60
+    }
   },
   "rewrites": [
-    { "source": "/api/invites", "destination": "/api/users?_kind=invites" },
-    { "source": "/api/proposals", "destination": "/api/proposals/_root" },
-    { "source": "/api/templates", "destination": "/api/templates/_root" },
-    { "source": "/api/xero/invoice-pdf/:filename", "destination": "/api/xero/invoice-pdf" },
-    { "source": "/api/crm/:resource/:id/:action/:subaction", "destination": "/api/crm/:resource?_id=:id&_action=:action&_subaction=:subaction" },
-    { "source": "/api/crm/:resource/:id/:action", "destination": "/api/crm/:resource?_id=:id&_action=:action" },
-    { "source": "/api/crm/:resource/:id", "destination": "/api/crm/:resource?_id=:id" },
-    { "source": "/api/portal/:action", "destination": "/api/portal?action=:action" },
-    { "source": "/api/quote-requests-admin/:id/:action", "destination": "/api/quote-requests-admin?_id=:id&_action=:action" },
-    { "source": "/api/quote-requests-admin/:id", "destination": "/api/quote-requests-admin?_id=:id" },
-    { "source": "/extension-auth", "destination": "/api/extension/auth-page" },
-    { "source": "/quote", "destination": "/quote.html" },
-    { "source": "/contact", "destination": "/contact.html" },
-    { "source": "/portal", "destination": "/portal.html" }
+    {
+      "source": "/api/invites",
+      "destination": "/api/users?_kind=invites"
+    },
+    {
+      "source": "/api/proposals",
+      "destination": "/api/proposals/_root"
+    },
+    {
+      "source": "/api/templates",
+      "destination": "/api/templates/_root"
+    },
+    {
+      "source": "/api/xero/invoice-pdf/:filename",
+      "destination": "/api/xero/invoice-pdf"
+    },
+    {
+      "source": "/api/crm/:resource/:id/:action/:subaction",
+      "destination": "/api/crm/:resource?_id=:id&_action=:action&_subaction=:subaction"
+    },
+    {
+      "source": "/api/crm/:resource/:id/:action",
+      "destination": "/api/crm/:resource?_id=:id&_action=:action"
+    },
+    {
+      "source": "/api/crm/:resource/:id",
+      "destination": "/api/crm/:resource?_id=:id"
+    },
+    {
+      "source": "/api/portal/:action",
+      "destination": "/api/portal?action=:action"
+    },
+    {
+      "source": "/api/quote-requests-admin/:id/:action",
+      "destination": "/api/quote-requests-admin?_id=:id&_action=:action"
+    },
+    {
+      "source": "/api/quote-requests-admin/:id",
+      "destination": "/api/quote-requests-admin?_id=:id"
+    },
+    {
+      "source": "/extension-auth",
+      "destination": "/api/extension/auth-page"
+    },
+    {
+      "source": "/quote",
+      "destination": "/quote.html"
+    },
+    {
+      "source": "/contact",
+      "destination": "/contact.html"
+    },
+    {
+      "source": "/portal",
+      "destination": "/portal.html"
+    }
   ],
   "crons": [
-    { "path": "/api/crm/cron/task-reminders", "schedule": "*/15 * * * *" },
-    { "path": "/api/crm/cron/task-digest", "schedule": "0 7 * * *" },
-    { "path": "/api/crm/cron/gmail-watch-renew", "schedule": "0 5 * * *" },
-    { "path": "/api/crm/cron/prune-views", "schedule": "0 3 * * 1" },
-    { "path": "/api/crm/cron/quote-partials", "schedule": "*/5 * * * *" },
-    { "path": "/api/crm/cron/quote-resume", "schedule": "*/15 * * * *" },
-    { "path": "/api/crm/cron/scheduled-emails", "schedule": "* * * * *" },
-    { "path": "/api/crm/cron/invoice-reminders", "schedule": "0 * * * *" },
-    { "path": "/api/crm/cron/quarterly-tax-summary", "schedule": "0 8 * * *" },
-    { "path": "/api/crm/cron/director-tax-reminders", "schedule": "0 8 * * *" },
-    { "path": "/api/crm/cron/intro-call-reminders", "schedule": "0 * * * *" },
-    { "path": "/api/crm/cron/ad-spend-sync", "schedule": "0 6 * * *" },
-    { "path": "/api/crm/cron/gsc-sync", "schedule": "15 6 * * *" },
-    { "path": "/api/crm/cron/ga4-sync", "schedule": "30 6 * * *" },
-    { "path": "/api/crm/cron/cost-snapshot", "schedule": "30 23 28-31 * *" }
+    {
+      "path": "/api/crm/cron/task-reminders",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/crm/cron/task-digest",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/crm/cron/gmail-watch-renew",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/crm/cron/prune-views",
+      "schedule": "0 3 * * 1"
+    },
+    {
+      "path": "/api/crm/cron/quote-partials",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/crm/cron/quote-resume",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/crm/cron/scheduled-emails",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/crm/cron/invoice-reminders",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/crm/cron/quarterly-tax-summary",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/crm/cron/director-tax-reminders",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/crm/cron/intro-call-reminders",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/crm/cron/ad-spend-sync",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/crm/cron/gsc-sync",
+      "schedule": "15 6 * * *"
+    },
+    {
+      "path": "/api/crm/cron/ga4-sync",
+      "schedule": "30 6 * * *"
+    },
+    {
+      "path": "/api/crm/cron/cost-snapshot",
+      "schedule": "30 23 28-31 * *"
+    }
   ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" }
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains; preload"
+        }
       ]
     },
     {
@@ -50,9 +144,18 @@
           "key": "Content-Security-Policy",
           "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob: https://*.public.blob.vercel-storage.com; connect-src 'self' https://vercel.com https://blob.vercel-storage.com https://*.public.blob.vercel-storage.com; frame-src https://www.loom.com https://www.youtube.com https://player.vimeo.com https://docs.google.com https://drive.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         },
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        }
       ]
     },
     {
@@ -62,9 +165,18 @@
           "key": "Content-Security-Policy",
           "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob: https://*.public.blob.vercel-storage.com; connect-src 'self' https://blob.vercel-storage.com https://*.public.blob.vercel-storage.com; frame-src https://www.loom.com https://www.youtube.com https://player.vimeo.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         },
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        }
       ]
     },
     {
@@ -74,11 +186,26 @@
           "key": "Content-Security-Policy",
           "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://squideo.com https://*.squideo.com https://squideo.co.uk https://*.squideo.co.uk https://*.duda.co https://*.dudaone.com https://*.multiscreensite.com"
         },
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Cross-Origin-Resource-Policy", "value": "cross-origin" },
-        { "key": "Cross-Origin-Embedder-Policy", "value": "unsafe-none" },
-        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Cross-Origin-Resource-Policy",
+          "value": "cross-origin"
+        },
+        {
+          "key": "Cross-Origin-Embedder-Policy",
+          "value": "unsafe-none"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        }
       ]
     },
     {
@@ -88,11 +215,26 @@
           "key": "Content-Security-Policy",
           "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://squideo.com https://*.squideo.com https://squideo.co.uk https://*.squideo.co.uk https://*.duda.co https://*.dudaone.com https://*.multiscreensite.com"
         },
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Cross-Origin-Resource-Policy", "value": "cross-origin" },
-        { "key": "Cross-Origin-Embedder-Policy", "value": "unsafe-none" },
-        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Cross-Origin-Resource-Policy",
+          "value": "cross-origin"
+        },
+        {
+          "key": "Cross-Origin-Embedder-Policy",
+          "value": "unsafe-none"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        }
       ]
     }
   ]
