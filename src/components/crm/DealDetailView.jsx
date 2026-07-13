@@ -627,7 +627,20 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           <ScheduleCard deal={deal} onOpen={() => setScheduleOpen(true)} />
         )}
 
-        <Card title="Tasks" count={tasks.filter(t => !t.doneAt).length}>
+        <Card
+          title="Tasks"
+          count={tasks.filter(t => !t.doneAt).length}
+          action={(
+            <button
+              onClick={() => { setPrefillTitle(''); setCreatingTask(true); }}
+              className="btn"
+              title="Add a task with a due date, assignee and notes"
+            ><Plus size={12} /> Add task</button>
+          )}
+        >
+          {/* The inline row is the one-line quick add (type + Enter → due tomorrow,
+              assigned to you). Anything more — due date, assignee, notes — goes
+              through the Add task button above, which opens the full form. */}
           <QuickAddTask
             dealId={dealId}
             onSchedule={(title) => { setPrefillTitle(title); setCreatingTask(true); }}
@@ -992,14 +1005,19 @@ function QuickAddTask({ dealId, onSchedule }) {
         disabled={saving}
         style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 13, color: BRAND.ink, fontFamily: 'inherit' }}
       />
-      <button
-        type="button"
-        onClick={() => onSchedule(title.trim())}
-        title="Schedule with full details"
-        style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex', lineHeight: 1 }}
-      >
-        <Clock size={14} />
-      </button>
+      {/* Escalate what you've typed into the full form (due date, assignee, notes).
+          Only offered once there's a title — an always-on icon here read as the
+          only way to add a task, which is what the Add task button is for. */}
+      {title.trim() && (
+        <button
+          type="button"
+          onClick={() => onSchedule(title.trim())}
+          title="Open the full form with this title"
+          style={{ flexShrink: 0, padding: '2px 8px', border: '1px solid ' + BRAND.border, borderRadius: 999, background: 'white', cursor: 'pointer', color: BRAND.muted, fontFamily: 'inherit', fontSize: 11, fontWeight: 600, lineHeight: 1.6 }}
+        >
+          Add details
+        </button>
+      )}
     </div>
   );
 }
