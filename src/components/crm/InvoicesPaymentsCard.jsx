@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Plus, FileText, Trash2, CheckCircle, Link, Copy, Check, ExternalLink, Download } from 'lucide-react';
+import { Plus, FileText, Trash2, CheckCircle, Link, Copy, Check, ExternalLink, Download, Upload } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatCurrency, formatAmountWithGbp } from '../../utils.js';
@@ -9,6 +9,7 @@ import { AddInvoiceModal } from './AddInvoiceModal.jsx';
 import { MarkInvoicePaidModal } from './MarkInvoicePaidModal.jsx';
 import { CreateXeroInvoiceModal } from './CreateXeroInvoiceModal.jsx';
 import { AddExtraModal } from './AddExtraModal.jsx';
+import { UploadPoModal } from './UploadPoModal.jsx';
 
 // Open the invoice PDF with a filename-friendly URL so "Save as" defaults to the
 // invoice number (e.g. INV-6082.pdf) — browsers use the URL's last path segment.
@@ -41,6 +42,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
   const [adding, setAdding] = useState(false);
   const [creatingXero, setCreatingXero] = useState(false);
   const [addingExtra, setAddingExtra] = useState(false);
+  const [uploadingPo, setUploadingPo] = useState(false);
   const [extras, setExtras] = useState(null);
   // When creating from a "not invoiced" card we target a specific deal and pull
   // the appropriate portion: the balance if a deposit's already been raised,
@@ -160,9 +162,15 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
       title="Invoices & Payments"
       count={count || undefined}
       action={(
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button onClick={() => openCreate()} className="btn"><Plus size={12} /> Create invoice</button>
           <button onClick={() => setAdding(true)} className="btn-ghost"><Plus size={12} /> Upload invoice</button>
+          {/* PO tracking is deal-scoped, so no PO upload on the company page. */}
+          {dealId && (
+            <button onClick={() => setUploadingPo(true)} className="btn-ghost">
+              <Upload size={12} /> {poNumber ? 'Replace PO' : 'Upload PO'}
+            </button>
+          )}
           <button onClick={() => setAddingExtra(true)} className="btn-ghost"><Plus size={12} /> Add extra</button>
         </div>
       )}
@@ -333,6 +341,14 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
           deals={deals}
           onClose={() => setAddingExtra(false)}
           onCreated={() => { setAddingExtra(false); reloadExtras(); onChanged?.(); }}
+        />
+      )}
+      {uploadingPo && (
+        <UploadPoModal
+          dealId={dealId}
+          currentNumber={poNumber || ''}
+          onClose={() => setUploadingPo(false)}
+          onSaved={() => onChanged?.()}
         />
       )}
     </Card>

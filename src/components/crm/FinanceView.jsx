@@ -679,7 +679,7 @@ function PredictedRowBadges({ item }) {
     return (
       <>
         {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
-        {item.isPo && <PoStatusPill d={r} />}
+        {showPoPill(r, item.isPo) && <PoStatusPill d={r} />}
         {types.map((t) => <PaymentBadge key={t} type={t} />)}
         {anyNotInvoiced && <NotInvoicedTag />}
       </>
@@ -2516,8 +2516,13 @@ function PredictedTag({ auto = false }) {
   );
 }
 
-// PO status pill: amber "Pending PO" until the PO is received, then a green
-// "PO <number>" once recorded. Shown only on PO-route deal rows.
+// PO status pill: amber "Pending PO" on a PO-route deal still waiting for its
+// purchase order, green "PO <number>" once one has been received. Any deal can
+// have a PO uploaded against it, so `showPoPill` gates on either.
+function showPoPill(d, isPo) {
+  return !!isPo || !!d?.poReceivedAt;
+}
+
 function PoStatusPill({ d }) {
   const received = !!d.poReceivedAt;
   const color = received ? '#15803D' : '#B45309';
@@ -2633,15 +2638,19 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
   const invoiceLines = lines.filter(canInvoice);
   // Pending-only users (Project/Production Managers) get only Open + predict.
   const canManage = predict?.canManage !== false;
+  // The PO action is offered on PO-route deals (still waiting on their PO) and on
+  // any deal that already has one recorded — a PO uploaded from the deal page can
+  // be corrected here.
+  const hasPo = !!d.poReceivedAt;
   const rowActions = [
-    canManage && isPo && onMarkPoReceived && {
-      label: d.poReceivedAt ? 'Edit PO number' : 'Mark PO received', icon: Check,
+    canManage && (isPo || hasPo) && onMarkPoReceived && {
+      label: hasPo ? 'Edit PO number' : 'Mark PO received', icon: Check,
       onClick: () => onMarkPoReceived({ dealId: d.dealId, title: d.title, company: d.company, poNumber: d.poNumber || '' }),
     },
     ...(canManage ? invoiceLines.map((l) => ({
       label: invoiceLines.length > 1 ? `Invoice ${PAYMENT_TYPE_META[l.type]?.label || 'amount'}` : 'Create invoice',
       icon: FileText,
-      onClick: () => onCreateInvoice({ dealId: d.dealId, companyId: d.companyId, title: d.title || d.company, stage: d.stage, mode: l.type === 'final' ? 'final' : undefined, reference: isPo ? (d.poNumber || undefined) : undefined }),
+      onClick: () => onCreateInvoice({ dealId: d.dealId, companyId: d.companyId, title: d.title || d.company, stage: d.stage, mode: l.type === 'final' ? 'final' : undefined, reference: d.poNumber || undefined }),
     })) : []),
     onOpenDeal && { label: 'Open deal', icon: ExternalLink, onClick: open },
     d.dealId && predictMenuItem(predict, { key: predictKeyForDeal(d.dealId), label: name, amount: d.outstanding }),
@@ -2674,11 +2683,11 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
             </div>
             <div style={{ flexShrink: 0 }}><RowActionsMenu items={rowActions} /></div>
           </div>
-          {(number || isPo || isPredicted || (single && (single0.type || single0.invoiced === false || single0.label))) && (
+          {(number || showPoPill(d, isPo) || isPredicted || (single && (single0.type || single0.invoiced === false || single0.label))) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 5 }}>
               {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
               {single && <PaymentBadge type={single0.type} />}
-              {isPo && <PoStatusPill d={d} />}
+              {showPoPill(d, isPo) && <PoStatusPill d={d} />}
               {isPredicted && <PredictedTag />}
               {single && single0.invoiced === false && <NotInvoicedTag />}
               {single && single0.label && (
@@ -2697,7 +2706,7 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
             </span>
             {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
             {single && <PaymentBadge type={single0.type} />}
-            {isPo && <PoStatusPill d={d} />}
+            {showPoPill(d, isPo) && <PoStatusPill d={d} />}
             {isPredicted && <PredictedTag />}
             {single && single0.invoiced === false && <NotInvoicedTag />}
             {single && single0.label && (

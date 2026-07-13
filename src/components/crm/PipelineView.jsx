@@ -325,10 +325,16 @@ function SaleStatusPills({ deal }) {
       ? <PipelinePill label={`PO ${s.poNumber || ''}`.trim()} tone="green" />
       : <PipelinePill label="Pending PO" tone="amber" />;
   }
+  // Any deal can have a PO uploaded against it (Invoices & Payments → Upload PO),
+  // not just PO-route ones. There the PO sits alongside the invoiced state rather
+  // than replacing it — the client raised a PO *and* we still have to invoice it.
+  const poPill = s.poReceivedAt ? <PipelinePill label={`PO ${s.poNumber || ''}`.trim()} tone="green" /> : null;
   // A 50/50 deal with the deposit in but the balance outstanding reads clearer as
   // "Deposit paid" than the invoiced state (which looks fully settled).
-  if (s.depositPaid) return <PipelinePill label="Deposit paid" tone="teal" />;
-  return s.invoiced ? <PipelinePill label="Invoiced" tone="green" /> : <PipelinePill label="Not invoiced" tone="amber" />;
+  const statusPill = s.depositPaid
+    ? <PipelinePill label="Deposit paid" tone="teal" />
+    : (s.invoiced ? <PipelinePill label="Invoiced" tone="green" /> : <PipelinePill label="Not invoiced" tone="amber" />);
+  return <>{poPill}{statusPill}</>;
 }
 
 function formatDuration(secs) {

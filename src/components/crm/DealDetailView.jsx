@@ -667,9 +667,11 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           )}
         </Card>
 
-        {detail?.purchaseOrder?.isPo && (
+        {/* PO-route deals always show the card (they're waiting on a PO); any other
+            deal shows it once a PO has actually been uploaded/recorded against it. */}
+        {(po?.isPo || !!po?.number || (po?.files || []).length > 0) && (
           <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-            <PurchaseOrderCard dealId={dealId} po={detail.purchaseOrder} isMobile={isMobile} />
+            <PurchaseOrderCard dealId={dealId} po={po} isMobile={isMobile} />
           </div>
         )}
 

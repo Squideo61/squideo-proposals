@@ -1353,10 +1353,13 @@ async function pendingPaymentsReport() {
       outstanding: round2(outstandingNet + extrasNet),
       outstandingGross: round2(outstandingInc + extrasGross),
       lines,
-      // PO tracking — only meaningful on PO-route deals; the UI shows a
-      // "Pending PO" pill until poReceivedAt is set, then "PO <number>".
-      poNumber: isPo ? (inf.po_number || null) : null,
-      poReceivedAt: isPo ? (inf.po_received_at || null) : null,
+      // PO tracking. PO-route deals show a "Pending PO" pill until poReceivedAt
+      // is set, then "PO <number>". Any other deal can also have a PO uploaded
+      // against it (from the deal's Invoices & Payments card), so these are
+      // carried regardless of route — the UI shows the green pill whenever a PO
+      // has been received.
+      poNumber: inf.po_number || null,
+      poReceivedAt: inf.po_received_at || null,
     };
     (isPo ? po : normal).push(item);
   }
