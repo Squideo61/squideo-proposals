@@ -5,6 +5,7 @@ import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
 import { Modal } from '../ui.jsx';
 import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
+import { SearchBox } from './ProductionView.jsx';
 
 // Compact <select> linking a project to a CRM deal (its team gets the client
 // feedback notifications). Mirrors the deal picker in TaskFormModal.
@@ -339,6 +340,7 @@ export function RevisionsView({ onBack }) {
   const [selectedId, setSelectedId] = useState(null);
   const [creating, setCreating] = useState(false);
   const [analyticsProject, setAnalyticsProject] = useState(null);
+  const [query, setQuery] = useState('');
 
   const [loaded, setLoaded] = useState(false);
 
@@ -348,29 +350,46 @@ export function RevisionsView({ onBack }) {
     actions.refreshDeals?.();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const all = state.revisions || [];
+  // Live search across the project name, the client, and the linked deal.
+  const projects = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter(p => [p.title, p.clientName, p.dealTitle]
+      .some(f => (f || '').toLowerCase().includes(q)));
+  }, [all, query]);
+
   if (selectedId) {
     return <ProjectDetail projectId={selectedId} onBack={() => { setSelectedId(null); actions.loadRevisions(); }} />;
   }
 
-  const projects = state.revisions || [];
-
   return (
     <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           {onBack && <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>}
           <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
             <Clapperboard size={22} color={BRAND.blue} /> Video Revisions
           </h1>
+          <SearchBox value={query} onChange={setQuery} placeholder="Search projects, clients…" />
+          {query && (
+            <span style={{ fontSize: 12, color: BRAND.muted }}>
+              {projects.length} of {all.length}
+            </span>
+          )}
         </div>
         <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New project</button>
       </header>
 
-      {projects.length === 0 ? (
+      {all.length === 0 ? (
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
           {loaded
             ? 'No revision projects yet. Create one, upload a draft video, and share the link with your client.'
             : 'Loading projects…'}
+        </div>
+      ) : projects.length === 0 ? (
+        <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 40, textAlign: 'center', color: BRAND.muted }}>
+          No projects match “{query}”.
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

@@ -288,7 +288,7 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
       <div style={{ marginTop: 28 }}>
         {!isFreelancer && <LeavePanel sched={sched} canManage={canManage} canApprove={canApprove} me={me} actions={actions} />}
         {!isFreelancer && <AllowancePanel sched={sched} canManage={canManage} canManageAllowance={canManageAllowance} me={me} onEdit={setAllowanceModal} />}
-        <AmendsPanel sched={sched} onOpenVideo={onOpenVideo} showProducer={canManage} />
+        <AmendsPanel sched={sched} onOpenVideo={onOpenVideo} showProducer={canManage} selected={effectiveSelected} />
       </div>
 
       {newBlock && <NewBlockModal producers={allProducers} onClose={() => setNewBlock(false)}
@@ -668,11 +668,17 @@ function AllowancePanel({ sched, canManage, canManageAllowance, me, onEdit }) {
 }
 
 // ── Amends to do ──
-// On the manager (master) view each row is prefixed with the assigned producer's
-// profile picture, so it's obvious at a glance whose amends these are.
-function AmendsPanel({ sched, onOpenVideo, showProducer }) {
+// Follows the producer switcher: on Master every row is prefixed with the
+// assigned producer's profile picture; pick a producer and the list narrows to
+// just the amends they're assigned to.
+function AmendsPanel({ sched, onOpenVideo, showProducer, selected }) {
   const { state } = useStore();
-  const amends = sched.amends || [];
+  const all = sched.amends || [];
+  // `selected` is 'master' (or falsy) for everyone, else a producer's email.
+  const forProducer = selected && selected !== 'master' ? selected : null;
+  const amends = forProducer
+    ? all.filter(a => (a.producerEmails || []).includes(forProducer) || a.userEmail === forProducer)
+    : all;
   // Prefer the rota roster (name + avatar), fall back to the user directory for
   // anyone off-roster.
   const lookup = (email) => {
@@ -682,10 +688,15 @@ function AmendsPanel({ sched, onOpenVideo, showProducer }) {
     const u = (state.users || {})[email];
     return { email, name: u?.name || email, avatar: u?.avatar || null };
   };
+  const who = forProducer ? (lookup(forProducer)?.name || forProducer) : null;
   return (
-    <Section title="Amends to do" icon={AlertTriangle} color="#DC2626"
+    <Section title={who ? `Amends to do — ${who}` : 'Amends to do'} icon={AlertTriangle} color="#DC2626"
       badge={<span style={{ fontSize: 12, color: BRAND.muted }}>{amends.length} outstanding</span>}>
-      {amends.length === 0 && <div style={{ color: BRAND.muted, fontSize: 13 }}>No amends outstanding — nice.</div>}
+      {amends.length === 0 && (
+        <div style={{ color: BRAND.muted, fontSize: 13 }}>
+          {who ? `No amends outstanding for ${who}.` : 'No amends outstanding — nice.'}
+        </div>
+      )}
       {amends.map(a => {
         const producer = showProducer ? lookup(a.userEmail) : null;
         return (
