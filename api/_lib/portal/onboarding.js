@@ -97,10 +97,13 @@ function companyNameFromEmail(email) {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-// Resolve the deal's company, creating one from the proposal's business name
-// (then the signer's work-email domain, then the deal title) when the deal has
-// none — the org is the portal's anchor, so we can't invite without it.
-export async function resolveCompanyForDeal(dealId, proposalData, signerEmail) {
+// Resolve the deal's company, creating one when the deal has none — the org is
+// the portal's anchor, so we can't invite without it. Naming, in order: the
+// proposal's business name, the signer's work-email domain (acme.co.uk →
+// "Acme"), then — for sole traders / personal addresses — the person's own name,
+// falling back to their email. Never the deal title: a project name reads badly
+// as an organisation.
+export async function resolveCompanyForDeal(dealId, proposalData, signerEmail, signerName = null) {
   const [deal] = await sql`
     SELECT d.id, d.title, d.company_id, c.name AS company_name
       FROM deals d LEFT JOIN companies c ON c.id = d.company_id
@@ -110,9 +113,10 @@ export async function resolveCompanyForDeal(dealId, proposalData, signerEmail) {
   if (deal.company_id) return { dealTitle: deal.title, companyId: deal.company_id, companyName: deal.company_name };
 
   const businessName = trimOrNull(proposalData?.contactBusinessName)
-    || trimOrNull(proposalData?.clientName)
     || companyNameFromEmail(signerEmail)
-    || trimOrNull(deal.title);
+    || trimOrNull(signerName)
+    || trimOrNull(proposalData?.clientName)
+    || trimOrNull(signerEmail);
   if (!businessName) return null;
 
   // Reuse an exact-name match before creating (mirrors clientResolver.js).
@@ -159,7 +163,7 @@ export async function sendPortalWelcome({ dealId, proposalData, signerName, sign
   const email = lowerOrNull(signerEmail);
   if (!dealId || !email) return { sent: false, reason: 'missing dealId or signer email' };
 
-  const org = await resolveCompanyForDeal(dealId, proposalData, email);
+  const org = await resolveCompanyForDeal(dealId, proposalData, email, signerName);
   if (!org) return { sent: false, reason: 'deal has no company and none could be created' };
 
   const contact = await resolveContactForSigner({ email, name: signerName, companyId: org.companyId });
