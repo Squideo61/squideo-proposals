@@ -18,16 +18,80 @@
 
 import sql from '../_lib/db.js';
 import { cors, requirePermission } from '../_lib/middleware.js';
-import { makeId, trimOrNull, lowerOrNull, numberOrNull } from '../_lib/crm/shared.js';
+import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureDealContactsTable } from '../_lib/crm/shared.js';
 import { sendMail } from '../_lib/email.js';
 import { ensurePortalTables } from '../_lib/portal/db.js';
-import { sendPortalWelcome, sendTeamInvite, createPortalInvite, inviteUrlFor } from '../_lib/portal/onboarding.js';
+import { sendTeamInvite, createPortalInvite, inviteUrlFor, resolveCompanyForDeal } from '../_lib/portal/onboarding.js';
 import { portalTeamInviteHtml } from '../_lib/portal/emails.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 
 // Any of these grants access — the panel spans company pages (members) and
 // deal pages (offers/pricing), which different roles legitimately manage.
 const PORTAL_ADMIN_PERMS = ['companies.manage_all', 'deals.manage_all', 'invoices.manage', 'users.manage'];
+
+// Who the "Portal invite" modal offers to invite for a deal: its primary
+// contact, its secondary contacts, and the proposal signer (who may not be a
+// contact at all). Each is annotated with their current portal status so the
+// modal can pre-tick only the people who still need an invite.
+async function inviteCandidatesForDeal(dealId) {
+  await ensureDealContactsTable();
+  const [deal] = await sql`
+    SELECT d.company_id, c.name AS company_name
+      FROM deals d LEFT JOIN companies c ON c.id = d.company_id
+     WHERE d.id = ${dealId}
+  `;
+  const companyId = deal?.company_id || null;
+
+  const [contactRows, signerRows, memberRows, inviteRows] = await Promise.all([
+    sql`
+      SELECT c.id, c.name, c.email, 'primary' AS role
+        FROM deals d JOIN contacts c ON c.id = d.primary_contact_id
+       WHERE d.id = ${dealId} AND c.email IS NOT NULL
+      UNION
+      SELECT c.id, c.name, c.email, COALESCE(dc.role, 'secondary') AS role
+        FROM deal_contacts dc JOIN contacts c ON c.id = dc.contact_id
+       WHERE dc.deal_id = ${dealId} AND c.email IS NOT NULL
+    `,
+    sql`
+      SELECT s.name, s.email FROM proposals p JOIN signatures s ON s.proposal_id = p.id
+       WHERE p.deal_id = ${dealId} AND s.email IS NOT NULL
+       ORDER BY s.signed_at DESC LIMIT 1
+    `,
+    companyId ? sql`
+      SELECT pu.email FROM portal_memberships m JOIN portal_users pu ON pu.id = m.portal_user_id
+       WHERE m.company_id = ${companyId} AND m.disabled_at IS NULL AND pu.disabled_at IS NULL
+    ` : [],
+    companyId ? sql`
+      SELECT email FROM portal_invites
+       WHERE company_id = ${companyId} AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()
+    ` : [],
+  ]);
+
+  const members = new Set(memberRows.map((r) => String(r.email).toLowerCase()));
+  const pending = new Set(inviteRows.map((r) => String(r.email).toLowerCase()));
+
+  const byEmail = new Map();
+  const add = (email, name, source) => {
+    const key = String(email || '').trim().toLowerCase();
+    if (!key) return;
+    if (byEmail.has(key)) return; // first source wins (contacts before signer)
+    byEmail.set(key, {
+      email: key,
+      name: name || null,
+      source,
+      hasAccess: members.has(key),
+      invitePending: pending.has(key),
+    });
+  };
+  for (const c of contactRows) add(c.email, c.name, c.role === 'primary' ? 'Primary contact' : 'Deal contact');
+  if (signerRows[0]) add(signerRows[0].email, signerRows[0].name, 'Signed the proposal');
+
+  return {
+    companyId,
+    companyName: deal?.company_name || null,
+    candidates: Array.from(byEmail.values()),
+  };
+}
 
 export default async function handler(req, res) {
   cors(res);
@@ -93,6 +157,7 @@ export default async function handler(req, res) {
         const derived = await computePortalOffers(deal);
         return res.status(200).json({
           dealId,
+          ...(await inviteCandidatesForDeal(dealId)),
           discount: Number(deal.portal_extras_discount ?? 0.10),
           offers: offers.map((o) => ({
             id: o.id,
@@ -180,32 +245,72 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    if (op === 'resend-welcome') {
+    // Invite one or more people to the deal's organisation portal. Recipients
+    // come from the modal: the deal's contacts/signer (pre-ticked) plus any
+    // ad-hoc emails typed in, each optionally saved as a CRM contact on the
+    // deal. Creates the company from the proposal if the deal somehow has none
+    // (the org is the portal's anchor).
+    if (op === 'invite-deal') {
       const dealId = trimOrNull(body.dealId);
+      const recipients = Array.isArray(body.recipients) ? body.recipients : [];
       if (!dealId) return res.status(400).json({ error: 'dealId required' });
-      // Prefer the signer of the deal's signed proposal; fall back to the
-      // deal's primary contact.
-      const [sig] = await sql`
-        SELECT s.name, s.email, p.data
-          FROM proposals p JOIN signatures s ON s.proposal_id = p.id
-         WHERE p.deal_id = ${dealId}
-         ORDER BY s.signed_at DESC LIMIT 1
+      if (!recipients.length) return res.status(400).json({ error: 'Pick at least one person to invite' });
+
+      const [prop] = await sql`
+        SELECT data FROM proposals WHERE deal_id = ${dealId} ORDER BY created_at DESC LIMIT 1
       `;
-      let signerName = sig?.name || null;
-      let signerEmail = sig?.email || null;
-      let proposalData = sig?.data || null;
-      if (!signerEmail) {
-        const [ct] = await sql`
-          SELECT ct.name, ct.email FROM deals d JOIN contacts ct ON ct.id = d.primary_contact_id
-           WHERE d.id = ${dealId}
-        `;
-        signerName = ct?.name || null;
-        signerEmail = ct?.email || null;
+      const org = await resolveCompanyForDeal(dealId, prop?.data || null, recipients[0]?.email || null);
+      if (!org?.companyId) {
+        return res.status(400).json({ error: 'This deal has no company — link it to a company first, then invite.' });
       }
-      if (!signerEmail) return res.status(400).json({ error: 'No signer or primary-contact email on this deal — add a contact with an email first.' });
-      const result = await sendPortalWelcome({ dealId, proposalData, signerName, signerEmail });
-      if (!result.sent) return res.status(400).json({ error: `Could not send: ${result.reason}` });
-      return res.status(200).json({ ok: true, existing: !!result.existing, email: signerEmail });
+
+      await ensureDealContactsTable();
+      const sent = [];
+      const failed = [];
+      for (const r of recipients) {
+        const email = lowerOrNull(r?.email);
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          failed.push({ email: r?.email || '(blank)', reason: 'Not a valid email' });
+          continue;
+        }
+        const name = trimOrNull(r?.name);
+        try {
+          // Optionally save an ad-hoc invitee as a CRM contact, attached to the
+          // company and linked to this deal as a secondary contact.
+          if (r?.createContact) {
+            const [existing] = await sql`SELECT id FROM contacts WHERE LOWER(email) = ${email} LIMIT 1`;
+            let contactId = existing?.id || null;
+            if (!contactId) {
+              contactId = makeId('ct');
+              await sql`
+                INSERT INTO contacts (id, email, name, company_id, provisional, source)
+                VALUES (${contactId}, ${email}, ${name}, ${org.companyId}, FALSE, 'portal_invite')
+              `;
+            }
+            await sql`
+              INSERT INTO deal_contacts (deal_id, contact_id, role, added_by)
+              VALUES (${dealId}, ${contactId}, 'secondary', ${user.email})
+              ON CONFLICT (deal_id, contact_id) DO NOTHING
+            `;
+          }
+          await sendTeamInvite({
+            email,
+            companyId: org.companyId,
+            companyName: org.companyName,
+            inviterName: user.name || 'The Squideo team',
+            invitedBy: user.email,
+            prefill: { name },
+          });
+          sent.push(email);
+        } catch (err) {
+          console.error('[portal-admin] invite-deal send failed', email, err.message);
+          failed.push({ email, reason: err.message || 'Send failed' });
+        }
+      }
+      if (!sent.length) {
+        return res.status(502).json({ error: `Could not send: ${failed[0]?.reason || 'unknown error'}` });
+      }
+      return res.status(200).json({ ok: true, sent, failed });
     }
 
     if (op === 'offer-create') {

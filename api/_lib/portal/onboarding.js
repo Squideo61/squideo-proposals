@@ -80,7 +80,7 @@ export async function sendTeamInvite({ email, companyId, companyName, inviterNam
 // Resolve the deal's company, creating one from the proposal's business name
 // (or the signer's email domain as a last resort) when the deal has none —
 // the org is the portal's anchor, so we can't invite without it.
-async function resolveCompanyForDeal(dealId, proposalData, signerEmail) {
+export async function resolveCompanyForDeal(dealId, proposalData, signerEmail) {
   const [deal] = await sql`
     SELECT d.id, d.title, d.company_id, c.name AS company_name
       FROM deals d LEFT JOIN companies c ON c.id = d.company_id
