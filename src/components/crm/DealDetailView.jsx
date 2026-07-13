@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -1960,6 +1960,19 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
 
   useEffect(() => { loadContents(currentFolderId); }, [loadContents, currentFolderId]);
 
+  // Deal folders in Drive tagged with this deal but not the one we're using —
+  // leftovers from the old create-race. Merge and trash them by hand in Drive;
+  // they can hold real work, so nothing here deletes them.
+  const [dupeFolders, setDupeFolders] = useState([]);
+  useEffect(() => {
+    if (!driveEnabled || !driveFolderId) { setDupeFolders([]); return; }
+    let live = true;
+    actions.loadDealDuplicateFolders(dealId)
+      .then((resp) => { if (live) setDupeFolders(resp?.duplicates || []); })
+      .catch(() => { if (live) setDupeFolders([]); });
+    return () => { live = false; };
+  }, [actions, dealId, driveEnabled, driveFolderId]);
+
   const openFolder = (folder) => setPath((p) => [...p, { id: folder.id, name: folder.name }]);
   const goToCrumb = (idx) => setPath((p) => p.slice(0, idx + 1));
 
@@ -2113,6 +2126,28 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
               Open in Drive <ExternalLink size={11} />
             </a>
           )}
+        </div>
+      )}
+      {dupeFolders.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8, padding: '8px 10px', borderRadius: 8, background: '#FEF3C7', border: '1px solid #FCD34D', fontSize: 12, color: '#92400E' }}>
+          <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>
+              {dupeFolders.length === 1 ? 'A duplicate Drive folder' : dupeFolders.length + ' duplicate Drive folders'} for this project
+            </div>
+            <div style={{ marginBottom: 4 }}>
+              Files above live in the folder the CRM is using. Move anything worth keeping out of the duplicates, then delete them in Drive.
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {dupeFolders.map((f) => (
+                <a key={f.id} href={f.webViewLink || `https://drive.google.com/drive/folders/${f.id}`}
+                  target="_blank" rel="noopener noreferrer"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#92400E', fontWeight: 600 }}>
+                  {f.name} <ExternalLink size={11} />
+                </a>
+              ))}
+            </div>
+          </div>
         </div>
       )}
       {/* Breadcrumb — click a crumb to jump back up the folder path. */}

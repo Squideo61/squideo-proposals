@@ -145,7 +145,12 @@ export async function ensureSubfolderByPath(accessToken, rootFolderId, pathNames
 }
 
 // Find (by our dealId tag) or create the per-deal folder under the configured
-// root. Returns the folder id.
+// root. Returns { id, created }: the caller caches the id on the deal *before*
+// scaffolding the template, so a concurrent caller sees the folder straight away
+// rather than waiting out the (slow, many-call) scaffold and creating a second
+// one. Callers must also serialise on the deal — Drive allows same-named
+// siblings and its appProperties index lags writes, so two concurrent callers
+// would both find nothing and both create a folder.
 export async function ensureDealFolder(accessToken, { dealId, name }) {
   const root = rootId();
   if (!root) throw new Error('DEAL_DRIVE_ROOT_ID not configured');
@@ -157,7 +162,7 @@ export async function ensureDealFolder(accessToken, { dealId, name }) {
     `${DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name)` +
     `&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives`;
   const found = await driveFetch(accessToken, listUrl).then((r) => r.json());
-  if (found.files && found.files.length) return found.files[0].id;
+  if (found.files && found.files.length) return { id: found.files[0].id, created: false };
 
   const meta = {
     name: (name || dealId).slice(0, 120),
@@ -170,13 +175,24 @@ export async function ensureDealFolder(accessToken, { dealId, name }) {
     `${DRIVE_API}/files?supportsAllDrives=true&fields=id`,
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(meta) },
   ).then((r) => r.json());
-  // Newly created folder — lay down the standard production subfolder template.
-  // Best-effort: a mid-scaffold failure leaves a partial tree but the deal folder
-  // itself is still returned and usable.
-  try {
-    await applyFolderTemplate(accessToken, created.id);
-  } catch (_) { /* partial tree is fine; don't block folder creation */ }
-  return created.id;
+  return { id: created.id, created: true };
+}
+
+// Every folder under the root tagged with this dealId, oldest first. Normally
+// one; more than one means duplicates were created (see dealDriveFolder), so the
+// Files card can surface them for a manual merge.
+export async function findDealFolders(accessToken, dealId) {
+  const root = rootId();
+  if (!root) return [];
+  const query =
+    `'${q(root)}' in parents and mimeType='application/vnd.google-apps.folder' ` +
+    `and trashed=false and appProperties has { key='dealId' and value='${q(dealId)}' }`;
+  const url =
+    `${DRIVE_API}/files?q=${encodeURIComponent(query)}` +
+    `&fields=files(id,name,createdTime,webViewLink)&orderBy=createdTime` +
+    `&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives`;
+  const out = await driveFetch(accessToken, url).then((r) => r.json());
+  return out.files || [];
 }
 
 // Multipart upload of a buffer into a folder. Returns { id, webViewLink }.

@@ -8,7 +8,7 @@ import { serialiseComment, notifyCommentMentions } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
 import { trackingForDealThreads, trackingForMessages, backfillDealTrackingIds } from './tracking.js';
-import { ensureDealFolder, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree, isFolderWithin, listFolderContents, getDriveFile } from '../googleDrive.js';
+import { ensureDealFolder, findDealFolders, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree, isFolderWithin, listFolderContents, getDriveFile } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { enterProduction } from '../production.js';
@@ -30,6 +30,8 @@ export function ensureDealFileDriveColumns() {
     await sql`ALTER TABLE deal_files ALTER COLUMN blob_url DROP NOT NULL`;
     await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS drive_folder_id TEXT`;
     await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS overview_video_url TEXT`;
+    // Serialises Drive folder creation per deal — see dealDriveFolder.
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS drive_folder_claimed_at TIMESTAMPTZ`;
   })().catch((err) => { dealFileDriveEnsured = null; throw err; });
   return dealFileDriveEnsured;
 }
@@ -103,33 +105,95 @@ export function driveErrorHint(err) {
   return 'Could not start Google Drive upload: ' + (msg || 'unknown error');
 }
 
+// The cached folder id if the deal has one and it's still usable in Drive.
+// Self-heals a deleted/trashed folder by clearing the cache (so the caller
+// recreates); auth/transient errors return the cached id rather than wrongly
+// treating the folder as gone.
+async function cachedDealFolder(accessToken, dealId) {
+  const [d] = await sql`SELECT drive_folder_id FROM deals WHERE id = ${dealId}`;
+  if (!d?.drive_folder_id) return null;
+  let usable = true;
+  try { usable = await folderUsable(accessToken, d.drive_folder_id); }
+  catch { return d.drive_folder_id; }
+  if (usable) return d.drive_folder_id;
+  await sql`UPDATE deals SET drive_folder_id = NULL WHERE id = ${dealId}`;
+  return null;
+}
+
+// Poll for the folder id another caller is currently creating. Short by design:
+// the claimant caches the id right after the single create call, before the slow
+// template scaffold, so it lands within a second or two.
+async function awaitClaimedDealFolder(dealId, tries = 20, gapMs = 500) {
+  for (let i = 0; i < tries; i++) {
+    await new Promise((r) => setTimeout(r, gapMs));
+    const [d] = await sql`SELECT drive_folder_id FROM deals WHERE id = ${dealId}`;
+    if (d?.drive_folder_id) return d.drive_folder_id;
+  }
+  return null;
+}
+
 // Find-or-create a deal's Shared Drive folder, caching its id on the deal so we
 // only hit Drive once per deal.
+//
+// Creation is serialised per deal via an atomic claim on drive_folder_claimed_at.
+// Without it, concurrent callers (adding videos back-to-back fires a detached
+// Drive task per video, and uploads/setup-folders can land alongside them) each
+// see no cached id, each search Drive — whose appProperties index lags writes —
+// find nothing, and each create a folder. Drive allows same-named siblings, so
+// that silently leaves duplicate deal folders in the Shared Drive.
 export async function dealDriveFolder(accessToken, dealId) {
-  const [d] = await sql`SELECT drive_folder_id, title FROM deals WHERE id = ${dealId}`;
-  if (d?.drive_folder_id) {
-    // Self-heal: if the cached folder was deleted/trashed in Drive, clear it and
-    // re-find (by the deal tag) or recreate below. Auth/transient errors bubble
-    // up rather than wrongly recreating.
-    let usable = true;
-    try { usable = await folderUsable(accessToken, d.drive_folder_id); }
-    catch { return d.drive_folder_id; }
-    if (usable) return d.drive_folder_id;
-    await sql`UPDATE deals SET drive_folder_id = NULL WHERE id = ${dealId}`;
+  await ensureDealFileDriveColumns();
+
+  const cached = await cachedDealFolder(accessToken, dealId);
+  if (cached) return cached;
+
+  // Claim the right to create it. A claim older than 2 minutes is treated as
+  // abandoned (the claimant crashed mid-create) and can be taken over.
+  const claim = await sql`
+    UPDATE deals SET drive_folder_claimed_at = NOW()
+     WHERE id = ${dealId}
+       AND drive_folder_id IS NULL
+       AND (drive_folder_claimed_at IS NULL OR drive_folder_claimed_at < NOW() - INTERVAL '2 minutes')
+     RETURNING id`;
+  if (!claim.length) {
+    // Someone else is mid-create — wait for their folder instead of making a
+    // second one. If they never persist an id, fall through: ensureDealFolder
+    // searches by the deal tag first, so we adopt their folder if it exists.
+    const id = await awaitClaimedDealFolder(dealId);
+    if (id) return id;
   }
-  // Name the folder "<project number> — <title>" — the proposal number doubles
-  // as the project number, so folders read and sort sensibly in Drive.
-  const [p] = await sql`
-    SELECT number_year AS ny, number_seq AS ns
-      FROM proposals
-     WHERE deal_id = ${dealId} AND number_year IS NOT NULL AND number_seq IS NOT NULL
-     ORDER BY number_seq ASC LIMIT 1`;
-  const num = p?.ny && p?.ns ? `${p.ny}-${String(p.ns).padStart(3, '0')}` : null;
-  const title = d?.title || dealId;
-  const name = num ? `${num} — ${title}` : title;
-  const folderId = await ensureDealFolder(accessToken, { dealId, name });
-  await sql`UPDATE deals SET drive_folder_id = ${folderId} WHERE id = ${dealId}`;
-  return folderId;
+
+  try {
+    // Name the folder "<project number> — <title>" — the proposal number doubles
+    // as the project number, so folders read and sort sensibly in Drive.
+    const [d] = await sql`SELECT title FROM deals WHERE id = ${dealId}`;
+    const [p] = await sql`
+      SELECT number_year AS ny, number_seq AS ns
+        FROM proposals
+       WHERE deal_id = ${dealId} AND number_year IS NOT NULL AND number_seq IS NOT NULL
+       ORDER BY number_seq ASC LIMIT 1`;
+    const num = p?.ny && p?.ns ? `${p.ny}-${String(p.ns).padStart(3, '0')}` : null;
+    const title = d?.title || dealId;
+    const name = num ? `${num} — ${title}` : title;
+
+    const { id: folderId, created } = await ensureDealFolder(accessToken, { dealId, name });
+    // Cache the id before scaffolding: the template is a dozen-plus sequential
+    // Drive calls, and anyone waiting on the claim needs the id now, not then.
+    await sql`
+      UPDATE deals SET drive_folder_id = ${folderId}, drive_folder_claimed_at = NULL
+       WHERE id = ${dealId}`;
+    if (created) {
+      // Best-effort: a mid-scaffold failure leaves a partial tree, which the
+      // Files card's "Set up folders" button tops up.
+      try { await applyFolderTemplate(accessToken, folderId); }
+      catch (_) { /* partial tree is fine; don't block folder creation */ }
+    }
+    return folderId;
+  } catch (err) {
+    // Release the claim so the next caller can retry rather than waiting it out.
+    await sql`UPDATE deals SET drive_folder_claimed_at = NULL WHERE id = ${dealId}`.catch(() => {});
+    throw err;
+  }
 }
 
 // Make the deal's stored file list mirror its Drive folder: drop rows for files
@@ -933,6 +997,29 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     } catch (err) {
       console.error('[deal files] setup-folders failed', err.status, err.message);
       return res.status(502).json({ error: driveErrorHint(err) });
+    }
+  }
+
+  // /deals/:id/files/duplicate-folders — deal folders in Drive tagged with this
+  // deal beyond the one we're using. Should always be empty; anything here was
+  // created by the pre-claim race in dealDriveFolder and needs a manual merge in
+  // Drive (we never trash folders that may hold work). Best-effort.
+  if (action === 'files' && subaction === 'duplicate-folders' && req.method === 'GET') {
+    if (!driveFilesEnabled()) return res.status(200).json({ duplicates: [] });
+    const [d] = await sql`SELECT drive_folder_id FROM deals WHERE id = ${id}`;
+    if (!d?.drive_folder_id) return res.status(200).json({ duplicates: [] });
+    let accessToken;
+    try { accessToken = await getFreshAccessToken(user.email); }
+    catch { return res.status(200).json({ duplicates: [] }); }
+    try {
+      const folders = await findDealFolders(accessToken, id);
+      const duplicates = folders
+        .filter((f) => f.id !== d.drive_folder_id)
+        .map((f) => ({ id: f.id, name: f.name, createdAt: f.createdTime || null, webViewLink: f.webViewLink || null }));
+      return res.status(200).json({ duplicates, activeFolderId: d.drive_folder_id });
+    } catch (err) {
+      console.warn('[deal files] duplicate folder check failed', err.message);
+      return res.status(200).json({ duplicates: [] });
     }
   }
 

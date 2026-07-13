@@ -3440,6 +3440,12 @@ export function StoreProvider({ children }) {
         .then((resp) => actions.loadDealDetail(dealId).then(() => resp));
     },
 
+    // Any Drive folders tagged with this deal other than the one it's using —
+    // leftovers from the old folder-creation race. Returns { duplicates: [...] }.
+    loadDealDuplicateFolders(dealId) {
+      return api.get('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/duplicate-folders');
+    },
+
     // Fetch the deal's Drive subfolder tree (for showing structure in the Files
     // card). Returns { folders: [...] }.
     loadDealFolders(dealId) {

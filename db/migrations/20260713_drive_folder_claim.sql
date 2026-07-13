@@ -1,0 +1,12 @@
+-- Serialise per-deal Google Drive folder creation.
+--
+-- dealDriveFolder() was an unguarded check-then-create: concurrent callers (the
+-- detached per-video Drive tasks fired by adding videos back-to-back, plus any
+-- upload or "Set up folders" click landing alongside them) all saw a NULL
+-- drive_folder_id, all searched Drive (whose appProperties index lags writes),
+-- all found nothing, and all created a folder. Drive allows same-named siblings,
+-- so this silently left duplicate deal folders in the Shared Drive.
+--
+-- Callers now take an atomic claim on this column before creating; a claim older
+-- than 2 minutes is treated as abandoned and can be taken over.
+ALTER TABLE deals ADD COLUMN IF NOT EXISTS drive_folder_claimed_at TIMESTAMPTZ;
