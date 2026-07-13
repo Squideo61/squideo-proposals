@@ -77,9 +77,29 @@ export async function sendTeamInvite({ email, companyId, companyName, inviterNam
   });
 }
 
+// Free-mail domains never name an organisation — "gmail's portal" is nonsense.
+// A signer on a personal address falls back to the deal title instead.
+const FREEMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'hotmail.co.uk',
+  'live.com', 'live.co.uk', 'yahoo.com', 'yahoo.co.uk', 'ymail.com',
+  'icloud.com', 'me.com', 'mac.com', 'aol.com', 'protonmail.com', 'proton.me',
+  'gmx.com', 'mail.com', 'msn.com', 'btinternet.com', 'sky.com', 'virginmedia.com',
+]);
+
+// An organisation name derived from the signer's email domain (acme.co.uk →
+// "Acme"), or null for personal addresses.
+function companyNameFromEmail(email) {
+  if (!email || !email.includes('@')) return null;
+  const domain = email.split('@')[1].trim().toLowerCase();
+  if (!domain || FREEMAIL_DOMAINS.has(domain)) return null;
+  const label = domain.split('.')[0];
+  if (!label || label.length < 2) return null;
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 // Resolve the deal's company, creating one from the proposal's business name
-// (or the signer's email domain as a last resort) when the deal has none —
-// the org is the portal's anchor, so we can't invite without it.
+// (then the signer's work-email domain, then the deal title) when the deal has
+// none — the org is the portal's anchor, so we can't invite without it.
 export async function resolveCompanyForDeal(dealId, proposalData, signerEmail) {
   const [deal] = await sql`
     SELECT d.id, d.title, d.company_id, c.name AS company_name
@@ -91,7 +111,8 @@ export async function resolveCompanyForDeal(dealId, proposalData, signerEmail) {
 
   const businessName = trimOrNull(proposalData?.contactBusinessName)
     || trimOrNull(proposalData?.clientName)
-    || (signerEmail && signerEmail.includes('@') ? signerEmail.split('@')[1].split('.')[0] : null);
+    || companyNameFromEmail(signerEmail)
+    || trimOrNull(deal.title);
   if (!businessName) return null;
 
   // Reuse an exact-name match before creating (mirrors clientResolver.js).

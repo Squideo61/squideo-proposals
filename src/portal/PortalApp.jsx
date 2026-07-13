@@ -213,14 +213,17 @@ function Boot() {
       </div>
     );
   }
+  // An authenticated session wins over a stale ?invite= / ?reset= token: those
+  // are read once at boot, so after accepting an invite (which signs you in)
+  // this is what takes you into the portal instead of leaving you looking at
+  // the consumed invite form.
+  if (user) return <AuthedApp />;
   if (inviteToken) return <AcceptInvite token={inviteToken} onDone={clearQuery} />;
   if (resetToken) return <ResetPassword token={resetToken} onDone={clearQuery} />;
-  if (!user) {
-    const magicError = typeof magicState === 'string' && magicState.startsWith('failed:')
-      ? magicState.slice(7) : null;
-    return <Login initialError={magicError} />;
-  }
-  return <AuthedApp />;
+
+  const magicError = typeof magicState === 'string' && magicState.startsWith('failed:')
+    ? magicState.slice(7) : null;
+  return <Login initialError={magicError} />;
 }
 
 export default function PortalApp() {

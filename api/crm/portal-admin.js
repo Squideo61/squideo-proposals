@@ -21,7 +21,7 @@ import { cors, requirePermission } from '../_lib/middleware.js';
 import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureDealContactsTable } from '../_lib/crm/shared.js';
 import { sendMail } from '../_lib/email.js';
 import { ensurePortalTables } from '../_lib/portal/db.js';
-import { sendTeamInvite, createPortalInvite, inviteUrlFor, resolveCompanyForDeal } from '../_lib/portal/onboarding.js';
+import { sendTeamInvite, createPortalInvite, inviteUrlFor } from '../_lib/portal/onboarding.js';
 import { portalTeamInviteHtml } from '../_lib/portal/emails.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 
@@ -256,13 +256,19 @@ export default async function handler(req, res) {
       if (!dealId) return res.status(400).json({ error: 'dealId required' });
       if (!recipients.length) return res.status(400).json({ error: 'Pick at least one person to invite' });
 
-      const [prop] = await sql`
-        SELECT data FROM proposals WHERE deal_id = ${dealId} ORDER BY created_at DESC LIMIT 1
+      // Staff-initiated invites never invent an organisation — the org is what
+      // the invitee will see projects for, so it must be a deliberate link.
+      // (The automatic post-signing invite does create one, from the proposal.)
+      const [dealRow] = await sql`
+        SELECT d.company_id, c.name AS company_name
+          FROM deals d LEFT JOIN companies c ON c.id = d.company_id
+         WHERE d.id = ${dealId}
       `;
-      const org = await resolveCompanyForDeal(dealId, prop?.data || null, recipients[0]?.email || null);
-      if (!org?.companyId) {
+      if (!dealRow) return res.status(404).json({ error: 'Deal not found' });
+      if (!dealRow.company_id) {
         return res.status(400).json({ error: 'This deal has no company — link it to a company first, then invite.' });
       }
+      const org = { companyId: dealRow.company_id, companyName: dealRow.company_name };
 
       await ensureDealContactsTable();
       const sent = [];
