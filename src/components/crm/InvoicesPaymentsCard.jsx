@@ -165,10 +165,10 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button onClick={() => openCreate()} className="btn"><Plus size={12} /> Create invoice</button>
           <button onClick={() => setAdding(true)} className="btn-ghost"><Plus size={12} /> Upload invoice</button>
-          {/* PO tracking is deal-scoped, so no PO upload on the company page. */}
+          {/* PO tracking is deal-scoped, so no PO on the company page. */}
           {dealId && (
-            <button onClick={() => setUploadingPo(true)} className="btn-ghost">
-              <Upload size={12} /> {poNumber ? 'Replace PO' : 'Upload PO'}
+            <button onClick={() => setUploadingPo(true)} className="btn-ghost" title="Record the client's PO number, with or without the document">
+              <Upload size={12} /> {poNumber ? 'Edit PO' : 'Add PO'}
             </button>
           )}
           <button onClick={() => setAddingExtra(true)} className="btn-ghost"><Plus size={12} /> Add extra</button>

@@ -7,10 +7,14 @@ import { detectPoNumberFromFile } from '../../utils/poDetect.js';
 
 const MAX_BYTES = 20 * 1024 * 1024;
 
-// Upload the client's purchase order against a deal. Saving stores the documents
-// and marks the PO received (deals.po_number + po_received_at), which is what
-// turns the deal's "Pending PO" state green here, on the pipeline card, and in
-// Pending Payments — and seeds the reference on its Xero invoice.
+// Record the client's purchase order against a deal. Saving marks the PO received
+// (deals.po_number + po_received_at) — which turns the deal's "Pending PO" state
+// green here, on the pipeline card, and in Pending Payments, and seeds the
+// reference on its Xero invoice — and stores any documents alongside it.
+//
+// The number is what matters; the document is optional. Often the PO arrives as
+// a number in an email body with nothing attached, so a typed/pasted number on
+// its own is enough to save.
 export function UploadPoModal({ dealId, currentNumber, onClose, onSaved }) {
   const { actions, showMsg } = useStore();
   const [files, setFiles] = useState([]);
@@ -50,7 +54,6 @@ export function UploadPoModal({ dealId, currentNumber, onClose, onSaved }) {
   const save = async (e) => {
     e.preventDefault();
     const num = poNumber.trim();
-    if (!files.length) { showMsg?.('Choose the purchase order document to upload', 'error'); return; }
     if (!num) { showMsg?.('Enter the PO number', 'error'); return; }
     setSaving(true);
     try {
@@ -69,51 +72,14 @@ export function UploadPoModal({ dealId, currentNumber, onClose, onSaved }) {
   return (
     <Modal onClose={onClose} showClose={false}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Upload purchase order</h2>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Add purchase order</h2>
         <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
       </div>
 
       <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <p style={{ margin: 0, fontSize: 12, color: BRAND.muted }}>
-          Uploading marks the PO as received: the deal shows <strong>PO {'<number>'}</strong> in Pending Payments and on its pipeline card, and the number becomes the reference on its invoice.
+          Marks the PO as received: the deal shows <strong>PO {'<number>'}</strong> in Pending Payments and on its pipeline card, and the number becomes the reference on its invoice. The document is optional — the number on its own is enough.
         </p>
-
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept="application/pdf,image/*"
-          style={{ display: 'none' }}
-          onChange={(e) => addFiles(e.target.files)}
-        />
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
-          onClick={() => inputRef.current?.click()}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            padding: '18px 14px', border: '1px dashed ' + (dragOver ? BRAND.blue : BRAND.border),
-            borderRadius: 8, cursor: 'pointer', background: dragOver ? '#F0F9FF' : BRAND.paper,
-            fontSize: 13, color: BRAND.muted, textAlign: 'center',
-          }}
-        >
-          <Upload size={14} />
-          <span>Drop the PO here or click to choose (PDF or image, max 20 MB)</span>
-        </div>
-
-        {files.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {files.map((f, i) => (
-              <div key={f.name + i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', border: '1px solid ' + BRAND.border, borderRadius: 6, background: 'white' }}>
-                <span style={{ flex: 1, minWidth: 0, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</span>
-                <button type="button" onClick={() => removeFile(i)} className="btn-icon" aria-label={`Remove ${f.name}`} title="Remove">
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>PO number</span>
@@ -122,7 +88,7 @@ export function UploadPoModal({ dealId, currentNumber, onClose, onSaved }) {
             value={poNumber}
             onChange={(e) => { touched.current = true; setDetectedFrom(null); setPoNumber(e.target.value); }}
             className="input"
-            placeholder={detecting ? 'Reading the document…' : 'e.g. 4500012345'}
+            placeholder={detecting ? 'Reading the document…' : 'Type or paste it — e.g. 4500012345'}
             autoFocus
           />
         </label>
@@ -142,10 +108,52 @@ export function UploadPoModal({ dealId, currentNumber, onClose, onSaved }) {
           </p>
         )}
 
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept="application/pdf,image/*"
+          style={{ display: 'none' }}
+          onChange={(e) => addFiles(e.target.files)}
+        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>
+            Document <span style={{ fontWeight: 400, color: BRAND.muted }}>· optional</span>
+          </span>
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
+            onClick={() => inputRef.current?.click()}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              padding: '14px', border: '1px dashed ' + (dragOver ? BRAND.blue : BRAND.border),
+              borderRadius: 8, cursor: 'pointer', background: dragOver ? '#F0F9FF' : BRAND.paper,
+              fontSize: 13, color: BRAND.muted, textAlign: 'center',
+            }}
+          >
+            <Upload size={14} />
+            <span>Drop the PO here or click to choose — we&rsquo;ll read the number off it (PDF or image, max 20 MB)</span>
+          </div>
+        </div>
+
+        {files.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {files.map((f, i) => (
+              <div key={f.name + i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', border: '1px solid ' + BRAND.border, borderRadius: 6, background: 'white' }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</span>
+                <button type="button" onClick={() => removeFile(i)} className="btn-icon" aria-label={`Remove ${f.name}`} title="Remove">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
-          <button type="submit" className="btn" disabled={saving || detecting || !files.length || !poNumber.trim()}>
-            {saving ? 'Saving…' : 'Upload & mark PO received'}
+          <button type="submit" className="btn" disabled={saving || detecting || !poNumber.trim()}>
+            {saving ? 'Saving…' : (files.length ? 'Upload & mark PO received' : 'Mark PO received')}
           </button>
         </div>
       </form>
