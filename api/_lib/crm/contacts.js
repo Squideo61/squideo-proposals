@@ -2,6 +2,7 @@ import sql from '../db.js';
 import { makeId, trimOrNull, lowerOrNull, ensureDealContactsTable, ensureContactCompanies } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { ensurePortalTables } from '../portal/db.js';
 
 // Re-read a contact with its full set of organisation ids (the join table is a
 // superset that already includes the primary company_id after backfill).
@@ -23,13 +24,23 @@ export async function contactsRoute(req, res, id, action, user, subaction = null
       // first (lazily created) so the correlated subquery can't 500.
       await ensureDealContactsTable().catch(() => {});
       await ensureContactCompanies();
+      // Portal status is matched by email — the customer portal has its own
+      // identities (portal_users), deliberately not FK'd to contacts.
+      await ensurePortalTables().catch(() => {});
       const rows = await sql`
         SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at,
                (SELECT COUNT(DISTINCT d.id)::int FROM deals d
                   WHERE d.primary_contact_id = contacts.id
                      OR EXISTS (SELECT 1 FROM deal_contacts dc WHERE dc.contact_id = contacts.id AND dc.deal_id = d.id)
                ) AS deal_count,
-               COALESCE((SELECT array_agg(cc.company_id) FROM contact_companies cc WHERE cc.contact_id = contacts.id), '{}') AS company_ids
+               COALESCE((SELECT array_agg(cc.company_id) FROM contact_companies cc WHERE cc.contact_id = contacts.id), '{}') AS company_ids,
+               (SELECT CASE WHEN pu.disabled_at IS NULL THEN 'active' ELSE 'disabled' END
+                  FROM portal_users pu WHERE LOWER(pu.email) = LOWER(contacts.email) LIMIT 1
+               ) AS portal_status,
+               EXISTS (SELECT 1 FROM portal_invites i
+                        WHERE LOWER(i.email) = LOWER(contacts.email)
+                          AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > NOW()
+               ) AS portal_invite_pending
         FROM contacts
         WHERE provisional = FALSE
         ORDER BY name ASC NULLS LAST, email ASC
@@ -239,6 +250,12 @@ export function serialiseContact(r) {
     source: r.source || null,
     // Linked-deal count (list query only) so the UI can warn before deleting.
     dealCount: r.deal_count !== undefined ? Number(r.deal_count) : null,
+    // Customer-portal status (list query only): 'active' | 'disabled' | null,
+    // plus whether an unaccepted invite is outstanding.
+    ...(r.portal_status !== undefined ? {
+      portalStatus: r.portal_status || null,
+      portalInvitePending: r.portal_invite_pending === true,
+    } : {}),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

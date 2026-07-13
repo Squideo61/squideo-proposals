@@ -6,6 +6,7 @@ import { useIsMobile, formatGBP, formatRelativeTime } from '../../utils.js';
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
 import { PaymentsCard } from './PaymentsCard.jsx';
+import { PortalContactCard } from './PortalContactCard.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
 
 export function ContactDetailView({ contactId, onBack, onOpenDeal, onOpenCompany, onEdit }) {
@@ -62,6 +63,11 @@ export function ContactDetailView({ contactId, onBack, onOpenDeal, onOpenCompany
             {detail.notes}
           </div>
         )}
+      </div>
+
+      {/* Customer-portal access + activity for this person. */}
+      <div style={{ marginBottom: 16 }}>
+        <PortalContactCard contactId={contactId} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16 }}>

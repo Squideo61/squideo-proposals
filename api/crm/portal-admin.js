@@ -21,8 +21,9 @@ import { cors, requirePermission } from '../_lib/middleware.js';
 import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureDealContactsTable } from '../_lib/crm/shared.js';
 import { sendMail } from '../_lib/email.js';
 import { ensurePortalTables } from '../_lib/portal/db.js';
+import { createRawToken, hashToken } from '../_lib/portal/auth.js';
 import { sendTeamInvite, createPortalInvite, inviteUrlFor } from '../_lib/portal/onboarding.js';
-import { portalTeamInviteHtml } from '../_lib/portal/emails.js';
+import { portalTeamInviteHtml, portalResetHtml, PORTAL_URL } from '../_lib/portal/emails.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 
 // Any of these grants access — the panel spans company pages (members) and
@@ -93,6 +94,111 @@ async function inviteCandidatesForDeal(dealId) {
   };
 }
 
+// One person's portal profile, for the Client-portal card on a contact page:
+// their account, which organisations they can see, pending invites, and a
+// recent-activity feed stitched from everything the portal records them doing.
+async function portalProfileForEmail(email) {
+  const clean = String(email || '').trim().toLowerCase();
+  if (!clean) return { account: null };
+
+  const [pu] = await sql`
+    SELECT id, email, name, phone, job_title, last_login_at, disabled_at, created_at
+      FROM portal_users WHERE email = ${clean}
+  `;
+
+  // Pending invites exist even without an account (that's the whole point).
+  const invites = await sql`
+    SELECT i.id, i.company_id, i.expires_at, i.created_at, i.invited_by, c.name AS company_name
+      FROM portal_invites i JOIN companies c ON c.id = i.company_id
+     WHERE i.email = ${clean} AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > NOW()
+     ORDER BY i.created_at DESC
+  `;
+
+  if (!pu) {
+    return {
+      account: null,
+      invites: invites.map((i) => ({
+        id: i.id, companyId: i.company_id, companyName: i.company_name,
+        expiresAt: i.expires_at, createdAt: i.created_at, invitedBy: i.invited_by || null,
+      })),
+      memberships: [],
+      activity: [],
+    };
+  }
+
+  const [memberships, brandFiles, dealFiles, extras, quotes] = await Promise.all([
+    sql`
+      SELECT m.company_id, m.disabled_at, m.created_at, c.name AS company_name
+        FROM portal_memberships m JOIN companies c ON c.id = m.company_id
+       WHERE m.portal_user_id = ${pu.id}
+       ORDER BY m.created_at ASC
+    `,
+    sql`
+      SELECT filename, created_at FROM portal_company_files
+       WHERE uploaded_by_portal_user = ${pu.id} ORDER BY created_at DESC LIMIT 20
+    `,
+    sql`
+      SELECT f.filename, f.created_at, f.deal_id, d.title AS deal_title
+        FROM deal_files f LEFT JOIN deals d ON d.id = f.deal_id
+       WHERE f.portal_user_id = ${pu.id} ORDER BY f.created_at DESC LIMIT 20
+    `,
+    sql`
+      SELECT e.description, e.amount, e.created_at, e.deal_id, d.title AS deal_title
+        FROM deal_extras e LEFT JOIN deals d ON d.id = e.deal_id
+       WHERE e.portal_user_id = ${pu.id} ORDER BY e.created_at DESC LIMIT 20
+    `,
+    sql`
+      SELECT id, created_at, status FROM quote_requests
+       WHERE portal_user_id = ${pu.id} ORDER BY created_at DESC LIMIT 20
+    `,
+  ]);
+
+  const activity = [
+    ...brandFiles.map((f) => ({
+      type: 'file', at: f.created_at,
+      text: `Uploaded ${f.filename} to brand & documents`, link: null,
+    })),
+    ...dealFiles.map((f) => ({
+      type: 'file', at: f.created_at,
+      text: `Uploaded ${f.filename}${f.deal_title ? ` to ${f.deal_title}` : ''}`,
+      link: f.deal_id ? `#/deal/${f.deal_id}` : null,
+    })),
+    ...extras.map((e) => ({
+      type: 'extra', at: e.created_at,
+      text: `Added an extra: ${e.description} (£${Number(e.amount || 0).toFixed(2)} ex VAT)`,
+      link: e.deal_id ? `#/deal/${e.deal_id}` : null,
+    })),
+    ...quotes.map((q) => ({
+      type: 'quote', at: q.created_at,
+      text: `Requested a new video (10% portal discount)${q.status === 'qualified' ? ' — qualified' : ''}`,
+      link: '#/quote-requests',
+    })),
+  ].sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 15);
+
+  return {
+    account: {
+      id: pu.id,
+      email: pu.email,
+      name: pu.name || null,
+      jobTitle: pu.job_title || null,
+      lastLoginAt: pu.last_login_at || null,
+      createdAt: pu.created_at,
+      disabled: !!pu.disabled_at,
+    },
+    memberships: memberships.map((m) => ({
+      companyId: m.company_id,
+      companyName: m.company_name,
+      disabled: !!m.disabled_at,
+      joinedAt: m.created_at,
+    })),
+    invites: invites.map((i) => ({
+      id: i.id, companyId: i.company_id, companyName: i.company_name,
+      expiresAt: i.expires_at, createdAt: i.created_at, invitedBy: i.invited_by || null,
+    })),
+    activity,
+  };
+}
+
 export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -105,6 +211,25 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const companyId = trimOrNull(req.query.companyId);
       const dealId = trimOrNull(req.query.dealId);
+      const contactId = trimOrNull(req.query.contactId);
+
+      // Portal profile for a contact (the Client-portal card on a contact page).
+      if (contactId) {
+        const [ct] = await sql`SELECT id, email, name FROM contacts WHERE id = ${contactId}`;
+        if (!ct) return res.status(404).json({ error: 'Contact not found' });
+        if (!ct.email) return res.status(200).json({ contactId, noEmail: true, account: null, invites: [], memberships: [], activity: [] });
+        const profile = await portalProfileForEmail(ct.email);
+        // Which of the contact's organisations they could be invited to.
+        const companies = await sql`
+          SELECT c.id, c.name FROM companies c
+           WHERE c.id = (SELECT company_id FROM contacts WHERE id = ${contactId})
+              OR c.id IN (SELECT company_id FROM contact_companies WHERE contact_id = ${contactId})
+        `.catch(() => []);
+        return res.status(200).json({
+          contactId, email: ct.email, ...profile,
+          companies: companies.map((c) => ({ id: c.id, name: c.name })),
+        });
+      }
 
       if (companyId) {
         const members = await sql`
@@ -317,6 +442,50 @@ export default async function handler(req, res) {
         return res.status(502).json({ error: `Could not send: ${failed[0]?.reason || 'unknown error'}` });
       }
       return res.status(200).json({ ok: true, sent, failed });
+    }
+
+    // Account-level controls from a contact's portal card. Disabling kills every
+    // session immediately (token_version bump) and blocks login everywhere, as
+    // opposed to disable-member which only removes one organisation.
+    if (op === 'user-disable' || op === 'user-enable' || op === 'user-signout' || op === 'user-reset-link') {
+      const portalUserId = trimOrNull(body.portalUserId);
+      if (!portalUserId) return res.status(400).json({ error: 'portalUserId required' });
+      const [pu] = await sql`SELECT id, email, name FROM portal_users WHERE id = ${portalUserId}`;
+      if (!pu) return res.status(404).json({ error: 'Portal account not found' });
+
+      if (op === 'user-disable') {
+        await sql`
+          UPDATE portal_users SET disabled_at = NOW(), token_version = token_version + 1
+           WHERE id = ${portalUserId}
+        `;
+        return res.status(200).json({ ok: true });
+      }
+      if (op === 'user-enable') {
+        await sql`UPDATE portal_users SET disabled_at = NULL WHERE id = ${portalUserId}`;
+        return res.status(200).json({ ok: true });
+      }
+      if (op === 'user-signout') {
+        await sql`UPDATE portal_users SET token_version = token_version + 1 WHERE id = ${portalUserId}`;
+        return res.status(200).json({ ok: true });
+      }
+
+      // user-reset-link: same single-use hashed token the portal's own
+      // "forgotten password" flow issues (60 min), emailed to the client.
+      const raw = createRawToken();
+      await sql`
+        INSERT INTO portal_login_tokens (id, portal_user_id, token_hash, purpose, expires_at)
+        VALUES (${makeId('plt')}, ${portalUserId}, ${hashToken(raw)}, 'password_reset',
+                ${new Date(Date.now() + 60 * 60 * 1000).toISOString()})
+      `;
+      const resetUrl = `${PORTAL_URL}?reset=${encodeURIComponent(raw)}`;
+      await sendMail({
+        to: pu.email,
+        subject: 'Reset your Squideo portal password',
+        html: portalResetHtml({ resetUrl }),
+        text: `Choose a new Squideo Client Portal password (link works once, expires in 60 minutes): ${resetUrl}`,
+        throwOnError: true,
+      });
+      return res.status(200).json({ ok: true, email: pu.email });
     }
 
     if (op === 'offer-create') {

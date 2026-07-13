@@ -213,7 +213,10 @@ function ContactRow({ contact, onOpen, onEdit }) {
           {(contact.name || contact.email || '?')[0].toUpperCase()}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: 14 }}>{contact.name || contact.email || 'Unnamed'}</div>
+          <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 7 }}>
+            {contact.name || contact.email || 'Unnamed'}
+            <PortalBadge status={contact.portalStatus} invitePending={contact.portalInvitePending} />
+          </div>
           <div style={{ fontSize: 12, color: BRAND.muted, display: 'flex', gap: 12, marginTop: 2, flexWrap: 'wrap' }}>
             {contact.email && <span>{contact.email}</span>}
             {orgNames.length > 0 && <span>· {orgNames.join(', ')}</span>}
@@ -286,6 +289,31 @@ function CompanyRow({ company, owed = 0, onOpen, onEdit, onToggleCustomer }) {
         <Edit2 size={14} />
       </button>
     </div>
+  );
+}
+
+// Customer-portal status at a glance. Nothing renders for the majority of
+// contacts who've never been invited.
+function PortalBadge({ status, invitePending }) {
+  const pill = status === 'active'
+    ? { label: 'Portal', bg: '#2BB8E622', color: '#0B6E93', title: 'Has customer-portal access' }
+    : status === 'disabled'
+      ? { label: 'Portal off', bg: '#DC262622', color: '#B91C1C', title: 'Portal access revoked' }
+      : invitePending
+        ? { label: 'Portal invited', bg: '#F59E0B22', color: '#B45309', title: 'Portal invite sent — not accepted yet' }
+        : null;
+  if (!pill) return null;
+  return (
+    <span
+      title={pill.title}
+      style={{
+        background: pill.bg, color: pill.color, fontSize: 9.5, fontWeight: 700,
+        padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4,
+        flexShrink: 0,
+      }}
+    >
+      {pill.label}
+    </span>
   );
 }
 
