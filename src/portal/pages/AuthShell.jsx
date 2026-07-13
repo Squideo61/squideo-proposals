@@ -22,7 +22,7 @@ export default function AuthShell({ children, footer = null }) {
         {children}
       </div>
       <div style={{ marginTop: 22, color: '#7E97A8', fontSize: 12.5, textAlign: 'center', lineHeight: 1.6 }}>
-        {footer || <>Need help? Email <a href="mailto:hello@squideo.co.uk" style={{ color: '#9FDFF5' }}>hello@squideo.co.uk</a> or call 01482 738 656.</>}
+        {footer || <>Need help? Email <a href="mailto:enquiries@squideo.co.uk" style={{ color: '#9FDFF5' }}>enquiries@squideo.co.uk</a> or call 01482 738 656.</>}
       </div>
     </div>
   );
