@@ -306,7 +306,6 @@ async function buildInsights(req) {
   // still-open viewed proposals would wrongly count them as "not won".
   const decidedProp = withProposal.filter((d) => d.isSale || d.isLost);
   const viewedDecided = decidedProp.filter((d) => d.proposalOpens > 0);
-  const notViewedDecided = decidedProp.filter((d) => d.proposalOpens === 0);
   // Follow-up: a proposal the client opened, still open, sorted by recency.
   const followUp = open.filter((d) => d.hasProposal && d.proposalOpens > 0 && d.lastOpenedAt)
     .sort((a, b) => new Date(b.lastOpenedAt) - new Date(a.lastOpenedAt))
@@ -317,7 +316,6 @@ async function buildInsights(req) {
     viewed: viewed.length,
     viewRate: pctRate(viewed.length, withProposal.length),
     winRateViewed: pctRate(viewedDecided.filter((d) => d.isSale).length, viewedDecided.length),
-    winRateNotViewed: pctRate(notViewedDecided.filter((d) => d.isSale).length, notViewedDecided.length),
     followUp,
   };
 

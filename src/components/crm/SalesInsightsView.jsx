@@ -410,8 +410,9 @@ function Engagement({ engagement, onOpenDeal, isMobile }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <Stat icon={FileText} label="Proposals sent" value={e.sent ?? 0} accent="#0EA5E9" isMobile={isMobile} />
         <Stat icon={Eye} label="View rate" value={fmtPct(e.viewRate)} sub={`${e.viewed ?? 0} opened`} accent="#7C3AED" isMobile={isMobile} />
-        <Stat icon={Trophy} label="Win — viewed" value={fmtPct(e.winRateViewed)} sub="opened the proposal" accent="#16A34A" colorValue isMobile={isMobile} />
-        <Stat icon={XCircle} label="Win — not viewed" value={fmtPct(e.winRateNotViewed)} sub="never opened" accent="#94A3B8" isMobile={isMobile} />
+        <div style={{ gridColumn: '1 / -1' }}>
+          <Stat icon={Trophy} label="Win — viewed" value={fmtPct(e.winRateViewed)} sub="opened the proposal" accent="#16A34A" colorValue isMobile={isMobile} />
+        </div>
       </div>
       <div>
         <Panel style={{ padding: 0 }}>
