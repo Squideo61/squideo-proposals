@@ -27,7 +27,7 @@ import {
   durationDaysForLength, workingDaysBetween, addWorkingDays, addDays,
   nextWorkingDay, todayStr, countWorkingDays, isWeekend,
 } from '../scheduleCalendar.js';
-import { isVideoSignedOff } from '../productionStages.js';
+import { isVideoSignedOff, stageOrderIndex } from '../productionStages.js';
 
 // Finish work at least this many working days before the client delivery date,
 // so it can be checked internally first.
@@ -256,9 +256,31 @@ async function approvedMilestones(videoIds) {
   }
   return map;
 }
+// The BOARD POSITION at which each stage's work is finished. A video sitting in
+// Amends 1 has already had its visuals produced (they're out for client feedback
+// — that's what the amends are ON), and one in Amends 2 has had its production
+// done. So anything at or past that column needs no further booking of that
+// stage, even though the corresponding milestone isn't approved yet (approving
+// it is what moves the card OUT of amends). Relying on the milestone alone meant
+// assigning a producer to an amends card re-booked work that was already done.
+const STAGE_DONE_AT = {
+  storyboard: stageOrderIndex('pre_production', 'amends_1'),
+  production: stageOrderIndex('production', 'amends_2'),
+};
+// Holding columns aren't progression — they just park a card. Their position in
+// the column order is meaningless (they happen to sit after Amends 2), so a card
+// in one tells us nothing about what's been produced. Read the milestones for
+// those instead of its board position.
+const HOLDING_STAGES = new Set(['back_up', 'on_hold', 'reserved', 'reserved_express', 'days_off_various']);
+
 // `approved` = Set of approved milestones for the video; phase/stage = its board position.
 function stageComplete(kind, approved, phase, stage) {
-  if (phase && stage && isVideoSignedOff(phase, stage)) return true;
+  if (phase && stage && !HOLDING_STAGES.has(stage)) {
+    if (isVideoSignedOff(phase, stage)) return true;
+    const idx = stageOrderIndex(phase, stage);
+    const doneAt = STAGE_DONE_AT[kind];
+    if (idx >= 0 && doneAt >= 0 && idx >= doneAt) return true;
+  }
   const done = approved || new Set();
   return kind === 'storyboard' ? done.has('storyboard') : done.has('video');
 }
