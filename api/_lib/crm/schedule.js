@@ -76,6 +76,20 @@ export function ensureScheduleTables() {
     // to the leave request that spawned them so they can be cleaned up if it's
     // denied / cancelled. kind = 'cover'.
     await sql`ALTER TABLE schedule_assignments ADD COLUMN IF NOT EXISTS cover_leave_id TEXT`;
+    // Work pushed back because the CLIENT wasn't ready. Slipping past the delivery
+    // date is then their doing, not a production clash — so these blocks never
+    // raise a scheduling conflict (see reflowSchedules).
+    await sql`ALTER TABLE schedule_assignments ADD COLUMN IF NOT EXISTS client_delayed BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Undo point for the last "Update rota" press: the pre-change rows, so the
+    // manager can put the rota back exactly as it was. Only the most recent
+    // reflow is retained.
+    await sql`CREATE TABLE IF NOT EXISTS schedule_reflow_undo (
+      id TEXT PRIMARY KEY,
+      scope TEXT NOT NULL DEFAULT 'all',
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      snapshot JSONB NOT NULL
+    )`;
     await sql`CREATE TABLE IF NOT EXISTS leave_requests (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -518,10 +532,10 @@ async function notifyConflicts(deal, conflicts) {
 // (auto_generated=FALSE) so a later per-deal auto-sync doesn't undo the reorder.
 const IMMINENT_DAYS = 1; // "24 hours before its scheduled date" (starts today/tomorrow, or overdue)
 
-export async function reflowSchedules(scopeEmails) {
+export async function reflowSchedules(scopeEmails, { scope = 'all', actorEmail = null } = {}) {
   await ensureScheduleTables();
   const emails = [...new Set((scopeEmails || []).map(e => String(e).toLowerCase()).filter(Boolean))];
-  if (!emails.length) return { moved: 0, producers: 0 };
+  if (!emails.length) return { moved: 0, removed: 0, producers: 0 };
   const today = todayStr();
 
   const asg = await sql`SELECT * FROM schedule_assignments WHERE user_email = ANY(${emails})`;
@@ -570,15 +584,71 @@ export async function reflowSchedules(scopeEmails) {
   const isStale = (r) => r.video_id && r.kind !== 'manual' && r.auto_generated
     && isDone(r) && asDateStr(r.end_date) >= today;
 
+  // Readiness of a block: its prerequisite milestone is approved ("green").
+  const readyOf = (r) => {
+    const approved = approvedByVideo.get(r.video_id) || new Set();
+    return r.kind === 'storyboard' ? approved.has('script') : approved.has('storyboard');
+  };
+  const daysUntil = (r) => {
+    const start = asDateStr(r.start_date);
+    return start >= today ? countWorkingDays(today, start) - 1 : -(countWorkingDays(start, today) - 1);
+  };
+  // A block is STUCK when the client hasn't come back in time: not ready, and due
+  // within 24h (or already overdue).
+  const isStuck = (r) => canReflow(r) && !readyOf(r) && daysUntil(r) <= IMMINENT_DAYS;
+
+  // The whole VIDEO is delayed if any of its blocks is stuck. This is the key
+  // rule: a video's production can never overtake its own visuals, so deferring
+  // the storyboard must drag the matching production block back with it —
+  // otherwise the repack would happily pull that production forward ahead of
+  // another project's ready work, which is the wrong job to bring forward.
+  const delayedVideos = new Set(asg.filter(isStuck).map(r => r.video_id));
+  const isDelayed = (r) => delayedVideos.has(r.video_id);
+
+  // Order a producer's queue: ready-and-on-track work first (chronological),
+  // then the client-delayed videos. Within a video, visuals always precede
+  // production.
+  const KIND_RANK = { storyboard: 0, production: 1 };
+  const chrono = (a, b) => {
+    const d = asDateStr(a.start_date).localeCompare(asDateStr(b.start_date));
+    return d !== 0 ? d : (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9);
+  };
+  // Emit in order, but hold back any production block whose own storyboard is
+  // still queued behind it, releasing it as soon as that storyboard lands.
+  const chainOrder = (list) => {
+    const awaitingSb = new Set(list.filter(r => r.kind === 'storyboard').map(r => r.video_id));
+    const out = [], held = [];
+    for (const r of list) {
+      if (r.kind === 'production' && awaitingSb.has(r.video_id)) { held.push(r); continue; }
+      out.push(r);
+      if (r.kind === 'storyboard') {
+        awaitingSb.delete(r.video_id);
+        for (let i = held.length - 1; i >= 0; i--) {
+          if (held[i].video_id === r.video_id) { out.push(held[i]); held.splice(i, 1); }
+        }
+      }
+    }
+    return out.concat(held);
+  };
+
+  // A video's production can't start until its visuals finish. Seeded with the
+  // CURRENT storyboard end for every video, then updated as blocks are placed —
+  // so it holds across producers when visuals and production sit with different
+  // people.
+  const sbEndByVideo = new Map();
+  for (const r of asg) {
+    if (r.kind === 'storyboard' && r.video_id) sbEndByVideo.set(r.video_id, asDateStr(r.end_date));
+  }
+
   const updates = [];
   const removals = [];
+  const before = new Map();  // id → pre-change row, for Undo
   let producersTouched = 0;
   for (const email of emails) {
     const rows = byUser.get(email) || [];
-    for (const r of rows) if (isStale(r)) removals.push(r.id);
+    for (const r of rows) if (isStale(r)) { removals.push(r.id); before.set(r.id, snapshotRow(r)); }
 
-    const reflowable = rows.filter(canReflow)
-      .sort((a, b) => asDateStr(a.start_date).localeCompare(asDateStr(b.start_date)));
+    const reflowable = rows.filter(canReflow).sort(chrono);
     if (reflowable.length < 2) continue; // nothing to reorder
 
     // Fixed obstacles: leave, manual ad-hoc blocks, and finished/past work.
@@ -589,48 +659,55 @@ export async function reflowSchedules(scopeEmails) {
       for (const d of workingDaysBetween(asDateStr(r.start_date), asDateStr(r.end_date))) occupied.add(d);
     }
 
-    const items = reflowable.map(r => {
-      const start = asDateStr(r.start_date);
-      const daysUntilStart = start >= today ? countWorkingDays(today, start) - 1 : -(countWorkingDays(start, today) - 1);
-      const approved = approvedByVideo.get(r.video_id) || new Set();
-      const ready = r.kind === 'storyboard' ? approved.has('script') : approved.has('storyboard');
-      return { r, start, end: asDateStr(r.end_date), daysUntilStart, ready };
-    });
-    const isStuck = (i) => !i.ready && i.daysUntilStart <= IMMINENT_DAYS;
-    const deferred = items.filter(isStuck);
-    if (!deferred.length) continue;                    // nothing stuck+imminent → no-op
-    const kept = items.filter(i => !isStuck(i));
-    if (!kept.some(i => i.ready)) continue;            // no green work to bring forward → leave as-is
+    const delayed = reflowable.filter(isDelayed);
+    if (!delayed.length) continue;                              // nothing stuck → no-op
+    const onTrack = reflowable.filter(r => !isDelayed(r));
+    if (!onTrack.some(readyOf)) continue;                       // no green work to pull forward
 
-    const order = [...kept, ...deferred];              // both already chronological
+    const order = [...chainOrder(onTrack), ...chainOrder(delayed)];
 
     // Repack from the earliest slot this producer's reflowable work currently
     // uses (never in the past), flowing around leave + manual obstacles.
-    let cursor = nextWorkingDay(laterDate(today, items[0].start));
+    const anchor = asDateStr(reflowable[0].start_date);
+    let cursor = nextWorkingDay(laterDate(today, anchor));
     let movedHere = 0;
-    for (const it of order) {
-      const r = it.r;
+    for (const r of order) {
+      const wasStart = asDateStr(r.start_date), wasEnd = asDateStr(r.end_date);
       const n = Math.max(1, r.duration_days + (r.extended_days || 0));
-      const run = firstFreeRun(occupied, n, cursor);
+      // Production waits for its own visuals to finish.
+      let earliest = cursor;
+      if (r.kind === 'production') {
+        const sbEnd = sbEndByVideo.get(r.video_id);
+        if (sbEnd) earliest = laterDate(earliest, nextWorkingDay(addDays(sbEnd, 1)));
+      }
+      const run = firstFreeRun(occupied, n, earliest);
       if (!run) break;                                 // guard window exhausted — leave the rest
       const start = run[0], end = run[run.length - 1];
       for (const d of run) occupied.add(d);
       cursor = nextWorkingDay(addDays(end, 1));
-      if (start === it.start && end === it.end) continue; // didn't actually move
-      // Recompute the delivery-deadline conflict at the new position.
-      const dl = deadlineByVideo.get(r.video_id) || {};
-      const deadline = r.kind === 'storyboard' ? dl.storyboard : dl.production;
+      if (r.kind === 'storyboard') sbEndByVideo.set(r.video_id, end);
+      if (start === wasStart && end === wasEnd) continue; // didn't actually move
+
+      // Client-delayed work: the client held the project up, so slipping past the
+      // delivery date is their doing, not a production clash. Don't raise a
+      // scheduling conflict for it — flag it as a client delay instead.
+      const clientDelayed = isDelayed(r);
       let conflict = false, reason = null;
-      if (deadline) {
-        const latestSafeEnd = addWorkingDays(deadline, -INTERNAL_REVIEW_BUFFER_DAYS);
-        if (end > latestSafeEnd) {
-          conflict = true;
-          reason = end > deadline
-            ? `Work finishes ${end}, after the ${deadline} delivery date.`
-            : `Work finishes ${end}, leaving no internal-review buffer before the ${deadline} delivery date.`;
+      if (!clientDelayed) {
+        const dl = deadlineByVideo.get(r.video_id) || {};
+        const deadline = r.kind === 'storyboard' ? dl.storyboard : dl.production;
+        if (deadline) {
+          const latestSafeEnd = addWorkingDays(deadline, -INTERNAL_REVIEW_BUFFER_DAYS);
+          if (end > latestSafeEnd) {
+            conflict = true;
+            reason = end > deadline
+              ? `Work finishes ${end}, after the ${deadline} delivery date.`
+              : `Work finishes ${end}, leaving no internal-review buffer before the ${deadline} delivery date.`;
+          }
         }
       }
-      updates.push({ id: r.id, start, end, conflict, reason });
+      before.set(r.id, snapshotRow(r));
+      updates.push({ id: r.id, start, end, conflict, reason, clientDelayed });
       movedHere++;
     }
     if (movedHere) producersTouched++;
@@ -642,10 +719,79 @@ export async function reflowSchedules(scopeEmails) {
   for (const u of updates) {
     await sql`UPDATE schedule_assignments
       SET start_date = ${u.start}, end_date = ${u.end}, auto_generated = FALSE,
-          conflict = ${u.conflict}, conflict_reason = ${u.reason}, updated_at = NOW()
+          conflict = ${u.conflict}, conflict_reason = ${u.reason},
+          client_delayed = ${u.clientDelayed}, updated_at = NOW()
       WHERE id = ${u.id}`;
   }
+  // Bank an undo point so the manager can put the rota back exactly as it was.
+  if (before.size) await saveUndoPoint(scope, actorEmail, [...before.values()]);
   return { moved: updates.length, removed: removals.length, producers: producersTouched };
+}
+
+// ── Undo the last rota update ──
+// The reflow banks the pre-change rows (both the ones it moved and the stale ones
+// it deleted). Only the most recent reflow is kept, so Undo always means "put it
+// back the way it was before the last press" — no stale snapshot can be replayed
+// over newer changes.
+function snapshotRow(r) {
+  return {
+    id: r.id, video_id: r.video_id, deal_id: r.deal_id, user_email: r.user_email,
+    kind: r.kind, title: r.title || null,
+    start_date: asDateStr(r.start_date), end_date: asDateStr(r.end_date),
+    duration_days: r.duration_days, extended_days: r.extended_days || 0,
+    auto_generated: !!r.auto_generated, conflict: !!r.conflict,
+    conflict_reason: r.conflict_reason || null, cover_leave_id: r.cover_leave_id || null,
+    client_delayed: !!r.client_delayed,
+  };
+}
+
+async function saveUndoPoint(scope, actorEmail, rows) {
+  const uid = makeId('undo');
+  await sql`INSERT INTO schedule_reflow_undo (id, scope, created_by, snapshot)
+    VALUES (${uid}, ${scope || 'all'}, ${actorEmail || null}, ${JSON.stringify(rows)}::jsonb)`;
+  await sql`DELETE FROM schedule_reflow_undo WHERE id <> ${uid}`;
+  return uid;
+}
+
+async function loadUndoPoint() {
+  const [u] = await sql`SELECT id, scope, created_by, created_at,
+      jsonb_array_length(snapshot) AS blocks
+    FROM schedule_reflow_undo ORDER BY created_at DESC LIMIT 1`;
+  if (!u) return null;
+  return { id: u.id, scope: u.scope, by: u.created_by || null, at: u.created_at, blocks: Number(u.blocks) };
+}
+
+export async function undoLastReflow() {
+  await ensureScheduleTables();
+  const [u] = await sql`SELECT * FROM schedule_reflow_undo ORDER BY created_at DESC LIMIT 1`;
+  if (!u) return { restored: 0, scope: null };
+  const rows = Array.isArray(u.snapshot) ? u.snapshot : [];
+  let restored = 0;
+  for (const r of rows) {
+    try {
+      await sql`INSERT INTO schedule_assignments
+          (id, video_id, deal_id, user_email, kind, title, start_date, end_date,
+           duration_days, extended_days, auto_generated, conflict, conflict_reason,
+           cover_leave_id, client_delayed, updated_at)
+        VALUES (${r.id}, ${r.video_id}, ${r.deal_id}, ${r.user_email}, ${r.kind}, ${r.title},
+           ${r.start_date}, ${r.end_date}, ${r.duration_days}, ${r.extended_days},
+           ${r.auto_generated}, ${r.conflict}, ${r.conflict_reason},
+           ${r.cover_leave_id}, ${r.client_delayed}, NOW())
+        ON CONFLICT (id) DO UPDATE SET
+          start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date,
+          duration_days = EXCLUDED.duration_days, extended_days = EXCLUDED.extended_days,
+          user_email = EXCLUDED.user_email, auto_generated = EXCLUDED.auto_generated,
+          conflict = EXCLUDED.conflict, conflict_reason = EXCLUDED.conflict_reason,
+          client_delayed = EXCLUDED.client_delayed, updated_at = NOW()`;
+      restored++;
+    } catch (err) {
+      // A deleted block whose (video_id, kind, user_email) slot has since been
+      // retaken by a fresh sync can't come back — skip it rather than fail the undo.
+      console.warn('[schedule] undo could not restore block', r.id, err.message);
+    }
+  }
+  await sql`DELETE FROM schedule_reflow_undo WHERE id = ${u.id}`;
+  return { restored, scope: u.scope };
 }
 
 // ── Leave-year maths ──
@@ -691,6 +837,7 @@ function serialiseAssignment(r, ctx) {
     autoGenerated: r.auto_generated,
     conflict: !!r.conflict,
     conflictReason: r.conflict_reason || null,
+    clientDelayed: !!r.client_delayed,
     leaveConflict,
     ready,
     daysUntilStart,
@@ -783,6 +930,8 @@ async function buildPayload(user, manage, approve = false, manageAllowance = fal
     leave: leave.map(serialiseLeave),
     allowances,
     amends,
+    // The last "Update rota" press, if it's still undoable (managers only).
+    undo: manage ? await loadUndoPoint() : null,
   };
 }
 
@@ -927,16 +1076,21 @@ export async function scheduleRoute(req, res, id, action, user) {
     return res.status(200).json({ ...result, ...(await reload()) });
   }
 
-  // POST /api/crm/schedule/reflow { userEmail? } — "Update Schedule": push
-  // imminent-but-not-ready blocks back, pull ready work forward. Scoped to one
-  // producer when `userEmail` is given, otherwise the whole roster (managers).
+  // POST /api/crm/schedule/reflow { userEmail? } — "Update rota": push client-
+  // delayed videos back, pull ready work forward. Scoped to one producer when
+  // `userEmail` is given, otherwise the whole roster (managers).
+  // POST /api/crm/schedule/reflow/undo — put the rota back as it was.
   if (id === 'reflow') {
     if (req.method !== 'POST') return res.status(405).end();
-    if (!manage) return res.status(403).json({ error: 'Only schedule managers can update the schedule' });
+    if (!manage) return res.status(403).json({ error: 'Only schedule managers can update the rota' });
+    if (action === 'undo') {
+      const result = await undoLastReflow();
+      return res.status(200).json({ ...result, ...(await reload()) });
+    }
     const roster = (await scheduleUsers()).filter(u => u.onRoster && u.producesContent).map(u => u.email);
     const only = String((req.body || {}).userEmail || '').toLowerCase();
     if (only && !roster.includes(only)) return res.status(400).json({ error: 'Not a schedulable producer' });
-    const result = await reflowSchedules(only ? [only] : roster);
+    const result = await reflowSchedules(only ? [only] : roster, { scope: only || 'all', actorEmail: email });
     return res.status(200).json({ ...result, ...(await reload()) });
   }
 

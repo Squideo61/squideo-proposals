@@ -675,7 +675,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             proposals={proposals}
             contactName={company?.name || contact?.name || deal.title}
             poNumber={detail?.purchaseOrder?.number || null}
-            onChanged={() => setOrderRefresh((n) => n + 1)}
+            onChanged={() => {
+              setOrderRefresh((n) => n + 1);
+              // Invoicing/paying changes the deal's sale status, which the
+              // pipeline renders as a pill from the (server-computed) deals list.
+              actions.refreshDeals?.();
+            }}
           />
         </div>
 

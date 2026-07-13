@@ -30,6 +30,12 @@ export function PipelineView({ onBack, onOpenDeal }) {
     try { localStorage.setItem(OWNER_FILTER_STORAGE_KEY, ownerFilter); } catch {}
   }, [ownerFilter]);
 
+  // The sale-status pills (Invoiced / Not invoiced / PO / Deposit paid) are
+  // computed server-side on the deals list, so a deal invoiced elsewhere (its own
+  // page, Finance, another user) would keep a stale pill against the boot-time
+  // fetch. Re-pull the list on mount so the pipeline always opens on fresh state.
+  useEffect(() => { actions.refreshDeals?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // "Hot only" filter — show just the deals flagged warm/keen, regardless of
   // which stage they're in (the flag is orthogonal to the funnel position).
   const [hotOnly, setHotOnly] = useState(false);
