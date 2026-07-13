@@ -11,6 +11,16 @@ import {
 
 const KIND_LABEL = { storyboard: 'Storyboard / Visuals', production: 'Production' };
 
+// ── Half-day leave ──
+// A half day is a single date taken as a morning or an afternoon; it counts 0.5
+// against the allowance and leaves the producer on the rota for the other half.
+const HALF_LABEL = { am: 'Morning', pm: 'Afternoon' };
+const HALF_SHORT = { am: 'AM', pm: 'PM' };
+// "0.5d (AM)" / "3d" — for the leave lists.
+function leaveDaysLabel(l) {
+  return l.halfDay ? `½ day · ${HALF_SHORT[l.halfPeriod] || 'AM'}` : `${l.days}d`;
+}
+
 function initials(name, email) {
   const src = (name || email || '?').trim();
   const parts = src.split(/\s+/).filter(Boolean);
@@ -377,7 +387,7 @@ function MonthGrid({ cells, producers, single, asgByCell, leaveByCell, today, ca
                 const prefix = single ? '' : initials(p.name, p.email) + ' · ';
                 return (
                   <React.Fragment key={p.email}>
-                    {leave && <MiniChip label={prefix + 'Leave'} leave />}
+                    {leave && <MiniChip label={prefix + (leave.halfDay ? `½ Leave · ${HALF_SHORT[leave.halfPeriod] || 'AM'}` : 'Leave')} leave />}
                     {asg && <MiniChip label={prefix + asg.projectTitle} asg={asg} onClick={() => onBlock(asg)} draggable={dropOk && (canManage || asg.userEmail === me)} />}
                   </React.Fragment>
                 );
@@ -480,9 +490,13 @@ function BlockChip({ asg, draggable, onClick }) {
 
 function LeaveChip({ leave }) {
   const approved = leave.status === 'approved';
+  const base = approved ? 'Annual Leave' : 'Leave (pending)';
+  // Half days sit on a day the producer still works, so they're drawn narrower
+  // and tagged AM/PM to read differently from a whole day off.
+  const label = leave.halfDay ? `½ ${base} · ${HALF_SHORT[leave.halfPeriod] || 'AM'}` : base;
   return (
-    <div style={{ background: approved ? '#FEF3C7' : '#FDF2F8', color: approved ? '#92400E' : '#9D174D', border: '1px dashed ' + (approved ? '#FCD34D' : '#F9A8D4'), borderRadius: 8, padding: '4px 8px', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-      <Plane size={11} /> {approved ? 'Annual Leave' : 'Leave (pending)'}
+    <div title={label} style={{ background: approved ? '#FEF3C7' : '#FDF2F8', color: approved ? '#92400E' : '#9D174D', border: '1px dashed ' + (approved ? '#FCD34D' : '#F9A8D4'), borderRadius: 8, padding: '4px 8px', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4, width: leave.halfDay ? '65%' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <Plane size={11} style={{ flexShrink: 0 }} /> {label}
     </div>
   );
 }
@@ -542,7 +556,7 @@ function LeavePanel({ sched, canManage, canApprove, me, actions }) {
           {pending.map(l => (
             <div key={l.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 0', borderBottom: '1px solid ' + BRAND.paper, flexWrap: 'wrap' }}>
               <div style={{ fontSize: 14 }}>
-                <strong>{nameFor(l.userEmail)}</strong> · {l.startDate} → {l.endDate} · {l.days}d{l.note ? ' · ' + l.note : ''}
+                <strong>{nameFor(l.userEmail)}</strong> · {l.halfDay ? l.startDate : `${l.startDate} → ${l.endDate}`} · {leaveDaysLabel(l)}{l.note ? ' · ' + l.note : ''}
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button className="btn" onClick={() => setReview(l)}><CalendarDays size={14} /> Review impact</button>
@@ -558,7 +572,7 @@ function LeavePanel({ sched, canManage, canApprove, me, actions }) {
       {upcoming.map(l => (
         <div key={l.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '7px 0', borderBottom: '1px solid ' + BRAND.paper }}>
           <div style={{ fontSize: 14 }}>
-            {canManage && <strong>{nameFor(l.userEmail)} · </strong>}{l.startDate} → {l.endDate} · {l.days}d{' '}
+            {canManage && <strong>{nameFor(l.userEmail)} · </strong>}{l.halfDay ? l.startDate : `${l.startDate} → ${l.endDate}`} · {leaveDaysLabel(l)}{' '}
             <Badge color={l.status === 'approved' ? 'green' : l.status === 'denied' ? 'grey' : 'yellow'}>{l.status}</Badge>
           </div>
           {(canManage || (l.userEmail === me && l.status === 'pending')) && (
@@ -664,9 +678,15 @@ function AmendsPanel({ sched, onOpenVideo, showProducer }) {
 function LeaveModal({ producers, canManage, sched, me, onClose, onSubmit }) {
   const [start, setStart] = useState(todayStr());
   const [end, setEnd] = useState(todayStr());
+  const [halfDay, setHalfDay] = useState(false);
+  const [halfPeriod, setHalfPeriod] = useState('am');
   const [note, setNote] = useState('');
   const [target, setTarget] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // A half day is always a single date — the "To" field drops away.
+  const effectiveEnd = halfDay ? start : (end || start);
+  const daysRequested = halfDay ? 0.5 : countWorkingDays(start, effectiveEnd);
 
   // Warn the booker up-front if these dates land on work already booked for the
   // person taking leave. Computed from the loaded schedule — a producer sees
@@ -674,18 +694,38 @@ function LeaveModal({ producers, canManage, sched, me, onClose, onSubmit }) {
   const forEmail = (canManage && target) ? target : me;
   const clashes = useMemo(() => {
     if (!start) return [];
-    const days = new Set(workingDaysBetween(start, end || start));
+    const days = new Set(workingDaysBetween(start, effectiveEnd));
     return (sched?.assignments || []).filter(a =>
       a.userEmail === forEmail &&
       workingDaysBetween(a.startDate, a.endDate).some(d => days.has(d)));
-  }, [start, end, forEmail, sched?.assignments]);
+  }, [start, effectiveEnd, forEmail, sched?.assignments]);
 
   const submit = () => {
     if (!start) return;
     setBusy(true);
-    onSubmit({ startDate: start, endDate: end || start, note, ...(canManage && target ? { userEmail: target } : {}) })
-      .catch(() => setBusy(false));
+    onSubmit({
+      startDate: start,
+      endDate: effectiveEnd,
+      halfDay,
+      ...(halfDay ? { halfPeriod } : {}),
+      note,
+      ...(canManage && target ? { userEmail: target } : {}),
+    }).catch(() => setBusy(false));
   };
+  const modeBtn = (isHalf, label) => (
+    <button key={label} onClick={() => setHalfDay(isHalf)} className="btn-ghost"
+      style={{ flex: 1, border: 'none', borderRadius: 0, fontWeight: 600, justifyContent: 'center',
+        background: halfDay === isHalf ? BRAND.blue : 'white', color: halfDay === isHalf ? 'white' : BRAND.ink }}>
+      {label}
+    </button>
+  );
+  const periodBtn = (id) => (
+    <button key={id} onClick={() => setHalfPeriod(id)} className="btn-ghost"
+      style={{ flex: 1, border: 'none', borderRadius: 0, fontWeight: 600, justifyContent: 'center',
+        background: halfPeriod === id ? BRAND.blue : 'white', color: halfPeriod === id ? 'white' : BRAND.ink }}>
+      {HALF_LABEL[id]}
+    </button>
+  );
   return (
     <Modal onClose={onClose} dismissible={false} maxWidth={440}>
       <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Book annual leave</h3>
@@ -697,9 +737,31 @@ function LeaveModal({ producers, canManage, sched, me, onClose, onSubmit }) {
           </select>
         </Field>
       )}
-      <Field label="From"><input type="date" className="input" value={start} onChange={e => setStart(e.target.value)} style={selStyle} /></Field>
-      <Field label="To"><input type="date" className="input" value={end} min={start} onChange={e => setEnd(e.target.value)} style={selStyle} /></Field>
+      <Field label="Length">
+        <div style={{ display: 'flex', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
+          {modeBtn(false, 'Full day(s)')}
+          {modeBtn(true, 'Half day')}
+        </div>
+      </Field>
+      <Field label={halfDay ? 'Date' : 'From'}>
+        <input type="date" className="input" value={start} onChange={e => setStart(e.target.value)} style={selStyle} />
+      </Field>
+      {halfDay ? (
+        <Field label="Which half">
+          <div style={{ display: 'flex', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
+            {periodBtn('am')}
+            {periodBtn('pm')}
+          </div>
+        </Field>
+      ) : (
+        <Field label="To"><input type="date" className="input" value={end} min={start} onChange={e => setEnd(e.target.value)} style={selStyle} /></Field>
+      )}
       <Field label="Note (optional)"><input className="input" value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. family holiday" style={selStyle} /></Field>
+
+      <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 4 }}>
+        This will use <strong style={{ color: BRAND.ink }}>{daysRequested} day{daysRequested === 1 ? '' : 's'}</strong> of your allowance.
+        {halfDay && ' You stay on the rota for the other half of the day.'}
+      </div>
 
       {clashes.length > 0 && (
         <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#92400E', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginTop: 4, marginBottom: 4, display: 'flex', gap: 10 }}>
@@ -713,14 +775,18 @@ function LeaveModal({ producers, canManage, sched, me, onClose, onSubmit }) {
                 <li key={a.id}>{a.manual ? (a.projectTitle || a.title || 'Booked block') : `${a.projectTitle} — ${a.videoTitle}`}{a.kind && !a.manual ? ` (${KIND_LABEL[a.kind] || a.kind})` : ''}</li>
               ))}
             </ul>
-            <div style={{ marginTop: 5 }}>You can still request it — a manager will see the clash and re-plan the work when approving.</div>
+            <div style={{ marginTop: 5 }}>
+              {halfDay
+                ? 'A half day won’t move the work — you’ll just have less time on it that day.'
+                : 'You can still request it — a manager will see the clash and re-plan the work when approving.'}
+            </div>
           </div>
         </div>
       )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
         <button className="btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn" onClick={submit} disabled={busy}>{busy ? 'Submitting…' : (clashes.length ? 'Request anyway' : 'Submit request')}</button>
+        <button className="btn" onClick={submit} disabled={busy}>{busy ? 'Submitting…' : (clashes.length && !halfDay ? 'Request anyway' : 'Submit request')}</button>
       </div>
     </Modal>
   );
@@ -756,11 +822,18 @@ function LeaveReviewModal({ leave, nameFor, actions, onClose }) {
     <Modal onClose={onClose} dismissible={false} maxWidth={640}>
       <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Review leave — {nameFor(leave.userEmail)}</h3>
       <div style={{ color: BRAND.muted, fontSize: 14, marginBottom: 16 }}>
-        {leave.startDate} → {leave.endDate} · {leave.days} day{leave.days === 1 ? '' : 's'}{leave.note ? ' · ' + leave.note : ''}
+        {leave.halfDay
+          ? `${leave.startDate} · half day (${HALF_LABEL[leave.halfPeriod] || 'Morning'}) · 0.5 days`
+          : `${leave.startDate} → ${leave.endDate} · ${leave.days} day${leave.days === 1 ? '' : 's'}`}
+        {leave.note ? ' · ' + leave.note : ''}
       </div>
 
       {loading ? (
         <div style={{ color: BRAND.muted, fontSize: 14, padding: '12px 0' }}>Checking production impact…</div>
+      ) : leave.halfDay ? (
+        <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', borderRadius: 10, padding: '12px 14px', fontSize: 14, display: 'flex', gap: 10, alignItems: 'center' }}>
+          <Check size={18} /> A half day doesn’t take them off the rota — no work needs re-planning.
+        </div>
       ) : clashes.length === 0 ? (
         <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', borderRadius: 10, padding: '12px 14px', fontSize: 14, display: 'flex', gap: 10, alignItems: 'center' }}>
           <Check size={18} /> No production work clashes with these dates — safe to approve.

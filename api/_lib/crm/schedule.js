@@ -25,7 +25,7 @@ import { sendNotification } from '../notifications.js';
 import { APP_URL } from '../email.js';
 import {
   durationDaysForLength, workingDaysBetween, addWorkingDays, addDays,
-  nextWorkingDay, todayStr, countWorkingDays,
+  nextWorkingDay, todayStr, countWorkingDays, isWeekend,
 } from '../scheduleCalendar.js';
 import { isVideoSignedOff } from '../productionStages.js';
 
@@ -90,6 +90,13 @@ export function ensureScheduleTables() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`;
     await sql`CREATE INDEX IF NOT EXISTS leave_requests_user_idx ON leave_requests (user_email)`;
+    // Half-day leave: a single date taken as a morning or afternoon (days = 0.5).
+    // `days` is already NUMERIC so the allowance maths needs no change. A half day
+    // does NOT block the rota day — the producer still works the other half — so
+    // loadOccupancy skips it; it's still drawn on the calendar and still raises the
+    // overlap warning so managers can see it.
+    await sql`ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS half_day BOOLEAN NOT NULL DEFAULT FALSE`;
+    await sql`ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS half_period TEXT`;
     await sql`CREATE TABLE IF NOT EXISTS leave_allowances (
       user_email TEXT PRIMARY KEY,
       annual_allowance NUMERIC NOT NULL DEFAULT 20,
@@ -293,8 +300,10 @@ async function loadOccupancy(emails, excludeDealId) {
     if (!set) continue;
     for (const d of workingDaysBetween(asDateStr(a.start_date), asDateStr(a.end_date))) set.add(d);
   }
+  // Half days don't take the producer off the rota — they're still in for the
+  // other half — so only whole-day leave blocks a day for the packer.
   const lv = await sql`SELECT user_email, start_date, end_date FROM leave_requests
-    WHERE user_email = ANY(${emails}) AND status IN ('pending','approved')`;
+    WHERE user_email = ANY(${emails}) AND status IN ('pending','approved') AND half_day = FALSE`;
   for (const l of lv) {
     const set = map.get(String(l.user_email).toLowerCase());
     if (!set) continue;
@@ -678,6 +687,8 @@ function serialiseLeave(r) {
     startDate: asDateStr(r.start_date),
     endDate: asDateStr(r.end_date),
     days: Number(r.days),
+    halfDay: !!r.half_day,
+    halfPeriod: r.half_period || null, // 'am' | 'pm' (only when halfDay)
     kind: r.kind,
     note: r.note || null,
     status: r.status,
@@ -978,11 +989,15 @@ export async function scheduleRoute(req, res, id, action, user) {
     if (!action && req.method === 'POST') {
       const b = req.body || {};
       const startStr = asDateStr(b.startDate);
-      const endStr = asDateStr(b.endDate) || startStr;
+      // A half day is always a single date, taken as a morning or an afternoon.
+      const halfDay = !!b.halfDay;
+      const halfPeriod = halfDay ? (b.halfPeriod === 'pm' ? 'pm' : 'am') : null;
+      const endStr = halfDay ? startStr : (asDateStr(b.endDate) || startStr);
       if (!startStr) return res.status(400).json({ error: 'startDate is required' });
       if (endStr < startStr) return res.status(400).json({ error: 'End date is before start date' });
+      if (halfDay && isWeekend(startStr)) return res.status(400).json({ error: 'A half day must fall on a working day' });
       const target = (b.userEmail && manage) ? String(b.userEmail).toLowerCase() : email;
-      const days = countWorkingDays(startStr, endStr);
+      const days = halfDay ? 0.5 : countWorkingDays(startStr, endStr);
       const kind = b.kind === 'compulsory' ? 'compulsory' : 'annual';
       const lid = makeId('leave');
       // People without an allowance tracked (directors/owners) just log days off —
@@ -990,14 +1005,14 @@ export async function scheduleRoute(req, res, id, action, user) {
       const [al] = await sql`SELECT track_allowance FROM leave_allowances WHERE user_email = ${target}`;
       const autoApprove = al && al.track_allowance === false;
       if (autoApprove) {
-        await sql`INSERT INTO leave_requests (id, user_email, start_date, end_date, days, kind, note, status, decided_by, decided_at)
-          VALUES (${lid}, ${target}, ${startStr}, ${endStr}, ${days}, ${kind}, ${trimOrNull(b.note)}, 'approved', ${email}, NOW())`;
+        await sql`INSERT INTO leave_requests (id, user_email, start_date, end_date, days, half_day, half_period, kind, note, status, decided_by, decided_at)
+          VALUES (${lid}, ${target}, ${startStr}, ${endStr}, ${days}, ${halfDay}, ${halfPeriod}, ${kind}, ${trimOrNull(b.note)}, 'approved', ${email}, NOW())`;
         // Approved on booking → fill any cover person's rota immediately.
-        try { await applyLeaveCoverage({ id: lid, user_email: target, start_date: startStr, end_date: endStr }); }
+        try { await applyLeaveCoverage({ id: lid, user_email: target, start_date: startStr, end_date: endStr, half_day: halfDay }); }
         catch (err) { console.warn('[schedule] leave coverage failed', err.message); }
       } else {
-        await sql`INSERT INTO leave_requests (id, user_email, start_date, end_date, days, kind, note, status)
-          VALUES (${lid}, ${target}, ${startStr}, ${endStr}, ${days}, ${kind}, ${trimOrNull(b.note)}, 'pending')`;
+        await sql`INSERT INTO leave_requests (id, user_email, start_date, end_date, days, half_day, half_period, kind, note, status)
+          VALUES (${lid}, ${target}, ${startStr}, ${endStr}, ${days}, ${halfDay}, ${halfPeriod}, ${kind}, ${trimOrNull(b.note)}, 'pending')`;
         try { await notifyLeaveRequested(user, target, startStr, endStr, days); }
         catch (err) { console.warn('[schedule] leave notify failed', err.message); }
       }
@@ -1073,13 +1088,15 @@ export async function scheduleRoute(req, res, id, action, user) {
 // filled for those dates with a labelled "cover" block (e.g. Hannah covers
 // Callum). Matched by exact name so it tracks whoever holds those accounts.
 const LEAVE_COVER_RULES = [
-  { taker: 'callum majors', cover: 'hannah bales', label: 'Covering Callum' },
+  { taker: 'callum major', cover: 'hannah bales', label: 'Covering Callum' },
 ];
 
 // (Re)create the cover blocks for a leave request. Clears any prior blocks for
-// the same leave first so a re-approval / date change doesn't duplicate.
+// the same leave first so a re-approval / date change doesn't duplicate. A half
+// day needs no cover — the person is in for the other half.
 async function applyLeaveCoverage(leaveRow) {
   await sql`DELETE FROM schedule_assignments WHERE cover_leave_id = ${leaveRow.id}`;
+  if (leaveRow.half_day) return;
   const takerEmail = String(leaveRow.user_email).toLowerCase();
   const [taker] = await sql`SELECT LOWER(name) AS name FROM users WHERE email = ${takerEmail} LIMIT 1`;
   const takerName = taker?.name || '';
@@ -1111,6 +1128,9 @@ async function removeLeaveCoverage(leaveId) {
 //   2. hand it to ANOTHER producer who's free before the deadline
 //   3. neither fits → flag for manual review (freelancer and/or push delivery)
 async function analyseLeaveImpact(leaveRow) {
+  // A half day doesn't take the producer off the rota, so it can't displace a
+  // block — there's nothing to re-plan.
+  if (leaveRow.half_day) return { clashes: [], halfDay: true };
   const target = String(leaveRow.user_email).toLowerCase();
   const startStr = asDateStr(leaveRow.start_date);
   const endStr = asDateStr(leaveRow.end_date);
