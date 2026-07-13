@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Check, X, AlertTriangle, Plane, LayoutGrid, CheckCircle2, Gauge, RefreshCw } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2, Check, X, AlertTriangle, Plane, LayoutGrid, CheckCircle2, Gauge, RefreshCw, Undo2, Clock } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -10,6 +10,13 @@ import {
 } from '../../lib/scheduleCalendar.js';
 
 const KIND_LABEL = { storyboard: 'Storyboard / Visuals', production: 'Production' };
+
+// Small square icon button used in the rota column headers (↻ update, ↺ undo).
+const iconBtn = (busy) => ({
+  flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  width: 24, height: 24, padding: 0, border: '1px solid ' + BRAND.border, borderRadius: 6,
+  background: 'white', color: BRAND.muted, cursor: busy ? 'default' : 'pointer',
+});
 
 // ── Half-day leave ──
 // A half day is a single date taken as a morning or an afternoon; it counts 0.5
@@ -152,11 +159,18 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
       ? (allProducers.find(p => p.email === userEmail)?.name || userEmail)
       : null;
     const msg = userEmail
-      ? `Update ${who}’s rota?\n\nWork that isn’t ready but is due within 24 hours will be pushed back, and their next ready job brought forward to fill the slot.`
-      : 'Update the whole schedule?\n\nFor every producer, work that isn’t ready but is due within 24 hours will be pushed back, and the next ready job brought forward to fill the slot.';
+      ? `Update ${who}’s rota?\n\nProjects the client hasn’t come back on (due within 24 hours but not ready) will be pushed back — visuals and their production together — and the next ready job brought forward to fill the slot.`
+      : 'Update the whole rota?\n\nFor every producer, projects the client hasn’t come back on (due within 24 hours but not ready) will be pushed back — visuals and their production together — and the next ready job brought forward to fill the slot.';
     if (!window.confirm(msg)) return;
     setReflowing(userEmail || 'all');
     try { await actions.reflowSchedule(userEmail); } finally { setReflowing(null); }
+  };
+  // Put the rota back exactly as it was before the last Update rota press.
+  const undoPoint = sched.undo || null;
+  const runUndo = async () => {
+    if (!window.confirm('Undo the last rota update?\n\nEvery block it moved goes back to where it was.')) return;
+    setReflowing('undo');
+    try { await actions.undoReflow(); } finally { setReflowing(null); }
   };
 
   const onDropCell = (producerEmail, day, e) => {
@@ -193,10 +207,17 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
           </div>
           {canManage && (
             <button className="btn-ghost" disabled={!!reflowing}
-              title="Push not-ready work back and pull ready work forward across every producer's rota"
+              title="Push client-delayed work back and pull ready work forward across every producer's rota"
               onClick={() => runReflow(null)}
               style={{ fontWeight: 600 }}>
-              <RefreshCw size={14} style={reflowing === 'all' ? { animation: 'spin 0.8s linear infinite' } : undefined} /> {reflowing === 'all' ? 'Updating…' : 'Update schedule'}
+              <RefreshCw size={14} style={reflowing === 'all' ? { animation: 'spin 0.8s linear infinite' } : undefined} /> {reflowing === 'all' ? 'Updating…' : 'Update rota'}
+            </button>
+          )}
+          {canManage && undoPoint && (
+            <button className="btn-ghost" disabled={!!reflowing} onClick={runUndo}
+              title={`Undo the last rota update (${undoPoint.scope === 'all' ? 'all producers' : (allProducers.find(p => p.email === undoPoint.scope)?.name || undoPoint.scope)}) — ${undoPoint.blocks} block${undoPoint.blocks === 1 ? '' : 's'}`}
+              style={{ fontWeight: 600 }}>
+              <Undo2 size={14} /> {reflowing === 'undo' ? 'Undoing…' : 'Undo'}
             </button>
           )}
           {canManage && (
@@ -260,7 +281,7 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
             ? <AgendaList days={weekDays} producers={visibleProducers} asgByCell={asgByCell} leaveByCell={leaveByCell} today={today} onBlock={setBlockModal} />
             : <CalendarGrid weekDays={weekDays} producers={visibleProducers} asgByCell={asgByCell} leaveByCell={leaveByCell}
                 today={today} canManage={canManage} me={me} onBlock={setBlockModal} onDropCell={onDropCell}
-                onReflow={runReflow} reflowing={reflowing} />)}
+                onReflow={runReflow} onUndo={runUndo} undoPoint={undoPoint} reflowing={reflowing} />)}
 
       {/* Leave requests + allowances + amends. Annual leave / allowance don't
           apply to freelancers, so they only see their Amends to do. */}
@@ -414,7 +435,7 @@ function MiniChip({ label, asg, leave, onClick, draggable }) {
 }
 
 // ── Desktop grid: rows = weekdays, columns = producers ──
-function CalendarGrid({ weekDays, producers, asgByCell, leaveByCell, today, canManage, me, onBlock, onDropCell, onReflow, reflowing }) {
+function CalendarGrid({ weekDays, producers, asgByCell, leaveByCell, today, canManage, me, onBlock, onDropCell, onReflow, onUndo, undoPoint, reflowing }) {
   const colW = `minmax(150px, 1fr)`;
   return (
     <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12, background: 'white' }}>
@@ -426,13 +447,22 @@ function CalendarGrid({ weekDays, producers, asgByCell, leaveByCell, today, canM
             <ProducerAvatar producer={p} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name || p.email}</span>
             {canManage && onReflow && (
-              <button onClick={() => onReflow(p.email)} disabled={!!reflowing}
-                title={`Update ${p.name || p.email}'s rota — push not-ready work back, pull ready work forward`}
-                style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  width: 24, height: 24, padding: 0, border: '1px solid ' + BRAND.border, borderRadius: 6,
-                  background: 'white', color: BRAND.muted, cursor: reflowing ? 'default' : 'pointer' }}>
-                <RefreshCw size={13} style={reflowing === p.email ? { animation: 'spin 0.8s linear infinite' } : undefined} />
-              </button>
+              <span style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex', gap: 4 }}>
+                {/* Undo only appears on the producer whose rota was last updated —
+                    you can only ever revert the most recent press. */}
+                {undoPoint && undoPoint.scope === p.email && (
+                  <button onClick={onUndo} disabled={!!reflowing}
+                    title={`Undo the last update to ${p.name || p.email}'s rota (${undoPoint.blocks} block${undoPoint.blocks === 1 ? '' : 's'})`}
+                    style={iconBtn(reflowing)}>
+                    <Undo2 size={13} />
+                  </button>
+                )}
+                <button onClick={() => onReflow(p.email)} disabled={!!reflowing}
+                  title={`Update ${p.name || p.email}'s rota — push client-delayed work back, pull ready work forward`}
+                  style={iconBtn(reflowing)}>
+                  <RefreshCw size={13} style={reflowing === p.email ? { animation: 'spin 0.8s linear infinite' } : undefined} />
+                </button>
+              </span>
             )}
           </div>
         ))}
@@ -472,7 +502,8 @@ function BlockChip({ asg, draggable, onClick }) {
       draggable={draggable}
       onDragStart={(e) => e.dataTransfer.setData('text/plain', asg.id)}
       onClick={onClick}
-      title={asg.manual ? asg.projectTitle : `${asg.projectTitle} — ${asg.videoTitle} (${KIND_LABEL[asg.kind] || asg.kind})`}
+      title={(asg.manual ? asg.projectTitle : `${asg.projectTitle} — ${asg.videoTitle} (${KIND_LABEL[asg.kind] || asg.kind})`)
+        + (asg.clientDelayed ? '\nPushed back — the client wasn’t ready. Delivery dates aren’t flagged as a clash.' : '')}
       style={{ background: c.bg, color: c.fg, border: '1px solid ' + c.border, borderRadius: 8, padding: '6px 8px', cursor: 'pointer', fontSize: 12, lineHeight: 1.3 }}>
       <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{asg.projectTitle}</div>
       {!asg.manual && (
@@ -482,6 +513,8 @@ function BlockChip({ asg, draggable, onClick }) {
       )}
       <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 2, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>
         <span>{asg.manual ? `${dur}d` : `${asg.kind === 'storyboard' ? 'Visuals' : 'Production'} · ${dur}d`}</span>
+        {/* Pushed back because the client wasn't ready — a delay, not a clash. */}
+        {asg.clientDelayed && <Clock size={11} />}
         {(asg.conflict || asg.leaveConflict) && <AlertTriangle size={11} />}
       </div>
     </div>

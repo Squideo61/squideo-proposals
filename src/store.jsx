@@ -1913,10 +1913,20 @@ export function StoreProvider({ children }) {
           const bits = [];
           if (p.moved) bits.push(`${p.moved} block${p.moved === 1 ? '' : 's'} moved`);
           if (p.removed) bits.push(`${p.removed} completed block${p.removed === 1 ? '' : 's'} cleared`);
-          showMsg(bits.length ? `Schedule updated — ${bits.join(', ')}` : 'Schedule already up to date');
+          showMsg(bits.length ? `Rota updated — ${bits.join(', ')}` : 'Rota already up to date');
           return p;
         })
-        .catch((err) => { showMsg(err.message || 'Failed to update schedule'); throw err; });
+        .catch((err) => { showMsg(err.message || 'Failed to update the rota'); throw err; });
+    },
+    // Revert the last "Update rota" press, putting the blocks back where they were.
+    undoReflow() {
+      return api.post('/api/crm/schedule/reflow/undo', {})
+        .then((p) => {
+          actions._applySchedule(p);
+          showMsg(p.restored ? `Rota update undone — ${p.restored} block${p.restored === 1 ? '' : 's'} restored` : 'Nothing to undo');
+          return p;
+        })
+        .catch((err) => { showMsg(err.message || 'Failed to undo the rota update'); throw err; });
     },
     createBlock(fields) {
       return api.post('/api/crm/schedule/block', fields)
