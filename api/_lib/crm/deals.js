@@ -13,7 +13,7 @@ import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { enterProduction } from '../production.js';
 import { syncDealSchedule } from './schedule.js';
-import { sendNotification } from '../notifications.js';
+import { sendNotification, ensurePoReceivedNotificationDefault } from '../notifications.js';
 import { getDealCreditProject } from './retainers.js';
 import { isFreelancer, userOnDeal } from './access.js';
 import { APP_URL } from '../email.js';
@@ -740,11 +740,19 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     if (req.method === 'POST') {
       const poNumber = trimOrNull((req.body || {}).poNumber);
       if (!poNumber) return res.status(400).json({ error: 'PO number is required' });
+      const [before] = await sql`SELECT po_number, po_received_at FROM deals WHERE id = ${id}`;
       await sql`UPDATE deals SET po_number = ${poNumber}, po_received_at = NOW(), updated_at = NOW() WHERE id = ${id}`;
       await sql`
         INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
         VALUES (${id}, 'po_received', ${JSON.stringify({ poNumber })}, ${user.email || null})`;
       const [d] = await sql`SELECT po_number, po_received_at FROM deals WHERE id = ${id}`;
+      // Tell the team — but only when this actually changes something. Re-saving
+      // the same number (e.g. adding a second PO document) is a no-op, not news.
+      const isNews = !before?.po_received_at || (before?.po_number || null) !== poNumber;
+      if (isNews) {
+        try { await notifyPoReceived(id, poNumber, !!before?.po_received_at, user); }
+        catch (err) { console.error('[deals] PO notification failed', err.message); }
+      }
       return res.status(200).json({ ok: true, poNumber: d?.po_number || null, poReceivedAt: d?.po_received_at || null });
     }
     if (req.method === 'DELETE') {
@@ -1787,6 +1795,37 @@ async function notifyGoodToGo(deal, user) {
       title: `Good to go: ${title}`,
       body: `${actor} moved this deal into production.`,
       link: `#/deal/${deal.id}`,
+    },
+  });
+}
+
+// Alert the team that a client PO has landed on a deal — someone can now invoice
+// against it. Broadcast on the finance (£) bell to Admins / Directors / Project-
+// Production Managers, in-app + desktop push by default (see
+// ensurePoReceivedNotificationDefault); the person who recorded it is excluded.
+// Best-effort: the caller wraps this in try/catch.
+async function notifyPoReceived(dealId, poNumber, wasAlreadyReceived, user) {
+  await ensurePoReceivedNotificationDefault();
+  const [d] = await sql`
+    SELECT d.title, c.name AS company_name
+      FROM deals d LEFT JOIN companies c ON c.id = d.company_id
+     WHERE d.id = ${dealId}`;
+  const name = d?.company_name || d?.title || dealId;
+  const title = d?.title && d.title !== name ? `${name} · ${d.title}` : name;
+  const actor = user?.name || user?.email || 'Someone';
+  const verb = wasAlreadyReceived ? 'updated the PO on' : 'recorded a PO for';
+  const link = `${APP_URL}/#/deal/${dealId}`;
+  await sendNotification('po.received', {
+    subject: `📄 PO ${poNumber} received — ${name}`,
+    html: `<p style="font-size:15px"><strong>${actor}</strong> ${verb} <strong>${title}</strong>: <strong>PO ${poNumber}</strong>.</p>`
+        + `<p>It's ready to invoice against — the number will be the invoice reference.</p>`
+        + `<p><a href="${link}">Open the deal</a></p>`,
+    text: `${actor} ${verb} ${title}: PO ${poNumber}. It's ready to invoice against. ${link}`,
+    excludeEmails: user?.email ? [user.email] : null,
+    inApp: {
+      title: `PO ${poNumber} received — ${name}`,
+      body: `${actor} ${verb} this deal. Ready to invoice against.`,
+      link: `#/deal/${dealId}`,
     },
   });
 }

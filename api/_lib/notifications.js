@@ -308,6 +308,30 @@ export async function ensureExtraAddedNotificationDefault() {
   }
 }
 
+// Self-heal the role default + delivery channel for po.received ("a teammate
+// recorded a client PO"). ON for Admin / Director / Project-Production Manager
+// (role 'member') — the people who chase POs and invoice against them; the
+// producer/copywriter roles don't need it. Delivered IN-APP ONLY by default
+// (bell + desktop push, no email): a PO lands often enough that an email each
+// time would be noise. Anyone can switch themselves to email/both in Account
+// settings. Guarded to run once per warm instance.
+let poReceivedDefaultReady = false;
+export async function ensurePoReceivedNotificationDefault() {
+  if (poReceivedDefaultReady) return;
+  try {
+    await ensureNotificationChannelColumns();
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{po.received}', 'true'::jsonb, true)
+      WHERE id IN ('admin', 'director', 'member') AND NOT (notification_defaults ? 'po.received')`;
+    await sql`UPDATE roles SET notification_channel_defaults = jsonb_set(
+      notification_channel_defaults, '{po.received}', '"in_app"'::jsonb, true)
+      WHERE NOT (notification_channel_defaults ? 'po.received')`;
+    poReceivedDefaultReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensurePoReceivedNotificationDefault failed', err.message);
+  }
+}
+
 // Self-heal role defaults for the customer-portal keys so portal alerts work
 // before a seed/migration lands. Each key inherits from the closest existing
 // staff alert: member_joined ← user.invite_accepted, doc_uploaded ←

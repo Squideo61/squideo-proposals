@@ -67,6 +67,14 @@ export const NOTIFICATIONS = [
     channel: 'finance',
   },
   {
+    key: 'po.received',
+    label: 'Purchase order received',
+    description: 'A teammate records a client purchase order against a deal (uploads the PO or types in the number).',
+    audience: 'broadcast',
+    group: 'Payments',
+    channel: 'finance',
+  },
+  {
     key: 'pp.marked_paid',
     label: 'Pending payment marked paid',
     description: 'Someone ticks off a pending payment (an imported PP/PO or a partner fee) as collected.',
