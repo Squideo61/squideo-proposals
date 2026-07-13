@@ -27,6 +27,7 @@ import {
   durationDaysForLength, workingDaysBetween, addWorkingDays, addDays,
   nextWorkingDay, todayStr, countWorkingDays,
 } from '../scheduleCalendar.js';
+import { isVideoSignedOff } from '../productionStages.js';
 
 // Finish work at least this many working days before the client delivery date,
 // so it can be checked internally first.
@@ -229,6 +230,32 @@ function scheduleDeadlines(schedule) {
   return { storyboard, production };
 }
 
+// ── Stage completion ──
+// A calendar block's work is FINISHED once the stage's own output milestone is
+// approved (storyboard block → 'storyboard' approved; production block → 'video'
+// approved), or the video is signed off / delivered. Finished work is never
+// re-booked onto a rota: the packer preserves the historical block exactly where
+// it sat and the reflow treats it as a fixed obstacle. Without this, every sync
+// re-dated long-completed blocks to `floor` (= today) and spammed them back onto
+// producers' rotas.
+async function approvedMilestones(videoIds) {
+  const ids = [...new Set((videoIds || []).filter(Boolean))];
+  const map = new Map();
+  if (!ids.length) return map;
+  const rows = await sql`SELECT video_id, milestone FROM video_milestones WHERE video_id = ANY(${ids})`;
+  for (const r of rows) {
+    if (!map.has(r.video_id)) map.set(r.video_id, new Set());
+    map.get(r.video_id).add(r.milestone);
+  }
+  return map;
+}
+// `approved` = Set of approved milestones for the video; phase/stage = its board position.
+function stageComplete(kind, approved, phase, stage) {
+  if (phase && stage && isVideoSignedOff(phase, stage)) return true;
+  const done = approved || new Set();
+  return kind === 'storyboard' ? done.has('storyboard') : done.has('video');
+}
+
 // ── The greedy packer ──
 // Earliest run of `n` free working days for a producer, starting no earlier
 // than `earliestStr`, avoiding the `occupied` day set. Returns the array of day
@@ -283,14 +310,19 @@ export async function syncDealSchedule(dealId, { notify = true } = {}) {
   const [deal] = await sql`SELECT id, title, production_schedule, production_start_date
     FROM deals WHERE id = ${dealId}`;
   if (!deal) return { blocks: 0, conflicts: 0 };
-  const floor = laterDate(todayStr(), asDateStr(deal.production_start_date));
+  const today = todayStr();
+  const floor = laterDate(today, asDateStr(deal.production_start_date));
 
   const videos = await sql`SELECT pv.id, pv.title, pv.video_length, pv.production_schedule,
+      pv.production_phase, pv.production_stage,
       (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
          FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails
     FROM project_videos pv
     WHERE pv.deal_id = ${dealId} AND pv.production_phase IS NOT NULL
     ORDER BY pv.sort_order, pv.created_at`;
+
+  // Which stages are already DONE, so the packer never re-books finished work.
+  const approvedByVideo = await approvedMilestones(videos.map(v => v.id));
 
   const existing = await sql`SELECT * FROM schedule_assignments WHERE deal_id = ${dealId}`;
   const existingByKey = new Map(existing.map(r => [`${r.video_id}:${r.kind}`, r]));
@@ -332,11 +364,34 @@ export async function syncDealSchedule(dealId, { notify = true } = {}) {
       { kind: 'production', deadline: vDeadlines.production },
     ];
 
+    const approved = approvedByVideo.get(v.id) || new Set();
+
     let prevEnd = null; // production must follow storyboard for the same video
     for (const stage of STAGES) {
+      const priorAny = existingByKey.get(`${v.id}:${stage.kind}`);
+
+      // Finished work (visuals/production already approved, or the video is
+      // signed off) is NEVER re-booked. Keep the historical block exactly where
+      // it is and chain off it; if there isn't one, don't invent one.
+      if (stageComplete(stage.kind, approved, v.production_phase, v.production_stage)) {
+        if (priorAny) {
+          // An AUTO block for finished work sitting today-or-later is the spam a
+          // previous sync created (it re-dated done work to `floor`). Leave it
+          // untouched so the sweep below deletes it — it shouldn't eat capacity.
+          // Hand-placed blocks and genuine past history are kept as-is.
+          const pEnd = asDateStr(priorAny.end_date);
+          if (priorAny.auto_generated && pEnd >= today) continue;
+          touchedIds.add(priorAny.id);
+          for (const d of workingDaysBetween(asDateStr(priorAny.start_date), pEnd)) {
+            occupiedFor(String(priorAny.user_email).toLowerCase()).add(d);
+          }
+          prevEnd = pEnd;
+        }
+        continue;
+      }
+
       // Preserve a hand-edited block for this (video, stage) as-is — respects a
       // manual move / extend / reassign. Keep its days occupied and chain off it.
-      const priorAny = existingByKey.get(`${v.id}:${stage.kind}`);
       if (priorAny && priorAny.auto_generated === false) {
         touchedIds.add(priorAny.id);
         for (const d of workingDaysBetween(asDateStr(priorAny.start_date), asDateStr(priorAny.end_date))) {
@@ -349,8 +404,10 @@ export async function syncDealSchedule(dealId, { notify = true } = {}) {
       const producer = stageProducer(stage.kind, v);
       if (!producer) continue; // nobody assigned for this stage → skip
       const occupied = occupiedFor(producer);
+      // Never schedule into the past: chaining off a finished storyboard block
+      // whose end is behind us must still start at the floor (today).
       const earliest = stage.kind === 'production' && prevEnd
-        ? nextWorkingDay(addDays(prevEnd, 1))
+        ? laterDate(floor, nextWorkingDay(addDays(prevEnd, 1)))
         : floor;
       const run = firstFreeRun(occupied, baseDays, earliest);
       if (!run) continue;
@@ -438,18 +495,23 @@ export async function reflowSchedules(scopeEmails) {
 
   const asg = await sql`SELECT * FROM schedule_assignments WHERE user_email = ANY(${emails})`;
   const videoIds = [...new Set(asg.map(a => a.video_id).filter(Boolean))];
-  const approvedByVideo = new Map();  // video_id → Set(milestones) → readiness
+  const approvedByVideo = await approvedMilestones(videoIds);
   const deadlineByVideo = new Map();  // video_id → { storyboard, production }
+  const boardByVideo = new Map();     // video_id → { phase, stage }
   if (videoIds.length) {
-    const ms = await sql`SELECT video_id, milestone FROM video_milestones WHERE video_id = ANY(${videoIds})`;
-    for (const m of ms) {
-      if (!approvedByVideo.has(m.video_id)) approvedByVideo.set(m.video_id, new Set());
-      approvedByVideo.get(m.video_id).add(m.milestone);
-    }
-    const vids = await sql`SELECT pv.id, pv.production_schedule AS v_sched, d.production_schedule AS d_sched
+    const vids = await sql`SELECT pv.id, pv.production_phase, pv.production_stage,
+        pv.production_schedule AS v_sched, d.production_schedule AS d_sched
       FROM project_videos pv JOIN deals d ON d.id = pv.deal_id WHERE pv.id = ANY(${videoIds})`;
-    for (const v of vids) deadlineByVideo.set(v.id, scheduleDeadlines(v.v_sched || v.d_sched));
+    for (const v of vids) {
+      deadlineByVideo.set(v.id, scheduleDeadlines(v.v_sched || v.d_sched));
+      boardByVideo.set(v.id, { phase: v.production_phase, stage: v.production_stage });
+    }
   }
+  // Finished work + anything already in the past is history — never reflowed.
+  const isDone = (r) => {
+    const b = boardByVideo.get(r.video_id) || {};
+    return stageComplete(r.kind, approvedByVideo.get(r.video_id), b.phase, b.stage);
+  };
 
   // Fixed obstacle days per producer: leave (pending/approved).
   const leaveByUser = new Map(emails.map(e => [e, new Set()]));
@@ -466,21 +528,34 @@ export async function reflowSchedules(scopeEmails) {
     if (byUser.has(u)) byUser.get(u).push(a);
   }
 
+  // Reflowable = live production/storyboard blocks: tied to a video, not yet
+  // finished, and not already in the past. Completed / historical work stays put —
+  // reordering it would drag old projects back onto the rota.
+  const canReflow = (r) => r.video_id && r.kind !== 'manual'
+    && !isDone(r) && asDateStr(r.end_date) >= today;
+  // Stale = an AUTO block for FINISHED work sitting today-or-later. These are the
+  // spam a buggy sync left behind (done work re-dated to today); they're deleted
+  // so they stop eating capacity. Past history + hand-placed blocks are kept.
+  const isStale = (r) => r.video_id && r.kind !== 'manual' && r.auto_generated
+    && isDone(r) && asDateStr(r.end_date) >= today;
+
   const updates = [];
+  const removals = [];
   let producersTouched = 0;
   for (const email of emails) {
     const rows = byUser.get(email) || [];
-    // Reflowable = colour-coded production/storyboard blocks tied to a video.
-    const reflowable = rows.filter(r => r.video_id && r.kind !== 'manual')
+    for (const r of rows) if (isStale(r)) removals.push(r.id);
+
+    const reflowable = rows.filter(canReflow)
       .sort((a, b) => asDateStr(a.start_date).localeCompare(asDateStr(b.start_date)));
     if (reflowable.length < 2) continue; // nothing to reorder
 
-    // Fixed obstacles: leave + manual ad-hoc blocks (never moved by reflow).
+    // Fixed obstacles: leave, manual ad-hoc blocks, and finished/past work.
+    // Stale blocks are on their way out, so they don't block anything.
     const occupied = new Set(leaveByUser.get(email) || []);
     for (const r of rows) {
-      if (r.kind === 'manual' || !r.video_id) {
-        for (const d of workingDaysBetween(asDateStr(r.start_date), asDateStr(r.end_date))) occupied.add(d);
-      }
+      if (canReflow(r) || isStale(r)) continue;
+      for (const d of workingDaysBetween(asDateStr(r.start_date), asDateStr(r.end_date))) occupied.add(d);
     }
 
     const items = reflowable.map(r => {
@@ -530,13 +605,16 @@ export async function reflowSchedules(scopeEmails) {
     if (movedHere) producersTouched++;
   }
 
+  if (removals.length) {
+    await sql`DELETE FROM schedule_assignments WHERE id = ANY(${removals})`;
+  }
   for (const u of updates) {
     await sql`UPDATE schedule_assignments
       SET start_date = ${u.start}, end_date = ${u.end}, auto_generated = FALSE,
           conflict = ${u.conflict}, conflict_reason = ${u.reason}, updated_at = NOW()
       WHERE id = ${u.id}`;
   }
-  return { moved: updates.length, producers: producersTouched };
+  return { moved: updates.length, removed: removals.length, producers: producersTouched };
 }
 
 // ── Leave-year maths ──
@@ -816,13 +894,16 @@ export async function scheduleRoute(req, res, id, action, user) {
     return res.status(200).json({ ...result, ...(await reload()) });
   }
 
-  // POST /api/crm/schedule/reflow — "Update Schedule": push imminent-but-not-ready
-  // blocks back, pull ready work forward across every producer's rota (managers).
+  // POST /api/crm/schedule/reflow { userEmail? } — "Update Schedule": push
+  // imminent-but-not-ready blocks back, pull ready work forward. Scoped to one
+  // producer when `userEmail` is given, otherwise the whole roster (managers).
   if (id === 'reflow') {
     if (req.method !== 'POST') return res.status(405).end();
     if (!manage) return res.status(403).json({ error: 'Only schedule managers can update the schedule' });
     const roster = (await scheduleUsers()).filter(u => u.onRoster && u.producesContent).map(u => u.email);
-    const result = await reflowSchedules(roster);
+    const only = String((req.body || {}).userEmail || '').toLowerCase();
+    if (only && !roster.includes(only)) return res.status(400).json({ error: 'Not a schedulable producer' });
+    const result = await reflowSchedules(only ? [only] : roster);
     return res.status(200).json({ ...result, ...(await reload()) });
   }
 

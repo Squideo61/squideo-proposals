@@ -71,7 +71,7 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
   const [blockModal, setBlockModal] = useState(null);
   const [newBlock, setNewBlock] = useState(false);
   const [allowanceModal, setAllowanceModal] = useState(null);
-  const [reflowing, setReflowing] = useState(false);
+  const [reflowing, setReflowing] = useState(null); // null | 'all' | producer email
 
   useEffect(() => { actions.loadSchedule(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -136,6 +136,19 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [viewMode, leaveModal, blockModal, newBlock, allowanceModal]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Reflow one producer's rota, or the whole roster when `userEmail` is null.
+  const runReflow = async (userEmail) => {
+    const who = userEmail
+      ? (allProducers.find(p => p.email === userEmail)?.name || userEmail)
+      : null;
+    const msg = userEmail
+      ? `Update ${who}’s rota?\n\nWork that isn’t ready but is due within 24 hours will be pushed back, and their next ready job brought forward to fill the slot.`
+      : 'Update the whole schedule?\n\nFor every producer, work that isn’t ready but is due within 24 hours will be pushed back, and the next ready job brought forward to fill the slot.';
+    if (!window.confirm(msg)) return;
+    setReflowing(userEmail || 'all');
+    try { await actions.reflowSchedule(userEmail); } finally { setReflowing(null); }
+  };
+
   const onDropCell = (producerEmail, day, e) => {
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain');
@@ -169,15 +182,11 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
             ))}
           </div>
           {canManage && (
-            <button className="btn-ghost" disabled={reflowing}
-              title="Push not-ready work back and pull ready work forward across the rota"
-              onClick={async () => {
-                if (!window.confirm('Update the schedule?\n\nWork that isn’t ready but is due within 24 hours will be pushed back, and the next ready job will be brought forward to fill the slot.')) return;
-                setReflowing(true);
-                try { await actions.reflowSchedule(); } finally { setReflowing(false); }
-              }}
+            <button className="btn-ghost" disabled={!!reflowing}
+              title="Push not-ready work back and pull ready work forward across every producer's rota"
+              onClick={() => runReflow(null)}
               style={{ fontWeight: 600 }}>
-              <RefreshCw size={14} style={reflowing ? { animation: 'spin 0.8s linear infinite' } : undefined} /> {reflowing ? 'Updating…' : 'Update schedule'}
+              <RefreshCw size={14} style={reflowing === 'all' ? { animation: 'spin 0.8s linear infinite' } : undefined} /> {reflowing === 'all' ? 'Updating…' : 'Update schedule'}
             </button>
           )}
           {canManage && (
@@ -240,14 +249,15 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
         : (isMobile
             ? <AgendaList days={weekDays} producers={visibleProducers} asgByCell={asgByCell} leaveByCell={leaveByCell} today={today} onBlock={setBlockModal} />
             : <CalendarGrid weekDays={weekDays} producers={visibleProducers} asgByCell={asgByCell} leaveByCell={leaveByCell}
-                today={today} canManage={canManage} me={me} onBlock={setBlockModal} onDropCell={onDropCell} />)}
+                today={today} canManage={canManage} me={me} onBlock={setBlockModal} onDropCell={onDropCell}
+                onReflow={runReflow} reflowing={reflowing} />)}
 
       {/* Leave requests + allowances + amends. Annual leave / allowance don't
           apply to freelancers, so they only see their Amends to do. */}
       <div style={{ marginTop: 28 }}>
         {!isFreelancer && <LeavePanel sched={sched} canManage={canManage} canApprove={canApprove} me={me} actions={actions} />}
         {!isFreelancer && <AllowancePanel sched={sched} canManage={canManage} canManageAllowance={canManageAllowance} me={me} onEdit={setAllowanceModal} />}
-        <AmendsPanel sched={sched} onOpenVideo={onOpenVideo} />
+        <AmendsPanel sched={sched} onOpenVideo={onOpenVideo} showProducer={canManage} />
       </div>
 
       {newBlock && <NewBlockModal producers={allProducers} onClose={() => setNewBlock(false)}
@@ -394,7 +404,7 @@ function MiniChip({ label, asg, leave, onClick, draggable }) {
 }
 
 // ── Desktop grid: rows = weekdays, columns = producers ──
-function CalendarGrid({ weekDays, producers, asgByCell, leaveByCell, today, canManage, me, onBlock, onDropCell }) {
+function CalendarGrid({ weekDays, producers, asgByCell, leaveByCell, today, canManage, me, onBlock, onDropCell, onReflow, reflowing }) {
   const colW = `minmax(150px, 1fr)`;
   return (
     <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12, background: 'white' }}>
@@ -405,6 +415,15 @@ function CalendarGrid({ weekDays, producers, asgByCell, leaveByCell, today, canM
           <div key={p.email} style={{ padding: '10px 12px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '1px solid ' + BRAND.paper, background: BRAND.paper, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 13 }}>
             <ProducerAvatar producer={p} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name || p.email}</span>
+            {canManage && onReflow && (
+              <button onClick={() => onReflow(p.email)} disabled={!!reflowing}
+                title={`Update ${p.name || p.email}'s rota — push not-ready work back, pull ready work forward`}
+                style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 24, height: 24, padding: 0, border: '1px solid ' + BRAND.border, borderRadius: 6,
+                  background: 'white', color: BRAND.muted, cursor: reflowing ? 'default' : 'pointer' }}>
+                <RefreshCw size={13} style={reflowing === p.email ? { animation: 'spin 0.8s linear infinite' } : undefined} />
+              </button>
+            )}
           </div>
         ))}
         {/* rows */}
@@ -602,21 +621,41 @@ function AllowancePanel({ sched, canManage, canManageAllowance, me, onEdit }) {
 }
 
 // ── Amends to do ──
-function AmendsPanel({ sched, onOpenVideo }) {
+// On the manager (master) view each row is prefixed with the assigned producer's
+// profile picture, so it's obvious at a glance whose amends these are.
+function AmendsPanel({ sched, onOpenVideo, showProducer }) {
+  const { state } = useStore();
   const amends = sched.amends || [];
+  // Prefer the rota roster (name + avatar), fall back to the user directory for
+  // anyone off-roster.
+  const lookup = (email) => {
+    if (!email) return null;
+    const fromRoster = (sched.producers || []).find(p => p.email === email);
+    if (fromRoster) return fromRoster;
+    const u = (state.users || {})[email];
+    return { email, name: u?.name || email, avatar: u?.avatar || null };
+  };
   return (
     <Section title="Amends to do" icon={AlertTriangle} color="#DC2626"
       badge={<span style={{ fontSize: 12, color: BRAND.muted }}>{amends.length} outstanding</span>}>
       {amends.length === 0 && <div style={{ color: BRAND.muted, fontSize: 13 }}>No amends outstanding — nice.</div>}
-      {amends.map(a => (
-        <div key={a.videoId} onClick={() => onOpenVideo && onOpenVideo(a.videoId)}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '9px 0', borderBottom: '1px solid ' + BRAND.paper, cursor: onOpenVideo ? 'pointer' : 'default' }}>
-          <div style={{ fontSize: 14 }}>
-            <strong>{a.projectTitle}</strong> — {a.videoTitle}
+      {amends.map(a => {
+        const producer = showProducer ? lookup(a.userEmail) : null;
+        return (
+          <div key={a.videoId} onClick={() => onOpenVideo && onOpenVideo(a.videoId)}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '9px 0', borderBottom: '1px solid ' + BRAND.paper, cursor: onOpenVideo ? 'pointer' : 'default' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, fontSize: 14 }}>
+              {showProducer && (producer
+                ? <ProducerAvatar producer={producer} size={22} />
+                : <span title="No producer assigned" style={{ width: 22, height: 22, borderRadius: '50%', flexShrink: 0, background: BRAND.paper, border: '1px dashed ' + BRAND.border }} />)}
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <strong>{a.projectTitle}</strong> — {a.videoTitle}
+              </span>
+            </div>
+            <Badge color={a.kind === 'storyboard' ? 'orange' : 'blue'}>{a.kind === 'storyboard' ? 'Storyboard revisions' : 'Revisions'}</Badge>
           </div>
-          <Badge color={a.kind === 'storyboard' ? 'orange' : 'blue'}>{a.kind === 'storyboard' ? 'Storyboard revisions' : 'Revisions'}</Badge>
-        </div>
-      ))}
+        );
+      })}
     </Section>
   );
 }

@@ -1904,11 +1904,16 @@ export function StoreProvider({ children }) {
         .then((p) => actions._applySchedule(p))
         .catch((err) => { showMsg(err.message || 'Failed to sync schedule'); throw err; });
     },
-    reflowSchedule() {
-      return api.post('/api/crm/schedule/reflow', {})
+    // Omit `userEmail` to reflow the whole roster; pass one to reflow just that
+    // producer's rota.
+    reflowSchedule(userEmail = null) {
+      return api.post('/api/crm/schedule/reflow', userEmail ? { userEmail } : {})
         .then((p) => {
           actions._applySchedule(p);
-          showMsg(p.moved ? `Schedule updated — ${p.moved} block${p.moved === 1 ? '' : 's'} moved` : 'Schedule already up to date');
+          const bits = [];
+          if (p.moved) bits.push(`${p.moved} block${p.moved === 1 ? '' : 's'} moved`);
+          if (p.removed) bits.push(`${p.removed} completed block${p.removed === 1 ? '' : 's'} cleared`);
+          showMsg(bits.length ? `Schedule updated — ${bits.join(', ')}` : 'Schedule already up to date');
           return p;
         })
         .catch((err) => { showMsg(err.message || 'Failed to update schedule'); throw err; });
