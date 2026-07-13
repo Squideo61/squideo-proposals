@@ -603,11 +603,15 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginLeft: 'auto' }}>
-                  <button
-                    type="button"
-                    onClick={() => onOpenProposal?.(p.id, 'edit')}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: BRAND.ink }}
-                  ><Edit2 size={13} /> Edit</button>
+                  {/* Signed proposals are locked — the client has agreed to these
+                      terms, so only Preview is offered. */}
+                  {!p.signed && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenProposal?.(p.id, 'edit')}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: BRAND.ink }}
+                    ><Edit2 size={13} /> Edit</button>
+                  )}
                   <button
                     type="button"
                     onClick={() => onOpenProposal?.(p.id, 'preview')}

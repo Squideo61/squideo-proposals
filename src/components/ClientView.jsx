@@ -613,7 +613,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             </div>
           )}
           <div style={{ display: 'flex', gap: isMobile ? 4 : 8, flexShrink: 0 }}>
-            {onEdit && (
+            {onEdit && !storeSigned && (
               <button onClick={onEdit} className="btn-ghost" style={{ fontSize: 13 }} title="Edit this proposal in the builder" aria-label="Edit">
                 <PenLine size={14} /> {!isMobile && 'Edit'}
               </button>

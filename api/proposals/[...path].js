@@ -90,6 +90,29 @@ export default async function handler(req, res) {
     // hoisted local copies for INSERT/UPDATE column values.
     data._contactId = presetContactId;
     data._companyId = presetCompanyId;
+
+    // A signed proposal is a contract — its content is frozen, so no PUT may
+    // change it (the UI hides every Edit entry point; this backstops deep links
+    // and stale clients). `archived` is a filing flag rather than proposal
+    // content, so that one field still applies — the dashboard archives signed
+    // proposals through this same route.
+    const isSignedProposal = (await sql`SELECT 1 FROM signatures WHERE proposal_id = ${id} LIMIT 1`).length > 0;
+    if (isSignedProposal) {
+      const cur = await sql`SELECT data FROM proposals WHERE id = ${id}`;
+      if (!cur.length) return res.status(404).json({ error: 'Not found' });
+      const frozen = { ...(cur[0].data || {}), archived: !!data.archived };
+      await sql`UPDATE proposals SET data = ${JSON.stringify(frozen)}, updated_at = NOW() WHERE id = ${id}`;
+      const meta = await sql`SELECT number_year, number_seq, deal_id FROM proposals WHERE id = ${id}`;
+      const m = meta[0];
+      return res.status(200).json({
+        ok: true,
+        locked: true,
+        number: m && m.number_year && m.number_seq ? { year: m.number_year, seq: m.number_seq } : null,
+        dealId: m?.deal_id || null,
+        dealCreated: false,
+      });
+    }
+
     const y = new Date().getFullYear();
     await sql`
       INSERT INTO proposals (id, data, updated_at, number_year, number_seq)
@@ -142,31 +165,18 @@ export default async function handler(req, res) {
         }
         await sql`UPDATE proposals SET deal_id = ${expectedAutoDealId} WHERE id = ${id} AND deal_id IS NULL`;
       } else if (meta[0].deal_id === expectedAutoDealId) {
-        // Don't clobber the signed total ex-VAT that the sign flow wrote onto
-        // deals.value — only sync from basePrice while the proposal is still
-        // unsigned. Once signed, the value reflects extras/partner discount,
-        // which we don't want to lose on every subsequent edit.
-        const isSigned = (await sql`SELECT 1 FROM signatures WHERE proposal_id = ${id} LIMIT 1`).length > 0;
-        if (isSigned) {
-          await sql`
-            UPDATE deals
-               SET title = ${title},
-                   primary_contact_id = COALESCE(primary_contact_id, ${presetContactId}),
-                   company_id = COALESCE(company_id, ${presetCompanyId}),
-                   updated_at = NOW()
-             WHERE id = ${expectedAutoDealId}
-          `;
-        } else {
-          await sql`
-            UPDATE deals
-               SET title = ${title},
-                   value = ${value},
-                   primary_contact_id = COALESCE(primary_contact_id, ${presetContactId}),
-                   company_id = COALESCE(company_id, ${presetCompanyId}),
-                   updated_at = NOW()
-             WHERE id = ${expectedAutoDealId}
-          `;
-        }
+        // Only reached while the proposal is unsigned (signed ones return above),
+        // so syncing value from basePrice can't clobber the signed total ex-VAT
+        // that the sign flow wrote onto deals.value.
+        await sql`
+          UPDATE deals
+             SET title = ${title},
+                 value = ${value},
+                 primary_contact_id = COALESCE(primary_contact_id, ${presetContactId}),
+                 company_id = COALESCE(company_id, ${presetCompanyId}),
+                 updated_at = NOW()
+           WHERE id = ${expectedAutoDealId}
+        `;
       }
     } catch (err) {
       console.error('[proposals] auto-create deal failed', err);

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
+import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Lock, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { useIsMobile, formatGBP, computeBaseDiscount } from '../utils.js';
@@ -265,6 +265,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   const { state, actions, showMsg } = useStore();
   const isTemplate = mode === 'template';
   const data = isTemplate ? state.templates[id] : state.proposals[id];
+  const signature = isTemplate ? null : state.signatures[id];
   const [showSaveTpl, setShowSaveTpl] = useState(false);
   const [tplName, setTplName] = useState('');
   const [showBankPicker, setShowBankPicker] = useState(false);
@@ -374,6 +375,36 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   };
+
+  // A signed proposal is a contract — its terms and pricing are frozen. The
+  // builder auto-saves every keystroke, so we block it outright rather than
+  // disable inputs one by one; this also catches deep links to #/builder/<id>.
+  // The server refuses the writes too (PUT /api/proposals/:id).
+  if (signature) {
+    const signedOn = signature.signedAt
+      ? new Date(signature.signedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      : null;
+    return (
+      <div style={{ maxWidth: 620, margin: '0 auto', padding: isMobile ? '32px 12px' : '64px 24px' }}>
+        <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 20 : 32, textAlign: 'center' }}>
+          <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#ECFDF5', color: '#15803D', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+            <Lock size={20} />
+          </div>
+          <h2 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700 }}>This proposal is signed</h2>
+          <p style={{ margin: '0 0 6px', fontSize: 13.5, color: BRAND.muted, lineHeight: 1.5 }}>
+            {[signature.name, signedOn && 'accepted it on ' + signedOn].filter(Boolean).join(' ') || 'It has been accepted'} — so it&rsquo;s locked. Editing it now would change the terms the client agreed to.
+          </p>
+          <p style={{ margin: '0 0 20px', fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
+            To make changes, remove the signature first (&ldquo;Unmark as accepted&rdquo; on the proposals list), or duplicate it as a new proposal.
+          </p>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button onClick={onBack} className="btn-ghost"><ChevronLeft size={14} /> Back</button>
+            {onPreview && <button onClick={onPreview} className="btn"><Eye size={14} /> View proposal</button>}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: isMobile ? '12px 12px 96px' : 24 }}>

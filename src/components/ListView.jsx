@@ -475,7 +475,8 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
   // desktop collapse into the ⋮ menu, so each card stays a tight two-line row.
   const mobileMenuItems = [
     ...(proposal._dealId && onOpenDeal ? [{ label: 'Go to deal', icon: ExternalLink, onClick: () => onOpenDeal(proposal._dealId) }] : []),
-    { label: 'Edit proposal', icon: Pencil, onClick: () => onOpen(proposal.id) },
+    // Signed = locked: the client agreed to these terms, so there's no Edit.
+    ...(signed ? [] : [{ label: 'Edit proposal', icon: Pencil, onClick: () => onOpen(proposal.id) }]),
     { label: 'Copy share link', icon: Link2, onClick: copyLink },
     ...actionItems,
   ];
@@ -655,7 +656,9 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
           </button>
         )}
         <button onClick={(e) => { stop(e); copyLink(); }} className="btn-icon" title="Share link" aria-label="Copy share link"><Link2 size={16} /></button>
-        <button onClick={(e) => { stop(e); onOpen(proposal.id); }} className="btn-icon" title="Edit" aria-label="Edit proposal">Edit</button>
+        {!signed && (
+          <button onClick={(e) => { stop(e); onOpen(proposal.id); }} className="btn-icon" title="Edit" aria-label="Edit proposal">Edit</button>
+        )}
         <ActionMenu
           open={menuOpen}
           onOpenChange={setMenuOpen}
