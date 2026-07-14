@@ -10,7 +10,7 @@
     "package": "node build.js && node -e \"const {execSync}=require('child_process'),{readFileSync}=require('fs'),v=JSON.parse(readFileSync('package.json','utf8')).version;execSync('powershell Compress-Archive -Path dist\\\\* -DestinationPath squideo-crm-'+v+'.zip -Force');console.log('Packaged squideo-crm-'+v+'.zip');\""
   },
   "dependencies": {
-    "@inboxsdk/core": "^2.2.15",
+    "@inboxsdk/core": "^2.2.17",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
