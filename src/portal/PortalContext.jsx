@@ -6,6 +6,14 @@ import { portalApi } from './api.js';
 
 const PortalContext = createContext(null);
 const COMPANY_KEY = 'squideo:portal:companyId';
+const LOGO_KEY = 'squideo:portal:logoUrl';
+
+// The sign-in screen has no session and no org, so it can't ask the server
+// whose portal it is. Remembering the last org's logo is what lets a returning
+// client land on their own branding (a first-ever visit just sees Squideo's).
+export function rememberedLogoUrl() {
+  try { return localStorage.getItem(LOGO_KEY) || null; } catch { return null; }
+}
 
 export function PortalProvider({ children }) {
   const [booting, setBooting] = useState(true);
@@ -70,6 +78,17 @@ export function PortalProvider({ children }) {
   useEffect(() => {
     if (user && companyId) refreshOverview(companyId).catch(() => {});
   }, [user, companyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep the remembered logo in step with the active org — it outlives the
+  // session on purpose, so the next sign-in screen is already branded.
+  useEffect(() => {
+    const active = (user?.companies || []).find((c) => c.id === companyId);
+    if (!active) return;
+    try {
+      if (active.logoUrl) localStorage.setItem(LOGO_KEY, active.logoUrl);
+      else localStorage.removeItem(LOGO_KEY);
+    } catch { /* ignore */ }
+  }, [user, companyId]);
 
   const logout = useCallback(async () => {
     try { await portalApi.post('auth?op=logout'); } catch { /* ignore */ }

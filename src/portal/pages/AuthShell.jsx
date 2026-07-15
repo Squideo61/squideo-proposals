@@ -2,8 +2,12 @@
 import React from 'react';
 import { BRAND } from '../../theme.js';
 import { SQUIDEO_LOGO } from '../../defaults.js';
+import ClientLogo from '../ClientLogo.jsx';
 
-export default function AuthShell({ children, footer = null }) {
+// logoUrl is the client's own logo — known here from the invite token, or
+// remembered from their last session (see PortalContext). It sits inside the
+// white card rather than on the navy backdrop so a dark logo still reads.
+export default function AuthShell({ children, footer = null, logoUrl = null }) {
   return (
     <div style={{
       minHeight: '100vh', background: BRAND.ink,
@@ -19,6 +23,15 @@ export default function AuthShell({ children, footer = null }) {
         border: `1px solid ${BRAND.border}`, borderRadius: 16, padding: 28,
         boxShadow: '0 18px 50px rgba(0,0,0,0.28)',
       }}>
+        {logoUrl && (
+          <div style={{
+            display: 'flex', justifyContent: 'center',
+            paddingBottom: 20, marginBottom: 20,
+            borderBottom: `1px solid ${BRAND.border}`,
+          }}>
+            <ClientLogo src={logoUrl} height={44} maxWidth={200} style={{ padding: 0 }} />
+          </div>
+        )}
         {children}
       </div>
       <div style={{ marginTop: 22, color: '#7E97A8', fontSize: 12.5, textAlign: 'center', lineHeight: 1.6 }}>

@@ -12,6 +12,7 @@ import { sendMail } from '../email.js';
 import { makeId, trimOrNull, lowerOrNull } from '../crm/shared.js';
 import { ensurePortalTables } from './db.js';
 import { createRawToken, hashToken } from './auth.js';
+import { emailLogoUrl } from './logo.js';
 import {
   PORTAL_URL,
   portalWelcomeHtml,
@@ -68,10 +69,11 @@ export async function createPortalInvite({ email, companyId, prefill = null, inv
 // invite from the CRM). Throws on a send failure so callers can surface it.
 export async function sendTeamInvite({ email, companyId, companyName, inviterName, invitedBy, prefill = null }) {
   const { rawToken } = await createPortalInvite({ email, companyId, prefill, invitedBy });
+  const logoUrl = await emailLogoUrl(companyId);
   await sendMail({
     to: email,
     subject: `${inviterName || 'A colleague'} invited you to ${companyName || 'your team'}'s Squideo portal`,
-    html: portalTeamInviteHtml({ inviterName, companyName, inviteUrl: inviteUrlFor(rawToken) }),
+    html: portalTeamInviteHtml({ inviterName, companyName, inviteUrl: inviteUrlFor(rawToken), logoUrl }),
     text: `${inviterName || 'A colleague'} invited you to ${companyName || 'your team'}'s Squideo Client Portal. Join here: ${inviteUrlFor(rawToken)} (expires in ${INVITE_DAYS} days)`,
     throwOnError: true,
   });
@@ -168,6 +170,9 @@ export async function sendPortalWelcome({ dealId, proposalData, signerName, sign
 
   const contact = await resolveContactForSigner({ email, name: signerName, companyId: org.companyId });
   const projectTitle = proposalData?.proposalTitle || proposalData?.clientName || org.dealTitle || null;
+  // resolveCompanyForDeal has just linked the deal to its company, so the
+  // proposal they signed (logo and all) is now reachable from the org.
+  const logoUrl = await emailLogoUrl(org.companyId);
 
   const existing = await sql`SELECT id, name FROM portal_users WHERE email = ${email}`;
   if (existing.length) {
@@ -182,7 +187,7 @@ export async function sendPortalWelcome({ dealId, proposalData, signerName, sign
       await sendMail({
         to: email,
         subject: `${projectTitle || 'Your new project'} is now in your Squideo portal`,
-        html: portalProjectAddedHtml({ clientName: pu.name || signerName, projectTitle, companyName: org.companyName }),
+        html: portalProjectAddedHtml({ clientName: pu.name || signerName, projectTitle, companyName: org.companyName, logoUrl }),
         text: `${projectTitle || 'Your new project'} is now live in your Squideo Client Portal: ${PORTAL_URL}`,
       });
     }
@@ -200,7 +205,7 @@ export async function sendPortalWelcome({ dealId, proposalData, signerName, sign
   await sendMail({
     to: email,
     subject: `Your Squideo Client Portal is ready${projectTitle ? ` — ${projectTitle}` : ''}`,
-    html: portalWelcomeHtml({ clientName: prefill.name, projectTitle, inviteUrl: inviteUrlFor(rawToken) }),
+    html: portalWelcomeHtml({ clientName: prefill.name, projectTitle, inviteUrl: inviteUrlFor(rawToken), logoUrl }),
     text: `Your Squideo Client Portal is ready. Set up your account (details prefilled): ${inviteUrlFor(rawToken)}`,
   });
   return { sent: true, existing: false };

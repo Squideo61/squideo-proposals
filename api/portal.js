@@ -59,6 +59,7 @@ import {
   extrasWindowOpen,
 } from './_lib/portal/extrasOffers.js';
 import { sendTeamInvite } from './_lib/portal/onboarding.js';
+import { companyHasLogo, portalLogoPath, emailLogoUrl } from './_lib/portal/logo.js';
 import {
   PORTAL_URL,
   portalMagicLinkHtml,
@@ -179,6 +180,17 @@ async function consumeLoginToken(rawToken, purpose) {
     RETURNING portal_user_id
   `;
   return rows[0]?.portal_user_id || null;
+}
+
+// The org a sign-in email is branded with: the account's first (all but a
+// handful of clients have exactly one) organisation.
+async function primaryCompanyId(portalUserId) {
+  const rows = await sql`
+    SELECT company_id FROM portal_memberships
+     WHERE portal_user_id = ${portalUserId} AND disabled_at IS NULL
+     ORDER BY created_at ASC LIMIT 1
+  `;
+  return rows[0]?.company_id || null;
 }
 
 function publicPortalUser(user, memberships = null) {
@@ -338,7 +350,7 @@ async function authRoutes(req, res) {
     const raw = req.query.token ? String(req.query.token) : '';
     if (!raw) return res.status(400).json({ error: 'token required' });
     const rows = await sql`
-      SELECT i.email, i.prefill, i.expires_at, i.accepted_at, i.revoked_at, c.name AS company_name
+      SELECT i.email, i.company_id, i.prefill, i.expires_at, i.accepted_at, i.revoked_at, c.name AS company_name
         FROM portal_invites i JOIN companies c ON c.id = i.company_id
        WHERE i.token_hash = ${hashToken(raw)}
     `;
@@ -353,6 +365,9 @@ async function authRoutes(req, res) {
     return res.status(200).json({
       email: inv.email,
       companyName: inv.company_name,
+      // The invite token is what tells us whose portal this is, so the accept
+      // screen is the one pre-auth screen that can brand itself properly.
+      logoUrl: (await companyHasLogo(inv.company_id)) ? portalLogoPath(inv.company_id) : null,
       prefill: inv.prefill || {},
       existingAccount: existing.length > 0,
     });
@@ -478,10 +493,11 @@ async function authRoutes(req, res) {
     if ((recent[0]?.n || 0) >= MAGIC_SENDS_PER_10MIN) return ok();
     const raw = await issueLoginToken(user.id, 'magic_link', 15);
     const loginUrl = `${PORTAL_URL}?login=${encodeURIComponent(raw)}`;
+    const logoUrl = await emailLogoUrl(await primaryCompanyId(user.id));
     await sendMail({
       to: email,
       subject: 'Your Squideo portal sign-in link',
-      html: portalMagicLinkHtml({ loginUrl }),
+      html: portalMagicLinkHtml({ loginUrl, logoUrl }),
       text: `Sign in to your Squideo Client Portal (link works once, expires in 15 minutes): ${loginUrl}`,
     });
     return ok();
@@ -513,10 +529,11 @@ async function authRoutes(req, res) {
     if ((recent[0]?.n || 0) >= MAGIC_SENDS_PER_10MIN) return ok();
     const raw = await issueLoginToken(user.id, 'password_reset', 60);
     const resetUrl = `${PORTAL_URL}?reset=${encodeURIComponent(raw)}`;
+    const logoUrl = await emailLogoUrl(await primaryCompanyId(user.id));
     await sendMail({
       to: email,
       subject: 'Reset your Squideo portal password',
-      html: portalResetHtml({ resetUrl }),
+      html: portalResetHtml({ resetUrl, logoUrl }),
       text: `Choose a new Squideo Client Portal password (link works once, expires in 60 minutes): ${resetUrl}`,
     });
     return ok();
@@ -980,6 +997,7 @@ async function extrasAcceptRoute(req, res, user) {
       to: user.email,
       subject: `Added to ${deal.title}: ${priced.title}`,
       html: portalExtraConfirmHtml({
+        logoUrl: await emailLogoUrl(deal.company_id),
         clientName: user.name,
         projectTitle: deal.title,
         title: `${priced.title}${qtyLabel}`,

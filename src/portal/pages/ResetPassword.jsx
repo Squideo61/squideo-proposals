@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { portalApi } from '../api.js';
-import { usePortal } from '../PortalContext.jsx';
+import { usePortal, rememberedLogoUrl } from '../PortalContext.jsx';
 import AuthShell, { AuthField, AuthError } from './AuthShell.jsx';
 
 export default function ResetPassword({ token, onDone }) {
   const { refreshSession } = usePortal();
+  const [logoUrl] = useState(rememberedLogoUrl);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
@@ -30,7 +31,7 @@ export default function ResetPassword({ token, onDone }) {
   };
 
   return (
-    <AuthShell>
+    <AuthShell logoUrl={logoUrl}>
       <h1 style={{ margin: '0 0 6px', fontSize: 20, fontWeight: 800, color: BRAND.ink }}>Choose a new password</h1>
       <p style={{ margin: '0 0 18px', fontSize: 13.5, color: BRAND.muted }}>You'll be signed in straight after.</p>
       <AuthError>{error}</AuthError>

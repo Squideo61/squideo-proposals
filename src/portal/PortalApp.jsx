@@ -10,6 +10,7 @@ import {
   Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut,
 } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
+import ClientLogo from './ClientLogo.jsx';
 import { portalApi } from './api.js';
 import Login from './pages/Login.jsx';
 import AcceptInvite from './pages/AcceptInvite.jsx';
@@ -48,6 +49,7 @@ function Header() {
   const { user, companyId, setActiveCompanyId, logout } = usePortal();
   const isMobile = useIsMobile();
   const companies = user?.companies || [];
+  const activeCompany = companies.find((c) => c.id === companyId) || null;
   return (
     <header style={{
       background: BRAND.ink,
@@ -66,6 +68,17 @@ function Header() {
             </span>
           )}
         </a>
+        {activeCompany?.logoUrl && (
+          <>
+            <span style={{ width: 1, height: isMobile ? 20 : 26, background: '#2E546E' }} />
+            <ClientLogo
+              src={activeCompany.logoUrl}
+              alt={activeCompany.name}
+              height={isMobile ? 18 : 22}
+              maxWidth={isMobile ? 90 : 150}
+            />
+          </>
+        )}
         <div style={{ flex: 1 }} />
         {companies.length > 1 && (
           <select

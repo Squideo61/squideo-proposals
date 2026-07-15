@@ -24,6 +24,7 @@ import { ensurePortalTables } from '../_lib/portal/db.js';
 import { createRawToken, hashToken } from '../_lib/portal/auth.js';
 import { sendTeamInvite, createPortalInvite, inviteUrlFor } from '../_lib/portal/onboarding.js';
 import { portalTeamInviteHtml, portalResetHtml, PORTAL_URL } from '../_lib/portal/emails.js';
+import { emailLogoUrl } from '../_lib/portal/logo.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 
 // Any of these grants access — the panel spans company pages (members) and
@@ -336,7 +337,12 @@ export default async function handler(req, res) {
       await sendMail({
         to: inv.email,
         subject: `Your invite to ${inv.company_name}'s Squideo portal`,
-        html: portalTeamInviteHtml({ inviterName: user.name || 'The Squideo team', companyName: inv.company_name, inviteUrl: inviteUrlFor(rawToken) }),
+        html: portalTeamInviteHtml({
+          inviterName: user.name || 'The Squideo team',
+          companyName: inv.company_name,
+          inviteUrl: inviteUrlFor(rawToken),
+          logoUrl: await emailLogoUrl(inv.company_id),
+        }),
         text: `Join ${inv.company_name}'s Squideo Client Portal: ${inviteUrlFor(rawToken)}`,
         throwOnError: true,
       });
@@ -478,10 +484,15 @@ export default async function handler(req, res) {
                 ${new Date(Date.now() + 60 * 60 * 1000).toISOString()})
       `;
       const resetUrl = `${PORTAL_URL}?reset=${encodeURIComponent(raw)}`;
+      const [membership] = await sql`
+        SELECT company_id FROM portal_memberships
+         WHERE portal_user_id = ${portalUserId} AND disabled_at IS NULL
+         ORDER BY created_at ASC LIMIT 1
+      `;
       await sendMail({
         to: pu.email,
         subject: 'Reset your Squideo portal password',
-        html: portalResetHtml({ resetUrl }),
+        html: portalResetHtml({ resetUrl, logoUrl: await emailLogoUrl(membership?.company_id) }),
         text: `Choose a new Squideo Client Portal password (link works once, expires in 60 minutes): ${resetUrl}`,
         throwOnError: true,
       });

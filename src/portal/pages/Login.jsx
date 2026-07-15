@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { portalApi } from '../api.js';
-import { usePortal } from '../PortalContext.jsx';
+import { usePortal, rememberedLogoUrl } from '../PortalContext.jsx';
 import AuthShell, { AuthField, AuthError, AuthInfo } from './AuthShell.jsx';
 
 export default function Login({ initialError = null }) {
   const { refreshSession } = usePortal();
+  const [logoUrl] = useState(rememberedLogoUrl);
   const [mode, setMode] = useState('password'); // 'password' | 'magic' | 'forgot'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -60,7 +61,7 @@ export default function Login({ initialError = null }) {
   });
 
   return (
-    <AuthShell>
+    <AuthShell logoUrl={logoUrl}>
       <h1 style={{ margin: '0 0 6px', fontSize: 20, fontWeight: 800, color: BRAND.ink }}>Welcome back</h1>
       <p style={{ margin: '0 0 18px', fontSize: 13.5, color: BRAND.muted, lineHeight: 1.5 }}>
         Track your projects, review drafts and download your videos.

@@ -86,7 +86,7 @@ export default function AcceptInvite({ token, onDone }) {
   }
 
   return (
-    <AuthShell>
+    <AuthShell logoUrl={invite.logoUrl}>
       <h1 style={{ margin: '0 0 6px', fontSize: 20, fontWeight: 800, color: BRAND.ink }}>
         {invite.existingAccount ? `Join ${invite.companyName}` : 'Set up your portal account'}
       </h1>
