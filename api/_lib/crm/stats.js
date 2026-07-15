@@ -711,15 +711,21 @@ async function financeReport(year) {
   // months. A loss month reserves nothing. Mirrors the Cash Flow tab (estimate).
   try {
     const costRows = await loadCashflowCostRows();
-    // CRM & hosting (Neon + Blob + fixed items, GBP) is a deductible operating
-    // cost — subtract it from the taxable base too so the Corporation Tax to set
-    // aside matches the Cash Flow tab (and the quarterly tax cron, which reads
-    // this). Guarded so a snapshot hiccup never zeroes the whole CT column.
+    const monthKeys = months.map((m) => m.month);
+    // Match the Cash Flow tab's taxable base exactly so the Corporation Tax to
+    // set aside is identical in both reports (and the quarterly tax cron, which
+    // reads this): deduct CRM & hosting (Neon + Blob + fixed items, GBP) AND the
+    // auto staff commission — both genuine deductible operating costs that live
+    // outside the cashflow_costs rows deductibleCostTotalForMonth sees. Each
+    // lookup is guarded so a hiccup never zeroes the whole CT column.
     let crmByMonth = {};
-    try { crmByMonth = await crmCostGbpByMonth(months.map((m) => m.month), curMonthKey()); }
+    try { crmByMonth = await crmCostGbpByMonth(monthKeys, curMonthKey()); }
     catch (err) { console.warn('[finance] CRM cost lookup failed', err.message); }
+    let commByMonth = {};
+    try { commByMonth = await commissionTotalsForMonths(monthKeys); }
+    catch (err) { console.warn('[finance] commission lookup failed', err.message); }
     for (const m of months) {
-      const tp = round2(m.net - deductibleCostTotalForMonth(costRows, m.month) - (crmByMonth[m.month] || 0));
+      const tp = round2(m.net - deductibleCostTotalForMonth(costRows, m.month) - (crmByMonth[m.month] || 0) - (commByMonth[m.month] || 0));
       m.corpTax = monthlyCorpTax(tp);
     }
   } catch { /* leave corpTax at 0 — the cost base is admin-only and may be empty */ }
