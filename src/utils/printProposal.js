@@ -402,6 +402,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   `}
 
   <!-- Team -->
+  ${data.showDeliveryTeam === false ? '' : `
   <h2 class="page-title">Your Delivery Team</h2>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:14px;">
     ${teamCards}
@@ -413,6 +414,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       <p style="font-size:13px;color:#6B7785;line-height:1.5;margin:0;">Our experienced producers will be involved throughout the production process, each contributing their expertise to ensure the highest standard of work. You'll have the opportunity to communicate with them directly at key stages of the project, from initial planning through to final delivery. Every member of our production team takes pride in delivering exceptional results that reflect Squideo's commitment to quality and creativity.</p>
     </div>
   </div>
+  `}
 
   <!-- Requirement -->
   ${(() => {

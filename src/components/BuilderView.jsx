@@ -736,7 +736,15 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         collapsedHint={isMobile ? sectionMeta.find(s => s.id === 'team')?.hint : 'Click to expand and edit team members'}
         {...sectionProps('team')}
       >
-        <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 16px' }}>Photos appear on the client proposal.</p>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={data.showDeliveryTeam !== false}
+            onChange={(e) => update({ showDeliveryTeam: e.target.checked })}
+          />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Show delivery team on this proposal</span>
+        </label>
+        <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 16px' }}>Photos appear on the client proposal. Untick to hide the whole Delivery Team section from this proposal.</p>
         {data.team.map((m, i) => (
           <TeamMemberEditor
             key={i}

@@ -725,6 +725,8 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           </>
         )}
 
+        {data.showDeliveryTeam !== false && (
+        <>
         <PageTitle>Your Delivery Team</PageTitle>
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 16, marginBottom: 16 }}>
           {data.team.map((m, i) => {
@@ -756,6 +758,8 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             <p style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, margin: 0 }}>Our experienced producers will be involved throughout the production process, each contributing their expertise to ensure the highest standard of work. You'll have the opportunity to communicate with them directly at key stages of the project, from initial planning through to final delivery. Every member of our production team takes pride in delivering exceptional results that reflect Squideo's commitment to quality and creativity.</p>
           </div>
         </div>
+        </>
+        )}
 
         {/* "Your Requirement" now renders just above Your Quote (see below) so
             it sits consistently in both single and option mode. */}
