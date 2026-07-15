@@ -31,6 +31,34 @@ export async function ensureMessageDealsTable() {
   return messageDealsTableEnsured;
 }
 
+// Self-heal for db/migrations/20260715_email_thread_deal_blocks.sql — the
+// "keep this thread off this deal" list written when a user manually unlinks.
+// Read by the auto-link resolver (gmailSync) and the inbox chip resolver so a
+// later reply can't rebuild a link the user deliberately removed. Same
+// module-level cache pattern as ensureMessageDealsTable.
+let threadDealBlocksTableEnsured = null;
+export async function ensureThreadDealBlocksTable() {
+  if (threadDealBlocksTableEnsured) return threadDealBlocksTableEnsured;
+  threadDealBlocksTableEnsured = (async () => {
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS email_thread_deal_blocks (
+          gmail_thread_id TEXT NOT NULL,
+          deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+          blocked_by TEXT,
+          blocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (gmail_thread_id, deal_id)
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS email_thread_deal_blocks_thread_idx ON email_thread_deal_blocks (gmail_thread_id)`;
+    } catch (err) {
+      threadDealBlocksTableEnsured = null;
+      console.warn('[email_thread_deal_blocks] ensure failed', err.message);
+    }
+  })();
+  return threadDealBlocksTableEnsured;
+}
+
 // Self-heal for db/migrations/20260519_deal_contacts.sql — secondary contacts
 // per deal. Same module-level cache pattern as ensureMessageDealsTable.
 let dealContactsTableEnsured = null;

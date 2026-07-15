@@ -1,5 +1,5 @@
 import sql from '../db.js';
-import { trimOrNull, lowerOrNull, ensureMessageDealsTable } from './shared.js';
+import { trimOrNull, lowerOrNull, ensureMessageDealsTable, ensureThreadDealBlocksTable } from './shared.js';
 
 // Endpoints the Chrome extension + the SPA talk to. Routes:
 //   POST   /api/crm/threads                            — snapshot ingest from extension
@@ -67,6 +67,11 @@ export async function threadsRoute(req, res, id, action, user) {
     `;
 
     if (dealId) {
+      // A snapshot carrying a dealId is a deliberate user link from the
+      // extension (attaching a suggestion / picking a deal), so clear any prior
+      // "keep off this deal" block just like the /link POST does.
+      await ensureThreadDealBlocksTable();
+      await sql`DELETE FROM email_thread_deal_blocks WHERE gmail_thread_id = ${gmailThreadId} AND deal_id = ${dealId}`;
       await sql`
         INSERT INTO email_thread_deals (gmail_thread_id, deal_id, resolved_by)
         VALUES (${gmailThreadId}, ${dealId}, 'extension')
@@ -208,12 +213,26 @@ export async function threadsRoute(req, res, id, action, user) {
           dealId: m.id, title: m.title, stage: m.stage, source: 'contact',
         });
       }
+      // Thread->deal pairs the user manually unlinked: never re-suggest them as
+      // a contact-based chip, or the extension would offer to re-file (and the
+      // auto-linker would rebuild) a link the user deliberately removed.
+      await ensureThreadDealBlocksTable();
+      const unlinkedThreadIds = unlinked.map(i => i.threadId);
+      const blockRows = unlinkedThreadIds.length
+        ? await sql`
+            SELECT gmail_thread_id, deal_id FROM email_thread_deal_blocks
+            WHERE gmail_thread_id = ANY(${unlinkedThreadIds})
+          `
+        : [];
+      const blockedPairs = new Set(blockRows.map(r => `${r.gmail_thread_id}|${r.deal_id}`));
+
       for (const item of unlinked) {
         const seen = new Map();
         for (const email of item.senderEmails) {
           const lower = String(email).toLowerCase();
           if (!lower || lower === userEmail) continue;
           for (const d of (dealsByEmail[lower] || [])) {
+            if (blockedPairs.has(`${item.threadId}|${d.dealId}`)) continue;
             if (!seen.has(d.dealId)) seen.set(d.dealId, d);
           }
         }
@@ -232,6 +251,7 @@ export async function threadsRoute(req, res, id, action, user) {
   // email can be filed against a different deal than the rest of its conversation.
   if (action === 'link') {
     await ensureMessageDealsTable();
+    await ensureThreadDealBlocksTable();
     if (req.method === 'POST') {
       const body = req.body || {};
       const dealId = trimOrNull(body.dealId);
@@ -247,6 +267,9 @@ export async function threadsRoute(req, res, id, action, user) {
       if (!threadRow) return res.status(404).json({ error: 'Thread not found' });
 
       if (scope === 'thread') {
+        // Deliberately re-linking clears any prior "keep off this deal" block so
+        // the auto-linker is free to maintain the link again.
+        await sql`DELETE FROM email_thread_deal_blocks WHERE gmail_thread_id = ${id} AND deal_id = ${dealId}`;
         await sql`
           INSERT INTO email_thread_deals (gmail_thread_id, deal_id, resolved_by)
           VALUES (${id}, ${dealId}, 'manual')
@@ -310,6 +333,13 @@ export async function threadsRoute(req, res, id, action, user) {
               SELECT gmail_message_id FROM email_messages WHERE gmail_thread_id = ${id}
             )
         `;
+        // Remember the manual unlink so a later reply on this thread can't
+        // rebuild the link via the contact/domain auto-link rules.
+        await sql`
+          INSERT INTO email_thread_deal_blocks (gmail_thread_id, deal_id, blocked_by)
+          VALUES (${id}, ${dealId}, ${user.email || null})
+          ON CONFLICT (gmail_thread_id, deal_id) DO NOTHING
+        `;
       } else {
         await sql`
           DELETE FROM email_message_deals
@@ -337,9 +367,17 @@ export async function threadsRoute(req, res, id, action, user) {
   if (req.method === 'DELETE') {
     const dealId = trimOrNull(req.query.dealId);
     if (!dealId) return res.status(400).json({ error: 'dealId query param required' });
+    await ensureThreadDealBlocksTable();
     await sql`
       DELETE FROM email_thread_deals
       WHERE gmail_thread_id = ${id} AND deal_id = ${dealId}
+    `;
+    // Record the manual unlink so the auto-linker won't rebuild it (mirrors the
+    // /link DELETE handler above).
+    await sql`
+      INSERT INTO email_thread_deal_blocks (gmail_thread_id, deal_id, blocked_by)
+      VALUES (${id}, ${dealId}, ${user.email || null})
+      ON CONFLICT (gmail_thread_id, deal_id) DO NOTHING
     `;
     return res.status(200).json({ ok: true });
   }

@@ -98,6 +98,7 @@ describe('resolveDealForMessage', () => {
 
   it('Rule 1 — X-Squideo-Deal header wins when the deal exists', async () => {
     setSqlHandler((text) => {
+      if (text.includes('email_thread_deal_blocks')) return [];
       if (text.includes('FROM deals WHERE id')) return [{ id: 'd99' }];
       throw new Error('unexpected query: ' + text);
     });
@@ -119,6 +120,7 @@ describe('resolveDealForMessage', () => {
 
   it('Rule 2 — thread continuity inherits the existing email_thread_deals link', async () => {
     setSqlHandler((text) => {
+      if (text.includes('email_thread_deal_blocks')) return [];
       if (text.includes('email_thread_deals')) return [{ deal_id: 'd5' }];
       throw new Error('unexpected query: ' + text);
     });
@@ -128,6 +130,7 @@ describe('resolveDealForMessage', () => {
 
   it('Rule 3 — in-reply-to inherits the parent message deal', async () => {
     setSqlHandler((text) => {
+      if (text.includes('email_thread_deal_blocks')) return [];
       if (text.includes('FROM email_thread_deals WHERE gmail_thread_id')) return [];
       if (text.includes('FROM email_messages em')) return [{ deal_id: 'd7' }];
       throw new Error('unexpected query: ' + text);
@@ -138,6 +141,7 @@ describe('resolveDealForMessage', () => {
 
   it('Rule 3 — references (without in-reply-to) also trigger parent lookup', async () => {
     setSqlHandler((text) => {
+      if (text.includes('email_thread_deal_blocks')) return [];
       if (text.includes('FROM email_thread_deals WHERE gmail_thread_id')) return [];
       if (text.includes('FROM email_messages em')) return [{ deal_id: 'd8' }];
       throw new Error('unexpected query: ' + text);
@@ -151,6 +155,7 @@ describe('resolveDealForMessage', () => {
 
   it('Rule 4 — contact match returns the most-recent non-lost deal', async () => {
     setSqlHandler((text) => {
+      if (text.includes('email_thread_deal_blocks')) return [];
       if (text.includes('FROM email_thread_deals WHERE gmail_thread_id')) return [];
       if (text.includes('FROM email_messages em')) return [];
       if (text.includes('FROM users')) return [];
@@ -232,6 +237,7 @@ describe('resolveDealForMessage', () => {
 
   it('Rule 5 — domain match falls back when contact lookup is empty', async () => {
     setSqlHandler((text) => {
+      if (text.includes('email_thread_deal_blocks')) return [];
       if (text.includes('FROM email_thread_deals WHERE gmail_thread_id')) return [];
       if (text.includes('FROM users')) return [];
       if (text.includes('matched_contacts')) return [];
@@ -246,6 +252,26 @@ describe('resolveDealForMessage', () => {
     setSqlHandler(() => []);
     const r = await resolveDealForMessage(base);
     expect(r).toEqual({ dealId: null, resolvedBy: null });
+  });
+
+  it('block list — a manually-unlinked deal is threaded into the match queries so it can be excluded', async () => {
+    // The user unlinked this thread from d9; the block row must be read and its
+    // deal id passed to the thread/contact/domain queries so a later reply
+    // can't re-link the thread to the deal they detached it from.
+    let contactValues = null;
+    setSqlHandler((text, values) => {
+      if (text.includes('email_thread_deal_blocks')) return [{ deal_id: 'd9' }];
+      if (text.includes('FROM email_thread_deals WHERE gmail_thread_id')) return [];
+      if (text.includes('FROM email_messages em')) return [];
+      if (text.includes('FROM users')) return [];
+      if (text.includes('matched_contacts')) { contactValues = values; return []; }
+      if (text.includes('JOIN companies c')) return [];
+      return [];
+    });
+    await resolveDealForMessage(base);
+    expect(contactValues).not.toBeNull();
+    // The blocked deal id is passed as a query parameter (the `<> ALL(...)` guard).
+    expect(contactValues.flat()).toContain('d9');
   });
 });
 

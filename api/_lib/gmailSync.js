@@ -4,6 +4,7 @@
 // email_threads / email_messages / email_thread_deals.
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import sql from './db.js';
+import { ensureThreadDealBlocksTable } from './crm/shared.js';
 
 const GOOGLE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
 
@@ -248,6 +249,15 @@ export async function resolveDealForMessage({
   // We'll mark it internal_only=true (no deal); the UI will hide these.
   if (internalOnly) return { dealId: null, resolvedBy: null };
 
+  // Deals this thread was manually unlinked from — the resolver must never
+  // rebuild those links, or a later reply snaps the thread back onto a deal the
+  // user deliberately detached it from. Applies to every rule below EXCEPT the
+  // explicit X-Squideo-Deal header (rule 1), which is a deliberate act of
+  // filing this message onto that deal and so overrides a prior unlink.
+  await ensureThreadDealBlocksTable();
+  const blockedRows = await sql`SELECT deal_id FROM email_thread_deal_blocks WHERE gmail_thread_id = ${threadId}`;
+  const blocked = blockedRows.map(r => r.deal_id);
+
   // 1. X-Squideo-Deal header injected by our compose helper or extension.
   if (xSquideoDeal) {
     const exists = await sql`SELECT id FROM deals WHERE id = ${xSquideoDeal}`;
@@ -255,7 +265,10 @@ export async function resolveDealForMessage({
   }
 
   // 2. Thread continuity — already linked to a deal? Use that.
-  const threadLink = await sql`SELECT deal_id FROM email_thread_deals WHERE gmail_thread_id = ${threadId} LIMIT 1`;
+  const threadLink = await sql`
+    SELECT deal_id FROM email_thread_deals WHERE gmail_thread_id = ${threadId}
+      AND deal_id <> ALL(${blocked}) LIMIT 1
+  `;
   if (threadLink.length) return { dealId: threadLink[0].deal_id, resolvedBy: 'thread' };
 
   // 3. In-Reply-To / References — look up the parent message and inherit its deal.
@@ -266,6 +279,7 @@ export async function resolveDealForMessage({
       FROM email_messages em
       JOIN email_thread_deals etd ON etd.gmail_thread_id = em.gmail_thread_id
       WHERE em.message_id_header = ANY(${parentRefs})
+        AND etd.deal_id <> ALL(${blocked})
       LIMIT 1
     `;
     if (parents.length) return { dealId: parents[0].deal_id, resolvedBy: 'in-reply-to' };
@@ -296,6 +310,7 @@ export async function resolveDealForMessage({
       SELECT d.id, d.last_activity_at
       FROM deals d
       WHERE d.stage <> 'lost'
+        AND d.id <> ALL(${blocked})
         AND (
           d.primary_contact_id IN (SELECT id FROM matched_contacts)
           OR EXISTS (
@@ -322,6 +337,7 @@ export async function resolveDealForMessage({
         FROM deals d
         JOIN companies c ON c.id = d.company_id
         WHERE d.stage <> 'lost'
+          AND d.id <> ALL(${blocked})
           AND LOWER(c.domain) = ANY(${domains.map(d => d.toLowerCase())})
         ORDER BY d.last_activity_at DESC
         LIMIT 1
