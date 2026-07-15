@@ -327,6 +327,20 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
     const next = opts.find(o => o !== '5050') || 'full';
     setPaymentOption(next);
   }, [partnerSelected, signed, paymentOption, data]);
+
+  // paymentOption is seeded at mount (above), but on a public link the proposal
+  // data arrives a beat later — so that seed can be a default ('5050') the
+  // proposal doesn't actually offer. Once the offered list is known, snap the
+  // selection back into it: otherwise the radios (driven by data.paymentOptions)
+  // and both the breakdown line AND the signed submission (driven by this state)
+  // silently disagree — the client sees only "Pay in full" yet gets billed a
+  // 50/50 deposit. Skips signed views, where the locked-in choice is replayed.
+  useEffect(() => {
+    if (signed) return;
+    const opts = data?.paymentOptions;
+    if (!opts || !opts.length || opts.includes(paymentOption)) return;
+    setPaymentOption(opts[0]);
+  }, [data, signed, paymentOption]);
   const [sigName, setSigName] = useState('');
   const [sigEmail, setSigEmail] = useState('');
   const [sigAccepted, setSigAccepted] = useState(false);
