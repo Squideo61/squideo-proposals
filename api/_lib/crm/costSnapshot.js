@@ -16,13 +16,41 @@ const num = (n) => Number(n) || 0;
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
 
 // CRM/hosting bills (Neon, Vercel Blob, the fixed cost-items list) are all in
-// USD; the Cash Flow sheet is in GBP. Convert with a single rate, overridable
-// via env when it drifts. These costs are small and already labelled estimates,
-// so an approximate rate is fine. Default ~ mid-2026 GBP per USD.
-export const USD_TO_GBP = (() => {
+// USD; the Cash Flow + Finance reports are in GBP. We convert at the live
+// USD→GBP rate, fetched server-side (no CSP concerns) from the ECB-backed
+// Frankfurter API and cached ~12h per instance. Precedence:
+//   1. env USD_GBP_RATE — a manual pin always wins (set it to freeze the rate).
+//   2. live fetched rate (cached).
+//   3. last-known cached rate, else a sensible static fallback.
+const FX_FALLBACK_USD_GBP = 0.79;
+const FX_TTL_MS = 12 * 60 * 60 * 1000;
+let fxCache = null; // { at, rate }
+
+function envRate() {
   const n = Number(process.env.USD_GBP_RATE);
-  return Number.isFinite(n) && n > 0 ? n : 0.79;
-})();
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+export async function getUsdToGbp() {
+  const pinned = envRate();
+  if (pinned) return pinned; // manual override wins, no fetch
+  if (fxCache && (Date.now() - fxCache.at) < FX_TTL_MS) return fxCache.rate;
+  try {
+    const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=GBP');
+    if (res.ok) {
+      const data = await res.json();
+      const rate = Number(data?.rates?.GBP);
+      if (Number.isFinite(rate) && rate > 0) {
+        fxCache = { at: Date.now(), rate };
+        return rate;
+      }
+    }
+    console.warn('[fx] USD→GBP fetch returned no usable rate');
+  } catch (err) {
+    console.warn('[fx] USD→GBP fetch failed', err?.message);
+  }
+  return fxCache?.rate || FX_FALLBACK_USD_GBP; // stale-but-known, else static default
+}
 
 // GBP CRM-cost total per month for the given YYYY-MM keys, read from the
 // persisted snapshots (converted from USD). Past months without a snapshot are
@@ -32,7 +60,10 @@ export const USD_TO_GBP = (() => {
 // forward so the line isn't £0 while costs are genuinely being incurred.
 export async function crmCostGbpByMonth(monthKeys, currentMonthKey) {
   await ensureSnapshotTable();
-  const rows = await sql`SELECT month, total_usd FROM crm_cost_snapshots`;
+  const [rows, rate] = await Promise.all([
+    sql`SELECT month, total_usd FROM crm_cost_snapshots`,
+    getUsdToGbp(),
+  ]);
   const usdByMonth = {};
   for (const r of rows) usdByMonth[r.month] = num(r.total_usd);
   const latestMonth = rows.map((r) => r.month).sort().pop() || null;
@@ -41,7 +72,7 @@ export async function crmCostGbpByMonth(monthKeys, currentMonthKey) {
   for (const mk of monthKeys) {
     let usd = usdByMonth[mk];
     if (usd == null && mk === currentMonthKey) usd = latestUsd; // carry forward for the live month
-    out[mk] = round2(num(usd) * USD_TO_GBP);
+    out[mk] = round2(num(usd) * rate);
   }
   return out;
 }

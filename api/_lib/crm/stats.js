@@ -711,8 +711,15 @@ async function financeReport(year) {
   // months. A loss month reserves nothing. Mirrors the Cash Flow tab (estimate).
   try {
     const costRows = await loadCashflowCostRows();
+    // CRM & hosting (Neon + Blob + fixed items, GBP) is a deductible operating
+    // cost — subtract it from the taxable base too so the Corporation Tax to set
+    // aside matches the Cash Flow tab (and the quarterly tax cron, which reads
+    // this). Guarded so a snapshot hiccup never zeroes the whole CT column.
+    let crmByMonth = {};
+    try { crmByMonth = await crmCostGbpByMonth(months.map((m) => m.month), curMonthKey()); }
+    catch (err) { console.warn('[finance] CRM cost lookup failed', err.message); }
     for (const m of months) {
-      const tp = round2(m.net - deductibleCostTotalForMonth(costRows, m.month));
+      const tp = round2(m.net - deductibleCostTotalForMonth(costRows, m.month) - (crmByMonth[m.month] || 0));
       m.corpTax = monthlyCorpTax(tp);
     }
   } catch { /* leave corpTax at 0 — the cost base is admin-only and may be empty */ }
