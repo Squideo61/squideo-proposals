@@ -3186,6 +3186,21 @@ export function StoreProvider({ children }) {
         return r;
       });
     },
+    // Attach one or more whole Gmail threads to a deal in a single call (inbox
+    // multi-select "Add to deal"). Ingests each thread's real messages server-side
+    // so the conversation shows on the deal. Drops the cached chip associations so
+    // they re-resolve with the new link.
+    bulkLinkEmails({ threadIds, dealId }) {
+      const ids = Array.isArray(threadIds) ? threadIds.filter(Boolean) : [];
+      return api.post('/api/crm/threads/bulk-link', { threadIds: ids, dealId }).then((r) => {
+        setState(s => {
+          const t = { ...s.threadDeals };
+          for (const tid of ids) delete t[tid];
+          return { ...s, threadDeals: t };
+        });
+        return r;
+      });
+    },
     detachThreadFromDeal({ gmailThreadId, dealId }) {
       return api.delete('/api/crm/threads/' + encodeURIComponent(gmailThreadId) + '?dealId=' + encodeURIComponent(dealId))
         .then((r) => {

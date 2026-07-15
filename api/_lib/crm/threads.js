@@ -1,5 +1,7 @@
 import sql from '../db.js';
 import { trimOrNull, lowerOrNull, ensureMessageDealsTable, ensureThreadDealBlocksTable } from './shared.js';
+import { getFreshAccessToken } from './gmail.js';
+import { ingestMessage } from '../gmailSync.js';
 
 // Endpoints the Chrome extension + the SPA talk to. Routes:
 //   POST   /api/crm/threads                            — snapshot ingest from extension
@@ -241,6 +243,104 @@ export async function threadsRoute(req, res, id, action, user) {
     }
 
     return res.status(200).json(byThread);
+  }
+
+  // /api/crm/threads/bulk-link  POST { dealId, threadIds: [...] }
+  // Attach one or more whole Gmail threads to a deal in a single call — the
+  // inbox multi-select "Add to deal". For each thread we link it to the deal
+  // FIRST (so ingestMessage's resolver keeps it on THIS deal via thread
+  // continuity, rather than a contact-matched one), then pull the real messages
+  // from Gmail and ingest them so the conversation actually shows on the deal
+  // page (which reads bodies from email_messages, not live Gmail). Clears any
+  // prior unlink block. Needs the caller's Gmail connected.
+  if (id === 'bulk-link') {
+    if (req.method !== 'POST') return res.status(405).end();
+    await ensureThreadDealBlocksTable();
+    const body = req.body || {};
+    const dealId = trimOrNull(body.dealId);
+    const threadIds = Array.isArray(body.threadIds)
+      ? Array.from(new Set(body.threadIds.map(trimOrNull).filter(Boolean)))
+      : [];
+    if (!dealId) return res.status(400).json({ error: 'dealId required' });
+    if (!threadIds.length) return res.status(400).json({ error: 'threadIds required' });
+    const dealRow = (await sql`SELECT id, title FROM deals WHERE id = ${dealId}`)[0];
+    if (!dealRow) return res.status(404).json({ error: 'Deal not found' });
+
+    let accessToken;
+    try { accessToken = await getFreshAccessToken(user.email); }
+    catch { return res.status(409).json({ error: 'Connect your Gmail to link emails to a deal.' }); }
+
+    const MAX_THREADS = 100;
+    const MAX_MSGS_PER_THREAD = 100;
+    let linked = 0;
+    const failed = [];
+    for (const tid of threadIds.slice(0, MAX_THREADS)) {
+      try {
+        // Minimal thread row so the link FK is satisfied; ingestMessage fills in
+        // the real subject / participants below, and we fix last_message_at after.
+        await sql`
+          INSERT INTO email_threads (gmail_thread_id, user_email, participant_emails)
+          VALUES (${tid}, ${user.email}, '{}')
+          ON CONFLICT (gmail_thread_id) DO NOTHING
+        `;
+        await sql`DELETE FROM email_thread_deal_blocks WHERE gmail_thread_id = ${tid} AND deal_id = ${dealId}`;
+        await sql`
+          INSERT INTO email_thread_deals (gmail_thread_id, deal_id, resolved_by)
+          VALUES (${tid}, ${dealId}, 'manual')
+          ON CONFLICT (gmail_thread_id, deal_id) DO NOTHING
+        `;
+
+        // Pull the real messages so the conversation renders on the deal.
+        const tRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(tid)}?format=minimal`,
+          { headers: { Authorization: 'Bearer ' + accessToken } },
+        );
+        if (tRes.ok) {
+          const t = await tRes.json();
+          const msgIds = (t.messages || []).map((m) => m && m.id).filter(Boolean).slice(0, MAX_MSGS_PER_THREAD);
+          for (const mid of msgIds) {
+            try { await ingestMessage({ userEmail: user.email, accessToken, messageId: mid }); }
+            catch (err) { console.warn('[bulk-link] ingest msg failed', mid, err.message); }
+          }
+        } else {
+          console.warn('[bulk-link] threads.get failed', tid, tRes.status);
+        }
+
+        // ingestMessage upserts last_message_at with GREATEST against our seed
+        // row, so pin it to the real latest message; re-assert the link (its
+        // resolver runs per message) and clear unmatched.
+        await sql`
+          UPDATE email_threads SET last_message_at = (
+            SELECT MAX(sent_at) FROM email_messages
+            WHERE gmail_thread_id = ${tid} AND gmail_message_id NOT LIKE '%-stub'
+          )
+          WHERE gmail_thread_id = ${tid}
+        `;
+        await sql`UPDATE email_messages SET unmatched = FALSE WHERE gmail_thread_id = ${tid}`;
+        await sql`
+          INSERT INTO email_thread_deals (gmail_thread_id, deal_id, resolved_by)
+          VALUES (${tid}, ${dealId}, 'manual')
+          ON CONFLICT (gmail_thread_id, deal_id) DO NOTHING
+        `;
+        await sql`
+          INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+          VALUES (
+            ${dealId}, 'email_linked',
+            ${JSON.stringify({ gmailThreadId: tid, scope: 'thread', source: 'bulk' })},
+            ${user.email || null}
+          )
+        `;
+        linked += 1;
+      } catch (err) {
+        console.error('[bulk-link] failed for thread', tid, err.message);
+        failed.push(tid);
+      }
+    }
+    await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${dealId}`;
+    return res.status(200).json({
+      ok: true, dealId, dealTitle: dealRow.title,
+      linked, failed, truncated: threadIds.length > MAX_THREADS,
+    });
   }
 
   // /api/crm/threads/:gmailThreadId/link

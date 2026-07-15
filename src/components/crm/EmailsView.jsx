@@ -15,7 +15,8 @@ import { DealContextPanel } from './DealContextPanel.jsx';
 import { FolderView } from './FolderView.jsx';
 import { EmailComposerModal } from './DealDetailView.jsx';
 import { TrackingEye, TrackingBanner } from './EmailTracking.jsx';
-import { ActionMenu } from '../ui.jsx';
+import { ActionMenu, Modal } from '../ui.jsx';
+import { NewDealModal } from './PipelineView.jsx';
 import { STAGE_COLOURS, STAGE_LABEL } from '../../lib/stages.js';
 
 // 'deals' + 'triage' are DB-backed (CRM-aware); the rest proxy live to Gmail
@@ -295,6 +296,8 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     });
   };
   const [openRef, setOpenRef] = useState(null);     // { kind, threadId, unread } for the conversation modal
+  const [dealLinkSel, setDealLinkSel] = useState(null); // { rows, clear } — bulk "Add to deal"
+  const [newDealSel, setNewDealSel] = useState(null);   // { rows, clear } — bulk "New deal"
   const [density, setDensity] = useState(() => {
     try { return localStorage.getItem(DENSITY_KEY) || 'default'; } catch { return 'default'; }
   });
@@ -766,13 +769,142 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
               onOpen={(row) => onOpenThread?.(active, def.kind === 'gmail' ? row.id : row.gmailThreadId)}
               onDismiss={(row) => { if (window.confirm('Dismiss this conversation? It stays archived but leaves Triage.')) { actions.triageDismiss(row.gmailThreadId); showMsg('Dismissed'); } }}
               onAction={(action, id) => doAction(actions, active, action, id, showMsg)}
+              onAddToDeal={(rows, clear) => setDealLinkSel({ rows, clear })}
+              onNewDeal={(rows, clear) => setNewDealSel({ rows, clear })}
             />
           )}
           </>
           )}
         </div>
       </div>
+      {dealLinkSel && (
+        <AddEmailsToDealModal
+          rows={dealLinkSel.rows}
+          onClose={() => setDealLinkSel(null)}
+          onLinked={(deal, linked) => {
+            const linkedRows = dealLinkSel.rows || [];
+            dealLinkSel.clear?.();
+            setDealLinkSel(null);
+            // Refresh the inbox deal chips for the just-linked threads.
+            actions.resolveThreadDeals(linkedRows.map((r) => ({ threadId: r.id, senderEmails: r.fromEmail ? [r.fromEmail] : [] })));
+            showMsg(`Linked ${linked} email${linked === 1 ? '' : 's'} to “${deal.title}”`);
+          }}
+        />
+      )}
+      {newDealSel && (
+        <NewDealModal
+          initialTitle={suggestDealTitle(newDealSel.rows)}
+          onClose={() => setNewDealSel(null)}
+          onCreated={async (deal) => {
+            const rows = newDealSel.rows || [];
+            try {
+              const r = await actions.bulkLinkEmails({ threadIds: rows.map((x) => x.id), dealId: deal.id });
+              newDealSel.clear?.();
+              showMsg(`Created “${deal.title}” and linked ${r.linked} email${r.linked === 1 ? '' : 's'}`);
+              onOpenDeal?.(deal.id);
+            } catch (err) {
+              showMsg('Created the deal, but linking the emails failed: ' + (err?.message || 'unknown error'), 'error');
+            } finally {
+              setNewDealSel(null);
+            }
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// Suggest a deal title from the selected emails — the first row's subject with
+// Re:/Fwd: prefixes stripped, falling back to the sender or a generic label.
+function suggestDealTitle(rows) {
+  const first = (rows || [])[0];
+  if (!first) return '';
+  const subj = (first.subject || '').replace(/^\s*(re|fwd?|fw)\s*:\s*/i, '').trim();
+  return subj || displayName(first.from) || first.fromEmail || '';
+}
+
+// Deal picker for the inbox multi-select "Add to deal". Searchable list of
+// deals (most recently active first); picking one links every selected thread
+// to it via the bulk-link endpoint, which ingests the real conversation so it
+// shows on the deal.
+function AddEmailsToDealModal({ rows, onClose, onLinked }) {
+  const { state, actions, showMsg } = useStore();
+  const [query, setQuery] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!state.deals || Object.keys(state.deals).length === 0) actions.refreshDeals?.();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const companyName = (d) => (d.companyId && state.companies?.[d.companyId]?.name) || '';
+  const allDeals = useMemo(() => Object.values(state.deals || {})
+    .filter((d) => d && d.id && d.stage !== 'lost')
+    .sort((a, b) => (b.lastActivityAt ? Date.parse(b.lastActivityAt) : 0) - (a.lastActivityAt ? Date.parse(a.lastActivityAt) : 0)),
+    [state.deals]);
+
+  const q = query.trim().toLowerCase();
+  const matches = useMemo(() => (q
+    ? allDeals.filter((d) => `${d.title || ''} ${companyName(d)}`.toLowerCase().includes(q))
+    : allDeals).slice(0, 50),
+    [allDeals, q, state.companies]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const count = rows.length;
+  const link = async (deal) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await actions.bulkLinkEmails({ threadIds: rows.map((x) => x.id), dealId: deal.id });
+      const linked = typeof r?.linked === 'number' ? r.linked : count;
+      if (r?.failed?.length) showMsg(`${r.failed.length} email${r.failed.length === 1 ? '' : 's'} couldn’t be linked`, 'error');
+      onLinked?.(deal, linked);
+    } catch (err) {
+      showMsg('Could not link the emails: ' + (err?.message || 'unknown error'), 'error');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} maxWidth={520} fullScreenOnMobile>
+      <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Add {count} email{count === 1 ? '' : 's'} to a deal</h2>
+      <p style={{ margin: '0 0 14px', fontSize: 13, color: BRAND.muted }}>
+        The whole conversation{count === 1 ? '' : 's'} will be attached and shown on the deal.
+      </p>
+      <input
+        autoFocus
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search deals…"
+        style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid ' + BRAND.border, fontSize: 14, marginBottom: 10, boxSizing: 'border-box' }}
+      />
+      <div style={{ maxHeight: 340, overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 8, opacity: busy ? 0.6 : 1 }}>
+        {matches.length === 0 ? (
+          <div style={{ padding: 16, textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>
+            {allDeals.length === 0 ? 'Loading deals…' : 'No deals match your search.'}
+          </div>
+        ) : matches.map((d, i) => {
+          const co = companyName(d);
+          return (
+            <button
+              key={d.id}
+              disabled={busy}
+              onClick={() => link(d)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+                padding: '9px 12px', background: 'white', border: 'none',
+                borderTop: i === 0 ? 'none' : '1px solid ' + BRAND.border, cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 500, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {d.title || '(untitled deal)'}
+                {co && <span style={{ color: BRAND.muted, fontWeight: 400 }}> · {co}</span>}
+              </span>
+              <StagePill stage={d.stage} />
+            </button>
+          );
+        })}
+      </div>
+      {busy && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 10, textAlign: 'center' }}>Linking {count} conversation{count === 1 ? '' : 's'}…</div>}
+    </Modal>
   );
 }
 
@@ -854,7 +986,7 @@ function DensitySettings({ density, onChange, variant = 'icon', dropUp = false }
   );
 }
 
-function Body({ def, rows, density = 'default', searchQuery = '', loading, error, onRetry, hasMore, onLoadMore, onOpen, onDismiss, onAction }) {
+function Body({ def, rows, density = 'default', searchQuery = '', loading, error, onRetry, hasMore, onLoadMore, onOpen, onDismiss, onAction, onAddToDeal, onNewDeal }) {
   // Infinite scroll: auto-load the next page as the bottom of the list nears the
   // viewport. We use BOTH a window scroll/resize listener and an
   // IntersectionObserver on a sentinel — the listener is the dependable path
@@ -880,6 +1012,10 @@ function Body({ def, rows, density = 'default', searchQuery = '', loading, error
   });
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(rows.map(r => r.id)));
   const bulk = (action) => { if (!selectedIds.length) return; onAction(action, selectedIds); setSelected(new Set()); };
+  const selectedRows = useMemo(() => rows.filter(r => selected.has(r.id)), [rows, selected]);
+  const clearSelection = () => setSelected(new Set());
+  const openAddToDeal = () => { if (selectedRows.length) onAddToDeal?.(selectedRows, clearSelection); };
+  const openNewDeal = () => { if (selectedRows.length) onNewDeal?.(selectedRows, clearSelection); };
 
   useEffect(() => {
     if (!hasMore) return undefined;
@@ -947,6 +1083,8 @@ function Body({ def, rows, density = 'default', searchQuery = '', loading, error
           onToggleAll={toggleAll}
           onClear={() => setSelected(new Set())}
           onBulk={bulk}
+          onAddToDeal={openAddToDeal}
+          onNewDeal={openNewDeal}
         />
       )}
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
@@ -1113,11 +1251,12 @@ function DealThreadRow({ row, first, density, onOpen, href }) {
 // selected, the actions that apply to the current folder. Hidden actions
 // mirror the per-row buttons (no Archive in trash/spam/sent/drafts; Restore
 // instead of Delete in trash).
-function BulkBar({ folder, count, allSelected, onToggleAll, onClear, onBulk }) {
+function BulkBar({ folder, count, allSelected, onToggleAll, onClear, onBulk, onAddToDeal, onNewDeal }) {
   const checkRef = useRef(null);
   const some = count > 0;
   useEffect(() => { if (checkRef.current) checkRef.current.indeterminate = some && !allSelected; }, [some, allSelected]);
   const canArchive = !['trash', 'spam', 'sent', 'drafts'].includes(folder);
+  const divider = <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '0 2px' }} />;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', marginBottom: 8, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10 }}>
       <input
@@ -1132,7 +1271,11 @@ function BulkBar({ folder, count, allSelected, onToggleAll, onClear, onBulk }) {
       {some ? (
         <>
           <span style={{ fontSize: 13, color: BRAND.muted, minWidth: 76 }}>{count} selected</span>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* Deal actions first — the reason for multi-select in the CRM inbox. */}
+            <button onClick={onAddToDeal} className="btn-ghost" style={{ fontSize: 12, fontWeight: 600, color: BRAND.blue }}><Briefcase size={14} /> Add to deal</button>
+            <button onClick={onNewDeal} className="btn-ghost" style={{ fontSize: 12, fontWeight: 600, color: BRAND.blue }}><FolderPlus size={14} /> New deal</button>
+            {divider}
             <button onClick={() => onBulk('markRead')} className="btn-ghost" style={{ fontSize: 12 }}><MailOpen size={14} /> Mark read</button>
             <button onClick={() => onBulk('markUnread')} className="btn-ghost" style={{ fontSize: 12 }}><Mail size={14} /> Mark unread</button>
             {canArchive && (
@@ -1145,7 +1288,7 @@ function BulkBar({ folder, count, allSelected, onToggleAll, onClear, onBulk }) {
           <button onClick={onClear} className="btn-ghost" style={{ fontSize: 12, marginLeft: 'auto' }}>Clear</button>
         </>
       ) : (
-        <span style={{ fontSize: 13, color: BRAND.muted }}>Select to mark read, archive or delete in bulk</span>
+        <span style={{ fontSize: 13, color: BRAND.muted }}>Select emails to add to a deal, create a deal, or archive in bulk</span>
       )}
     </div>
   );
