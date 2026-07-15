@@ -795,18 +795,24 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
         <NewDealModal
           initialTitle={suggestDealTitle(newDealSel.rows)}
           onClose={() => setNewDealSel(null)}
-          onCreated={async (deal) => {
-            const rows = newDealSel.rows || [];
-            try {
-              const r = await actions.bulkLinkEmails({ threadIds: rows.map((x) => x.id), dealId: deal.id });
-              newDealSel.clear?.();
-              showMsg(`Created “${deal.title}” and linked ${r.linked} email${r.linked === 1 ? '' : 's'}`);
-              onOpenDeal?.(deal.id);
-            } catch (err) {
-              showMsg('Created the deal, but linking the emails failed: ' + (err?.message || 'unknown error'), 'error');
-            } finally {
-              setNewDealSel(null);
-            }
+          onCreated={(deal) => {
+            // Close the modal SYNCHRONOUSLY the moment the deal is created — the
+            // email linking below is slow (it ingests each thread), and if we
+            // waited for it the re-enabled "Create deal" button could be clicked
+            // again and make a duplicate deal. Link in the background, then open.
+            const sel = newDealSel;
+            const rows = sel?.rows || [];
+            setNewDealSel(null);
+            sel?.clear?.();
+            actions.bulkLinkEmails({ threadIds: rows.map((x) => x.id), dealId: deal.id })
+              .then((r) => {
+                showMsg(`Created “${deal.title}” and linked ${r.linked} email${r.linked === 1 ? '' : 's'}`);
+                onOpenDeal?.(deal.id);
+              })
+              .catch((err) => {
+                showMsg('Created the deal, but linking the emails failed: ' + (err?.message || 'unknown error'), 'error');
+                onOpenDeal?.(deal.id);
+              });
           }}
         />
       )}
