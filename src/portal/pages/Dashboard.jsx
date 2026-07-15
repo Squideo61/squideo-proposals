@@ -100,9 +100,20 @@ function QuickAction({ Icon, title, body, badge, onClick, accent }) {
   );
 }
 
+function timeOfDayGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
 export default function Dashboard() {
-  const { user, overview, overviewLoading, companyId, showToast } = usePortal();
-  const firstName = (user?.name || '').split(' ')[0] || null;
+  const { user, preview, overview, overviewLoading, companyId, showToast } = usePortal();
+  // In a staff preview there's no real person, so greet the organisation rather
+  // than the synthetic "Preview" account name.
+  const firstName = preview
+    ? (preview.company?.name || null)
+    : ((user?.name || '').split(' ')[0] || null);
   const projects = overview?.projects || [];
   const actionNeeded = overview?.actionNeeded || 0;
 
@@ -120,7 +131,7 @@ export default function Dashboard() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
       <div>
         <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: BRAND.ink }}>
-          {firstName ? `Hey ${firstName} 👋` : 'Welcome 👋'}
+          {firstName ? `${timeOfDayGreeting()}, ${firstName} 👋` : `${timeOfDayGreeting()} 👋`}
         </h1>
         <p style={{ margin: '6px 0 0', fontSize: 14, color: BRAND.muted }}>
           {actionNeeded > 0
