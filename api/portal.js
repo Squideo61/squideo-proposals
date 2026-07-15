@@ -319,6 +319,13 @@ export default async function handler(req, res) {
     const user = await requirePortalAuth(req, res);
     if (!user) return;
 
+    // Preview sessions (staff viewing as a client) are strictly read-only — all
+    // portal reads are GET, so blocking non-GET blocks every side-effect
+    // (uploads, extras, requests, PO, invites, profile edits) in one place.
+    if (user.isPreview && req.method !== 'GET') {
+      return res.status(403).json({ error: 'Preview mode — changes are disabled. This is a read-only view of the client’s portal.' });
+    }
+
     switch (action) {
       case 'me': return meRoutes(req, res, user);
       case 'overview': return overviewRoute(req, res, user);
@@ -574,7 +581,10 @@ async function authRoutes(req, res) {
 // ═════════════════════════ me ═════════════════════════
 async function meRoutes(req, res, user) {
   if (req.method === 'GET') {
-    return res.status(200).json({ user: publicPortalUser(user, user.companies) });
+    return res.status(200).json({
+      user: publicPortalUser(user, user.companies),
+      preview: user.isPreview ? { company: user.companies[0] || null } : null,
+    });
   }
   if (req.method === 'PATCH') {
     const body = await readJsonBody(req);

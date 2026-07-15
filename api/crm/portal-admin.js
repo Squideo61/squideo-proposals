@@ -21,7 +21,7 @@ import { cors, requirePermission } from '../_lib/middleware.js';
 import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureDealContactsTable } from '../_lib/crm/shared.js';
 import { sendMail } from '../_lib/email.js';
 import { ensurePortalTables } from '../_lib/portal/db.js';
-import { createRawToken, hashToken } from '../_lib/portal/auth.js';
+import { createRawToken, hashToken, signPortalPreviewToken } from '../_lib/portal/auth.js';
 import { sendTeamInvite, createPortalInvite, inviteUrlFor } from '../_lib/portal/onboarding.js';
 import { portalTeamInviteHtml, portalResetHtml, PORTAL_URL } from '../_lib/portal/emails.js';
 import { emailLogoUrl } from '../_lib/portal/logo.js';
@@ -497,6 +497,21 @@ export default async function handler(req, res) {
         throwOnError: true,
       });
       return res.status(200).json({ ok: true, email: pu.email });
+    }
+
+    // "Preview as client" — mint a short-lived read-only preview token for an
+    // organisation and hand back the portal URL to open. The token lives in the
+    // opened tab only (never a cookie), so it can't disturb a real client login.
+    if (op === 'preview') {
+      const companyId = trimOrNull(body.companyId);
+      if (!companyId) return res.status(400).json({ error: 'companyId required' });
+      const [co] = await sql`SELECT id, name FROM companies WHERE id = ${companyId}`;
+      if (!co) return res.status(404).json({ error: 'Company not found' });
+      const token = await signPortalPreviewToken({ companyId, staffEmail: user.email });
+      return res.status(200).json({
+        url: `${PORTAL_URL}?preview=${encodeURIComponent(token)}`,
+        companyName: co.name,
+      });
     }
 
     if (op === 'offer-create') {

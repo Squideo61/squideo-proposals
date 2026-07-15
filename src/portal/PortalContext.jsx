@@ -23,6 +23,7 @@ export function PortalProvider({ children }) {
   });
   const [overview, setOverview] = useState(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
+  const [preview, setPreview] = useState(null); // { company } when staff is previewing
   const [toast, setToast] = useState(null);
 
   const showToast = useCallback((msg) => {
@@ -48,9 +49,11 @@ export function PortalProvider({ children }) {
     try {
       const data = await portalApi.get('me');
       setUser(data.user);
+      setPreview(data.preview || null);
       return data.user;
     } catch {
       setUser(null);
+      setPreview(null);
       return null;
     }
   }, []);
@@ -100,8 +103,8 @@ export function PortalProvider({ children }) {
     booting, user, setUser,
     companyId, setActiveCompanyId,
     overview, overviewLoading, refreshOverview, refreshSession,
-    logout, toast, showToast,
-  }), [booting, user, companyId, setActiveCompanyId, overview, overviewLoading, refreshOverview, refreshSession, logout, toast, showToast]);
+    preview, logout, toast, showToast,
+  }), [booting, user, companyId, setActiveCompanyId, overview, overviewLoading, refreshOverview, refreshSession, preview, logout, toast, showToast]);
 
   return <PortalContext.Provider value={value}>{children}</PortalContext.Provider>;
 }

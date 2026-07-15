@@ -28,6 +28,25 @@ export async function verifyPortalToken(token) {
   return payload;
 }
 
+// Staff "preview as this client" token. Same portal audience so it flows through
+// requirePortalAuth, but carries `pv:true` + the org it's scoped to and no puid —
+// requirePortalAuth turns it into a synthetic, READ-ONLY session for that one
+// organisation. Short-lived; delivered in a URL and held per-tab (never a
+// cookie), so it can't collide with a real client's login in the same browser.
+export async function signPortalPreviewToken({ companyId, staffEmail }) {
+  return new SignJWT({ pv: true, companyId, staffEmail })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setAudience(PORTAL_SESSION_AUD)
+    .setExpirationTime('2h')
+    .sign(await secret());
+}
+
+// Read the per-tab preview token the SPA sends as a header (see src/portal/api.js).
+export function readPreviewHeader(req) {
+  const h = req.headers['x-portal-preview'];
+  return (Array.isArray(h) ? h[0] : h) || null;
+}
+
 export function portalCookieHeader(jwt) {
   return `${PORTAL_COOKIE}=${jwt}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${PORTAL_MAX_AGE}`;
 }

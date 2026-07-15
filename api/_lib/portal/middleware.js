@@ -7,10 +7,48 @@
 
 import sql from '../db.js';
 import { ensurePortalTables } from './db.js';
-import { verifyPortalToken, readPortalCookie } from './auth.js';
+import { verifyPortalToken, readPortalCookie, readPreviewHeader } from './auth.js';
 import { portalLogoPath } from './logo.js';
 
 export async function requirePortalAuth(req, res) {
+  // Staff "preview as client" comes in as a per-tab header (never a cookie, so
+  // it can't hijack a real client session). It yields a synthetic, read-only
+  // session scoped to the one organisation being previewed — writes are blocked
+  // in the router by the `isPreview` flag.
+  const previewToken = readPreviewHeader(req);
+  if (previewToken) {
+    let pv;
+    try {
+      pv = await verifyPortalToken(previewToken);
+    } catch {
+      res.status(401).json({ error: 'Preview link expired — reopen the preview from the CRM.' });
+      return null;
+    }
+    if (!pv?.pv || !pv.companyId) {
+      res.status(401).json({ error: 'Invalid preview session' });
+      return null;
+    }
+    await ensurePortalTables();
+    const [co] = await sql`SELECT id, name FROM companies WHERE id = ${pv.companyId}`;
+    if (!co) {
+      res.status(404).json({ error: 'Organisation not found' });
+      return null;
+    }
+    const [logo] = await sql`
+      SELECT 1 FROM proposals p JOIN deals d ON d.id = p.deal_id
+       WHERE d.company_id = ${co.id} AND COALESCE(p.data->>'clientLogo', '') <> '' LIMIT 1
+    `;
+    return {
+      puid: null,
+      isPreview: true,
+      previewBy: pv.staffEmail || null,
+      email: pv.staffEmail || 'preview@squideo.co.uk',
+      name: 'Preview',
+      companyIds: [co.id],
+      companies: [{ id: co.id, name: co.name, logoUrl: logo ? portalLogoPath(co.id) : null }],
+    };
+  }
+
   const token = readPortalCookie(req.headers.cookie);
   if (!token) {
     res.status(401).json({ error: 'Unauthorised' });

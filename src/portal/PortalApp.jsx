@@ -9,9 +9,10 @@ import { Toast } from '../components/ui.jsx';
 import {
   Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut,
 } from 'lucide-react';
+import { Eye } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
 import ClientLogo from './ClientLogo.jsx';
-import { portalApi } from './api.js';
+import { portalApi, setPreviewToken } from './api.js';
 import Login from './pages/Login.jsx';
 import AcceptInvite from './pages/AcceptInvite.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
@@ -177,6 +178,7 @@ function AuthedApp() {
 
   return (
     <div style={{ minHeight: '100vh', background: BRAND.paper }}>
+      <PreviewBanner />
       <Header />
       <main style={{
         maxWidth: MAX_WIDTH, margin: '0 auto',
@@ -186,6 +188,38 @@ function AuthedApp() {
       </main>
       {isMobile && <MobileTabBar view={route.view} />}
       {toast && <Toast msg={toast} />}
+    </div>
+  );
+}
+
+// Persistent bar shown only when staff are previewing a client's portal. Makes
+// it unmistakable this isn't the real thing and that actions are disabled.
+function PreviewBanner() {
+  const { preview } = usePortal();
+  if (!preview) return null;
+  const exit = () => {
+    setPreviewToken(null);
+    // Closing the preview tab is the natural exit; if it can't self-close
+    // (not script-opened), fall back to a neutral page.
+    window.close();
+    window.setTimeout(() => { window.location.href = 'about:blank'; }, 150);
+  };
+  return (
+    <div style={{
+      background: '#7C3AED', color: '#fff', padding: '8px 16px',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
+      fontSize: 13, fontWeight: 600, flexWrap: 'wrap', textAlign: 'center',
+    }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+        <Eye size={15} />
+        Preview — you’re viewing {preview.company?.name || 'this client'}’s portal as they’d see it. Changes are disabled.
+      </span>
+      <button
+        onClick={exit}
+        style={{ background: 'rgba(255,255,255,0.2)', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
+      >
+        Exit preview
+      </button>
     </div>
   );
 }

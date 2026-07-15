@@ -4,6 +4,7 @@
 // Backed by /api/crm/portal-admin.
 import React, { useCallback, useEffect, useState } from 'react';
 import { Check, Eye, EyeOff, Plus, Send, Sparkles, Trash2, UserPlus, X } from 'lucide-react';
+// (Eye is reused for the preview button.)
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { formatGBP } from '../../utils.js';
@@ -256,6 +257,18 @@ export function PortalDealCard({ dealId }) {
       title={<><Sparkles size={12} style={{ verticalAlign: -1, marginRight: 5 }} />Client portal</>}
       action={
         <div style={{ display: 'flex', gap: 6 }}>
+          {data?.companyId && (
+            <button className="btn-ghost" style={{ fontSize: 12 }} disabled={busy} title="Open this client's portal exactly as they see it (read-only)"
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const r = await api.post('/api/crm/portal-admin?op=preview', { companyId: data.companyId });
+                  window.open(r.url, '_blank', 'noopener');
+                } catch (err) { flash(err.message); } finally { setBusy(false); }
+              }}>
+              <Eye size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Preview
+            </button>
+          )}
           <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data} onClick={() => setShowInvite(true)} title="Invite this deal's contacts to the client portal">
             <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Portal invite
           </button>
