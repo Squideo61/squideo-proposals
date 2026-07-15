@@ -124,7 +124,7 @@
     },
     {
       "path": "/api/crm/cron/cost-snapshot",
-      "schedule": "30 23 28-31 * *"
+      "schedule": "30 23 * * *"
     }
   ],
   "headers": [

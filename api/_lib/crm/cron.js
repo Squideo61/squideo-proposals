@@ -236,18 +236,16 @@ export async function cronPruneViews(res) {
   return res.status(200).json({ ok: true, deleted: result.count || result.rowCount || 0 });
 }
 
-// Monthly CRM-cost snapshot. Scheduled daily over the last few days of the
-// month; only acts on the final day so the row captures end-of-month state
-// (Blob storage + fixed costs are point-in-time, Neon is the live billing-period
-// estimate). The month key is the month that's ending. Self-heals its table.
+// CRM-cost snapshot. Runs daily and upserts the CURRENT month's row (Blob +
+// fixed costs are point-in-time, Neon is the live billing-period estimate), so
+// the Storage tab and the Cash Flow "CRM & hosting" auto line always have a
+// fresh figure for the in-progress month. Because it re-upserts the same month
+// key each day, the final run of the month (23:30 on the last day) naturally
+// leaves the definitive month-end snapshot in place before the key rolls over.
+// Self-heals its table.
 export async function cronCostSnapshot(res) {
   const now = new Date();
-  const tomorrow = new Date(now.getTime() + 86400000);
-  const isLastDayOfMonth = tomorrow.getUTCMonth() !== now.getUTCMonth();
   const monthKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-  if (!isLastDayOfMonth) {
-    return res.status(200).json({ ok: true, skipped: 'not month-end', month: monthKey });
-  }
   try {
     const snap = await captureCostSnapshot(monthKey);
     console.log('[cron cost-snapshot] captured', snap);

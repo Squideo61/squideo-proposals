@@ -11,6 +11,7 @@ import { archiveRecord } from './recycleBin.js';
 import { sendNotification } from '../notifications.js';
 import { ensureDealPo } from './deals.js';
 import { commissionTotalsForMonths, commissionByMemberForMonth } from './commission.js';
+import { crmCostGbpByMonth } from './costSnapshot.js';
 import { zipStore } from '../zip.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
@@ -2392,6 +2393,16 @@ async function cashflowReport(action) {
   // no stored cost row. { 'YYYY-MM': total }.
   const commByMonth = await commissionTotalsForMonths(keys);
 
+  // Auto CRM & hosting cost per month (Neon + Vercel Blob + fixed cost items),
+  // converted from USD to GBP. Read from the persisted monthly snapshots (the
+  // cost-snapshot cron keeps the current month fresh daily); past un-snapshotted
+  // months are £0. A genuine, CT-deductible operating cost. { 'YYYY-MM': gbp }.
+  // Guarded so a snapshot-table hiccup can never break the whole report.
+  let crmByMonth = {};
+  try { crmByMonth = await crmCostGbpByMonth(keys, curMonthKey()); }
+  catch (err) { console.warn('[cashflow] CRM cost lookup failed', err.message); }
+  const crmCostForMonth = (mk) => round2(crmByMonth[mk] || 0);
+
   // Operating costs per month — everything EXCEPT the auto Corporation Tax line.
   const opCostsForMonth = (mk) => {
     let wages = 0, expenses = 0, freelancers = 0, marketing = 0, director = 0, allowance = 0, savings = 0;
@@ -2408,6 +2419,7 @@ async function cashflowReport(action) {
       else expenses += amt;
     }
     allowance += dirAllowanceForMonth(mk); // director allowance (£250/mo per director, rising to actual spend if over)
+    expenses += crmCostForMonth(mk); // auto CRM & hosting cost (Neon + Blob + fixed items, GBP)
     const commission = round2(commByMonth[mk] || 0); // auto staff commission (paid sales)
     // Savings is in the total (so it's part of the break-even target and comes out
     // of the drawable surplus), but it was excluded from the CT-deductible base
@@ -2423,7 +2435,10 @@ async function cashflowReport(action) {
     // they're excluded from the taxable-profit base (but still in operating costs).
     // Commission is a genuine deductible cost (unlike savings), so it lowers the
     // taxable-profit base as well as operating profit.
-    return { month: mk, c, cashIn, opProfit: round2(cashIn - c.total), taxProfit: round2(cashIn - deductibleCostTotalForMonth(costRows, mk) - c.commission) };
+    // CRM & hosting is a genuine deductible operating cost (like commission), so
+    // it lowers the taxable-profit base too — deductibleCostTotalForMonth only
+    // covers the DB cost rows, so subtract the synthetic CRM figure here.
+    return { month: mk, c, cashIn, opProfit: round2(cashIn - c.total), taxProfit: round2(cashIn - deductibleCostTotalForMonth(costRows, mk) - c.commission - crmCostForMonth(mk)) };
   });
 
   // Corporation Tax per month on TAXABLE profit (cash − the CT-deductible cost
@@ -2493,6 +2508,21 @@ async function cashflowReport(action) {
   for (const l of lines) {
     if (l.autoType === 'director_tax') { l.amount = autoDirectorTaxMonthly; l.monthlyAmount = autoDirectorTaxMonthly; l.frequency = 'monthly'; }
   }
+  // Auto CRM & hosting line — Neon + Vercel Blob + fixed cost items for the
+  // month (converted USD→GBP), read from the persisted snapshots. Shown read-only
+  // under Expenses and already folded into the expenses bucket + totals above.
+  // Past months without a snapshot show £0 (they weren't captured).
+  const crmSel = crmCostForMonth(month);
+  const isCurMonth = month === curMonthKey();
+  lines.unshift({
+    id: 'cfcrmcost', label: 'CRM & hosting (Neon, Vercel, tools)', category: 'expense',
+    amount: crmSel, frequency: 'monthly', monthlyAmount: crmSel,
+    note: crmSel > 0.005
+      ? (isCurMonth ? 'Live estimate — Neon + Vercel Blob + fixed items (Admin → Storage & CRM costs)' : 'Month-end snapshot — Neon + Vercel Blob + fixed items')
+      : 'No cost snapshot captured for this month',
+    autoType: 'crm_cost', taxBasis: false,
+    recurring: true, month: null, effectiveFrom: null, effectiveTo: null,
+  });
   // Auto Corporation Tax line — pinned to the top of the Expenses list and counted
   // in the totals (so the targets cover the CT bill). Display-only; no DB row, so
   // the frontend treats it as read-only (no edit / remove / drag).

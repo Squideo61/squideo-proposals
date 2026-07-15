@@ -13,6 +13,38 @@ import { compute as computeBlob } from '../../blob-usage.js';
 import { compute as computeNeon } from '../../neon-usage.js';
 
 const num = (n) => Number(n) || 0;
+const round2 = (n) => Number((Number(n) || 0).toFixed(2));
+
+// CRM/hosting bills (Neon, Vercel Blob, the fixed cost-items list) are all in
+// USD; the Cash Flow sheet is in GBP. Convert with a single rate, overridable
+// via env when it drifts. These costs are small and already labelled estimates,
+// so an approximate rate is fine. Default ~ mid-2026 GBP per USD.
+export const USD_TO_GBP = (() => {
+  const n = Number(process.env.USD_GBP_RATE);
+  return Number.isFinite(n) && n > 0 ? n : 0.79;
+})();
+
+// GBP CRM-cost total per month for the given YYYY-MM keys, read from the
+// persisted snapshots (converted from USD). Past months without a snapshot are
+// £0 (snapshots only accrue forward — matches the Storage tab). The current
+// month is captured daily by the cost-snapshot cron; if its row isn't present
+// yet (e.g. right after first deploy), we carry the most recent snapshot total
+// forward so the line isn't £0 while costs are genuinely being incurred.
+export async function crmCostGbpByMonth(monthKeys, currentMonthKey) {
+  await ensureSnapshotTable();
+  const rows = await sql`SELECT month, total_usd FROM crm_cost_snapshots`;
+  const usdByMonth = {};
+  for (const r of rows) usdByMonth[r.month] = num(r.total_usd);
+  const latestMonth = rows.map((r) => r.month).sort().pop() || null;
+  const latestUsd = latestMonth ? usdByMonth[latestMonth] : 0;
+  const out = {};
+  for (const mk of monthKeys) {
+    let usd = usdByMonth[mk];
+    if (usd == null && mk === currentMonthKey) usd = latestUsd; // carry forward for the live month
+    out[mk] = round2(num(usd) * USD_TO_GBP);
+  }
+  return out;
+}
 
 export async function ensureSnapshotTable() {
   await sql`CREATE TABLE IF NOT EXISTS crm_cost_snapshots (

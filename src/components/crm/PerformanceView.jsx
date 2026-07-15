@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download, Upload, Ban, Camera, ScanLine, Percent } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download, Upload, Ban, Camera, ScanLine, Percent, Server } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -1633,7 +1633,8 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
   const isDirExp = row.autoType === 'director_expenses'; // synthetic Directors-tab total
   const isDirAllow = row.autoType === 'director_allowance'; // synthetic director-allowance line
   const isCommission = row.autoType === 'commission'; // synthetic staff-commission line
-  const isReadOnly = isCorpTax || isDirExp || isDirAllow || isCommission; // no drag / edit / remove
+  const isCrmCost = row.autoType === 'crm_cost'; // synthetic CRM & hosting total (Neon + Blob + fixed)
+  const isReadOnly = isCorpTax || isDirExp || isDirAllow || isCommission || isCrmCost; // no drag / edit / remove
 
   const save = () => {
     const before = { label: row.label, amount: Number(row.amount) || 0, frequency: row.frequency || 'monthly', category: row.category || 'expense', note: row.note || '', taxBasis: !!row.taxBasis };
@@ -1702,6 +1703,8 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
           ? <span style={{ flexShrink: 0, color: '#CA8A04', display: 'flex', lineHeight: 0 }}><Crown size={14} /></span>
           : isCommission
           ? <span style={{ flexShrink: 0, color: '#0891B2', display: 'flex', lineHeight: 0 }}><Percent size={14} /></span>
+          : isCrmCost
+          ? <span style={{ flexShrink: 0, color: '#4F46E5', display: 'flex', lineHeight: 0 }}><Server size={14} /></span>
           : <span title="Drag to reorder" style={{ flexShrink: 0, cursor: 'grab', color: BRAND.muted, display: 'flex', lineHeight: 0 }}><GripVertical size={14} /></span>}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: isCorpTax ? 700 : 400, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1717,6 +1720,8 @@ function CfCostRow({ row, actions, reload, dragging, over, onDragStart, onDragOv
             ? <div title="Combined director expenses logged on the Directors tab for this month — counted in the costs and targets." style={{ fontSize: 11, color: '#92400E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — combined spend from the Directors tab; counted in the totals</div>
             : isCommission
             ? <div title="Staff commission (ex-VAT) recognised this month: full commission when a deposit is paid or a PO project is signed, plus extras when paid. Resets to £0 each month. Manage staff + bands in Admin → Staff Commission." style={{ fontSize: 11, color: '#155E75', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — deposits / PO signings + paid extras; resets monthly (Admin → Staff Commission)</div>
+            : isCrmCost
+            ? <div title="CRM & hosting running costs for this month — Neon database + Vercel Blob storage + your fixed cost items, converted from USD to GBP. Current month is a live estimate; past months are the month-end snapshot. Manage the figures in Admin → Storage & CRM costs." style={{ fontSize: 11, color: '#4338CA', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — {row.note || 'Neon + Vercel + fixed items (Admin → Storage & CRM costs)'}</div>
             : isAuto
             ? <div title="Income tax + employee NI on each director's drawings marked “feeds director tax” (2025/26 rates), treating the figure as gross salary" style={{ fontSize: 11, color: '#CA8A04', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>⚙ Auto — income tax + NI on the director pay marked “feeds director tax” (current rates){row.note ? ` · ${row.note}` : ''}</div>
             : (row.note && <div title={row.note} style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.note}</div>)}
