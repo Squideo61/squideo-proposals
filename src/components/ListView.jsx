@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, BarChart3, Check, ChevronDown, Clock, Copy, Download, ExternalLink, Eye, FileText, Inbox, LayoutTemplate, Link2, MoreVertical, Pencil, Plus, Receipt, Search, Trash2, Undo2, Users, X } from 'lucide-react';
+import { Archive, ArchiveRestore, BarChart3, Check, ChevronDown, Clock, Copy, Download, ExternalLink, Eye, EyeOff, FileText, Inbox, LayoutTemplate, Link2, MoreVertical, Pencil, Plus, Receipt, Search, Trash2, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, proposalSignedTotalExVat, computeBaseDiscount, useIsMobile } from '../utils.js';
@@ -490,6 +490,12 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
   else if (signed) statusBadge = <Badge color="green">ACCEPTED</Badge>;
   else if (opened) statusBadge = <Badge color="yellow">OPENED</Badge>;
 
+  // A live proposal the client hasn't opened yet: show an explicit "not opened"
+  // cue instead of a blank space, so an empty tracking slot reads as "waiting on
+  // the client", not "tracking broken". Signed/paid/archived proposals were
+  // necessarily opened, so they never get this.
+  const notOpened = !opened && !signed && !fullyPaid && !partlyPaid && !proposal.archived;
+
   // Compact mobile card: a tight two-line row — number + name (truncated) on top,
   // status + business · date beneath — with the price on the right and every
   // action behind the ⋮ menu. Far shorter than the desktop card, so more fit.
@@ -542,6 +548,11 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
                 <BarChart3 size={12} color={BRAND.muted} />
               </button>
             ) : statusBadge)}
+            {notOpened && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: BRAND.muted, fontSize: 11, fontWeight: 600, flexShrink: 0 }}>
+                <EyeOff size={11} /> Not opened
+              </span>
+            )}
             <span style={{ fontSize: 11.5, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
               {proposal.contactBusinessName || '—'}{proposal.date ? ` · ${proposal.date}` : ''}
             </span>
@@ -621,6 +632,15 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
                 </>
               )}
             </button>
+          )}
+          {notOpened && (
+            <span
+              title="The client hasn't opened this proposal yet"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid ' + BRAND.border, borderRadius: 999, background: '#F8FAFC', color: BRAND.muted, fontWeight: 600, fontSize: isMobile ? 11 : 12 }}
+            >
+              <EyeOff size={11} />
+              <span>Not opened</span>
+            </span>
           )}
         </div>
         {isMobile && (
