@@ -92,6 +92,18 @@ function Header() {
           </select>
         )}
         {!isMobile && (
+          <a
+            href="#/request"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 7,
+              padding: '8px 15px', borderRadius: 8, textDecoration: 'none',
+              fontSize: 13.5, fontWeight: 700, color: '#0F2A3D', background: BRAND.blue,
+            }}
+          >
+            <PlusCircle size={15} /> New video
+          </a>
+        )}
+        {!isMobile && (
           <span style={{ color: '#B9CBD6', fontSize: 13 }}>{user?.name || user?.email}</span>
         )}
         <button
@@ -104,7 +116,7 @@ function Header() {
       </div>
       {!isMobile && (
         <nav style={{ maxWidth: MAX_WIDTH, margin: '10px auto 0', display: 'flex', gap: 4 }}>
-          {NAV.map(({ view, label, hash, Icon, highlight }) => {
+          {NAV.filter((n) => n.view !== 'request').map(({ view, label, hash, Icon, highlight }) => {
             const active = parseHash().view === view || (view === 'home' && parseHash().view === 'project');
             return (
               <a
