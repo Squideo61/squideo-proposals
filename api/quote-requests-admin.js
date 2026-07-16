@@ -1,4 +1,4 @@
-import sql from './_lib/db.js';
+import sql, { batchWrite } from './_lib/db.js';
 import { cors, requireAuth } from './_lib/middleware.js';
 import { makeId, trimOrNull, lowerOrNull } from './_lib/crm/shared.js';
 import { serialiseContact } from './_lib/crm/contacts.js';
@@ -8,6 +8,32 @@ import { getRole } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
 import { qualifyQuoteRequest, disqualifyQuoteRequest, markQuoteRequestSpam, clearQuoteRequest, clearNewQuoteRequests } from './_lib/quoteRequestActions.js';
 import { ensurePortalTables } from './_lib/portal/db.js';
+import { ensureLeadAttribution } from './_lib/leadAttribution.js';
+
+// Channels a lead can be logged under by hand. Off-web enquiries (email, phone,
+// referral) never pass through /track.js, so they carry no PPC attribution —
+// these keep them visible in the Marketing funnel, grouped by their own channel
+// so they never muddy paid-ad ROAS.
+const MANUAL_CHANNELS = ['email', 'phone', 'referral', 'other'];
+
+async function readJsonBody(req) {
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) return req.body;
+  const chunks = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  const buf = Buffer.concat(chunks);
+  if (!buf.length) return {};
+  try { return JSON.parse(buf.toString('utf8')); } catch { return {}; }
+}
+
+// Parse a YYYY-MM-DD "enquiry date" to a noon-UTC timestamp (noon keeps it on the
+// intended calendar day in every UK-ish timezone). Falls back to now.
+function enquiryDateToTs(v) {
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+    const d = new Date(v + 'T12:00:00Z');
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return new Date();
+}
 
 function serialiseQuoteRequest(r, files = []) {
   return {
@@ -105,6 +131,130 @@ export default async function handler(req, res) {
       if (!isAdmin) return res.status(403).json({ error: 'Only admins can clear quote requests' });
       const result = await clearNewQuoteRequests();
       return res.status(200).json({ ok: true, clearedIds: result.clearedIds });
+    }
+
+    // ── Log a lead by hand (POST, no id) — capture an off-web enquiry (email/
+    // phone/referral) so it counts in the Marketing funnel. Optionally links to
+    // an existing deal, in which case it lands "qualified" and its revenue flows
+    // through as a sale when that deal signs. ────────────────────────────────
+    if (!id && req.method === 'POST' && action === 'manual') {
+      const body = await readJsonBody(req);
+      const name = trimOrNull(body.name);
+      const email = lowerOrNull(body.email);
+      const company = trimOrNull(body.company);
+      if (!name && !email && !company) {
+        return res.status(400).json({ error: 'Give the lead a name, email or company' });
+      }
+      const channel = MANUAL_CHANNELS.includes(body.channel) ? body.channel : 'other';
+      const dealId = trimOrNull(body.dealId);
+      let deal = null;
+      if (dealId) {
+        deal = await loadDeal(dealId);
+        if (!deal) return res.status(400).json({ error: 'Linked deal not found' });
+      }
+      const createdAt = enquiryDateToTs(body.enquiryDate);
+      await ensureLeadAttribution().catch((e) => console.warn('[quote-requests-admin] attr ensure failed', e?.message));
+
+      const newId = makeId('qr');
+      await sql`
+        INSERT INTO quote_requests (
+          id, name, email, phone, company, project_details,
+          source, status, contact_id, deal_id, company_id, reviewed_at, created_at,
+          attr_channel, attr_source, attr_medium
+        ) VALUES (
+          ${newId}, ${name}, ${email}, ${trimOrNull(body.phone)}, ${company},
+          ${trimOrNull(body.projectDetails)},
+          'manual', ${dealId ? 'qualified' : 'new'},
+          ${deal?.primary_contact_id || null}, ${dealId || null}, ${deal?.company_id || null},
+          ${dealId ? createdAt : null}, ${createdAt},
+          ${channel}, 'manual', ${channel}
+        )
+      `;
+      const refreshed = await loadRequest(newId);
+      return res.status(201).json(serialiseQuoteRequest(refreshed.row, refreshed.files));
+    }
+
+    // ── Email-enquiry backfill (GET preview / POST apply, no id) — surfaces
+    // deals that arrived via the enquiries inbox (≥1 inbound email) but were
+    // never logged as a Marketing lead, and lets you create 'email' leads for
+    // them in bulk so historic sales stop being under-counted. ────────────────
+    if (!id && action === 'email-backfill') {
+      if (req.method === 'GET') {
+        const rows = await sql`
+          SELECT d.id, d.title, d.stage, d.value, d.created_at,
+                 c.name AS company_name,
+                 ct.name AS contact_name, ct.email AS contact_email,
+                 MIN(m.sent_at) AS first_inbound,
+                 (array_agg(m.from_email ORDER BY m.sent_at))[1] AS first_from,
+                 COUNT(m.gmail_message_id) AS inbound_count
+            FROM deals d
+            JOIN email_thread_deals etd ON etd.deal_id = d.id
+            JOIN email_messages m ON m.gmail_thread_id = etd.gmail_thread_id AND m.direction = 'inbound'
+            LEFT JOIN companies c ON c.id = d.company_id
+            LEFT JOIN contacts ct ON ct.id = d.primary_contact_id
+           WHERE NOT EXISTS (SELECT 1 FROM quote_requests qr WHERE qr.deal_id = d.id)
+           GROUP BY d.id, d.title, d.stage, d.value, d.created_at, c.name, ct.name, ct.email
+           ORDER BY MIN(m.sent_at) DESC NULLS LAST
+           LIMIT 300`;
+        return res.status(200).json({
+          candidates: rows.map((r) => ({
+            dealId: r.id,
+            title: r.title || null,
+            stage: r.stage || null,
+            value: r.value != null ? Number(r.value) : null,
+            company: r.company_name || null,
+            name: r.contact_name || null,
+            email: r.contact_email || r.first_from || null,
+            firstInboundAt: r.first_inbound || r.created_at,
+            inboundCount: Number(r.inbound_count) || 0,
+          })),
+        });
+      }
+
+      if (req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const dealIds = Array.isArray(body.dealIds) ? body.dealIds.filter((x) => typeof x === 'string') : [];
+        if (!dealIds.length) return res.status(400).json({ error: 'No deals selected' });
+        await ensureLeadAttribution().catch((e) => console.warn('[quote-requests-admin] attr ensure failed', e?.message));
+
+        // Re-derive everything server-side (don't trust client dates/emails) and
+        // skip any deal that already has a lead — keeps apply idempotent.
+        const rows = await sql`
+          SELECT d.id, d.company_id, d.primary_contact_id, d.created_at,
+                 c.name AS company_name,
+                 ct.name AS contact_name, ct.email AS contact_email,
+                 MIN(m.sent_at) AS first_inbound,
+                 (array_agg(m.from_email ORDER BY m.sent_at))[1] AS first_from
+            FROM deals d
+            JOIN email_thread_deals etd ON etd.deal_id = d.id
+            JOIN email_messages m ON m.gmail_thread_id = etd.gmail_thread_id AND m.direction = 'inbound'
+            LEFT JOIN companies c ON c.id = d.company_id
+            LEFT JOIN contacts ct ON ct.id = d.primary_contact_id
+           WHERE d.id = ANY(${dealIds})
+             AND NOT EXISTS (SELECT 1 FROM quote_requests qr WHERE qr.deal_id = d.id)
+           GROUP BY d.id, d.company_id, d.primary_contact_id, d.created_at, c.name, ct.name, ct.email`;
+
+        const inserts = rows.map((r) => {
+          const createdAt = r.first_inbound || r.created_at || new Date();
+          return sql`
+            INSERT INTO quote_requests (
+              id, name, email, company, source, status,
+              contact_id, deal_id, company_id, reviewed_at, created_at,
+              attr_channel, attr_source, attr_medium
+            ) VALUES (
+              ${makeId('qr')}, ${trimOrNull(r.contact_name)},
+              ${lowerOrNull(r.contact_email || r.first_from)}, ${trimOrNull(r.company_name)},
+              'manual', 'qualified',
+              ${r.primary_contact_id || null}, ${r.id}, ${r.company_id || null},
+              ${createdAt}, ${createdAt},
+              'email', 'manual', 'email'
+            )`;
+        });
+        await batchWrite(inserts);
+        return res.status(200).json({ ok: true, created: inserts.length });
+      }
+
+      return res.status(405).end();
     }
 
     // ── List ────────────────────────────────────────────────────────────────

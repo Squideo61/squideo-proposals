@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
-import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe, Users, UserCheck, FileText, Trophy, PoundSterling, Wallet, Target, Coins, Clock, Gauge, XCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe, Users, UserCheck, FileText, Trophy, PoundSterling, Wallet, Target, Coins, Clock, Gauge, XCircle, ChevronLeft, ChevronRight, Plus, Mail, Phone, Link2, Inbox } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
-import { CallLink } from './../ui.jsx';
+import { CallLink, Modal } from './../ui.jsx';
 import { computeRange, rangeHeading, fmtRangeDates, segBtn, RangeControl, thisMonthStr } from './dateRange.jsx';
 
 // Remembers the Marketing page's view state across navigation (mirrors
@@ -17,6 +17,9 @@ const CHANNEL_LABELS = {
   social: 'Social',
   referral: 'Referral',
   direct: 'Direct',
+  email: 'Email',
+  phone: 'Phone',
+  other: 'Other',
 };
 const CHANNEL_COLORS = {
   paid_search: '#2BB8E6',
@@ -24,6 +27,9 @@ const CHANNEL_COLORS = {
   social: '#7C3AED',
   referral: '#F59E0B',
   direct: '#94A3B8',
+  email: '#0EA5E9',
+  phone: '#14B8A6',
+  other: '#94A3B8',
 };
 const prettyChannel = (c) => CHANNEL_LABELS[c] || c || '—';
 
@@ -572,16 +578,16 @@ const STAGE_STYLE = {
 };
 
 function LeadsTab({ data, loading, onOpenCompany, onRetry }) {
-  const { actions } = useStore();
   const [filter, setFilter] = useState('all'); // all | new | qualified | disqualified | spam
   const [selectedId, setSelectedId] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [showBackfill, setShowBackfill] = useState(false);
   // Selection is scoped to the active tab, so dropping it on a filter change
   // keeps Prev/Next paging within whatever section you're looking at.
   useEffect(() => { setSelectedId(null); }, [filter]);
   if (loading && !data) return <Loading />;
   if (!data) return <LoadFailed onRetry={onRetry} />;
   const allLeads = data?.leads || [];
-  if (allLeads.length === 0) return <Empty>No leads captured in this period yet.</Empty>;
   const counts = {
     all: allLeads.length,
     new: allLeads.filter((l) => (l.status || 'new') === 'new').length,
@@ -600,15 +606,31 @@ function LeadsTab({ data, loading, onOpenCompany, onRetry }) {
   const selIdx = selectedId ? leads.findIndex((l) => l.id === selectedId) : -1;
   const selectedLead = selIdx >= 0 ? leads[selIdx] : null;
 
+  // Reload the leads log after a create/backfill so the new rows appear (they
+  // only show if their enquiry date lands in the current range — the modals warn
+  // about that).
+  const afterChange = () => { onRetry?.(); };
+
   return (
     <div>
-      <div style={{ display: 'inline-flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2, marginBottom: 16, flexWrap: 'wrap' }}>
-        {FILTERS.map((f) => (
-          <button key={f.key} onClick={() => setFilter(f.key)} style={segBtn(filter === f.key)}>
-            {f.label} <span style={{ opacity: 0.7 }}>{counts[f.key]}</span>
-          </button>
-        ))}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'inline-flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2, flexWrap: 'wrap' }}>
+          {FILTERS.map((f) => (
+            <button key={f.key} onClick={() => setFilter(f.key)} style={segBtn(filter === f.key)}>
+              {f.label} <span style={{ opacity: 0.7 }}>{counts[f.key]}</span>
+            </button>
+          ))}
+        </div>
+        <div style={{ flex: 1 }} />
+        <button onClick={() => setShowBackfill(true)} className="btn-ghost" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13, fontWeight: 600 }}>
+          <Inbox size={15} /> Find email enquiries
+        </button>
+        <button onClick={() => setShowAdd(true)} className="btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13, fontWeight: 600 }}>
+          <Plus size={15} /> Add lead
+        </button>
       </div>
+      {allLeads.length === 0 ? <Empty>No leads captured in this period yet — use <strong>Add lead</strong> to log an email or phone enquiry.</Empty> : (
+      <>
       {leads.length === 0 ? <Empty>No {filter} leads in this period.</Empty> : (
       <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -657,7 +679,253 @@ function LeadsTab({ data, loading, onOpenCompany, onRetry }) {
           onOpenCompany={onOpenCompany}
         />
       )}
+      </>
+      )}
+      {showAdd && <AddLeadModal onClose={() => setShowAdd(false)} onCreated={afterChange} />}
+      {showBackfill && <EmailBackfillModal onClose={() => setShowBackfill(false)} onApplied={afterChange} />}
     </div>
+  );
+}
+
+// Shared field styles for the lead modals.
+const fieldLabel = { display: 'block', fontSize: 12, fontWeight: 600, color: BRAND.muted, marginBottom: 4 };
+const fieldInput = { width: '100%', padding: '8px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', background: 'white', color: BRAND.ink };
+
+const LEAD_CHANNELS = [
+  { key: 'email', label: 'Email', icon: Mail },
+  { key: 'phone', label: 'Phone', icon: Phone },
+  { key: 'referral', label: 'Referral', icon: Users },
+  { key: 'other', label: 'Other', icon: MailQuestion },
+];
+
+// "Add lead" — log an off-web enquiry so it counts in the Marketing funnel.
+// Optionally link it to an existing deal, in which case it lands "qualified" and
+// its revenue flows through as a sale when that deal signs.
+function AddLeadModal({ onClose, onCreated }) {
+  const { state, actions } = useStore();
+  const [channel, setChannel] = useState('email');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [company, setCompany] = useState('');
+  const [phone, setPhone] = useState('');
+  const [details, setDetails] = useState('');
+  const [enquiryDate, setEnquiryDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dealQuery, setDealQuery] = useState('');
+  const [dealId, setDealId] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const companiesById = state.companies || {};
+  const dealsList = useMemo(() => Object.values(state.deals || {}), [state.deals]);
+  const matches = useMemo(() => {
+    const q = dealQuery.trim().toLowerCase();
+    if (!q) return [];
+    return dealsList
+      .map((d) => ({ d, cName: (d.companyId && companiesById[d.companyId]?.name) || '' }))
+      .filter(({ d, cName }) => (d.title || '').toLowerCase().includes(q) || cName.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [dealQuery, dealsList, companiesById]);
+  const selectedDeal = dealId ? (state.deals || {})[dealId] : null;
+  const selectedDealCompany = selectedDeal && selectedDeal.companyId ? companiesById[selectedDeal.companyId]?.name : null;
+
+  const pickDeal = (d) => {
+    setDealId(d.id);
+    setDealQuery('');
+    // Prefill company from the deal if we don't already have one typed.
+    const cName = (d.companyId && companiesById[d.companyId]?.name) || '';
+    if (!company && cName) setCompany(cName);
+  };
+
+  const canSave = !!(name.trim() || email.trim() || company.trim());
+  const submit = async () => {
+    if (!canSave || saving) return;
+    setSaving(true); setError(null);
+    const created = await actions.createManualLead({
+      channel, name: name.trim() || null, email: email.trim() || null,
+      company: company.trim() || null, phone: phone.trim() || null,
+      projectDetails: details.trim() || null, enquiryDate, dealId,
+    });
+    setSaving(false);
+    if (!created) { setError('Could not save the lead. Please try again.'); return; }
+    onCreated?.();
+    onClose();
+  };
+
+  return (
+    <Modal onClose={onClose} maxWidth={520}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Plus size={18} style={{ color: BRAND.blue }} /> Add lead
+      </h3>
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted }}>
+        Log an enquiry that didn't come through the website form (email, phone, referral) so it counts in your Marketing funnel.
+      </p>
+
+      <label style={fieldLabel}>Channel</label>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+        {LEAD_CHANNELS.map((c) => {
+          const Icon = c.icon; const on = channel === c.key;
+          return (
+            <button key={c.key} type="button" onClick={() => setChannel(c.key)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13, fontWeight: 600, borderRadius: 8, cursor: 'pointer',
+                border: '1px solid ' + (on ? BRAND.blue : BRAND.border), background: on ? BRAND.blue : 'white', color: on ? 'white' : BRAND.ink }}>
+              <Icon size={14} /> {c.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+        <div><label style={fieldLabel}>Name</label><input style={fieldInput} value={name} onChange={(e) => setName(e.target.value)} placeholder="Contact name" /></div>
+        <div><label style={fieldLabel}>Company</label><input style={fieldInput} value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company" /></div>
+        <div><label style={fieldLabel}>Email</label><input style={fieldInput} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" /></div>
+        <div><label style={fieldLabel}>Phone</label><input style={fieldInput} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Optional" /></div>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <label style={fieldLabel}>Enquiry date</label>
+        <input style={{ ...fieldInput, maxWidth: 200 }} type="date" value={enquiryDate} onChange={(e) => setEnquiryDate(e.target.value)} />
+        <span style={{ fontSize: 12, color: BRAND.muted, marginLeft: 8 }}>The lead only shows in a report period that includes this date.</span>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <label style={fieldLabel}>Notes</label>
+        <textarea style={{ ...fieldInput, minHeight: 60, resize: 'vertical' }} value={details} onChange={(e) => setDetails(e.target.value)} placeholder="What did they ask for?" />
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <label style={fieldLabel}>Link to a deal <span style={{ fontWeight: 400 }}>(optional — makes it count as a sale when the deal signs)</span></label>
+        {selectedDeal ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8, background: BRAND.paper }}>
+            <Link2 size={14} style={{ color: BRAND.blue }} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{selectedDeal.title || 'Untitled deal'}</span>
+            {selectedDealCompany && <span style={{ fontSize: 12, color: BRAND.muted }}>· {selectedDealCompany}</span>}
+            <div style={{ flex: 1 }} />
+            <button type="button" onClick={() => setDealId(null)} style={{ border: 'none', background: 'none', color: BRAND.muted, cursor: 'pointer', fontSize: 12 }}>Remove</button>
+          </div>
+        ) : (
+          <div style={{ position: 'relative' }}>
+            <input style={fieldInput} value={dealQuery} onChange={(e) => setDealQuery(e.target.value)} placeholder="Search deals by name or company…" />
+            {matches.length > 0 && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 5, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, marginTop: 4, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', maxHeight: 220, overflowY: 'auto' }}>
+                {matches.map(({ d, cName }) => (
+                  <button key={d.id} type="button" onClick={() => pickDeal(d)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 'none', borderBottom: '1px solid ' + BRAND.border, background: 'white', cursor: 'pointer' }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{d.title || 'Untitled deal'}</div>
+                    {cName && <div style={{ fontSize: 12, color: BRAND.muted }}>{cName}</div>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {error && <div style={{ fontSize: 13, color: '#DC2626', marginBottom: 12 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button type="button" onClick={onClose} className="btn-ghost" style={{ padding: '8px 14px' }}>Cancel</button>
+        <button type="button" onClick={submit} disabled={!canSave || saving} className="btn" style={{ padding: '8px 16px', opacity: !canSave || saving ? 0.6 : 1 }}>
+          {saving ? 'Saving…' : 'Add lead'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// "Find email enquiries" — surfaces signed/active deals that arrived via the
+// enquiries inbox (≥1 inbound email) but were never logged as a Marketing lead,
+// and creates 'email' leads for the selected ones so historic sales stop being
+// under-counted. Preview-then-apply so nothing is created blindly.
+function EmailBackfillModal({ onClose, onApplied }) {
+  const { actions } = useStore();
+  const [loading, setLoading] = useState(true);
+  const [candidates, setCandidates] = useState([]);
+  const [selected, setSelected] = useState(() => new Set());
+  const [applying, setApplying] = useState(false);
+  const [done, setDone] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    actions.loadEmailBackfill().then((rows) => {
+      if (!active) return;
+      setCandidates(rows);
+      setSelected(new Set(rows.map((r) => r.dealId))); // default: all selected
+      setLoading(false);
+    });
+    return () => { active = false; };
+  }, [actions]);
+
+  const toggle = (id) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allOn = candidates.length > 0 && selected.size === candidates.length;
+  const toggleAll = () => setSelected(allOn ? new Set() : new Set(candidates.map((r) => r.dealId)));
+
+  const apply = async () => {
+    if (!selected.size || applying) return;
+    setApplying(true);
+    const created = await actions.applyEmailBackfill([...selected]);
+    setApplying(false);
+    if (created >= 0) { setDone(created); onApplied?.(); }
+  };
+
+  return (
+    <Modal onClose={onClose} maxWidth={640}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Inbox size={18} style={{ color: BRAND.blue }} /> Email enquiries not yet tracked
+      </h3>
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted }}>
+        These deals came in by email but were never logged as a Marketing lead. Create <strong>Email</strong> leads for them so they count in your funnel and revenue.
+      </p>
+
+      {done != null ? (
+        <div style={{ padding: '20px 0', textAlign: 'center' }}>
+          <Check size={28} style={{ color: '#16A34A' }} />
+          <div style={{ fontSize: 15, fontWeight: 600, marginTop: 8 }}>Created {done} email {done === 1 ? 'lead' : 'leads'}.</div>
+          <div style={{ fontSize: 13, color: BRAND.muted, marginTop: 4 }}>They'll appear in any report period that includes their enquiry date.</div>
+          <button type="button" onClick={onClose} className="btn" style={{ marginTop: 16, padding: '8px 18px' }}>Done</button>
+        </div>
+      ) : loading ? (
+        <Loading />
+      ) : candidates.length === 0 ? (
+        <div style={{ padding: '24px 0', textAlign: 'center', color: BRAND.muted, fontSize: 14 }}>
+          🎉 Nothing to backfill — every email-sourced deal is already tracked.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <button type="button" onClick={toggleAll} className="btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }}>
+              {allOn ? 'Deselect all' : 'Select all'}
+            </button>
+            <span style={{ fontSize: 12, color: BRAND.muted }}>{selected.size} of {candidates.length} selected</span>
+          </div>
+          <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, maxHeight: 340, overflowY: 'auto' }}>
+            {candidates.map((c) => {
+              const on = selected.has(c.dealId);
+              const stg = c.stage ? STAGE_STYLE[c.stage] : null;
+              return (
+                <label key={c.dealId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderBottom: '1px solid ' + BRAND.border, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={on} onChange={() => toggle(c.dealId)} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.title || c.company || c.name || 'Untitled deal'}</div>
+                    <div style={{ fontSize: 12, color: BRAND.muted }}>
+                      {[c.company, c.email].filter(Boolean).join(' · ') || '—'}
+                    </div>
+                  </div>
+                  {stg && <span style={{ background: stg.bg, color: stg.fg, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999 }}>{stg.label}</span>}
+                  <span style={{ fontSize: 12, color: BRAND.muted, width: 64, textAlign: 'right' }}>
+                    {c.firstInboundAt ? new Date(c.firstInboundAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : ''}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+            <button type="button" onClick={onClose} className="btn-ghost" style={{ padding: '8px 14px' }}>Cancel</button>
+            <button type="button" onClick={apply} disabled={!selected.size || applying} className="btn" style={{ padding: '8px 16px', opacity: !selected.size || applying ? 0.6 : 1 }}>
+              {applying ? 'Creating…' : `Create ${selected.size} ${selected.size === 1 ? 'lead' : 'leads'}`}
+            </button>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }
 

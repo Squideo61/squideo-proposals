@@ -1891,6 +1891,8 @@ export function StoreProvider({ children }) {
         allowances: payload.allowances || [],
         amends: payload.amends || [],
         canManage: !!payload.canManage,
+        canApproveLeave: !!payload.canApproveLeave,
+        canManageAllowance: !!payload.canManageAllowance,
         me: payload.me || s.schedule.me,
         loaded: true,
       } }));
@@ -2821,6 +2823,28 @@ export function StoreProvider({ children }) {
     },
 
     // ---------- Quote requests ----------
+    // Log an off-web enquiry (email/phone/referral) by hand so it counts in the
+    // Marketing funnel. Optionally links to an existing deal. Returns the created
+    // lead, or null on failure. Callers reload the leads log afterwards.
+    createManualLead(payload) {
+      return api.post('/api/quote-requests-admin?_action=manual', payload)
+        .then((r) => r || null)
+        .catch(() => null);
+    },
+    // Preview deals that arrived by email (≥1 inbound message) but were never
+    // logged as a Marketing lead. Returns an array of candidates.
+    loadEmailBackfill() {
+      return api.get('/api/quote-requests-admin?_action=email-backfill')
+        .then((r) => (Array.isArray(r?.candidates) ? r.candidates : []))
+        .catch(() => []);
+    },
+    // Create 'email' leads for the selected candidate deals. Returns the count
+    // created, or -1 on failure.
+    applyEmailBackfill(dealIds) {
+      return api.post('/api/quote-requests-admin?_action=email-backfill', { dealIds })
+        .then((r) => (r && typeof r.created === 'number' ? r.created : 0))
+        .catch(() => -1);
+    },
     refreshQuoteRequests(status = 'new') {
       const qs = status ? '?status=' + encodeURIComponent(status) : '';
       return api.get('/api/quote-requests-admin' + qs).then((rows) => {
