@@ -85,7 +85,7 @@ function DragHandle({ onDragStart, onDragEnd }) {
 // Section metadata used to drive the mobile nav strip + collapsed-state hints.
 // Order matches the rendering order in the JSX below; ids match the keys
 // passed to sectionProps()/jumpToSection() throughout BuilderView.
-function buildSectionMeta(data, isTemplate, issues) {
+function buildSectionMeta(data, isTemplate, issues, isDefault) {
   const formatGBPint = (n) => '£' + (Number(n) || 0).toLocaleString('en-GB', { maximumFractionDigits: 0 });
   const truncate = (s, max = 60) => {
     if (!s) return '';
@@ -95,8 +95,10 @@ function buildSectionMeta(data, isTemplate, issues) {
   const list = [
     {
       id: 'client',
-      label: isTemplate ? 'Template' : 'Client',
-      hint: isTemplate
+      label: isDefault ? 'Default' : isTemplate ? 'Template' : 'Client',
+      hint: isDefault
+        ? 'The base for every new proposal'
+        : isTemplate
         ? data.name?.trim() || 'Untitled template'
         : [data.clientName, data.contactBusinessName].filter(s => s?.trim()).join(' · ') || 'Tap to fill in',
       hasIssues: (issues.client || []).length > 0,
@@ -263,8 +265,13 @@ function SectionStatus({ issues }) {
 
 export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   const { state, actions, showMsg } = useStore();
-  const isTemplate = mode === 'template';
-  const data = isTemplate ? state.templates[id] : state.proposals[id];
+  // The default-proposal editor (Admin → Default proposal) reuses every bit of
+  // template mode — client fields skipped, no "save as template", a Done button —
+  // so isDefault piggybacks on isTemplate for UI, and only the data source,
+  // the persistence target, and the header label differ.
+  const isDefault = mode === 'default';
+  const isTemplate = mode === 'template' || isDefault;
+  const data = isDefault ? state.defaultProposal : (isTemplate ? state.templates[id] : state.proposals[id]);
   const signature = isTemplate ? null : state.signatures[id];
   const [showSaveTpl, setShowSaveTpl] = useState(false);
   const [tplName, setTplName] = useState('');
@@ -286,7 +293,9 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   }
 
   const update = (patch) => {
-    if (isTemplate) {
+    if (isDefault) {
+      actions.saveDefaultProposal({ ...data, ...patch });
+    } else if (isTemplate) {
       actions.saveTemplate(id, { ...data, ...patch });
     } else {
       actions.saveProposal(id, { ...data, ...patch });
@@ -347,7 +356,9 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   };
   const totalIssues = Object.values(issues).flat().length;
 
-  const proposalLabel = isTemplate
+  const proposalLabel = isDefault
+    ? 'Default proposal — the base for every new proposal'
+    : isTemplate
     ? 'Template: ' + (data.name || 'Untitled')
     : [data.clientName, data.contactBusinessName].filter(Boolean).join(' · ') || 'New Proposal';
 
@@ -357,7 +368,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   // it always has).
   const sectionRefs = useRef({});
   const [collapsedMap, setCollapsedMap] = useState({});
-  const sectionMeta = useMemo(() => buildSectionMeta(data, isTemplate, issues), [data, isTemplate, issues]);
+  const sectionMeta = useMemo(() => buildSectionMeta(data, isTemplate, issues, isDefault), [data, isTemplate, issues, isDefault]);
   const setCollapsed = (id, value) => setCollapsedMap(m => ({ ...m, [id]: value }));
   const sectionProps = (id) => isMobile
     ? {
@@ -499,16 +510,23 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         </div>
       )}
 
-      {/* ── Client Details / Template Info ── */}
+      {/* ── Client Details / Template Info / Default proposal ── */}
       <Section
-        title={isTemplate ? 'Template Info' : 'Client Details'}
+        title={isDefault ? 'Default proposal' : isTemplate ? 'Template Info' : 'Client Details'}
         color="#0369a1"
         icon={Building2}
         badge={isTemplate ? null : <SectionStatus issues={issues.client} />}
         collapsedHint={sectionMeta.find(s => s.id === 'client')?.hint}
         {...sectionProps('client')}
       >
-        {isTemplate ? (
+        {isDefault ? (
+          <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
+            Everything you set here becomes the starting point for every new
+            proposal — intro, team, requirement, pricing, inclusions, extras and
+            payment options. Client-specific details (name, business, logo) are
+            left blank and filled in per proposal.
+          </div>
+        ) : isTemplate ? (
           <Field label="Template name">
             <input
               className="input"

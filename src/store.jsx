@@ -5,6 +5,19 @@ import { permissionsInclude } from './lib/permissions.js';
 
 const StoreContext = createContext(null);
 
+// The default proposal an admin hasn't customised yet: a fresh clone of the
+// hardcoded DEFAULT_PROPOSAL with client-specific fields blanked (mirrors what
+// createTemplate/createFrom strip). Used as the seed for both the "new proposal"
+// flow and the Admin default-proposal editor until an admin saves a custom one.
+function seedDefaultProposal() {
+  const d = JSON.parse(JSON.stringify(DEFAULT_PROPOSAL));
+  d.clientName = '';
+  d.contactBusinessName = '';
+  d.clientLogo = null;
+  d.projectVision = '';
+  return d;
+}
+
 // Persistent slices live in localStorage so they survive page reloads:
 //   composerContext — the {dealId, dealTitle, contactEmail, initialDraft?}
 //   set when the user clicks Send email. Stays non-null until the user
@@ -447,6 +460,10 @@ export function StoreProvider({ children }) {
         financeTargets: settings?.financeTargets || [],
         salesTargets: settings?.salesTargets || [],
         costItems: settings?.costItems || [],
+        // Admin-editable base for new proposals. Falls back to the hardcoded
+        // DEFAULT_PROPOSAL (client fields blanked) until an admin saves one, so
+        // the default editor and the "new proposal" flow always have content.
+        defaultProposal: settings?.defaultProposal || seedDefaultProposal(),
         loading: false,
       }));
     });
@@ -974,6 +991,17 @@ export function StoreProvider({ children }) {
     saveTemplate(id, tpl) {
       setState(s => ({ ...s, templates: { ...s.templates, [id]: tpl } }));
       api.put('/api/templates/' + id, tpl).catch(() => {});
+    },
+    // Persist the admin-editable default proposal (Admin → Default proposal).
+    // Debounced like saveProposal — the builder calls this on every keystroke.
+    // Gated server-side by settings.manage; a non-admin's PUT 403s and the
+    // optimistic state simply won't match the server on next load.
+    saveDefaultProposal(data) {
+      setState(s => ({ ...s, defaultProposal: data }));
+      clearTimeout(saveTimers.current.__defaultProposal);
+      saveTimers.current.__defaultProposal = setTimeout(() => {
+        api.put('/api/settings', { defaultProposal: data }).catch(() => {});
+      }, 800);
     },
     deleteTemplate(id) {
       setState(s => {

@@ -19,7 +19,7 @@ import { CrmTopBar } from './components/crm/CrmTopBar.jsx';
 const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: m[name] })));
 
 // Focused editor / public-facing views that should NOT show the CRM top bar.
-const NO_TOPBAR_VIEWS = new Set(['builder', 'template-builder', 'client']);
+const NO_TOPBAR_VIEWS = new Set(['builder', 'template-builder', 'default-builder', 'client']);
 // Board views that read better edge-to-edge — they opt out of the centred
 // max-width cap and stay full width (their columns/rows can use the room).
 const FULL_WIDTH_VIEWS = new Set(['production', 'schedule']);
@@ -250,7 +250,7 @@ function AppShell() {
 
   const createNew = () => {
     const tpls = Object.values(state.templates);
-    if (tpls.length === 0) createFrom(DEFAULT_PROPOSAL);
+    if (tpls.length === 0) createFrom(state.defaultProposal || DEFAULT_PROPOSAL);
     else setModal({ type: 'templates' });
   };
 
@@ -258,7 +258,7 @@ function AppShell() {
   // lands populated with the deal's contact + company (see createFrom).
   const createForDeal = (dealId) => {
     const tpls = Object.values(state.templates);
-    if (tpls.length === 0) createFrom(DEFAULT_PROPOSAL, { dealId });
+    if (tpls.length === 0) createFrom(state.defaultProposal || DEFAULT_PROPOSAL, { dealId });
     else setModal({ type: 'templates', dealId });
   };
 
@@ -328,7 +328,7 @@ function AppShell() {
 
   const createTemplate = () => {
     const id = makeId();
-    const tpl = JSON.parse(JSON.stringify(DEFAULT_PROPOSAL));
+    const tpl = JSON.parse(JSON.stringify(state.defaultProposal || DEFAULT_PROPOSAL));
     delete tpl.clientName;
     delete tpl.contactBusinessName;
     delete tpl.clientLogo;
@@ -561,6 +561,7 @@ function AppShell() {
           tab={activeId || 'users'}
           onBack={() => navigate('list')}
           onChangeTab={(tab) => navigate('admin', tab)}
+          onEditDefault={() => navigate('default-builder')}
         />
       )}
       {view === 'pipeline' && (
@@ -755,6 +756,12 @@ function AppShell() {
           onBack={() => navigate('templates')}
         />
       )}
+      {view === 'default-builder' && (
+        <BuilderView
+          mode="default"
+          onBack={() => navigate('admin', 'default-proposal')}
+        />
+      )}
       {view === 'client' && activeId && (
         <ClientView
           id={activeId}
@@ -766,7 +773,7 @@ function AppShell() {
       </Suspense>
       </div>
       {modal && modal.type === 'templates' && (
-        <TemplatePicker templates={templates} onPick={(t) => createFrom(t || DEFAULT_PROPOSAL, { dealId: modal.dealId })} onClose={() => setModal(null)} />
+        <TemplatePicker templates={templates} onPick={(t) => createFrom(t || state.defaultProposal || DEFAULT_PROPOSAL, { dealId: modal.dealId })} onClose={() => setModal(null)} />
       )}
       {modal && modal.type === 'account' && (
         <Suspense fallback={null}>
