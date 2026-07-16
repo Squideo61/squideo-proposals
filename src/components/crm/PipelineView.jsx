@@ -696,6 +696,24 @@ function daysSince(iso) {
   return Math.max(0, Math.floor((Date.now() - t) / 86400000));
 }
 
+// How a manually-created deal's lead was generated. These map to Marketing lead
+// channels — picking one logs a linked lead so the deal counts in the funnel
+// (and as a sale when it signs). 'form' is the escape hatch: enquiry-form leads
+// are already tracked automatically, so we log nothing for it.
+const LEAD_SOURCE_CHANNELS = ['phone', 'email', 'referral', 'other'];
+const LEAD_SOURCE_OPTIONS = [
+  { key: 'phone', label: 'Phone call' },
+  { key: 'email', label: 'Enquiry email' },
+  { key: 'referral', label: 'Referral' },
+  { key: 'other', label: 'Other' },
+];
+const sourceBtn = (on) => ({
+  display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px',
+  fontSize: 13, fontWeight: 600, borderRadius: 8, cursor: 'pointer',
+  border: '1px solid ' + (on ? BRAND.blue : BRAND.border),
+  background: on ? BRAND.blue : 'white', color: on ? 'white' : BRAND.ink,
+});
+
 export function NewDealModal({ onClose, onCreated, initialTitle = '' }) {
   const { state, actions, showMsg } = useStore();
   const [title, setTitle] = useState(initialTitle);
@@ -704,6 +722,7 @@ export function NewDealModal({ onClose, onCreated, initialTitle = '' }) {
   const [vatPct, setVatPct] = useState('20');
   const [xeroContact, setXeroContact] = useState(null);
   const [primaryContactId, setPrimaryContactId] = useState('');
+  const [leadSource, setLeadSource] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const contacts = Object.values(state.contacts || {});
@@ -735,6 +754,20 @@ export function NewDealModal({ onClose, onCreated, initialTitle = '' }) {
         companyId,
         primaryContactId: primaryContactId || null,
       });
+      // This modal is always a manual creation (never from a quote request /
+      // enquiry form), so if they told us how the lead came in, log a linked
+      // Marketing lead now — that's what makes the deal count in the funnel and
+      // as a sale when it signs. 'form' logs nothing (already auto-tracked).
+      if (deal?.id && LEAD_SOURCE_CHANNELS.includes(leadSource)) {
+        const c = primaryContactId ? state.contacts?.[primaryContactId] : null;
+        await actions.createManualLead({
+          channel: leadSource,
+          dealId: deal.id,
+          name: c?.name || null,
+          email: c?.email || null,
+          company: xeroContact?.name || null,
+        }).catch(() => {});
+      }
       onCreated?.(deal);
     } catch (err) {
       console.error('createDeal failed', err);
@@ -764,6 +797,34 @@ export function NewDealModal({ onClose, onCreated, initialTitle = '' }) {
             {PIPELINE_STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
         </label>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 3 }}>How was this lead generated?</div>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 8, lineHeight: 1.4 }}>
+            It looks like this didn't come through a quote request or our enquiry form. Logging the source keeps your Marketing numbers accurate — it'll count as a lead now, and as a sale when the deal signs.
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {LEAD_SOURCE_OPTIONS.map((o) => {
+              const on = leadSource === o.key;
+              return (
+                <button key={o.key} type="button" onClick={() => setLeadSource(on ? '' : o.key)} style={sourceBtn(on)}>
+                  {o.label}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => setLeadSource(leadSource === 'form' ? '' : 'form')}
+              style={{ ...sourceBtn(leadSource === 'form'), fontWeight: 500, color: leadSource === 'form' ? 'white' : BRAND.muted }}
+            >
+              It came via our website form
+            </button>
+          </div>
+          {leadSource === 'form' && (
+            <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8, background: BRAND.paper, borderRadius: 8, padding: '8px 10px' }}>
+              Enquiry-form submissions are already tracked automatically as leads — no need to log this one. If it's genuinely a form lead, you can link the existing lead to this deal from Marketing → Leads.
+            </div>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: 12 }}>
           <label style={{ fontSize: 13, fontWeight: 500, flex: 2 }}>
             Value (£, ex VAT, optional)

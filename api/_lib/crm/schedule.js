@@ -1241,18 +1241,23 @@ export async function scheduleRoute(req, res, id, action, user) {
   if (id === 'allowance') {
     if (!manageAllowance) return res.status(403).json({ error: 'Only admins and directors can edit allowances' });
     if (req.method !== 'PATCH') return res.status(405).end();
-    const target = String(action || '').toLowerCase();
-    if (!target) return res.status(400).json({ error: 'user email required' });
     const b = req.body || {};
+    // Prefer the email from the JSON body — the path segment is flattened
+    // through Vercel's rewrite (:action → _action) where an already-encoded
+    // email (@ → %40) can arrive double-encoded. Defensively decode any stray
+    // percent-escapes and match case-insensitively so the write always lands on
+    // the real row rather than provisioning a junk one.
+    let target = String(b.userEmail || action || '').trim();
+    if (/%[0-9a-f]{2}/i.test(target)) { try { target = decodeURIComponent(target); } catch { /* keep as-is */ } }
+    target = target.toLowerCase();
+    if (!target) return res.status(400).json({ error: 'user email required' });
     await sql`INSERT INTO leave_allowances (user_email) VALUES (${target}) ON CONFLICT (user_email) DO NOTHING`;
-    const sets = [];
-    if (b.annualAllowance != null) await sql`UPDATE leave_allowances SET annual_allowance = ${Number(b.annualAllowance)}, updated_at = NOW() WHERE user_email = ${target}`;
-    if (b.compulsoryDays != null) await sql`UPDATE leave_allowances SET compulsory_days = ${Number(b.compulsoryDays)}, updated_at = NOW() WHERE user_email = ${target}`;
-    if (b.takenAdjustment != null) await sql`UPDATE leave_allowances SET taken_adjustment = ${Number(b.takenAdjustment)}, updated_at = NOW() WHERE user_email = ${target}`;
-    if (b.anniversary !== undefined) await sql`UPDATE leave_allowances SET anniversary = ${asDateStr(b.anniversary)}, updated_at = NOW() WHERE user_email = ${target}`;
-    if (b.active != null) await sql`UPDATE leave_allowances SET active = ${!!b.active}, updated_at = NOW() WHERE user_email = ${target}`;
-    if (b.trackAllowance != null) await sql`UPDATE leave_allowances SET track_allowance = ${!!b.trackAllowance}, updated_at = NOW() WHERE user_email = ${target}`;
-    void sets;
+    if (b.annualAllowance != null) await sql`UPDATE leave_allowances SET annual_allowance = ${Number(b.annualAllowance)}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
+    if (b.compulsoryDays != null) await sql`UPDATE leave_allowances SET compulsory_days = ${Number(b.compulsoryDays)}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
+    if (b.takenAdjustment != null) await sql`UPDATE leave_allowances SET taken_adjustment = ${Number(b.takenAdjustment)}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
+    if (b.anniversary !== undefined) await sql`UPDATE leave_allowances SET anniversary = ${asDateStr(b.anniversary)}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
+    if (b.active != null) await sql`UPDATE leave_allowances SET active = ${!!b.active}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
+    if (b.trackAllowance != null) await sql`UPDATE leave_allowances SET track_allowance = ${!!b.trackAllowance}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
     return res.status(200).json(await reload());
   }
 

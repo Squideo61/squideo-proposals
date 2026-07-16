@@ -1964,7 +1964,11 @@ export function StoreProvider({ children }) {
         .catch((err) => { showMsg(err.message || 'Failed to cancel leave'); throw err; });
     },
     updateAllowance(email, fields) {
-      return api.patch('/api/crm/schedule/allowance/' + encodeURIComponent(email), fields)
+      // Send the target email in the body as well as the path. The path segment
+      // is flattened through Vercel's rewrite (:action → _action) where an
+      // already-encoded email (@ → %40) can get double-encoded and land on a
+      // junk row; the JSON body transmits it cleanly.
+      return api.patch('/api/crm/schedule/allowance/' + encodeURIComponent(email), { ...fields, userEmail: email })
         .then((p) => actions._applySchedule(p))
         .catch((err) => { showMsg(err.message || 'Failed to update allowance'); throw err; });
     },
