@@ -1141,9 +1141,35 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         </label>
         {data.partnerProgramme.enabled && (
           <>
+            <Field label="Programme type">
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {[
+                  { key: 'subscription', label: 'Monthly subscription', hint: 'Recurring content credit, charged monthly — cancel any time.' },
+                  { key: 'oneoff', label: 'One-off content credit', hint: 'A single upfront purchase of content credit for future use.' },
+                ].map((opt) => {
+                  const active = (data.partnerProgramme.mode || 'subscription') === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => update({ partnerProgramme: { ...data.partnerProgramme, mode: opt.key } })}
+                      style={{
+                        flex: isMobile ? '1 1 100%' : '1 1 0', textAlign: 'left', padding: '10px 12px', borderRadius: 8,
+                        border: '2px solid ' + (active ? '#b45309' : BRAND.border), background: active ? '#FFFAEB' : 'white', cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 700, color: active ? '#92400E' : BRAND.ink }}>{opt.label}</div>
+                      <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, lineHeight: 1.4 }}>{opt.hint}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
-              <Field label="Monthly subscription rate (auto-derived)">
+              <Field label={(data.partnerProgramme.mode === 'oneoff' ? 'Content credit rate' : 'Monthly subscription rate') + ' (auto-derived)'}>
                 {(() => {
+                  const isOneoff = data.partnerProgramme.mode === 'oneoff';
+                  const suffix = isOneoff ? '' : '/mo';
                   const base = Number(data.partnerProgramme?.standardRatePerMin) || Number(data.basePrice) || 0;
                   const baseD = data.partnerProgramme.discountRate || 0;
                   const extraD = data.partnerProgramme.extraDiscountPerCredit || 0;
@@ -1155,12 +1181,14 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                   return (
                     <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 6, padding: '10px 12px', fontSize: 13, lineHeight: 1.6 }}>
                       <div style={{ color: '#0F2A3D' }}>
-                        <strong>1 min</strong>: £{tierRate(1).toFixed(0)}/mo &nbsp;·&nbsp;
-                        <strong>2 mins</strong>: £{tierRate(2).toFixed(0)}/mo &nbsp;·&nbsp;
-                        <strong>3 mins</strong>: £{tierRate(3).toFixed(0)}/mo
+                        <strong>1 min</strong>: £{tierRate(1).toFixed(0)}{suffix} &nbsp;·&nbsp;
+                        <strong>2 mins</strong>: £{tierRate(2).toFixed(0)}{suffix} &nbsp;·&nbsp;
+                        <strong>3 mins</strong>: £{tierRate(3).toFixed(0)}{suffix}
                       </div>
                       <div style={{ fontSize: 12, color: '#78350F', marginTop: 4 }}>
-                        Per-minute rate is the standard rate × discount tier; tweak the tier on the right to change it.
+                        {isOneoff
+                          ? 'One-off price per minute of credit — the standard rate × discount tier; tweak the tier on the right.'
+                          : 'Per-minute rate is the standard rate × discount tier; tweak the tier on the right to change it.'}
                       </div>
                     </div>
                   );

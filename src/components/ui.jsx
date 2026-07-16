@@ -135,7 +135,7 @@ export function PriceRow({ label, value, bold }) {
   );
 }
 
-export function PaymentOption({ selected, onSelect, title, desc, disabled, disabledReason }) {
+export function PaymentOption({ selected, onSelect, title, desc, disabled, disabledReason, recommended }) {
   const handleClick = () => { if (!disabled && onSelect) onSelect(); };
   return (
     <label
@@ -157,7 +157,10 @@ export function PaymentOption({ selected, onSelect, title, desc, disabled, disab
         {selected && <div style={{ width: 8, height: 8, borderRadius: '50%', background: BRAND.blue }} />}
       </div>
       <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{title}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{title}</span>
+          {recommended && <Badge color="gold">Recommended</Badge>}
+        </div>
         <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>{desc}</div>
         {disabled && disabledReason && (
           <div style={{ fontSize: 12, color: '#92400E', marginTop: 6, fontStyle: 'italic' }}>{disabledReason}</div>
@@ -313,7 +316,7 @@ export function ResponsiveTable({ columns, rows, keyField = 'id', onRowClick, em
   );
 }
 
-export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, phone, email, emailName, onSign, showVat = true }) {
+export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerOneoff, partnerSelected, phone, email, emailName, onSign, showVat = true }) {
   const isMobile = useIsMobile();
   const telHref = phone ? 'tel:' + String(phone).replace(/[^+\d]/g, '') : null;
   return (
@@ -350,7 +353,7 @@ export function StickyCTA({ totalExVat, partnerMonthlyExVat, partnerSelected, ph
             </span>
             {partnerSelected && partnerMonthlyExVat > 0 && (
               <span style={{ fontSize: 11, color: '#92400E', background: '#FFFAEB', border: '1px solid #FDE68A', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>
-                + {formatGBP(partnerMonthlyExVat)}{showVat && ' + VAT'}/mo
+                + {formatGBP(partnerMonthlyExVat)}{showVat && ' + VAT'}{partnerOneoff ? ' credit' : '/mo'}
               </span>
             )}
           </div>

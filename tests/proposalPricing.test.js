@@ -89,6 +89,40 @@ describe('computeProposalCheckout', () => {
     expect(r.amountGross).toBe(6750);
   });
 
+  it('one-off Content Credit: full payment bills project + credit block once', () => {
+    const prop = {
+      ...baseProposal,
+      partnerProgramme: { ...baseProposal.partnerProgramme, mode: 'oneoff', extraDiscountPerCredit: 0.03, maxDiscount: 0.3 },
+    };
+    const sig = { paymentOption: 'full', partnerSelected: true, partnerCredits: 4 };
+    const r = computeProposalCheckout(prop, sig);
+    // tier for 4 credits: 0.1 + 3*0.03 = 0.19; project 5000*0.81 = 4050;
+    // credit 1250*0.81*4 = 4050; gross (4050+4050)*1.2 = 9720
+    expect(r.projectExVat).toBe(4050);
+    expect(r.partnerExVat).toBe(4050);
+    expect(r.isDeposit).toBe(false);
+    expect(r.amountGross).toBe(9720);
+  });
+
+  it('one-off Content Credit: 50/50 split halves the combined project + credit (allowed here, unlike subscription)', () => {
+    const prop = {
+      ...baseProposal,
+      partnerProgramme: { ...baseProposal.partnerProgramme, mode: 'oneoff' },
+    };
+    const sig = { paymentOption: '5050', partnerSelected: true, partnerCredits: 1 };
+    const r = computeProposalCheckout(prop, sig);
+    // project 5000*0.9=4500, credit 1250*0.9=1125; combined gross (5625)*1.2=6750; half=3375
+    expect(r.isDeposit).toBe(true);
+    expect(r.amountGross).toBe(3375);
+  });
+
+  it('subscription partner still forces full payment (50/50 ignored → full combined)', () => {
+    const sig = { paymentOption: '5050', partnerSelected: true, partnerCredits: 1 };
+    const r = computeProposalCheckout(baseProposal, sig);
+    expect(r.isDeposit).toBe(false);
+    expect(r.amountGross).toBe(6750); // (4500 + 1125) * 1.2, not halved
+  });
+
   it('returns null when there is no proposal to price', () => {
     expect(computeProposalCheckout(null, { paymentOption: 'full' })).toBeNull();
   });

@@ -99,14 +99,23 @@ export function computeProposalCheckout(proposalData, signatureData) {
   const discountedSubtotal  = subtotal - partnerDiscount;          // project ex VAT
   const discountedTotal     = discountedSubtotal * (1 + vatRate);  // gross
 
+  // One-off Content Credit is a single upfront purchase (not a recurring
+  // subscription), so — unlike the subscription programme — it can use the
+  // 50/50 split and is billed once. `partnerTotal` here is that one-time block.
+  const isOneoff = pp.mode === 'oneoff';
   const paymentOption = sig.paymentOption || 'full';
-  const isDeposit = !partnerSelected && paymentOption === '5050';
+  const isDeposit = paymentOption === '5050' && (isOneoff || !partnerSelected);
 
   // Gross amount collected *now*. Mirrors ClientView.dueNowTotal + the deposit
-  // split (partner always pays the full discounted project + first month).
-  const amountGross = partnerSelected
-    ? (discountedTotal + partnerTotal)
-    : (isDeposit ? total / 2 : total);
+  // split. Subscription partner always pays the full discounted project + first
+  // month; one-off partner can split the combined project + credit 50/50.
+  let amountGross;
+  if (partnerSelected) {
+    const combined = discountedTotal + partnerTotal;
+    amountGross = (isOneoff && isDeposit) ? combined / 2 : combined;
+  } else {
+    amountGross = isDeposit ? total / 2 : total;
+  }
 
   return {
     vatRate,

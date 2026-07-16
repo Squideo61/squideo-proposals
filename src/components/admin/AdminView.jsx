@@ -20,7 +20,7 @@ const TABS = [
   { id: 'commission',    label: 'Staff Commission', icon: Percent,  perm: ['commission.manage', 'commission.view_own'] },
   { id: 'holiday',       label: 'Holiday',          icon: Plane,    perm: ['schedule.manage_allowance', 'schedule.manage'] },
   { id: 'intro-calls',   label: 'Intro call rules', icon: CalendarClock, perm: 'settings.manage' },
-  { id: 'default-proposal', label: 'Default proposal', icon: FileText, perm: 'settings.manage' },
+  { id: 'proposals', label: 'Proposals', icon: FileText, perm: 'settings.manage' },
 ];
 
 // A tab is visible if the caller holds its permission — `perm` may be a single
@@ -28,7 +28,7 @@ const TABS = [
 const tabVisible = (perms, perm) =>
   Array.isArray(perm) ? perm.some((p) => permissionsInclude(perms, p)) : permissionsInclude(perms, perm);
 
-export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault }) {
+export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, onCreateTemplate, onEditTemplate }) {
   const { state } = useStore();
   const session = state.session;
   const permissions = session?.permissions || [];
@@ -131,7 +131,7 @@ export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault })
         {active?.id === 'commission' && <StaffCommissionTab />}
         {active?.id === 'holiday' && <HolidayTab />}
         {active?.id === 'intro-calls' && <IntroCallRulesTab />}
-        {active?.id === 'default-proposal' && <DefaultProposalTab onEditDefault={onEditDefault} />}
+        {active?.id === 'proposals' && <DefaultProposalTab onEditDefault={onEditDefault} onCreateTemplate={onCreateTemplate} onEditTemplate={onEditTemplate} />}
       </div>
     </div>
   );

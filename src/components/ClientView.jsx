@@ -319,10 +319,13 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
     }
   }, [signed, data]);
 
-  // Partner Programme unlocks its discount only on full payment (or PO).
-  // When the client opts in, bump them off 50/50 onto the next available option.
+  // The *subscription* Partner Programme unlocks its discount only on full
+  // payment (or PO), so opting in bumps the client off 50/50. The one-off
+  // Content Credit is a single purchase that can still be split 50/50 — leave
+  // its payment choice alone.
   useEffect(() => {
     if (!partnerSelected || signed || paymentOption !== '5050') return;
+    if (data?.partnerProgramme?.mode === 'oneoff') return;
     const opts = data?.paymentOptions || ['5050', 'full'];
     const next = opts.find(o => o !== '5050') || 'full';
     setPaymentOption(next);
@@ -436,6 +439,10 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   const subtotal = netBasePrice + extrasTotal;
   const vat = subtotal * data.vatRate;
   const total = subtotal + vat;
+  // One-off Content Credit variant: a single upfront purchase of content credit
+  // (same tier ladder, but paid once for future use) rather than a recurring
+  // monthly subscription. Flips wording and payment rules throughout.
+  const isOneoff = data.partnerProgramme?.mode === 'oneoff';
   // Tiered project-discount ladder: base + (extra * (credits-1)), capped at max.
   // Legacy proposals (no extraDiscountPerCredit / maxDiscount) collapse to a flat
   // discountRate because extraPerCredit defaults to 0 and max defaults to base.
@@ -505,6 +512,10 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         partnerCredits,
         discountRate: effectiveDiscount,
         vatRate: data.vatRate,
+        // One-off Content Credit vs recurring subscription — SignedBlock and the
+        // post-sign payment prompt use this to drop the "/month, cancel any time"
+        // language for a single upfront credit purchase.
+        oneoff: isOneoff,
       } : null,
       // Lock the agreed manual discount so later edits to data.discount don't
       // change a signed/invoiced proposal (mirrors amountBreakdown for Partner).
@@ -1031,7 +1042,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                 style={{ height: 40, width: 'auto', flexShrink: 0 }}
               />
               <div style={{ fontSize: 16, fontWeight: 700, color: '#92400E' }}>
-                Squideo Partner Programme -{' '}
+                {isOneoff ? 'Squideo Content Credit' : 'Squideo Partner Programme'} -{' '}
                 <a href="https://www.squideo.com/partner-programme" target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Click Here to Learn More</a>
               </div>
             </div>
@@ -1060,7 +1071,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                         </span>
                       </div>
                       <div style={{ fontSize: 13, color: '#78350F', marginBottom: 12, lineHeight: 1.5 }}>
-                        {formatGBP(savingPerMin)} less per minute than the standard rate - locked in as long as you stay subscribed.
+                        {formatGBP(savingPerMin)} less per minute than the standard rate{isOneoff ? ' - locked in on every minute you buy today.' : ' - locked in as long as you stay subscribed.'}
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6, marginBottom: 8 }}>
                         <FutureRateCell label="Standard" value={formatGBP(standardRate) + '/min'} muted strike />
@@ -1080,17 +1091,17 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               {/* RIGHT — action */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink }}>Monthly content credit:</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{isOneoff ? 'Content credit:' : 'Monthly content credit:'}</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <button onClick={() => !signed && setPartnerCredits(c => Math.max(1, c - 1))} disabled={!!signed || partnerCredits <= 1} style={{ width: isMobile ? 44 : 30, height: isMobile ? 44 : 30, borderRadius: 6, border: '1px solid #FDE68A', background: '#FFFAEB', cursor: signed || partnerCredits <= 1 ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>−</button>
                     <span style={{ fontWeight: 700, fontSize: 16, minWidth: 28, textAlign: 'center' }}>{partnerCredits}</span>
                     <button onClick={() => !signed && setPartnerCredits(c => c + 1)} disabled={!!signed} style={{ width: isMobile ? 44 : 30, height: isMobile ? 44 : 30, borderRadius: 6, border: '1px solid #FDE68A', background: '#FFFAEB', cursor: signed ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>+</button>
-                    <span style={{ fontSize: 13, color: BRAND.muted }}>{partnerCredits === 1 ? 'min' : 'mins'}/mo</span>
+                    <span style={{ fontSize: 13, color: BRAND.muted }}>{partnerCredits === 1 ? 'min' : 'mins'}{isOneoff ? '' : '/mo'}</span>
                   </div>
                 </div>
                 {partnerExtraPerCredit > 0 && (
                   <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#78350F', lineHeight: 1.5 }}>
-                    Each extra minute/month adds <strong>{formatPct(partnerExtraPerCredit)}% off</strong> this project, up to <strong>{formatPct(partnerMaxDiscount)}%</strong>.
+                    Each extra minute{isOneoff ? '' : '/month'} adds <strong>{formatPct(partnerExtraPerCredit)}% off</strong> this project, up to <strong>{formatPct(partnerMaxDiscount)}%</strong>.
                     {' '}You&apos;re at <strong>{partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'} = {formatPct(effectiveDiscount)}% off</strong>
                     {effectiveDiscount < partnerMaxDiscount
                       ? <> · add another to save <strong>{formatPct(Math.min(partnerMaxDiscount, effectiveDiscount + partnerExtraPerCredit))}%</strong>.</>
@@ -1098,11 +1109,13 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                   </div>
                 )}
                 <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 15, fontWeight: 700 }}>
-                  <span>Monthly subscription</span>
-                  <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>{showVat ? '+ VAT / month' : '/ month'}</span></span>
+                  <span>{isOneoff ? 'Content credit (one-off)' : 'Monthly subscription'}</span>
+                  <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>{isOneoff ? (showVat ? '+ VAT' : '') : (showVat ? '+ VAT / month' : '/ month')}</span></span>
                 </div>
                 <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5, padding: '4px 2px' }}>
-                  💳 <strong>First month charged when you sign.</strong> Renews monthly - cancel any time, even mid-project.
+                  {isOneoff
+                    ? <>💳 <strong>Paid once when you sign</strong> (or via your Purchase Order). Credit never expires — draw it down on future videos whenever you&apos;re ready.</>
+                    : <>💳 <strong>First month charged when you sign.</strong> Renews monthly - cancel any time, even mid-project.</>}
                 </div>
               </div>
             </div>
@@ -1143,13 +1156,13 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               >
                 {partnerSelected
                   ? (partnerDiscount > 0
-                      ? `✓ Joined - saving ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off) - click to remove`
-                      : '✓ Joined - click to remove')
+                      ? `✓ ${isOneoff ? 'Added' : 'Joined'} - saving ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off) - click to remove`
+                      : `✓ ${isOneoff ? 'Added' : 'Joined'} - click to remove`)
                   : (partnerDiscount > 0
-                      ? `Opt in to Partner Programme - save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`
-                      : 'Opt in to Partner Programme')}
+                      ? `${isOneoff ? 'Add Content Credit' : 'Opt in to Partner Programme'} - save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`
+                      : (isOneoff ? 'Add Content Credit' : 'Opt in to Partner Programme'))}
               </button>
-              <div style={{ fontSize: 12, color: '#5D8A00', textAlign: 'center', marginTop: 8 }}>✓ Cancel any time &nbsp;·&nbsp; No minimum term</div>
+              <div style={{ fontSize: 12, color: '#5D8A00', textAlign: 'center', marginTop: 8 }}>{isOneoff ? '✓ One-off purchase  ·  Credit for future videos' : '✓ Cancel any time  ·  No minimum term'}</div>
             </div>
           </div>
         )}
@@ -1177,29 +1190,42 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 600, marginTop: 6 }}>
                 <span>
-                  + First month Partner Programme
+                  {isOneoff ? '+ Content credit' : '+ First month Partner Programme'}
                   <span style={{ opacity: 0.7, fontWeight: 500, fontSize: 13, marginLeft: 6 }}>
-                    ({partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'}/mo)
+                    ({partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'}{isOneoff ? '' : '/mo'})
                   </span>
                 </span>
                 <span>{formatGBP(partnerSubtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 13, opacity: 0.7 }}>+ VAT</span>}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
-                <span>Due today</span>
+                <span>{isOneoff ? (paymentOption === 'po' ? 'Order total (to invoice)' : 'Order total') : 'Due today'}</span>
                 <span>{formatGBP(discountedSubtotal + partnerSubtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(discountedSubtotal + partnerSubtotal)} inc.</span></span>}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 8, color: '#FFD54F' }}>
-                <span>Then {formatGBP(partnerSubtotal)}{showVat && ' + VAT'} / month for {partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'} of content credit, cancel any time</span>
-                <span></span>
-              </div>
+              {isOneoff ? (
+                paymentOption === '5050' && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 8, color: '#FFD54F' }}>
+                    <span>{formatGBP((discountedSubtotal + partnerSubtotal) / 2)}{showVat && ' + VAT'} due today, the balance on final approval.</span>
+                  </div>
+                )
+              ) : (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 8, color: '#FFD54F' }}>
+                  <span>Then {formatGBP(partnerSubtotal)}{showVat && ' + VAT'} / month for {partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'} of content credit, cancel any time</span>
+                  <span></span>
+                </div>
+              )}
             </>
           )}
         </div>
 
         <PageTitle>Payment Options</PageTitle>
-        {partnerSelected && (
+        {partnerSelected && !isOneoff && (
           <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#78350F', lineHeight: 1.5, marginBottom: 12 }}>
             <strong>Partner Programme selected.</strong> {showPartnerProjectDiscount ? `To unlock the ${formatPct(effectiveDiscount)}% project discount, payment` : 'Payment'} must be made in full (card/BACS). The 50/50 split is not available with the Partner Programme.
+          </div>
+        )}
+        {partnerSelected && isOneoff && (
+          <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#78350F', lineHeight: 1.5, marginBottom: 12 }}>
+            <strong>Content Credit selected.</strong> Most organisations raise a <strong>Purchase Order</strong> for this — but you can also pay in full or split 50/50, whichever suits your procurement.
           </div>
         )}
         <div style={{ display: 'grid', gap: 12, marginBottom: 12 }}>
@@ -1216,7 +1242,9 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             return (data.paymentOptions || ['5050', 'full']).map((key) => {
               const cfg = OPTION_CONFIG[key];
               if (!cfg) return null;
-              const lockedByPartner = key === '5050' && partnerSelected;
+              // The one-off Content Credit can still be split 50/50; only the
+              // recurring subscription locks it.
+              const lockedByPartner = key === '5050' && partnerSelected && !isOneoff;
               const disabled = !!signed || lockedByPartner;
               const disabledReason = lockedByPartner
                 ? 'Unavailable with the Partner Programme - choose Pay in full or Purchase Order.'
@@ -1230,26 +1258,37 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                   desc={cfg.desc}
                   disabled={disabled}
                   disabledReason={disabledReason}
+                  recommended={isOneoff && partnerSelected && key === 'po'}
                 />
               );
             });
           })()}
         </div>
         {(() => {
-          const exVat = partnerSelected ? discountedSubtotal : subtotal;
+          // One-off Content Credit folds the credit block into the order, and the
+          // 50/50 split is available on the combined total. The subscription
+          // variant keeps its "project now + monthly credit" split.
+          const combinedExVat = discountedSubtotal + partnerSubtotal;
+          const exVat = (partnerSelected && !isOneoff) ? discountedSubtotal : (partnerSelected ? combinedExVat : subtotal);
           const half = exVat / 2;
           const vatNote = showVat ? <span style={{ color: BRAND.muted, fontWeight: 500 }}>+ VAT</span> : null;
-          const dueExVat = partnerSelected ? (discountedSubtotal + partnerSubtotal) : exVat;
+          const dueExVat = partnerSelected ? combinedExVat : exVat;
           let line = null;
           if (paymentOption === '5050') {
-            line = <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(half)}</strong> {vatNote} today, <strong>{formatGBP(half)}</strong> {vatNote} on final approval.</>;
+            line = (partnerSelected && isOneoff)
+              ? <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(half)}</strong> {vatNote} today ({formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} content credit, split 50/50), <strong>{formatGBP(half)}</strong> {vatNote} on final approval.</>
+              : <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(half)}</strong> {vatNote} today, <strong>{formatGBP(half)}</strong> {vatNote} on final approval.</>;
           } else if (paymentOption === 'full') {
             line = partnerSelected
-              ? <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(dueExVat)}</strong> {vatNote} today ({formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month Partner Programme), then {formatGBP(partnerSubtotal)} {vatNote}/month - cancel any time.</>
+              ? (isOneoff
+                  ? <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(dueExVat)}</strong> {vatNote} today ({formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} content credit). Credit is yours to use on future videos.</>
+                  : <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(dueExVat)}</strong> {vatNote} today ({formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month Partner Programme), then {formatGBP(partnerSubtotal)} {vatNote}/month - cancel any time.</>)
               : <>You pay <strong style={{ color: BRAND.blue }}>{formatGBP(exVat)}</strong> {vatNote} today.</>;
           } else if (paymentOption === 'po') {
             line = partnerSelected
-              ? <>We&apos;ll invoice <strong style={{ color: BRAND.blue }}>{formatGBP(dueExVat)}</strong> {vatNote} once your Purchase Order is set up ({formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month Partner Programme), then {formatGBP(partnerSubtotal)} {vatNote}/month.</>
+              ? (isOneoff
+                  ? <>We&apos;ll invoice <strong style={{ color: BRAND.blue }}>{formatGBP(dueExVat)}</strong> {vatNote} once your Purchase Order is set up ({formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} content credit). Credit is yours to use on future videos.</>
+                  : <>We&apos;ll invoice <strong style={{ color: BRAND.blue }}>{formatGBP(dueExVat)}</strong> {vatNote} once your Purchase Order is set up ({formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month Partner Programme), then {formatGBP(partnerSubtotal)} {vatNote}/month.</>)
               : <>We&apos;ll invoice <strong style={{ color: BRAND.blue }}>{formatGBP(exVat)}</strong> {vatNote} once your Purchase Order is set up.</>;
           }
           if (!line) return null;
@@ -1357,7 +1396,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.95 }}>
                 {partnerSelected ? (
                   <>
-                    {formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} first month = <strong>{formatGBP(discountedSubtotal + partnerSubtotal)}{showVat && ' + VAT'}</strong>{showVat && <span style={{ opacity: 0.75 }}> · {incVat(discountedSubtotal + partnerSubtotal)} inc.</span>}
+                    {formatGBP(discountedSubtotal)} project + {formatGBP(partnerSubtotal)} {isOneoff ? 'content credit' : 'first month'} = <strong>{formatGBP(discountedSubtotal + partnerSubtotal)}{showVat && ' + VAT'}</strong>{showVat && <span style={{ opacity: 0.75 }}> · {incVat(discountedSubtotal + partnerSubtotal)} inc.</span>}
                   </>
                 ) : (
                   <>
@@ -1378,6 +1417,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         <StickyCTA
           totalExVat={partnerSelected ? discountedSubtotal : subtotal}
           partnerMonthlyExVat={partnerSubtotal}
+          partnerOneoff={isOneoff}
           showVat={showVat}
           partnerSelected={partnerSelected}
           phone={CONFIG.company.phone}

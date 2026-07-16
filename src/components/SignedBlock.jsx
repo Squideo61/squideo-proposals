@@ -86,16 +86,23 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
                 <span><strong>{formatGBP(signed.amountBreakdown.projectExVat)}</strong>{showVat && ' + VAT'}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>First month Partner Programme</span>
+                <span>{signed.amountBreakdown.oneoff ? 'Content credit (one-off)' : 'First month Partner Programme'}</span>
                 <span><strong>{formatGBP(signed.amountBreakdown.partnerExVat)}</strong>{showVat && ' + VAT'}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid #A5D6A7', fontWeight: 700 }}>
-                <span>Total committed today</span>
+                <span>Total committed{signed.amountBreakdown.oneoff ? '' : ' today'}</span>
                 <span>{formatGBP(signed.amountBreakdown.projectExVat + signed.amountBreakdown.partnerExVat)}{showVat && ' + VAT'}</span>
               </div>
-              <div style={{ fontSize: 12, color: '#15803D', marginTop: 6 }}>
-                Then {formatGBP(signed.amountBreakdown.partnerExVat)}{showVat && ' + VAT'} / month - cancel any time.
-              </div>
+              {!signed.amountBreakdown.oneoff && (
+                <div style={{ fontSize: 12, color: '#15803D', marginTop: 6 }}>
+                  Then {formatGBP(signed.amountBreakdown.partnerExVat)}{showVat && ' + VAT'} / month - cancel any time.
+                </div>
+              )}
+              {signed.amountBreakdown.oneoff && (
+                <div style={{ fontSize: 12, color: '#15803D', marginTop: 6 }}>
+                  Includes {signed.amountBreakdown.partnerCredits} {signed.amountBreakdown.partnerCredits === 1 ? 'minute' : 'minutes'} of content credit to use on future videos.
+                </div>
+              )}
             </div>
           ) : (
             <div style={{ marginTop: 8 }}>Total committed: <strong>{formatGBP(totalExVat)}{showVat && ' + VAT'}</strong></div>
@@ -285,7 +292,7 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
             {isDeposit
               ? 'Pay your 50% deposit of ' + formatGBP(amountDue) + ' now to reserve your place in our production schedule.'
               : signed.partnerSelected
-                ? 'Pay the full amount of ' + formatGBP(amountDue) + ' now to start production and activate your Partner Programme.'
+                ? 'Pay the full amount of ' + formatGBP(amountDue) + (signed.amountBreakdown?.oneoff ? ' now to start production and add your content credit.' : ' now to start production and activate your Partner Programme.')
                 : signed.payInFullIncentive === false
                   ? 'Pay the full amount of ' + formatGBP(amountDue) + ' now to reserve your place in our production schedule.'
                   : 'Pay the full amount of ' + formatGBP(amountDue) + ' now to lock in your free subtitled version.'}

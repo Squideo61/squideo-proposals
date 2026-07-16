@@ -562,6 +562,8 @@ function AppShell() {
           onBack={() => navigate('list')}
           onChangeTab={(tab) => navigate('admin', tab)}
           onEditDefault={() => navigate('default-builder')}
+          onCreateTemplate={createTemplate}
+          onEditTemplate={editTemplate}
         />
       )}
       {view === 'pipeline' && (
@@ -759,7 +761,7 @@ function AppShell() {
       {view === 'default-builder' && (
         <BuilderView
           mode="default"
-          onBack={() => navigate('admin', 'default-proposal')}
+          onBack={() => navigate('admin', 'proposals')}
         />
       )}
       {view === 'client' && activeId && (

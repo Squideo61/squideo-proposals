@@ -9,6 +9,44 @@ export function extraHasVariants(extra) {
   return true;
 }
 
+// Blueprint for the "Content Credit" proposal template — a one-off bulk credit
+// purchase aimed at larger organisations with a fixed budget to allocate (e.g.
+// an NHS body with a £10k budget who enquired about a single 3-min video, but
+// could pre-buy several minutes of content credit at a bulk discount for future
+// use). Takes the current default proposal as its base so it inherits the
+// workspace's own intro/team/inclusions, then swaps the recurring Partner
+// Programme for the one-off credit variant and leads with the Purchase Order
+// payment route (the usual path for these organisations).
+export const CONTENT_CREDIT_TEMPLATE_NAME = 'Content Credit (one-off)';
+export function makeContentCreditTemplate(base) {
+  const tpl = JSON.parse(JSON.stringify(base || DEFAULT_PROPOSAL));
+  delete tpl.clientName;
+  delete tpl.contactBusinessName;
+  delete tpl.clientLogo;
+  delete tpl.projectVision;
+  delete tpl._number;
+  delete tpl._views;
+  delete tpl._createdAt;
+  tpl.name = CONTENT_CREDIT_TEMPLATE_NAME;
+  tpl.proposalTitle = tpl.proposalTitle || 'Content Credit Proposal';
+  tpl.partnerProgramme = {
+    ...(tpl.partnerProgramme || {}),
+    enabled: true,
+    mode: 'oneoff',
+    standardRatePerMin: tpl.partnerProgramme?.standardRatePerMin || 1250,
+    // A steeper ladder than the subscription default — the whole point is to
+    // reward a bigger single commitment, so the discount keeps climbing further.
+    discountRate: 0.15,
+    extraDiscountPerCredit: 0.03,
+    maxDiscount: 0.30,
+    description: 'Content Credit lets you lock in a block of production time now and draw it down whenever you\'re ready.\n- Buy several minutes upfront at a bulk-discounted rate\n- Use it on this video, split it across smaller pieces, or save it for later\n- Credit never expires – no monthly commitment, no rush to spend\n\nWhy organisations use it:\n- Maximise a fixed budget – the more you allocate, the lower the per-minute rate\n- One approval, one Purchase Order – simpler procurement than commissioning piece by piece\n- Consistency – the same team and style across everything you make',
+  };
+  // Purchase Order first: these are typically larger organisations who raise a
+  // PO rather than pay by card. All three routes stay available.
+  tpl.paymentOptions = ['po', 'full', '5050'];
+  return tpl;
+}
+
 export const NEXT_STEPS = [
   'Accept this quote to guarantee a production slot in our creative schedule.',
   "We'll invoice your initial payment or arrange supplier setup with you for Purchase Orders.",
@@ -56,6 +94,11 @@ export const DEFAULT_PROPOSAL = {
   ],
   partnerProgramme: {
     enabled: true,
+    // 'subscription' — recurring monthly content credit, first month charged on
+    // sign, cancel any time (the original programme). 'oneoff' — a single upfront
+    // purchase of content credit for future use, priced on the same tier ladder
+    // (more minutes = bigger discount) but paid once. See makeContentCreditTemplate.
+    mode: 'subscription',
     standardRatePerMin: 1250,
     discountRate: 0.15,
     extraDiscountPerCredit: 0.025,
