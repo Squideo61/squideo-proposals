@@ -1048,7 +1048,7 @@ function NewBlockModal({ producers, onClose, onSubmit }) {
   );
 }
 
-function AllowanceModal({ row, onClose, onSave }) {
+export function AllowanceModal({ row, onClose, onSave }) {
   const [allowance, setAllowance] = useState(row.annualAllowance ?? 20);
   const [compulsory, setCompulsory] = useState(row.compulsoryDays ?? 6);
   const [used, setUsed] = useState(row.takenAdjustment ?? 0);

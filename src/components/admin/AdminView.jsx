@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { permissionsInclude } from '../../lib/permissions.js';
@@ -9,6 +9,7 @@ import { NotificationsTab } from './NotificationsTab.jsx';
 import { StorageTab } from './StorageTab.jsx';
 import { IntroCallRulesTab } from './IntroCallRulesTab.jsx';
 import { StaffCommissionTab } from './StaffCommissionTab.jsx';
+import { HolidayTab } from './HolidayTab.jsx';
 
 const TABS = [
   { id: 'users',         label: 'Users + invites',  icon: Users,    perm: 'users.manage' },
@@ -16,6 +17,7 @@ const TABS = [
   { id: 'notifications', label: 'Notifications',    icon: Bell,     perm: 'users.manage' },
   { id: 'storage',       label: 'Storage & CRM costs', icon: Wallet, perm: 'finance.manage' },
   { id: 'commission',    label: 'Staff Commission', icon: Percent,  perm: ['commission.manage', 'commission.view_own'] },
+  { id: 'holiday',       label: 'Holiday',          icon: Plane,    perm: ['schedule.manage_allowance', 'schedule.manage'] },
   { id: 'intro-calls',   label: 'Intro call rules', icon: CalendarClock, perm: 'settings.manage' },
 ];
 
@@ -125,6 +127,7 @@ export function AdminView({ tab = 'users', onBack, onChangeTab }) {
         {active?.id === 'notifications' && <NotificationsTab />}
         {active?.id === 'storage' && <StorageTab />}
         {active?.id === 'commission' && <StaffCommissionTab />}
+        {active?.id === 'holiday' && <HolidayTab />}
         {active?.id === 'intro-calls' && <IntroCallRulesTab />}
       </div>
     </div>
