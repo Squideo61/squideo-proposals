@@ -1007,7 +1007,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               <span style={isMobile
                 ? { display: 'block', marginBottom: 12, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', fontSize: 13, fontWeight: 700, padding: '8px 12px', borderRadius: 8, textShadow: '0 1px 2px rgba(0,0,0,0.35)', letterSpacing: 0.3, textAlign: 'center' }
                 : { position: 'absolute', top: -16, right: 16, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', fontSize: 14, fontWeight: 700, padding: '6px 14px', borderRadius: 999, boxShadow: '0 2px 8px rgba(146, 64, 14, 0.35), inset 0 1px 0 rgba(255,255,255,0.3)', textShadow: '0 1px 2px rgba(0,0,0,0.35)', letterSpacing: 0.3 }}>
-                Opt in today and save {formatGBP(partnerDiscount)} on this project
+                Secure more content today and save up to {formatPct(partnerMaxDiscount)}%
               </span>
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
