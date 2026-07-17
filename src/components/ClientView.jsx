@@ -1042,7 +1042,16 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               const tile = { background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 4 };
               const tileHead = { fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#92400E', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 };
               const bigNum = { fontSize: 26, fontWeight: 800, color: '#0F2A3D', lineHeight: 1.1 };
-              const goldPill = { display: 'inline-flex', alignItems: 'center', lineHeight: 1, fontSize: 12, fontWeight: 700, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', padding: '5px 10px', borderRadius: 999, textShadow: '0 1px 1px rgba(0,0,0,0.25)' };
+              const goldGrad = 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)';
+              const greenGrad = 'linear-gradient(135deg, #22C55E 0%, #16A34A 45%, #15803D 100%)';
+              const saveGreen = '#15803D';
+              const goldPill = { display: 'inline-flex', alignItems: 'center', lineHeight: 1, fontSize: 12, fontWeight: 700, background: goldGrad, color: 'white', padding: '5px 10px', borderRadius: 999, textShadow: '0 1px 1px rgba(0,0,0,0.25)' };
+              const savePill = { ...goldPill, background: greenGrad, boxShadow: '0 1px 4px rgba(21,128,61,0.35)' };
+              // Rounded numbered badge with a soft gradient + inner highlight —
+              // reads clearly as a step marker where the bare ①/② glyphs didn't.
+              const numBadge = (n, grad) => (
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 999, background: grad, color: 'white', fontSize: 12, fontWeight: 800, lineHeight: 1, boxShadow: '0 1px 3px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.35)', flexShrink: 0 }}>{n}</span>
+              );
               const subLine = { fontSize: 13, color: '#78350F', lineHeight: 1.5 };
               const stepBtn = (disabled) => ({ width: isMobile ? 44 : 32, height: isMobile ? 44 : 32, borderRadius: 6, border: '1px solid #FDE68A', background: '#FFFAEB', cursor: disabled ? 'default' : 'pointer', fontWeight: 700, fontSize: 18, lineHeight: 1 });
               return (
@@ -1060,7 +1069,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
 
                   {/* One control drives both wins */}
                   <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 12 }}>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{isOneoff ? 'How much credit?' : 'How much monthly credit?'}</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{isOneoff ? 'How much extra credit?' : 'How much monthly credit?'}</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <button onClick={() => !signed && setPartnerCredits(c => Math.max(1, c - 1))} disabled={!!signed || partnerCredits <= 1} style={stepBtn(!!signed || partnerCredits <= 1)}>−</button>
                       <span style={{ fontWeight: 800, fontSize: 20, minWidth: 32, textAlign: 'center' }}>{partnerCredits}</span>
@@ -1072,23 +1081,23 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                   {/* The two wins, side by side, both updating live with the stepper */}
                   <div style={{ display: isMobile ? 'block' : 'grid', gridTemplateColumns: showProjectWin ? '1fr 1fr' : '1fr', gap: 12, alignItems: 'stretch' }}>
                     {showProjectWin && (
-                      <div style={{ ...tile, marginBottom: isMobile ? 12 : 0 }}>
-                        <div style={tileHead}><span style={{ fontSize: 13 }}>①</span> Total you save today</div>
+                      <div style={{ ...tile, background: '#F6FEF9', border: '1px solid #A7F3D0', marginBottom: isMobile ? 12 : 0 }}>
+                        <div style={{ ...tileHead, color: saveGreen }}>{numBadge(1, greenGrad)} Total you save today</div>
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                          <span style={bigNum}>−{formatGBP(combinedSaving)}</span>
-                          <span style={goldPill}>{pct}% off</span>
+                          <span style={{ ...bigNum, color: saveGreen }}>−{formatGBP(combinedSaving)}</span>
+                          <span style={savePill}>{pct}% off</span>
                         </div>
                         <div style={subLine}>{formatGBP(partnerDiscount)} off this project{bankedSaving > 0 && <> + {formatGBP(bankedSaving)} off {partnerCredits} banked {partnerCredits === 1 ? 'min' : 'mins'}</>}</div>
                         <div style={{ ...subLine, fontSize: 12, color: BRAND.muted }}>Applied the moment you add credit.</div>
                       </div>
                     )}
                     <div style={tile}>
-                      <div style={tileHead}><span style={{ fontSize: 13 }}>{showProjectWin ? '②' : '①'}</span> Your cost per minute</div>
+                      <div style={tileHead}>{numBadge(showProjectWin ? 2 : 1, goldGrad)} Your cost per minute</div>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
                         <span style={bigNum}>{formatGBP(partnerRatePerMin)}<span style={{ fontSize: 15, fontWeight: 600, color: '#6B7785' }}>/min</span></span>
                         {effectiveDiscount > 0 && <span style={goldPill}>−{pct}%</span>}
                       </div>
-                      {savingPerMin > 0 && <div style={subLine}>vs {formatGBP(standardRatePerMin)}/min standard · <strong>save {formatGBP(savingPerMin)}/min</strong></div>}
+                      {savingPerMin > 0 && <div style={subLine}>vs {formatGBP(standardRatePerMin)}/min standard · <strong style={{ color: saveGreen }}>save {formatGBP(savingPerMin)}/min</strong></div>}
                       <div style={{ ...subLine, fontSize: 12, color: BRAND.muted }}>{isOneoff ? '2 years to use it · on any future video.' : 'Locked in for as long as you stay subscribed.'}</div>
                     </div>
                   </div>
