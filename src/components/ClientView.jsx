@@ -1098,7 +1098,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                         {effectiveDiscount > 0 && <span style={goldPill}>−{pct}%</span>}
                       </div>
                       {savingPerMin > 0 && <div style={subLine}>vs {formatGBP(standardRatePerMin)}/min standard · <strong style={{ color: saveGreen }}>save {formatGBP(savingPerMin)}/min</strong></div>}
-                      <div style={{ ...subLine, fontSize: 12, color: BRAND.muted }}>{isOneoff ? '2 years to use it · on any future video.' : 'Locked in for as long as you stay subscribed.'}</div>
+                      <div style={{ ...subLine, fontSize: 12, color: BRAND.muted }}>{isOneoff ? '2 years to use it · on any future video content.' : 'Locked in for as long as you stay subscribed.'}</div>
                     </div>
                   </div>
 
