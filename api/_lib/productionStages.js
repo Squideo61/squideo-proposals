@@ -11,6 +11,8 @@ export const PRODUCTION_PHASES = [
     stages: [
       { id: 'new_project',       label: 'New Project' },
       { id: 'script',            label: 'Script' },
+      { id: 'script_amends',     label: 'Script amends' },
+      { id: 'text_direction_pending', label: 'Text direction pending' },
       { id: 'scripts_completed', label: 'Scripts Completed' },
       { id: 'storyboard',        label: 'Storyboard' },
       { id: 'amends_1',          label: 'Amends 1' },

@@ -174,6 +174,7 @@ export function ScheduleModal({ deal, dealId, video, videoId, company, primaryCo
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
           {[
+            { kind: 'script', label: 'Script' },
             { kind: 'storyboard', label: 'Storyboard / Visuals' },
             { kind: 'revisions', label: 'Revisions (Amends)' },
             { kind: 'production', label: 'Production' },

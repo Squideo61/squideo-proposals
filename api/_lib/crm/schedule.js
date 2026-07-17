@@ -1009,20 +1009,29 @@ async function buildAmends(scopeEmails, manage) {
       (SELECT COALESCE(ARRAY_AGG(va.user_email), '{}') FROM video_assignees va WHERE va.video_id = pv.id) AS video_producers,
       (SELECT COALESCE(ARRAY_AGG(da.user_email), '{}') FROM deal_assignees da WHERE da.deal_id = d.id) AS deal_producers
     FROM project_videos pv JOIN deals d ON d.id = pv.deal_id
-    WHERE pv.production_stage IN ('amends_1','amends_2')
+    WHERE pv.production_stage IN ('amends_1','amends_2','script_amends')
     ORDER BY pv.production_stage_changed_at DESC NULLS LAST`;
   const out = [];
   for (const r of rows) {
     const sp = (r.production_schedule && r.production_schedule.producers) || {};
-    const revisionsProducer = sp.revisions ? String(sp.revisions).toLowerCase() : null;
-    const stageProducer = r.production_stage === 'amends_1'
-      ? (sp.storyboard ? String(sp.storyboard).toLowerCase() : null)
-      : (sp.production ? String(sp.production).toLowerCase() : null);
+    const lc = (e) => e ? String(e).toLowerCase() : null;
+    // Whoever leads the work for this amends stage:
+    //   script_amends → the card's scriptwriter (producers.script)
+    //   amends_1      → the storyboard producer
+    //   amends_2      → the production producer
+    // then the general revisions producer, then the video/deal assignee chain.
+    const isScript = r.production_stage === 'script_amends';
+    const stageProducer = isScript ? lc(sp.script)
+      : r.production_stage === 'amends_1' ? lc(sp.storyboard)
+      : lc(sp.production);
     const producers = [...new Set([
-      revisionsProducer, stageProducer,
-      ...(r.video_producers || []).map(e => String(e).toLowerCase()),
-      r.legacy_producer ? String(r.legacy_producer).toLowerCase() : null,
-      ...(r.deal_producers || []).map(e => String(e).toLowerCase()),
+      stageProducer,
+      // Script amends belong to the scriptwriter — don't fall through to the
+      // (video) revisions producer, only to the project's own assignees.
+      ...(isScript ? [] : [lc(sp.revisions)]),
+      ...(r.video_producers || []).map(lc),
+      lc(r.legacy_producer),
+      ...(r.deal_producers || []).map(lc),
     ].filter(Boolean))];
     const owner = producers[0] || null;
     if (!manage) {
@@ -1034,7 +1043,7 @@ async function buildAmends(scopeEmails, manage) {
       dealId: r.deal_id,
       projectTitle: r.project_title,
       videoTitle: r.title,
-      kind: r.production_stage === 'amends_1' ? 'storyboard' : 'video',
+      kind: isScript ? 'script' : r.production_stage === 'amends_1' ? 'storyboard' : 'video',
       stage: r.production_stage,
       userEmail: owner,
       producerEmails: producers,
