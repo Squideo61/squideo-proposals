@@ -136,6 +136,7 @@ export function PipelineView({ onBack, onOpenDeal }) {
                 deals={grouped[s.id] || []}
                 onDrop={(deal) => handleDrop(deal, s.id)}
                 onOpenDeal={onOpenDeal}
+                taskAssignee={ownerFilter}
               />
             </React.Fragment>
           );
@@ -232,7 +233,7 @@ function OwnerOption({ label, selected, onClick }) {
   );
 }
 
-function StageRow({ stage, deals, onDrop, onOpenDeal }) {
+function StageRow({ stage, deals, onDrop, onOpenDeal, taskAssignee }) {
   const [hover, setHover] = useState(false);
   const [collapsed, setCollapsed] = useState(stage.defaultCollapsed ?? false);
   // Column total mirrors the cards: prefer the proposal-derived (signed/proposed)
@@ -295,7 +296,7 @@ function StageRow({ stage, deals, onDrop, onOpenDeal }) {
           </div>
         ) : (
           <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
-            {deals.map(d => <DealRow key={d.id} deal={d} onOpen={() => onOpenDeal(d.id)} />)}
+            {deals.map(d => <DealRow key={d.id} deal={d} onOpen={() => onOpenDeal(d.id)} taskAssignee={taskAssignee} />)}
           </div>
         )
       )}
@@ -491,7 +492,7 @@ function EmailMetaPill({ lastEmailAt, opens, lastOpenedAt }) {
   );
 }
 
-function DealRow({ deal, onOpen }) {
+function DealRow({ deal, onOpen, taskAssignee }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const owner = deal.ownerEmail ? state.users[deal.ownerEmail] : null;
@@ -504,13 +505,24 @@ function DealRow({ deal, onOpen }) {
   // Next task derived live from the loaded task list (which holds every open
   // task across deals), so a just-created follow-up shows immediately without a
   // deals reload. Falls back to the backend snapshot if tasks aren't loaded.
+  //
+  // Scoped to the pipeline's owner view: "My deals" shows only tasks assigned to
+  // me, "<Name>'s deals" only theirs, "All team members" shows anyone's. Under
+  // an assignee filter we never fall back to the backend snapshot (deal.nextTask
+  // is unfiltered, so it could surface someone else's task).
   const nextTask = useMemo(() => {
-    const open = (state.tasks || []).filter(t => t.dealId === deal.id && !t.doneAt);
-    if (!open.length) return deal.nextTask || null;
+    let open = (state.tasks || []).filter(t => t.dealId === deal.id && !t.doneAt);
+    if (taskAssignee) {
+      const who = taskAssignee.toLowerCase();
+      open = open.filter(t => (t.assigneeEmails || []).some(e => (e || '').toLowerCase() === who));
+      if (!open.length) return null;
+    } else if (!open.length) {
+      return deal.nextTask || null;
+    }
     const dueMs = (t) => (t.dueAt ? new Date(t.dueAt).getTime() : Infinity);
     const best = open.reduce((b, t) => (b && dueMs(b) <= dueMs(t) ? b : t), null);
-    return best ? { title: best.title, dueAt: best.dueAt || null } : (deal.nextTask || null);
-  }, [state.tasks, deal.id, deal.nextTask]);
+    return best ? { title: best.title, dueAt: best.dueAt || null } : (taskAssignee ? null : (deal.nextTask || null));
+  }, [state.tasks, deal.id, deal.nextTask, taskAssignee]);
 
   const t = deal.tracking || {};
   const proposalSent = (deal.proposalCount || 0) > 0;
