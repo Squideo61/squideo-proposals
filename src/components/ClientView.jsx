@@ -1032,6 +1032,8 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               // rebuild leads with that sentence and shows the two wins as parallel
               // live tiles.
               const savingPerMin = standardRatePerMin - partnerRatePerMin;
+              const bankedSaving = Math.max(0, savingPerMin) * partnerCredits; // saved across all banked minutes
+              const combinedSaving = partnerDiscount + bankedSaving;           // project discount + banked-minute saving
               const pct = formatPct(effectiveDiscount);
               const maxPct = formatPct(partnerMaxDiscount);
               const nextPct = formatPct(Math.min(partnerMaxDiscount, effectiveDiscount + partnerExtraPerCredit));
@@ -1048,10 +1050,10 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                   {/* The one sentence that sells it: pay now, win twice, both grow */}
                   {effectiveDiscount > 0 && (
                     <div style={{ ...subLine, fontSize: 14, marginBottom: 14 }}>
-                      <strong style={{ color: '#92400E' }}>{isOneoff ? 'Buy credit now and save twice.' : 'Subscribe now and save twice.'}</strong>{' '}
+                      <strong style={{ color: '#92400E' }}>{isOneoff ? 'Secure additional content now and save twice,' : 'Subscribe now and save twice,'}</strong>{' '}
                       {showProjectWin
-                        ? <>You take <strong>{formatGBP(partnerDiscount)} ({pct}%)</strong> off <em>this</em> project <strong>and</strong> lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at the same discounted rate for future videos.</>
-                        : <>You lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at a discounted rate for future videos.</>}
+                        ? <>we&apos;ll discount <strong>{formatGBP(partnerDiscount)} ({pct}%)</strong> off <em>this</em> project <strong>and</strong> lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at the same discounted rate for future videos.</>
+                        : <>we&apos;ll lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at a discounted rate for future videos.</>}
                       {partnerExtraPerCredit > 0 && !atMax && <> Add more and {showProjectWin ? 'both discounts grow' : 'your discount grows'}, up to <strong>{maxPct}% off</strong>.</>}
                     </div>
                   )}
@@ -1071,23 +1073,23 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                   <div style={{ display: isMobile ? 'block' : 'grid', gridTemplateColumns: showProjectWin ? '1fr 1fr' : '1fr', gap: 12, alignItems: 'stretch' }}>
                     {showProjectWin && (
                       <div style={{ ...tile, marginBottom: isMobile ? 12 : 0 }}>
-                        <div style={tileHead}><span style={{ fontSize: 13 }}>①</span> This project</div>
+                        <div style={tileHead}><span style={{ fontSize: 13 }}>①</span> Total you save today</div>
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                          <span style={bigNum}>−{formatGBP(partnerDiscount)}</span>
+                          <span style={bigNum}>−{formatGBP(combinedSaving)}</span>
                           <span style={goldPill}>{pct}% off</span>
                         </div>
-                        <div style={subLine}>{formatGBP(subtotal)} → <strong>{formatGBP(discountedSubtotal)}</strong>{showVat ? ' + VAT' : ''}</div>
+                        <div style={subLine}>{formatGBP(partnerDiscount)} off this project{bankedSaving > 0 && <> + {formatGBP(bankedSaving)} off {partnerCredits} banked {partnerCredits === 1 ? 'min' : 'mins'}</>}</div>
                         <div style={{ ...subLine, fontSize: 12, color: BRAND.muted }}>Applied the moment you add credit.</div>
                       </div>
                     )}
                     <div style={tile}>
-                      <div style={tileHead}><span style={{ fontSize: 13 }}>{showProjectWin ? '②' : '①'}</span> {isOneoff ? 'Credit you bank' : 'Your monthly credit'}</div>
+                      <div style={tileHead}><span style={{ fontSize: 13 }}>{showProjectWin ? '②' : '①'}</span> Your cost per minute</div>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
                         <span style={bigNum}>{formatGBP(partnerRatePerMin)}<span style={{ fontSize: 15, fontWeight: 600, color: '#6B7785' }}>/min</span></span>
                         {effectiveDiscount > 0 && <span style={goldPill}>−{pct}%</span>}
                       </div>
                       {savingPerMin > 0 && <div style={subLine}>vs {formatGBP(standardRatePerMin)}/min standard · <strong>save {formatGBP(savingPerMin)}/min</strong></div>}
-                      <div style={{ ...subLine, fontSize: 12, color: BRAND.muted }}>{isOneoff ? 'Never expires · use it on any future video.' : 'Locked in for as long as you stay subscribed.'}</div>
+                      <div style={{ ...subLine, fontSize: 12, color: BRAND.muted }}>{isOneoff ? '2 years to use it · on any future video.' : 'Locked in for as long as you stay subscribed.'}</div>
                     </div>
                   </div>
 
@@ -1108,7 +1110,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                   </div>
                   <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5, padding: '6px 2px 0' }}>
                     {isOneoff
-                      ? <>💳 <strong>Paid once when you sign</strong> (or via your Purchase Order). Credit never expires — draw it down on future videos whenever you&apos;re ready.</>
+                      ? <>💳 <strong>Paid once when you sign</strong> (or via your Purchase Order). You have 2 years to use your credit — draw it down on future videos whenever you&apos;re ready.</>
                       : <>💳 <strong>First month charged when you sign.</strong> Renews monthly - cancel any time, even mid-project.</>}
                   </div>
 
