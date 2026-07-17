@@ -36,6 +36,77 @@ function ensureTaskFolderColumn() {
   return folderColumnEnsured;
 }
 
+// Self-heal for the recurring-task columns. A recurring task carries its own
+// recurrence config; completing it (mode 'after_done') or its due date passing
+// (mode 'fixed') spawns the next occurrence. `recur_spawned` guards each
+// occurrence to exactly one successor. Module-cached like the ensures above.
+let recurrenceColumnsEnsured = null;
+function ensureRecurrenceColumns() {
+  if (recurrenceColumnsEnsured) return recurrenceColumnsEnsured;
+  recurrenceColumnsEnsured = (async () => {
+    await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recur_freq TEXT`;
+    await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recur_mode TEXT`;
+    await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recur_until DATE`;
+    await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recur_spawned BOOLEAN NOT NULL DEFAULT false`;
+  })().catch((err) => { recurrenceColumnsEnsured = null; throw err; });
+  return recurrenceColumnsEnsured;
+}
+
+export const RECUR_FREQS = new Set(['daily', 'weekly', 'monthly']);
+export const RECUR_MODES = new Set(['after_done', 'fixed']);
+
+function addInterval(date, freq) {
+  const d = new Date(date);
+  if (freq === 'daily') d.setDate(d.getDate() + 1);
+  else if (freq === 'weekly') d.setDate(d.getDate() + 7);
+  else if (freq === 'monthly') d.setMonth(d.getMonth() + 1);
+  return d;
+}
+
+// Next due for a successor: one interval past the previous due, rolled forward
+// so it never lands already-overdue (matters when a task is completed/swept
+// well after its due date).
+function nextDueAfter(prevDueIso, freq) {
+  if (!prevDueIso || !RECUR_FREQS.has(freq)) return null;
+  let d = addInterval(new Date(prevDueIso), freq);
+  const now = Date.now();
+  let guard = 0;
+  while (d.getTime() <= now && guard < 3650) { d = addInterval(d, freq); guard++; }
+  return d.toISOString();
+}
+
+// Create the next occurrence of a recurring task, copying its content,
+// assignees and recurrence config forward with an advanced due date. Returns
+// the new task id, or null if the series has ended (past `recur_until`) or the
+// task isn't a valid recurring one. Caller is responsible for marking the
+// source row `recur_spawned = true`.
+export async function spawnRecurringSuccessor(task) {
+  await ensureRecurrenceColumns();
+  if (!task || !RECUR_FREQS.has(task.recur_freq) || !task.due_at) return null;
+  const nextDue = nextDueAfter(task.due_at, task.recur_freq);
+  if (!nextDue) return null;
+  if (task.recur_until) {
+    const until = new Date(task.recur_until);
+    until.setHours(23, 59, 59, 999);
+    if (new Date(nextDue).getTime() > until.getTime()) return null; // series ended
+  }
+  let assignees = Array.isArray(task.assignee_emails) ? task.assignee_emails.filter(Boolean) : [];
+  if (!assignees.length) {
+    const rows = await sql`SELECT user_email FROM task_assignees WHERE task_id = ${task.id}`;
+    assignees = rows.map(r => r.user_email).filter(Boolean);
+  }
+  if (!assignees.length && task.assignee_email) assignees = [task.assignee_email];
+  const newId = makeId('task');
+  await sql`
+    INSERT INTO tasks (id, deal_id, contact_id, folder_id, title, notes, due_at, assignee_email, created_by, recur_freq, recur_mode, recur_until)
+    VALUES (${newId}, ${task.deal_id || null}, ${task.contact_id || null}, ${task.folder_id || null},
+            ${task.title}, ${task.notes || null}, ${nextDue}, ${assignees[0] || null}, ${task.created_by || null},
+            ${task.recur_freq}, ${task.recur_mode || 'after_done'}, ${task.recur_until || null})
+  `;
+  await setTaskAssignees(newId, assignees);
+  return newId;
+}
+
 // Reconcile a deal's production schedule into milestone-flagged tasks.
 // Idempotent: upsert by schedule_key, delete rows whose schedule field was
 // removed/disabled, so re-running never duplicates and clearing dates removes
@@ -251,6 +322,7 @@ export async function tasksRoute(req, res, id, action, user) {
   // Every path below either reads or writes tasks.folder_id, so make sure the
   // column exists (idempotent, module-cached — negligible after the first call).
   await ensureTaskFolderColumn();
+  await ensureRecurrenceColumns();
   // "Move to milestones" — reconcile a deal's production schedule into
   // milestone-flagged tasks. Idempotent: upsert by schedule_key, delete rows
   // whose schedule field was removed/disabled, so re-clicking never duplicates.
@@ -367,8 +439,13 @@ export async function tasksRoute(req, res, id, action, user) {
           return res.status(403).json({ error: 'No access to that folder' });
         }
       }
+      // Recurrence needs a due date to anchor the cadence — ignore it otherwise.
+      const dueIso = body.dueAt ? new Date(body.dueAt).toISOString() : null;
+      const recurFreq = (dueIso && RECUR_FREQS.has(body.recurFreq)) ? body.recurFreq : null;
+      const recurMode = recurFreq ? (RECUR_MODES.has(body.recurMode) ? body.recurMode : 'after_done') : null;
+      const recurUntil = recurFreq ? (trimOrNull(body.recurUntil) || null) : null;
       await sql`
-        INSERT INTO tasks (id, deal_id, contact_id, folder_id, title, notes, due_at, assignee_email, created_by)
+        INSERT INTO tasks (id, deal_id, contact_id, folder_id, title, notes, due_at, assignee_email, created_by, recur_freq, recur_mode, recur_until)
         VALUES (
           ${newId},
           ${trimOrNull(body.dealId) || null},
@@ -376,9 +453,12 @@ export async function tasksRoute(req, res, id, action, user) {
           ${folderId},
           ${title},
           ${trimOrNull(body.notes)},
-          ${body.dueAt ? new Date(body.dueAt).toISOString() : null},
+          ${dueIso},
           ${legacyAssignee},
-          ${user.email || null}
+          ${user.email || null},
+          ${recurFreq},
+          ${recurMode},
+          ${recurUntil}
         )
       `;
       await setTaskAssignees(newId, assignees);
@@ -415,6 +495,21 @@ export async function tasksRoute(req, res, id, action, user) {
         VALUES (${deal_id}, ${eventType}, ${JSON.stringify({ taskId: id, title })}, ${user.email || null})
       `;
       await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${deal_id}`;
+    }
+    // 'after_done' recurrence: on completion, spawn the next occurrence (once).
+    // 'fixed' recurrence is driven by the cron when the due date passes instead.
+    if (done_at) {
+      const [full] = await sql`
+        SELECT t.*,
+          (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')
+           FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
+        FROM tasks t WHERE t.id = ${id}
+      `;
+      if (full && RECUR_FREQS.has(full.recur_freq) && full.recur_mode === 'after_done' && !full.recur_spawned) {
+        const spawned = await spawnRecurringSuccessor(full);
+        await sql`UPDATE tasks SET recur_spawned = true WHERE id = ${id}`;
+        void spawned;
+      }
     }
     return res.status(200).json(await loadTask(id));
   }
@@ -454,6 +549,15 @@ export async function tasksRoute(req, res, id, action, user) {
     `;
     if (assigneeKeyPresent) {
       await setTaskAssignees(id, nextAssignees);
+    }
+    // Recurrence, when the caller sends the field. Anchored on the (new) due
+    // date; clearing the due date or the frequency turns recurrence off. Reset
+    // the spawned guard so an edited series can produce its next occurrence.
+    if ('recurFreq' in body) {
+      const rf = (next.due_at && RECUR_FREQS.has(body.recurFreq)) ? body.recurFreq : null;
+      const rm = rf ? (RECUR_MODES.has(body.recurMode) ? body.recurMode : 'after_done') : null;
+      const ru = rf ? (trimOrNull(body.recurUntil) || null) : null;
+      await sql`UPDATE tasks SET recur_freq = ${rf}, recur_mode = ${rm}, recur_until = ${ru}, recur_spawned = false WHERE id = ${id}`;
     }
     return res.status(200).json(await loadTask(id));
   }
@@ -584,5 +688,8 @@ export function serialiseTask(r) {
     createdBy: r.created_by || null,
     isMilestone: !!r.is_milestone,
     scheduleKey: r.schedule_key || null,
+    recurFreq: r.recur_freq || null,
+    recurMode: r.recur_mode || null,
+    recurUntil: r.recur_until ? String(r.recur_until).slice(0, 10) : null,
   };
 }

@@ -9,6 +9,7 @@ import { getEventAttendees } from '../googleCalendar.js';
 import { del } from '@vercel/blob';
 import { buildResumeEmail } from '../quoteResumeEmail.js';
 import { signTaskActionToken } from '../auth.js';
+import { spawnRecurringSuccessor } from './tasks.js';
 import { quarterTaxSummary } from './stats.js';
 import { cronAdSpendSync } from './googleAds.js';
 import { cronGscSync } from './googleSearch.js';
@@ -563,6 +564,41 @@ export async function cronTaskReminders(res) {
     sent++;
   }
 
+  // 'fixed'-calendar recurring tasks: spawn the next occurrence once the due
+  // date passes, regardless of whether the current one was completed (that's
+  // what distinguishes it from 'after_done', which spawns on completion). The
+  // recur_spawned guard keeps it to exactly one successor per occurrence; the
+  // successor carries its own future due and spawns its own in turn.
+  let recurred = 0;
+  try {
+    await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recur_freq TEXT`;
+    await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recur_mode TEXT`;
+    await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recur_until DATE`;
+    await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recur_spawned BOOLEAN NOT NULL DEFAULT false`;
+    const recurDue = await sql`
+      SELECT t.*,
+             (SELECT COALESCE(ARRAY_AGG(ta.user_email ORDER BY ta.assigned_at), '{}')
+              FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_emails
+      FROM tasks t
+      WHERE t.recur_freq IS NOT NULL
+        AND t.recur_mode = 'fixed'
+        AND t.recur_spawned = false
+        AND t.due_at IS NOT NULL
+        AND t.due_at <= NOW()
+      ORDER BY t.due_at ASC
+      LIMIT 200
+    `;
+    for (const t of recurDue) {
+      const newId = await spawnRecurringSuccessor(t);
+      // Mark spawned even when the series has ended (newId null) so we don't
+      // reconsider this row every run.
+      await sql`UPDATE tasks SET recur_spawned = true WHERE id = ${t.id}`;
+      if (newId) recurred++;
+    }
+  } catch (err) {
+    console.error('[cron task-reminders] fixed recurrence failed', { err: err.message });
+  }
+
   // Milestone "heads-up" pre-reminder. Schedule-derived milestone tasks get an
   // extra nudge ~1 working day before they're due (in addition to the at-due
   // reminder above), so producers see the deadline coming. pre_reminded_at gates
@@ -613,7 +649,7 @@ export async function cronTaskReminders(res) {
     console.error('[cron task-reminders] milestone pre-reminder failed', { err: err.message });
   }
 
-  return res.status(200).json({ ok: true, found: due.length, sent, preSent });
+  return res.status(200).json({ ok: true, found: due.length, sent, preSent, recurred });
 }
 
 // Morning digest — runs once a day (vercel.json) as the heads-up counterpart to

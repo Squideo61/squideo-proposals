@@ -40,6 +40,11 @@ export function TaskFormModal({ task, defaults, onClose, onSaved, onSubmitValues
   const [dealId, setDealId] = useState(task?.dealId || defaults?.dealId || '');
   // Folder-scoped tasks (Email Folders) carry a folderId instead of a deal.
   const folderId = task?.folderId || defaults?.folderId || null;
+  // Recurrence: '' = doesn't repeat. Mode 'after_done' spawns the next one when
+  // this is completed; 'fixed' spawns on schedule regardless. Needs a due date.
+  const [recurFreq, setRecurFreq] = useState(task?.recurFreq || '');
+  const [recurMode, setRecurMode] = useState(task?.recurMode || 'after_done');
+  const [recurUntil, setRecurUntil] = useState(task?.recurUntil || '');
   const [submitting, setSubmitting] = useState(false);
 
   // Always include the signed-in user in the pickable list, so a new task that
@@ -73,6 +78,9 @@ export function TaskFormModal({ task, defaults, onClose, onSaved, onSubmitValues
       assigneeEmails,
       dealId: dealId || null,
       folderId: folderId || null,
+      recurFreq: (recurFreq && dueAt) ? recurFreq : null,
+      recurMode: (recurFreq && dueAt) ? recurMode : null,
+      recurUntil: (recurFreq && dueAt && recurUntil) ? recurUntil : null,
     };
     // Deferred-create mode: hand the values back and let the caller persist
     // them on its own schedule (no server write here).
@@ -105,6 +113,36 @@ export function TaskFormModal({ task, defaults, onClose, onSaved, onSubmitValues
         <Row label="Due">
           <DateTimePicker value={dueAt} onChange={setDueAt} />
         </Row>
+        <Row label="Repeat">
+          <select className="input" value={recurFreq} onChange={(e) => setRecurFreq(e.target.value)}>
+            <option value="">Doesn’t repeat</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </Row>
+        {recurFreq && (
+          <div style={{ margin: '-4px 0 2px', padding: '10px 12px', background: BRAND.paper, borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {!dueAt && (
+              <div style={{ fontSize: 12, color: '#B45309', background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 6, padding: '6px 8px' }}>
+                Set a due date above — a repeating task needs one to schedule the next occurrence.
+              </div>
+            )}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted, marginBottom: 6 }}>When should the next one appear?</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <RecurModeOption checked={recurMode === 'after_done'} onChange={() => setRecurMode('after_done')}
+                  title="After it’s done" desc="The next one is created when you complete this — only one active at a time." />
+                <RecurModeOption checked={recurMode === 'fixed'} onChange={() => setRecurMode('fixed')}
+                  title="On a fixed schedule" desc="A new one appears every period whether or not the last was completed." />
+              </div>
+            </div>
+            <label style={{ fontSize: 13, fontWeight: 500, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ color: BRAND.muted }}>Repeat until (optional)</span>
+              <input type="date" className="input" value={recurUntil} onChange={(e) => setRecurUntil(e.target.value)} />
+            </label>
+          </div>
+        )}
         <Row label="Assignees">
           <AssigneePicker
             users={allUsers}
@@ -449,6 +487,21 @@ function QuickPreset({ label, onClick }) {
         transition: 'background 100ms ease, border-color 100ms ease, color 100ms ease',
       }}
     >{label}</button>
+  );
+}
+
+// A single radio-style choice for the recurrence mode.
+function RecurModeOption({ checked, onChange, title, desc }) {
+  return (
+    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer',
+      padding: '8px 10px', borderRadius: 8, background: 'white',
+      border: '1px solid ' + (checked ? BRAND.blue : BRAND.border) }}>
+      <input type="radio" checked={checked} onChange={onChange} style={{ marginTop: 2 }} />
+      <span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{title}</span>
+        <span style={{ display: 'block', fontSize: 12, color: BRAND.muted }}>{desc}</span>
+      </span>
+    </label>
   );
 }
 
