@@ -177,7 +177,8 @@ export function Badge({ color, children }) {
     blue:   { bg: '#E3F2FD', fg: '#0D47A1' },
     orange: { bg: '#FFF3E0', fg: '#E65100' },
     grey:   { bg: '#ECEFF1', fg: '#455A64' },
-    gold:   { bg: '#FEF3C7', fg: '#92400E' }
+    gold:   { bg: '#FEF3C7', fg: '#92400E' },
+    purple: { bg: '#F3E8FF', fg: '#6D28D9' }
   };
   const c = colors[color] || colors.green;
   return (

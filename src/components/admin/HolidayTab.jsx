@@ -45,6 +45,21 @@ export function HolidayTab() {
   const save = (fields) =>
     actions.updateAllowance(editing.userEmail, fields).then(() => setEditing(null));
 
+  // Leave bookings for the person being edited, scoped to their current leave
+  // year (the window that feeds "Taken") so a manager can spot and delete stray
+  // or test entries — e.g. the bogus approved requests that pushed someone
+  // negative. `renewal` is the next renewal date; the window is the year before.
+  const leaveForEditing = useMemo(() => {
+    if (!editing) return [];
+    const next = editing.renewal || null;
+    let start = null;
+    if (next) { const d = new Date(next); d.setFullYear(d.getFullYear() - 1); start = d.toISOString().slice(0, 10); }
+    return (sched.leave || [])
+      .filter(l => l.userEmail === editing.userEmail && l.status !== 'denied')
+      .filter(l => !start || (l.startDate >= start && l.startDate < next))
+      .sort((a, b) => b.startDate.localeCompare(a.startDate));
+  }, [editing, sched.leave]);
+
   return (
     <div style={{ maxWidth: 900 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -97,7 +112,15 @@ export function HolidayTab() {
         </>
       )}
 
-      {editing && <AllowanceModal row={editing} onClose={() => setEditing(null)} onSave={save} />}
+      {editing && (
+        <AllowanceModal
+          row={editing}
+          onClose={() => setEditing(null)}
+          onSave={save}
+          leaveEntries={editing.trackAllowance ? leaveForEditing : null}
+          onDeleteLeave={(id) => actions.cancelLeave(id)}
+        />
+      )}
     </div>
   );
 }

@@ -28,6 +28,15 @@ function leaveDaysLabel(l) {
   return l.halfDay ? `½ day · ${HALF_SHORT[l.halfPeriod] || 'AM'}` : `${l.days}d`;
 }
 
+// Whole days a card has sat in its current stage, from `since`
+// (production_stage_changed_at). Used for the "days in amends" counter.
+function daysInStage(since) {
+  if (!since) return null;
+  const t = new Date(since).getTime();
+  if (Number.isNaN(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+
 function initials(name, email) {
   const src = (name || email || '?').trim();
   const parts = src.split(/\s+/).filter(Boolean);
@@ -699,6 +708,7 @@ function AmendsPanel({ sched, onOpenVideo, showProducer, selected }) {
       )}
       {amends.map(a => {
         const producer = showProducer ? lookup(a.userEmail) : null;
+        const days = daysInStage(a.since);
         return (
           <div key={a.videoId} onClick={() => onOpenVideo && onOpenVideo(a.videoId)}
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '9px 0', borderBottom: '1px solid ' + BRAND.paper, cursor: onOpenVideo ? 'pointer' : 'default' }}>
@@ -710,7 +720,19 @@ function AmendsPanel({ sched, onOpenVideo, showProducer, selected }) {
                 <strong>{a.projectTitle}</strong> — {a.videoTitle}
               </span>
             </div>
-            <Badge color={a.kind === 'storyboard' ? 'orange' : 'blue'}>{a.kind === 'storyboard' ? 'Storyboard revisions' : 'Revisions'}</Badge>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              {days != null && (
+                <span title={`In amends for ${days} day${days === 1 ? '' : 's'}`}
+                  style={{ fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap',
+                    background: days >= 7 ? '#FEE2E2' : days >= 3 ? '#FEF3C7' : BRAND.paper,
+                    color: days >= 7 ? '#DC2626' : days >= 3 ? '#B45309' : BRAND.muted }}>
+                  {days}d
+                </span>
+              )}
+              <Badge color={a.kind === 'storyboard' ? 'orange' : a.kind === 'script' ? 'purple' : 'blue'}>
+                {a.kind === 'storyboard' ? 'Storyboard revisions' : a.kind === 'script' ? 'Script amends' : 'Revisions'}
+              </Badge>
+            </div>
           </div>
         );
       })}
@@ -1048,7 +1070,7 @@ function NewBlockModal({ producers, onClose, onSubmit }) {
   );
 }
 
-export function AllowanceModal({ row, onClose, onSave }) {
+export function AllowanceModal({ row, onClose, onSave, leaveEntries, onDeleteLeave }) {
   const [allowance, setAllowance] = useState(row.annualAllowance ?? 20);
   const [compulsory, setCompulsory] = useState(row.compulsoryDays ?? 6);
   const [used, setUsed] = useState(row.takenAdjustment ?? 0);
@@ -1056,11 +1078,20 @@ export function AllowanceModal({ row, onClose, onSave }) {
   const [onRoster, setOnRoster] = useState(row.onRoster !== false);
   const [track, setTrack] = useState(row.trackAllowance !== false);
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(null);
   const save = () => {
     setBusy(true);
     onSave({ annualAllowance: Number(allowance), compulsoryDays: Number(compulsory), takenAdjustment: Number(used) || 0, anniversary: anniversary || null, active: onRoster, trackAllowance: track })
       .catch(() => setBusy(false));
   };
+  const removeLeave = (id) => {
+    setDeleting(id);
+    Promise.resolve(onDeleteLeave?.(id)).catch(() => {}).finally(() => setDeleting(null));
+  };
+  // Approved annual leave is what feeds the "Taken" figure; surface every
+  // booking (incl. past + pending) so a manager can delete stray/test entries
+  // that are inflating someone's total — the fix for figures like Hannah's -16.
+  const leave = leaveEntries || null;
   return (
     <Modal onClose={onClose} dismissible={false} maxWidth={420}>
       <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>{row.name}</h3>
@@ -1079,6 +1110,37 @@ export function AllowanceModal({ row, onClose, onSave }) {
         <div style={{ fontSize: 12, color: BRAND.muted, margin: '-6px 0 12px' }}>Opening balance for leave taken before it was tracked here. Leave booked in the app is added on top.</div>
         <Field label="Renewal date (renews yearly on this day)"><input type="date" className="input" value={anniversary} onChange={e => setAnniversary(e.target.value)} style={selStyle} /></Field>
       </div>
+      {leave && (
+        <div style={{ marginTop: 6, paddingTop: 14, borderTop: '1px solid ' + BRAND.paper }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+            Booked leave this year {leave.length > 0 && <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· {leave.length}</span>}
+          </div>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 10 }}>
+            Only <strong>approved annual</strong> leave counts towards “Taken”. Delete any stray or test bookings here to correct the figure.
+          </div>
+          {leave.length === 0 ? (
+            <div style={{ fontSize: 13, color: BRAND.muted }}>No leave booked in this leave year.</div>
+          ) : (
+            <div style={{ maxHeight: 220, overflowY: 'auto', margin: '0 -4px' }}>
+              {leave.map(l => (
+                <div key={l.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '7px 4px', borderBottom: '1px solid ' + BRAND.paper }}>
+                  <div style={{ fontSize: 13, minWidth: 0 }}>
+                    {l.halfDay ? l.startDate : `${l.startDate} → ${l.endDate}`}
+                    <span style={{ color: BRAND.muted }}> · {leaveDaysLabel(l)}</span>
+                    {' '}<Badge color={l.status === 'approved' ? 'green' : l.status === 'denied' ? 'grey' : 'yellow'}>{l.status}</Badge>
+                    {l.kind === 'compulsory' && <span style={{ color: BRAND.muted, fontSize: 12 }}> · compulsory</span>}
+                    {l.note ? <span style={{ color: BRAND.muted, fontSize: 12 }}> · {l.note}</span> : ''}
+                  </div>
+                  <button className="btn-ghost" title="Delete this booking" disabled={deleting === l.id}
+                    onClick={() => removeLeave(l.id)} style={{ flexShrink: 0, padding: '4px 8px' }}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
         <button className="btn-ghost" onClick={onClose}>Cancel</button>
         <button className="btn" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
