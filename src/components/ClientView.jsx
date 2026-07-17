@@ -65,31 +65,6 @@ function parseDateUK(s) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-function FutureRateCell({ label, value, muted, highlight, strike }) {
-  return (
-    <div style={{
-      background: highlight ? '#FFFAEB' : '#F8FAFC',
-      border: '1px solid ' + (highlight ? '#FDE68A' : '#E5E9EE'),
-      borderRadius: 8,
-      padding: '8px 6px',
-      textAlign: 'center',
-      minWidth: 0,
-    }}>
-      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#6B7785', marginBottom: 4 }}>{label}</div>
-      <div style={{
-        fontSize: 13,
-        fontWeight: 700,
-        color: highlight ? '#92400E' : (muted ? '#6B7785' : '#0F2A3D'),
-        textDecoration: strike ? 'line-through' : 'none',
-        textDecorationColor: '#94A3B8',
-        overflowWrap: 'anywhere',
-      }}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
 // Parse the partner-programme description (a `\n`-delimited string with
 // dash-bullets) into structured JSX: paragraphs, sub-headings, and bullet lists.
 // Render-time only — the underlying string in defaults / proposal data is
@@ -280,6 +255,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   const setMeta = (eid, patch) => setExtrasMeta(prev => ({ ...prev, [eid]: { ...getMeta(eid), ...patch } }));
   const [partnerSelected, setPartnerSelected] = useState(false);
   const [partnerCredits, setPartnerCredits] = useState(1);
+  const [partnerHowOpen, setPartnerHowOpen] = useState(false);
   const [paymentOption, setPaymentOption] = useState(() => {
     const opts = data?.paymentOptions || ['5050', 'full'];
     return opts[0];
@@ -1047,84 +1023,117 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               </div>
             </div>
 
-            <div style={{ display: isMobile ? 'block' : 'grid', gridTemplateColumns: isMobile ? undefined : '1fr 1fr', gap: 16, alignItems: 'start' }}>
-              {/* LEFT — benefits */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {(() => {
-                  const standardRate = standardRatePerMin;
-                  if (standardRate <= 0 || effectiveDiscount <= 0) return null;
-                  const futureRate = partnerRatePerMin;
-                  const savingPerMin = standardRate - futureRate;
-                  const futurePct = formatPct(effectiveDiscount);
-                  const maxPct = formatPct(partnerMaxDiscount);
-                  return (
-                    <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 16px' }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#92400E', marginBottom: 4 }}>
-                        Your Partner rate per minute
+            {(() => {
+              // Two things happen the moment credit is added, and the old layout
+              // presented them as two disconnected panels: a per-minute "rate card"
+              // (the credit you bank) on the left, and a "% off this project"
+              // explainer on the right. Clients never got the one line that sells
+              // it — pay now, win twice, and both wins grow the more you add. This
+              // rebuild leads with that sentence and shows the two wins as parallel
+              // live tiles.
+              const savingPerMin = standardRatePerMin - partnerRatePerMin;
+              const pct = formatPct(effectiveDiscount);
+              const maxPct = formatPct(partnerMaxDiscount);
+              const nextPct = formatPct(Math.min(partnerMaxDiscount, effectiveDiscount + partnerExtraPerCredit));
+              const atMax = effectiveDiscount >= partnerMaxDiscount;
+              const showProjectWin = partnerDiscount > 0; // no project win when the project is already free
+              const tile = { background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 4 };
+              const tileHead = { fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#92400E', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 };
+              const bigNum = { fontSize: 26, fontWeight: 800, color: '#0F2A3D', lineHeight: 1.1 };
+              const goldPill = { display: 'inline-flex', alignItems: 'center', lineHeight: 1, fontSize: 12, fontWeight: 700, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', padding: '5px 10px', borderRadius: 999, textShadow: '0 1px 1px rgba(0,0,0,0.25)' };
+              const subLine = { fontSize: 13, color: '#78350F', lineHeight: 1.5 };
+              const stepBtn = (disabled) => ({ width: isMobile ? 44 : 32, height: isMobile ? 44 : 32, borderRadius: 6, border: '1px solid #FDE68A', background: '#FFFAEB', cursor: disabled ? 'default' : 'pointer', fontWeight: 700, fontSize: 18, lineHeight: 1 });
+              return (
+                <>
+                  {/* The one sentence that sells it: pay now, win twice, both grow */}
+                  {effectiveDiscount > 0 && (
+                    <div style={{ ...subLine, fontSize: 14, marginBottom: 14 }}>
+                      <strong style={{ color: '#92400E' }}>{isOneoff ? 'Buy credit now and save twice.' : 'Subscribe now and save twice.'}</strong>{' '}
+                      {showProjectWin
+                        ? <>You take <strong>{formatGBP(partnerDiscount)} ({pct}%)</strong> off <em>this</em> project <strong>and</strong> lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at the same discounted rate for future videos.</>
+                        : <>You lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at a discounted rate for future videos.</>}
+                      {partnerExtraPerCredit > 0 && !atMax && <> Add more and {showProjectWin ? 'both discounts grow' : 'your discount grows'}, up to <strong>{maxPct}% off</strong>.</>}
+                    </div>
+                  )}
+
+                  {/* One control drives both wins */}
+                  <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 12 }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{isOneoff ? 'How much credit?' : 'How much monthly credit?'}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <button onClick={() => !signed && setPartnerCredits(c => Math.max(1, c - 1))} disabled={!!signed || partnerCredits <= 1} style={stepBtn(!!signed || partnerCredits <= 1)}>−</button>
+                      <span style={{ fontWeight: 800, fontSize: 20, minWidth: 32, textAlign: 'center' }}>{partnerCredits}</span>
+                      <button onClick={() => !signed && setPartnerCredits(c => c + 1)} disabled={!!signed} style={stepBtn(!!signed)}>+</button>
+                      <span style={{ fontSize: 13, color: BRAND.muted }}>{partnerCredits === 1 ? 'min' : 'mins'}{isOneoff ? '' : ' / mo'}</span>
+                    </div>
+                  </div>
+
+                  {/* The two wins, side by side, both updating live with the stepper */}
+                  <div style={{ display: isMobile ? 'block' : 'grid', gridTemplateColumns: showProjectWin ? '1fr 1fr' : '1fr', gap: 12, alignItems: 'stretch' }}>
+                    {showProjectWin && (
+                      <div style={{ ...tile, marginBottom: isMobile ? 12 : 0 }}>
+                        <div style={tileHead}><span style={{ fontSize: 13 }}>①</span> This project</div>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                          <span style={bigNum}>−{formatGBP(partnerDiscount)}</span>
+                          <span style={goldPill}>{pct}% off</span>
+                        </div>
+                        <div style={subLine}>{formatGBP(subtotal)} → <strong>{formatGBP(discountedSubtotal)}</strong>{showVat ? ' + VAT' : ''}</div>
+                        <div style={{ ...subLine, fontSize: 12, color: BRAND.muted }}>Applied the moment you add credit.</div>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
-                        <span style={{ fontSize: 28, fontWeight: 800, color: '#0F2A3D', lineHeight: 1.1 }}>
-                          {formatGBP(futureRate)}<span style={{ fontSize: 16, fontWeight: 600, color: '#6B7785' }}>/min</span>
-                        </span>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', lineHeight: 1, fontSize: 12, fontWeight: 700, background: 'linear-gradient(135deg, #FFD700 0%, #C9A227 50%, #8B6914 100%)', color: 'white', padding: '5px 10px', borderRadius: 999, textShadow: '0 1px 1px rgba(0,0,0,0.25)', alignSelf: 'center' }}>
-                          −{futurePct}%
-                        </span>
+                    )}
+                    <div style={tile}>
+                      <div style={tileHead}><span style={{ fontSize: 13 }}>{showProjectWin ? '②' : '①'}</span> {isOneoff ? 'Credit you bank' : 'Your monthly credit'}</div>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                        <span style={bigNum}>{formatGBP(partnerRatePerMin)}<span style={{ fontSize: 15, fontWeight: 600, color: '#6B7785' }}>/min</span></span>
+                        {effectiveDiscount > 0 && <span style={goldPill}>−{pct}%</span>}
                       </div>
-                      <div style={{ fontSize: 13, color: '#78350F', marginBottom: 12, lineHeight: 1.5 }}>
-                        {formatGBP(savingPerMin)} less per minute than the standard rate{isOneoff ? ' - locked in on every minute you buy today.' : ' - locked in as long as you stay subscribed.'}
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6, marginBottom: 8 }}>
-                        <FutureRateCell label="Standard" value={formatGBP(standardRate) + '/min'} muted strike />
-                        <FutureRateCell label="Partner rate" value={formatGBP(futureRate) + '/min'} highlight />
-                        <FutureRateCell label="You save" value={futurePct + '% · ' + formatGBP(savingPerMin)} highlight />
-                      </div>
-                      {partnerExtraPerCredit > 0 && effectiveDiscount < partnerMaxDiscount && (
-                        <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5 }}>
-                          Add another minute to lock in up to <strong>{maxPct}% off</strong>.
+                      {savingPerMin > 0 && <div style={subLine}>vs {formatGBP(standardRatePerMin)}/min standard · <strong>save {formatGBP(savingPerMin)}/min</strong></div>}
+                      <div style={{ ...subLine, fontSize: 12, color: BRAND.muted }}>{isOneoff ? 'Never expires · use it on any future video.' : 'Locked in for as long as you stay subscribed.'}</div>
+                    </div>
+                  </div>
+
+                  {/* The lever: more credit → bigger discount on both, up to the cap */}
+                  {partnerExtraPerCredit > 0 && (
+                    <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#78350F', lineHeight: 1.5, marginTop: 12 }}>
+                      You&apos;re at <strong>{partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'} = {pct}% off</strong>.{' '}
+                      {atMax
+                        ? <>That&apos;s the maximum — <strong>{maxPct}% off</strong>.</>
+                        : <>Add one more to reach <strong>{nextPct}%</strong>{showProjectWin ? ' on both' : ''} — up to <strong>{maxPct}%</strong>.</>}
+                    </div>
+                  )}
+
+                  {/* What you pay now + terms */}
+                  <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 15, fontWeight: 700, marginTop: 12 }}>
+                    <span>{isOneoff ? 'Content credit (one-off)' : 'Monthly subscription'}</span>
+                    <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>{isOneoff ? (showVat ? '+ VAT' : '') : (showVat ? '+ VAT / month' : '/ month')}</span></span>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5, padding: '6px 2px 0' }}>
+                    {isOneoff
+                      ? <>💳 <strong>Paid once when you sign</strong> (or via your Purchase Order). Credit never expires — draw it down on future videos whenever you&apos;re ready.</>
+                      : <>💳 <strong>First month charged when you sign.</strong> Renews monthly - cancel any time, even mid-project.</>}
+                  </div>
+
+                  {/* Detail essay collapsed — decision-critical info is already above */}
+                  {data.partnerProgramme.description && (
+                    <div style={{ marginTop: 14 }}>
+                      <button
+                        type="button"
+                        onClick={() => setPartnerHowOpen(o => !o)}
+                        aria-expanded={partnerHowOpen}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 700, color: BRAND.blue }}
+                      >
+                        <span style={{ transform: partnerHowOpen ? 'rotate(90deg)' : 'none', transition: 'transform 120ms', display: 'inline-block' }}>▸</span>
+                        How it works
+                      </button>
+                      {partnerHowOpen && (
+                        <div style={{ marginTop: 10, background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 18px' }}>
+                          {renderDescriptionMarkup((data.partnerProgramme.description || '').replace(/^\s*\d+\s+minute(?:s)?\s+of\s+additional\s+content\s+credit\s+per\s+month\s*[-–—]\s*Cancel\s+any\s+time\s*\n+/i, ''))}
                         </div>
                       )}
                     </div>
-                  );
-                })()}
-              </div>
-
-              {/* RIGHT — action */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{isOneoff ? 'Content credit:' : 'Monthly content credit:'}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <button onClick={() => !signed && setPartnerCredits(c => Math.max(1, c - 1))} disabled={!!signed || partnerCredits <= 1} style={{ width: isMobile ? 44 : 30, height: isMobile ? 44 : 30, borderRadius: 6, border: '1px solid #FDE68A', background: '#FFFAEB', cursor: signed || partnerCredits <= 1 ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>−</button>
-                    <span style={{ fontWeight: 700, fontSize: 16, minWidth: 28, textAlign: 'center' }}>{partnerCredits}</span>
-                    <button onClick={() => !signed && setPartnerCredits(c => c + 1)} disabled={!!signed} style={{ width: isMobile ? 44 : 30, height: isMobile ? 44 : 30, borderRadius: 6, border: '1px solid #FDE68A', background: '#FFFAEB', cursor: signed ? 'default' : 'pointer', fontWeight: 700, fontSize: 16, lineHeight: 1 }}>+</button>
-                    <span style={{ fontSize: 13, color: BRAND.muted }}>{partnerCredits === 1 ? 'min' : 'mins'}{isOneoff ? '' : '/mo'}</span>
-                  </div>
-                </div>
-                {partnerExtraPerCredit > 0 && (
-                  <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#78350F', lineHeight: 1.5 }}>
-                    Each extra minute{isOneoff ? '' : '/month'} adds <strong>{formatPct(partnerExtraPerCredit)}% off</strong> this project, up to <strong>{formatPct(partnerMaxDiscount)}%</strong>.
-                    {' '}You&apos;re at <strong>{partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'} = {formatPct(effectiveDiscount)}% off</strong>
-                    {effectiveDiscount < partnerMaxDiscount
-                      ? <> · add another to save <strong>{formatPct(Math.min(partnerMaxDiscount, effectiveDiscount + partnerExtraPerCredit))}%</strong>.</>
-                      : <> - maximum.</>}
-                  </div>
-                )}
-                <div style={{ background: 'white', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 15, fontWeight: 700 }}>
-                  <span>{isOneoff ? 'Content credit (one-off)' : 'Monthly subscription'}</span>
-                  <span>{formatGBP(partnerSubtotal)} <span style={{ color: BRAND.muted, fontWeight: 500, fontSize: 13 }}>{isOneoff ? (showVat ? '+ VAT' : '') : (showVat ? '+ VAT / month' : '/ month')}</span></span>
-                </div>
-                <div style={{ fontSize: 12, color: '#78350F', lineHeight: 1.5, padding: '4px 2px' }}>
-                  {isOneoff
-                    ? <>💳 <strong>Paid once when you sign</strong> (or via your Purchase Order). Credit never expires — draw it down on future videos whenever you&apos;re ready.</>
-                    : <>💳 <strong>First month charged when you sign.</strong> Renews monthly - cancel any time, even mid-project.</>}
-                </div>
-              </div>
-            </div>
-
-            {data.partnerProgramme.description && (
-              <div style={{ marginTop: 14, background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 18px' }}>
-                {renderDescriptionMarkup((data.partnerProgramme.description || '').replace(/^\s*\d+\s+minute(?:s)?\s+of\s+additional\s+content\s+credit\s+per\s+month\s*[-–—]\s*Cancel\s+any\s+time\s*\n+/i, ''))}
-              </div>
-            )}
+                  )}
+                </>
+              );
+            })()}
 
             <div style={{ marginTop: 14 }}>
               <button
