@@ -166,7 +166,10 @@ function buildSectionMeta(data, isTemplate, issues, isDefault) {
       hasIssues: false,
     },
   ];
-  return list;
+  // Content Credit proposals have no Partner Programme section, so it must not
+  // appear in the mobile section nav either.
+  const creditOnly = data.partnerProgramme?.mode === 'oneoff' && !!data.partnerProgramme?.creditOnly;
+  return creditOnly ? list.filter(s => s.id !== 'partner') : list;
 }
 
 function PriceInput({ value, onChange, ...props }) {
@@ -246,6 +249,73 @@ function DiscountEditor({ basePrice, discount, onChange, isMobile }) {
           {' '}({isPct ? `${value}% off` : `${formatGBP(amount)} off`}). Optional extras stay full price; ignored if the client opts into the Partner Programme.
         </div>
       )}
+    </div>
+  );
+}
+
+// Tier-ladder editor: base % + per-extra-credit % + cap, with a worked example.
+// Shared by the Pricing section (Content Credit proposals, where the credit
+// config IS the proposal) and the Partner Programme section (standard proposals).
+function CreditTierFields({ pp, onChange }) {
+  const baseD = pp.discountRate || 0;
+  const extraD = pp.extraDiscountPerCredit || 0;
+  const maxD = pp.maxDiscount || baseD;
+  const tier = (n) => Math.min(baseD + Math.max(0, n - 1) * extraD, maxD);
+  const fmtPct = (v) => (Math.round(v * 1000) / 10).toString().replace(/\.0$/, '');
+  const samples = [1, 2, 3, 4].map(n => `${n} ${n === 1 ? 'min' : 'mins'} = ${fmtPct(tier(n))}%`);
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Base (%)</div>
+          <PriceInput
+            className="input" min="0" max="100"
+            value={((pp.discountRate || 0) * 100).toFixed(0)}
+            onChange={(n) => onChange({ ...pp, discountRate: n / 100 })}
+          />
+        </div>
+        <div>
+          <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Per extra credit (%)</div>
+          <PriceInput
+            className="input" min="0" max="100" step="0.5"
+            value={((pp.extraDiscountPerCredit || 0) * 100).toFixed(2).replace(/\.?0+$/, '')}
+            onChange={(n) => onChange({ ...pp, extraDiscountPerCredit: n / 100 })}
+          />
+        </div>
+        <div>
+          <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Max (%)</div>
+          <PriceInput
+            className="input" min="0" max="100"
+            value={((pp.maxDiscount || 0) * 100).toFixed(0)}
+            onChange={(n) => onChange({ ...pp, maxDiscount: n / 100 })}
+          />
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: '#6B7785', marginTop: 6, lineHeight: 1.5 }}>
+        Worked example: {samples.join(' · ')}{tier(4) === maxD && extraD > 0 ? ' (capped)' : ''}.
+      </div>
+    </>
+  );
+}
+
+// Live preview of what a minute of credit costs at each tier.
+function CreditRatePreview({ pp, basePrice, suffix = '', note }) {
+  const base = Number(pp?.standardRatePerMin) || Number(basePrice) || 0;
+  const baseD = pp?.discountRate || 0;
+  const extraD = pp?.extraDiscountPerCredit || 0;
+  const maxD = pp?.maxDiscount || baseD;
+  const tierRate = (n) => base * (1 - Math.min(baseD + Math.max(0, n - 1) * extraD, maxD));
+  if (base <= 0) {
+    return <div style={{ fontSize: 13, color: '#6B7785', padding: 8 }}>Set a standard rate per minute to compute the partner rate.</div>;
+  }
+  return (
+    <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 6, padding: '10px 12px', fontSize: 13, lineHeight: 1.6 }}>
+      <div style={{ color: '#0F2A3D' }}>
+        <strong>1 min</strong>: £{tierRate(1).toFixed(0)}{suffix} &nbsp;·&nbsp;
+        <strong>2 mins</strong>: £{tierRate(2).toFixed(0)}{suffix} &nbsp;·&nbsp;
+        <strong>3 mins</strong>: £{tierRate(3).toFixed(0)}{suffix}
+      </div>
+      <div style={{ fontSize: 12, color: '#78350F', marginTop: 4 }}>{note}</div>
     </div>
   );
 }
@@ -518,6 +588,47 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
           ))}
         </div>
       )}
+
+      {/* ── Proposal type ──
+          A Content Credit proposal is a different shape of proposal, not a
+          Partner Programme add-on: the deliverable is quoted in minutes and the
+          whole credit config lives in Pricing, so the Partner Programme section
+          disappears entirely. Stored as partnerProgramme.mode/creditOnly. */}
+      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: BRAND.muted, marginBottom: 10 }}>
+          Proposal type
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {[
+            { key: 'standard', label: 'Standard', hint: 'Quote a project, with the Partner Programme as an optional add-on.' },
+            { key: 'credit', label: 'Content Credit', hint: 'Quote an amount of minutes; the client can add more at a discount.' },
+          ].map((opt) => {
+            const active = (isCreditOnly ? 'credit' : 'standard') === opt.key;
+            return (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => update({
+                  partnerProgramme: {
+                    ...data.partnerProgramme,
+                    enabled: opt.key === 'credit' ? true : data.partnerProgramme?.enabled,
+                    ...(opt.key === 'credit'
+                      ? { mode: 'oneoff', creditOnly: true, quotedMinutes: data.partnerProgramme?.quotedMinutes ?? 1 }
+                      : { creditOnly: false }),
+                  },
+                })}
+                style={{
+                  flex: isMobile ? '1 1 100%' : '1 1 0', textAlign: 'left', padding: '10px 12px', borderRadius: 8,
+                  border: '2px solid ' + (active ? '#b45309' : BRAND.border), background: active ? '#FFFAEB' : 'white', cursor: 'pointer',
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 700, color: active ? '#92400E' : BRAND.ink }}>{opt.label}</div>
+                <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, lineHeight: 1.4 }}>{opt.hint}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {/* ── Client Details / Template Info / Default proposal ── */}
       <Section
@@ -966,9 +1077,49 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             })}
           />
           <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
-            The headline per-minute rate used in the Partner Programme — independent of the project base price above.
+            {isCreditOnly
+              ? 'The standard per-minute rate. Quoted minutes are priced at this rate; added credit is discounted from it.'
+              : 'The headline per-minute rate used in the Partner Programme — independent of the project base price above.'}
           </div>
         </Field>
+
+        {/* Content Credit proposals own their credit config here — there is no
+            Partner Programme section on this proposal type. */}
+        {isCreditOnly && (
+          <div style={{ border: '1px solid #FDE68A', background: '#FFFBEB', borderRadius: 10, padding: 14, marginTop: 4 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#92400E', marginBottom: 4 }}>
+              Added content credit
+            </div>
+            <p style={{ fontSize: 12, color: '#78350F', margin: '0 0 12px', lineHeight: 1.5 }}>
+              What the client sees if they add more minutes on top of the quote. The quoted minutes above are never
+              discounted — only the extra minutes added here.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+              <Field label="Added-credit rate (auto-derived)">
+                <CreditRatePreview
+                  pp={data.partnerProgramme}
+                  basePrice={data.basePrice}
+                  note="Price per added minute — the standard rate × discount tier; tweak the tier on the right."
+                />
+              </Field>
+              <Field label="Added-credit discount tiers">
+                <CreditTierFields
+                  pp={data.partnerProgramme}
+                  onChange={(partnerProgramme) => update({ partnerProgramme })}
+                />
+              </Field>
+            </div>
+            <Field label="Description">
+              <textarea
+                className="input"
+                style={{ minHeight: 60 }}
+                value={data.partnerProgramme.description}
+                onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, description: e.target.value } })}
+              />
+            </Field>
+          </div>
+        )}
+
         {data.basePrice > 0 && (
           <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#15803d', fontWeight: 600 }}>
             Total inc. VAT: £{(data.basePrice * (1 + data.vatRate)).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1177,7 +1328,10 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         })()}
       </Section>
 
-      {/* ── Partner Programme ── */}
+      {/* ── Partner Programme ──
+          Absent on Content Credit proposals: there the credit config lives in
+          Pricing and the proposal isn't a project + partner add-on at all. */}
+      {!isCreditOnly && (
       <Section
         title="Partner Programme"
         color="#b45309"
@@ -1215,95 +1369,22 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                 })}
               </div>
             </Field>
-            {data.partnerProgramme.mode === 'oneoff' && (
-              <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', marginBottom: 12 }}>
-                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    style={{ marginTop: 2 }}
-                    checked={!!data.partnerProgramme.creditOnly}
-                    onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, creditOnly: e.target.checked } })}
-                  />
-                  <span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: '#92400E' }}>Credit-only proposal</span>
-                    <span style={{ display: 'block', fontSize: 12, color: '#78350F', marginTop: 2, lineHeight: 1.5 }}>
-                      Quote the deliverable as an amount of minutes instead of free text. The quoted minutes stay at the
-                      standard rate — the tier discount below applies only to the extra minutes the client adds on the
-                      proposal, encouraging them to maximise their budget.
-                    </span>
-                  </span>
-                </label>
-              </div>
-            )}
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
               <Field label={(data.partnerProgramme.mode === 'oneoff' ? 'Content credit rate' : 'Monthly subscription rate') + ' (auto-derived)'}>
-                {(() => {
-                  const isOneoff = data.partnerProgramme.mode === 'oneoff';
-                  const suffix = isOneoff ? '' : '/mo';
-                  const base = Number(data.partnerProgramme?.standardRatePerMin) || Number(data.basePrice) || 0;
-                  const baseD = data.partnerProgramme.discountRate || 0;
-                  const extraD = data.partnerProgramme.extraDiscountPerCredit || 0;
-                  const maxD = data.partnerProgramme.maxDiscount || baseD;
-                  const tierRate = (n) => base * (1 - Math.min(baseD + Math.max(0, n - 1) * extraD, maxD));
-                  if (base <= 0) {
-                    return <div style={{ fontSize: 13, color: '#6B7785', padding: 8 }}>Set a standard rate per minute to compute the partner rate.</div>;
-                  }
-                  return (
-                    <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 6, padding: '10px 12px', fontSize: 13, lineHeight: 1.6 }}>
-                      <div style={{ color: '#0F2A3D' }}>
-                        <strong>1 min</strong>: £{tierRate(1).toFixed(0)}{suffix} &nbsp;·&nbsp;
-                        <strong>2 mins</strong>: £{tierRate(2).toFixed(0)}{suffix} &nbsp;·&nbsp;
-                        <strong>3 mins</strong>: £{tierRate(3).toFixed(0)}{suffix}
-                      </div>
-                      <div style={{ fontSize: 12, color: '#78350F', marginTop: 4 }}>
-                        {isOneoff
-                          ? 'One-off price per minute of credit — the standard rate × discount tier; tweak the tier on the right.'
-                          : 'Per-minute rate is the standard rate × discount tier; tweak the tier on the right to change it.'}
-                      </div>
-                    </div>
-                  );
-                })()}
+                <CreditRatePreview
+                  pp={data.partnerProgramme}
+                  basePrice={data.basePrice}
+                  suffix={data.partnerProgramme.mode === 'oneoff' ? '' : '/mo'}
+                  note={data.partnerProgramme.mode === 'oneoff'
+                    ? 'One-off price per minute of credit — the standard rate × discount tier; tweak the tier on the right.'
+                    : 'Per-minute rate is the standard rate × discount tier; tweak the tier on the right to change it.'}
+                />
               </Field>
-              <Field label={isCreditOnly ? 'Added-credit discount tiers' : 'Project discount tiers'}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                  <div>
-                    <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Base (%)</div>
-                    <PriceInput
-                      className="input" min="0" max="100"
-                      value={((data.partnerProgramme.discountRate || 0) * 100).toFixed(0)}
-                      onChange={(n) => update({ partnerProgramme: { ...data.partnerProgramme, discountRate: n / 100 } })}
-                    />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Per extra credit (%)</div>
-                    <PriceInput
-                      className="input" min="0" max="100" step="0.5"
-                      value={((data.partnerProgramme.extraDiscountPerCredit || 0) * 100).toFixed(2).replace(/\.?0+$/, '')}
-                      onChange={(n) => update({ partnerProgramme: { ...data.partnerProgramme, extraDiscountPerCredit: n / 100 } })}
-                    />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Max (%)</div>
-                    <PriceInput
-                      className="input" min="0" max="100"
-                      value={((data.partnerProgramme.maxDiscount || 0) * 100).toFixed(0)}
-                      onChange={(n) => update({ partnerProgramme: { ...data.partnerProgramme, maxDiscount: n / 100 } })}
-                    />
-                  </div>
-                </div>
-                {(() => {
-                  const baseD = data.partnerProgramme.discountRate || 0;
-                  const extraD = data.partnerProgramme.extraDiscountPerCredit || 0;
-                  const maxD = data.partnerProgramme.maxDiscount || baseD;
-                  const tier = (n) => Math.min(baseD + Math.max(0, n - 1) * extraD, maxD);
-                  const fmtPct = (v) => (Math.round(v * 1000) / 10).toString().replace(/\.0$/, '');
-                  const samples = [1, 2, 3, 4].map(n => `${n} ${n === 1 ? 'min' : 'mins'} = ${fmtPct(tier(n))}%`);
-                  return (
-                    <div style={{ fontSize: 12, color: '#6B7785', marginTop: 6, lineHeight: 1.5 }}>
-                      Worked example: {samples.join(' · ')}{tier(4) === maxD && extraD > 0 ? ' (capped)' : ''}.
-                    </div>
-                  );
-                })()}
+              <Field label="Project discount tiers">
+                <CreditTierFields
+                  pp={data.partnerProgramme}
+                  onChange={(partnerProgramme) => update({ partnerProgramme })}
+                />
               </Field>
             </div>
             <Field label="Description">
@@ -1312,6 +1393,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
           </>
         )}
       </Section>
+      )}
 
       {/* ── Optional Extras ── */}
       <Section
