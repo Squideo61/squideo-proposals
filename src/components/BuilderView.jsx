@@ -1109,14 +1109,6 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                 />
               </Field>
             </div>
-            <Field label="Description">
-              <textarea
-                className="input"
-                style={{ minHeight: 60 }}
-                value={data.partnerProgramme.description}
-                onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, description: e.target.value } })}
-              />
-            </Field>
           </div>
         )}
 

@@ -254,7 +254,11 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   const getMeta = (eid) => extrasMeta[eid] || { quantity: 1, languages: '' };
   const setMeta = (eid, patch) => setExtrasMeta(prev => ({ ...prev, [eid]: { ...getMeta(eid), ...patch } }));
   const [partnerSelected, setPartnerSelected] = useState(false);
-  const [partnerCredits, setPartnerCredits] = useState(1);
+  // Credit-only proposals add credit inline at the total (no opt-in panel), so
+  // they start at zero added minutes and selection follows the stepper.
+  const [partnerCredits, setPartnerCredits] = useState(() =>
+    (data?.partnerProgramme?.mode === 'oneoff' && data?.partnerProgramme?.creditOnly) ? 0 : 1
+  );
   const [partnerHowOpen, setPartnerHowOpen] = useState(false);
   const [paymentOption, setPaymentOption] = useState(() => {
     const opts = data?.paymentOptions || ['5050', 'full'];
@@ -427,6 +431,14 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   const quotedMinutes = videoOptions
     ? Number(videoOptions[selectedVideoOptionIdx]?.minutes) || 0
     : Number(data.partnerProgramme?.quotedMinutes) || 0;
+  // Adding credit IS the opt-in on a credit-only proposal — there's no separate
+  // "add to proposal" button, so selection tracks the stepper.
+  const setAddedCredits = (n) => {
+    if (signed) return;
+    const v = Math.max(0, n);
+    setPartnerCredits(v);
+    setPartnerSelected(v > 0);
+  };
   // Tiered project-discount ladder: base + (extra * (credits-1)), capped at max.
   // Legacy proposals (no extraDiscountPerCredit / maxDiscount) collapse to a flat
   // discountRate because extraPerCredit defaults to 0 and max defaults to base.
@@ -950,9 +962,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               {videoOptions
                 ? (videoOptions[selectedVideoOptionIdx]?.label || `Option ${selectedVideoOptionIdx + 1}`)
                 : (isCreditOnly && quotedMinutes > 0
-                    ? <>{fmtMins(quotedMinutes)} of content credit
-                        {standardRatePerMin > 0 && <span style={{ display: 'block', fontWeight: 500, fontSize: 13, color: BRAND.muted, marginTop: 2 }}>at {formatGBP(standardRatePerMin)}/min</span>}
-                      </>
+                    ? `${fmtMins(quotedMinutes)} of content credit`
                     : 'Project base price')}
             </span>
             <span>
@@ -1037,7 +1047,9 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         );
         })()}
 
-        {data.partnerProgramme.enabled && (
+        {/* Credit-only proposals add credit inline at the total instead — the
+            standalone opt-in panel is the Partner Programme shape, not this one. */}
+        {data.partnerProgramme.enabled && !isCreditOnly && (
           <div style={{ position: 'relative', marginTop: partnerDiscount > 0 && !isMobile ? 24 : 16, marginBottom: 16, background: '#FFFAEB', border: '1px solid #C9A227', borderRadius: 12, padding: isMobile ? 12 : 16 }}>
             {partnerDiscount > 0 && (
               // Desktop floats the "save" badge over the top-right corner. On a
@@ -1267,12 +1279,42 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               {formatGBP(showPartnerProjectDiscount ? discountedSubtotal : subtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(showPartnerProjectDiscount ? discountedSubtotal : subtotal)} inc.</span></span>}
             </span>
           </div>
-          {/* Credit-only: nudge at the point the client reads the number — they
-              can stretch the same budget by adding discounted minutes. */}
-          {isCreditOnly && !partnerSelected && data.partnerProgramme?.enabled && partnerMaxDiscount > 0 && (
-            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.2)', fontSize: 13, lineHeight: 1.6 }}>
-              <span style={{ color: '#FFD54F', fontWeight: 700 }}>Want more content for your budget?</span>{' '}
-              <span style={{ opacity: 0.85 }}>Add extra minutes of content credit above and save up to {formatPct(partnerMaxDiscount)}% on them.</span>
+          {/* Credit-only: add credit right where the client reads the number,
+              rather than in a separate opt-in panel further up the page. */}
+          {isCreditOnly && data.partnerProgramme?.enabled && !signed && (
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>Add more content credit</div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2, lineHeight: 1.5 }}>
+                    Stretch your budget — extra minutes are discounted{partnerMaxDiscount > 0 && <>, up to {formatPct(partnerMaxDiscount)}% off</>}.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                  {(() => {
+                    const btn = (disabled) => ({
+                      width: isMobile ? 44 : 34, height: isMobile ? 44 : 34, borderRadius: 8,
+                      border: '1px solid rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.1)',
+                      color: 'white', cursor: disabled ? 'default' : 'pointer',
+                      opacity: disabled ? 0.4 : 1, fontWeight: 700, fontSize: 18, lineHeight: 1,
+                    });
+                    return (
+                      <>
+                        <button onClick={() => setAddedCredits(partnerCredits - 1)} disabled={partnerCredits <= 0} style={btn(partnerCredits <= 0)}>−</button>
+                        <span style={{ fontWeight: 800, fontSize: 20, minWidth: 30, textAlign: 'center' }}>{partnerCredits}</span>
+                        <button onClick={() => setAddedCredits(partnerCredits + 1)} style={btn(false)}>+</button>
+                        <span style={{ fontSize: 13, opacity: 0.8 }}>{partnerCredits === 1 ? 'min' : 'mins'}</span>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+              {partnerCredits > 0 && (
+                <div style={{ fontSize: 12.5, color: '#86EFAC', marginTop: 10, lineHeight: 1.6 }}>
+                  <strong>{formatGBP(partnerRatePerMin)}/min</strong> ({formatPct(effectiveDiscount)}% off) — you save <strong>{formatGBP(bankedSaving)}</strong>.
+                  {' '}Paid once when you sign; 2 years to use it on any future video content.
+                </div>
+              )}
             </div>
           )}
           {partnerSelected && (
