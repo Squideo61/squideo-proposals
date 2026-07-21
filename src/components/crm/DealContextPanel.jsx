@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, Plus, X, Search, FileText, ChevronDown, Check, Pencil, Folder } from 'lucide-react';
+import { ExternalLink, Plus, X, Search, FileText, ChevronDown, Check, Pencil, Folder, ArrowRightLeft, Flame } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
@@ -70,6 +70,7 @@ function DealSection({ gmailThreadId, counterpartyEmail, onOpenDeal, onOpenPropo
 function LinkedView({ linked, gmailThreadId, counterpartyEmail, onOpenDeal, onOpenProposal }) {
   const { state, actions, showMsg } = useStore();
   const [busy, setBusy] = useState(false);
+  const [picker, setPicker] = useState(null); // null | 'add' | 'move'
   const primary = linked[0];
   const detail = primary ? state.dealDetail?.[primary.dealId] : null;
 
@@ -95,13 +96,24 @@ function LinkedView({ linked, gmailThreadId, counterpartyEmail, onOpenDeal, onOp
 
       {detail && <DealDetailBlock detail={detail} gmailThreadId={gmailThreadId} onOpenDeal={onOpenDeal} onOpenProposal={onOpenProposal} />}
 
-      <AttachPicker
-        gmailThreadId={gmailThreadId}
-        counterpartyEmail={counterpartyEmail}
-        excludeDealIds={linked.map(d => d.dealId)}
-        label="Add to another deal"
-        collapsedLabel="+ Add to another deal"
-      />
+      {picker === null ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <button onClick={() => setPicker('add')} className="btn-ghost" style={{ fontSize: 12 }}>+ Add to another deal</button>
+          <button onClick={() => setPicker('move')} className="btn-ghost" style={{ fontSize: 12 }} title="Take this thread off the deal(s) above and put it on another one">
+            <ArrowRightLeft size={13} /> Move to another deal
+          </button>
+        </div>
+      ) : (
+        <AttachPicker
+          gmailThreadId={gmailThreadId}
+          counterpartyEmail={counterpartyEmail}
+          excludeDealIds={linked.map(d => d.dealId)}
+          moveOffDeals={picker === 'move' ? linked : []}
+          label={picker === 'move' ? 'Move to another deal' : 'Add to another deal'}
+          alwaysOpen
+          onDone={() => setPicker(null)}
+        />
+      )}
     </Wrap>
   );
 }
@@ -265,6 +277,7 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
           </Row>
         )}
         <PrimaryContactRow detail={detail} />
+        <HotRow detail={detail} />
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
           <button onClick={() => onOpenDeal?.(detail.id)} className="btn" style={{ fontSize: 12 }}>
             Open deal <ExternalLink size={13} />
@@ -515,8 +528,14 @@ function TimelineEmail({ email }) {
 
 // ---- Actions ----
 
-function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], label, collapsedLabel, alwaysOpen = false, allowCreate = true }) {
+// Picks (or creates) a deal for this thread. With `moveOffDeals` it becomes a
+// *move*: the thread is attached to the chosen deal and then detached from the
+// deals it was on — so a conversation that landed on the wrong deal, or that
+// has turned into a separate piece of work, can be relocated in one go without
+// briefly belonging to nothing.
+function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], moveOffDeals = [], label, collapsedLabel, alwaysOpen = false, allowCreate = true, onDone }) {
   const { state, actions, showMsg } = useStore();
+  const moving = moveOffDeals.length > 0;
   const [open, setOpen] = useState(alwaysOpen);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
@@ -541,9 +560,19 @@ function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], l
   );
   const canCreate = allowCreate && !!q && !exactExists;
 
+  // Attach to the target, then (when moving) drop the old links. Attach first
+  // so a failure mid-way leaves the thread on too many deals rather than none.
+  const place = async (dealId) => {
+    await actions.attachThreadToDeal({ gmailThreadId, counterpartyEmail, dealId });
+    for (const d of moveOffDeals) {
+      if (d.dealId !== dealId) await actions.detachThreadFromDeal({ gmailThreadId, dealId: d.dealId });
+    }
+  };
+
   const attach = async (dealId) => {
     setBusy(true);
-    try { await actions.attachThreadToDeal({ gmailThreadId, counterpartyEmail, dealId }); showMsg('Attached to deal'); }
+    try { await place(dealId); showMsg(moving ? 'Thread moved' : 'Attached to deal'); onDone?.(); }
+    catch (e) { showMsg(e?.message || (moving ? 'Could not move thread' : 'Could not attach thread')); }
     finally { setBusy(false); }
   };
 
@@ -552,9 +581,10 @@ function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], l
     setBusy(true);
     try {
       const deal = await actions.createDeal({ title: q });
-      if (deal?.id) await actions.attachThreadToDeal({ gmailThreadId, counterpartyEmail, dealId: deal.id });
-      showMsg('Deal created');
+      if (deal?.id) await place(deal.id);
+      showMsg(moving ? 'Moved to new deal' : 'Deal created');
       setQuery('');
+      onDone?.();
     } catch (e) { showMsg(e?.message || 'Could not create deal'); }
     finally { setBusy(false); }
   };
@@ -566,6 +596,13 @@ function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], l
   return (
     <div>
       <Label>{label}</Label>
+      {moving && (
+        <Muted style={{ display: 'block', margin: '4px 0 0' }}>
+          Takes the whole thread off {moveOffDeals.length === 1
+            ? <strong style={{ color: BRAND.ink }}>{moveOffDeals[0].title}</strong>
+            : `${moveOffDeals.length} deals`}.
+        </Muted>
+      )}
       <div style={{ position: 'relative', margin: '6px 0' }}>
         <Search size={13} color={BRAND.muted} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
         <input
@@ -585,12 +622,17 @@ function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], l
       ))}
       {filtered.length === 0 && !canCreate && <Muted>{q ? 'No matching deals.' : 'No deals yet.'}</Muted>}
       {canCreate && (
-        <button onClick={createAndAttach} disabled={busy} style={createRow} title="Create a new deal with this name and attach the thread">
+        <button onClick={createAndAttach} disabled={busy} style={createRow} title={moving ? 'Create a new deal with this name and move the thread onto it' : 'Create a new deal with this name and attach the thread'}>
           <Plus size={13} style={{ flexShrink: 0 }} />
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {busy ? 'Creating…' : <>Create new deal “<strong>{q}</strong>”</>}
+            {busy ? 'Creating…' : <>{moving ? 'Move to new deal' : 'Create new deal'} “<strong>{q}</strong>”</>}
           </span>
         </button>
+      )}
+      {onDone && (
+        <div style={{ marginTop: 8 }}>
+          <button onClick={() => onDone()} disabled={busy} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+        </div>
       )}
     </div>
   );
@@ -822,6 +864,37 @@ function StageBadge({ stage, compact }) {
     <span style={{ display: 'inline-block', padding: compact ? '1px 6px' : '2px 8px', borderRadius: 4, background: c.bg, color: c.fg, fontSize: compact ? 10 : 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>
       {STAGE_LABEL[stage] || stage}
     </span>
+  );
+}
+
+// The "hot" warm-lead flag, toggled straight from the thread — the moment a
+// reply tells you a lead is live is the moment you want to mark it. Mirrors the
+// deal page's flame button, and is hidden once the deal is a project in
+// production (the server rejects flagging those anyway).
+function HotRow({ detail }) {
+  const { state, actions } = useStore();
+  const hot = !!(state.deals?.[detail.id]?.hot ?? detail.hot);
+  const inProduction = (detail.videos || []).length > 0 || !!detail.productionPhase;
+  if (inProduction) return null;
+
+  return (
+    <Row>
+      <DealMetaKey>Lead</DealMetaKey>
+      <button
+        onClick={() => actions.toggleDealHot(detail.id, !hot)}
+        aria-pressed={hot}
+        title={hot ? 'Flagged hot — click to unflag' : 'Flag as hot'}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 999,
+          border: '1px solid ' + (hot ? '#EA580C' : BRAND.border),
+          background: hot ? '#FFF7ED' : 'transparent',
+          color: hot ? '#EA580C' : BRAND.muted,
+          fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        <Flame size={12} fill={hot ? '#EA580C' : 'none'} /> {hot ? 'Hot' : 'Mark hot'}
+      </button>
+    </Row>
   );
 }
 
