@@ -419,6 +419,14 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   // (same tier ladder, but paid once for future use) rather than a recurring
   // monthly subscription. Flips wording and payment rules throughout.
   const isOneoff = data.partnerProgramme?.mode === 'oneoff';
+  // Credit-only: the main section quotes an amount of minutes at the standard
+  // rate, and the tier discount rewards ONLY the extra minutes added here — the
+  // quoted minutes are never discounted. Purely a budget-maximiser: add more
+  // credit now, get a better rate on what you add.
+  const isCreditOnly = isOneoff && !!data.partnerProgramme?.creditOnly;
+  const quotedMinutes = videoOptions
+    ? Number(videoOptions[selectedVideoOptionIdx]?.minutes) || 0
+    : Number(data.partnerProgramme?.quotedMinutes) || 0;
   // Tiered project-discount ladder: base + (extra * (credits-1)), capped at max.
   // Legacy proposals (no extraDiscountPerCredit / maxDiscount) collapse to a flat
   // discountRate because extraPerCredit defaults to 0 and max defaults to base.
@@ -438,9 +446,20 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   const partnerSubtotal = partnerRatePerMin * partnerCredits;
   const partnerVat = partnerSubtotal * data.vatRate;
   const partnerTotal = partnerSubtotal + partnerVat;
-  // No further partner discount on a project that's already free.
-  const partnerDiscount = projectFullyDiscounted ? 0 : subtotal * effectiveDiscount;
+  // No further partner discount on a project that's already free. In credit-only
+  // mode the quoted work is never discounted at all — the tier rate applies only
+  // to the extra minutes bought here (already baked into partnerRatePerMin).
+  const partnerDiscount = (projectFullyDiscounted || isCreditOnly) ? 0 : subtotal * effectiveDiscount;
   const discountedSubtotal = subtotal - partnerDiscount;
+  // Savings split: what comes off the quoted work, and what's saved on the extra
+  // minutes bought here. In credit-only mode the first is always zero.
+  const savingPerMin = Math.max(0, standardRatePerMin - partnerRatePerMin);
+  const bankedSaving = savingPerMin * partnerCredits;
+  const combinedSaving = partnerDiscount + bankedSaving;
+  const fmtMins = (n) => {
+    const v = Number(n) || 0;
+    return `${v % 1 === 0 ? v.toFixed(0) : String(v)} ${v === 1 ? 'minute' : 'minutes'}`;
+  };
   // Only show the partner project-discount lines when there's an actual saving.
   const showPartnerProjectDiscount = partnerSelected && partnerDiscount > 0;
   const discountedVat = discountedSubtotal * data.vatRate;
@@ -486,7 +505,16 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         partnerExVat: partnerSubtotal,
         partnerTotal,
         partnerCredits,
-        discountRate: effectiveDiscount,
+        // discountRate is what downstream (Xero lineItemsForDiscountedProject)
+        // shaves off the PROJECT lines. In credit-only mode the quoted work is
+        // never discounted, so this must be 0 — the tier rate lives on the added
+        // credit minutes only and is recorded separately as creditDiscountRate.
+        discountRate: isCreditOnly ? 0 : effectiveDiscount,
+        creditDiscountRate: effectiveDiscount,
+        creditOnly: isCreditOnly,
+        // Minutes quoted in the main section. In credit-only mode these are also
+        // content credit, so the ledger banks them alongside partnerCredits.
+        baseCreditMinutes: isCreditOnly ? quotedMinutes : 0,
         vatRate: data.vatRate,
         // One-off Content Credit vs recurring subscription — SignedBlock and the
         // post-sign payment prompt use this to drop the "/month, cancel any time"
@@ -897,7 +925,12 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                     style={{ marginTop: 3, flexShrink: 0 }}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, marginBottom: opt.description ? 6 : 0 }}>{opt.label || `Option ${i + 1}`}</div>
+                    <div style={{ fontWeight: 600, fontSize: 14, marginBottom: (opt.description || isCreditOnly) ? 6 : 0 }}>{opt.label || `Option ${i + 1}`}</div>
+                    {isCreditOnly && Number(opt.minutes) > 0 && (
+                      <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.blue, marginBottom: opt.description ? 6 : 0 }}>
+                        {fmtMins(opt.minutes)} of content credit
+                      </div>
+                    )}
                     {opt.description && <p style={{ fontSize: 14, lineHeight: 1.7, margin: 0, whiteSpace: 'pre-wrap', color: BRAND.text }}>{opt.description}</p>}
                   </div>
                   <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0, paddingTop: 2 }}>{formatGBP(opt.price)}{showVat && <span style={{ fontWeight: 400, fontSize: 12, color: BRAND.muted }}> + VAT</span>}</span>
@@ -914,7 +947,13 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         {(!videoOptions || manualDiscount > 0) && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 16px', border: '1px solid ' + BRAND.border, borderRadius: 10, fontSize: 16, fontWeight: 700 }}>
             <span>
-              {videoOptions ? (videoOptions[selectedVideoOptionIdx]?.label || `Option ${selectedVideoOptionIdx + 1}`) : 'Project base price'}
+              {videoOptions
+                ? (videoOptions[selectedVideoOptionIdx]?.label || `Option ${selectedVideoOptionIdx + 1}`)
+                : (isCreditOnly && quotedMinutes > 0
+                    ? <>{fmtMins(quotedMinutes)} of content credit
+                        {standardRatePerMin > 0 && <span style={{ display: 'block', fontWeight: 500, fontSize: 13, color: BRAND.muted, marginTop: 2 }}>at {formatGBP(standardRatePerMin)}/min</span>}
+                      </>
+                    : 'Project base price')}
             </span>
             <span>
               {manualDiscount > 0 && (
@@ -1018,7 +1057,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                 style={{ height: 40, width: 'auto', flexShrink: 0 }}
               />
               <div style={{ fontSize: 16, fontWeight: 700, color: '#92400E' }}>
-                {isOneoff ? 'Squideo Content Credit' : 'Squideo Partner Programme'} -{' '}
+                {isCreditOnly ? 'Add more discounted content credits now' : (isOneoff ? 'Squideo Content Credit' : 'Squideo Partner Programme')} -{' '}
                 <a href="https://www.squideo.com/partner-programme" target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Click Here to Learn More</a>
               </div>
             </div>
@@ -1031,14 +1070,14 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               // it — pay now, win twice, and both wins grow the more you add. This
               // rebuild leads with that sentence and shows the two wins as parallel
               // live tiles.
-              const savingPerMin = standardRatePerMin - partnerRatePerMin;
-              const bankedSaving = Math.max(0, savingPerMin) * partnerCredits; // saved across all banked minutes
-              const combinedSaving = partnerDiscount + bankedSaving;           // project discount + banked-minute saving
               const pct = formatPct(effectiveDiscount);
               const maxPct = formatPct(partnerMaxDiscount);
               const nextPct = formatPct(Math.min(partnerMaxDiscount, effectiveDiscount + partnerExtraPerCredit));
               const atMax = effectiveDiscount >= partnerMaxDiscount;
-              const showProjectWin = partnerDiscount > 0; // no project win when the project is already free
+              // No project win when the quoted work is already free, or in
+              // credit-only mode where only the added minutes are discounted.
+              const showProjectWin = partnerDiscount > 0;
+              const showSaveTile = combinedSaving > 0;
               const tile = { background: 'white', border: '1px solid #FDE68A', borderRadius: 10, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 4 };
               const tileHead = { fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#92400E', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 };
               const bigNum = { fontSize: 26, fontWeight: 800, color: '#0F2A3D', lineHeight: 1.1 };
@@ -1059,10 +1098,21 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                   {/* The one sentence that sells it: pay now, win twice, both grow */}
                   {effectiveDiscount > 0 && (
                     <div style={{ ...subLine, fontSize: 14, marginBottom: 14 }}>
-                      <strong style={{ color: '#92400E' }}>{isOneoff ? 'Secure additional content now and save twice,' : 'Subscribe now and save twice,'}</strong>{' '}
-                      {showProjectWin
-                        ? <>we&apos;ll discount <strong>{formatGBP(partnerDiscount)} ({pct}%)</strong> off <em>this</em> project <strong>and</strong> lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at the same discounted rate for future videos.</>
-                        : <>we&apos;ll lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at a discounted rate for future videos.</>}
+                      {isCreditOnly ? (
+                        <>
+                          <strong style={{ color: '#92400E' }}>Add more content credit now and pay less for it.</strong>{' '}
+                          Your quoted {quotedMinutes > 0 ? fmtMins(quotedMinutes) : 'minutes'} stay at the standard {formatGBP(standardRatePerMin)}/min —
+                          but every extra minute you add here is discounted{partnerExtraPerCredit > 0 && <>, and the more you add the bigger that discount gets</>}.
+                          Use it on this content, split it across smaller pieces, or save it for later.
+                        </>
+                      ) : (
+                        <>
+                          <strong style={{ color: '#92400E' }}>{isOneoff ? 'Secure additional content now and save twice,' : 'Subscribe now and save twice,'}</strong>{' '}
+                          {showProjectWin
+                            ? <>we&apos;ll discount <strong>{formatGBP(partnerDiscount)} ({pct}%)</strong> off <em>this</em> project <strong>and</strong> lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at the same discounted rate for future videos.</>
+                            : <>we&apos;ll lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at a discounted rate for future videos.</>}
+                        </>
+                      )}
                       {partnerExtraPerCredit > 0 && !atMax && <> Add more and {showProjectWin ? 'both discounts grow' : 'your discount grows'}, up to <strong>{maxPct}% off</strong>.</>}
                     </div>
                   )}
@@ -1079,15 +1129,19 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                   </div>
 
                   {/* The two wins, side by side, both updating live with the stepper */}
-                  <div style={{ display: isMobile ? 'block' : 'grid', gridTemplateColumns: showProjectWin ? '1fr 1fr' : '1fr', gap: 12, alignItems: 'stretch' }}>
-                    {showProjectWin && (
+                  <div style={{ display: isMobile ? 'block' : 'grid', gridTemplateColumns: showSaveTile ? '1fr 1fr' : '1fr', gap: 12, alignItems: 'stretch' }}>
+                    {showSaveTile && (
                       <div style={{ ...tile, background: '#F6FEF9', border: '1px solid #A7F3D0', marginBottom: isMobile ? 12 : 0 }}>
                         <div style={{ ...tileHead, color: saveGreen }}>{numBadge(1, greenGrad)} Total you save today</div>
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
                           <span style={{ ...bigNum, color: saveGreen }}>−{formatGBP(combinedSaving)}</span>
                           <span style={savePill}>{pct}% off</span>
                         </div>
-                        <div style={subLine}>{formatGBP(partnerDiscount)} off this project{bankedSaving > 0 && <> + {formatGBP(bankedSaving)} off {partnerCredits} banked {partnerCredits === 1 ? 'min' : 'mins'}</>}</div>
+                        <div style={subLine}>
+                          {showProjectWin
+                            ? <>{formatGBP(partnerDiscount)} off this project{bankedSaving > 0 && <> + {formatGBP(bankedSaving)} off {partnerCredits} banked {partnerCredits === 1 ? 'min' : 'mins'}</>}</>
+                            : <>{formatGBP(bankedSaving)} off the {partnerCredits} extra {partnerCredits === 1 ? 'minute' : 'minutes'} you&apos;re adding</>}
+                        </div>
                         <div style={{ ...subLine, fontSize: 12, color: BRAND.muted }}>Applied the moment you add credit.</div>
                       </div>
                     )}
@@ -1174,13 +1228,20 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                       }),
                 }}
               >
-                {partnerSelected
-                  ? (partnerDiscount > 0
-                      ? `✓ ${isOneoff ? 'Added' : 'Joined'} - saving ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off) - click to remove`
-                      : `✓ ${isOneoff ? 'Added' : 'Joined'} - click to remove`)
-                  : (partnerDiscount > 0
-                      ? `${isOneoff ? 'Add Content Credit' : 'Opt in to Partner Programme'} - save ${formatGBP(partnerDiscount)} (${formatPct(effectiveDiscount)}% off)`
-                      : (isOneoff ? 'Add Content Credit' : 'Opt in to Partner Programme'))}
+                {(() => {
+                  // In credit-only mode the saving lives entirely on the added
+                  // minutes, so the CTA quotes combinedSaving rather than the
+                  // (always zero) project discount.
+                  const ctaLabel = isCreditOnly ? 'Add content credit' : (isOneoff ? 'Add Content Credit' : 'Opt in to Partner Programme');
+                  const doneLabel = isOneoff ? 'Added' : 'Joined';
+                  const saveText = `${formatGBP(combinedSaving)} (${formatPct(effectiveDiscount)}% off)`;
+                  if (partnerSelected) {
+                    return combinedSaving > 0
+                      ? `✓ ${doneLabel} - saving ${saveText} - click to remove`
+                      : `✓ ${doneLabel} - click to remove`;
+                  }
+                  return combinedSaving > 0 ? `${ctaLabel} - save ${saveText}` : ctaLabel;
+                })()}
               </button>
               <div style={{ fontSize: 12, color: '#5D8A00', textAlign: 'center', marginTop: 8 }}>{isOneoff ? '✓ One-off purchase  ·  Credit for future videos' : '✓ Cancel any time  ·  No minimum term'}</div>
             </div>
@@ -1206,11 +1267,19 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               {formatGBP(showPartnerProjectDiscount ? discountedSubtotal : subtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(showPartnerProjectDiscount ? discountedSubtotal : subtotal)} inc.</span></span>}
             </span>
           </div>
+          {/* Credit-only: nudge at the point the client reads the number — they
+              can stretch the same budget by adding discounted minutes. */}
+          {isCreditOnly && !partnerSelected && data.partnerProgramme?.enabled && partnerMaxDiscount > 0 && (
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.2)', fontSize: 13, lineHeight: 1.6 }}>
+              <span style={{ color: '#FFD54F', fontWeight: 700 }}>Want more content for your budget?</span>{' '}
+              <span style={{ opacity: 0.85 }}>Add extra minutes of content credit above and save up to {formatPct(partnerMaxDiscount)}% on them.</span>
+            </div>
+          )}
           {partnerSelected && (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 600, marginTop: 6 }}>
                 <span>
-                  {isOneoff ? '+ Content credit' : '+ First month Partner Programme'}
+                  {isCreditOnly ? '+ Extra content credit' : (isOneoff ? '+ Content credit' : '+ First month Partner Programme')}
                   <span style={{ opacity: 0.7, fontWeight: 500, fontSize: 13, marginLeft: 6 }}>
                     ({partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'}{isOneoff ? '' : '/mo'})
                   </span>

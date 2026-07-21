@@ -132,7 +132,11 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   const discountRate = partnerSelected
     ? (typeof lockedDiscount === 'number' ? lockedDiscount : computedDiscount)
     : 0;
-  const partnerDiscount = projectFullyDiscounted ? 0 : subtotal * discountRate;
+  // Credit-only proposals never discount the quoted work — the tier rate applies
+  // only to the extra minutes added on the proposal. (Signed ones already carry a
+  // locked discountRate of 0; this also covers unsigned previews.)
+  const isCreditOnly = data.partnerProgramme?.mode === 'oneoff' && !!data.partnerProgramme?.creditOnly;
+  const partnerDiscount = (projectFullyDiscounted || isCreditOnly) ? 0 : subtotal * discountRate;
   const discountedSubtotal = subtotal - partnerDiscount;
   const discountedVat = discountedSubtotal * data.vatRate;
   const discountedTotal = discountedSubtotal + discountedVat;

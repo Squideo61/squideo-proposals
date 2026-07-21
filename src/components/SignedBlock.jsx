@@ -82,11 +82,17 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
           {signed.partnerSelected && signed.amountBreakdown ? (
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #A5D6A7' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Project (discounted)</span>
+                {/* Credit-only proposals never discount the quoted work, so
+                    "(discounted)" would be misleading there. */}
+                <span>{signed.amountBreakdown.creditOnly
+                  ? `Quoted content${signed.amountBreakdown.baseCreditMinutes ? ` (${signed.amountBreakdown.baseCreditMinutes} ${signed.amountBreakdown.baseCreditMinutes === 1 ? 'minute' : 'minutes'})` : ''}`
+                  : 'Project (discounted)'}</span>
                 <span><strong>{formatGBP(signed.amountBreakdown.projectExVat)}</strong>{showVat && ' + VAT'}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>{signed.amountBreakdown.oneoff ? 'Content credit (one-off)' : 'First month Partner Programme'}</span>
+                <span>{signed.amountBreakdown.creditOnly
+                  ? 'Extra content credit'
+                  : (signed.amountBreakdown.oneoff ? 'Content credit (one-off)' : 'First month Partner Programme')}</span>
                 <span><strong>{formatGBP(signed.amountBreakdown.partnerExVat)}</strong>{showVat && ' + VAT'}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid #A5D6A7', fontWeight: 700 }}>
@@ -98,11 +104,18 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
                   Then {formatGBP(signed.amountBreakdown.partnerExVat)}{showVat && ' + VAT'} / month - cancel any time.
                 </div>
               )}
-              {signed.amountBreakdown.oneoff && (
-                <div style={{ fontSize: 12, color: '#15803D', marginTop: 6 }}>
-                  Includes {signed.amountBreakdown.partnerCredits} {signed.amountBreakdown.partnerCredits === 1 ? 'minute' : 'minutes'} of content credit to use on future videos.
-                </div>
-              )}
+              {signed.amountBreakdown.oneoff && (() => {
+                // Credit-only: the quoted minutes are content credit too, so the
+                // banked total is base + added.
+                const totalMins = (Number(signed.amountBreakdown.baseCreditMinutes) || 0)
+                  + (Number(signed.amountBreakdown.partnerCredits) || 0);
+                const mins = signed.amountBreakdown.creditOnly ? totalMins : signed.amountBreakdown.partnerCredits;
+                return (
+                  <div style={{ fontSize: 12, color: '#15803D', marginTop: 6 }}>
+                    Includes {mins} {mins === 1 ? 'minute' : 'minutes'} of content credit{signed.amountBreakdown.creditOnly ? ', with 2 years to use it.' : ' to use on future videos.'}
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             <div style={{ marginTop: 8 }}>Total committed: <strong>{formatGBP(totalExVat)}{showVat && ' + VAT'}</strong></div>

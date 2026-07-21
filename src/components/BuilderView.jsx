@@ -337,6 +337,15 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   // £0 base price is allowed when the Partner Programme is enabled — lets us
   // give the first video free on a retainer sign-up. Otherwise a real price is
   // required so a £0 proposal can't go out by accident.
+  // Credit-only proposals quote the deliverable as an amount of minutes priced
+  // off the standard rate; the tier discount then applies only to the extra
+  // minutes the client adds on the proposal itself.
+  const isCreditOnly = !!(data.partnerProgramme?.enabled
+    && data.partnerProgramme?.mode === 'oneoff'
+    && data.partnerProgramme?.creditOnly);
+  const creditRatePerMin = Number(data.partnerProgramme?.standardRatePerMin) || Number(data.basePrice) || 0;
+  const minutesToPrice = (n) => Math.round((Number(n) || 0) * creditRatePerMin * 100) / 100;
+
   const basePriceOk = data.partnerProgramme?.enabled
     ? Number(data.basePrice) >= 0
     : Number(data.basePrice) > 0;
@@ -671,7 +680,28 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                     }}
                   />
                 </Field>
-                <Field label="Price (ex VAT)">
+                {isCreditOnly && (
+                  <Field label="Minutes of content credit">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <PriceInput
+                        className="input" min="0" step="0.5" style={{ maxWidth: 120 }}
+                        value={opt.minutes ?? 1}
+                        onChange={(n) => {
+                          const next = [...data.videoOptions];
+                          next[i] = { ...next[i], minutes: n, price: minutesToPrice(n) };
+                          update({ videoOptions: next });
+                        }}
+                      />
+                      <span style={{ fontSize: 13, color: BRAND.muted }}>
+                        × {formatGBP(creditRatePerMin)}/min = <strong style={{ color: BRAND.ink }}>{formatGBP(minutesToPrice(opt.minutes ?? 1))}</strong>
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
+                      Sets the price below. Edit the price to override with a negotiated total.
+                    </div>
+                  </Field>
+                )}
+                <Field label={isCreditOnly ? 'Price (ex VAT) — override' : 'Price (ex VAT)'}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ fontSize: 13, color: BRAND.muted }}>£</span>
                     <PriceInput
@@ -882,8 +912,28 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         collapsedHint={sectionMeta.find(s => s.id === 'pricing')?.hint}
         {...sectionProps('pricing')}
       >
+        {isCreditOnly && (data.videoOptions || []).length === 0 && (
+          <Field label="Minutes of content credit quoted">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <PriceInput
+                className="input" min="0" step="0.5" style={{ maxWidth: 120 }}
+                value={data.partnerProgramme?.quotedMinutes ?? 1}
+                onChange={(n) => update({
+                  partnerProgramme: { ...data.partnerProgramme, quotedMinutes: n },
+                  basePrice: minutesToPrice(n),
+                })}
+              />
+              <span style={{ fontSize: 13, color: BRAND.muted }}>
+                × {formatGBP(creditRatePerMin)}/min = <strong style={{ color: BRAND.ink }}>{formatGBP(minutesToPrice(data.partnerProgramme?.quotedMinutes ?? 1))}</strong>
+              </span>
+            </div>
+            <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
+              Sets the base price below. Edit the base price to override with a negotiated total.
+            </div>
+          </Field>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
-          <Field label="Project base price (ex VAT)" error={!basePriceOk}>
+          <Field label={isCreditOnly ? 'Project base price (ex VAT) — override' : 'Project base price (ex VAT)'} error={!basePriceOk}>
             <PriceInput className="input" value={data.basePrice} onChange={(n) => update({ basePrice: n })} />
             {data.partnerProgramme?.enabled && Number(data.basePrice) === 0 && (
               <div style={{ fontSize: 12, color: '#15803d', marginTop: 4, fontWeight: 600 }}>
@@ -1165,6 +1215,26 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                 })}
               </div>
             </Field>
+            {data.partnerProgramme.mode === 'oneoff' && (
+              <div style={{ background: '#FFFAEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', marginBottom: 12 }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    style={{ marginTop: 2 }}
+                    checked={!!data.partnerProgramme.creditOnly}
+                    onChange={(e) => update({ partnerProgramme: { ...data.partnerProgramme, creditOnly: e.target.checked } })}
+                  />
+                  <span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#92400E' }}>Credit-only proposal</span>
+                    <span style={{ display: 'block', fontSize: 12, color: '#78350F', marginTop: 2, lineHeight: 1.5 }}>
+                      Quote the deliverable as an amount of minutes instead of free text. The quoted minutes stay at the
+                      standard rate — the tier discount below applies only to the extra minutes the client adds on the
+                      proposal, encouraging them to maximise their budget.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
               <Field label={(data.partnerProgramme.mode === 'oneoff' ? 'Content credit rate' : 'Monthly subscription rate') + ' (auto-derived)'}>
                 {(() => {
@@ -1194,7 +1264,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                   );
                 })()}
               </Field>
-              <Field label="Project discount tiers">
+              <Field label={isCreditOnly ? 'Added-credit discount tiers' : 'Project discount tiers'}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                   <div>
                     <div style={{ fontSize: 11, color: '#6B7785', marginBottom: 4, fontWeight: 600 }}>Base (%)</div>

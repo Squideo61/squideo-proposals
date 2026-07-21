@@ -116,6 +116,44 @@ describe('computeProposalCheckout', () => {
     expect(r.amountGross).toBe(3375);
   });
 
+  // Credit-only proposals quote the deliverable in minutes at the standard rate.
+  // Only the EXTRA minutes the client adds on the proposal get the tier discount —
+  // the quoted work is never discounted, unlike the regular partner path above.
+  const creditOnlyProposal = {
+    ...baseProposal,
+    partnerProgramme: {
+      ...baseProposal.partnerProgramme,
+      mode: 'oneoff',
+      creditOnly: true,
+      quotedMinutes: 4,
+      extraDiscountPerCredit: 0.03,
+      maxDiscount: 0.3,
+    },
+  };
+
+  it('credit-only: quoted project stays at full price, only added minutes are discounted', () => {
+    const sig = { paymentOption: 'full', partnerSelected: true, partnerCredits: 4 };
+    const r = computeProposalCheckout(creditOnlyProposal, sig);
+    // tier for 4 added credits: 0.1 + 3*0.03 = 0.19
+    expect(r.projectExVat).toBe(5000);          // NOT 4050 — quoted work undiscounted
+    expect(r.partnerExVat).toBe(4050);          // 1250 * 0.81 * 4, added minutes discounted
+    expect(r.amountGross).toBe(10860);          // (5000 + 4050) * 1.2
+  });
+
+  it('credit-only: no credit added means no discount anywhere', () => {
+    const r = computeProposalCheckout(creditOnlyProposal, { paymentOption: 'full' });
+    expect(r.projectExVat).toBe(5000);
+    expect(r.amountGross).toBe(6000);           // 5000 * 1.2
+  });
+
+  it('credit-only: 50/50 still halves the combined project + added credit', () => {
+    const sig = { paymentOption: '5050', partnerSelected: true, partnerCredits: 1 };
+    const r = computeProposalCheckout(creditOnlyProposal, sig);
+    // project 5000 undiscounted, credit 1250*0.9=1125; (6125)*1.2=7350; half=3675
+    expect(r.isDeposit).toBe(true);
+    expect(r.amountGross).toBe(3675);
+  });
+
   it('subscription partner still forces full payment (50/50 ignored → full combined)', () => {
     const sig = { paymentOption: '5050', partnerSelected: true, partnerCredits: 1 };
     const r = computeProposalCheckout(baseProposal, sig);

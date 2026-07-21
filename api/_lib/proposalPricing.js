@@ -43,6 +43,7 @@ export function computeProposalCheckout(proposalData, signatureData) {
   const proposalVideoOptions = Array.isArray(data.videoOptions) && data.videoOptions.length
     ? data.videoOptions : null;
   let effectiveBasePrice = Number(data.basePrice) || 0;
+  let selectedOption = null;
   if (proposalVideoOptions) {
     const sel = sig.selectedVideoOption || null;
     let opt = null;
@@ -53,7 +54,8 @@ export function computeProposalCheckout(proposalData, signatureData) {
       ) || null;
     }
     // No match → the client's default selection is the first option.
-    effectiveBasePrice = Number((opt || proposalVideoOptions[0])?.price) || effectiveBasePrice;
+    selectedOption = opt || proposalVideoOptions[0] || null;
+    effectiveBasePrice = Number(selectedOption?.price) || effectiveBasePrice;
   }
 
   // --- Selected extras (prices from the proposal, matched by id) ---
@@ -95,7 +97,11 @@ export function computeProposalCheckout(proposalData, signatureData) {
   const partnerRatePerMin  = standardRatePerMin * (1 - effectiveDiscount);
   const partnerSubtotal     = partnerRatePerMin * partnerCredits;   // ex VAT (recurring)
   const partnerTotal        = partnerSubtotal * (1 + vatRate);      // gross
-  const partnerDiscount     = projectFullyDiscounted ? 0 : subtotal * effectiveDiscount;
+  // Credit-only proposals quote the deliverable in minutes at the standard rate
+  // and discount ONLY the extra minutes added on the proposal, so the project
+  // subtotal never gets a partner discount here. Mirrors ClientView.
+  const isCreditOnly = pp.mode === 'oneoff' && !!pp.creditOnly;
+  const partnerDiscount     = (projectFullyDiscounted || isCreditOnly) ? 0 : subtotal * effectiveDiscount;
   const discountedSubtotal  = subtotal - partnerDiscount;          // project ex VAT
   const discountedTotal     = discountedSubtotal * (1 + vatRate);  // gross
 
@@ -117,11 +123,19 @@ export function computeProposalCheckout(proposalData, signatureData) {
     amountGross = isDeposit ? total / 2 : total;
   }
 
+  // Minutes quoted in the main section — in credit-only mode these are content
+  // credit too, so downstream can bank base + added together.
+  const baseCreditMinutes = isCreditOnly
+    ? (Number(selectedOption?.minutes) || Number(pp.quotedMinutes) || 0)
+    : 0;
+
   return {
     vatRate,
     isDeposit,
     partnerSelected,
     partnerCredits,
+    creditOnly: isCreditOnly,
+    baseCreditMinutes,
     amountGross: round2(amountGross),
     projectExVat: round2(discountedSubtotal),
     partnerExVat: round2(partnerSubtotal),

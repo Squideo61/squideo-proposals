@@ -126,8 +126,14 @@ export function lineItemsForPartnerFirstMonth(proposal, signed, proposalNumber) 
   const partnerExVat = Number(signed?.amountBreakdown?.partnerExVat) || 0;
   const ratePerCredit = credits > 0 ? partnerExVat / credits : partnerExVat;
   const prefix = proposalNumber ? `${proposalNumber} — ` : '';
+  // A one-off credit purchase isn't a "first month", and on a credit-only
+  // proposal these are specifically the extra minutes added on top of the quote.
+  const bd = signed?.amountBreakdown || {};
+  const label = bd.creditOnly
+    ? 'Squideo Content Credit — additional minutes'
+    : (bd.oneoff ? 'Squideo Content Credit' : 'Squideo Partner Programme — first month');
   return [{
-    description: `${prefix}Squideo Partner Programme — first month (${credits} min credit${credits === 1 ? '' : 's'})`,
+    description: `${prefix}${label} (${credits} min credit${credits === 1 ? '' : 's'})`,
     quantity: credits,
     unitAmount: Number(ratePerCredit.toFixed(2)),
     taxType,

@@ -29,17 +29,25 @@ export function makeContentCreditTemplate(base) {
   delete tpl._createdAt;
   tpl.name = CONTENT_CREDIT_TEMPLATE_NAME;
   tpl.proposalTitle = tpl.proposalTitle || 'Content Credit Proposal';
+  const ratePerMin = tpl.partnerProgramme?.standardRatePerMin || 1250;
+  // Credit-only: the main section quotes an amount of minutes, and the tier
+  // discount rewards only the extra minutes added on the proposal.
+  tpl.requirement = 'Animated video content';
+  tpl.requirementSummary = '';
+  tpl.basePrice = ratePerMin;
   tpl.partnerProgramme = {
     ...(tpl.partnerProgramme || {}),
     enabled: true,
     mode: 'oneoff',
-    standardRatePerMin: tpl.partnerProgramme?.standardRatePerMin || 1250,
+    creditOnly: true,
+    quotedMinutes: 1,
+    standardRatePerMin: ratePerMin,
     // A steeper ladder than the subscription default — the whole point is to
     // reward a bigger single commitment, so the discount keeps climbing further.
     discountRate: 0.15,
     extraDiscountPerCredit: 0.03,
     maxDiscount: 0.30,
-    description: 'Content Credit lets you lock in a block of production time now and draw it down whenever you\'re ready.\n- Buy several minutes upfront at a bulk-discounted rate\n- Use it on this video, split it across smaller pieces, or save it for later\n- Credit never expires – no monthly commitment, no rush to spend\n\nWhy organisations use it:\n- Maximise a fixed budget – the more you allocate, the lower the per-minute rate\n- One approval, one Purchase Order – simpler procurement than commissioning piece by piece\n- Consistency – the same team and style across everything you make',
+    description: 'Content Credit lets you lock in a block of production time now and draw it down whenever you\'re ready.\n- Add extra minutes on top of your quote at a bulk-discounted rate\n- Use it on this content, split it across smaller pieces, or save it for later\n- You have 2 years to use your credit – no monthly commitment, no rush to spend\n\nWhy organisations use it:\n- Maximise a fixed budget – the more minutes you add, the lower the rate on them\n- One approval, one Purchase Order – simpler procurement than commissioning piece by piece\n- Consistency – the same team and style across everything you make',
   };
   // Purchase Order first: these are typically larger organisations who raise a
   // PO rather than pay by card. All three routes stay available.
@@ -99,6 +107,16 @@ export const DEFAULT_PROPOSAL = {
     // purchase of content credit for future use, priced on the same tier ladder
     // (more minutes = bigger discount) but paid once. See makeContentCreditTemplate.
     mode: 'subscription',
+    // Credit-only proposals quote the main deliverable as an amount of minutes
+    // rather than free text, and the tier discount applies ONLY to the extra
+    // minutes the client adds on the proposal — the quoted minutes stay at the
+    // standard rate. Kept as a sub-flag of mode:'oneoff' (rather than a third
+    // mode) so all the existing one-off plumbing — PO payment route, Xero credit
+    // lines, Stripe metadata, credits dashboard — keeps working untouched.
+    creditOnly: false,
+    // Minutes quoted in single-option mode. Per-option minutes live on each
+    // videoOptions entry, mirroring how price/basePrice already work.
+    quotedMinutes: 1,
     standardRatePerMin: 1250,
     discountRate: 0.15,
     extraDiscountPerCredit: 0.025,
