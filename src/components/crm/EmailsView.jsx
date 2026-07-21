@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft, Mail, Inbox, Send, FileText, Star, ShieldAlert, Trash2, Archive,
   Search, X, RefreshCw, MailOpen, Reply, ReplyAll, Forward, Paperclip,
@@ -532,7 +533,11 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
     <div style={{ padding: isMobile ? '8px 6px' : '12px 24px' }}>
       {isMobile && headerEl}
 
-      <div style={{ display: 'flex', gap: isMobile ? 0 : 18, alignItems: 'flex-start', flexDirection: isMobile ? 'column' : 'row' }}>
+      {/* alignItems must be 'stretch' on mobile: stacked as a column the cross
+          axis is horizontal, so 'flex-start' shrink-wraps each child to its
+          MAX-content width — one nowrap email snippet then made the whole
+          section wider than the phone and the page scrolled sideways. */}
+      <div style={{ display: 'flex', gap: isMobile ? 0 : 18, alignItems: isMobile ? 'stretch' : 'flex-start', flexDirection: isMobile ? 'column' : 'row' }}>
         {/* Folder sidebar — Gmail-style: Compose pinned at the top, folder list,
             then display settings pinned to the bottom of the panel. */}
         <nav style={{
@@ -1545,6 +1550,14 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
   // null | 'reply' | 'replyAll' | 'forward'.
   const [composeMode, setComposeMode] = useState(null);
 
+  // The composer opens at the foot of the thread, which on a phone is off
+  // screen when you tap Reply from the floating bar — bring it into view.
+  const composerRef = useRef(null);
+  useEffect(() => {
+    if (!composeMode || !isMobile) return;
+    composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [composeMode, isMobile]);
+
   // A reply that was in progress when the user navigated away is mirrored in the
   // store keyed by thread id (see saveThreadDraft). On (re)opening a thread,
   // restore it — reopen the composer in its saved mode with its content — so the
@@ -1643,8 +1656,11 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
 
   const gmailWeb = openRef.threadId ? `https://mail.google.com/mail/u/0/#all/${openRef.threadId}` : null;
 
+  // Room for the floating reply bar, so it never covers the last message.
+  const replyBarShowing = isMobile && !embedded && !composeMode && folder !== 'drafts';
+
   return (
-    <div>
+    <div style={replyBarShowing ? { paddingBottom: 62 } : undefined}>
       {!embedded && (
         <button onClick={onBack} className="btn-ghost" style={{ marginBottom: 10 }}><ArrowLeft size={14} /> {folderLabel}</button>
       )}
@@ -1659,7 +1675,9 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
         />
       )}
 
-      <div style={{ display: 'flex', gap: 18, flexDirection: isMobile ? 'column' : 'row', alignItems: 'flex-start' }}>
+      {/* 'stretch' on mobile — see the note on the shell above: as a column,
+          'flex-start' sizes the conversation to its widest nowrap message row. */}
+      <div style={{ display: 'flex', gap: 18, flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'flex-start' }}>
         {/* Conversation (left) */}
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Action bar — folder management (Gmail folders only). Reply /
@@ -1727,7 +1745,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
           {!loading && !error && latest && folder !== 'drafts' && (
             composeMode
               ? (
-                <div style={{ marginTop: 14 }}>
+                <div style={{ marginTop: 14 }} ref={composerRef}>
                   <EmailComposerModal
                     key={composeMode}
                     inline
@@ -1747,13 +1765,31 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                 </div>
               )
               : (
-                <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-                  {canReplyAll && (
-                    <button onClick={() => setComposeMode('replyAll')} className="btn-ghost"><ReplyAll size={15} /> Reply all</button>
-                  )}
-                  <button onClick={() => setComposeMode('reply')} className="btn-ghost"><Reply size={15} /> Reply</button>
-                  <button onClick={() => setComposeMode('forward')} className="btn-ghost"><Forward size={15} /> Forward</button>
-                </div>
+                // Phone: float the actions over the thread (above the tab bar)
+                // so Reply is one tap away wherever you are in a long
+                // conversation, instead of a scroll to the very bottom.
+                // Embedded (deal-page modal) keeps them inline — a fixed bar
+                // would escape the modal.
+                isMobile && !embedded
+                  ? createPortal(
+                    <div className="mobile-reply-bar">
+                      <button onClick={() => setComposeMode('reply')} className="btn" style={{ flex: 1, justifyContent: 'center' }}><Reply size={15} /> Reply</button>
+                      {canReplyAll && (
+                        <button onClick={() => setComposeMode('replyAll')} className="btn-ghost" title="Reply all" aria-label="Reply all" style={{ flexShrink: 0 }}><ReplyAll size={15} /></button>
+                      )}
+                      <button onClick={() => setComposeMode('forward')} className="btn-ghost" title="Forward" aria-label="Forward" style={{ flexShrink: 0 }}><Forward size={15} /></button>
+                    </div>,
+                    document.body
+                  )
+                  : (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+                      {canReplyAll && (
+                        <button onClick={() => setComposeMode('replyAll')} className="btn-ghost"><ReplyAll size={15} /> Reply all</button>
+                      )}
+                      <button onClick={() => setComposeMode('reply')} className="btn-ghost"><Reply size={15} /> Reply</button>
+                      <button onClick={() => setComposeMode('forward')} className="btn-ghost"><Forward size={15} /> Forward</button>
+                    </div>
+                  )
               )
           )}
         </div>
@@ -1803,6 +1839,56 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
     [hasHtml, message.html, message.text]
   );
 
+  const badge = (
+    <span style={{
+      flexShrink: 0, padding: '1px 5px', borderRadius: 3, fontSize: 10, fontWeight: 700,
+      background: (outbound ? '#2BB8E6' : '#16A34A') + '22', color: outbound ? '#2BB8E6' : '#16A34A',
+    }}>{outbound ? 'OUT' : 'IN'}</span>
+  );
+  const chevron = (
+    <ChevronDown size={14} color={BRAND.muted} style={{ flexShrink: 0, transition: 'transform 150ms', transform: open ? 'none' : 'rotate(-90deg)' }} />
+  );
+
+  // Phone: the desktop one-liner can't fit badge + sender + preview + full
+  // timestamp + icons, so stack it — who/when on top, preview wrapped over two
+  // lines beneath — instead of a snippet the user can only read by scrolling
+  // sideways.
+  if (isMobile) {
+    return (
+      <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden', background: 'white' }}>
+        <button
+          onClick={() => setOpen(o => !o)}
+          style={{
+            width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 4,
+            padding: '10px 12px', background: open ? '#FAFBFC' : 'white', border: 'none',
+            borderBottom: open ? '1px solid ' + BRAND.border : 'none',
+            cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            {badge}
+            <span style={{ fontWeight: 600, fontSize: 13, color: BRAND.ink, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
+            {message.tracking && (
+              <span style={{ flexShrink: 0, display: 'inline-flex' }} onClick={(e) => e.stopPropagation()}>
+                <TrackingEye tracking={message.tracking} />
+              </span>
+            )}
+            {hasAttach && <Paperclip size={13} color={BRAND.muted} style={{ flexShrink: 0 }} />}
+            <span style={{ flexShrink: 0, fontSize: 11, color: BRAND.muted }}>{formatDateShort(message.date)}</span>
+            {chevron}
+          </span>
+          {!open && (
+            <span style={{
+              fontSize: 12, color: BRAND.muted, lineHeight: 1.4, wordBreak: 'break-word',
+              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+            }}>{decodeHtmlEntities(message.snippet)}</span>
+          )}
+        </button>
+        {open && <MessageBody message={message} connected={connected} addToDealId={addToDealId} isMobile hasHtml={hasHtml} main={main} quoted={quoted} hasQuote={hasQuote} showQuoted={showQuoted} onToggleQuote={() => setShowQuoted(s => !s)} />}
+      </div>
+    );
+  }
+
   return (
     <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden', background: 'white' }}>
       <button
@@ -1813,11 +1899,8 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
           cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
         }}
       >
-        <span style={{
-          flexShrink: 0, padding: '1px 5px', borderRadius: 3, fontSize: 10, fontWeight: 700,
-          background: (outbound ? '#2BB8E6' : '#16A34A') + '22', color: outbound ? '#2BB8E6' : '#16A34A',
-        }}>{outbound ? 'OUT' : 'IN'}</span>
-        <span style={{ fontWeight: 600, fontSize: 13, color: BRAND.ink, flexShrink: 0, maxWidth: isMobile ? 120 : 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
+        {badge}
+        <span style={{ fontWeight: 600, fontSize: 13, color: BRAND.ink, flexShrink: 0, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
         {!open && <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{decodeHtmlEntities(message.snippet)}</span>}
         {/* Per-email open/click state — the eye on the right of each sent email. */}
         {message.tracking && (
@@ -1835,34 +1918,41 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
           </span>
         )}
         <span style={{ marginLeft: (message.tracking || hasAttach) ? 0 : 'auto', flexShrink: 0, fontSize: 11, color: BRAND.muted }}>{formatDateLabel(message.date)}</span>
-        <ChevronDown size={14} color={BRAND.muted} style={{ flexShrink: 0, transition: 'transform 150ms', transform: open ? 'none' : 'rotate(-90deg)' }} />
+        {chevron}
       </button>
-      {open && (
-        <div style={{ padding: isMobile ? '10px 8px' : 12 }}>
-          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-            {message.to?.length ? <div>to {message.to.join(', ')}</div> : null}
-            {message.cc?.length ? <div>cc {message.cc.join(', ')}</div> : null}
-          </div>
-          <div className="email-body" style={{ fontSize: 13.5, lineHeight: 1.6, wordBreak: 'break-word', overflowWrap: 'anywhere', maxWidth: '100%' }}>
-            {hasHtml
-              ? <EmailFrame html={main} messageId={message.id} />
-              : message.text
-                ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily: 'inherit', margin: 0, maxWidth: '100%' }}>{main}</pre>
-                : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body)</div>}
-            {hasQuote && <QuoteToggle shown={showQuoted} onToggle={() => setShowQuoted(s => !s)} />}
-            {hasQuote && showQuoted && (
-              hasHtml
-                ? <EmailFrame html={quoted} messageId={message.id} />
-                : <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily: 'inherit', margin: 0, maxWidth: '100%', color: BRAND.muted }}>{quoted}</pre>
-            )}
-          </div>
-          {message.attachments?.length > 0 && (
-            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              {message.attachments.map((a, i) => (
-                <EmailAttachmentCard key={i} att={a} messageId={message.id} connected={connected} dealId={addToDealId} />
-              ))}
-            </div>
-          )}
+      {open && <MessageBody message={message} connected={connected} addToDealId={addToDealId} isMobile={false} hasHtml={hasHtml} main={main} quoted={quoted} hasQuote={hasQuote} showQuoted={showQuoted} onToggleQuote={() => setShowQuoted(s => !s)} />}
+    </div>
+  );
+}
+
+// The expanded half of a message — recipients, sanitised body, attachments.
+// Shared by the phone and desktop layouts of MessageBlock, which differ only in
+// their collapsed header.
+function MessageBody({ message, connected, addToDealId, isMobile, hasHtml, main, quoted, hasQuote, showQuoted, onToggleQuote }) {
+  return (
+    <div style={{ padding: isMobile ? '10px 8px' : 12, minWidth: 0 }}>
+      <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+        {message.to?.length ? <div>to {message.to.join(', ')}</div> : null}
+        {message.cc?.length ? <div>cc {message.cc.join(', ')}</div> : null}
+      </div>
+      <div className="email-body" style={{ fontSize: 13.5, lineHeight: 1.6, wordBreak: 'break-word', overflowWrap: 'anywhere', maxWidth: '100%' }}>
+        {hasHtml
+          ? <EmailFrame html={main} messageId={message.id} />
+          : message.text
+            ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily: 'inherit', margin: 0, maxWidth: '100%' }}>{main}</pre>
+            : <div style={{ color: BRAND.muted, fontStyle: 'italic' }}>(no body)</div>}
+        {hasQuote && <QuoteToggle shown={showQuoted} onToggle={onToggleQuote} />}
+        {hasQuote && showQuoted && (
+          hasHtml
+            ? <EmailFrame html={quoted} messageId={message.id} />
+            : <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily: 'inherit', margin: 0, maxWidth: '100%', color: BRAND.muted }}>{quoted}</pre>
+        )}
+      </div>
+      {message.attachments?.length > 0 && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+          {message.attachments.map((a, i) => (
+            <EmailAttachmentCard key={i} att={a} messageId={message.id} connected={connected} dealId={addToDealId} />
+          ))}
         </div>
       )}
     </div>
@@ -1956,6 +2046,19 @@ function displayName(fromHeader) {
 }
 function escapeText(s) {
   return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+// Phone-width timestamp: the time for today's messages, otherwise a short date
+// ("21 Jul"). The full "21 Jul 2026, 09:48" label doesn't fit a stacked row.
+function formatDateShort(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const sameDay = d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  if (sameDay) return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString('en-GB', d.getFullYear() === now.getFullYear()
+    ? { day: 'numeric', month: 'short' }
+    : { day: 'numeric', month: 'short', year: '2-digit' });
 }
 function formatDateLabel(iso) {
   if (!iso) return '';

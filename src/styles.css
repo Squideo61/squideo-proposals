@@ -167,6 +167,26 @@ body {
      body while mounted). Height = 54px bar + the iOS home-indicator inset. */
   body.has-mobile-tabbar { padding-bottom: calc(54px + env(safe-area-inset-bottom)); }
 
+  /* Floating Reply / Reply all / Forward bar for an open conversation. Sits on
+     the viewport floor, or just above the tab bar when one is mounted, so the
+     reply action is always a tap away in a long thread. */
+  .mobile-reply-bar {
+    position: fixed;
+    left: 0; right: 0;
+    bottom: env(safe-area-inset-bottom);
+    z-index: 900;
+    display: flex;
+    gap: 8px;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(6px);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -1px 8px rgba(15, 42, 61, 0.06);
+  }
+  body.has-mobile-tabbar .mobile-reply-bar {
+    bottom: calc(54px + env(safe-area-inset-bottom));
+  }
+
   /* Swipeable boards (kanban / wide grids): each direct child becomes a
      near-full-width snap page the user pages through horizontally, instead of
      squeezing many columns onto a phone. Opt in by adding class="board-scroll". */
