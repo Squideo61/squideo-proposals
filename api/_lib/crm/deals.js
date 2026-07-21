@@ -475,6 +475,11 @@ export async function annotateDeals(rows) {
         depositPaid: planByDeal.get(r.id) === '5050' && !poRouteSet.has(r.id)
           && (paidByDeal.get(r.id) || 0) > 0.005
           && (paidByDeal.get(r.id) || 0) < (committedByDeal.get(r.id) || 0) - 0.005,
+        // Settled in full — lets the status read "Paid" rather than sitting on
+        // "Invoiced" forever. A boolean rather than the totals themselves so no
+        // new money figure is exposed (freelancers see saleStatus).
+        paidInFull: (committedByDeal.get(r.id) || 0) > 0.005
+          && (paidByDeal.get(r.id) || 0) >= (committedByDeal.get(r.id) || 0) - 0.005,
       },
       tracking: {
         tracked: proposalOpens + emailOpens > 0,
@@ -1411,6 +1416,14 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     }
     const deal = serialiseDeal(rows[0]);
     if (freelancer) { deal.value = null; deal.vatRate = null; deal.poNumber = null; deal.poReceivedAt = null; }
+    // Sale status (PO / invoiced / paid) for the proposal card's pill. Computed
+    // by the same annotateDeals the pipeline uses, so the deal page and the
+    // pipeline can never disagree. Kicked off here and awaited at the response
+    // so its queries overlap the detail work below rather than adding latency;
+    // best-effort, since a missing status is better than a 500 deal page.
+    const saleStatusPromise = annotateDeals([rows[0]])
+      .then(list => list[0]?.saleStatus || null)
+      .catch((err) => { console.warn('[deal detail] saleStatus skipped', err.message); return null; });
     // The emails query below joins on email_message_deals which is created by
     // a manual migration — self-heal so workspaces that skipped it still load
     // deals without 'relation does not exist'. Likewise deal_contacts and the
@@ -1609,6 +1622,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 
     return res.status(200).json({
       ...deal,
+      saleStatus: await saleStatusPromise,
       paymentOption,
       // Money is hidden from freelancers (credit balances + proposal pricing).
       creditProject: freelancer ? null : creditProject,

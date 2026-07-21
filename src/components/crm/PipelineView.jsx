@@ -5,6 +5,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile } from '../../utils.js';
 import { Modal, RefBadge } from '../ui.jsx';
+import { describeSaleStatus } from '../../lib/saleStatus.js';
 import { PIPELINE_STAGES } from '../../lib/stages.js';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
 import { api } from '../../api.js';
@@ -308,6 +309,7 @@ function StageRow({ stage, deals, onDrop, onOpenDeal, taskAssignee }) {
 function PipelinePill({ label, tone }) {
   const c = tone === 'green' ? { color: '#15803D', bg: '#ECFDF3' }
     : tone === 'amber' ? { color: '#B45309', bg: '#FFFBEB' }
+    : tone === 'grey' ? { color: '#475569', bg: '#F1F5F9' }
     : { color: '#0E7490', bg: '#ECFEFF' };
   return (
     <span style={{ fontSize: 9, fontWeight: 700, color: c.color, background: c.bg, padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -316,26 +318,12 @@ function PipelinePill({ label, tone }) {
   );
 }
 
-// Sale-status pills for signed/paid deals: PO route (Pending PO → PO <number>),
-// otherwise invoiced state.
+// Sale-status pills for signed/paid deals — the vocabulary lives in
+// lib/saleStatus.js so these read identically to the deal page's proposal card.
 function SaleStatusPills({ deal }) {
-  const s = deal.saleStatus;
-  if (!s || !['signed', 'paid'].includes(deal.stage)) return null;
-  if (s.isPo) {
-    return s.poReceivedAt
-      ? <PipelinePill label={`PO ${s.poNumber || ''}`.trim()} tone="green" />
-      : <PipelinePill label="Pending PO" tone="amber" />;
-  }
-  // Any deal can have a PO uploaded against it (Invoices & Payments → Upload PO),
-  // not just PO-route ones. There the PO sits alongside the invoiced state rather
-  // than replacing it — the client raised a PO *and* we still have to invoice it.
-  const poPill = s.poReceivedAt ? <PipelinePill label={`PO ${s.poNumber || ''}`.trim()} tone="green" /> : null;
-  // A 50/50 deal with the deposit in but the balance outstanding reads clearer as
-  // "Deposit paid" than the invoiced state (which looks fully settled).
-  const statusPill = s.depositPaid
-    ? <PipelinePill label="Deposit paid" tone="teal" />
-    : (s.invoiced ? <PipelinePill label="Invoiced" tone="green" /> : <PipelinePill label="Not invoiced" tone="amber" />);
-  return <>{poPill}{statusPill}</>;
+  const pills = describeSaleStatus(deal);
+  if (!pills.length) return null;
+  return <>{pills.map(p => <PipelinePill key={p.key} label={p.label} tone={p.tone} />)}</>;
 }
 
 function formatDuration(secs) {

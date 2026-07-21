@@ -8,6 +8,11 @@ import { formatGBP, formatRelativeTime, formatDuration, useIsMobile, formatPropo
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { Badge, CallLink, Modal, RefBadge } from '../ui.jsx';
 import { referenceMonth } from '../../lib/reference.js';
+import { describeSaleStatus } from '../../lib/saleStatus.js';
+
+// The shared sale-status tones rendered in the deal page's Badge language (the
+// pipeline uses its own denser pill for the same statuses).
+const SALE_TONE_COLOR = { green: 'green', amber: 'orange', teal: 'blue', grey: 'grey' };
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
 import { TaskFormModal, AssigneePicker } from './TaskFormModal.jsx';
@@ -149,6 +154,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   }
 
   const proposals = detail?.proposals || [];
+  // Post-signature status for the proposal card. Falls back to the pipeline's
+  // copy of the deal while the detail is still loading, so the pill doesn't
+  // flash in late on a page the list already knows the answer for.
+  const saleStatusPills = describeSaleStatus(
+    deal.saleStatus ? deal : { ...deal, saleStatus: state.deals[dealId]?.saleStatus },
+  );
   // Value shown on the deal card. A signed proposal's total is the *actual* sale
   // value (incl. selected extras), so it wins. Otherwise the latest *proposed*
   // value takes over — sending a proposal supersedes any manual figure, so the
@@ -570,6 +581,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   {p.signed
                     ? <Badge color="green">Signed</Badge>
                     : <Badge color="grey">Unsigned</Badge>}
+                  {/* Where a signed proposal has got to on the way to being paid
+                      — Pending PO / Pending invoice / Pending payment / Paid.
+                      Same pills the pipeline row shows, from the same source. */}
+                  {p.signed && saleStatusPills.map(sp => (
+                    <Badge key={sp.key} color={SALE_TONE_COLOR[sp.tone] || 'grey'}>{sp.label}</Badge>
+                  ))}
                 </div>
                 {(p.totalExVat ?? p.basePrice) != null && (
                   <div style={{ flexShrink: 0, textAlign: 'right', fontSize: 12.5, fontWeight: 700, color: BRAND.ink }}>
@@ -701,8 +718,11 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             onChanged={() => {
               setOrderRefresh((n) => n + 1);
               // Invoicing/paying changes the deal's sale status, which the
-              // pipeline renders as a pill from the (server-computed) deals list.
+              // pipeline renders as a pill from the (server-computed) deals list
+              // and the proposal card renders from the deal detail — refresh
+              // both, or the pill on this very page goes stale.
               actions.refreshDeals?.();
+              actions.loadDealDetail?.(dealId);
             }}
           />
         </div>
