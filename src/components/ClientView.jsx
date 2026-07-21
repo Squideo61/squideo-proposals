@@ -956,14 +956,12 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             price, so this summary row would just repeat it — only show it for
             the single-price flow, or when a manual discount needs the
             strikethrough/discounted total. */}
-        {(!videoOptions || manualDiscount > 0) && (
+        {(!videoOptions || manualDiscount > 0) && !isCreditOnly && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 16px', border: '1px solid ' + BRAND.border, borderRadius: 10, fontSize: 16, fontWeight: 700 }}>
             <span>
               {videoOptions
                 ? (videoOptions[selectedVideoOptionIdx]?.label || `Option ${selectedVideoOptionIdx + 1}`)
-                : (isCreditOnly && quotedMinutes > 0
-                    ? `${fmtMins(quotedMinutes)} of content credit`
-                    : 'Project base price')}
+                : 'Project base price'}
             </span>
             <span>
               {manualDiscount > 0 && (
@@ -980,6 +978,80 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           </div>
         )}
 
+        {/* Credit-only: the credit total sits here, right under what's included,
+            and carries the add-credit control. Extras are totalled separately
+            below so this box stays purely about credit. */}
+        {isCreditOnly && (
+          <div style={{ background: BRAND.ink, color: 'white', padding: 20, borderRadius: 10, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 18, fontWeight: 700, gap: 12, flexWrap: 'wrap' }}>
+              <span>{quotedMinutes > 0 ? `${fmtMins(quotedMinutes)} of content credit` : 'Content credit'}</span>
+              <span>
+                {formatGBP(netBasePrice)} {showVat && <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT</span>}
+              </span>
+            </div>
+
+            {data.partnerProgramme?.enabled && !signed && (
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>Add more content credit</div>
+                    <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2, lineHeight: 1.5 }}>
+                      Stretch your budget — extra minutes are discounted{partnerMaxDiscount > 0 && <>, up to {formatPct(partnerMaxDiscount)}% off</>}.
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                    {(() => {
+                      const btn = (disabled) => ({
+                        width: isMobile ? 44 : 34, height: isMobile ? 44 : 34, borderRadius: 8,
+                        border: '1px solid rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.1)',
+                        color: 'white', cursor: disabled ? 'default' : 'pointer',
+                        opacity: disabled ? 0.4 : 1, fontWeight: 700, fontSize: 18, lineHeight: 1,
+                      });
+                      return (
+                        <>
+                          <button onClick={() => setAddedCredits(partnerCredits - 1)} disabled={partnerCredits <= 0} style={btn(partnerCredits <= 0)}>−</button>
+                          <span style={{ fontWeight: 800, fontSize: 20, minWidth: 30, textAlign: 'center' }}>{partnerCredits}</span>
+                          <button onClick={() => setAddedCredits(partnerCredits + 1)} style={btn(false)}>+</button>
+                          <span style={{ fontSize: 13, opacity: 0.8 }}>{partnerCredits === 1 ? 'min' : 'mins'}</span>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+                {partnerCredits > 0 && (
+                  <div style={{ fontSize: 12.5, color: '#86EFAC', marginTop: 10, lineHeight: 1.6 }}>
+                    <strong>{formatGBP(partnerRatePerMin)}/min</strong> ({formatPct(effectiveDiscount)}% off) — you save <strong>{formatGBP(bankedSaving)}</strong>.
+                    {' '}Paid once when you sign; 2 years to use it on any future video content.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {partnerSelected && partnerCredits > 0 && (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 600, marginTop: 14 }}>
+                  <span>
+                    + Extra content credit
+                    <span style={{ opacity: 0.7, fontWeight: 500, fontSize: 13, marginLeft: 6 }}>
+                      ({partnerCredits} {partnerCredits === 1 ? 'min' : 'mins'})
+                    </span>
+                  </span>
+                  <span>{formatGBP(partnerSubtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 13, opacity: 0.7 }}>+ VAT</span>}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 17, fontWeight: 700, marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+                  <span>
+                    Total content credit
+                    <span style={{ opacity: 0.7, fontWeight: 500, fontSize: 13, marginLeft: 6 }}>
+                      ({fmtMins(quotedMinutes + partnerCredits)})
+                    </span>
+                  </span>
+                  <span>{formatGBP(netBasePrice + partnerSubtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT</span>}</span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {(() => {
         // Optional extras can be hidden entirely from the client. Still show the
         // section on an already-signed proposal that locked in selected extras,
@@ -989,6 +1061,11 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         return (
         <>
         <PageTitle>Optional Extras</PageTitle>
+        {isCreditOnly && (
+          <p style={{ fontSize: 13, lineHeight: 1.6, color: '#15803D', background: '#F0FDF4', border: '1px solid #A7F3D0', borderRadius: 8, padding: '10px 14px', margin: '0 0 12px' }}>
+            Any unused content credit can be put towards any of the extras below, at any time.
+          </p>
+        )}
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden', marginBottom: 24 }}>
           {data.optionalExtras.map((extra, i) => {
             const isSelected = !!selectedExtras[extra.id];
@@ -1260,6 +1337,30 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           </div>
         )}
 
+        {/* Credit-only already showed the credit box above, so the closing total
+            is a slim grand total that folds in whatever extras were ticked. */}
+        {isCreditOnly ? (
+          <div style={{ background: BRAND.ink, color: 'white', padding: 20, borderRadius: 10, marginBottom: 32 }}>
+            {extrasTotal > 0 && (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, opacity: 0.85 }}>
+                  <span>Content credit{partnerSelected && partnerCredits > 0 ? ` (${fmtMins(quotedMinutes + partnerCredits)})` : ''}</span>
+                  <span>{formatGBP(netBasePrice + (partnerSelected ? partnerSubtotal : 0))}{showVat && ' + VAT'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 12, opacity: 0.85 }}>
+                  <span>Optional extras</span>
+                  <span>{formatGBP(extrasTotal)}{showVat && ' + VAT'}</span>
+                </div>
+              </>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, paddingTop: extrasTotal > 0 ? 12 : 0, borderTop: extrasTotal > 0 ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
+              <span>Total</span>
+              <span>
+                {formatGBP(discountedSubtotal + (partnerSelected ? partnerSubtotal : 0))} {showVat && <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(discountedSubtotal + (partnerSelected ? partnerSubtotal : 0))} inc.</span></span>}
+              </span>
+            </div>
+          </div>
+        ) : (
         <div style={{ background: BRAND.ink, color: 'white', padding: 20, borderRadius: 10, marginBottom: 32 }}>
           {showPartnerProjectDiscount && (
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, opacity: 0.8 }}>
@@ -1279,44 +1380,6 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
               {formatGBP(showPartnerProjectDiscount ? discountedSubtotal : subtotal)} {showVat && <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.7 }}>+ VAT <span style={{ opacity: 0.55 }}>· {incVat(showPartnerProjectDiscount ? discountedSubtotal : subtotal)} inc.</span></span>}
             </span>
           </div>
-          {/* Credit-only: add credit right where the client reads the number,
-              rather than in a separate opt-in panel further up the page. */}
-          {isCreditOnly && data.partnerProgramme?.enabled && !signed && (
-            <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700 }}>Add more content credit</div>
-                  <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2, lineHeight: 1.5 }}>
-                    Stretch your budget — extra minutes are discounted{partnerMaxDiscount > 0 && <>, up to {formatPct(partnerMaxDiscount)}% off</>}.
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                  {(() => {
-                    const btn = (disabled) => ({
-                      width: isMobile ? 44 : 34, height: isMobile ? 44 : 34, borderRadius: 8,
-                      border: '1px solid rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.1)',
-                      color: 'white', cursor: disabled ? 'default' : 'pointer',
-                      opacity: disabled ? 0.4 : 1, fontWeight: 700, fontSize: 18, lineHeight: 1,
-                    });
-                    return (
-                      <>
-                        <button onClick={() => setAddedCredits(partnerCredits - 1)} disabled={partnerCredits <= 0} style={btn(partnerCredits <= 0)}>−</button>
-                        <span style={{ fontWeight: 800, fontSize: 20, minWidth: 30, textAlign: 'center' }}>{partnerCredits}</span>
-                        <button onClick={() => setAddedCredits(partnerCredits + 1)} style={btn(false)}>+</button>
-                        <span style={{ fontSize: 13, opacity: 0.8 }}>{partnerCredits === 1 ? 'min' : 'mins'}</span>
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-              {partnerCredits > 0 && (
-                <div style={{ fontSize: 12.5, color: '#86EFAC', marginTop: 10, lineHeight: 1.6 }}>
-                  <strong>{formatGBP(partnerRatePerMin)}/min</strong> ({formatPct(effectiveDiscount)}% off) — you save <strong>{formatGBP(bankedSaving)}</strong>.
-                  {' '}Paid once when you sign; 2 years to use it on any future video content.
-                </div>
-              )}
-            </div>
-          )}
           {partnerSelected && (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 600, marginTop: 6 }}>
@@ -1347,6 +1410,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             </>
           )}
         </div>
+        )}
 
         <PageTitle>Payment Options</PageTitle>
         {partnerSelected && !isOneoff && (
