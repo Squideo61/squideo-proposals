@@ -4,7 +4,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
-import { CallLink } from '../ui.jsx';
+import { CallLink, RefBadge } from '../ui.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 import { FolderTaskList } from './FolderView.jsx';
 import { LostReasonModal } from './LostReasonModal.jsx';
@@ -263,6 +263,9 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
   return (
     <>
       <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12, marginBottom: 14 }}>
+        {detail.reference && (
+          <Row><DealMetaKey>Ref</DealMetaKey><RefBadge reference={detail.reference} /></Row>
+        )}
         <Row><DealMetaKey>Stage</DealMetaKey><StageDropdown dealId={detail.id} stage={detail.stage} /></Row>
         <ValueRow dealId={detail.id} valueInfo={valueInfo} />
         {detail.ownerEmail && (

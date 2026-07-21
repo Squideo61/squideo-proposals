@@ -3,7 +3,7 @@ import { ArrowLeft, Check, ChevronDown, Clapperboard, Film, Plus, LayoutGrid, Se
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
-import { Modal } from '../ui.jsx';
+import { Modal, RefBadge } from '../ui.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
 import { api } from '../../api.js';
 import {
@@ -301,6 +301,7 @@ function VideoRow({ video, onOpen, showStage }) {
         </div>
         <div style={{ fontSize: 11, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', whiteSpace: 'nowrap' }}>
           {showStage && <StageChip phase={video.productionPhase} stage={video.productionStage} />}
+          <RefBadge reference={video.reference} size={10} />
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {[video.title, (video.companyName && video.companyName !== video.projectTitle) ? video.companyName : null].filter(Boolean).join(' · ') || '—'}
           </span>

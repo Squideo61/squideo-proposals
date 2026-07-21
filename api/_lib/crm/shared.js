@@ -2,6 +2,61 @@
 import sql from '../db.js';
 import crypto from 'crypto';
 
+// Self-heal for db/migrations/20260721_deal_reference.sql — the human-readable
+// deal reference (YYMM-NNN, also the project number) and the per-deal video
+// ordinal it extends (2607-014-01). Includes both backfills, which only touch
+// rows still NULL, so this is safe to run repeatedly. Lives here rather than in
+// deals.js because production.js needs it too and imports the other way round.
+let dealReferenceEnsured = null;
+export function ensureDealReference() {
+  if (dealReferenceEnsured) return dealReferenceEnsured;
+  dealReferenceEnsured = (async () => {
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS reference TEXT`;
+    await sql`
+      WITH numbered AS (
+        SELECT id,
+               to_char(created_at, 'YYMM') AS ym,
+               row_number() OVER (PARTITION BY to_char(created_at, 'YYMM')
+                                      ORDER BY created_at, id) AS seq
+          FROM deals
+         WHERE reference IS NULL
+      )
+      UPDATE deals d
+         SET reference = n.ym || '-' || lpad(n.seq::text, 3, '0')
+        FROM numbered n
+       WHERE d.id = n.id
+    `;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS deals_reference_idx ON deals (reference)`;
+
+    // The video half is best-effort: project_videos is created by
+    // ensureProductionSchema(), which a deals-only request never runs, so a
+    // workspace without it must still be able to list and create deals.
+    try {
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS video_number INTEGER`;
+      await sql`
+        WITH numbered AS (
+          SELECT id,
+                 row_number() OVER (PARTITION BY deal_id
+                                        ORDER BY sort_order, created_at, id) AS num
+            FROM project_videos
+           WHERE video_number IS NULL
+        )
+        UPDATE project_videos pv
+           SET video_number = n.num
+          FROM numbered n
+         WHERE pv.id = n.id
+      `;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS project_videos_number_idx ON project_videos (deal_id, video_number)`;
+    } catch (err) {
+      // Don't leave a half-applied run cached as success — the next call (by
+      // which point ensureProductionSchema may have created the table) retries.
+      dealReferenceEnsured = null;
+      console.warn('[deal reference] video_number ensure skipped', err.message);
+    }
+  })().catch((err) => { dealReferenceEnsured = null; throw err; });
+  return dealReferenceEnsured;
+}
+
 // Self-heal for db/migrations/20260519_email_message_deals.sql — the
 // message-level email/deal join table. Called by every file that reads or
 // writes the table (threads.js for the link endpoints, deals.js for the

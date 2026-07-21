@@ -53,7 +53,9 @@ export function GlobalSearch({ navigate, isMobile, hideTrigger = false, openSign
       .map((d) => {
         const company = d.companyId ? companies[d.companyId] : null;
         const contact = d.primaryContactId ? contacts[d.primaryContactId] : null;
-        const score = scoreFields([d.title, company?.name, contact?.name, contact?.email], q);
+        // Reference included so "2607-014" jumps straight to the deal — the
+        // point of a quotable number is being able to look it up.
+        const score = scoreFields([d.title, d.reference, company?.name, contact?.name, contact?.email], q);
         return score ? { score, recency: new Date(d.lastActivityAt || 0).getTime(), item: d, company } : null;
       })
       .filter(Boolean)
@@ -62,7 +64,7 @@ export function GlobalSearch({ navigate, isMobile, hideTrigger = false, openSign
       .map(({ item, company }) => ({
         type: 'deal', id: item.id, icon: Briefcase,
         title: item.title || 'Untitled deal',
-        subtitle: company?.name || null,
+        subtitle: [item.reference, company?.name].filter(Boolean).join(' · ') || null,
         go: () => navigate('deal', item.id),
       }));
 

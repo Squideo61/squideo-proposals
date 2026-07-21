@@ -4,7 +4,8 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_LABEL } from '../../lib/productionStages.js';
 import { VideoProgressBar } from './ProductionProgressBar.jsx';
-import { Modal } from '../ui.jsx';
+import { Modal, RefBadge } from '../ui.jsx';
+import { videoReference } from '../../lib/reference.js';
 
 // The project's videos + pre-paid credit balance. Each video moves through the
 // board independently and is edited on its own page (onOpenVideo); this panel
@@ -106,7 +107,7 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, hideCredi
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {videos.map(v => <VideoRow key={v.id} dealId={dealId} video={v} onOpen={() => onOpenVideo && onOpenVideo(v.id)} />)}
+          {videos.map(v => <VideoRow key={v.id} dealId={dealId} dealReference={deal.reference} video={v} onOpen={() => onOpenVideo && onOpenVideo(v.id)} />)}
         </div>
       )}
     </div>
@@ -245,7 +246,7 @@ function PanelHeader() {
   );
 }
 
-function VideoRow({ dealId, video, onOpen }) {
+function VideoRow({ dealId, dealReference, video, onOpen }) {
   const { actions, showMsg } = useStore();
   const [busy, setBusy] = useState(false);
   const stageLabel = video.productionPhase ? (STAGE_LABEL[video.productionPhase]?.[video.productionStage] || video.productionStage) : null;
@@ -279,6 +280,7 @@ function VideoRow({ dealId, video, onOpen }) {
             fontSize: 13, fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {video.title}
         </button>
+        <RefBadge reference={videoReference(dealReference, video.videoNumber)} size={10} />
 
         {stageLabel && (
           <span style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap' }}>{stageLabel}</span>

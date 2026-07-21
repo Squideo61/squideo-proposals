@@ -4,7 +4,7 @@ import { ArrowLeft, Check, ChevronDown, Plus, KanbanSquare, Eye, Mail, FileText,
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile } from '../../utils.js';
-import { Modal } from '../ui.jsx';
+import { Modal, RefBadge } from '../ui.jsx';
 import { PIPELINE_STAGES } from '../../lib/stages.js';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
 import { api } from '../../api.js';
@@ -648,6 +648,7 @@ function DealRow({ deal, onOpen, taskAssignee }) {
           <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>
             {name}
           </span>
+          <RefBadge reference={deal.reference} size={10} />
           <SaleStatusPills deal={deal} />
           {/* Next due task + last-email date inline with the title, each as its own
               distinct chip so it's obvious what they are and where one ends. */}

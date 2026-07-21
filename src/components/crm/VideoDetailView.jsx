@@ -7,6 +7,7 @@ import {
   PRODUCTION_PHASES, PHASE_BY_ID, PAYMENT_OPTION_LABEL,
   VIDEO_MILESTONES, STAGE_LABEL, VIDEO_LENGTH_OPTIONS, VIDEO_LENGTH_VALUES,
 } from '../../lib/productionStages.js';
+import { RefBadge } from '../ui.jsx';
 import { VideoProgressBar } from './ProductionProgressBar.jsx';
 import { ScheduleCard, ScheduleModal } from './ScheduleModal.jsx';
 import { DealConversation } from './DealConversation.jsx';
@@ -103,6 +104,8 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
             onSave={(v) => update({ title: v || video.title })}
             style={{ ...ctrl, fontSize: 20, fontWeight: 700, border: '1px solid transparent', padding: '4px 6px' }}
           />
+          {/* Project reference + this video's ordinal, e.g. 2607-014-01. */}
+          <RefBadge reference={video.reference} size={12} />
         </div>
         {(video.projectTitle || video.companyName) && (
           <button onClick={() => onOpenProject && video.dealId && onOpenProject(video.dealId)}

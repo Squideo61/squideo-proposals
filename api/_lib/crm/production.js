@@ -17,7 +17,7 @@ import { put, del, getDownloadUrl } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
 import { waitUntil } from '@vercel/functions';
 import sql from '../db.js';
-import { makeId, trimOrNull, numberOrNull, driveFilesEnabled } from './shared.js';
+import { makeId, trimOrNull, numberOrNull, ensureDealReference, driveFilesEnabled } from './shared.js';
 import { serialiseDeal, ensureDealFileDriveColumns, dealDriveFolder, driveErrorHint } from './deals.js';
 import { getFreshAccessToken } from './gmail.js';
 import { uploadToFolder, ensureSubfolderByPath, ensureNamedSubfolder, deleteDriveFile } from '../googleDrive.js';
@@ -79,10 +79,7 @@ const VIDEO_SELECT = (whereSql) => sql`
          d.production_start_date AS production_start_date,
          (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
             FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails,
-         (SELECT p.number_year || '-' || lpad(p.number_seq::text, 3, '0')
-            FROM proposals p
-           WHERE p.deal_id = d.id AND p.number_seq IS NOT NULL
-           ORDER BY p.number_seq ASC LIMIT 1) AS project_number,
+         d.reference AS project_number,
          (SELECT MAX(rv.version_number)
             FROM revision_versions rv
            WHERE rv.video_id = pv.revision_video_id) AS revision_round
@@ -139,6 +136,9 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
   await ensureProductionSchema();
   // The board query selects deals.drive_folder_id — make sure the column exists.
   await ensureDealFileDriveColumns();
+  // …and deals.reference / project_videos.video_number, which VIDEO_SELECT and
+  // the add-video insert below both depend on.
+  await ensureDealReference();
 
   // ── Board list + project creation ─────────────────────────────────────────
   if (!id) {
@@ -319,7 +319,11 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
   if (action === 'videos') {
     if (req.method !== 'POST') return res.status(405).end();
     const body = req.body || {};
-    const [{ next }] = await sql`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM project_videos WHERE deal_id = ${dealId}`;
+    const [{ next, next_number: nextNumber }] = await sql`
+      SELECT COALESCE(MAX(sort_order), -1) + 1 AS next,
+             COALESCE(MAX(video_number), 0) + 1 AS next_number
+        FROM project_videos WHERE deal_id = ${dealId}
+    `;
     const title = trimOrNull(body.title) || ('Video ' + (Number(next) + 1));
 
     // Credit-based deals: deduct from the single credit project.
@@ -341,9 +345,9 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     const vid = makeId('pvid');
     await sql`
       INSERT INTO project_videos
-        (id, deal_id, title, status, sort_order, production_phase, production_stage, production_stage_changed_at, created_by)
+        (id, deal_id, title, status, sort_order, video_number, production_phase, production_stage, production_stage_changed_at, created_by)
       VALUES
-        (${vid}, ${dealId}, ${title}, 'not_started', ${next}, ${FIRST_PRODUCTION.phase}, ${FIRST_PRODUCTION.stage}, NOW(), ${user.email || null})
+        (${vid}, ${dealId}, ${title}, 'not_started', ${next}, ${Number(nextNumber)}, ${FIRST_PRODUCTION.phase}, ${FIRST_PRODUCTION.stage}, NOW(), ${user.email || null})
     `;
 
     // Log the video against the credit project so it shows as a line item
@@ -1113,6 +1117,14 @@ async function sendStoryboardForReview(res, videoId, user) {
   });
 }
 
+// A video's reference is its deal's reference plus the video's own two-digit
+// ordinal: 2607-014-01. Mirrored client-side in src/lib/reference.js — keep the
+// two in step.
+export function videoReference(projectNumber, videoNumber) {
+  if (!projectNumber || videoNumber == null) return null;
+  return projectNumber + '-' + String(videoNumber).padStart(2, '0');
+}
+
 export function serialiseVideo(r) {
   const out = {
     id: r.id,
@@ -1140,7 +1152,13 @@ export function serialiseVideo(r) {
   if ('project_title' in r) out.projectTitle = r.project_title || null;
   if ('company_name' in r) out.companyName = r.company_name || null;
   if ('drive_folder_id' in r) out.driveFolderId = r.drive_folder_id || null;
-  if ('project_number' in r) out.projectNumber = r.project_number || null;
+  // Per-deal ordinal, and the full video reference it renders as when the deal's
+  // project number is to hand: 2607-014-01.
+  out.videoNumber = r.video_number == null ? null : Number(r.video_number);
+  if ('project_number' in r) {
+    out.projectNumber = r.project_number || null;
+    out.reference = videoReference(r.project_number, r.video_number);
+  }
   if ('production_entered_at' in r) out.enteredProductionAt = r.production_entered_at || null;
   if ('production_start_date' in r) out.productionStartDate = r.production_start_date || null;
   if ('revision_round' in r) out.revisionRound = r.revision_round != null ? Number(r.revision_round) : null;

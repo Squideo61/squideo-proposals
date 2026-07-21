@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { put, del, getDownloadUrl } from '@vercel/blob';
 import sql from '../db.js';
 import { isValidStage } from '../dealStage.js';
-import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureMessageDealsTable, ensureDealContactsTable, driveFilesEnabled } from './shared.js';
+import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureMessageDealsTable, ensureDealContactsTable, ensureDealReference, driveFilesEnabled } from './shared.js';
 import { serialiseTask } from './tasks.js';
 import { serialiseComment, notifyCommentMentions } from './comments.js';
 import { serialiseContact } from './contacts.js';
@@ -73,6 +73,23 @@ export function ensureDealHot() {
   dealHotEnsured = sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS hot BOOLEAN NOT NULL DEFAULT FALSE`
     .then(() => {}).catch((err) => { dealHotEnsured = null; throw err; });
   return dealHotEnsured;
+}
+
+// Allocate the next reference for a deal formed now: YYMM of today plus the
+// next free sequence in that month. Races are settled by the unique index —
+// the caller retries — so two deals created at the same instant can't collide.
+async function nextDealReference() {
+  const now = new Date();
+  const ym = String(now.getUTCFullYear() % 100).padStart(2, '0')
+           + String(now.getUTCMonth() + 1).padStart(2, '0');
+  // The regex guard doubles as a cast guard — only well-formed references
+  // reach substring()::int, so a hand-edited row can't break deal creation.
+  const [row] = await sql`
+    SELECT COALESCE(MAX(substring(reference from 6)::int), 0) + 1 AS next
+      FROM deals
+     WHERE reference ~ ${'^' + ym + '-\\d+$'}
+  `;
+  return ym + '-' + String(Number(row?.next) || 1).padStart(3, '0');
 }
 
 // Self-heal for db/migrations/20260617_deal_vat_rate.sql — a per-deal VAT rate
@@ -527,11 +544,12 @@ export async function dealLeadSource(deal) {
 }
 
 export async function dealsRoute(req, res, id, action, user, subaction = null) {
-  // Cheap (cached) self-heal so the `hot` and `vat_rate` columns are present for
-  // every list / detail SELECT * and the writes below, even before the
-  // migrations are applied.
+  // Cheap (cached) self-heal so the `hot`, `vat_rate` and `reference` columns
+  // are present for every list / detail SELECT * and the writes below, even
+  // before the migrations are applied.
   await ensureDealHot();
   await ensureDealVat();
+  await ensureDealReference();
   if (!id) {
     if (req.method === 'GET') {
       // Optional filter by stage, owner. Default: everything (Kanban renders
@@ -557,27 +575,39 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       if (!title) return res.status(400).json({ error: 'title is required' });
       const newId = body.id || makeId('deal');
       const stage = isValidStage(body.stage) ? body.stage : 'lead';
-      await sql`
-        INSERT INTO deals (id, title, company_id, primary_contact_id, owner_email, stage, value, vat_rate, expected_close_at, notes)
-        VALUES (
-          ${newId},
-          ${title},
-          ${trimOrNull(body.companyId) || null},
-          ${trimOrNull(body.primaryContactId) || null},
-          ${trimOrNull(body.ownerEmail) || user.email},
-          ${stage},
-          ${numberOrNull(body.value)},
-          ${numberOrNull(body.vatRate)},
-          ${trimOrNull(body.expectedCloseAt)},
-          ${trimOrNull(body.notes)}
-        )
-      `;
+      // Allocate the reference inside the insert retry: if two deals are created
+      // at the same moment the loser trips the unique index, re-reads the high
+      // water mark and takes the next number rather than failing the request.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await sql`
+            INSERT INTO deals (id, title, company_id, primary_contact_id, owner_email, stage, value, vat_rate, expected_close_at, notes, reference)
+            VALUES (
+              ${newId},
+              ${title},
+              ${trimOrNull(body.companyId) || null},
+              ${trimOrNull(body.primaryContactId) || null},
+              ${trimOrNull(body.ownerEmail) || user.email},
+              ${stage},
+              ${numberOrNull(body.value)},
+              ${numberOrNull(body.vatRate)},
+              ${trimOrNull(body.expectedCloseAt)},
+              ${trimOrNull(body.notes)},
+              ${await nextDealReference()}
+            )
+          `;
+          break;
+        } catch (err) {
+          const dupRef = err?.code === '23505' && String(err?.constraint || err?.detail || '').includes('reference');
+          if (!dupRef || attempt >= 4) throw err;
+        }
+      }
       await sql`
         INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
         VALUES (${newId}, 'deal_created', ${JSON.stringify({ title, stage, source: 'manual' })}, ${user.email || null})
       `;
       const rows = await sql`
-        SELECT id, title, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
+        SELECT id, title, reference, company_id, primary_contact_id, owner_email, stage, stage_changed_at,
                value, vat_rate, expected_close_at, lost_reason, notes, last_activity_at, created_at, updated_at
         FROM deals WHERE id = ${newId}
       `;
@@ -1528,7 +1558,8 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         producerEmail: v.producer_email || null,
         producerEmails: Array.isArray(v.producer_emails) && v.producer_emails.length
           ? v.producer_emails : (v.producer_email ? [v.producer_email] : []),
-        sortOrder: v.sort_order, revisionVideoId: v.revision_video_id || null,
+        sortOrder: v.sort_order, videoNumber: v.video_number == null ? null : Number(v.video_number),
+        revisionVideoId: v.revision_video_id || null,
         revisionRound: v.revision_round != null ? Number(v.revision_round) : null,
         createdAt: v.created_at, updatedAt: v.updated_at || null,
       }));
@@ -1865,6 +1896,9 @@ export function serialiseDeal(r) {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
+  // Human-readable reference (YYMM-NNN) — also the project number. Guarded like
+  // the rest so a partial select never blanks it in the cached deal.
+  if ('reference' in r) out.reference = r.reference || null;
   // Only carried on rows that select it (detail SELECT *, the PATCH returning
   // list); omitted on partial selects so the optimistic merge never blanks it.
   if ('overview_video_url' in r) out.overviewVideoUrl = r.overview_video_url || null;

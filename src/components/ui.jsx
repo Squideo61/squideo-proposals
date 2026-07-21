@@ -188,6 +188,37 @@ export function Badge({ color, children }) {
   );
 }
 
+// A deal or video reference number (2607-014 / 2607-014-01), rendered as a
+// monospace pill so it reads as an identifier you can quote back rather than as
+// prose. Click to copy — these get pasted into POs, invoices and emails.
+// Renders nothing when there's no reference, so callers needn't guard.
+export function RefBadge({ reference, size = 11, title }) {
+  const [copied, setCopied] = useState(false);
+  if (!reference) return null;
+  const copy = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    navigator.clipboard?.writeText(reference).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    }).catch(() => {});
+  };
+  return (
+    <button
+      onClick={copy}
+      title={title || (copied ? 'Copied' : 'Copy reference ' + reference)}
+      style={{
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontSize: size, fontWeight: 600, letterSpacing: 0.3,
+        color: copied ? '#2E7D32' : '#475569',
+        background: copied ? '#E8F5E9' : '#F1F5F9',
+        border: '1px solid ' + (copied ? '#A5D6A7' : 'transparent'),
+        borderRadius: 6, padding: '2px 7px', cursor: 'pointer', whiteSpace: 'nowrap',
+      }}
+    >{copied ? 'Copied' : reference}</button>
+  );
+}
+
 // `dismissible` (default true) controls the easy-close affordances: clicking the
 // backdrop and pressing Escape. Set it false for forms where an accidental close
 // would lose typed input — pair with `showClose` so there's still an explicit X

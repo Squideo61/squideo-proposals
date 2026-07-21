@@ -6,7 +6,8 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, formatDuration, useIsMobile, formatProposalNumber, decodeHtmlEntities } from '../../utils.js';
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
-import { Badge, CallLink, Modal } from '../ui.jsx';
+import { Badge, CallLink, Modal, RefBadge } from '../ui.jsx';
+import { referenceMonth } from '../../lib/reference.js';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
 import { TaskFormModal, AssigneePicker } from './TaskFormModal.jsx';
@@ -319,6 +320,9 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 16 : 24, marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', margin: '0 0 12px' }}>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>{deal.title}</h1>
+          {/* The deal's reference — also its project number once in production.
+              Sits with the title so it's quotable from the first glance. */}
+          <RefBadge reference={deal.reference} size={12} title={referenceMonth(deal.reference) ? `Deal ${deal.reference} — formed ${referenceMonth(deal.reference)}. Click to copy.` : undefined} />
           {/* "Hot" is a sales/lead warmth marker — irrelevant once the deal
               is a won project in production, so hide it there. */}
           {!productionOnly && !isProject && (

@@ -5,7 +5,7 @@
 import sql from './db.js';
 import { logDealEvent } from './dealStage.js';
 import { FIRST_PRODUCTION } from './productionStages.js';
-import { makeId } from './crm/shared.js';
+import { makeId, ensureDealReference } from './crm/shared.js';
 
 // Self-heal for db/migrations/20260522_production_board.sql and
 // 20260522_production_video_length.sql. Called by every production code path so
@@ -192,6 +192,9 @@ export async function ensureProductionSchema() {
 export async function enterProduction(dealId, { source = null, actorEmail = null } = {}) {
   if (!dealId) return { entered: false, reason: 'no-deal' };
   await ensureProductionSchema();
+  // The first video is inserted with its video_number below — after
+  // ensureProductionSchema, which is what creates project_videos.
+  await ensureDealReference();
 
   const rows = await sql`SELECT id, production_phase, title FROM deals WHERE id = ${dealId}`;
   if (!rows.length) return { entered: false, reason: 'deal-not-found' };
@@ -215,9 +218,9 @@ export async function enterProduction(dealId, { source = null, actorEmail = null
   if (!existing.length) {
     await sql`
       INSERT INTO project_videos
-        (id, deal_id, title, status, sort_order, production_phase, production_stage, production_stage_changed_at, created_by)
+        (id, deal_id, title, status, sort_order, video_number, production_phase, production_stage, production_stage_changed_at, created_by)
       VALUES
-        (${makeId('pvid')}, ${dealId}, 'Video 1', 'not_started', 0, ${phase}, ${stage}, NOW(), ${actorEmail})
+        (${makeId('pvid')}, ${dealId}, 'Video 1', 'not_started', 0, 1, ${phase}, ${stage}, NOW(), ${actorEmail})
     `;
   }
 
