@@ -807,7 +807,8 @@ function DirectorColumn({ d, month, actions, reload, showMsg }) {
       {/* Expenses. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 4 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Expenses</span>
-        <button className="btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={13} /> Add</button>
+        {/* Blue (primary): logging an expense is the main action on this card. */}
+        <button className="btn" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}><Plus size={13} /> Add</button>
       </div>
 
       {adding && <DirExpenseForm directorEmail={d.email} actions={actions} showMsg={showMsg} onDone={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} />}
