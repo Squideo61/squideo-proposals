@@ -5,7 +5,7 @@ import {
   Play, RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
 } from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
-import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice } from '../defaults.js';
+import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice, resolveExtraPricing } from '../defaults.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile, computeBaseDiscount } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
@@ -403,10 +403,20 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
     ? Number(videoOptions[selectedVideoOptionIdx]?.minutes) || 0
     : Number(data.partnerProgramme?.quotedMinutes) || 0;
 
+  // A signed proposal bills the unit price agreed at signing, so later changes to
+  // the proposal's extras (or to the pricing catalogue) can't move a signed total.
+  const signedExtraPrice = new Map();
+  for (const e of (signed?.selectedExtras || [])) {
+    if (e?.id && Number.isFinite(Number(e.price))) signedExtraPrice.set(e.id, Number(e.price));
+  }
+  const unitPriceFor = (e) => (
+    signedExtraPrice.has(e.id) ? signedExtraPrice.get(e.id) : extraUnitPrice(e, contentMinutes)
+  );
+
   const extrasTotal = data.optionalExtras.reduce((s, e) => {
     if (!selectedExtras[e.id]) return s;
     const qty = extraHasQuantity(e) ? Math.max(1, Number(getMeta(e.id).quantity) || 1) : 1;
-    return s + extraUnitPrice(e, contentMinutes) * qty;
+    return s + unitPriceFor(e) * qty;
   }, 0);
   // Simple manual discount on the base price — standard flow only. When the
   // client opts into the Partner Programme its own discount takes over and this
@@ -1091,8 +1101,8 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             const qty = qtyOn ? Math.max(1, Number(meta.quantity) || 1) : 1;
             const showVariants = qtyOn && isSelected;
             // Unit price scales with the minutes of content the proposal covers.
-            const unit = extraUnitPrice(extra, contentMinutes);
-            const scaled = extra.priceModel === 'perExtraMinute' && contentMinutes > 1;
+            const unit = unitPriceFor(extra);
+            const scaled = resolveExtraPricing(extra)?.priceModel === 'perExtraMinute' && contentMinutes > 1;
             return (
               <div key={extra.id} style={{ borderBottom: i < data.optionalExtras.length - 1 ? '1px solid ' + BRAND.border : 'none', background: isSelected ? '#F0F9FF' : 'white' }}>
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', cursor: signed ? 'default' : 'pointer' }}>

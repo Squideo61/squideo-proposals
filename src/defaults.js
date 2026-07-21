@@ -10,12 +10,43 @@ export function extraHasVariants(extra) {
   return true;
 }
 
+// Pricing behaviour for the standard extras, keyed by id.
+//
+// Every proposal, template and the admin's saved default proposal stores its OWN
+// deep copy of optionalExtras, taken at creation time — nothing merges these
+// defaults back in on load. So anything created before per-length pricing existed
+// carries extras with no pricing model at all. Rather than migrate every stored
+// row, pricing falls back to this catalogue whenever an extra doesn't declare a
+// model. An extra that HAS been configured always wins, including one explicitly
+// set to 'fixed' — which is why the builder writes 'fixed' rather than clearing
+// the field when you untick "scales with content length".
+const EXTRA_PRICING_CATALOGUE = {
+  voiceover:      { priceModel: 'perExtraMinute', perExtraMinute: 30 },
+  subtitles:      { priceModel: 'perExtraMinute', perExtraMinute: 30 },
+  translatedsubs: { priceModel: 'perExtraMinute', perExtraMinute: 30 },
+  fulltranslate:  { priceModel: 'perExtraMinute', perExtraMinute: 30 },
+  bsl:            { priceModel: 'perExtraMinute', perExtraMinute: 200 },
+  portrait:       { priceModel: 'perExtraMinute', perExtraMinute: 300 },
+  shortedit:      { priceModel: 'fixed', perVersion: true },
+  thumbnail:      { priceModel: 'fixed', perVersion: true },
+  assetpack:      { priceModel: 'fixed' },
+  priority:       { priceModel: 'fixed' },
+};
+
+// An extra with the catalogue defaults applied where it declares nothing itself.
+export function resolveExtraPricing(extra) {
+  if (!extra || extra.priceModel) return extra;
+  const fallback = EXTRA_PRICING_CATALOGUE[extra.id];
+  return fallback ? { ...extra, ...fallback } : extra;
+}
+
 // Does the client choose how many of this extra they want? True for the
 // per-language translation extras and anything flagged perVersion (short edits,
 // thumbnails) — those get a quantity stepper but no languages field.
 export function extraHasQuantity(extra) {
-  if (!extra) return false;
-  return extraHasVariants(extra) || extra.perVersion === true;
+  const e = resolveExtraPricing(extra);
+  if (!e) return false;
+  return extraHasVariants(e) || e.perVersion === true;
 }
 
 // Unit price for one of an extra, given how many minutes of content the proposal
@@ -25,10 +56,11 @@ export function extraHasQuantity(extra) {
 //                           perExtraMinute for each additional minute.
 // Quantity (languages / versions) multiplies this unit price separately.
 export function extraUnitPrice(extra, minutes) {
-  const base = Number(extra?.price) || 0;
-  if (extra?.priceModel !== 'perExtraMinute') return base;
+  const e = resolveExtraPricing(extra);
+  const base = Number(e?.price) || 0;
+  if (e?.priceModel !== 'perExtraMinute') return base;
   const mins = Math.max(1, Number(minutes) || 1);
-  return base + (mins - 1) * (Number(extra.perExtraMinute) || 0);
+  return base + (mins - 1) * (Number(e.perExtraMinute) || 0);
 }
 
 // Blueprint for the "Content Credit" proposal template — a one-off bulk credit

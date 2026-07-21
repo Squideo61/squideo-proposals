@@ -7,7 +7,7 @@ import { Field, Modal, Section } from './ui.jsx';
 import { LogoUploader } from './LogoUploader.jsx';
 import { TeamMemberEditor } from './TeamMemberEditor.jsx';
 import { ExtrasBankManager } from './ExtrasBankManager.jsx';
-import { extraHasVariants, extraUnitPrice, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
+import { extraHasVariants, extraUnitPrice, resolveExtraPricing, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 
@@ -1481,7 +1481,11 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                 minute; a per-minute extra then adds a fixed amount for each
                 additional minute of content the proposal covers. */}
             {(() => {
-              const perMin = extra.priceModel === 'perExtraMinute';
+              // Show the effective model, which for an unconfigured extra comes
+              // from the shared catalogue. Writing 'fixed' (rather than clearing
+              // priceModel) is what stops the catalogue re-applying scaling.
+              const eff = resolveExtraPricing(extra) || extra;
+              const perMin = eff.priceModel === 'perExtraMinute';
               const mins = Math.max(1, Number(contentMinutes) || 1);
               return (
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
@@ -1490,8 +1494,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                       type="checkbox"
                       checked={perMin}
                       onChange={(e) => updateExtra(i, {
-                        priceModel: e.target.checked ? 'perExtraMinute' : undefined,
-                        perExtraMinute: e.target.checked ? (extra.perExtraMinute ?? 30) : undefined,
+                        priceModel: e.target.checked ? 'perExtraMinute' : 'fixed',
+                        perExtraMinute: e.target.checked ? (eff.perExtraMinute ?? 30) : 0,
                       })}
                     />
                     Scales with content length
@@ -1501,20 +1505,20 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                       <span>+ £</span>
                       <PriceInput
                         className="input" min="0" style={{ width: 80, padding: '4px 6px' }}
-                        value={extra.perExtraMinute ?? 0}
-                        onChange={(n) => updateExtra(i, { perExtraMinute: n })}
+                        value={eff.perExtraMinute ?? 0}
+                        onChange={(n) => updateExtra(i, { priceModel: 'perExtraMinute', perExtraMinute: n })}
                       />
                       <span>per additional minute</span>
                       <span style={{ color: BRAND.ink, fontWeight: 600 }}>
-                        → {formatGBP(extraUnitPrice(extra, mins))} at {mins} min{mins === 1 ? '' : 's'}
+                        → {formatGBP(extraUnitPrice(eff, mins))} at {mins} min{mins === 1 ? '' : 's'}
                       </span>
                     </div>
                   )}
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={extra.perVersion === true}
-                      onChange={(e) => updateExtra(i, { perVersion: e.target.checked ? true : undefined })}
+                      checked={eff.perVersion === true}
+                      onChange={(e) => updateExtra(i, { priceModel: eff.priceModel || 'fixed', perVersion: e.target.checked })}
                     />
                     Client picks quantity
                   </label>

@@ -106,6 +106,51 @@ describe('computeProposalCheckout', () => {
     expect(r.amountGross).toBe(6150);
   });
 
+  // Proposals deep-copy optionalExtras at creation, so anything made before
+  // per-length pricing existed has extras with NO priceModel. Those must still
+  // scale, via the shared catalogue — otherwise every in-flight proposal would
+  // quietly charge the flat 1-minute price.
+  const legacyProposal = {
+    ...baseProposal,
+    partnerProgramme: { ...baseProposal.partnerProgramme, quotedMinutes: 8 },
+    optionalExtras: [
+      { id: 'voiceover', label: 'Professional human voiceover artist', price: 125 },
+      { id: 'portrait', label: 'Mobile-friendly 9:16 portrait version', price: 400 },
+      { id: 'shortedit', label: 'Short edit', price: 300 },
+      { id: 'custom_thing', label: 'Something bespoke', price: 90 },
+    ],
+  };
+
+  it('scales legacy extras that declare no pricing model, via the catalogue', () => {
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'voiceover' }, { id: 'portrait' }] };
+    const r = computeProposalCheckout(legacyProposal, sig);
+    // voiceover 125 + 7*30 = 335; portrait 400 + 7*300 = 2500
+    // (5000 + 335 + 2500) * 1.2 = 9402
+    expect(r.amountGross).toBe(9402);
+  });
+
+  it('honours a legacy perVersion extra from the catalogue', () => {
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'shortedit', quantity: 2 }] };
+    const r = computeProposalCheckout(legacyProposal, sig);
+    expect(r.amountGross).toBe(6720); // (5000 + 300*2) * 1.2
+  });
+
+  it('leaves unknown custom extras flat — the catalogue only covers known ids', () => {
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'custom_thing' }] };
+    const r = computeProposalCheckout(legacyProposal, sig);
+    expect(r.amountGross).toBe(6108); // (5000 + 90) * 1.2
+  });
+
+  it('an explicit fixed model beats the catalogue', () => {
+    const prop = {
+      ...legacyProposal,
+      optionalExtras: [{ id: 'voiceover', price: 125, priceModel: 'fixed' }],
+    };
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'voiceover' }] };
+    const r = computeProposalCheckout(prop, sig);
+    expect(r.amountGross).toBe(6150); // (5000 + 125) * 1.2 — not scaled
+  });
+
   it('applies a percentage discount from the proposal (not the signature)', () => {
     const prop = { ...baseProposal, discount: { type: 'percent', value: 10 } };
     const sig = { paymentOption: 'full', discountApplied: { amount: 4999 } }; // tampered — ignored

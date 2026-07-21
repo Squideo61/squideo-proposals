@@ -16,19 +16,45 @@ function extraHasVariants(extra) {
   return true;
 }
 
+// Mirror of EXTRA_PRICING_CATALOGUE in src/defaults.js. Proposals store their own
+// copy of optionalExtras, so anything created before per-length pricing existed
+// declares no model — these defaults fill that in. MUST stay in step with the
+// client catalogue or the checkout floor check would reject a correct total.
+const EXTRA_PRICING_CATALOGUE = {
+  voiceover:      { priceModel: 'perExtraMinute', perExtraMinute: 30 },
+  subtitles:      { priceModel: 'perExtraMinute', perExtraMinute: 30 },
+  translatedsubs: { priceModel: 'perExtraMinute', perExtraMinute: 30 },
+  fulltranslate:  { priceModel: 'perExtraMinute', perExtraMinute: 30 },
+  bsl:            { priceModel: 'perExtraMinute', perExtraMinute: 200 },
+  portrait:       { priceModel: 'perExtraMinute', perExtraMinute: 300 },
+  shortedit:      { priceModel: 'fixed', perVersion: true },
+  thumbnail:      { priceModel: 'fixed', perVersion: true },
+  assetpack:      { priceModel: 'fixed' },
+  priority:       { priceModel: 'fixed' },
+};
+
+// Mirror of resolveExtraPricing in src/defaults.js.
+function resolveExtraPricing(extra) {
+  if (!extra || extra.priceModel) return extra;
+  const fallback = EXTRA_PRICING_CATALOGUE[extra.id];
+  return fallback ? { ...extra, ...fallback } : extra;
+}
+
 // Mirror of extraHasQuantity in src/defaults.js.
 function extraHasQuantity(extra) {
-  if (!extra) return false;
-  return extraHasVariants(extra) || extra.perVersion === true;
+  const e = resolveExtraPricing(extra);
+  if (!e) return false;
+  return extraHasVariants(e) || e.perVersion === true;
 }
 
 // Mirror of extraUnitPrice in src/defaults.js: `price` covers the first minute,
 // then perExtraMinute is added for each additional minute of content.
 function extraUnitPrice(extra, minutes) {
-  const base = Number(extra?.price) || 0;
-  if (extra?.priceModel !== 'perExtraMinute') return base;
+  const e = resolveExtraPricing(extra);
+  const base = Number(e?.price) || 0;
+  if (e?.priceModel !== 'perExtraMinute') return base;
   const mins = Math.max(1, Number(minutes) || 1);
-  return base + (mins - 1) * (Number(extra.perExtraMinute) || 0);
+  return base + (mins - 1) * (Number(e.perExtraMinute) || 0);
 }
 
 // Mirror of computeBaseDiscount in src/utils.js.
