@@ -5,7 +5,7 @@ import {
   Play, RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
 } from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
-import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants } from '../defaults.js';
+import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice } from '../defaults.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile, computeBaseDiscount } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
@@ -396,10 +396,17 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
     ? (videoOptions[selectedVideoOptionIdx]?.price ?? data.basePrice)
     : data.basePrice;
 
+  // How many minutes of content this proposal covers. Drives per-minute extra
+  // pricing on standard proposals as well as credit-only ones — an extra like
+  // the voiceover costs more on 8 minutes of content than on 1.
+  const contentMinutes = videoOptions
+    ? Number(videoOptions[selectedVideoOptionIdx]?.minutes) || 0
+    : Number(data.partnerProgramme?.quotedMinutes) || 0;
+
   const extrasTotal = data.optionalExtras.reduce((s, e) => {
     if (!selectedExtras[e.id]) return s;
-    const qty = extraHasVariants(e) ? Math.max(1, Number(getMeta(e.id).quantity) || 1) : 1;
-    return s + e.price * qty;
+    const qty = extraHasQuantity(e) ? Math.max(1, Number(getMeta(e.id).quantity) || 1) : 1;
+    return s + extraUnitPrice(e, contentMinutes) * qty;
   }, 0);
   // Simple manual discount on the base price — standard flow only. When the
   // client opts into the Partner Programme its own discount takes over and this
@@ -428,9 +435,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   // quoted minutes are never discounted. Purely a budget-maximiser: add more
   // credit now, get a better rate on what you add.
   const isCreditOnly = isOneoff && !!data.partnerProgramme?.creditOnly;
-  const quotedMinutes = videoOptions
-    ? Number(videoOptions[selectedVideoOptionIdx]?.minutes) || 0
-    : Number(data.partnerProgramme?.quotedMinutes) || 0;
+  const quotedMinutes = contentMinutes;
   // Adding credit IS the opt-in on a credit-only proposal — there's no separate
   // "add to proposal" button, so selection tracks the stepper.
   const setAddedCredits = (n) => {
@@ -497,11 +502,22 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
       email: sigEmail,
       signatureImage: sigImage,
       signedAt: new Date().toISOString(),
+      // `price` is stored as the AGREED unit price (already scaled for the
+      // proposal's minutes), because Xero and the invoice builders bill straight
+      // off these lines. listPrice keeps the unscaled figure for reference.
       selectedExtras: data.optionalExtras
         .filter((e) => selectedExtras[e.id])
-        .map((e) => extraHasVariants(e)
-          ? { ...e, variantsEnabled: true, quantity: Math.max(1, Number(getMeta(e.id).quantity) || 1), languages: getMeta(e.id).languages || '' }
-          : e),
+        .map((e) => {
+          const unit = extraUnitPrice(e, contentMinutes);
+          const base = { ...e, price: unit, listPrice: Number(e.price) || 0, contentMinutes };
+          return extraHasQuantity(e)
+            ? {
+                ...base,
+                ...(extraHasVariants(e) ? { variantsEnabled: true, languages: getMeta(e.id).languages || '' } : {}),
+                quantity: Math.max(1, Number(getMeta(e.id).quantity) || 1),
+              }
+            : base;
+        }),
       ...(videoOptions ? { selectedVideoOption: videoOptions[selectedVideoOptionIdx] } : {}),
       partnerSelected,
       partnerCredits,
@@ -1070,9 +1086,13 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           {data.optionalExtras.map((extra, i) => {
             const isSelected = !!selectedExtras[extra.id];
             const meta = getMeta(extra.id);
-            const variantsOn = extraHasVariants(extra);
-            const qty = variantsOn ? Math.max(1, Number(meta.quantity) || 1) : 1;
-            const showVariants = variantsOn && isSelected;
+            const languagesOn = extraHasVariants(extra);
+            const qtyOn = extraHasQuantity(extra);
+            const qty = qtyOn ? Math.max(1, Number(meta.quantity) || 1) : 1;
+            const showVariants = qtyOn && isSelected;
+            // Unit price scales with the minutes of content the proposal covers.
+            const unit = extraUnitPrice(extra, contentMinutes);
+            const scaled = extra.priceModel === 'perExtraMinute' && contentMinutes > 1;
             return (
               <div key={extra.id} style={{ borderBottom: i < data.optionalExtras.length - 1 ? '1px solid ' + BRAND.border : 'none', background: isSelected ? '#F0F9FF' : 'white' }}>
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', cursor: signed ? 'default' : 'pointer' }}>
@@ -1082,18 +1102,24 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                     {extra.description && <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.5, marginTop: 4 }}>{extra.description}</div>}
                   </div>
                   <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0, textAlign: 'right' }}>
-                    {variantsOn
-                      ? (isSelected
-                          ? <>{formatGBP(extra.price * qty)}<div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>{formatGBP(extra.price)} × {qty}</div></>
-                          : <>{formatGBP(extra.price)}<div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>per language</div></>)
-                      : formatGBP(extra.price)}
+                    {formatGBP(unit * qty)}
+                    {(qtyOn || scaled) && (
+                      <div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>
+                        {qtyOn && isSelected
+                          ? <>{formatGBP(unit)} × {qty}</>
+                          : (qtyOn ? (languagesOn ? 'per language' : 'each') : null)}
+                        {scaled && (
+                          <div>for {fmtMins(contentMinutes)}</div>
+                        )}
+                      </div>
+                    )}
                   </span>
                 </label>
                 {showVariants && (
                   <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', padding: '0 16px 14px 44px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontSize: 12, color: BRAND.muted }}>How many languages?</span>
-                      <button type="button" disabled={!!signed || qty <= 1} onClick={() => setMeta(extra.id, { quantity: qty - 1 })} className="btn-icon" aria-label="Decrease languages">−</button>
+                      <span style={{ fontSize: 12, color: BRAND.muted }}>{languagesOn ? 'How many languages?' : 'How many?'}</span>
+                      <button type="button" disabled={!!signed || qty <= 1} onClick={() => setMeta(extra.id, { quantity: qty - 1 })} className="btn-icon" aria-label="Decrease quantity">−</button>
                       <input
                         type="number"
                         min={1}
@@ -1103,17 +1129,19 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                         className="input"
                         style={{ width: 56, textAlign: 'center', padding: '4px 6px' }}
                       />
-                      <button type="button" disabled={!!signed} onClick={() => setMeta(extra.id, { quantity: qty + 1 })} className="btn-icon" aria-label="Increase languages">+</button>
+                      <button type="button" disabled={!!signed} onClick={() => setMeta(extra.id, { quantity: qty + 1 })} className="btn-icon" aria-label="Increase quantity">+</button>
                     </div>
-                    <input
-                      type="text"
-                      placeholder="Which languages? (optional, e.g. French, German, Spanish)"
-                      value={meta.languages || ''}
-                      disabled={!!signed}
-                      onChange={(e) => setMeta(extra.id, { languages: e.target.value })}
-                      className="input"
-                      style={{ flex: '1 1 240px', minWidth: 200, fontSize: 13 }}
-                    />
+                    {languagesOn && (
+                      <input
+                        type="text"
+                        placeholder="Which languages? (optional, e.g. French, German, Spanish)"
+                        value={meta.languages || ''}
+                        disabled={!!signed}
+                        onChange={(e) => setMeta(extra.id, { languages: e.target.value })}
+                        className="input"
+                        style={{ flex: '1 1 240px', minWidth: 200, fontSize: 13 }}
+                      />
+                    )}
                   </div>
                 )}
               </div>

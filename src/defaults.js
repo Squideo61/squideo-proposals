@@ -1,12 +1,34 @@
 import { CONFIG } from './theme.js';
 export { SQUIDEO_LOGO } from './_logo_tmp.js';
 
+// "Which languages?" free-text — only meaningful for the translation extras.
 export const VARIANT_ELIGIBLE_IDS = new Set(['translatedsubs', 'fulltranslate']);
 export function extraHasVariants(extra) {
   if (!extra) return false;
   if (!VARIANT_ELIGIBLE_IDS.has(extra.id)) return false;
   if (typeof extra.variantsEnabled === 'boolean') return extra.variantsEnabled;
   return true;
+}
+
+// Does the client choose how many of this extra they want? True for the
+// per-language translation extras and anything flagged perVersion (short edits,
+// thumbnails) — those get a quantity stepper but no languages field.
+export function extraHasQuantity(extra) {
+  if (!extra) return false;
+  return extraHasVariants(extra) || extra.perVersion === true;
+}
+
+// Unit price for one of an extra, given how many minutes of content the proposal
+// covers. Two models:
+//  · fixed (default)      — price as entered, duration-independent.
+//  · perExtraMinute       — price covers the first minute, then adds
+//                           perExtraMinute for each additional minute.
+// Quantity (languages / versions) multiplies this unit price separately.
+export function extraUnitPrice(extra, minutes) {
+  const base = Number(extra?.price) || 0;
+  if (extra?.priceModel !== 'perExtraMinute') return base;
+  const mins = Math.max(1, Number(minutes) || 1);
+  return base + (mins - 1) * (Number(extra.perExtraMinute) || 0);
 }
 
 // Blueprint for the "Content Credit" proposal template — a one-off bulk credit
@@ -123,18 +145,19 @@ export const DEFAULT_PROPOSAL = {
     maxDiscount: 0.20,
     description: 'Content credit is a pre-agreed way to allocate budget to ongoing video production.\n- Spend all credits on a single piece\n- Split credits across several smaller pieces\n- Roll credits forward for a larger video later\n\nWhy it\'s better:\n- More cost-effective – less procurement/admin each time\n- Faster delivery – streamlined production process utilising reserved capacity\n- Consistency – the same style can be reused and extended'
   },
+  // price is always the cost covering the first minute. Extras on the
+  // perExtraMinute model add perExtraMinute for each additional minute of
+  // content; perVersion extras let the client pick a quantity instead.
   optionalExtras: [
-    { id: 'voiceover', label: 'Professional human voiceover artist', price: 125, description: 'Partner artists in a variety of styles to match your messaging.' },
-    { id: 'shortedit', label: 'Short edit - cut from main content', price: 300, description: 'Ideal where attention spans are lowest. Cost is per edit.' },
-    { id: 'subtitles', label: 'Hard-coded English subtitled version', price: 125, description: 'Subtitles burned into the video for guaranteed accuracy.' },
-    { id: 'translatedsubs', label: 'Professionally translated subtitles', price: 200, description: 'Available in over 100 languages. Cost is per language.', variantsEnabled: true },
-    { id: 'fulltranslate', label: 'Fully translated version', price: 550, description: 'Translation, native voiceover, all on-screen text synced.', variantsEnabled: true },
-    { id: 'bsl', label: 'BSL (British Sign Language) version', price: 550, description: 'Includes professional sign artist overlay.' },
-    { id: 'portrait', label: 'Mobile-friendly 9:16 portrait version', price: 400, description: 'For Instagram reels, TikTok, Snapchat.' },
-    { id: 'thumbnail', label: 'Video thumbnail imagery', price: 40, description: 'Static thumbnail to maximise click-through.' },
+    { id: 'voiceover', label: 'Professional human voiceover artist', price: 125, priceModel: 'perExtraMinute', perExtraMinute: 30, description: 'Partner artists in a variety of styles to match your messaging.' },
+    { id: 'shortedit', label: 'Short edit - cut from main content', price: 300, perVersion: true, description: 'Ideal where attention spans are lowest. Cost is per edit.' },
+    { id: 'subtitles', label: 'Hard-coded English subtitled version', price: 125, priceModel: 'perExtraMinute', perExtraMinute: 30, description: 'Subtitles burned into the video for guaranteed accuracy.' },
+    { id: 'translatedsubs', label: 'Translated Subtitles', price: 200, priceModel: 'perExtraMinute', perExtraMinute: 30, description: 'Available in over 100 languages. Cost is per language.', variantsEnabled: true },
+    { id: 'fulltranslate', label: 'Fully translated version', price: 550, priceModel: 'perExtraMinute', perExtraMinute: 30, description: 'Translation, native voiceover, all on-screen text synced. Cost is per language.', variantsEnabled: true },
+    { id: 'bsl', label: 'BSL (British Sign Language) version', price: 550, priceModel: 'perExtraMinute', perExtraMinute: 200, description: 'Includes professional sign artist overlay.' },
+    { id: 'portrait', label: 'Mobile-friendly 9:16 portrait version', price: 400, priceModel: 'perExtraMinute', perExtraMinute: 300, description: 'For Instagram reels, TikTok, Snapchat.' },
+    { id: 'thumbnail', label: 'Video thumbnail imagery', price: 40, perVersion: true, description: 'Static thumbnail to maximise click-through.' },
     { id: 'assetpack', label: 'Bespoke asset pack', price: 500, description: 'Vector assets for unrestricted use. Adds 7 days to turnaround.' },
-    { id: 'valuepack', label: 'Extras value pack - save 30%', price: 675.50, description: 'Portrait, short, subtitled and thumbnail bundled at 30% discount.' },
-    { id: 'additional', label: 'Additional video at 25% discount', price: 937.50, description: 'Additional video at 25% off. Must be paid upfront.' },
     { id: 'priority', label: 'Priority delivery - 4 week turnaround', price: 595, description: 'Prioritises your project in our schedule.' }
   ],
   processVideoUrl: 'https://vimeo.com/625502459',

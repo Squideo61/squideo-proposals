@@ -1,4 +1,4 @@
-import { SQUIDEO_LOGO, extraHasVariants } from '../defaults.js';
+import { SQUIDEO_LOGO, extraHasVariants, extraHasQuantity, extraUnitPrice } from '../defaults.js';
 import { CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { formatGBP, computeBaseDiscount } from '../utils.js';
 
@@ -92,12 +92,18 @@ export function printOptionsForSigned(signed, payment) {
 
 function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedExtrasMeta = {}, paymentOption = '5050', partnerSelected = false, signed = null, payment = null } = {}) {
   const getQty = (e) => {
-    if (!extraHasVariants(e)) return 1;
+    if (!extraHasQuantity(e)) return 1;
     return Math.max(1, Number(selectedExtrasMeta[e.id]?.quantity) || 1);
   };
+  // Extras that scale with content length are priced off the minutes this
+  // proposal covers, mirroring ClientView.
+  const printMinutes = (data.videoOptions || []).length > 0
+    ? Number(signed?.selectedVideoOption?.minutes ?? data.videoOptions[0]?.minutes) || 0
+    : Number(data.partnerProgramme?.quotedMinutes) || 0;
+  const getUnit = (e) => extraUnitPrice(e, printMinutes);
   const extrasTotal = data.optionalExtras.reduce((s, e) => {
     if (!selectedExtras[e.id]) return s;
-    return s + e.price * getQty(e);
+    return s + getUnit(e) * getQty(e);
   }, 0);
   // Simple manual discount on the base price — standard flow only. Ignored when
   // the client is on the Partner Programme. Locked into signed.discountApplied.
@@ -181,18 +187,19 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       ? `<input type="checkbox" ${checked ? 'checked' : ''} style="margin-top:2px;flex-shrink:0;" />`
       : `<div style="width:14px;height:14px;border:2px solid #C7CFD8;border-radius:3px;flex-shrink:0;background:${checked ? '#2BB8E6' : 'white'};"></div>`;
     const qty = getQty(e);
+    const unit = getUnit(e);
     const languages = selectedExtrasMeta[e.id]?.languages || '';
-    const showVariantSummary = extraHasVariants(e) && checked;
+    const showVariantSummary = extraHasQuantity(e) && checked;
     const labelExtra = showVariantSummary && qty > 1 ? ` <span style="color:#6B7785;font-weight:500;">× ${qty}</span>` : '';
     const languagesLine = showVariantSummary && languages
       ? `<div style="font-size:12px;color:#6B7785;margin-top:2px;">Languages: ${esc(languages)}</div>`
       : '';
     const priceCell = showVariantSummary
       ? `<div style="text-align:right;white-space:nowrap;">
-           <div style="font-weight:600;">${formatGBP(e.price * qty)}</div>
-           <div style="font-size:11px;color:#6B7785;font-weight:500;">${formatGBP(e.price)} × ${qty}</div>
+           <div style="font-weight:600;">${formatGBP(unit * qty)}</div>
+           <div style="font-size:11px;color:#6B7785;font-weight:500;">${formatGBP(unit)} × ${qty}</div>
          </div>`
-      : `<div style="font-weight:600;white-space:nowrap;">${formatGBP(e.price)}</div>`;
+      : `<div style="font-weight:600;white-space:nowrap;">${formatGBP(unit)}</div>`;
     return `
       <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #E5E9EE;font-size:13px;">
         ${box}

@@ -57,6 +57,55 @@ describe('computeProposalCheckout', () => {
     expect(r.amountGross).toBe(6720);
   });
 
+  // Per-minute extras: `price` covers the first minute, then perExtraMinute is
+  // added for each additional minute of content the proposal covers.
+  const perMinProposal = {
+    ...baseProposal,
+    partnerProgramme: { ...baseProposal.partnerProgramme, quotedMinutes: 8 },
+    optionalExtras: [
+      { id: 'voiceover', price: 125, priceModel: 'perExtraMinute', perExtraMinute: 30 },
+      { id: 'translatedsubs', price: 200, priceModel: 'perExtraMinute', perExtraMinute: 30, variantsEnabled: true },
+      { id: 'shortedit', price: 300, perVersion: true },
+      { id: 'assetpack', price: 500 },
+    ],
+  };
+
+  it('scales a per-minute extra by the minutes the proposal covers', () => {
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'voiceover' }] };
+    const r = computeProposalCheckout(perMinProposal, sig);
+    // voiceover on 8 min = 125 + 7*30 = 335; (5000 + 335) * 1.2 = 6402
+    expect(r.amountGross).toBe(6402);
+  });
+
+  it('scales a per-minute extra and then multiplies by quantity', () => {
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'translatedsubs', quantity: 3 }] };
+    const r = computeProposalCheckout(perMinProposal, sig);
+    // unit = 200 + 7*30 = 410; x3 = 1230; (5000 + 1230) * 1.2 = 7476
+    expect(r.amountGross).toBe(7476);
+  });
+
+  it('charges perVersion extras by quantity without scaling by minutes', () => {
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'shortedit', quantity: 2 }] };
+    const r = computeProposalCheckout(perMinProposal, sig);
+    // 300 * 2 = 600 regardless of the 8 minutes; (5000 + 600) * 1.2 = 6720
+    expect(r.amountGross).toBe(6720);
+  });
+
+  it('leaves fixed extras alone however long the content is', () => {
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'assetpack', quantity: 5 }] };
+    const r = computeProposalCheckout(perMinProposal, sig);
+    // fixed and not perVersion → quantity ignored; (5000 + 500) * 1.2 = 6600
+    expect(r.amountGross).toBe(6600);
+  });
+
+  it('treats a proposal with no minutes set as a single minute', () => {
+    const noMins = { ...perMinProposal, partnerProgramme: { ...baseProposal.partnerProgramme } };
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'voiceover' }] };
+    const r = computeProposalCheckout(noMins, sig);
+    // no scaling → base 125; (5000 + 125) * 1.2 = 6150
+    expect(r.amountGross).toBe(6150);
+  });
+
   it('applies a percentage discount from the proposal (not the signature)', () => {
     const prop = { ...baseProposal, discount: { type: 'percent', value: 10 } };
     const sig = { paymentOption: 'full', discountApplied: { amount: 4999 } }; // tampered — ignored

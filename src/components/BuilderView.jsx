@@ -7,7 +7,7 @@ import { Field, Modal, Section } from './ui.jsx';
 import { LogoUploader } from './LogoUploader.jsx';
 import { TeamMemberEditor } from './TeamMemberEditor.jsx';
 import { ExtrasBankManager } from './ExtrasBankManager.jsx';
-import { extraHasVariants, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
+import { extraHasVariants, extraUnitPrice, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 
@@ -415,6 +415,11 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
     && data.partnerProgramme?.creditOnly);
   const creditRatePerMin = Number(data.partnerProgramme?.standardRatePerMin) || Number(data.basePrice) || 0;
   const minutesToPrice = (n) => Math.round((Number(n) || 0) * creditRatePerMin * 100) / 100;
+  // Minutes of content the proposal covers — previews what length-scaled extras
+  // will actually cost. Option mode uses the first option as the sample.
+  const contentMinutes = (data.videoOptions || []).length > 0
+    ? Number(data.videoOptions[0]?.minutes) || 0
+    : Number(data.partnerProgramme?.quotedMinutes) || 0;
 
   const basePriceOk = data.partnerProgramme?.enabled
     ? Number(data.basePrice) >= 0
@@ -791,27 +796,29 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                     }}
                   />
                 </Field>
-                {isCreditOnly && (
-                  <Field label="Minutes of content credit">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <PriceInput
-                        className="input" min="0" step="0.5" style={{ maxWidth: 120 }}
-                        value={opt.minutes ?? 1}
-                        onChange={(n) => {
-                          const next = [...data.videoOptions];
-                          next[i] = { ...next[i], minutes: n, price: minutesToPrice(n) };
-                          update({ videoOptions: next });
-                        }}
-                      />
+                <Field label={isCreditOnly ? 'Minutes of content credit' : 'Minutes of content'}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <PriceInput
+                      className="input" min="0" step="0.5" style={{ maxWidth: 120 }}
+                      value={opt.minutes ?? 1}
+                      onChange={(n) => {
+                        const next = [...data.videoOptions];
+                        next[i] = { ...next[i], minutes: n, ...(isCreditOnly ? { price: minutesToPrice(n) } : {}) };
+                        update({ videoOptions: next });
+                      }}
+                    />
+                    {isCreditOnly && (
                       <span style={{ fontSize: 13, color: BRAND.muted }}>
                         × {formatGBP(creditRatePerMin)}/min = <strong style={{ color: BRAND.ink }}>{formatGBP(minutesToPrice(opt.minutes ?? 1))}</strong>
                       </span>
-                    </div>
-                    <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
-                      Sets the price below. Edit the price to override with a negotiated total.
-                    </div>
-                  </Field>
-                )}
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
+                    {isCreditOnly
+                      ? 'Sets the price below. Edit the price to override with a negotiated total.'
+                      : 'Used to price extras that scale with content length.'}
+                  </div>
+                </Field>
                 <Field label={isCreditOnly ? 'Price (ex VAT) — override' : 'Price (ex VAT)'}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ fontSize: 13, color: BRAND.muted }}>£</span>
@@ -1023,23 +1030,30 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         collapsedHint={sectionMeta.find(s => s.id === 'pricing')?.hint}
         {...sectionProps('pricing')}
       >
-        {isCreditOnly && (data.videoOptions || []).length === 0 && (
-          <Field label="Minutes of content credit quoted">
+        {/* Minutes of content. On a Content Credit proposal this also prices the
+            quote (minutes × rate); on a standard proposal it's just the figure
+            that per-minute extras scale off. */}
+        {(data.videoOptions || []).length === 0 && (
+          <Field label={isCreditOnly ? 'Minutes of content credit quoted' : 'Minutes of content this proposal covers'}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <PriceInput
                 className="input" min="0" step="0.5" style={{ maxWidth: 120 }}
                 value={data.partnerProgramme?.quotedMinutes ?? 1}
                 onChange={(n) => update({
                   partnerProgramme: { ...data.partnerProgramme, quotedMinutes: n },
-                  basePrice: minutesToPrice(n),
+                  ...(isCreditOnly ? { basePrice: minutesToPrice(n) } : {}),
                 })}
               />
-              <span style={{ fontSize: 13, color: BRAND.muted }}>
-                × {formatGBP(creditRatePerMin)}/min = <strong style={{ color: BRAND.ink }}>{formatGBP(minutesToPrice(data.partnerProgramme?.quotedMinutes ?? 1))}</strong>
-              </span>
+              {isCreditOnly && (
+                <span style={{ fontSize: 13, color: BRAND.muted }}>
+                  × {formatGBP(creditRatePerMin)}/min = <strong style={{ color: BRAND.ink }}>{formatGBP(minutesToPrice(data.partnerProgramme?.quotedMinutes ?? 1))}</strong>
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
-              Sets the base price below. Edit the base price to override with a negotiated total.
+              {isCreditOnly
+                ? 'Sets the base price below. Edit the base price to override with a negotiated total. Extras that scale with length also use this figure.'
+                : "Doesn't change the base price — it's what extras priced per additional minute (voiceover, subtitles, portrait…) scale off."}
             </div>
           </Field>
         )}
@@ -1462,17 +1476,59 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               <button onClick={() => update({ optionalExtras: data.optionalExtras.filter((_, idx) => idx !== i) })} aria-label="Remove extra" className="btn-icon"><X size={14} /></button>
             </div>
             <textarea className="input" style={{ minHeight: 50, fontSize: 13 }} value={extra.description || ''} onChange={(e) => updateExtra(i, { description: e.target.value })} placeholder="Description shown to client" />
-            {VARIANT_ELIGIBLE_IDS.has(extra.id) && (() => {
-              const variantsOn = extraHasVariants(extra);
+
+            {/* How this extra scales. The price above always covers the first
+                minute; a per-minute extra then adds a fixed amount for each
+                additional minute of content the proposal covers. */}
+            {(() => {
+              const perMin = extra.priceModel === 'perExtraMinute';
+              const mins = Math.max(1, Number(contentMinutes) || 1);
               return (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={variantsOn}
-                    onChange={(e) => updateExtra(i, { variantsEnabled: e.target.checked })}
-                  />
-                  Per-language pricing {variantsOn && <span style={{ color: BRAND.muted }}>— price above is charged per language</span>}
-                </label>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={perMin}
+                      onChange={(e) => updateExtra(i, {
+                        priceModel: e.target.checked ? 'perExtraMinute' : undefined,
+                        perExtraMinute: e.target.checked ? (extra.perExtraMinute ?? 30) : undefined,
+                      })}
+                    />
+                    Scales with content length
+                  </label>
+                  {perMin && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.muted }}>
+                      <span>+ £</span>
+                      <PriceInput
+                        className="input" min="0" style={{ width: 80, padding: '4px 6px' }}
+                        value={extra.perExtraMinute ?? 0}
+                        onChange={(n) => updateExtra(i, { perExtraMinute: n })}
+                      />
+                      <span>per additional minute</span>
+                      <span style={{ color: BRAND.ink, fontWeight: 600 }}>
+                        → {formatGBP(extraUnitPrice(extra, mins))} at {mins} min{mins === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                  )}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={extra.perVersion === true}
+                      onChange={(e) => updateExtra(i, { perVersion: e.target.checked ? true : undefined })}
+                    />
+                    Client picks quantity
+                  </label>
+                  {VARIANT_ELIGIBLE_IDS.has(extra.id) && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={extraHasVariants(extra)}
+                        onChange={(e) => updateExtra(i, { variantsEnabled: e.target.checked })}
+                      />
+                      Per-language
+                    </label>
+                  )}
+                </div>
               );
             })()}
           </div>

@@ -16,6 +16,21 @@ function extraHasVariants(extra) {
   return true;
 }
 
+// Mirror of extraHasQuantity in src/defaults.js.
+function extraHasQuantity(extra) {
+  if (!extra) return false;
+  return extraHasVariants(extra) || extra.perVersion === true;
+}
+
+// Mirror of extraUnitPrice in src/defaults.js: `price` covers the first minute,
+// then perExtraMinute is added for each additional minute of content.
+function extraUnitPrice(extra, minutes) {
+  const base = Number(extra?.price) || 0;
+  if (extra?.priceModel !== 'perExtraMinute') return base;
+  const mins = Math.max(1, Number(minutes) || 1);
+  return base + (mins - 1) * (Number(extra.perExtraMinute) || 0);
+}
+
 // Mirror of computeBaseDiscount in src/utils.js.
 function computeBaseDiscount(basePrice, discount) {
   const v = Number(discount?.value) || 0;
@@ -62,12 +77,17 @@ export function computeProposalCheckout(proposalData, signatureData) {
   const proposalExtras = Array.isArray(data.optionalExtras) ? data.optionalExtras : [];
   const extrasById = new Map(proposalExtras.map(e => [e.id, e]));
   const selectedExtras = Array.isArray(sig.selectedExtras) ? sig.selectedExtras : [];
+  // Minutes of content the proposal covers — from the selected option, else the
+  // proposal-level figure. Per-minute extras scale off this, and it comes from
+  // the PROPOSAL (never the signature) so a tampered figure can't cut the price.
+  const contentMinutes = Number(selectedOption?.minutes) || Number(data.partnerProgramme?.quotedMinutes) || 0;
+
   let extrasTotal = 0;
   for (const selRaw of selectedExtras) {
     const e = extrasById.get(selRaw?.id);
     if (!e) continue; // a selection not present in the proposal can't be charged
-    const qty = extraHasVariants(e) ? Math.max(1, Number(selRaw.quantity) || 1) : 1;
-    extrasTotal += (Number(e.price) || 0) * qty;
+    const qty = extraHasQuantity(e) ? Math.max(1, Number(selRaw.quantity) || 1) : 1;
+    extrasTotal += extraUnitPrice(e, contentMinutes) * qty;
   }
 
   const partnerSelected = sig.partnerSelected === true;
@@ -125,9 +145,7 @@ export function computeProposalCheckout(proposalData, signatureData) {
 
   // Minutes quoted in the main section — in credit-only mode these are content
   // credit too, so downstream can bank base + added together.
-  const baseCreditMinutes = isCreditOnly
-    ? (Number(selectedOption?.minutes) || Number(pp.quotedMinutes) || 0)
-    : 0;
+  const baseCreditMinutes = isCreditOnly ? contentMinutes : 0;
 
   return {
     vatRate,
