@@ -17,6 +17,14 @@ const WON_STAGES = new Set(['signed', 'paid', 'long_term']);
 
 const STAGE_LABEL = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s.label]));
 
+// A resolved thread→deal link carries the title and stage as they were when the
+// association was cached, and the cache is only dropped on attach/detach — so a
+// renamed deal would show its old name here until a refresh. Read both through
+// the live deal cache instead, falling back to the link for a deal that isn't
+// in it (the resolver can return deals the current view hasn't loaded).
+const linkTitle = (state, link) => state.deals?.[link.dealId]?.title || link.title;
+const linkStage = (state, link) => state.deals?.[link.dealId]?.stage || link.stage;
+
 // The deal-context panel shown on the right of an open conversation — the
 // in-app twin of the Chrome extension's Gmail sidebar. Tells you which deal(s)
 // a thread is on (or suggests/lets you attach one) and surfaces the deal's
@@ -90,7 +98,7 @@ function LinkedView({ linked, gmailThreadId, counterpartyEmail, onOpenDeal, onOp
       <Label>This thread is on</Label>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 14px' }}>
         {linked.map(d => (
-          <DealChip key={d.dealId} title={d.title} stage={state.deals?.[d.dealId]?.stage || d.stage} onRemove={() => detach(d.dealId)} disabled={busy} />
+          <DealChip key={d.dealId} title={linkTitle(state, d)} stage={linkStage(state, d)} onRemove={() => detach(d.dealId)} disabled={busy} />
         ))}
       </div>
 
@@ -119,7 +127,7 @@ function LinkedView({ linked, gmailThreadId, counterpartyEmail, onOpenDeal, onOp
 }
 
 function SuggestedView({ suggested, gmailThreadId, counterpartyEmail, onOpenDeal }) {
-  const { actions, showMsg } = useStore();
+  const { state, actions, showMsg } = useStore();
   const [busy, setBusy] = useState(false);
 
   const attach = async (dealId) => {
@@ -135,8 +143,8 @@ function SuggestedView({ suggested, gmailThreadId, counterpartyEmail, onOpenDeal
         {suggested.map(d => (
           <div key={d.dealId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: '1px solid ' + BRAND.border }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <button onClick={() => onOpenDeal?.(d.dealId)} style={linkBtn} title="Open deal">{d.title}</button>
-              <div style={{ marginTop: 3 }}><StageBadge stage={d.stage} /></div>
+              <button onClick={() => onOpenDeal?.(d.dealId)} style={linkBtn} title="Open deal">{linkTitle(state, d)}</button>
+              <div style={{ marginTop: 3 }}><StageBadge stage={linkStage(state, d)} /></div>
             </div>
             <button onClick={() => attach(d.dealId)} disabled={busy} className="btn" style={{ fontSize: 12 }}>Attach</button>
           </div>
@@ -602,7 +610,7 @@ function AttachPicker({ gmailThreadId, counterpartyEmail, excludeDealIds = [], m
       {moving && (
         <Muted style={{ display: 'block', margin: '4px 0 0' }}>
           Takes the whole thread off {moveOffDeals.length === 1
-            ? <strong style={{ color: BRAND.ink }}>{moveOffDeals[0].title}</strong>
+            ? <strong style={{ color: BRAND.ink }}>{linkTitle(state, moveOffDeals[0])}</strong>
             : `${moveOffDeals.length} deals`}.
         </Muted>
       )}
