@@ -1970,7 +1970,9 @@ function LinkPicker({ actions, companies, linkedDeal, linkedCompany, onPickDeal,
   const needle = q.trim().toLowerCase();
   const filteredDeals = (deals || []).filter((d) => {
     if (!needle) return true;
-    const hay = `${d.company || ''} ${d.title || ''} ${d.number ? formatProposalNumber(d.number) : ''}`.toLowerCase();
+    // Placeholder customers are left out: they aren't shown on the row, so
+    // matching them would surface deals with no visible reason for the hit.
+    const hay = `${realCompany(d.company) || ''} ${d.title || ''} ${d.number ? formatProposalNumber(d.number) : ''}`.toLowerCase();
     return hay.includes(needle);
   }).slice(0, 40);
   // Customers: only suggest once they start typing — the full company list is
