@@ -1022,7 +1022,8 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 15, fontWeight: 700 }}>Add more content credit</div>
                     <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2, lineHeight: 1.5 }}>
-                      Stretch your budget — extra minutes are discounted{partnerMaxDiscount > 0 && <>, up to {formatPct(partnerMaxDiscount)}% off</>}.
+                      Maximise your budget — extra minutes are discounted{partnerMaxDiscount > 0 && <>, up to {formatPct(partnerMaxDiscount)}% off</>}.
+                      {' '}Every minute stays yours to use for 2 years from the day you secure it.
                     </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
@@ -1047,7 +1048,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                 {partnerCredits > 0 && (
                   <div style={{ fontSize: 12.5, color: '#86EFAC', marginTop: 10, lineHeight: 1.6 }}>
                     <strong>{formatGBP(partnerRatePerMin)}/min</strong> ({formatPct(effectiveDiscount)}% off) — you save <strong>{formatGBP(bankedSaving)}</strong>.
-                    {' '}Paid once when you sign; 2 years to use it on any future video content.
+                    {' '}Paid once when you sign.
                   </div>
                 )}
               </div>
