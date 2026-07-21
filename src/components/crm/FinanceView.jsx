@@ -18,6 +18,17 @@ const VAT_COLOR = '#F59E0B';
 const CT_COLOR = '#0E7490';
 const PREDICT_COLOR = '#7C3AED';
 
+// One-off jobs get parked under placeholder customers ("Not Applicable" etc).
+// Those names say nothing on a payments row, so treat them as no company at all
+// and let the deal title take the headline instead.
+const PLACEHOLDER_COMPANY = /^(n\s*\/?\s*a|not\s+applicable|none|no\s+company|tbc|tbd|unknown)$/i;
+const realCompany = (name) => {
+  const s = (name || '').trim();
+  return s && !PLACEHOLDER_COMPANY.test(s) ? s : null;
+};
+// Headline for a pending-payments deal row: real customer, else the deal title.
+const dealRowName = (d) => realCompany(d.company) || d.title || 'Untitled deal';
+
 // "Predicted this month" plumbing. Any Pending-Payments row can be flagged as a
 // payment the user expects to land this calendar month; the flagged set powers
 // the Finance "Predicted <month> Payments" tab. Each row computes a stable
@@ -112,8 +123,8 @@ function collectPredicted(pending, partners, predictKeys, excludedKeys, predictM
   const add = (key, it) => { if (!seen.has(key) && !excluded.has(key)) { seen.add(key); out.push({ key, ...it }); } };
   const keys = predictKeys || new Set();
   const p = pending || {};
-  for (const d of (p.normal || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Signed deal', dealId: d.dealId, type: 'deal', row: d, isPo: false });
-  for (const d of (p.po || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: d.company || d.title || 'Untitled deal', amount: Number(d.outstanding) || 0, source: 'Purchase order', dealId: d.dealId, type: 'deal', row: d, isPo: true });
+  for (const d of (p.normal || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: dealRowName(d), amount: Number(d.outstanding) || 0, source: 'Signed deal', dealId: d.dealId, type: 'deal', row: d, isPo: false });
+  for (const d of (p.po || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: dealRowName(d), amount: Number(d.outstanding) || 0, source: 'Purchase order', dealId: d.dealId, type: 'deal', row: d, isPo: true });
   for (const r of (p.manual || [])) if (keys.has(predictKeyForManual(r))) add(predictKeyForManual(r), { name: r.company || r.description || 'Pending payment', amount: Number(r.amountExVat) || 0, source: r.kind === 'po' ? 'Imported PO' : 'Imported PP', dealId: r.dealId || null, companyId: r.companyId || null, type: 'manual', row: r });
   for (const r of (p.companyInvoices || [])) if (keys.has(predictKeyForManual(r))) add(predictKeyForManual(r), { name: r.company || r.description || 'Company invoice', amount: Number(r.amountExVat) || 0, source: 'Company invoice', companyId: r.companyId || null, type: 'manual', row: r });
   // Active partners ride along automatically (subscription = next month's fee,
@@ -656,7 +667,7 @@ const PAYMENT_TYPE_META = {
 // shows on the Pending Payments list.
 function predictedSubtitle(item) {
   const r = item.row || {};
-  if (item.type === 'deal') return (r.company && r.title && r.title !== r.company) ? r.title : null;
+  if (item.type === 'deal') { const c = realCompany(r.company); return (c && r.title && r.title !== c) ? r.title : null; }
   if (item.type === 'manual') return [r.invoiceType, r.poNumber, r.description, r.note].filter(Boolean).join(' · ') || null;
   if (item.type === 'partner') {
     const credits = Number(r.creditsRemaining) || 0;
@@ -2016,7 +2027,7 @@ function LinkPicker({ actions, companies, linkedDeal, linkedCompany, onPickDeal,
               style={{ display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', textAlign: 'left', border: 'none', background: 'transparent', cursor: 'pointer', padding: '6px 8px', borderRadius: 6 }}
             >
               <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {d.company || d.title || 'Untitled deal'}
+                {dealRowName(d)}
               </span>
               {d.number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{formatProposalNumber(d.number)}</span>}
               <span style={{ fontSize: 12, color: BRAND.muted, flexShrink: 0 }}>{formatGBP(d.net)} net</span>
@@ -2618,10 +2629,12 @@ function RowActionsMenu({ items }) {
 function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoReceived, isMobile = false }) {
   const predict = usePredict();
   const [predictingDate, setPredictingDate] = useState(false);
-  const name = d.company || d.title || 'Untitled deal';
+  const company = realCompany(d.company);
+  const name = dealRowName(d);
   // Only keep the deal title as a second line when it adds something beyond the
-  // company name (avoids showing e.g. "Beyond PR" twice).
-  const subtitle = d.company && d.title && d.title !== d.company ? d.title : null;
+  // company name (avoids showing e.g. "Beyond PR" twice, or repeating the title
+  // when a placeholder customer already promoted it to the headline).
+  const subtitle = company && d.title && d.title !== company ? d.title : null;
   const number = d.number ? formatProposalNumber(d.number) : '';
   const lines = d.lines && d.lines.length ? d.lines : [{ type: 'full', amount: d.outstanding }];
   const single = lines.length === 1;
