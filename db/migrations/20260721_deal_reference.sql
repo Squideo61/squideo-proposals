@@ -16,17 +16,33 @@
 
 ALTER TABLE deals ADD COLUMN IF NOT EXISTS reference TEXT;
 
--- Backfill in creation order, numbered within each calendar month.
-WITH numbered AS (
-  SELECT id,
-         to_char(created_at, 'YYMM') AS ym,
-         row_number() OVER (PARTITION BY to_char(created_at, 'YYMM')
-                                ORDER BY created_at, id) AS seq
+-- Backfill in creation order, numbered within each calendar month. Continues
+-- from the highest sequence already issued that month rather than restarting at
+-- 1 — deals arrive with a NULL reference from other insert paths (portal
+-- onboarding, project create, quote-form leads), so this runs against a live
+-- table and must never re-issue a reference another deal already holds.
+WITH issued AS (
+  SELECT substring(reference from 1 for 4) AS ym,
+         MAX(substring(reference from 6)::int) AS max_seq
     FROM deals
-   WHERE reference IS NULL
+   WHERE reference ~ '^\d{4}-\d+$'
+   GROUP BY substring(reference from 1 for 4)
+),
+numbered AS (
+  SELECT d.id,
+         to_char(COALESCE(d.created_at, NOW()), 'YYMM') AS ym,
+         COALESCE(i.max_seq, 0)
+           + row_number() OVER (PARTITION BY to_char(COALESCE(d.created_at, NOW()), 'YYMM')
+                                    ORDER BY d.created_at, d.id) AS seq
+    FROM deals d
+    LEFT JOIN issued i ON i.ym = to_char(COALESCE(d.created_at, NOW()), 'YYMM')
+   WHERE d.reference IS NULL
 )
 UPDATE deals d
-   SET reference = n.ym || '-' || lpad(n.seq::text, 3, '0')
+   -- lpad TRUNCATES when the value is longer than the width, so a month past
+   -- 999 must bypass it or 1000 would become '100' and collide.
+   SET reference = n.ym || '-' ||
+         CASE WHEN n.seq < 1000 THEN lpad(n.seq::text, 3, '0') ELSE n.seq::text END
   FROM numbered n
  WHERE d.id = n.id;
 
@@ -35,12 +51,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS deals_reference_idx ON deals (reference);
 
 ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS video_number INTEGER;
 
-WITH numbered AS (
-  SELECT id,
-         row_number() OVER (PARTITION BY deal_id
-                                ORDER BY sort_order, created_at, id) AS num
-    FROM project_videos
-   WHERE video_number IS NULL
+-- Same rule as above: continue from the highest ordinal already issued for the
+-- deal, so a video created after an earlier partial run can't take a number a
+-- sibling already has.
+WITH issued AS (
+  SELECT deal_id, MAX(video_number) AS max_num
+    FROM project_videos WHERE video_number IS NOT NULL GROUP BY deal_id
+),
+numbered AS (
+  SELECT pv.id,
+         COALESCE(i.max_num, 0)
+           + row_number() OVER (PARTITION BY pv.deal_id
+                                    ORDER BY pv.sort_order, pv.created_at, pv.id) AS num
+    FROM project_videos pv
+    LEFT JOIN issued i ON i.deal_id = pv.deal_id
+   WHERE pv.video_number IS NULL
 )
 UPDATE project_videos pv
    SET video_number = n.num

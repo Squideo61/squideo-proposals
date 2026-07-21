@@ -11,35 +11,63 @@ let dealReferenceEnsured = null;
 export function ensureDealReference() {
   if (dealReferenceEnsured) return dealReferenceEnsured;
   dealReferenceEnsured = (async () => {
-    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS reference TEXT`;
-    await sql`
-      WITH numbered AS (
-        SELECT id,
-               to_char(created_at, 'YYMM') AS ym,
-               row_number() OVER (PARTITION BY to_char(created_at, 'YYMM')
-                                      ORDER BY created_at, id) AS seq
-          FROM deals
-         WHERE reference IS NULL
-      )
-      UPDATE deals d
-         SET reference = n.ym || '-' || lpad(n.seq::text, 3, '0')
-        FROM numbered n
-       WHERE d.id = n.id
-    `;
-    await sql`CREATE UNIQUE INDEX IF NOT EXISTS deals_reference_idx ON deals (reference)`;
+    let ok = true;
 
-    // The video half is best-effort: project_videos is created by
-    // ensureProductionSchema(), which a deals-only request never runs, so a
-    // workspace without it must still be able to list and create deals.
+    // Deal half. The backfill continues from the highest sequence already
+    // issued in each month — numbering un-referenced deals from 1 would hand
+    // out a reference an existing deal already holds, which is exactly what
+    // took the CRM down: deals inserted by other code paths (portal onboarding,
+    // project create, quote-form leads) arrive with a NULL reference, so this
+    // runs against a live table, not just once at migration time.
+    try {
+      await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS reference TEXT`;
+      await sql`
+        WITH issued AS (
+          SELECT substring(reference from 1 for 4) AS ym,
+                 MAX(substring(reference from 6)::int) AS max_seq
+            FROM deals
+           WHERE reference ~ '^\\d{4}-\\d+$'
+           GROUP BY substring(reference from 1 for 4)
+        ),
+        numbered AS (
+          SELECT d.id,
+                 to_char(COALESCE(d.created_at, NOW()), 'YYMM') AS ym,
+                 COALESCE(i.max_seq, 0)
+                   + row_number() OVER (PARTITION BY to_char(COALESCE(d.created_at, NOW()), 'YYMM')
+                                            ORDER BY d.created_at, d.id) AS seq
+            FROM deals d
+            LEFT JOIN issued i ON i.ym = to_char(COALESCE(d.created_at, NOW()), 'YYMM')
+           WHERE d.reference IS NULL
+        )
+        UPDATE deals d
+           SET reference = n.ym || '-' ||
+                 CASE WHEN n.seq < 1000 THEN lpad(n.seq::text, 3, '0') ELSE n.seq::text END
+          FROM numbered n
+         WHERE d.id = n.id
+      `;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS deals_reference_idx ON deals (reference)`;
+    } catch (err) {
+      ok = false;
+      console.warn('[deal reference] deal half skipped', err.message);
+    }
+
+    // Video half. project_videos is created by ensureProductionSchema(), which
+    // a deals-only request never runs, so its absence must not stop the rest.
     try {
       await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS video_number INTEGER`;
       await sql`
-        WITH numbered AS (
-          SELECT id,
-                 row_number() OVER (PARTITION BY deal_id
-                                        ORDER BY sort_order, created_at, id) AS num
-            FROM project_videos
-           WHERE video_number IS NULL
+        WITH issued AS (
+          SELECT deal_id, MAX(video_number) AS max_num
+            FROM project_videos WHERE video_number IS NOT NULL GROUP BY deal_id
+        ),
+        numbered AS (
+          SELECT pv.id,
+                 COALESCE(i.max_num, 0)
+                   + row_number() OVER (PARTITION BY pv.deal_id
+                                            ORDER BY pv.sort_order, pv.created_at, pv.id) AS num
+            FROM project_videos pv
+            LEFT JOIN issued i ON i.deal_id = pv.deal_id
+           WHERE pv.video_number IS NULL
         )
         UPDATE project_videos pv
            SET video_number = n.num
@@ -48,12 +76,15 @@ export function ensureDealReference() {
       `;
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS project_videos_number_idx ON project_videos (deal_id, video_number)`;
     } catch (err) {
-      // Don't leave a half-applied run cached as success — the next call (by
-      // which point ensureProductionSchema may have created the table) retries.
-      dealReferenceEnsured = null;
-      console.warn('[deal reference] video_number ensure skipped', err.message);
+      ok = false;
+      console.warn('[deal reference] video half skipped', err.message);
     }
-  })().catch((err) => { dealReferenceEnsured = null; throw err; });
+
+    // Never cache a partial run as done, and never reject: this runs at the top
+    // of the deals and production routes, so throwing here 500s the whole CRM.
+    // A missing reference is a cosmetic gap; an unreachable pipeline is not.
+    if (!ok) dealReferenceEnsured = null;
+  })();
   return dealReferenceEnsured;
 }
 

@@ -583,6 +583,8 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       // Allocate the reference inside the insert retry: if two deals are created
       // at the same moment the loser trips the unique index, re-reads the high
       // water mark and takes the next number rather than failing the request.
+      // A failed allocation inserts NULL — the backfill picks it up on the next
+      // request. Creating a deal must never hinge on the numbering working.
       for (let attempt = 0; ; attempt++) {
         try {
           await sql`
@@ -598,7 +600,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
               ${numberOrNull(body.vatRate)},
               ${trimOrNull(body.expectedCloseAt)},
               ${trimOrNull(body.notes)},
-              ${await nextDealReference()}
+              ${await nextDealReference().catch(() => null)}
             )
           `;
           break;
