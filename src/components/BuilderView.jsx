@@ -104,12 +104,6 @@ function buildSectionMeta(data, isTemplate, issues, isDefault) {
       hasIssues: (issues.client || []).length > 0,
     },
     {
-      id: 'vision',
-      label: 'Vision',
-      hint: (data.videoOptions || []).length > 0 ? `${data.videoOptions.length} option${data.videoOptions.length === 1 ? '' : 's'}` : (truncate(data.requirement) || 'Empty'),
-      hasIssues: (issues.vision || []).length > 0,
-    },
-    {
       id: 'team',
       label: 'Team',
       hint: `${(data.team || []).length} member${(data.team || []).length === 1 ? '' : 's'}`,
@@ -128,6 +122,14 @@ function buildSectionMeta(data, isTemplate, issues, isDefault) {
         ? `${(data.notableExamples || []).filter(e => e?.url?.trim()).length} example${(data.notableExamples || []).filter(e => e?.url?.trim()).length === 1 ? '' : 's'}`
         : 'Off',
       hasIssues: false,
+    },
+    // Vision sits directly above Pricing in the builder — it describes what's
+    // being quoted, so it reads best immediately before the money.
+    {
+      id: 'vision',
+      label: 'Vision',
+      hint: (data.videoOptions || []).length > 0 ? `${data.videoOptions.length} option${data.videoOptions.length === 1 ? '' : 's'}` : (truncate(data.requirement) || 'Empty'),
+      hasIssues: (issues.vision || []).length > 0,
     },
     {
       id: 'pricing',
@@ -750,6 +752,135 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         )}
       </Section>
 
+      {/* ── Delivery Team ── */}
+      <Section
+        title="Delivery Team"
+        color="#0f766e"
+        icon={Users}
+        collapsible
+        defaultCollapsed
+        collapsedHint={isMobile ? sectionMeta.find(s => s.id === 'team')?.hint : 'Click to expand and edit team members'}
+        {...sectionProps('team')}
+      >
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={data.showDeliveryTeam !== false}
+            onChange={(e) => update({ showDeliveryTeam: e.target.checked })}
+          />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Show delivery team on this proposal</span>
+        </label>
+        <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 16px' }}>Photos appear on the client proposal. Untick to hide the whole Delivery Team section from this proposal.</p>
+        {data.team.map((m, i) => (
+          <TeamMemberEditor
+            key={i}
+            member={m}
+            onChange={(p) => updateTeam(i, p)}
+            onRemove={() => update({ team: data.team.filter((_, idx) => idx !== i) })}
+            showMsg={showMsg}
+          />
+        ))}
+        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, marginBottom: 12, display: 'flex', gap: 14, alignItems: 'center', background: BRAND.paper, opacity: 0.85 }}>
+          <img src="/team-photos/producers.png" alt="Production Team" style={{ width: 100, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>Our Producers <span style={{ fontWeight: 400, color: BRAND.muted, fontSize: 11 }}>(always included)</span></div>
+            <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4, lineHeight: 1.4 }}>Our experienced producers will be involved throughout the production process…</div>
+          </div>
+        </div>
+        <button onClick={() => update({ team: [...data.team, { name: 'New Member', role: 'Role', bio: '', photo: null }] })} className="btn-ghost">
+          <Plus size={14} /> Add team member
+        </button>
+      </Section>
+
+      {/* ── Production Process ── */}
+      <Section
+        title="Production Process"
+        color="#c2410c"
+        icon={Video}
+        collapsible
+        defaultCollapsed
+        collapsedHint={isMobile ? sectionMeta.find(s => s.id === 'process')?.hint : 'Click to expand and edit the production-process video'}
+        {...sectionProps('process')}
+      >
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={data.showProcessVideo !== false}
+            onChange={(e) => update({ showProcessVideo: e.target.checked })}
+          />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Show production-process video on this proposal</span>
+        </label>
+        <Field label="Video URL">
+          <input
+            className="input"
+            value={data.processVideoUrl || ''}
+            onChange={(e) => update({ processVideoUrl: e.target.value })}
+            placeholder="YouTube or Vimeo URL — leave blank to hide this section"
+          />
+        </Field>
+        <p style={{ fontSize: 12, color: BRAND.muted, margin: '4px 0 0' }}>Paste a YouTube or Vimeo link. The section appears on the proposal only when this is set <em>and</em> the checkbox above is ticked.</p>
+      </Section>
+
+      {/* ── Notable Examples ── */}
+      <Section
+        title="Notable Examples"
+        color="#7c3aed"
+        icon={Star}
+        collapsible
+        defaultCollapsed
+        collapsedHint={isMobile ? sectionMeta.find(s => s.id === 'examples')?.hint : 'Click to expand and add up to 3 example videos'}
+        {...sectionProps('examples')}
+      >
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={!!data.showNotableExamples}
+            onChange={(e) => update({ showNotableExamples: e.target.checked })}
+          />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Show notable examples on this proposal</span>
+        </label>
+        <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 16px' }}>Paste up to 3 Vimeo links. The title is pulled from Vimeo automatically — tweak it if you like.</p>
+        {(data.notableExamples || []).map((ex, i) => (
+          <div key={ex.id || i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted }}>Example {i + 1}</span>
+              <button
+                onClick={() => update({ notableExamples: (data.notableExamples || []).filter((_, idx) => idx !== i) })}
+                className="btn-ghost"
+                style={{ padding: '4px 8px' }}
+              >
+                <X size={14} /> Remove
+              </button>
+            </div>
+            <Field label="Vimeo URL">
+              <input
+                className="input"
+                value={ex.url || ''}
+                onChange={(e) => updateExample(i, { url: e.target.value })}
+                onBlur={(e) => autofillExampleMeta(i, e.target.value)}
+                placeholder="https://vimeo.com/123456789"
+              />
+            </Field>
+            <Field label="Title (shown on the proposal)">
+              <input
+                className="input"
+                value={ex.title || ''}
+                onChange={(e) => updateExample(i, { title: e.target.value })}
+                placeholder="Auto-filled from Vimeo — edit as needed"
+              />
+            </Field>
+          </div>
+        ))}
+        {(data.notableExamples || []).length < 3 && (
+          <button
+            onClick={() => update({ notableExamples: [...(data.notableExamples || []), { id: 'ex_' + Date.now(), url: '', title: '' }] })}
+            className="btn-ghost"
+          >
+            <Plus size={14} /> Add example
+          </button>
+        )}
+      </Section>
+
       {/* ── Project Vision ── */}
       <Section
         title="Project Vision"
@@ -919,135 +1050,6 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         <Field label="Vision (problem and solution)">
           <textarea className="input" style={{ minHeight: 100 }} value={data.projectVision} onChange={(e) => update({ projectVision: e.target.value })} placeholder="Describe the problem and how the videos will solve it…" />
         </Field>
-      </Section>
-
-      {/* ── Delivery Team ── */}
-      <Section
-        title="Delivery Team"
-        color="#0f766e"
-        icon={Users}
-        collapsible
-        defaultCollapsed
-        collapsedHint={isMobile ? sectionMeta.find(s => s.id === 'team')?.hint : 'Click to expand and edit team members'}
-        {...sectionProps('team')}
-      >
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={data.showDeliveryTeam !== false}
-            onChange={(e) => update({ showDeliveryTeam: e.target.checked })}
-          />
-          <span style={{ fontSize: 14, fontWeight: 600 }}>Show delivery team on this proposal</span>
-        </label>
-        <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 16px' }}>Photos appear on the client proposal. Untick to hide the whole Delivery Team section from this proposal.</p>
-        {data.team.map((m, i) => (
-          <TeamMemberEditor
-            key={i}
-            member={m}
-            onChange={(p) => updateTeam(i, p)}
-            onRemove={() => update({ team: data.team.filter((_, idx) => idx !== i) })}
-            showMsg={showMsg}
-          />
-        ))}
-        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, marginBottom: 12, display: 'flex', gap: 14, alignItems: 'center', background: BRAND.paper, opacity: 0.85 }}>
-          <img src="/team-photos/producers.png" alt="Production Team" style={{ width: 100, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
-          <div>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>Our Producers <span style={{ fontWeight: 400, color: BRAND.muted, fontSize: 11 }}>(always included)</span></div>
-            <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4, lineHeight: 1.4 }}>Our experienced producers will be involved throughout the production process…</div>
-          </div>
-        </div>
-        <button onClick={() => update({ team: [...data.team, { name: 'New Member', role: 'Role', bio: '', photo: null }] })} className="btn-ghost">
-          <Plus size={14} /> Add team member
-        </button>
-      </Section>
-
-      {/* ── Production Process ── */}
-      <Section
-        title="Production Process"
-        color="#c2410c"
-        icon={Video}
-        collapsible
-        defaultCollapsed
-        collapsedHint={isMobile ? sectionMeta.find(s => s.id === 'process')?.hint : 'Click to expand and edit the production-process video'}
-        {...sectionProps('process')}
-      >
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={data.showProcessVideo !== false}
-            onChange={(e) => update({ showProcessVideo: e.target.checked })}
-          />
-          <span style={{ fontSize: 14, fontWeight: 600 }}>Show production-process video on this proposal</span>
-        </label>
-        <Field label="Video URL">
-          <input
-            className="input"
-            value={data.processVideoUrl || ''}
-            onChange={(e) => update({ processVideoUrl: e.target.value })}
-            placeholder="YouTube or Vimeo URL — leave blank to hide this section"
-          />
-        </Field>
-        <p style={{ fontSize: 12, color: BRAND.muted, margin: '4px 0 0' }}>Paste a YouTube or Vimeo link. The section appears on the proposal only when this is set <em>and</em> the checkbox above is ticked.</p>
-      </Section>
-
-      {/* ── Notable Examples ── */}
-      <Section
-        title="Notable Examples"
-        color="#7c3aed"
-        icon={Star}
-        collapsible
-        defaultCollapsed
-        collapsedHint={isMobile ? sectionMeta.find(s => s.id === 'examples')?.hint : 'Click to expand and add up to 3 example videos'}
-        {...sectionProps('examples')}
-      >
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={!!data.showNotableExamples}
-            onChange={(e) => update({ showNotableExamples: e.target.checked })}
-          />
-          <span style={{ fontSize: 14, fontWeight: 600 }}>Show notable examples on this proposal</span>
-        </label>
-        <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 16px' }}>Paste up to 3 Vimeo links. The title is pulled from Vimeo automatically — tweak it if you like.</p>
-        {(data.notableExamples || []).map((ex, i) => (
-          <div key={ex.id || i} style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted }}>Example {i + 1}</span>
-              <button
-                onClick={() => update({ notableExamples: (data.notableExamples || []).filter((_, idx) => idx !== i) })}
-                className="btn-ghost"
-                style={{ padding: '4px 8px' }}
-              >
-                <X size={14} /> Remove
-              </button>
-            </div>
-            <Field label="Vimeo URL">
-              <input
-                className="input"
-                value={ex.url || ''}
-                onChange={(e) => updateExample(i, { url: e.target.value })}
-                onBlur={(e) => autofillExampleMeta(i, e.target.value)}
-                placeholder="https://vimeo.com/123456789"
-              />
-            </Field>
-            <Field label="Title (shown on the proposal)">
-              <input
-                className="input"
-                value={ex.title || ''}
-                onChange={(e) => updateExample(i, { title: e.target.value })}
-                placeholder="Auto-filled from Vimeo — edit as needed"
-              />
-            </Field>
-          </div>
-        ))}
-        {(data.notableExamples || []).length < 3 && (
-          <button
-            onClick={() => update({ notableExamples: [...(data.notableExamples || []), { id: 'ex_' + Date.now(), url: '', title: '' }] })}
-            className="btn-ghost"
-          >
-            <Plus size={14} /> Add example
-          </button>
-        )}
       </Section>
 
       {/* ── Pricing ── */}
