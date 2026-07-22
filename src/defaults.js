@@ -86,7 +86,10 @@ export function makeContentCreditTemplate(base) {
   const ratePerMin = tpl.partnerProgramme?.standardRatePerMin || 1250;
   // Credit-only: the main section quotes an amount of minutes, and the tier
   // discount rewards only the extra minutes added on the proposal.
-  tpl.requirement = 'Animated video content';
+  // Left blank so the builder's dynamic placeholder ("8 minutes of HD animated
+  // video content") guides what to write, rather than inheriting the standard
+  // proposal's fixed video requirement.
+  tpl.requirement = '';
   tpl.requirementSummary = '';
   tpl.basePrice = ratePerMin;
   tpl.partnerProgramme = {

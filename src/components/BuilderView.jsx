@@ -7,7 +7,7 @@ import { Field, Modal, Section } from './ui.jsx';
 import { LogoUploader } from './LogoUploader.jsx';
 import { TeamMemberEditor } from './TeamMemberEditor.jsx';
 import { ExtrasBankManager } from './ExtrasBankManager.jsx';
-import { extraHasVariants, extraUnitPrice, resolveExtraPricing, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
+import { extraHasVariants, extraUnitPrice, resolveExtraPricing, DEFAULT_PROPOSAL, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 
@@ -632,10 +632,20 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                   // Content Credit shows a single requirement box, so collapse the
                   // two fields into `requirement` using the same precedence the
                   // client view applies — otherwise summary text would keep showing
-                  // on the proposal with no field left to edit it in.
-                  ...(opt.key === 'credit' && (data.requirementSummary || '').trim()
-                    ? { requirement: (data.requirementSummary || '').trim(), requirementSummary: '' }
-                    : {}),
+                  // on the proposal with no field left to edit it in. Boilerplate
+                  // inherited from the default proposal is cleared instead, so the
+                  // credit-shaped placeholder can do its job; anything actually
+                  // written is kept.
+                  ...(opt.key === 'credit' ? (() => {
+                    const summary = (data.requirementSummary || '').trim();
+                    const current = (data.requirement || '').trim();
+                    const boilerplate = new Set([
+                      (state.defaultProposal?.requirement || '').trim(),
+                      (DEFAULT_PROPOSAL.requirement || '').trim(),
+                    ].filter(Boolean));
+                    const kept = summary || (boilerplate.has(current) ? '' : current);
+                    return { requirement: kept, requirementSummary: '' };
+                  })() : {}),
                 })}
                 style={{
                   flex: isMobile ? '1 1 100%' : '1 1 0', textAlign: 'left', padding: '10px 12px', borderRadius: 8,
