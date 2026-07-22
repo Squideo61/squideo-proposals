@@ -226,9 +226,10 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
 
   // Real participants on the currently-viewed thread that aren't already a
   // contact on this deal — the sender of a message we received (`fromEmail`),
-  // the people we emailed (`toEmails`), and anyone Cc'd into a reply we got
+  // the people we emailed (`toEmails`), and anyone Cc'd in either direction
   // (`ccEmails`). Drives the add-as-contact prompt. Mirrors the Chrome
-  // extension's sidebar. Outbound Cc's are the user's own choice and skipped.
+  // extension's sidebar. Outbound Cc's count too: Cc'ing a client's colleague is
+  // how a new stakeholder joins a deal. Internal addresses are filtered below.
   const unknownParticipants = useMemo(() => {
     const linked = new Set();
     if (detail.primaryContact?.email) linked.add(detail.primaryContact.email.toLowerCase());
@@ -260,10 +261,10 @@ function DealDetailBlock({ detail, gmailThreadId, onOpenDeal, onOpenProposal }) 
       if (gmailThreadId && em.gmailThreadId !== gmailThreadId) continue;
       if (em.direction === 'inbound') {
         consider(em.fromEmail);
-        for (const raw of (em.ccEmails || [])) consider(raw);
       } else {
         for (const raw of (em.toEmails || [])) consider(raw);
       }
+      for (const raw of (em.ccEmails || [])) consider(raw);
     }
     return out;
   }, [detail, gmailThreadId, state.users, state.session, state.gmailAccount]);

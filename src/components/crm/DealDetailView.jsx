@@ -1395,10 +1395,12 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
 
   // Real participants on this thread that aren't already linked to this deal —
   // the person who emailed us (inbound `fromEmail`), the people we emailed
-  // (outbound `toEmails`), and anyone Cc'd into a reply we received (inbound
-  // `ccEmails`). These are the addresses worth prompting to add as a contact.
-  // Outbound Cc's are the user's own choice and skipped; our own team is never
-  // a candidate.
+  // (outbound `toEmails`), and anyone Cc'd in either direction (`ccEmails`).
+  // These are the addresses worth prompting to add as a contact. Outbound Cc's
+  // count too: Cc'ing a client's colleague is exactly how a new stakeholder
+  // joins a deal, and they'd otherwise never be offered. Our own team is never a
+  // candidate — the filters below drop CRM users, the mailbox and own-domain
+  // addresses, which is what keeps internal Cc's out.
   const unknownParticipants = useMemo(() => {
     if (!linkedEmails) return [];
     // Our own team is never a "new contact" to add. Exclude CRM users, the
@@ -1424,10 +1426,10 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
     for (const m of messages) {
       if (m.direction === 'inbound') {
         consider(m.fromEmail);
-        for (const raw of (Array.isArray(m.ccEmails) ? m.ccEmails : [])) consider(raw);
       } else {
         for (const raw of (Array.isArray(m.toEmails) ? m.toEmails : [])) consider(raw);
       }
+      for (const raw of (Array.isArray(m.ccEmails) ? m.ccEmails : [])) consider(raw);
     }
     return out;
   }, [messages, linkedEmails, state.users, state.session, state.gmailAccount]);
