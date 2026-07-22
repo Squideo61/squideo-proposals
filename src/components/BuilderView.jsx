@@ -420,6 +420,12 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   const contentMinutes = (data.videoOptions || []).length > 0
     ? Number(data.videoOptions[0]?.minutes) || 0
     : Number(data.partnerProgramme?.quotedMinutes) || 0;
+  // "8 minutes" / "1 minute" — drives the Content Credit requirement placeholder
+  // so it tracks whatever minutes are set in Pricing.
+  const creditMinutesLabel = (() => {
+    const m = contentMinutes || 1;
+    return `${m % 1 === 0 ? m.toFixed(0) : m} ${m === 1 ? 'minute' : 'minutes'}`;
+  })();
 
   const basePriceOk = data.partnerProgramme?.enabled
     ? Number(data.basePrice) >= 0
@@ -621,6 +627,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                       ? { mode: 'oneoff', creditOnly: true, quotedMinutes: data.partnerProgramme?.quotedMinutes ?? 1 }
                       : { creditOnly: false }),
                   },
+                  // Content Credit shows a single requirement box, so collapse the
+                  // two fields into `requirement` using the same precedence the
+                  // client view applies — otherwise summary text would keep showing
+                  // on the proposal with no field left to edit it in.
+                  ...(opt.key === 'credit' && (data.requirementSummary || '').trim()
+                    ? { requirement: (data.requirementSummary || '').trim(), requirementSummary: '' }
+                    : {}),
                 })}
                 style={{
                   flex: isMobile ? '1 1 100%' : '1 1 0', textAlign: 'left', padding: '10px 12px', borderRadius: 8,
@@ -746,16 +759,25 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         collapsedHint={sectionMeta.find(s => s.id === 'vision')?.hint}
         {...sectionProps('vision')}
       >
-        <Field label="Your Requirement">
-          <textarea
-            className="input"
-            style={{ minHeight: isMobile ? 80 : 110, resize: 'vertical' }}
-            value={data.requirementSummary || ''}
-            onChange={(e) => update({ requirementSummary: e.target.value })}
-            placeholder="A short summary of what the client needs — shown as 'Your Requirement' above Your Quote on the proposal."
-          />
-        </Field>
-        <p style={{ fontSize: 12, color: BRAND.muted, margin: '4px 0 18px' }}>Free text shown to the client above the quote. Leave blank to hide it{(data.videoOptions || []).length === 0 ? ' (the single requirement below is used as a fallback)' : ''}.</p>
+        {/* A Content Credit proposal describes one thing — the content the credit
+            buys — so it gets a single box (the Requirement field below) rather
+            than a summary plus a fallback. Switching proposal type folds any
+            summary text into that field, so nothing the client would have seen
+            is lost. */}
+        {!isCreditOnly && (
+          <>
+            <Field label="Your Requirement">
+              <textarea
+                className="input"
+                style={{ minHeight: isMobile ? 80 : 110, resize: 'vertical' }}
+                value={data.requirementSummary || ''}
+                onChange={(e) => update({ requirementSummary: e.target.value })}
+                placeholder="A short summary of what the client needs — shown as 'Your Requirement' above Your Quote on the proposal."
+              />
+            </Field>
+            <p style={{ fontSize: 12, color: BRAND.muted, margin: '4px 0 18px' }}>Free text shown to the client above the quote. Leave blank to hide it{(data.videoOptions || []).length === 0 ? ' (the single requirement below is used as a fallback)' : ''}.</p>
+          </>
+        )}
         {(data.videoOptions || []).length > 0 ? (
           <>
             {data.videoOptions.map((opt, i) => (
@@ -863,16 +885,23 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
           </>
         ) : (
           <>
-            <Field label="Requirement" error={!data.requirement?.trim()}>
+            <Field label={isCreditOnly ? 'What the credit covers' : 'Requirement'} error={!data.requirement?.trim()}>
               <textarea
-                rows={10}
+                rows={isCreditOnly ? 4 : 10}
                 className="input"
-                style={{ minHeight: isMobile ? 100 : 200, resize: 'vertical' }}
+                style={{ minHeight: isCreditOnly ? 90 : (isMobile ? 100 : 200), resize: 'vertical' }}
                 value={data.requirement}
                 onChange={(e) => update({ requirement: e.target.value })}
-                placeholder={"1 x HD Animated explainer video - up to 60 seconds\n1 x Short social cutdown - 15 seconds"}
+                placeholder={isCreditOnly
+                  ? `${creditMinutesLabel} of HD animated video content`
+                  : "1 x HD Animated explainer video - up to 60 seconds\n1 x Short social cutdown - 15 seconds"}
               />
             </Field>
+            {isCreditOnly && (
+              <p style={{ fontSize: 12, color: BRAND.muted, margin: '4px 0 0' }}>
+                Shown to the client as &apos;Your Requirement&apos; above the quote.
+              </p>
+            )}
             <button
               className="btn-ghost"
               style={{ fontSize: 12, marginTop: 4 }}
