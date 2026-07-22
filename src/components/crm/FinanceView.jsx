@@ -13,6 +13,7 @@ import { PerformancePanel, resolveIncomeTargets } from './PerformanceView.jsx';
 import { CreateXeroInvoiceModal } from './CreateXeroInvoiceModal.jsx';
 import { MarkInvoicePaidModal } from './MarkInvoicePaidModal.jsx';
 import { Modal } from '../ui.jsx';
+import { SearchBox } from './ProductionView.jsx';
 
 const VAT_COLOR = '#F59E0B';
 const CT_COLOR = '#0E7490';
@@ -700,10 +701,19 @@ function PredictedRowBadges({ item }) {
     if (r.kind === 'company-invoice') {
       return <span style={{ fontSize: 9, fontWeight: 700, color: '#B45309', background: '#FFFBEB', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>Not linked to a deal</span>;
     }
+    // Imported rows carry their invoice status here too, so the ⋮ "Mark invoiced"
+    // action has something visible to flip.
+    const notInvoiced = r.status !== 'invoiced' && <NotInvoicedTag />;
     if (r.companyId || r.dealId) {
-      return <span style={{ fontSize: 9, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{r.companyId ? 'Customer' : 'Linked'}</span>;
+      return <>
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#15803D', background: '#ECFDF3', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{r.companyId ? 'Customer' : 'Linked'}</span>
+        {notInvoiced}
+      </>;
     }
-    return <span style={{ fontSize: 9, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>Imported</span>;
+    return <>
+      <span style={{ fontSize: 9, fontWeight: 700, color: '#0E7490', background: '#ECFEFF', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>Imported</span>
+      {notInvoiced}
+    </>;
   }
   if (item.type === 'partner') {
     const meta = PARTNER_STATUS_META[r.status] || PARTNER_STATUS_META.active;
@@ -723,6 +733,9 @@ function PredictedRowBadges({ item }) {
 function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys, rolledKeys, rolledAwayKeys, isPastMonth = false, predictMonthKey, monthName, bankedNet, targets, notes = {}, onSaveNote, onUnpredict, onExclude, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
   const [editOther, setEditOther] = useState(null); // the "Other" row being edited
   const [noteTarget, setNoteTarget] = useState(null); // { key, name, note } being edited
+  // The deal + portion to invoice when "Create invoice" is picked on a predicted
+  // signed-deal row (opens the shared Xero modal, same as Pending Payments).
+  const [invTarget, setInvTarget] = useState(null);
   const rolled = rolledKeys || new Set();
   const rolledAway = rolledAwayKeys || new Set();
   const items = useMemo(() => collectPredicted(pending, partners, predictKeys, excludedKeys, predictMonthKey)
@@ -769,6 +782,27 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
     }
     if (p) Promise.resolve(p).then(() => onChanged && onChanged());
   };
+
+  // Raise the invoice for a predicted row without going back to Pending Payments.
+  // Imported PP/PO rows just flip status (undoable, mirroring the pending list);
+  // signed deals open the Xero create-invoice modal for the chosen portion.
+  const setInvoiced = (it, invoiced) => {
+    if (!actions || it.type !== 'manual' || !it.row?.id) return;
+    const label = it.name || 'payment';
+    actions.markPendingPaymentInvoiced(it.row.id, invoiced).then(() => {
+      if (onChanged) onChanged();
+      actions.recordUndo && actions.recordUndo({
+        label: invoiced ? `Mark ${label} invoiced` : `Move ${label} back to pending`,
+        undo: () => actions.markPendingPaymentInvoiced(it.row.id, !invoiced).then(() => onChanged && onChanged()),
+        redo: () => actions.markPendingPaymentInvoiced(it.row.id, invoiced).then(() => onChanged && onChanged()),
+      });
+    });
+  };
+  // The not-yet-invoiced portions of a predicted signed deal (extras ride on the
+  // final invoice, so they're never invoiced on their own).
+  const invoiceableLines = (it) => (it.type === 'deal' && it.row?.dealId)
+    ? (it.row.lines || []).filter((l) => l.invoiced === false && l.type !== 'extra')
+    : [];
 
   // Remove an "Other" recurring item outright (it also drops off Pending Payments).
   const removeOther = (row) => {
@@ -871,6 +905,18 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
                     <span style={{ fontSize: 9, fontWeight: 700, color: BRAND.muted, background: BRAND.paper, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{it.source}</span>
                     <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0, minWidth: 70, textAlign: 'right' }}>{formatGBP(it.amount)}{perMo ? '/mo' : ''}</span>
                     <RowActionsMenu items={[
+                      // Invoicing comes first, mirroring the Pending Payments ⋮
+                      // order: raise it, then bank it once it's paid.
+                      it.type === 'manual' && it.row?.kind !== 'company-invoice' && (
+                        it.row?.status === 'invoiced'
+                          ? { label: 'Move back to pending', icon: RotateCcw, onClick: () => setInvoiced(it, false) }
+                          : { label: 'Mark invoiced', icon: FileText, onClick: () => setInvoiced(it, true) }
+                      ),
+                      ...invoiceableLines(it).map((l, i, arr) => ({
+                        label: arr.length > 1 ? `Invoice ${PAYMENT_TYPE_META[l.type]?.label || 'amount'}` : 'Create invoice',
+                        icon: FileText,
+                        onClick: () => setInvTarget({ dealId: it.row.dealId, companyId: it.row.companyId, title: it.row.title || it.row.company, stage: it.row.stage, mode: l.type === 'final' ? 'final' : undefined, reference: it.row.poNumber || undefined }),
+                      })),
                       it.type === 'manual' && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
                       it.type === 'manual' && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => markPaid(it, 'bacs') },
                       it.type === 'deal' && it.row?.proposalId && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
@@ -947,6 +993,18 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
           onSave={(text) => { onSaveNote && onSaveNote(noteTarget.key, text); setNoteTarget(null); }}
         />
       )}
+      {invTarget && (
+        <CreateXeroInvoiceModal
+          companyId={invTarget.companyId || undefined}
+          dealId={invTarget.companyId ? undefined : invTarget.dealId}
+          deals={invTarget.companyId ? [{ id: invTarget.dealId, title: invTarget.title, stage: invTarget.stage || 'signed', company_id: invTarget.companyId }] : undefined}
+          initialDealId={invTarget.dealId}
+          initialReference={invTarget.reference || undefined}
+          mode={invTarget.mode}
+          onClose={() => setInvTarget(null)}
+          onCreated={() => { setInvTarget(null); onChanged && onChanged(); }}
+        />
+      )}
     </>
   );
 }
@@ -986,39 +1044,94 @@ function PredictedNoteModal({ target, onClose, onSave }) {
   );
 }
 
+// Free-text search over the Pending Payments list. Each row type keeps its
+// details in different fields, so flatten the ones someone would actually type
+// (customer, deal/PO/invoice number, description, note) into one haystack. All
+// terms must match, so "greenwich 50%" narrows rather than widens.
+const PENDING_SEARCH_FIELDS = {
+  deal: (d) => [d.company, d.title, d.number ? formatProposalNumber(d.number) : null, d.poNumber, ...((d.lines || []).map((l) => l.label))],
+  manual: (r) => [r.company, r.description, r.note, r.invoiceType, r.poNumber, r.linkedCompanyName],
+  partner: (p) => [p.clientName],
+  other: (r) => [r.label, r.note],
+};
+function makePendingMatcher(query, kind) {
+  const q = (query || '').trim().toLowerCase();
+  if (!q) return () => true;
+  const terms = q.split(/\s+/);
+  const fields = PENDING_SEARCH_FIELDS[kind];
+  return (row) => {
+    const hay = fields(row).filter(Boolean).join(' ').toLowerCase();
+    return terms.every((t) => hay.includes(t));
+  };
+}
+
 function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCompany, onOpenPartner, companies, isMobile, actions, onChanged }) {
   // The deal + portion to invoice when an INV button is clicked (opens the
   // shared Xero create-invoice modal, pre-filled with the deal's suggested lines).
   const [invTarget, setInvTarget] = useState(null);
   // The PO-route deal whose PO number we're recording (opens MarkPoReceivedModal).
   const [poTarget, setPoTarget] = useState(null);
+  // Free-text filter across every group below. Panel totals follow the filter so
+  // a search doubles as "what's outstanding for this customer?"; the headline
+  // stat cards above stay whole-business.
+  const [query, setQuery] = useState('');
+  const searching = !!query.trim();
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 20 }}>
-      <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-        Pending Payments
-      </h3>
-      <p style={{ margin: '0 0 16px', fontSize: 12, color: BRAND.muted }}>
-        Invoiced and outstanding amounts awaiting payment — shown ex-VAT (net). Each signed-deal line is tagged "Not invoiced" until raised; use the ⋮ menu on a row to invoice, mark paid or open the deal.
-      </p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <div style={{ flex: '1 1 320px', minWidth: 0 }}>
+          <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+            Pending Payments
+          </h3>
+          <p style={{ margin: 0, fontSize: 12, color: BRAND.muted }}>
+            Invoiced and outstanding amounts awaiting payment — shown ex-VAT (net). Each signed-deal line is tagged "Not invoiced" until raised; use the ⋮ menu on a row to invoice, mark paid or open the deal.
+          </p>
+        </div>
+        <div style={{ flexShrink: 0 }}>
+          <SearchBox value={query} onChange={setQuery} placeholder="Search customer, PO, invoice…" />
+        </div>
+      </div>
       {!pending ? (
         <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>
       ) : (() => {
-        const manual = pending.manual || [];
+        const matchDeal = makePendingMatcher(query, 'deal');
+        const matchManual = makePendingMatcher(query, 'manual');
+        const manual = (pending.manual || []).filter(matchManual);
         // Imported rows you've marked invoiced sit on the invoiced/awaiting list;
         // the rest stay in the not-yet-invoiced "Imported" groups.
         // The single Invoiced list = imported items you've invoiced + company
         // invoices not tied to a deal (tagged "not linked to a deal").
-        const invoicedManual = [...manual.filter((r) => r.status === 'invoiced'), ...(pending.companyInvoices || [])];
+        const companyInvoices = (pending.companyInvoices || []).filter(matchManual);
+        const invoicedManual = [...manual.filter((r) => r.status === 'invoiced'), ...companyInvoices];
         const pendingManual = manual.filter((r) => r.status !== 'invoiced');
         const pps = pendingManual.filter((r) => r.kind !== 'po');
         const pos = pendingManual.filter((r) => r.kind === 'po');
         const sumNet = (arr) => arr.reduce((s, r) => s + (Number(r.amountExVat) || 0), 0);
         // Signed deals split by invoice status: invoiced portions join the
         // Invoiced panel, not-yet-invoiced portions stay in Signed deals.
-        const { notInvoiced: signedOutstanding, invoiced: signedInvoiced } = splitSignedByInvoiced(pending.normal);
+        const { notInvoiced: signedOutstanding, invoiced: signedInvoiced } = splitSignedByInvoiced((pending.normal || []).filter(matchDeal));
         const sumOut = (arr) => round2Money(arr.reduce((s, d) => s + (Number(d.outstanding) || 0), 0));
+        // The remaining groups follow the same filter; their totals come from the
+        // server when unfiltered, and are re-summed from the matches when not.
+        const poRows = (pending.po || []).filter(matchDeal);
+        const partnerRows = (partners || []).filter(makePendingMatcher(query, 'partner'));
+        const otherRows = (pending.other || []).filter(makePendingMatcher(query, 'other'));
+        const matches = signedOutstanding.length + signedInvoiced.length + manual.length + companyInvoices.length
+          + poRows.length + partnerRows.length + otherRows.length;
+        if (searching && matches === 0) {
+          return (
+            <div style={{ padding: '14px 4px', fontSize: 13, color: BRAND.muted, fontStyle: 'italic' }}>
+              Nothing pending matches “{query.trim()}”.
+            </div>
+          );
+        }
         return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {searching && (
+            <div style={{ fontSize: 12, color: BRAND.muted }}>
+              {matches} {matches === 1 ? 'row matches' : 'rows match'} “{query.trim()}” · group totals below cover the matches only
+            </div>
+          )}
           <InvoicedAwaitingPanel
             dealRows={signedInvoiced}
             manualRows={invoicedManual}
@@ -1029,9 +1142,12 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
             companies={companies}
             isMobile={isMobile}
           />
+          {/* While searching, groups with no match drop out entirely — an empty
+              panel (with its paste-to-import footer) is just noise mid-search. */}
+          {(!searching || poRows.length + pos.length > 0) && (
           <PurchaseOrdersPanel
-            crmRows={pending.po || []}
-            crmTotal={pending.totals.po}
+            crmRows={poRows}
+            crmTotal={searching ? sumOut(poRows) : pending.totals.po}
             importedRows={pos}
             actions={actions}
             onChanged={onChanged}
@@ -1042,6 +1158,7 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
             companies={companies}
             isMobile={isMobile}
           />
+          )}
           <SignedDealsPanel
             rows={signedOutstanding}
             total={sumOut(signedOutstanding)}
@@ -1064,9 +1181,23 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
               isMobile={isMobile}
             />
           )}
-          <ArchivedPendingButton actions={actions} onChanged={onChanged} refreshSignal={pps} />
-          <PartnersPanel partners={partners} total={partnerTotal} onOpenPartner={onOpenPartner} isMobile={isMobile} />
-          <OtherPanel rows={pending.other || []} total={pending.totals?.other || 0} actions={actions} onChanged={onChanged} isMobile={isMobile} />
+          {/* The archive is its own unfiltered list, so it sits out a search. */}
+          {!searching && <ArchivedPendingButton actions={actions} onChanged={onChanged} refreshSignal={pps} />}
+          <PartnersPanel
+            partners={partnerRows}
+            total={searching ? partnerRows.reduce((s, p) => s + (Number(p.outstanding) || 0), 0) : partnerTotal}
+            onOpenPartner={onOpenPartner}
+            isMobile={isMobile}
+          />
+          {(!searching || otherRows.length > 0) && (
+            <OtherPanel
+              rows={otherRows}
+              total={searching ? sumNet(otherRows) : (pending.totals?.other || 0)}
+              actions={actions}
+              onChanged={onChanged}
+              isMobile={isMobile}
+            />
+          )}
         </div>
         );
       })()}
