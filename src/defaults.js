@@ -33,6 +33,31 @@ const EXTRA_PRICING_CATALOGUE = {
   priority:       { priceModel: 'fixed' },
 };
 
+// The script allowance is quoted per minute of content, so an inclusion stating a
+// word count should grow with the proposal's length.
+export const SCRIPT_WORDS_PER_MINUTE = 140;
+
+// Resolve an inclusion's text against the minutes the proposal covers.
+//  · {words} / {minutes} tokens are substituted, for explicit control.
+//  · "up to N words" is rescaled, treating the written N as the PER-MINUTE
+//    allowance. Proposals store their own copy of baseInclusions, so this is what
+//    lets ones written before per-length pricing still scale without a migration.
+export function applyInclusionTokens(text, minutes) {
+  if (!text) return text;
+  const mins = Math.max(1, Number(minutes) || 1);
+  const fmt = (n) => n.toLocaleString('en-GB');
+  let out = String(text)
+    .replace(/\{minutes\}/gi, fmt(mins))
+    .replace(/\{words\}/gi, fmt(SCRIPT_WORDS_PER_MINUTE * mins));
+  if (mins > 1) {
+    out = out.replace(/up to\s+([\d,]+)\s+words/gi, (match, written) => {
+      const perMinute = Number(String(written).replace(/,/g, '')) || 0;
+      return perMinute ? `up to ${fmt(perMinute * mins)} words` : match;
+    });
+  }
+  return out;
+}
+
 // An extra with the catalogue defaults applied where it declares nothing itself.
 export function resolveExtraPricing(extra) {
   if (!extra || extra.priceModel) return extra;

@@ -1,4 +1,4 @@
-import { SQUIDEO_LOGO, extraHasVariants, extraHasQuantity, extraUnitPrice } from '../defaults.js';
+import { SQUIDEO_LOGO, extraHasVariants, extraHasQuantity, extraUnitPrice, applyInclusionTokens } from '../defaults.js';
 import { CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { formatGBP, computeBaseDiscount } from '../utils.js';
 
@@ -171,8 +171,8 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
     <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #E5E9EE;font-size:13px;">
       <span style="color:#2BB8E6;flex-shrink:0;font-size:16px;line-height:1;">✓</span>
       <div>
-        <div style="font-weight:500;">${esc(inc.title)}</div>
-        ${inc.description ? `<div style="font-size:12px;color:#6B7785;margin-top:2px;">${esc(inc.description)}</div>` : ''}
+        <div style="font-weight:500;">${esc(applyInclusionTokens(inc.title, printMinutes))}</div>
+        ${inc.description ? `<div style="font-size:12px;color:#6B7785;margin-top:2px;">${esc(applyInclusionTokens(inc.description, printMinutes))}</div>` : ''}
       </div>
     </div>`).join('');
 

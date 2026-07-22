@@ -5,7 +5,7 @@ import {
   Play, RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
 } from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
-import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice, resolveExtraPricing } from '../defaults.js';
+import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice, resolveExtraPricing, applyInclusionTokens } from '../defaults.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile, computeBaseDiscount } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
@@ -943,9 +943,10 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                   <Icon size={16} color={BRAND.blue} strokeWidth={2.25} />
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 500 }}>{inc.title}</div>
+                  {/* Word counts and the like scale with the content length. */}
+                  <div style={{ fontWeight: 500 }}>{applyInclusionTokens(inc.title, contentMinutes)}</div>
                   {inc.description && (
-                    <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginTop: 3 }}>{inc.description}</div>
+                    <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginTop: 3 }}>{applyInclusionTokens(inc.description, contentMinutes)}</div>
                   )}
                 </div>
               </div>
