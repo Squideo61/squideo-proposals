@@ -5305,6 +5305,69 @@ function PickContactModal({ dealId, excludeIds, defaultCompanyId, onClose, onPic
   );
 }
 
+// Type-to-search over the companies already in the CRM. A plain <select> becomes
+// unusable once there are hundreds of companies, so this filters as you type and
+// shows a short list of suggestions. Filtering is local — companies are already
+// in the store, so there's nothing to fetch.
+function CompanyPicker({ value, onChange, companies }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const selected = value ? companies.find((c) => c.id === value) : null;
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return companies.slice(0, 8);
+    return companies.filter((c) => (c.name || '').toLowerCase().includes(q)).slice(0, 8);
+  }, [query, companies]);
+
+  if (selected) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+        <div style={{ flex: 1, padding: '8px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8, background: 'white', fontSize: 13, fontWeight: 600, color: BRAND.ink, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected.name}
+        </div>
+        <button type="button" className="btn-ghost" onClick={() => { onChange(''); setQuery(''); }}>Change</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: 'relative', marginTop: 4 }}>
+      <input
+        className="input"
+        style={{ width: '100%' }}
+        value={query}
+        placeholder="Search companies… (optional)"
+        name="squideo-contact-company"
+        autoComplete="off"
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && matches.length > 0 && (
+        <div style={{ position: 'absolute', zIndex: 20, top: '100%', left: 0, right: 0, marginTop: 4, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.12)', maxHeight: 220, overflowY: 'auto' }}>
+          {matches.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onChange(c.id); setOpen(false); }}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13 }}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {open && query.trim() && matches.length === 0 && (
+        <div style={{ position: 'absolute', zIndex: 20, top: '100%', left: 0, right: 0, marginTop: 4, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.12)', padding: '8px 10px', fontSize: 12, color: BRAND.muted }}>
+          No companies match — leave blank to add without one.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Lightweight create-and-link modal used by the email Cc prompt and the
 // SecondaryContactsRow picker when the typed email isn't in CRM yet.
 function CreateContactModal({ dealId, defaultCompanyId, prefill, onClose, onCreated }) {
@@ -5357,15 +5420,10 @@ function CreateContactModal({ dealId, defaultCompanyId, prefill, onClose, onCrea
           Job title
           <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Optional" name="squideo-contact-title" autoComplete="off" className="input" style={{ width: '100%', marginTop: 4 }} />
         </label>
-        <label style={{ fontSize: 12, color: BRAND.muted }}>
+        <div style={{ fontSize: 12, color: BRAND.muted }}>
           Company
-          <select value={companyId || ''} onChange={(e) => setCompanyId(e.target.value)} className="input" style={{ width: '100%', marginTop: 4 }}>
-            <option value="">— None —</option>
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-        </label>
+          <CompanyPicker value={companyId} onChange={setCompanyId} companies={companies} />
+        </div>
         {error && <div style={{ color: '#DC2626', fontSize: 12 }}>{error}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
