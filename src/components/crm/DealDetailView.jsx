@@ -5383,23 +5383,33 @@ function CreateContactModal({ dealId, defaultCompanyId, prefill, onClose, onCrea
     .sort((a, b) => (a.name || '').localeCompare(b.name || '')),
     [state.companies]);
 
-  const submit = async (e) => {
-    e.preventDefault();
+  // Two outcomes from the same form: create the contact and link it to this deal,
+  // or just create it (linked to the organisation) and leave the deal alone —
+  // useful when someone appears on a thread but isn't a stakeholder on this deal.
+  // `busy` holds which action is in flight so only that button shows a spinner.
+  const save = async (linkToDeal) => {
     if (!email.trim() || busy) return;
     setError('');
-    setBusy(true);
+    setBusy(linkToDeal ? 'deal' : 'contact');
+    const payload = {
+      email: email.trim(),
+      name: name.trim() || null,
+      title: title.trim() || null,
+      companyId: companyId || null,
+    };
     try {
-      await actions.addDealContact(dealId, {
-        email: email.trim(),
-        name: name.trim() || null,
-        title: title.trim() || null,
-        companyId: companyId || null,
-      });
+      if (linkToDeal) await actions.addDealContact(dealId, payload);
+      else await actions.createContact(payload);
       onCreated?.();
     } catch (err) {
       setError(err?.message || 'Could not add contact');
       setBusy(false);
     }
+  };
+
+  const submit = (e) => {
+    e.preventDefault();
+    save(!!dealId);
   };
 
   return (
@@ -5425,11 +5435,24 @@ function CreateContactModal({ dealId, defaultCompanyId, prefill, onClose, onCrea
           <CompanyPicker value={companyId} onChange={setCompanyId} companies={companies} />
         </div>
         {error && <div style={{ color: '#DC2626', fontSize: 12 }}>{error}</div>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+        <div style={{ fontSize: 11, color: BRAND.muted, lineHeight: 1.5 }}>
+          Saving without adding to the deal still links them to the organisation.
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
-          <button type="submit" className="btn" disabled={busy || !email.trim()}>
-            {busy ? 'Adding…' : 'Add to deal'}
+          <button
+            type="button"
+            onClick={() => save(false)}
+            className="btn-ghost"
+            disabled={!!busy || !email.trim()}
+          >
+            {busy === 'contact' ? 'Saving…' : 'Save contact only'}
           </button>
+          {dealId && (
+            <button type="submit" className="btn" disabled={!!busy || !email.trim()}>
+              {busy === 'deal' ? 'Adding…' : 'Add to deal'}
+            </button>
+          )}
         </div>
       </form>
     </Modal>
