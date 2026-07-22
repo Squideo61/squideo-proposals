@@ -429,7 +429,13 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
 
   <!-- Requirement -->
   ${(() => {
-    const reqText = (data.requirementSummary || '').trim() || (data.requirement || '').trim();
+    const written = (data.requirementSummary || '').trim() || (data.requirement || '').trim();
+    // Mirrors ClientView: a Content Credit proposal states what the credit buys
+    // even when nothing's been written.
+    const creditMins = Math.max(0, printMinutes);
+    const reqText = written || (isCreditOnly && creditMins > 0
+      ? `${creditMins % 1 === 0 ? creditMins.toFixed(0) : creditMins} ${creditMins === 1 ? 'minute' : 'minutes'} of HD animated video content`
+      : '');
     return reqText ? `<h2 class="page-title">Your Requirement</h2>
   <p style="font-size:13px;font-weight:500;line-height:1.7;white-space:pre-wrap;">${esc(reqText)}</p>` : '';
   })()}

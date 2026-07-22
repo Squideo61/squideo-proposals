@@ -917,7 +917,12 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         {(() => {
           // Prefer the dedicated free-text brief; fall back to the single-mode
           // requirement so existing proposals still show their requirement.
-          const reqText = (data.requirementSummary || '').trim() || (!videoOptions ? (data.requirement || '').trim() : '');
+          const written = (data.requirementSummary || '').trim() || (!videoOptions ? (data.requirement || '').trim() : '');
+          // Content Credit proposals describe the same thing every time, so when
+          // nothing's been written we state it rather than dropping the section.
+          const reqText = written || (isCreditOnly && quotedMinutes > 0
+            ? `${fmtMins(quotedMinutes)} of HD animated video content`
+            : '');
           if (!reqText) return null;
           return (
             <div style={{ marginBottom: 32 }}>
