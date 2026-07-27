@@ -22,7 +22,7 @@ import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { OrderSummaryCard } from './OrderSummaryCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
-import { PortalDealCard } from './PortalDealCard.jsx';
+import { PortalDealCard, launchIntroEmail } from './PortalDealCard.jsx';
 import { IntroCallButton } from './IntroCallCard.jsx';
 import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
 import { TrackingEye } from './EmailTracking.jsx';
@@ -108,6 +108,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   const [creatingTask, setCreatingTask] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [introBusy, setIntroBusy] = useState(false);
   // The composer itself is mounted at App level (see EmailComposerHost) so
   // it survives navigation. Opening it is now a store action.
   const openComposerForDeal = () => actions.openComposer({
@@ -115,6 +116,16 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
     dealTitle: deal?.title,
     contactEmail: contact?.email || null,
   });
+  const sendIntroEmail = async () => {
+    setIntroBusy(true);
+    try {
+      await launchIntroEmail({ actions, dealId: deal?.id, dealTitle: deal?.title });
+    } catch (err) {
+      showMsg(err?.message || 'Could not prepare the intro email');
+    } finally {
+      setIntroBusy(false);
+    }
+  };
   const [openEmailId, setOpenEmailId] = useState(null);
   const [askLost, setAskLost] = useState(false);
   const [prefillTitle, setPrefillTitle] = useState('');
@@ -189,6 +200,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
     || ['signed', 'paid', 'long_term'].includes(deal.stage)
     || (po && (po.isPo || !!po.number))
   );
+  // The intro email is what unlocks the client's portal task list (voiceover,
+  // kick-off, PO). Offer it once the deal is committed — signed or already in
+  // production — so PO deals can launch tasks before the PO lands.
+  const introReady = proposals.some(p => p.signed) || !!deal.productionPhase;
   const events = detail?.events || [];
   const tasks = detail?.tasks || [];
   const emails = detail?.emails || [];
@@ -305,6 +320,15 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             className="btn"
             title="Add a task to this deal"
           ><Plus size={14} /> Add task</button>
+          {introReady && (
+            <button
+              onClick={sendIntroEmail}
+              className="btn"
+              disabled={introBusy}
+              style={{ background: '#7C3AED', borderColor: '#7C3AED', color: '#fff' }}
+              title="Draft the client's intro email with their portal link — unlocks their portal tasks (PO, voiceover, kick-off call)"
+            ><Rocket size={14} /> {introBusy ? 'Preparing…' : 'Send intro email'}</button>
+          )}
           {!productionOnly && (
             <>
               {canGoodToGo && (
@@ -764,7 +788,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             from freelancers / finance-restricted views). */}
         {state.session?.role !== 'freelancer' && !hideFinancials && (
           <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-            <PortalDealCard dealId={dealId} dealTitle={deal.title} introReady={proposals.some(p => p.signed) || !!deal.productionPhase} />
+            <PortalDealCard dealId={dealId} dealTitle={deal.title} />
           </div>
         )}
 

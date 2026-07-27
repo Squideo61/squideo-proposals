@@ -3,7 +3,7 @@
 // upsells), tune the per-deal discount, and resend the portal welcome invite.
 // Backed by /api/crm/portal-admin.
 import React, { useCallback, useEffect, useState } from 'react';
-import { Check, Eye, EyeOff, Plus, Send, Sparkles, Trash2, UserPlus, X, Rocket } from 'lucide-react';
+import { Check, Eye, EyeOff, Plus, Send, Sparkles, Trash2, UserPlus, X } from 'lucide-react';
 // (Eye is reused for the preview button.)
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
@@ -182,7 +182,7 @@ function InviteModal({ dealId, data, onClose, onSent }) {
 // A ready-to-edit intro email body containing the client's portal link. The PM
 // opens this in the composer, tweaks the wording (or loads a saved template),
 // and sends. bodyHtml is seeded into the rich-text editor.
-function introEmailHtml({ name, url }) {
+export function introEmailHtml({ name, url }) {
   const hi = name ? `Hi ${name},` : 'Hi there,';
   return `<p>${hi}</p>`
     + `<p>Great news — your project is underway! To get started, head to your portal where you can choose your voiceover artist and book your kick-off call:</p>`
@@ -190,7 +190,29 @@ function introEmailHtml({ name, url }) {
     + `<p>Any questions, just reply to this email.</p>`;
 }
 
-export function PortalDealCard({ dealId, dealTitle = null, introReady = false }) {
+// Draft the client's intro email and open it in the composer. Fetches the deal's
+// current portal contacts *fresh* (a cached list goes stale the moment you add a
+// contact), generates the client's portal link — which marks the deal's tasks as
+// launched — and seeds the composer with an editable intro that already contains
+// it. Shared by the portal card and the deal-header button. Throws on no contact.
+export async function launchIntroEmail({ actions, dealId, dealTitle = null }) {
+  const info = await api.get(`/api/crm/portal-admin?dealId=${encodeURIComponent(dealId)}`);
+  const contact = (info?.candidates || []).find((c) => c.email);
+  if (!contact) throw new Error('This deal has no contact with an email — add one first.');
+  const { url } = await actions.generatePortalLink(dealId, contact.email, { markIntro: true });
+  actions.openComposer({
+    dealId,
+    dealTitle,
+    contactEmail: contact.email,
+    initialDraft: {
+      to: contact.email,
+      subject: dealTitle ? `${dealTitle} — let’s get started` : 'Your project — let’s get started',
+      body: introEmailHtml({ name: contact.name?.split(' ')[0] || null, url }),
+    },
+  });
+}
+
+export function PortalDealCard({ dealId, dealTitle = null }) {
   const { actions, showMsg } = useStore();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -198,7 +220,6 @@ export function PortalDealCard({ dealId, dealTitle = null, introReady = false })
   const [notice, setNotice] = useState(null);
   const [showCustom, setShowCustom] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
-  const [introBusy, setIntroBusy] = useState(false);
   const [custom, setCustom] = useState({ title: '', description: '', amount: '' });
   const [discountEdit, setDiscountEdit] = useState(null); // % string while editing
 
@@ -216,32 +237,6 @@ export function PortalDealCard({ dealId, dealTitle = null, introReady = false })
   const flash = (msg) => {
     setNotice(msg);
     window.setTimeout(() => setNotice(null), 3000);
-  };
-
-  // Draft the client's intro email: generate their portal link and open the
-  // composer pre-filled with an editable intro that already contains it. The PM
-  // can tweak it (or load a saved template) and send.
-  const sendIntroEmail = async () => {
-    const contact = (data?.candidates || []).find((c) => c.email);
-    if (!contact) return flash('This deal has no contact with an email — add one first.');
-    setIntroBusy(true);
-    try {
-      const { url } = await actions.generatePortalLink(dealId, contact.email, { markIntro: true });
-      actions.openComposer({
-        dealId,
-        dealTitle,
-        contactEmail: contact.email,
-        initialDraft: {
-          to: contact.email,
-          subject: dealTitle ? `${dealTitle} — let’s get started` : 'Your project — let’s get started',
-          body: introEmailHtml({ name: contact.name?.split(' ')[0] || null, url }),
-        },
-      });
-    } catch (err) {
-      flash(err.message || 'Could not prepare the intro email');
-    } finally {
-      setIntroBusy(false);
-    }
   };
 
   const run = async (fn, okMsg) => {
@@ -312,11 +307,6 @@ export function PortalDealCard({ dealId, dealTitle = null, introReady = false })
           <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data} onClick={() => setShowInvite(true)} title="Invite this deal's contacts to the client portal">
             <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Portal invite
           </button>
-          {introReady && (
-            <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data || introBusy} onClick={sendIntroEmail} title="Draft the client's intro email with their portal link — unlocks their portal tasks (PO, voiceover, kick-off call)">
-              <Rocket size={12} style={{ verticalAlign: -1, marginRight: 4 }} />{introBusy ? 'Preparing…' : 'Send intro email'}
-            </button>
-          )}
           <button className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setShowCustom(true)}>
             <Plus size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Custom offer
           </button>
