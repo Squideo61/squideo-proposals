@@ -10,9 +10,10 @@
 // set) — that's when the PM sends the "here are your tasks" email.
 
 const TASK_PRODUCERS = [
-  // Choose a voiceover artist for each video.
-  ({ deal, videos }) => {
-    if (!videos.length) return null;
+  // Choose a voiceover artist for each video. Only when the project actually
+  // includes a voiceover (the standard AI VO can be removed from the proposal).
+  ({ deal, videos, hasVoiceover }) => {
+    if (!hasVoiceover || !videos.length) return null;
     const remaining = videos.filter((v) => !v.voiceover_artist_id).length;
     return {
       key: 'voiceover',

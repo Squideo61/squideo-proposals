@@ -6,6 +6,7 @@ import { sendNotification } from '../_lib/notifications.js';
 import { getOrCreateContact, createInvoice, emailInvoice, createPayment } from '../_lib/xero.js';
 import { advanceStage, dealIdForProposal, xeroContactIdForProposal } from '../_lib/dealStage.js';
 import { computeProposalCheckout } from '../_lib/proposalPricing.js';
+import { completeVoiceoverUpgrade } from '../_lib/voiceover.js';
 import { escapeHtml } from '../_lib/crm/shared.js';
 import {
   lineItemsForProject,
@@ -415,6 +416,19 @@ export default async function handler(req, res) {
 
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
+
+      // Portal voiceover upgrade (a paid voice pick on a pay-now deal). Handled
+      // separately from proposal payments — it must NOT touch the proposal-scoped
+      // `payments` row. Apply the pick + log the paid extra, then 200.
+      if (session.payment_status === 'paid' && session.metadata?.kind === 'voiceover_upgrade') {
+        try {
+          await completeVoiceoverUpgrade(session.metadata);
+        } catch (err) {
+          console.error('[stripe webhook] voiceover upgrade apply failed', err.message);
+        }
+        return res.status(200).json({ received: true });
+      }
+
       if (session.payment_status === 'paid') {
         const proposalId = session.metadata?.proposalId;
         if (proposalId) {

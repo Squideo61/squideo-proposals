@@ -146,6 +146,38 @@ function ArtistRow({ artist }) {
   );
 }
 
+function PremiumPriceEditor() {
+  const { state, actions } = useStore();
+  const [price, setPrice] = useState(state.voiceoverPricing?.premiumPrice ?? '');
+  useEffect(() => { setPrice(state.voiceoverPricing?.premiumPrice ?? ''); }, [state.voiceoverPricing]);
+  const meta = VOICEOVER_SECTIONS.find((s) => s.key === 'premium');
+  const save = () => {
+    const n = Number(price);
+    actions.saveVoiceoverPricing({ premiumPrice: Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null });
+  };
+  return (
+    <div style={{ marginTop: 28, background: meta.tint, border: `1px solid ${meta.border}`, borderRadius: 12, padding: 16 }}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 15.5, fontWeight: 800, color: meta.accent }}>Premium upgrade price</h3>
+      <p style={{ margin: '0 0 12px', fontSize: 13, color: BRAND.muted, lineHeight: 1.5, maxWidth: 600 }}>
+        The single charge a client pays to pick a <strong>Premium</strong> artist. On a standard-AI
+        project they pay this in full; if they already bought a Human voiceover they pay the
+        difference. Full &amp; 50/50 deals pay by card at selection; PO deals have it added to the
+        final invoice. Leave blank to hide the Premium section from clients.
+      </p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: BRAND.ink }}>£</span>
+        <input
+          type="number" min="0" step="1" value={price}
+          onChange={(e) => setPrice(e.target.value)} onBlur={save}
+          placeholder="e.g. 200"
+          style={{ width: 130, fontSize: 14, padding: '8px 11px', border: '1px solid ' + BRAND.border, borderRadius: 8 }}
+        />
+        <span style={{ fontSize: 12.5, color: BRAND.muted }}>ex VAT · saved automatically</span>
+      </div>
+    </div>
+  );
+}
+
 function ProjectTasksEmailEditor() {
   const { state, actions } = useStore();
   const cur = state.projectTasksEmail || {};
@@ -267,6 +299,7 @@ export function VoiceoverCatalogueTab() {
         })
       )}
 
+      <PremiumPriceEditor />
       <ProjectTasksEmailEditor />
     </div>
   );

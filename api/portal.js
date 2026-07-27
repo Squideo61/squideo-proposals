@@ -22,6 +22,7 @@
 
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
+import Stripe from 'stripe';
 import { put, del, getDownloadUrl } from '@vercel/blob';
 import sql from './_lib/db.js';
 import { sendMail, APP_URL } from './_lib/email.js';
@@ -54,6 +55,7 @@ import {
 } from './_lib/portal/middleware.js';
 import { deriveNextStep } from './_lib/portal/nextStep.js';
 import { deriveProjectTasks, countOpenTasks } from './_lib/portal/tasks.js';
+import { voiceoverProposalContext } from './_lib/proposalPricing.js';
 import {
   computePortalOffers,
   resolveOfferForAccept,
@@ -65,6 +67,13 @@ import {
   serialiseArtist,
   getArtist,
   streamVoiceoverSample,
+  resolveVoiceoverContext,
+  applyVoiceoverSelection,
+  shapePortalVoiceoverVideo,
+  recordVoiceoverExtra,
+  notifyVoiceoverChosen,
+  emailVoiceoverConfirm,
+  sectionName,
 } from './_lib/voiceover.js';
 import { ensureIntroCallTables } from './_lib/crm/introCallSlots.js';
 import { bookSlot, computeBookingSlots } from './_lib/introCallBooking.js';
@@ -224,7 +233,7 @@ async function gatherDealStates(dealIds) {
 
   const [proposalRows, videoRows, revRows, sbRows, kickoffRows] = await Promise.all([
     sql`
-      SELECT p.id, p.deal_id, p.created_at, s.data AS signature_data, s.signed_at
+      SELECT p.id, p.deal_id, p.created_at, p.data AS proposal_data, s.data AS signature_data, s.signed_at
         FROM proposals p
         LEFT JOIN signatures s ON s.proposal_id = p.id
        WHERE p.deal_id = ANY(${dealIds})
@@ -261,12 +270,20 @@ async function gatherDealStates(dealIds) {
     `.catch(() => []),
   ]);
 
-  const proposals = new Map(); // dealId -> { id, signature }
+  const proposals = new Map(); // dealId -> { id, signature, hasVo }
   for (const p of proposalRows) {
     if (!proposals.has(p.deal_id)) {
+      // Does this project include a voiceover at all? (AI VO is standard but can
+      // be removed from the proposal; or the client bought the human VO extra.)
+      let hasVo = false;
+      try {
+        const vo = voiceoverProposalContext(p.proposal_data, p.signature_data);
+        hasVo = vo.aiIncluded || vo.humanPurchased;
+      } catch { hasVo = false; }
       proposals.set(p.deal_id, {
         id: p.id,
         signature: p.signed_at ? { data: p.signature_data, signedAt: p.signed_at } : null,
+        hasVo,
       });
     }
   }
@@ -335,6 +352,7 @@ function tasksFor(deal, states) {
     deal,
     videos: states.videos.get(deal.id) || [],
     hasKickoffBooking: states.kickoffDeals.has(deal.id),
+    hasVoiceover: states.proposals.get(deal.id)?.hasVo ?? false,
   });
 }
 
@@ -1070,44 +1088,59 @@ async function extrasAcceptRoute(req, res, user) {
 // The client auditions the global artist catalogue (two sections, matching
 // squideo.com) and picks one PER VIDEO. A pick locks — they can't change it.
 
-// GET voiceover?dealId= — catalogue + this project's videos with any pick.
+// The label a client-facing charge/video uses (2607-014-01 or the title).
+function voiceoverVideoLabel(deal, video) {
+  return deal.reference && video.video_number
+    ? `${deal.reference}-${String(video.video_number).padStart(2, '0')}`
+    : (video.title || 'your video');
+}
+
+// GET voiceover?dealId= — eligibility + catalogue (only the sections this
+// client can pick, each with its per-pick charge) + this project's videos.
 async function voiceoverRoute(req, res, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const deal = await requireDealInOrg(res, req.query.dealId ? String(req.query.dealId) : null, user.companyIds);
   if (!deal) return;
   await ensureVoiceoverCatalogue();
 
-  const [artists, videos] = await Promise.all([
-    sql`SELECT * FROM voiceover_artists WHERE archived_at IS NULL ORDER BY category, sort_order, created_at`,
-    sql`
-      SELECT v.id, v.title, v.video_number, v.sort_order, v.created_at,
-             v.voiceover_artist_id, va.name AS voiceover_artist_name, va.category AS voiceover_category
-        FROM project_videos v
-        LEFT JOIN voiceover_artists va ON va.id = v.voiceover_artist_id
-       WHERE v.deal_id = ${deal.id}
-       ORDER BY v.sort_order ASC, v.created_at ASC`,
-  ]);
+  const ctx = await resolveVoiceoverContext(deal);
 
-  const grouped = { ai: [], human: [], premium: [] };
-  for (const a of artists) (grouped[grouped[a.category] ? a.category : 'human']).push(serialiseArtist(a));
+  const videos = await sql`
+    SELECT v.id, v.title, v.video_number, v.sort_order, v.created_at,
+           v.voiceover_artist_id, va.name AS voiceover_artist_name, va.category AS voiceover_category
+      FROM project_videos v
+      LEFT JOIN voiceover_artists va ON va.id = v.voiceover_artist_id
+     WHERE v.deal_id = ${deal.id}
+     ORDER BY v.sort_order ASC, v.created_at ASC`;
+
+  // No voiceover on this project (the AI inclusion was removed and no human VO
+  // was bought) → nothing to choose.
+  if (!ctx.hasVo) {
+    return res.status(200).json({ dealId: deal.id, dealTitle: deal.title, hasVo: false, sections: [], videos: videos.map(shapePortalVoiceoverVideo) });
+  }
+
+  const artists = await sql`SELECT * FROM voiceover_artists WHERE archived_at IS NULL AND category = ANY(${ctx.sections}) ORDER BY category, sort_order, created_at`;
+  const grouped = {};
+  for (const key of ctx.sections) grouped[key] = [];
+  for (const a of artists) if (grouped[a.category]) grouped[a.category].push(serialiseArtist(a));
 
   return res.status(200).json({
     dealId: deal.id,
     dealTitle: deal.title,
     reference: deal.reference || null,
-    artists: grouped,
-    videos: videos.map((v) => ({
-      id: v.id,
-      title: v.title,
-      videoNumber: v.video_number ?? null,
-      voiceover: v.voiceover_artist_id
-        ? { artistId: v.voiceover_artist_id, artistName: v.voiceover_artist_name || 'Selected artist', category: v.voiceover_category || null, locked: true }
-        : null,
-    })),
+    hasVo: true,
+    // Ordered sections with the £ charge for picking any artist in them.
+    sections: ctx.sections.map((key) => ({ key, charge: ctx.charges[key] ?? 0, artists: grouped[key] || [] })),
+    entitlement: ctx.entitlement,
+    paymentMode: ctx.paymentMode,               // 'now' | 'final'
+    videos: videos.map(shapePortalVoiceoverVideo),
   });
 }
 
 // POST voiceover-select { dealId, videoId, artistId, applyToAll }
+// Server is the pricing authority: it recomputes the charge for the chosen tier
+// (never trusts the client). Free picks lock immediately; a paid pick either
+// rides the final invoice (PO) or requires a Stripe payment first (full/50-50).
 async function voiceoverSelectRoute(req, res, user) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const body = await readJsonBody(req);
@@ -1119,92 +1152,79 @@ async function voiceoverSelectRoute(req, res, user) {
   const artistId = trimOrNull(body.artistId);
   if (!videoId || !artistId) return res.status(400).json({ error: 'videoId and artistId are required' });
 
-  // The chosen artist must exist and still be live.
   const artist = await getArtist(artistId);
   if (!artist || artist.archived_at) {
     return res.status(400).json({ error: 'That voiceover artist is no longer available — refresh and try again.' });
   }
-  // The target video must belong to THIS deal (org already checked).
   const [video] = await sql`SELECT id, title, video_number, voiceover_artist_id FROM project_videos WHERE id = ${videoId} AND deal_id = ${deal.id}`;
   if (!video) return res.status(404).json({ error: 'Video not found' });
   if (video.voiceover_artist_id) {
     return res.status(409).json({ error: 'A voiceover is already locked in for this video. Contact your producer to change it.' });
   }
 
+  const ctx = await resolveVoiceoverContext(deal);
+  if (!ctx.hasVo) return res.status(409).json({ error: 'This project doesn’t include a voiceover.' });
+  // The artist's section must be one this client is allowed to pick from.
+  if (!ctx.sections.includes(artist.category)) {
+    return res.status(403).json({ error: 'That voice isn’t available on your project.' });
+  }
+  const charge = ctx.charges[artist.category];
+  if (charge == null) return res.status(409).json({ error: 'That voice can’t be selected right now — contact your producer.' });
+
   const applyToAll = body.applyToAll === true;
-  if (applyToAll) {
-    // Set the same artist on every video in the deal that isn't already locked.
-    await sql`
-      UPDATE project_videos
-         SET voiceover_artist_id = ${artistId}, voiceover_selected_at = NOW(),
-             voiceover_selected_by = ${user.puid}, updated_at = NOW()
-       WHERE deal_id = ${deal.id} AND voiceover_artist_id IS NULL`;
-  } else {
-    await sql`
-      UPDATE project_videos
-         SET voiceover_artist_id = ${artistId}, voiceover_selected_at = NOW(),
-             voiceover_selected_by = ${user.puid}, updated_at = NOW()
-       WHERE id = ${videoId} AND voiceover_artist_id IS NULL`;
+  const videoLabel = voiceoverVideoLabel(deal, video);
+
+  // Paid upgrade on a pay-now (full / 50-50) deal → take the card payment FIRST.
+  // The pick is applied by the Stripe webhook once payment completes.
+  if (charge > 0 && ctx.paymentMode === 'now') {
+    try {
+      const checkoutUrl = await createVoiceoverCheckout({ deal, user, artist, video, applyToAll, charge });
+      return res.status(200).json({ requiresPayment: true, checkoutUrl, amount: charge });
+    } catch (err) {
+      console.error('[portal] voiceover checkout failed', err.message);
+      return res.status(502).json({ error: 'Could not start payment — please try again.' });
+    }
   }
 
-  const videoLabel = deal.reference && video.video_number
-    ? `${deal.reference}-${String(video.video_number).padStart(2, '0')}`
-    : (video.title || 'your video');
-
-  // Team alert.
-  try {
-    await ensurePortalNotificationDefaults();
-    await sendNotification('portal.voiceover_selected', {
-      subject: `🎙️ Voiceover chosen: ${artist.name} — ${deal.title}`,
-      text: `${user.name || user.email} chose ${artist.name} (${artist.category === 'ai' ? 'AI' : 'Human'}) for ${applyToAll ? 'all videos' : videoLabel} on ${deal.title}.`,
-      inApp: {
-        title: `Voiceover: ${artist.name}`,
-        body: `${user.name || user.email} · ${applyToAll ? 'all videos' : videoLabel} · ${deal.title}`,
-        link: `#/deal/${deal.id}`,
-      },
-      inAppOnly: true,
-    });
-  } catch (err) {
-    console.warn('[portal] voiceover_selected notify failed', err.message);
+  // Free pick, or a paid pick on a PO deal (rides the final invoice).
+  if (charge > 0) {
+    await recordVoiceoverExtra({ dealId: deal.id, artist, videoLabel, applyToAll, amount: charge, paid: false, portalUserId: user.puid });
   }
+  const videos = await applyVoiceoverSelection({ dealId: deal.id, videoId, artistId, applyToAll, portalUserId: user.puid });
+  await notifyVoiceoverChosen({ deal, actorName: user.name || user.email, artist, videoLabel, applyToAll, charge, paidNow: false });
+  await emailVoiceoverConfirm({ deal, clientEmail: user.email, clientName: user.name, artist, videoLabel, applyToAll });
 
-  // Client confirmation (best-effort).
-  try {
-    await sendMail({
-      to: user.email,
-      subject: `Voiceover locked in for ${deal.title}`,
-      html: portalVoiceoverConfirmHtml({
-        logoUrl: await emailLogoUrl(deal.company_id),
-        clientName: user.name,
-        projectTitle: deal.title,
-        artistName: artist.name,
-        videoLabel,
-        appliedToAll: applyToAll,
-      }),
-      text: `You chose ${artist.name} for ${applyToAll ? 'all videos in' : videoLabel + ' on'} ${deal.title}.`,
-    });
-  } catch (err) {
-    console.warn('[portal] voiceover confirm email failed', err.message);
-  }
+  return res.status(200).json({ videos, charged: charge > 0 ? { amount: charge, mode: 'final' } : null });
+}
 
-  // Return the refreshed video list so the page re-renders locked rows.
-  const videos = await sql`
-    SELECT v.id, v.title, v.video_number,
-           v.voiceover_artist_id, va.name AS voiceover_artist_name, va.category AS voiceover_category
-      FROM project_videos v
-      LEFT JOIN voiceover_artists va ON va.id = v.voiceover_artist_id
-     WHERE v.deal_id = ${deal.id}
-     ORDER BY v.sort_order ASC, v.created_at ASC`;
-  return res.status(200).json({
-    videos: videos.map((v) => ({
-      id: v.id,
-      title: v.title,
-      videoNumber: v.video_number ?? null,
-      voiceover: v.voiceover_artist_id
-        ? { artistId: v.voiceover_artist_id, artistName: v.voiceover_artist_name || 'Selected artist', category: v.voiceover_category || null, locked: true }
-        : null,
-    })),
+// Create a Stripe Checkout Session for a paid voiceover upgrade. The metadata
+// carries everything the webhook needs to apply the pick after payment.
+async function createVoiceoverCheckout({ deal, user, artist, video, applyToAll, charge }) {
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+  const label = `${sectionName(artist.category)} voiceover — ${artist.name}`;
+  // Query param BEFORE the hash so it lands in location.search and doesn't
+  // corrupt the hash-routed dealId (#/voiceover/<dealId>).
+  const returnTo = (flag) => `${PORTAL_URL}/?${flag}=1#/voiceover/${deal.id}`;
+  const session = await stripe.checkout.sessions.create({
+    mode: 'payment',
+    customer_email: user.email || undefined,
+    line_items: [{
+      price_data: { currency: 'gbp', product_data: { name: label }, unit_amount: Math.round(charge * 100) },
+      quantity: 1,
+    }],
+    metadata: {
+      kind: 'voiceover_upgrade',
+      dealId: deal.id,
+      videoId: video.id,
+      artistId: artist.id,
+      applyToAll: applyToAll ? 'true' : 'false',
+      portalUserId: user.puid || '',
+      amount: String(charge),
+    },
+    success_url: returnTo('vo_paid'),
+    cancel_url: returnTo('vo_cancelled'),
   });
+  return session.url;
 }
 
 // GET voiceover-sample?artistId= — stream a sample clip (global catalogue, any

@@ -467,6 +467,8 @@ export function StoreProvider({ children }) {
         // Admin-editable body for the PM "email project tasks" action; null
         // until first saved (the send route falls back to a default).
         projectTasksEmail: settings?.projectTasksEmail || null,
+        // Flat charge to pick a Premium voiceover artist; null until set.
+        voiceoverPricing: settings?.voiceoverPricing || null,
         loading: false,
       }));
     });
@@ -2751,6 +2753,14 @@ export function StoreProvider({ children }) {
       clearTimeout(saveTimers.current.__projectTasksEmail);
       saveTimers.current.__projectTasksEmail = setTimeout(() => {
         api.put('/api/settings', { projectTasksEmail: data }).catch(() => {});
+      }, 800);
+    },
+    // Persist the flat Premium voiceover price (Admin → Voiceovers).
+    saveVoiceoverPricing(data) {
+      setState(s => ({ ...s, voiceoverPricing: data }));
+      clearTimeout(saveTimers.current.__voiceoverPricing);
+      saveTimers.current.__voiceoverPricing = setTimeout(() => {
+        api.put('/api/settings', { voiceoverPricing: data }).catch(() => {});
       }, 800);
     },
     getGmailSignature() {

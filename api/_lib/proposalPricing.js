@@ -49,12 +49,66 @@ function extraHasQuantity(extra) {
 
 // Mirror of extraUnitPrice in src/defaults.js: `price` covers the first minute,
 // then perExtraMinute is added for each additional minute of content.
-function extraUnitPrice(extra, minutes) {
+export function extraUnitPrice(extra, minutes) {
   const e = resolveExtraPricing(extra);
   const base = Number(e?.price) || 0;
   if (e?.priceModel !== 'perExtraMinute') return base;
   const mins = Math.max(1, Number(minutes) || 1);
   return base + (mins - 1) * (Number(e.perExtraMinute) || 0);
+}
+
+// The video option the client selected (matched back to the proposal), else the
+// first option. Shared by computeProposalCheckout and the voiceover pricing.
+function selectedVideoOption(data, sig) {
+  const opts = Array.isArray(data?.videoOptions) && data.videoOptions.length ? data.videoOptions : null;
+  if (!opts) return null;
+  const sel = sig?.selectedVideoOption || null;
+  let opt = null;
+  if (sel) {
+    opt = opts.find((v) => (v.id && sel.id && v.id === sel.id) || (v.label && sel.label && v.label === sel.label)) || null;
+  }
+  return opt || opts[0] || null;
+}
+
+// Minutes of content the proposal covers — from the selected option, else the
+// proposal-level figure. Per-minute extras scale off this. Always from the
+// PROPOSAL, never the signature.
+export function proposalContentMinutes(data, sig) {
+  const opt = selectedVideoOption(data, sig);
+  return Number(opt?.minutes) || Number(data?.partnerProgramme?.quotedMinutes) || 0;
+}
+
+// Everything the voiceover feature needs to decide eligibility + pricing from a
+// signed proposal:
+//   aiIncluded    — the standard "Latest-generation AI voiceover" base inclusion
+//                   is present (a project may have it removed → no VO at all)
+//   humanPurchased— the client bought the 'voiceover' (human) optional extra
+//   humanPrice    — the proposal's own price to add a human voiceover (the exact
+//                   figure the proposal showed — perExtraMinute-scaled), or null
+//   humanPaid     — what they actually paid for it, if purchased
+export function voiceoverProposalContext(proposalData, signatureData) {
+  const data = proposalData || {};
+  const sig = signatureData || {};
+  const minutes = proposalContentMinutes(data, sig);
+  const extras = Array.isArray(data.optionalExtras) ? data.optionalExtras : [];
+  const voExtra = extras.find((e) => e && e.id === 'voiceover') || null;
+  const humanPrice = voExtra ? round2(extraUnitPrice(voExtra, minutes)) : null;
+
+  const selectedExtras = Array.isArray(sig.selectedExtras) ? sig.selectedExtras : [];
+  const purchased = selectedExtras.find((e) => e && e.id === 'voiceover') || null;
+  const humanPaid = purchased ? round2(Number(purchased.price) || humanPrice || 0) : null;
+
+  const baseInclusions = Array.isArray(data.baseInclusions) ? data.baseInclusions : [];
+  const aiIncluded = baseInclusions.some((i) => /latest-generation ai voiceover/i.test(i?.title || ''));
+
+  return {
+    aiIncluded,
+    humanPurchased: !!purchased,
+    humanPrice,
+    humanPaid,
+    contentMinutes: minutes,
+    paymentOption: sig.paymentOption || null, // 'full' | '5050' | 'po'
+  };
 }
 
 // Mirror of computeBaseDiscount in src/utils.js.
@@ -81,23 +135,9 @@ export function computeProposalCheckout(proposalData, signatureData) {
   const vatRate = Number(data.vatRate) || 0;
 
   // --- Base / selected video-option price (matched back to the proposal) ---
-  const proposalVideoOptions = Array.isArray(data.videoOptions) && data.videoOptions.length
-    ? data.videoOptions : null;
+  const selectedOption = selectedVideoOption(data, sig);
   let effectiveBasePrice = Number(data.basePrice) || 0;
-  let selectedOption = null;
-  if (proposalVideoOptions) {
-    const sel = sig.selectedVideoOption || null;
-    let opt = null;
-    if (sel) {
-      opt = proposalVideoOptions.find(v =>
-        (v.id && sel.id && v.id === sel.id)
-        || (v.label && sel.label && v.label === sel.label)
-      ) || null;
-    }
-    // No match → the client's default selection is the first option.
-    selectedOption = opt || proposalVideoOptions[0] || null;
-    effectiveBasePrice = Number(selectedOption?.price) || effectiveBasePrice;
-  }
+  if (selectedOption) effectiveBasePrice = Number(selectedOption.price) || effectiveBasePrice;
 
   // --- Selected extras (prices from the proposal, matched by id) ---
   const proposalExtras = Array.isArray(data.optionalExtras) ? data.optionalExtras : [];
@@ -106,7 +146,7 @@ export function computeProposalCheckout(proposalData, signatureData) {
   // Minutes of content the proposal covers — from the selected option, else the
   // proposal-level figure. Per-minute extras scale off this, and it comes from
   // the PROPOSAL (never the signature) so a tampered figure can't cut the price.
-  const contentMinutes = Number(selectedOption?.minutes) || Number(data.partnerProgramme?.quotedMinutes) || 0;
+  const contentMinutes = proposalContentMinutes(data, sig);
 
   let extrasTotal = 0;
   for (const selRaw of selectedExtras) {

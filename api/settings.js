@@ -35,6 +35,10 @@ function ensureFinanceTargetsColumn() {
     // { subject, bodyHtml } — the live per-client portal button is appended at
     // send time. null until an admin saves one (server falls back to a default).
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS project_tasks_email JSONB`;
+    // Voiceover upgrade pricing. { premiumPrice } — the single flat charge to
+    // pick a Premium artist. null until an admin sets it (Premium section is
+    // hidden from clients while unpriced).
+    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS voiceover_pricing JSONB`;
   })().catch((err) => { financeTargetsColumnEnsured = null; throw err; });
   return financeTargetsColumnEnsured;
 }
@@ -49,7 +53,7 @@ export default async function handler(req, res) {
   await ensureFinanceTargetsColumn();
 
   if (req.method === 'GET') {
-    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal, project_tasks_email FROM settings WHERE id = 1`;
+    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal, project_tasks_email, voiceover_pricing FROM settings WHERE id = 1`;
     const row = rows[0];
     return res.status(200).json({
       extrasBank: row.extras_bank,
@@ -62,6 +66,8 @@ export default async function handler(req, res) {
       // Admin-editable body for the PM "email project tasks" action. null until
       // first saved — the send route falls back to a hardcoded default.
       projectTasksEmail: row.project_tasks_email || null,
+      // Flat charge to pick a Premium voiceover artist. null until set.
+      voiceoverPricing: row.voiceover_pricing || null,
       financeTargets: Array.isArray(row.finance_targets) && row.finance_targets.length
         ? row.finance_targets
         : DEFAULT_FINANCE_TARGETS,
@@ -81,7 +87,7 @@ export default async function handler(req, res) {
     if (!hasPermission(await getRole(user.role), 'settings.manage')) {
       return res.status(403).json({ error: 'You do not have permission to edit workspace settings' });
     }
-    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal, projectTasksEmail } = req.body || {};
+    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal, projectTasksEmail, voiceoverPricing } = req.body || {};
     await sql`
       UPDATE settings SET
         extras_bank             = COALESCE(${extrasBank ? JSON.stringify(extrasBank) : null}::jsonb, extras_bank),
@@ -92,7 +98,8 @@ export default async function handler(req, res) {
         sales_targets           = COALESCE(${salesTargets ? JSON.stringify(salesTargets) : null}::jsonb, sales_targets),
         cost_items              = COALESCE(${Array.isArray(costItems) ? JSON.stringify(costItems) : null}::jsonb, cost_items),
         default_proposal        = COALESCE(${defaultProposal ? JSON.stringify(defaultProposal) : null}::jsonb, default_proposal),
-        project_tasks_email     = COALESCE(${projectTasksEmail ? JSON.stringify(projectTasksEmail) : null}::jsonb, project_tasks_email)
+        project_tasks_email     = COALESCE(${projectTasksEmail ? JSON.stringify(projectTasksEmail) : null}::jsonb, project_tasks_email),
+        voiceover_pricing       = COALESCE(${voiceoverPricing ? JSON.stringify(voiceoverPricing) : null}::jsonb, voiceover_pricing)
       WHERE id = 1
     `;
     return res.status(200).json({ ok: true });
