@@ -20,24 +20,26 @@ const videoLabel = (v, reference) =>
 
 function ArtistCard({ artist, section, charge, onChoose, disabled }) {
   return (
-    <div style={{ border: `1px solid ${BRAND.border}`, borderRadius: 12, padding: '12px 14px', background: '#fff', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-      <div style={{ flex: '1 1 160px', minWidth: 140 }}>
-        <div style={{ fontWeight: 800, fontSize: 14, color: BRAND.ink }}>{artist.name}</div>
-        {artist.description && <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.4, marginTop: 2 }}>{artist.description}</div>}
+    <div style={{ border: `1px solid ${BRAND.border}`, borderRadius: 12, padding: '12px 14px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div>
+        <div style={{ fontWeight: 600, fontSize: 14, color: BRAND.ink }}>{artist.name}</div>
+        {artist.description && <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.4, marginTop: 1 }}>{artist.description}</div>}
       </div>
-      {artist.hasSample ? (
-        <audio controls preload="none" src={`/api/portal/voiceover-sample?artistId=${encodeURIComponent(artist.id)}&v=${artist.sizeBytes || 0}`} style={{ flex: '2 1 240px', minWidth: 200, height: 38 }} />
-      ) : (
-        <div style={{ flex: '2 1 240px', minWidth: 200, fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Sample coming soon</div>
-      )}
-      <button
-        className="btn"
-        disabled={disabled}
-        onClick={() => onChoose(artist, section, charge)}
-        style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: section.accent, borderColor: section.accent }}
-      >
-        <Mic size={14} /> {charge > 0 ? `Choose · +${money(charge)}` : 'Choose this voice'}
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        {artist.hasSample ? (
+          <audio controls preload="none" src={`/api/portal/voiceover-sample?artistId=${encodeURIComponent(artist.id)}&v=${artist.sizeBytes || 0}`} style={{ flex: '1 1 240px', minWidth: 200, height: 38 }} />
+        ) : (
+          <div style={{ flex: '1 1 240px', minWidth: 200, fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Sample coming soon</div>
+        )}
+        <button
+          className="btn"
+          disabled={disabled}
+          onClick={() => onChoose(artist, section, charge)}
+          style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: section.accent, borderColor: section.accent }}
+        >
+          <Mic size={14} /> {charge > 0 ? `Choose · +${money(charge)}` : 'Choose this voice'}
+        </button>
+      </div>
     </div>
   );
 }
