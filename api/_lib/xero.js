@@ -274,6 +274,59 @@ export async function createInvoice({ contactId, lineItems, reference, invoiceNu
 // Returns the predicted next invoice number based on the most recent ACCREC
 // invoice in Xero. Includes all statuses (DRAFT, AUTHORISED, PAID, VOIDED)
 // so the latest paid invoices are counted. Parses "INV-6058" → "INV-6059".
+// Append a line item to an existing invoice. Xero's update replaces the WHOLE
+// LineItems array, so we fetch the current lines (with their LineItemIDs, to
+// preserve them) and re-POST them plus the new one. Only DRAFT/SUBMITTED/
+// AUTHORISED invoices with no payment yet can have their lines edited — anything
+// paid or voided is rejected with a 409 so the caller can fall back to a new
+// invoice. Returns the refreshed number + totals.
+export async function addLineToInvoice(invoiceId, lineItem) {
+  const json = await xeroFetch(`/api.xro/2.0/Invoices/${encodeURIComponent(invoiceId)}`);
+  const inv = json?.Invoices?.[0];
+  if (!inv) { const e = new Error('Invoice not found in Xero'); e.status = 404; throw e; }
+  if (!['DRAFT', 'SUBMITTED', 'AUTHORISED'].includes(inv.Status)) {
+    const e = new Error(`the invoice is ${String(inv.Status || '').toLowerCase() || 'not editable'}`); e.status = 409; throw e;
+  }
+  if (Number(inv.AmountPaid) > 0) {
+    const e = new Error('the invoice already has a payment against it'); e.status = 409; throw e;
+  }
+  // Resend existing lines verbatim (LineItemID keeps them from duplicating) then
+  // the new one. Preserve the invoice's own LineAmountTypes so our ex-VAT unit
+  // amount is interpreted the same way its other lines are.
+  const existing = (inv.LineItems || []).map((li) => ({
+    LineItemID: li.LineItemID,
+    Description: li.Description,
+    Quantity: li.Quantity,
+    UnitAmount: li.UnitAmount,
+    TaxType: li.TaxType,
+    AccountCode: li.AccountCode,
+    DiscountRate: li.DiscountRate || undefined,
+  }));
+  const payload = {
+    InvoiceID: inv.InvoiceID,
+    LineAmountTypes: inv.LineAmountTypes || 'Exclusive',
+    LineItems: [...existing, {
+      Description: lineItem.description,
+      Quantity: lineItem.quantity,
+      UnitAmount: lineItem.unitAmount,
+      TaxType: lineItem.taxType,
+      AccountCode: lineItem.accountCode,
+    }],
+  };
+  const res = await xeroFetch(`/api.xro/2.0/Invoices/${encodeURIComponent(invoiceId)}`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  const out = res?.Invoices?.[0] || inv;
+  return {
+    invoiceId: out.InvoiceID || invoiceId,
+    invoiceNumber: out.InvoiceNumber || inv.InvoiceNumber || null,
+    total: out.Total != null ? Number(out.Total) : null,
+    subTotal: out.SubTotal != null ? Number(out.SubTotal) : null,
+    totalTax: out.TotalTax != null ? Number(out.TotalTax) : null,
+  };
+}
+
 export async function getNextInvoiceNumber() {
   try {
     // Must include all statuses — default only returns DRAFT+AUTHORISED, missing PAID.

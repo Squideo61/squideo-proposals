@@ -12,17 +12,19 @@ import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { sendNotification, ensureExtraAddedNotificationDefault } from '../notifications.js';
-import { getOrCreateContact, createQuote, voidQuote } from '../xero.js';
+import { getOrCreateContact, createQuote, voidQuote, addLineToInvoice } from '../xero.js';
 // Imported lazily-at-call (circular: invoices.js imports markExtrasInvoiced from
 // here). ESM live bindings make this safe as long as we only call inside handlers.
 import { createXeroInvoiceForDeal, resolveXeroContactInfo } from './invoices.js';
 
 // How an extra is billed:
-//   'final'       — sits on the deal as a pending line, rides the final invoice
-//   'invoice_now' — its own Xero invoice raised immediately
-//   'po'          — a Xero quote ("Pending PO") is raised; later turned into an
-//                   invoice from the Purchase Orders section
-const PAYMENT_TYPES = ['final', 'invoice_now', 'po'];
+//   'final'            — sits on the deal as a pending line, rides the final invoice
+//   'invoice_now'      — its own Xero invoice raised immediately
+//   'po'               — a Xero quote ("Pending PO") is raised; later turned into
+//                        an invoice from the Purchase Orders section
+//   'existing_invoice' — appended as a line to one of the deal's still-open Xero
+//                        invoices (requires `xeroInvoiceId`)
+const PAYMENT_TYPES = ['final', 'invoice_now', 'po', 'existing_invoice'];
 
 // The deal's effective VAT rate as a percent (deal_extras.vat_rate is a fraction
 // or null = inherit; deals.vat_rate is a fraction, default 20% when unset).
@@ -34,7 +36,7 @@ function dealVatPercent(dealVatRate) {
 // Alert Admins + Directors that an ad-hoc extra was logged on a deal (in-app
 // bell + desktop push; no email — these are frequent production-floor actions).
 // The creator is excluded. Best-effort; never fails the write.
-async function notifyExtraAdded({ dealId, dealTitle, description, amount, author, paymentType }) {
+async function notifyExtraAdded({ dealId, dealTitle, description, amount, author, paymentType, invoiceNumber }) {
   try {
     await ensureExtraAddedNotificationDefault();
     const amountStr = '£' + (Number(amount) || 0).toFixed(2);
@@ -42,6 +44,7 @@ async function notifyExtraAdded({ dealId, dealTitle, description, amount, author
     const title = dealTitle || 'a deal';
     const route = paymentType === 'invoice_now' ? 'invoiced now'
       : paymentType === 'po' ? 'raised as a PO quote'
+      : paymentType === 'existing_invoice' ? `added to invoice ${invoiceNumber || ''}`.trim()
       : 'added to the final invoice';
     await sendNotification('extra.added', {
       excludeEmails: author?.email ? [author.email] : null,
@@ -243,6 +246,7 @@ export async function extrasRoute(req, res, id, action, user) {
     // Always record the extra first (pending), then run the chosen billing
     // action. If that Xero step fails we roll the row back so nothing is orphaned.
     const newId = makeId('xtr');
+    let invoiceNumber = null; // set by the existing_invoice branch, for the notification
     await sql`
       INSERT INTO deal_extras (id, deal_id, description, amount, vat_rate, status, payment_type, created_by)
       VALUES (${newId}, ${dealId}, ${description}, ${amount}, ${vatRate}, 'pending', ${paymentType}, ${user.email || null})`;
@@ -285,10 +289,51 @@ export async function extrasRoute(req, res, id, action, user) {
         console.error('[extras] po quote failed', err);
         return res.status(502).json({ error: 'Could not create PO quote: ' + (err.message || 'unknown') });
       }
+    } else if (paymentType === 'existing_invoice') {
+      // Append this extra as a line on one of the deal's own still-open Xero
+      // invoices. Guard against cross-deal linking (must be this deal's invoice)
+      // and against paid/void targets (Xero can't edit those — raise a new
+      // invoice instead). On any failure the pending row is rolled back.
+      const xeroInvoiceId = trimOrNull(body.xeroInvoiceId);
+      if (!xeroInvoiceId) {
+        await sql`DELETE FROM deal_extras WHERE id = ${newId}`;
+        return res.status(400).json({ error: 'Pick an invoice to add this extra to.' });
+      }
+      const [mi] = await sql`
+        SELECT id, invoice_number, status FROM manual_invoices
+         WHERE xero_invoice_id = ${xeroInvoiceId} AND deal_id = ${dealId}`;
+      if (!mi) {
+        await sql`DELETE FROM deal_extras WHERE id = ${newId}`;
+        return res.status(404).json({ error: "That invoice isn't on this deal." });
+      }
+      if (mi.status !== 'issued') {
+        await sql`DELETE FROM deal_extras WHERE id = ${newId}`;
+        return res.status(409).json({ error: 'That invoice is already paid or voided — use “Create invoice now” for a new one.' });
+      }
+      try {
+        const upd = await addLineToInvoice(xeroInvoiceId, {
+          description, quantity: 1, unitAmount: amount,
+          taxType: vatPct > 0 ? 'OUTPUT2' : 'NONE', accountCode: '200',
+        });
+        invoiceNumber = mi.invoice_number || upd.invoiceNumber || null;
+        await markExtrasInvoiced([newId], xeroInvoiceId, invoiceNumber);
+        // Keep the stored invoice totals in step (the card also live-enriches
+        // from Xero on load, but Pending Payments reads the stored amount).
+        if (upd.total != null) {
+          await sql`
+            UPDATE manual_invoices
+               SET amount = ${upd.total}, subtotal_ex_vat = ${upd.subTotal}, tax_amount = ${upd.totalTax}, updated_at = NOW()
+             WHERE id = ${mi.id}`;
+        }
+      } catch (err) {
+        await sql`DELETE FROM deal_extras WHERE id = ${newId}`;
+        console.error('[extras] existing_invoice failed', err);
+        return res.status(err.status || 502).json({ error: 'Could not add to invoice: ' + (err.message || 'unknown') });
+      }
     }
     // 'final' leaves the extra pending to ride the final invoice.
 
-    await notifyExtraAdded({ dealId, dealTitle: dealRow.title, description, amount, author: user, paymentType });
+    await notifyExtraAdded({ dealId, dealTitle: dealRow.title, description, amount, author: user, paymentType, invoiceNumber });
     const [row] = await sql`SELECT * FROM deal_extras WHERE id = ${newId}`;
     return res.status(201).json(serialiseExtra(row));
   }
