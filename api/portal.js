@@ -1088,8 +1088,8 @@ async function voiceoverRoute(req, res, user) {
        ORDER BY v.sort_order ASC, v.created_at ASC`,
   ]);
 
-  const grouped = { ai: [], human: [] };
-  for (const a of artists) (grouped[a.category === 'ai' ? 'ai' : 'human']).push(serialiseArtist(a));
+  const grouped = { ai: [], human: [], premium: [] };
+  for (const a of artists) (grouped[grouped[a.category] ? a.category : 'human']).push(serialiseArtist(a));
 
   return res.status(200).json({
     dealId: deal.id,

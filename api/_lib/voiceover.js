@@ -8,7 +8,7 @@
 import { put, del, get as blobGet } from '@vercel/blob';
 import sql from './db.js';
 
-export const VOICEOVER_CATEGORIES = ['ai', 'human'];
+export const VOICEOVER_CATEGORIES = ['ai', 'human', 'premium'];
 // Audio the browser's <audio> element can play, mapped to a content type.
 export const VOICEOVER_MIME = {
   mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', ogg: 'audio/ogg',

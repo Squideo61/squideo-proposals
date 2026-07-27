@@ -7,12 +7,10 @@ import { BRAND } from '../../theme.js';
 import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, StatusPill } from '../components.jsx';
-import { ArrowLeft, Sparkles, User, Check, Mic, Lock } from 'lucide-react';
+import { ArrowLeft, Check, Mic, Lock } from 'lucide-react';
+import { VOICEOVER_SECTIONS } from '../../lib/voiceoverSections.js';
 
-const SECTIONS = [
-  { key: 'ai', label: 'Latest-Generation AI Voiceovers', Icon: Sparkles, accent: '#0EA5E9' },
-  { key: 'human', label: 'Professional Voiceover Artists', Icon: User, accent: '#7C3AED' },
-];
+const SECTIONS = VOICEOVER_SECTIONS;
 
 const videoLabel = (v, reference) =>
   reference && v.videoNumber ? `${reference}-${String(v.videoNumber).padStart(2, '0')}` : (v.title || 'Video');
@@ -147,14 +145,15 @@ export default function Voiceover({ dealId }) {
         SECTIONS.map((section) => {
           const list = (data.artists?.[section.key]) || [];
           if (!list.length) return null;
-          const Icon = section.Icon;
+          const Icon = section.icon;
           return (
-            <div key={section.key}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 9, margin: '0 0 12px' }}>
+            <div key={section.key} style={{ background: section.tint, border: `1px solid ${section.border}`, borderRadius: 14, padding: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 9, margin: '0 0 6px' }}>
                 <Icon size={17} color={section.accent} />
-                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: BRAND.ink }}>{section.label}</h2>
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: section.accent }}>{section.label}</h2>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {section.note && <div style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 12px', lineHeight: 1.45 }}>{section.note}</div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: section.note ? 0 : 6 }}>
                 {list.map((a) => (
                   <ArtistCard key={a.id} artist={a} accent={section.accent} disabled={busy} onChoose={openChoose} />
                 ))}

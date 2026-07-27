@@ -1,20 +1,19 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Mic, Plus, Trash2, Upload, Sparkles, User, Loader2, Eye, EyeOff } from 'lucide-react';
+import { Mic, Plus, Trash2, Upload, Loader2, Eye, EyeOff } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
+import { VOICEOVER_SECTIONS } from '../../lib/voiceoverSections.js';
 
 // Admin → Voiceovers. Manage the GLOBAL voiceover-artist catalogue the client
-// picks from (per video) in the portal. Two sections matching squideo.com:
-//   'ai'    → Latest-Generation AI Voiceovers
-//   'human' → Professional Voiceover Artists
+// picks from (per video) in the portal. Three colour-coded sections:
+//   'ai'      → Latest-Generation AI Voiceovers   (green — included as standard)
+//   'human'   → Professional Voiceover Artists     (blue  — paid upgrade)
+//   'premium' → Premium Voiceover Artists          (orange — higher charge)
 // One sample clip per artist (uploaded here → private Blob → streamed to the
 // portal's <audio>). Below the catalogue, the editable body for the PM's
 // "email project tasks" portal email.
 
-const SECTIONS = [
-  { key: 'ai', label: 'Latest-Generation AI Voiceovers', hint: 'AI voices — usually named after the person (Dan, Amelia, …).', icon: Sparkles, accent: '#0EA5E9', tint: '#E0F2FE' },
-  { key: 'human', label: 'Professional Voiceover Artists', hint: 'Human artists — usually named by style/accent (UK Female Corporate, …).', icon: User, accent: '#7C3AED', tint: '#F3E8FF' },
-];
+const SECTIONS = VOICEOVER_SECTIONS;
 
 // Sample bytes are served through the API (private Blob). A cache-buster keyed
 // to the artist's size means a re-upload reloads the <audio> instead of the old
@@ -37,10 +36,10 @@ function ClientPreview({ artists }) {
         if (!list.length) return null;
         const Icon = section.icon;
         return (
-          <div key={section.key} style={{ marginBottom: 18 }}>
+          <div key={section.key} style={{ marginBottom: 14, background: section.tint, border: `1px solid ${section.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, margin: '0 0 12px' }}>
               <Icon size={17} color={section.accent} />
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: BRAND.ink }}>{section.label}</h3>
+              <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 800, color: section.accent }}>{section.label}</h3>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {list.map((a) => (
@@ -136,10 +135,10 @@ function ArtistRow({ artist }) {
           {busy ? <Loader2 size={14} className="spin" /> : <Upload size={14} />}
           {artist.hasSample ? 'Replace clip' : 'Upload clip'}
         </button>
-        {/* Quick move between the two sections. */}
+        {/* Quick move between the three sections. */}
         {SECTIONS.filter((s) => s.key !== artist.category).map((s) => (
           <button key={s.key} onClick={() => move(s.key)} className="btn-ghost" style={{ fontSize: 12 }}>
-            Move to {s.key === 'ai' ? 'AI' : 'Human'}
+            Move to {s.short}
           </button>
         ))}
       </div>
@@ -241,21 +240,21 @@ export function VoiceoverCatalogueTab() {
           const list = artists.filter((a) => (a.category || 'human') === section.key);
           const Icon = section.icon;
           return (
-            <div key={section.key} style={{ marginBottom: 28 }}>
+            <div key={section.key} style={{ marginBottom: 16, background: section.tint, border: `1px solid ${section.border}`, borderRadius: 12, padding: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 8, background: section.tint, color: section.accent, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 8, background: '#fff', color: section.accent, border: `1px solid ${section.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Icon size={16} />
                   </div>
                   <div>
-                    <div style={{ fontSize: 15, fontWeight: 700 }}>{section.label}</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: section.accent }}>{section.label}</div>
                     <div style={{ fontSize: 12, color: BRAND.muted }}>{section.hint}</div>
                   </div>
                 </div>
                 <button onClick={() => add(section.key)} className="btn"><Plus size={14} /> Add artist</button>
               </div>
               {list.length === 0 ? (
-                <div style={{ background: 'white', border: '1px dashed ' + BRAND.border, borderRadius: 10, padding: 22, textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>
+                <div style={{ background: 'rgba(255,255,255,0.6)', border: '1px dashed ' + section.border, borderRadius: 10, padding: 22, textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>
                   No artists in this section yet.
                 </div>
               ) : (
