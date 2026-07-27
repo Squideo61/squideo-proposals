@@ -428,7 +428,8 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   );
 
   const extrasTotal = data.optionalExtras.reduce((s, e) => {
-    if (!selectedExtras[e.id]) return s;
+    // "Include as standard" extras are part of the package — never charged here.
+    if (!selectedExtras[e.id] || e.includeAsStandard) return s;
     const qty = extraHasQuantity(e) ? Math.max(1, Number(getMeta(e.id).quantity) || 1) : 1;
     return s + unitPriceFor(e) * qty;
   }, 0);
@@ -949,23 +950,32 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         <PageTitle>Your Quote</PageTitle>
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>What's included:</h3>
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 16 }}>
-          {data.baseInclusions.map((inc, i) => {
-            const Icon = iconForInclusion(inc.title);
-            return (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0', fontSize: 14, borderBottom: i < data.baseInclusions.length - 1 ? '1px solid ' + BRAND.border : 'none' }}>
-                <span style={{ flexShrink: 0, marginTop: 1, width: 28, height: 28, borderRadius: 8, background: BRAND.blue + '14', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Icon size={16} color={BRAND.blue} strokeWidth={2.25} />
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {/* Word counts and the like scale with the content length. */}
-                  <div style={{ fontWeight: 500 }}>{applyInclusionTokens(inc.title, contentMinutes)}</div>
-                  {inc.description && (
-                    <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginTop: 3 }}>{applyInclusionTokens(inc.description, contentMinutes)}</div>
-                  )}
+          {(() => {
+            // Optional extras marked "include as standard" (e.g. a human voiceover
+            // that replaces the standard AI voice) are shown here as included,
+            // never as a paid add-on.
+            const includedExtras = (data.optionalExtras || [])
+              .filter((e) => e.includeAsStandard)
+              .map((e) => ({ title: e.label, description: e.description }));
+            const shownInclusions = [...data.baseInclusions, ...includedExtras];
+            return shownInclusions.map((inc, i) => {
+              const Icon = iconForInclusion(inc.title);
+              return (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0', fontSize: 14, borderBottom: i < shownInclusions.length - 1 ? '1px solid ' + BRAND.border : 'none' }}>
+                  <span style={{ flexShrink: 0, marginTop: 1, width: 28, height: 28, borderRadius: 8, background: BRAND.blue + '14', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Icon size={16} color={BRAND.blue} strokeWidth={2.25} />
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {/* Word counts and the like scale with the content length. */}
+                    <div style={{ fontWeight: 500 }}>{applyInclusionTokens(inc.title, contentMinutes)}</div>
+                    {inc.description && (
+                      <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginTop: 3 }}>{applyInclusionTokens(inc.description, contentMinutes)}</div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            });
+          })()}
         </div>
 
         {videoOptions && (
@@ -1109,6 +1119,10 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         // so the signed record stays accurate.
         const hasSignedExtras = Array.isArray(signed?.selectedExtras) && signed.selectedExtras.length > 0;
         if (data.hideOptionalExtras && !hasSignedExtras) return null;
+        // Extras marked "include as standard" are shown as included above, not
+        // as a paid add-on here.
+        const paidExtras = data.optionalExtras.filter((e) => !e.includeAsStandard);
+        if (!paidExtras.length && !hasSignedExtras) return null;
         return (
         <>
         <PageTitle>Optional Extras</PageTitle>
@@ -1118,7 +1132,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
           </p>
         )}
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden', marginBottom: 24 }}>
-          {data.optionalExtras.map((extra, i) => {
+          {paidExtras.map((extra, i) => {
             const isSelected = !!selectedExtras[extra.id];
             const meta = getMeta(extra.id);
             const languagesOn = extraHasVariants(extra);
@@ -1129,7 +1143,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             const unit = unitPriceFor(extra);
             const scaled = resolveExtraPricing(extra)?.priceModel === 'perExtraMinute' && contentMinutes > 1;
             return (
-              <div key={extra.id} style={{ borderBottom: i < data.optionalExtras.length - 1 ? '1px solid ' + BRAND.border : 'none', background: isSelected ? '#F0F9FF' : 'white' }}>
+              <div key={extra.id} style={{ borderBottom: i < paidExtras.length - 1 ? '1px solid ' + BRAND.border : 'none', background: isSelected ? '#F0F9FF' : 'white' }}>
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', cursor: signed ? 'default' : 'pointer' }}>
                   <input type="checkbox" checked={isSelected} onChange={(e) => setSelectedExtras({ ...selectedExtras, [extra.id]: e.target.checked })} disabled={!!signed} style={{ marginTop: 3 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>

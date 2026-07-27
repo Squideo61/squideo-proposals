@@ -278,7 +278,7 @@ async function gatherDealStates(dealIds) {
       let hasVo = false;
       try {
         const vo = voiceoverProposalContext(p.proposal_data, p.signature_data);
-        hasVo = vo.aiIncluded || vo.humanPurchased;
+        hasVo = vo.aiIncluded || vo.humanPurchased || vo.humanIncludedStandard;
       } catch { hasVo = false; }
       proposals.set(p.deal_id, {
         id: p.id,

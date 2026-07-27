@@ -98,12 +98,18 @@ export function voiceoverProposalContext(proposalData, signatureData) {
   const purchased = selectedExtras.find((e) => e && e.id === 'voiceover') || null;
   const humanPaid = purchased ? round2(Number(purchased.price) || humanPrice || 0) : null;
 
+  // "Include as standard" on the human VO extra: the human voice is the free
+  // baseline (no upgrade fee), but the client can still pick AI freely and pays
+  // only to upgrade to Premium. Doesn't change the extra's price.
+  const humanIncludedStandard = !!(voExtra && voExtra.includeAsStandard);
+
   const baseInclusions = Array.isArray(data.baseInclusions) ? data.baseInclusions : [];
   const aiIncluded = baseInclusions.some((i) => /latest-generation ai voiceover/i.test(i?.title || ''));
 
   return {
     aiIncluded,
     humanPurchased: !!purchased,
+    humanIncludedStandard,
     humanPrice,
     humanPaid,
     contentMinutes: minutes,
@@ -152,6 +158,7 @@ export function computeProposalCheckout(proposalData, signatureData) {
   for (const selRaw of selectedExtras) {
     const e = extrasById.get(selRaw?.id);
     if (!e) continue; // a selection not present in the proposal can't be charged
+    if (e.includeAsStandard) continue; // included in the package — never charged
     const qty = extraHasQuantity(e) ? Math.max(1, Number(selRaw.quantity) || 1) : 1;
     extrasTotal += extraUnitPrice(e, contentMinutes) * qty;
   }

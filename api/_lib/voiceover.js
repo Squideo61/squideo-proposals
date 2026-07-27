@@ -134,15 +134,24 @@ export async function resolveVoiceoverContext(deal) {
   const ctx = voiceoverProposalContext(state?.data, state?.signature_data);
   const premiumPrice = await premiumPriceFromSettings();
 
-  const hasVo = ctx.aiIncluded || ctx.humanPurchased;
-  const entitlement = ctx.humanPurchased ? 'human' : 'ai';
-  const entitlementPrice = ctx.humanPurchased ? (ctx.humanPaid ?? ctx.humanPrice ?? 0) : 0;
+  // The client's free baseline is Human when they either bought the human VO
+  // extra OR it's "included as standard" on the proposal; otherwise it's AI.
+  const humanBaseline = ctx.humanPurchased || ctx.humanIncludedStandard;
+  const hasVo = ctx.aiIncluded || humanBaseline;
+  const entitlement = humanBaseline ? 'human' : 'ai';
   const humanPrice = ctx.humanPrice ?? ctx.humanPaid ?? null;
+  const entitlementPrice = humanBaseline ? (ctx.humanPaid ?? humanPrice ?? 0) : 0;
   const tierPrice = { ai: 0, human: humanPrice, premium: premiumPrice };
 
+  // AI is shown for an AI-baseline project, and also when Human is included as
+  // standard (the client may freely pick AI too). It's hidden only when the
+  // client actively PURCHASED the human upgrade (they chose human).
+  const humanPurchasedOnly = ctx.humanPurchased && !ctx.humanIncludedStandard;
+  const showAi = ctx.humanIncludedStandard || (ctx.aiIncluded && !humanPurchasedOnly);
+
   const sections = [];
-  if (entitlement === 'ai' && ctx.aiIncluded) sections.push('ai');
-  if (ctx.humanPurchased || humanPrice != null) sections.push('human');
+  if (showAi) sections.push('ai');
+  if (humanBaseline || humanPrice != null) sections.push('human');
   if (premiumPrice != null) sections.push('premium');
 
   const chargeFor = (cat) => {

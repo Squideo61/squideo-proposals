@@ -1264,8 +1264,10 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             the human voiceover extra). Removing it silently skips that task. */}
         {(() => {
           const hasAiVo = (data.baseInclusions || []).some(inc => /latest-generation ai voiceover/i.test(inc?.title || ''));
-          const hasVoExtra = (data.optionalExtras || []).some(e => e?.id === 'voiceover');
-          if (hasAiVo) return null;
+          const voExtra = (data.optionalExtras || []).find(e => e?.id === 'voiceover');
+          const hasVoExtra = !!voExtra;
+          // Human VO "included as standard" already provides a voiceover, so no warning.
+          if (hasAiVo || voExtra?.includeAsStandard) return null;
           return (
             <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
               <AlertTriangle size={16} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
@@ -1595,6 +1597,29 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                 </div>
               );
             })()}
+
+            {/* Human voiceover only: make it the included standard voice (in
+                place of the AI voiceover inclusion). Doesn't change the price. */}
+            {extra.id === 'voiceover' && (
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: BRAND.ink, cursor: 'pointer', marginTop: 10, padding: '8px 10px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={!!extra.includeAsStandard}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    const arr = data.optionalExtras.map((x, idx) => (idx === i ? { ...x, includeAsStandard: on } : x));
+                    const patch = { optionalExtras: arr };
+                    // Ticking this replaces the AI voiceover in "What's Included".
+                    if (on) patch.baseInclusions = (data.baseInclusions || []).filter((inc) => !/latest-generation ai voiceover/i.test(inc?.title || ''));
+                    update(patch);
+                  }}
+                  style={{ marginTop: 2 }}
+                />
+                <span>
+                  <strong>Include as standard</strong> — makes this the included voice (replaces the AI voiceover inclusion). The client can still pick any AI or human voice for free; only Premium artists cost extra. Doesn&apos;t change the price — adjust the base price manually if needed.
+                </span>
+              </label>
+            )}
           </div>
         ))}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
