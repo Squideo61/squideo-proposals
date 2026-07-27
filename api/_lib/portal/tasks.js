@@ -5,11 +5,27 @@
 //
 // It's a registry: each producer inspects the bundle and returns a task (or
 // null). Adding a task later is one entry. A task is:
-//   { key, title, detail, status: 'todo'|'done'|'locked', cta: { href } }
-// Tasks only appear once a project is actually in production (production_phase
-// set) — that's when the PM sends the "here are your tasks" email.
+//   { key, title, detail, status: 'todo'|'done'|'locked', cta: { href } | { action } }
+// Tasks only appear once the PM has launched them by sending the client's intro
+// email (deal.client_tasks_launched_at) — that's the "here are your tasks" email.
 
 const TASK_PRODUCERS = [
+  // Send us your purchase order. PO-route deals only, first in the list, until
+  // the PO number lands. (Mirrors the PO rule in nextStep.js.)
+  ({ deal, sigPaymentOption }) => {
+    const isPo = sigPaymentOption === 'po' || deal.payment_terms === 'po';
+    if (!isPo) return null;
+    const done = !!deal.po_number;
+    return {
+      key: 'po',
+      title: 'Send us your purchase order',
+      detail: done
+        ? `PO ${deal.po_number} received — thank you.`
+        : 'Share your PO number (and upload the PO document if you have one) so we can raise the invoice.',
+      status: done ? 'done' : 'todo',
+      cta: { label: done ? 'View' : 'Submit PO', action: 'po-number' },
+    };
+  },
   // Choose a voiceover artist for each video. Only when the project actually
   // includes a voiceover (the standard AI VO can be removed from the proposal).
   ({ deal, videos, hasVoiceover }) => {
@@ -39,10 +55,12 @@ const TASK_PRODUCERS = [
   }),
 ];
 
-// Returns the ordered task list, or [] when the project isn't in production yet.
+// Returns the ordered task list, or [] until the PM has launched the client's
+// tasks (sent the intro email). A project already in production counts too — it
+// implies onboarding happened even if the flag predates this feature.
 export function deriveProjectTasks(bundle = {}) {
   const { deal } = bundle;
-  if (!deal || !deal.production_phase) return [];
+  if (!deal || (!deal.client_tasks_launched_at && !deal.production_phase)) return [];
   const tasks = [];
   for (const produce of TASK_PRODUCERS) {
     let task = null;

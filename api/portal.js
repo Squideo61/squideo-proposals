@@ -346,13 +346,15 @@ function nextStepFor(deal, states) {
   });
 }
 
-// The client's "project tasks" for a deal (voiceover, kick-off call, …).
+// The client's "project tasks" for a deal (purchase order, voiceover, kick-off).
 function tasksFor(deal, states) {
+  const prop = states.proposals.get(deal.id) || null;
   return deriveProjectTasks({
     deal,
     videos: states.videos.get(deal.id) || [],
     hasKickoffBooking: states.kickoffDeals.has(deal.id),
-    hasVoiceover: states.proposals.get(deal.id)?.hasVo ?? false,
+    hasVoiceover: prop?.hasVo ?? false,
+    sigPaymentOption: prop?.signature?.data?.paymentOption || null,
   });
 }
 
@@ -685,6 +687,7 @@ async function overviewRoute(req, res, user) {
   const deals = await sql`
     SELECT d.id, d.title, d.company_id, d.stage, d.payment_terms, d.po_number,
            d.production_phase, d.production_stage, d.delivery_deadline,
+           d.client_tasks_launched_at,
            d.portal_extras_discount, d.created_at, c.name AS company_name
       FROM deals d JOIN companies c ON c.id = d.company_id
      WHERE d.company_id = ${companyId}

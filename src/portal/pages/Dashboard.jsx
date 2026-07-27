@@ -5,7 +5,7 @@ import { BRAND } from '../../theme.js';
 import { usePortal } from '../PortalContext.jsx';
 import { portalApi } from '../api.js';
 import {
-  Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, SectionHeading,
+  Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, SectionHeading, ProjectTasks,
 } from '../components.jsx';
 import { Film, FolderOpen, Sparkles, Handshake, ChevronRight, Video } from 'lucide-react';
 
@@ -54,6 +54,15 @@ function ProjectCard({ project }) {
       )}
 
       <CourtBanner nextStep={project.nextStep} onCta={(cta) => runCta(cta, project.id)} compact />
+
+      {project.tasks?.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, color: BRAND.muted, margin: '0 0 7px' }}>
+            Your tasks{project.openTasks > 0 ? ` · ${project.openTasks} to do` : ' · all done ✅'}
+          </div>
+          <ProjectTasks tasks={project.tasks} onCta={(cta) => runCta(cta, project.id)} compact />
+        </div>
+      )}
 
       {project.videos?.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>

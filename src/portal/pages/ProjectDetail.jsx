@@ -6,16 +6,12 @@ import { BRAND } from '../../theme.js';
 import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import {
-  Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, FileRow, SectionHeading, fmtDate,
+  Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, FileRow, SectionHeading, ProjectTasks, fmtDate,
 } from '../components.jsx';
 import { runCta } from './Dashboard.jsx';
 import {
-  ArrowLeft, Video, PlayCircle, LayoutPanelTop, Sparkles, Upload, FileSignature,
-  Mic, CalendarClock, Check, ChevronRight, Circle,
+  ArrowLeft, Video, PlayCircle, LayoutPanelTop, Sparkles, Upload, FileSignature, Mic,
 } from 'lucide-react';
-
-// Icon per task key, so new task types get a sensible default.
-const TASK_ICON = { voiceover: Mic, kickoff: CalendarClock };
 
 function TasksCard({ tasks, dealId }) {
   const open = tasks.filter((t) => t.status !== 'done');
@@ -23,42 +19,7 @@ function TasksCard({ tasks, dealId }) {
   return (
     <Card>
       <SectionHeading>Your tasks{open.length ? ` · ${open.length} to do` : ' · all done ✅'}</SectionHeading>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {tasks.map((t) => {
-          const Icon = TASK_ICON[t.key] || Circle;
-          const done = t.status === 'done';
-          const go = () => { if (t.cta?.href) runCta(t.cta, dealId); };
-          return (
-            <button
-              key={t.key}
-              onClick={go}
-              disabled={done && !t.cta}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', width: '100%',
-                padding: '12px 14px', borderRadius: 10, cursor: t.cta ? 'pointer' : 'default',
-                border: `1px solid ${BRAND.border}`, background: done ? '#F6FBF7' : '#FFFDF5',
-              }}
-            >
-              <div style={{
-                width: 30, height: 30, borderRadius: 8, flexShrink: 0,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: done ? '#DCFCE7' : '#FEF3C7', color: done ? '#16A34A' : '#B45309',
-              }}>
-                {done ? <Check size={16} /> : <Icon size={16} />}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink }}>{t.title}</div>
-                <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.45 }}>{t.detail}</div>
-              </div>
-              {t.cta && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12.5, fontWeight: 700, color: done ? BRAND.muted : BRAND.blue, flexShrink: 0 }}>
-                  {t.cta.label} <ChevronRight size={14} />
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+      <ProjectTasks tasks={tasks} onCta={(cta) => runCta(cta, dealId)} />
     </Card>
   );
 }

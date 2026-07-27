@@ -1839,8 +1839,11 @@ export function StoreProvider({ children }) {
     // Generate a per-client portal link for a deal (for the intro email). The
     // invite link signs the client up or logs them in and links their portal
     // account back to the CRM contact by email.
-    generatePortalLink(dealId, email) {
-      return api.post('/api/crm/portal-admin?op=portal-link', { dealId, email });
+    // markIntro=true stamps the deal as "client tasks launched" (the intro-email
+    // flow), which unlocks the portal task list. The generic composer "insert
+    // link" passes no flag so it never triggers that.
+    generatePortalLink(dealId, email, { markIntro = false } = {}) {
+      return api.post('/api/crm/portal-admin?op=portal-link', { dealId, email, markIntro });
     },
     // Partner-client meeting links (no deal — an explicit chosen host list).
     loadPartnerIntroCall(clientKey, compute) {

@@ -4,6 +4,7 @@ import React from 'react';
 import { BRAND } from '../theme.js';
 import {
   Zap, CheckCircle2, Clapperboard, ChevronRight, Download, FileText,
+  Mic, CalendarClock, ClipboardList, Check, Circle,
 } from 'lucide-react';
 
 export const fmtGBP = (n) =>
@@ -209,6 +210,55 @@ export function SectionHeading({ children, right }) {
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 0 12px' }}>
       <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: BRAND.ink }}>{children}</h2>
       {right}
+    </div>
+  );
+}
+
+// Icon per task key, so a new task type gets a sensible default.
+const TASK_ICON = { po: ClipboardList, voiceover: Mic, kickoff: CalendarClock };
+
+// The client's "Your tasks" checklist, shared by the dashboard project card and
+// the project detail page. `onCta(cta)` runs the task's action/deep-link.
+export function ProjectTasks({ tasks = [], onCta, compact = false }) {
+  if (!tasks.length) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: compact ? 6 : 8 }}>
+      {tasks.map((t) => {
+        const Icon = TASK_ICON[t.key] || Circle;
+        const done = t.status === 'done';
+        const clickable = !!t.cta && !!onCta;
+        const go = (e) => { e.stopPropagation(); if (clickable) onCta(t.cta); };
+        return (
+          <button
+            key={t.key}
+            onClick={go}
+            disabled={!clickable}
+            style={{
+              display: 'flex', alignItems: 'center', gap: compact ? 10 : 12, textAlign: 'left', width: '100%',
+              padding: compact ? '9px 11px' : '12px 14px', borderRadius: 10,
+              cursor: clickable ? 'pointer' : 'default',
+              border: `1px solid ${BRAND.border}`, background: done ? '#F6FBF7' : '#FFFDF5',
+            }}
+          >
+            <div style={{
+              width: compact ? 26 : 30, height: compact ? 26 : 30, borderRadius: 8, flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: done ? '#DCFCE7' : '#FEF3C7', color: done ? '#16A34A' : '#B45309',
+            }}>
+              {done ? <Check size={15} /> : <Icon size={15} />}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: compact ? 13 : 13.5, fontWeight: 700, color: BRAND.ink }}>{t.title}</div>
+              <div style={{ fontSize: compact ? 11.5 : 12, color: BRAND.muted, lineHeight: 1.45 }}>{t.detail}</div>
+            </div>
+            {t.cta && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12.5, fontWeight: 700, color: done ? BRAND.muted : BRAND.blue, flexShrink: 0 }}>
+                {t.cta.label} <ChevronRight size={14} />
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }

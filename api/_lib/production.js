@@ -33,6 +33,9 @@ export async function ensureProductionSchema() {
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS revision_project_id TEXT`;
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS storyboard_project_id TEXT`;
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS video_length TEXT`;
+      // When the PM sends the client's intro email, the portal "Your tasks"
+      // checklist (voiceover, kick-off call, PO) unlocks. Null = not launched yet.
+      await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS client_tasks_launched_at TIMESTAMPTZ`;
       await sql`
         CREATE TABLE IF NOT EXISTS project_videos (
           id                 TEXT        PRIMARY KEY,

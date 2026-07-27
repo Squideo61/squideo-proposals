@@ -26,6 +26,7 @@ import { sendTeamInvite, createPortalInvite, inviteUrlFor } from '../_lib/portal
 import { portalTeamInviteHtml, portalResetHtml, PORTAL_URL } from '../_lib/portal/emails.js';
 import { emailLogoUrl } from '../_lib/portal/logo.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
+import { ensureProductionSchema } from '../_lib/production.js';
 
 // Any of these grants access — the panel spans company pages (members) and
 // deal pages (offers/pricing), which different roles legitimately manage.
@@ -473,6 +474,19 @@ export default async function handler(req, res) {
       const prefill = { name: trimOrNull(body.name) || contact?.name || null, phone: contact?.phone || null, jobTitle: contact?.title || null };
 
       const { rawToken } = await createPortalInvite({ email, companyId: deal.company_id, prefill, invitedBy: user.email });
+
+      // When this link is generated for the "Send intro email" action, that's the
+      // trigger that unlocks the client's portal task list (voiceover, kick-off,
+      // PO). Stamp it once; a generic "insert portal link" in the composer passes
+      // no flag and leaves it untouched.
+      if (body.markIntro) {
+        await ensureProductionSchema();
+        await sql`
+          UPDATE deals SET client_tasks_launched_at = COALESCE(client_tasks_launched_at, NOW())
+           WHERE id = ${dealId}
+        `.catch(() => {});
+      }
+
       return res.status(200).json({ url: inviteUrlFor(rawToken), companyName: deal.company_name || null });
     }
 

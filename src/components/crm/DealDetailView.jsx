@@ -764,7 +764,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             from freelancers / finance-restricted views). */}
         {state.session?.role !== 'freelancer' && !hideFinancials && (
           <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-            <PortalDealCard dealId={dealId} dealTitle={deal.title} goodToGo={!!deal.productionPhase} />
+            <PortalDealCard dealId={dealId} dealTitle={deal.title} introReady={proposals.some(p => p.signed) || !!deal.productionPhase} />
           </div>
         )}
 

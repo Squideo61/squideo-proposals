@@ -190,7 +190,7 @@ function introEmailHtml({ name, url }) {
     + `<p>Any questions, just reply to this email.</p>`;
 }
 
-export function PortalDealCard({ dealId, dealTitle = null, goodToGo = false }) {
+export function PortalDealCard({ dealId, dealTitle = null, introReady = false }) {
   const { actions, showMsg } = useStore();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -226,7 +226,7 @@ export function PortalDealCard({ dealId, dealTitle = null, goodToGo = false }) {
     if (!contact) return flash('This deal has no contact with an email — add one first.');
     setIntroBusy(true);
     try {
-      const { url } = await actions.generatePortalLink(dealId, contact.email);
+      const { url } = await actions.generatePortalLink(dealId, contact.email, { markIntro: true });
       actions.openComposer({
         dealId,
         dealTitle,
@@ -312,8 +312,8 @@ export function PortalDealCard({ dealId, dealTitle = null, goodToGo = false }) {
           <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data} onClick={() => setShowInvite(true)} title="Invite this deal's contacts to the client portal">
             <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Portal invite
           </button>
-          {goodToGo && (
-            <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data || introBusy} onClick={sendIntroEmail} title="Draft the client's intro email with their portal link (voiceover + kick-off call)">
+          {introReady && (
+            <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data || introBusy} onClick={sendIntroEmail} title="Draft the client's intro email with their portal link — unlocks their portal tasks (PO, voiceover, kick-off call)">
               <Rocket size={12} style={{ verticalAlign: -1, marginRight: 4 }} />{introBusy ? 'Preparing…' : 'Send intro email'}
             </button>
           )}
