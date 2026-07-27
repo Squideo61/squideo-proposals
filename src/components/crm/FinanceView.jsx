@@ -809,6 +809,12 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
     let p = null;
     if (it.type === 'manual') p = actions.markPendingPaymentPaid(it.row.id, true, method);
     else if (it.type === 'partner') p = actions.markPartnerFeePaid(it.clientKey, true);
+    else if (it.type === 'other' && it.row?.id) {
+      // "Other" recurring income (web hosting etc.) banks by logging it received
+      // for THIS predicted month — that lands it in the month's income and drops
+      // it off the predicted list (collectPredicted skips received months).
+      p = actions.receiveRecurringOther({ id: it.row.id, month: predictMonthKey }, it.name);
+    }
     else if (it.type === 'deal' && it.row?.proposalId) {
       // Signed deals record a real payment against the proposal (advances to paid
       // + enters production). Confirm the gross amount first — it's heavier than a
@@ -961,6 +967,7 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
                       it.type === 'deal' && it.row?.proposalId && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
                       it.type === 'deal' && it.row?.proposalId && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => markPaid(it, 'bacs') },
                       it.type === 'partner' && { label: 'Mark paid this month', icon: Check, onClick: () => markPaid(it) },
+                      it.type === 'other' && { label: 'Mark paid this month', icon: Check, onClick: () => markPaid(it) },
                       it.type === 'other' && { label: 'Edit', icon: Pencil, onClick: () => setEditOther(it.row) },
                       { label: note ? 'Edit note' : 'Add note', icon: StickyNote, onClick: () => setNoteTarget({ key: it.key, name: it.name, note }) },
                       it.type === 'other' && { label: 'Remove', icon: Trash2, onClick: () => removeOther(it.row) },
