@@ -1368,6 +1368,18 @@ export function StoreProvider({ children }) {
     reorderTaxPayments(ids) {
       return api.post('/api/crm/stats/director-tax', { reorder: ids });
     },
+    // Mark a tax payment paid (or unpaid) — paid rows can then be archived.
+    markTaxPaymentPaid(id, paid = true) {
+      return api.patch('/api/crm/stats/director-tax/' + id, { paid });
+    },
+    // Archive (or restore) a payment — archived rows leave the live list + the
+    // reminder cron but stay retrievable via getArchivedTaxPayments.
+    archiveTaxPayment(id, archived = true) {
+      return api.patch('/api/crm/stats/director-tax/' + id, { archived });
+    },
+    getArchivedTaxPayments() {
+      return api.get('/api/crm/stats/director-tax?archived=1').then((d) => (d?.payments || []));
+    },
 
     // Business → Finance: outstanding balance per signed deal (PO vs normal) +
     // the imported manual pending payments group.

@@ -399,6 +399,10 @@ export async function cronDirectorTaxReminders(res) {
       amount NUMERIC(12,2) NOT NULL DEFAULT 0, reference TEXT, note TEXT,
       reminded_transfer1_at TIMESTAMPTZ, reminded_transfer2_at TIMESTAMPTZ, sort_order INT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+  // A paid or archived payment is done with — no reminders. Columns added by the
+  // directorTaxRoute self-heal too; mirrored here since the cron runs on its own.
+  await sql`ALTER TABLE director_tax_payments ADD COLUMN IF NOT EXISTS paid_at  TIMESTAMPTZ`;
+  await sql`ALTER TABLE director_tax_payments ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false`;
 
   // Both directors always get the reminder (email + finance bell + push), sent
   // directly rather than via the preference resolver — these are not optional.
@@ -413,6 +417,8 @@ export async function cronDirectorTaxReminders(res) {
       FROM director_tax_payments
      WHERE due_date >= CURRENT_DATE
        AND due_date <= CURRENT_DATE + INTERVAL '7 days'
+       AND paid_at IS NULL
+       AND archived = false
        AND (reminded_transfer1_at IS NULL OR reminded_transfer2_at IS NULL)
      ORDER BY due_date ASC`;
 

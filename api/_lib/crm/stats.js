@@ -3279,6 +3279,11 @@ function ensureDirectorFinance() {
                         ELSE 'company'
                       END
        WHERE person IS NULL`;
+    // Mark a payment paid, then archive it — archived rows drop off the live list
+    // and the reminder cron but stay retrievable. Keep this in sync with the
+    // cron's own self-heal (cron.js) since the two run independently.
+    await sql`ALTER TABLE director_tax_payments ADD COLUMN IF NOT EXISTS paid_at  TIMESTAMPTZ`;
+    await sql`ALTER TABLE director_tax_payments ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false`;
     // Each director's constant HMRC personal-tax reference, so it's pre-filled.
     await sql`
       CREATE TABLE IF NOT EXISTS director_tax_refs (
@@ -3406,16 +3411,23 @@ async function directorTaxRoute(req, res, action) {
   await ensureDirectorFinance();
 
   if (req.method === 'GET') {
-    const rows = await sql`SELECT * FROM director_tax_payments ORDER BY due_date ASC, sort_order ASC NULLS LAST, created_at ASC`;
+    // The live list hides archived rows; ?archived=1 returns just the archive
+    // (most-recently-paid first) for the "Archived" disclosure.
+    const wantArchived = req.query?.archived === '1' || /[?&]archived=1(?:&|$)/.test(req.url || '');
+    const rows = wantArchived
+      ? await sql`SELECT * FROM director_tax_payments WHERE archived = true ORDER BY paid_at DESC NULLS LAST, due_date DESC`
+      : await sql`SELECT * FROM director_tax_payments WHERE archived = false ORDER BY due_date ASC, sort_order ASC NULLS LAST, created_at ASC`;
     const payments = rows.map((r) => ({
       id: r.id, title: r.title, kind: r.kind || 'other', person: TAX_PERSONS.has(r.person) ? r.person : 'company',
       dueDate: dateKey(r.due_date),
       amount: Number(r.amount) || 0, reference: r.reference || null, note: r.note || null,
+      paidAt: r.paid_at ? new Date(r.paid_at).toISOString() : null, archived: r.archived === true,
     }));
     const refRows = await sql`SELECT person, reference FROM director_tax_refs`;
     const refs = {};
     for (const r of refRows) refs[r.person] = r.reference || null;
-    return res.status(200).json({ payments, refs });
+    const [{ n: archivedCount }] = await sql`SELECT COUNT(*)::int AS n FROM director_tax_payments WHERE archived = true`;
+    return res.status(200).json({ payments, refs, archivedCount });
   }
 
   if (req.method === 'POST') {
@@ -3451,6 +3463,19 @@ async function directorTaxRoute(req, res, action) {
     const [existing] = await sql`SELECT * FROM director_tax_payments WHERE id = ${action}`;
     if (!existing) return res.status(404).json({ error: 'Not found' });
     const body = req.body || {};
+    // Lightweight state toggles — paid/archived don't touch the schedule, so
+    // they skip the field-merge (and the reminder re-arm) entirely.
+    if ('paid' in body || 'archived' in body) {
+      if ('paid' in body) {
+        if (body.paid === false) await sql`UPDATE director_tax_payments SET paid_at = NULL, updated_at = NOW() WHERE id = ${action}`;
+        else await sql`UPDATE director_tax_payments SET paid_at = NOW(), updated_at = NOW() WHERE id = ${action}`;
+      }
+      if ('archived' in body) {
+        const archived = body.archived !== false;
+        await sql`UPDATE director_tax_payments SET archived = ${archived}, updated_at = NOW() WHERE id = ${action}`;
+      }
+      return res.status(200).json({ ok: true });
+    }
     const kind = body.kind !== undefined ? (TAX_KINDS.has(body.kind) ? body.kind : 'other') : existing.kind;
     const person = body.person !== undefined ? (TAX_PERSONS.has(body.person) ? body.person : 'company') : (TAX_PERSONS.has(existing.person) ? existing.person : 'company');
     // An explicit title wins; otherwise keep the stored one, re-deriving it when

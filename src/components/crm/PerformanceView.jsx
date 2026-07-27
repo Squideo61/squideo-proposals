@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download, Upload, Ban, Camera, ScanLine, Percent, Server } from 'lucide-react';
+import { TrendingUp, Pencil, Check, X, Wallet, PoundSterling, ChevronDown, Plus, Trash2, Receipt, Landmark, PiggyBank, Users, GripVertical, Briefcase, Megaphone, Crown, Coins, Target, Paperclip, Download, Upload, Ban, Camera, ScanLine, Percent, Server, Archive, RotateCcw } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -1322,6 +1322,9 @@ function TaxPaymentsSection({ isMobile }) {
           </div>
         ))
       )}
+      {data?.archivedCount > 0 && (
+        <ArchivedTaxPayments count={data.archivedCount} actions={actions} refs={refs} reload={reload} />
+      )}
     </div>
   );
 }
@@ -1338,31 +1341,100 @@ function daysUntilDate(d) {
   return Math.round((new Date(d + 'T00:00:00Z').getTime() - today) / 86400000);
 }
 
-function TaxPaymentRow({ payment, actions, refs, reload }) {
+// 'YYYY-MM-DDTHH:MM:SSZ' → "31 Jul 2026" for the paid-on stamp.
+function fmtPaidDate(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function TaxPaymentRow({ payment, actions, refs, reload, archived = false }) {
   const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
   const meta = TAX_KIND_META[payment.kind] || TAX_KIND_META.other;
   const left = daysUntilDate(payment.dueDate);
-  const remove = () => { if (window.confirm(`Delete "${payment.title}"?`)) actions.deleteTaxPayment(payment.id).then(reload); };
+  const paid = !!payment.paidAt;
+  // Every mutation refreshes the list; guard against double-clicks while in flight.
+  const run = (p) => { setBusy(true); Promise.resolve(p).then(() => reload()).finally(() => setBusy(false)); };
+  const markPaid = () => run(actions.markTaxPaymentPaid(payment.id, true));
+  const markUnpaid = () => run(actions.markTaxPaymentPaid(payment.id, false));
+  const archive = () => run(actions.archiveTaxPayment(payment.id, true));
+  const restore = () => run(actions.archiveTaxPayment(payment.id, false));
+  const remove = () => { if (window.confirm(`Delete "${payment.title}"? This can't be undone.`)) run(actions.deleteTaxPayment(payment.id)); };
 
   if (editing) {
     return <TaxPaymentForm payment={payment} actions={actions} refs={refs} onDone={() => { setEditing(false); reload(); }} onCancel={() => setEditing(false)} />;
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid ' + BRAND.border, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid ' + BRAND.border, flexWrap: 'wrap', opacity: (paid && !archived) ? 0.75 : 1 }}>
       <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, background: meta.bg, border: '1px solid ' + meta.border, padding: '1px 7px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: 0.3, flexShrink: 0 }}>{meta.label}</span>
       <div style={{ flex: 1, minWidth: 140 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink }}>{payment.title}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink }}>{payment.title}</span>
+          {paid && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#166534', background: '#DCFCE7', border: '1px solid #BBF7D0', padding: '1px 7px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: 0.3, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+              <Check size={11} /> Paid{payment.paidAt ? ` ${fmtPaidDate(payment.paidAt)}` : ''}
+            </span>
+          )}
+        </div>
         <div style={{ fontSize: 12, color: BRAND.muted }}>
           Due {fmtDueDate(payment.dueDate)}
-          {left != null && (left < 0 ? ' · overdue' : left === 0 ? ' · today' : ` · in ${left} day${left === 1 ? '' : 's'}`)}
+          {!paid && left != null && (left < 0 ? ' · overdue' : left === 0 ? ' · today' : ` · in ${left} day${left === 1 ? '' : 's'}`)}
           {payment.reference && <> · ref <strong style={{ color: BRAND.ink }}>{payment.reference}</strong></>}
         </div>
         {payment.note && <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>{payment.note}</div>}
       </div>
       <span style={{ fontSize: 15, fontWeight: 800, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(payment.amount)}</span>
-      <button className="btn-icon" title="Edit payment" onClick={() => setEditing(true)} style={{ padding: 3 }}><Pencil size={13} /></button>
-      <button className="btn-icon" title="Delete payment" onClick={remove} style={{ padding: 3 }}><Trash2 size={13} /></button>
+      {archived ? (
+        // Archive view: put it back on the live list, or delete for good.
+        <>
+          <button className="btn-icon" title="Restore to the live list" onClick={restore} disabled={busy} style={{ padding: 3 }}><RotateCcw size={13} /></button>
+          <button className="btn-icon" title="Delete permanently" onClick={remove} disabled={busy} style={{ padding: 3 }}><Trash2 size={13} /></button>
+        </>
+      ) : !paid ? (
+        // Live + unpaid: the primary new action, plus edit/delete.
+        <>
+          <button className="btn-ghost" title="Mark this payment as paid" onClick={markPaid} disabled={busy} style={{ padding: '3px 9px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}><Check size={13} /> Mark paid</button>
+          <button className="btn-icon" title="Edit payment" onClick={() => setEditing(true)} disabled={busy} style={{ padding: 3 }}><Pencil size={13} /></button>
+          <button className="btn-icon" title="Delete payment" onClick={remove} disabled={busy} style={{ padding: 3 }}><Trash2 size={13} /></button>
+        </>
+      ) : (
+        // Live + paid: archive it away, or undo the paid mark.
+        <>
+          <button className="btn-ghost" title="Archive — keeps it viewable under Archived" onClick={archive} disabled={busy} style={{ padding: '3px 9px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}><Archive size={13} /> Archive</button>
+          <button className="btn-icon" title="Mark unpaid" onClick={markUnpaid} disabled={busy} style={{ padding: 3 }}><RotateCcw size={13} /></button>
+          <button className="btn-icon" title="Delete payment" onClick={remove} disabled={busy} style={{ padding: 3 }}><Trash2 size={13} /></button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Collapsible archive of paid-and-filed tax payments — kept for future reference.
+// Fetches lazily on open, and refreshes when the archived count changes (e.g.
+// after archiving one from the live list above).
+function ArchivedTaxPayments({ count, actions, refs, reload }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState(null);
+  const load = () => actions.getArchivedTaxPayments().then((list) => setRows(list || [])).catch(() => setRows([]));
+  useEffect(() => { if (open) load(); }, [open, count]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Any change inside the archive (restore/delete) also refreshes the live list.
+  const reloadBoth = () => { load(); reload(); };
+  return (
+    <div style={{ marginTop: 12, borderTop: '1px solid ' + BRAND.border, paddingTop: 10 }}>
+      <button onClick={() => setOpen((v) => !v)} className="btn-ghost" style={{ padding: '2px 4px', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+        <ChevronDown size={14} style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s' }} />
+        Archived ({count})
+      </button>
+      {open && (
+        rows == null ? (
+          <div style={{ color: BRAND.muted, fontSize: 13, padding: '8px 0' }}>Loading…</div>
+        ) : rows.length === 0 ? (
+          <div style={{ color: BRAND.muted, fontSize: 13, padding: '8px 0' }}>Nothing archived.</div>
+        ) : (
+          rows.map((p) => <TaxPaymentRow key={p.id} payment={p} actions={actions} refs={refs} reload={reloadBoth} archived />)
+        )
+      )}
     </div>
   );
 }
