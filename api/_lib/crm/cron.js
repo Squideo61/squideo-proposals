@@ -347,7 +347,9 @@ export async function cronQuarterlyTaxSummary(res) {
 
   const s = await quarterTaxSummary(y, qNum);
   const root = APP_URL.replace(/\/$/, '');
-  const link = `${root}/#/finance`;
+  // Deep-links straight to the VAT & Corp tax tab — both the email button
+  // (labelled "Open Finance → VAT & Corp tax") and the in-app bell.
+  const link = `${root}/#/finance/vat`;
   const gbp = (n) => '£' + (Number(n) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const total = gbp((Number(s.vat) || 0) + (Number(s.corpTax) || 0));
   const subject = `${s.label}: set aside ${gbp(s.vat)} VAT + ${gbp(s.corpTax)} Corp Tax`;
@@ -368,7 +370,7 @@ export async function cronQuarterlyTaxSummary(res) {
       ownerEmail: QUARTER_TAX_NOTIFY_TO,
       subject, html, text,
       extraRecipients: [QUARTER_TAX_NOTIFY_TO],
-      inApp: { title: subject, body: `Set aside ${gbp(s.vat)} VAT + ${gbp(s.corpTax)} Corp Tax for ${s.label}.`, link: '#/finance' },
+      inApp: { title: subject, body: `Set aside ${gbp(s.vat)} VAT + ${gbp(s.corpTax)} Corp Tax for ${s.label}.`, link: '#/finance/vat' },
     });
     await sql`INSERT INTO finance_quarter_summaries (quarter) VALUES (${quarterKey}) ON CONFLICT DO NOTHING`;
     return res.status(200).json({ ok: true, quarter: quarterKey, status: 'sent', vat: s.vat, corpTax: s.corpTax });
@@ -415,7 +417,9 @@ export async function cronDirectorTaxReminders(res) {
      ORDER BY due_date ASC`;
 
   const root = APP_URL.replace(/\/$/, '');
-  const link = `${root}/#/finance`;
+  // Deep-links to the Directors tab (Performance panel) where these tax pay-dates
+  // live — used by the email buttons ("Open Finance → Directors") and the bell.
+  const link = `${root}/#/finance/directors`;
   const gbp = (n) => '£' + (Number(n) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   // A DATE column arrives as 'YYYY-MM-DD' (string) or a Date — normalise to the key.
   const ymd = (d) => (typeof d === 'string' ? d.slice(0, 10) : new Date(d).toISOString().slice(0, 10));
@@ -443,7 +447,7 @@ export async function cronDirectorTaxReminders(res) {
         <p style="margin:20px 0 0;"><a href="${link}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open Finance → Directors</a></p>`;
       const text = `Step 1: move ${amt} for ${p.title} out of Shawbrook into the current account so it clears. Due ${when}. ${link}`;
       try {
-        await notifyBoth(subject, html, text, { title: subject, body: `Move ${amt} out of Shawbrook for ${p.title}, due ${when}.`, link: '#/finance' });
+        await notifyBoth(subject, html, text, { title: subject, body: `Move ${amt} out of Shawbrook for ${p.title}, due ${when}.`, link: '#/finance/directors' });
         await sql`UPDATE director_tax_payments SET reminded_transfer1_at = NOW(), updated_at = NOW() WHERE id = ${p.id}`;
         sent++;
       } catch (err) {
@@ -466,7 +470,7 @@ export async function cronDirectorTaxReminders(res) {
         <p style="margin:20px 0 0;"><a href="${link}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open Finance → Directors</a></p>`;
       const text = `Step 2: pay HMRC ${amt} for ${p.title}${ref}. Due ${when}. ${link}`;
       try {
-        await notifyBoth(subject, html, text, { title: subject, body: `Pay HMRC ${amt} for ${p.title}${ref}, due ${when}.`, link: '#/finance' });
+        await notifyBoth(subject, html, text, { title: subject, body: `Pay HMRC ${amt} for ${p.title}${ref}, due ${when}.`, link: '#/finance/directors' });
         await sql`UPDATE director_tax_payments SET reminded_transfer2_at = NOW(), updated_at = NOW() WHERE id = ${p.id}`;
         sent++;
       } catch (err) {

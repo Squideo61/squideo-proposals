@@ -213,7 +213,13 @@ function buildFinanceView(fin, { mode, qIdx, monthKey, isCurrentYear, monthIdx, 
   return { months, quarters, displayMonths, totals, chart, thisMonth, thisQuarter, periodLabel };
 }
 
-export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }) {
+// A deep-link tab (from a notification's `#/finance/<tab>` link) maps to one of
+// two tab groups: the lower section tabs, or the Performance-panel toggle at the
+// top (which is where Directors / Cash Flow live).
+const DEEPLINK_TO_SECTION = { income: 'income', predicted: 'predicted', pending: 'pending', vat: 'vat' };
+const DEEPLINK_TO_PERF = { sales: 'sales', salesvspp: 'salesvspp', cashflow: 'cashflow', directors: 'directors' };
+
+export function FinanceView({ initialTab = null, onBack, onOpenDeal, onOpenCompany, onOpenPartner }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   // Project/Production Managers reach this page with finance.pending_payments
@@ -228,8 +234,8 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
     .map((c) => ({ id: c.id, name: c.name }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const now = new Date();
-  const [section, setSection] = useState(financeViewMemory.section); // 'income' | 'predicted' | 'pending' | 'vat'
-  const [perfSection, setPerfSection] = useState(financeViewMemory.perfSection); // Performance toggle: 'income' | 'sales' | 'salesvspp'
+  const [section, setSection] = useState(DEEPLINK_TO_SECTION[initialTab] || financeViewMemory.section); // 'income' | 'predicted' | 'pending' | 'vat'
+  const [perfSection, setPerfSection] = useState(DEEPLINK_TO_PERF[initialTab] || financeViewMemory.perfSection); // Performance toggle: 'income' | 'sales' | 'salesvspp' | 'cashflow' | 'directors'
   const [mode, setMode] = useState(financeViewMemory.mode); // 'month' | 'quarter' | 'year'
   const [year, setYear] = useState(() => financeViewMemory.year ?? now.getFullYear());
   const [quarterKey, setQuarterKey] = useState(() => financeViewMemory.quarterKey ?? recentQuarters(1)[0]); // 'YYYY-Qn'
@@ -240,6 +246,17 @@ export function FinanceView({ onBack, onOpenDeal, onOpenCompany, onOpenPartner }
   useEffect(() => {
     Object.assign(financeViewMemory, { section, perfSection, mode, year, quarterKey, monthKey });
   }, [section, perfSection, mode, year, quarterKey, monthKey]);
+
+  // Honour a deep-link tab arriving while we're already mounted (e.g. clicking a
+  // finance notification from another finance tab) — the state initialisers only
+  // run on first mount. Runs only when the requested tab changes, so it never
+  // fights a manual tab switch. Directors/Cash Flow live in the Performance
+  // panel toggle; the rest are the lower section tabs.
+  useEffect(() => {
+    if (!initialTab) return;
+    if (DEEPLINK_TO_SECTION[initialTab]) setSection(DEEPLINK_TO_SECTION[initialTab]);
+    if (DEEPLINK_TO_PERF[initialTab]) setPerfSection(DEEPLINK_TO_PERF[initialTab]);
+  }, [initialTab]);
 
   // Restore scroll on mount (re-asserting a few times as async content settles),
   // and save it on unmount — the moment just before navigating into a deal. Any

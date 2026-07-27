@@ -705,7 +705,7 @@ function AppShell() {
         />
       )}
       {(view === 'finance' || view === 'performance') && (
-        <FinanceView onBack={() => navigate('list')} onOpenDeal={(id) => navigate('deal', id)} onOpenCompany={(id) => navigate('company', id)} onOpenPartner={(key) => navigate('partner-credit-detail', key)} />
+        <FinanceView initialTab={activeId || null} onBack={() => navigate('list')} onOpenDeal={(id) => navigate('deal', id)} onOpenCompany={(id) => navigate('company', id)} onOpenPartner={(key) => navigate('partner-credit-detail', key)} />
       )}
       {view === 'marketing' && (
         <MarketingView
