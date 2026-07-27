@@ -1623,10 +1623,22 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                   onChange={(e) => {
                     const on = e.target.checked;
                     const arr = data.optionalExtras.map((x, idx) => (idx === i ? { ...x, includeAsStandard: on } : x));
-                    const patch = { optionalExtras: arr };
-                    // Ticking this replaces the AI voiceover in "What's Included".
-                    if (on) patch.baseInclusions = (data.baseInclusions || []).filter((inc) => !/latest-generation ai voiceover/i.test(inc?.title || ''));
-                    update(patch);
+                    const inclusions = [...(data.baseInclusions || [])];
+                    const aiRx = /latest-generation ai voiceover/i;
+                    if (on) {
+                      // Swap the AI voiceover inclusion in place for the human one
+                      // (marked so untick can restore AI at the same position).
+                      const human = { title: extra.label, description: extra.description || '', voiceoverStandard: true };
+                      const aiIdx = inclusions.findIndex((inc) => aiRx.test(inc?.title || ''));
+                      if (aiIdx !== -1) inclusions.splice(aiIdx, 1, human);
+                      else if (!inclusions.some((inc) => inc?.voiceoverStandard)) inclusions.push(human);
+                    } else {
+                      // Restore the standard AI voiceover where the human line sat.
+                      const stdIdx = inclusions.findIndex((inc) => inc?.voiceoverStandard);
+                      const aiIncl = { title: 'Latest-generation AI voiceover artist', description: 'Delivered at an optimum rate of 140wpm.' };
+                      if (stdIdx !== -1) inclusions.splice(stdIdx, 1, aiIncl);
+                    }
+                    update({ optionalExtras: arr, baseInclusions: inclusions });
                   }}
                   style={{ marginTop: 2 }}
                 />

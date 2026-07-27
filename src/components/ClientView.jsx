@@ -951,30 +951,30 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>What's included:</h3>
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 16, marginBottom: 16 }}>
           {(() => {
-            // Optional extras marked "include as standard" (e.g. a human voiceover
-            // that replaces the standard AI voice) are shown here as included,
-            // never as a paid add-on.
-            const includedExtras = (data.optionalExtras || [])
-              .filter((e) => e.includeAsStandard)
-              .map((e) => ({ title: e.label, description: e.description }));
-            const shownInclusions = [...data.baseInclusions, ...includedExtras];
-            return shownInclusions.map((inc, i) => {
-              const Icon = iconForInclusion(inc.title);
-              return (
-                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0', fontSize: 14, borderBottom: i < shownInclusions.length - 1 ? '1px solid ' + BRAND.border : 'none' }}>
-                  <span style={{ flexShrink: 0, marginTop: 1, width: 28, height: 28, borderRadius: 8, background: BRAND.blue + '14', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Icon size={16} color={BRAND.blue} strokeWidth={2.25} />
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    {/* Word counts and the like scale with the content length. */}
-                    <div style={{ fontWeight: 500 }}>{applyInclusionTokens(inc.title, contentMinutes)}</div>
-                    {inc.description && (
-                      <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginTop: 3 }}>{applyInclusionTokens(inc.description, contentMinutes)}</div>
-                    )}
-                  </div>
+          // Normally an "include as standard" voiceover already sits in the
+          // inclusions list (the builder swaps it in place of AI). For proposals
+          // saved before that, fall back to appending it so it still shows.
+          const hasStdInclusion = (data.baseInclusions || []).some((inc) => inc?.voiceoverStandard);
+          const shownInclusions = hasStdInclusion
+            ? data.baseInclusions
+            : [...data.baseInclusions, ...(data.optionalExtras || []).filter((e) => e.includeAsStandard).map((e) => ({ title: e.label, description: e.description }))];
+          return shownInclusions.map((inc, i) => {
+            const Icon = iconForInclusion(inc.title);
+            return (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0', fontSize: 14, borderBottom: i < shownInclusions.length - 1 ? '1px solid ' + BRAND.border : 'none' }}>
+                <span style={{ flexShrink: 0, marginTop: 1, width: 28, height: 28, borderRadius: 8, background: BRAND.blue + '14', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Icon size={16} color={BRAND.blue} strokeWidth={2.25} />
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {/* Word counts and the like scale with the content length. */}
+                  <div style={{ fontWeight: 500 }}>{applyInclusionTokens(inc.title, contentMinutes)}</div>
+                  {inc.description && (
+                    <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginTop: 3 }}>{applyInclusionTokens(inc.description, contentMinutes)}</div>
+                  )}
                 </div>
-              );
-            });
+              </div>
+            );
+          });
           })()}
         </div>
 
