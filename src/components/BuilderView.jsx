@@ -1280,7 +1280,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             </div>
           );
         })()}
-        {data.baseInclusions.map((inc, i) => (
+        {data.baseInclusions.map((inc, i) => {
+          // The standard AI voiceover is a key inclusion — removing it stops the
+          // client being prompted to choose a voiceover in their portal. Flag it
+          // (subtle yellow) and confirm before deleting.
+          const isAiVo = /latest-generation ai voiceover/i.test(inc?.title || '');
+          const dragActive = inclusionsReorder.overIdx === i && inclusionsReorder.draggingIdx !== null && inclusionsReorder.draggingIdx !== i;
+          return (
           <div
             key={i}
             onDragOver={(e) => {
@@ -1297,7 +1303,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               inclusionsReorder.reset();
             }}
             style={{
-              border: '1px solid ' + (inclusionsReorder.overIdx === i && inclusionsReorder.draggingIdx !== null && inclusionsReorder.draggingIdx !== i ? BRAND.blue : BRAND.border),
+              border: '1px solid ' + (dragActive ? BRAND.blue : isAiVo ? '#FDE68A' : BRAND.border),
+              background: isAiVo ? '#FFFBEB' : undefined,
               borderRadius: 10,
               padding: 12,
               marginBottom: 10,
@@ -1336,7 +1343,14 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                 className="btn-icon"
                 title="Save to inclusions bank"
               ><BookmarkPlus size={14} /></button>
-              <button onClick={() => update({ baseInclusions: data.baseInclusions.filter((_, idx) => idx !== i) })} aria-label="Remove inclusion" className="btn-icon"><X size={14} /></button>
+              <button
+                onClick={() => {
+                  if (isAiVo && !window.confirm('Remove the standard AI voiceover inclusion?\n\nThe client won’t be asked to choose a voiceover in their portal unless they add the human voiceover extra.')) return;
+                  update({ baseInclusions: data.baseInclusions.filter((_, idx) => idx !== i) });
+                }}
+                aria-label="Remove inclusion"
+                className="btn-icon"
+              ><X size={14} /></button>
             </div>
             <textarea
               className="input"
@@ -1350,7 +1364,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               placeholder="Description shown to client (optional)"
             />
           </div>
-        ))}
+          );
+        })}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button onClick={() => update({ baseInclusions: [...data.baseInclusions, { title: 'New inclusion', description: '' }] })} className="btn-ghost">
             <Plus size={14} /> Add inclusion
