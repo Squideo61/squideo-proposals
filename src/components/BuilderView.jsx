@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Lock, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
+import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Lock, Mic, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { useIsMobile, formatGBP, computeBaseDiscount } from '../utils.js';
@@ -1259,32 +1259,47 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         collapsedHint={sectionMeta.find(s => s.id === 'inclusions')?.hint}
         {...sectionProps('inclusions')}
       >
-        {/* Voiceover gating warning: the portal only asks the client to choose a
-            voiceover when the standard AI voiceover is included here (or they buy
-            the human voiceover extra). Removing it silently skips that task. */}
+        {/* Voiceover gating: the portal only asks the client to choose a voiceover
+            when a voice is included here — the standard AI voiceover, or a human
+            voice set as standard (or they buy the human voiceover extra). When no
+            voice is included, show a "removed" card so it's clear (and one click
+            to add it back), rather than silently skipping that task. */}
         {(() => {
           const hasAiVo = (data.baseInclusions || []).some(inc => /latest-generation ai voiceover/i.test(inc?.title || ''));
+          const hasStandardVo = (data.baseInclusions || []).some(inc => inc?.voiceoverStandard);
           const voExtra = (data.optionalExtras || []).find(e => e?.id === 'voiceover');
           const hasVoExtra = !!voExtra;
-          // Human VO "included as standard" already provides a voiceover, so no warning.
-          if (hasAiVo || voExtra?.includeAsStandard) return null;
+          // A voice is already included (AI, or human-as-standard) → nothing to flag.
+          if (hasAiVo || hasStandardVo) return null;
           return (
-            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
-              <AlertTriangle size={16} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
-              <div style={{ fontSize: 12.5, color: '#92400E', lineHeight: 1.5 }}>
-                <strong>No standard AI voiceover inclusion.</strong>{' '}
-                {hasVoExtra
-                  ? 'The client won’t be asked to choose a voiceover in their portal unless they add the human voiceover extra. Add the “Latest-generation AI voiceover artist” inclusion if this project should include a voice.'
-                  : 'The client won’t be prompted to choose a voiceover in their portal. If this project should include a voice, add the “Latest-generation AI voiceover artist” inclusion.'}
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', background: '#FFFBEB', border: '1px dashed #FCD34D', borderRadius: 10, padding: '12px 14px', marginBottom: 10 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: '#92400E', textDecoration: 'line-through' }}>Latest-generation AI voiceover artist</span>
+                  <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: '#B45309', background: '#FDE68A', borderRadius: 999, padding: '2px 7px' }}>REMOVED</span>
+                </div>
+                <div style={{ fontSize: 12, color: '#92400E', lineHeight: 1.5, marginTop: 3 }}>
+                  {hasVoExtra
+                    ? 'The client won’t be asked to choose a voiceover in their portal unless they add the human voiceover extra.'
+                    : 'The client won’t be prompted to choose a voiceover in their portal.'}
+                </div>
               </div>
+              <button
+                onClick={() => update({ baseInclusions: [...(data.baseInclusions || []), { title: 'Latest-generation AI voiceover artist', description: 'Delivered at an optimum rate of 140wpm.' }] })}
+                className="btn-ghost"
+                style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 600, color: '#B45309', whiteSpace: 'nowrap' }}
+              ><Plus size={13} /> Add back</button>
             </div>
           );
         })()}
         {data.baseInclusions.map((inc, i) => {
-          // The standard AI voiceover is a key inclusion — removing it stops the
-          // client being prompted to choose a voiceover in their portal. Flag it
-          // (subtle yellow) and confirm before deleting.
+          // The voiceover is a key inclusion — the AI voice, or a human voice set
+          // as standard. Removing it stops the client being prompted to choose a
+          // voiceover in their portal. Flag it (subtle yellow), badge it, and
+          // confirm before deleting.
           const isAiVo = /latest-generation ai voiceover/i.test(inc?.title || '');
+          const isStandardVo = !!inc?.voiceoverStandard;
+          const isVoInclusion = isAiVo || isStandardVo;
           const dragActive = inclusionsReorder.overIdx === i && inclusionsReorder.draggingIdx !== null && inclusionsReorder.draggingIdx !== i;
           return (
           <div
@@ -1303,8 +1318,8 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               inclusionsReorder.reset();
             }}
             style={{
-              border: '1px solid ' + (dragActive ? BRAND.blue : isAiVo ? '#FDE68A' : BRAND.border),
-              background: isAiVo ? '#FFFBEB' : undefined,
+              border: '1px solid ' + (dragActive ? BRAND.blue : isVoInclusion ? '#FDE68A' : BRAND.border),
+              background: isVoInclusion ? '#FFFBEB' : undefined,
               borderRadius: 10,
               padding: 12,
               marginBottom: 10,
@@ -1312,6 +1327,11 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               transition: 'border-color 120ms, opacity 120ms',
             }}
           >
+            {isVoInclusion && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: '#B45309', marginBottom: 8 }}>
+                <Mic size={11} /> {isStandardVo ? 'INCLUDED VOICE (HUMAN, STANDARD)' : 'INCLUDED VOICE'}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
               <DragHandle
                 onDragStart={(e) => {
@@ -1345,8 +1365,14 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               ><BookmarkPlus size={14} /></button>
               <button
                 onClick={() => {
-                  if (isAiVo && !window.confirm('Remove the standard AI voiceover inclusion?\n\nThe client won’t be asked to choose a voiceover in their portal unless they add the human voiceover extra.')) return;
-                  update({ baseInclusions: data.baseInclusions.filter((_, idx) => idx !== i) });
+                  if (isVoInclusion && !window.confirm('Remove the included voiceover?\n\nThe client won’t be asked to choose a voiceover in their portal unless they add the human voiceover extra.')) return;
+                  const patch = { baseInclusions: data.baseInclusions.filter((_, idx) => idx !== i) };
+                  // Removing the human "standard voice" line also clears the
+                  // include-as-standard flag on the extra, so the two stay in step.
+                  if (isStandardVo) {
+                    patch.optionalExtras = (data.optionalExtras || []).map(x => x?.id === 'voiceover' ? { ...x, includeAsStandard: false } : x);
+                  }
+                  update(patch);
                 }}
                 aria-label="Remove inclusion"
                 className="btn-icon"
