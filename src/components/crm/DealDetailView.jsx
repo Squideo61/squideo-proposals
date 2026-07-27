@@ -204,6 +204,12 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   // kick-off, PO). Offer it once the deal is committed — signed or already in
   // production — so PO deals can launch tasks before the PO lands.
   const introReady = proposals.some(p => p.signed) || !!deal.productionPhase;
+  // But the kick-off task offers the assigned team's availability, so there must
+  // be a team first — otherwise the client lands on a dead "no availability"
+  // screen. Block the intro email until someone's assigned (server enforces too).
+  const hasTeam = Array.isArray(deal.producerEmails)
+    ? deal.producerEmails.length > 0
+    : !!deal.producerEmail;
   const events = detail?.events || [];
   const tasks = detail?.tasks || [];
   const emails = detail?.emails || [];
@@ -324,9 +330,11 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             <button
               onClick={sendIntroEmail}
               className="btn"
-              disabled={introBusy}
-              style={{ background: '#7C3AED', borderColor: '#7C3AED', color: '#fff' }}
-              title="Draft the client's intro email with their portal link — unlocks their portal tasks (PO, voiceover, kick-off call)"
+              disabled={introBusy || !hasTeam}
+              style={{ background: '#7C3AED', borderColor: '#7C3AED', color: '#fff', opacity: hasTeam ? 1 : 0.55 }}
+              title={hasTeam
+                ? "Draft the client's intro email with their portal link — unlocks their portal tasks (PO, voiceover, kick-off call)"
+                : 'Assign a team member to this deal first — they host the client\'s kick-off call, so the intro email is blocked until then'}
             ><Rocket size={14} /> {introBusy ? 'Preparing…' : 'Send intro email'}</button>
           )}
           {!productionOnly && (

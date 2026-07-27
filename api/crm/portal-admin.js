@@ -462,12 +462,24 @@ export default async function handler(req, res) {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Add the client’s email first' });
 
       const [deal] = await sql`
-        SELECT d.id, d.title, d.company_id, c.name AS company_name
+        SELECT d.id, d.title, d.company_id, d.producer_email, c.name AS company_name
           FROM deals d LEFT JOIN companies c ON c.id = d.company_id
          WHERE d.id = ${dealId}
       `;
       if (!deal) return res.status(404).json({ error: 'Deal not found' });
       if (!deal.company_id) return res.status(400).json({ error: 'This deal has no company — link it to a company first.' });
+
+      // The intro email unlocks the client's kick-off task, which offers the
+      // assigned team's availability — so refuse to launch it until the deal has
+      // a team (mirrors the disabled button; a stale client can't bypass it).
+      if (body.markIntro) {
+        const [{ n }] = await sql`SELECT COUNT(*)::int AS n FROM deal_assignees WHERE deal_id = ${dealId}`
+          .catch(() => [{ n: 0 }]);
+        const hasTeam = n > 0 || !!deal.producer_email;
+        if (!hasTeam) {
+          return res.status(400).json({ error: 'Assign a team member to this deal before sending the intro email — they host the client’s kick-off call.' });
+        }
+      }
 
       // Prefill from the CRM contact so signup is one click.
       const [contact] = await sql`SELECT name, phone, title FROM contacts WHERE LOWER(email) = ${email} ORDER BY created_at ASC LIMIT 1`;

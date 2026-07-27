@@ -138,11 +138,19 @@ export default function Kickoff({ dealId }) {
         </Card>
       ) : !data.ready ? (
         <Card>
-          <EmptyState title="We're just finishing setup" body="Our team is finalising availability for your kick-off call. Check back shortly, or reply to your welcome email and we'll set a time with you." />
+          <EmptyState
+            icon={<CalendarClock size={30} />}
+            title="We'll set up your call together"
+            body="Your Squideo team will be in touch shortly to lock in the perfect time for your kick-off call — keep an eye on your inbox, or just reply to your welcome email and we'll sort it."
+          />
         </Card>
       ) : days.length === 0 ? (
         <Card>
-          <EmptyState title="No times available right now" body="We couldn't find open slots in the next couple of weeks. Reply to your welcome email and we'll sort a time." />
+          <EmptyState
+            icon={<CalendarClock size={30} />}
+            title="No open times in the next couple of weeks"
+            body="Everything's booked up for now — reply to your welcome email and we'll find a slot that works for you."
+          />
         </Card>
       ) : (
         <>
