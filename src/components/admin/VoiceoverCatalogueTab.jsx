@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Mic, Plus, Trash2, Upload, Sparkles, User, Loader2 } from 'lucide-react';
+import { Mic, Plus, Trash2, Upload, Sparkles, User, Loader2, Eye, EyeOff } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 
@@ -20,6 +20,52 @@ const SECTIONS = [
 // to the artist's size means a re-upload reloads the <audio> instead of the old
 // cached clip.
 const sampleSrc = (a) => `/api/crm/voiceovers/${encodeURIComponent(a.id)}/sample?v=${a.sizeBytes || 0}`;
+
+// A read-only render of the two-section picker exactly as the client sees it in
+// the portal (same layout as src/portal/pages/Voiceover.jsx), so an admin can
+// eyeball it without the "preview as client" flow. The "Choose this voice"
+// buttons are disabled here — it's a preview, not a real selection.
+function ClientPreview({ artists }) {
+  return (
+    <div style={{ background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 18, marginBottom: 28 }}>
+      <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 16 }}>
+        This is what a client sees on their <strong>Choose your voiceover</strong> page. The
+        “Choose this voice” buttons are disabled in this preview.
+      </div>
+      {SECTIONS.map((section) => {
+        const list = artists.filter((a) => (a.category || 'human') === section.key);
+        if (!list.length) return null;
+        const Icon = section.icon;
+        return (
+          <div key={section.key} style={{ marginBottom: 18 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9, margin: '0 0 12px' }}>
+              <Icon size={17} color={section.accent} />
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: BRAND.ink }}>{section.label}</h3>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 14 }}>
+              {list.map((a) => (
+                <div key={a.id} style={{ border: '1px solid ' + BRAND.border, borderRadius: 14, padding: 16, background: '#fff', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 14.5, color: BRAND.ink }}>{a.name}</div>
+                    {a.description && <div style={{ fontSize: 12.5, color: BRAND.muted, lineHeight: 1.45, marginTop: 2 }}>{a.description}</div>}
+                  </div>
+                  {a.hasSample ? (
+                    <audio controls preload="none" src={sampleSrc(a)} style={{ width: '100%', height: 38 }} />
+                  ) : (
+                    <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Sample coming soon</div>
+                  )}
+                  <button className="btn" disabled style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: section.accent, borderColor: section.accent, opacity: 0.55, cursor: 'not-allowed' }}>
+                    <Mic size={14} /> Choose this voice
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function ArtistRow({ artist }) {
   const { actions, showMsg } = useStore();
@@ -156,6 +202,7 @@ function ProjectTasksEmailEditor() {
 export function VoiceoverCatalogueTab() {
   const { state, actions, showMsg } = useStore();
   const artists = state.voiceoverArtists;
+  const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => { actions.loadVoiceoverArtists(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -170,7 +217,7 @@ export function VoiceoverCatalogueTab() {
         <div style={{ width: 40, height: 40, borderRadius: 10, background: '#ECFDF5', color: '#047857', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <Mic size={20} />
         </div>
-        <div>
+        <div style={{ flex: 1 }}>
           <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Voiceover catalogue</h2>
           <p style={{ margin: 0, fontSize: 13.5, color: BRAND.muted, lineHeight: 1.5, maxWidth: 640 }}>
             The voices clients audition and pick from in the portal (one per video).
@@ -178,7 +225,14 @@ export function VoiceoverCatalogueTab() {
             sample clip per artist.
           </p>
         </div>
+        {artists?.length > 0 && (
+          <button onClick={() => setShowPreview((v) => !v)} className="btn-ghost" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
+            {showPreview ? <><EyeOff size={14} /> Hide preview</> : <><Eye size={14} /> Preview as client</>}
+          </button>
+        )}
       </div>
+
+      {showPreview && artists?.length > 0 && <ClientPreview artists={artists} />}
 
       {artists == null ? (
         <div style={{ padding: 28, textAlign: 'center', color: BRAND.muted, fontSize: 13.5 }}>Loading…</div>
