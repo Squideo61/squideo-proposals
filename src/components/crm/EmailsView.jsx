@@ -9,7 +9,7 @@ import {
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatMailDate, formatRelativeTime, useIsMobile, decodeHtmlEntities } from '../../utils.js';
+import { formatMailDate, formatRelativeTime, useIsMobile, decodeHtmlEntities, realCompany } from '../../utils.js';
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { EmailAttachmentCard } from './EmailAttachment.jsx';
 import { DealContextPanel } from './DealContextPanel.jsx';
@@ -1142,8 +1142,11 @@ function DealResults({ deals, onOpenDeal }) {
       {deals.map((d, i) => {
         const company = d.companyId ? state.companies?.[d.companyId] : null;
         const contact = d.primaryContactId ? state.contacts?.[d.primaryContactId] : null;
-        const name = company?.name || d.title || 'Untitled deal';
-        const sub = contact?.name || (company && d.title && d.title !== company.name ? d.title : '');
+        // Placeholder company names ("Not Applicable" etc.) aren't a real name —
+        // show the deal title instead, matching the pipeline / finance rows.
+        const realName = realCompany(company?.name);
+        const name = realName || d.title || 'Untitled deal';
+        const sub = contact?.name || (realName && d.title && d.title !== realName ? d.title : '');
         return (
           <button
             key={d.id}

@@ -134,6 +134,19 @@ export const formatAmountWithGbp = (amount, currency = 'GBP', gbpAmount = null) 
 export const formatProposalNumber = (n) =>
   n && n.year && n.seq ? n.year + '-' + String(n.seq).padStart(3, '0') : '';
 
+// One-off jobs get parked under placeholder customers ("Not Applicable" etc).
+// Those names say nothing on a row, so treat them as no company at all and let
+// the deal title take the headline instead. Shared so every surface (Finance,
+// Pending Payments, Predicted, Sales Pipeline…) resolves a deal's display name
+// the same way — rename the deal title once and it updates everywhere.
+export const PLACEHOLDER_COMPANY = /^(n\s*\/?\s*a|not\s+applicable|none|no\s+company|tbc|tbd|unknown)$/i;
+export const realCompany = (name) => {
+  const s = (name || '').trim();
+  return s && !PLACEHOLDER_COMPANY.test(s) ? s : null;
+};
+// Headline for a deal row: real customer name, else the deal title.
+export const dealDisplayName = (companyName, title) => realCompany(companyName) || title || 'Untitled deal';
+
 // Gmail snippets (and some stored email fields) arrive HTML-escaped — e.g.
 // &#39; for an apostrophe, &amp; for &. Decode the common named + numeric
 // entities so preview text reads naturally. Pure (no DOM) so it's safe to call

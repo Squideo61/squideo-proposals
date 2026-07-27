@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { ArrowLeft, Check, ChevronDown, Plus, KanbanSquare, Eye, Mail, FileText, CheckSquare, Flame } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP, formatRelativeTime, useIsMobile } from '../../utils.js';
+import { formatGBP, formatRelativeTime, useIsMobile, dealDisplayName } from '../../utils.js';
 import { Modal, RefBadge } from '../ui.jsx';
 import { describeSaleStatus } from '../../lib/saleStatus.js';
 import { PIPELINE_STAGES } from '../../lib/stages.js';
@@ -485,7 +485,9 @@ function DealRow({ deal, onOpen, taskAssignee }) {
   const isMobile = useIsMobile();
   const owner = deal.ownerEmail ? state.users[deal.ownerEmail] : null;
   const company = deal.companyId ? state.companies[deal.companyId] : null;
-  const name = company?.name || deal.title || 'Untitled deal';
+  // Placeholder companies ("Not Applicable" etc.) aren't a real name — fall back
+  // to the deal title so a renamed one-off shows its new title here too.
+  const name = dealDisplayName(company?.name, deal.title);
   const ageDays = daysSince(deal.stageChangedAt);
   // Value shown: signed/proposed value derived by the backend, else the manual
   // value. So a deal with a proposal shows a figure even before it's signed.

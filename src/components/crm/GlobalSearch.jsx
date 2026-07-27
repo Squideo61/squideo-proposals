@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X, Briefcase, Building2, User, FileText, CornerDownLeft } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatProposalNumber } from '../../utils.js';
+import { formatProposalNumber, realCompany } from '../../utils.js';
 
 // CRM-wide search in the top bar: type to find deals, companies, contacts and
 // proposals across the whole workspace, then jump straight to one. Results are
@@ -64,7 +64,7 @@ export function GlobalSearch({ navigate, isMobile, hideTrigger = false, openSign
       .map(({ item, company }) => ({
         type: 'deal', id: item.id, icon: Briefcase,
         title: item.title || 'Untitled deal',
-        subtitle: [item.reference, company?.name].filter(Boolean).join(' · ') || null,
+        subtitle: [item.reference, realCompany(company?.name)].filter(Boolean).join(' · ') || null,
         go: () => navigate('deal', item.id),
       }));
 

@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP, formatProposalNumber, useIsMobile } from '../../utils.js';
+import { formatGBP, formatProposalNumber, useIsMobile, realCompany } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { PerformancePanel, resolveIncomeTargets } from './PerformanceView.jsx';
 import { CreateXeroInvoiceModal } from './CreateXeroInvoiceModal.jsx';
@@ -19,15 +19,9 @@ const VAT_COLOR = '#F59E0B';
 const CT_COLOR = '#0E7490';
 const PREDICT_COLOR = '#7C3AED';
 
-// One-off jobs get parked under placeholder customers ("Not Applicable" etc).
-// Those names say nothing on a payments row, so treat them as no company at all
-// and let the deal title take the headline instead.
-const PLACEHOLDER_COMPANY = /^(n\s*\/?\s*a|not\s+applicable|none|no\s+company|tbc|tbd|unknown)$/i;
-const realCompany = (name) => {
-  const s = (name || '').trim();
-  return s && !PLACEHOLDER_COMPANY.test(s) ? s : null;
-};
 // Headline for a pending-payments deal row: real customer, else the deal title.
+// realCompany (shared, in utils) treats placeholder company names ("Not
+// Applicable" etc.) as no company, so these rows show the deal title instead.
 const dealRowName = (d) => realCompany(d.company) || d.title || 'Untitled deal';
 
 // "Predicted this month" plumbing. Any Pending-Payments row can be flagged as a
