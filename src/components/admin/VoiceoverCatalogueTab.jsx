@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Mic, Plus, Trash2, Upload, Loader2, Eye, EyeOff } from 'lucide-react';
+import { Mic, Plus, Trash2, Upload, Loader2, Eye, EyeOff, Pencil } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { VOICEOVER_SECTIONS } from '../../lib/voiceoverSections.js';
@@ -70,18 +70,25 @@ function ClientPreview({ artists }) {
 
 function ArtistRow({ artist }) {
   const { actions, showMsg } = useStore();
+  const [editing, setEditing] = useState(false);
   const [name, setName] = useState(artist.name || '');
   const [description, setDescription] = useState(artist.description || '');
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
 
+  // Keep local fields in sync if the artist changes underneath (e.g. reorder).
+  useEffect(() => { if (!editing) { setName(artist.name || ''); setDescription(artist.description || ''); } }, [artist.name, artist.description]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const dirty = name !== (artist.name || '') || description !== (artist.description || '');
 
   const save = async () => {
-    if (!dirty) return;
-    try { await actions.updateVoiceoverArtist(artist.id, { name: name.trim(), description: description.trim() }); }
-    catch (err) { showMsg(err.message || 'Could not save'); }
+    if (dirty) {
+      try { await actions.updateVoiceoverArtist(artist.id, { name: name.trim() || artist.name, description: description.trim() }); }
+      catch (err) { showMsg(err.message || 'Could not save'); }
+    }
+    setEditing(false);
   };
+  const cancelEdit = () => { setName(artist.name || ''); setDescription(artist.description || ''); setEditing(false); };
   const upload = async (file) => {
     if (!file) return;
     setBusy(true);
@@ -99,22 +106,41 @@ function ArtistRow({ artist }) {
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <div style={{ flex: 1, minWidth: 180, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={save}
-            placeholder="Artist name"
-            style={{ fontSize: 14.5, fontWeight: 700, padding: '7px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8 }}
-          />
-          <input
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onBlur={save}
-            placeholder="Style / accent (e.g. British, warm, corporate)"
-            style={{ fontSize: 13, padding: '7px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8 }}
-          />
-        </div>
+        {editing ? (
+          <div style={{ flex: 1, minWidth: 180, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelEdit(); }}
+              placeholder="Artist name"
+              style={{ fontSize: 14, fontWeight: 600, padding: '7px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8 }}
+            />
+            <input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelEdit(); }}
+              placeholder="Style / accent (e.g. British, warm, corporate)"
+              style={{ fontSize: 13, padding: '7px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8 }}
+            />
+            <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+              <button onClick={save} className="btn" style={{ fontSize: 12 }}>Done</button>
+              <button onClick={cancelEdit} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setEditing(true)}
+            title="Click to edit name & description"
+            style={{ flex: 1, minWidth: 180, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0', display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink }}>{artist.name || 'Untitled artist'}</span>
+              {artist.description && <span style={{ display: 'block', fontSize: 12, color: BRAND.muted, marginTop: 1 }}>{artist.description}</span>}
+            </span>
+            <Pencil size={13} color={BRAND.muted} style={{ flexShrink: 0 }} />
+          </button>
+        )}
         <button onClick={remove} className="btn-icon is-danger" title="Remove artist" aria-label={'Remove ' + (artist.name || '')}>
           <Trash2 size={16} />
         </button>
