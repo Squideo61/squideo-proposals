@@ -23,7 +23,7 @@ import { sendMail } from '../_lib/email.js';
 import { ensurePortalTables } from '../_lib/portal/db.js';
 import { createRawToken, hashToken, signPortalPreviewToken } from '../_lib/portal/auth.js';
 import { sendTeamInvite, createPortalInvite, inviteUrlFor } from '../_lib/portal/onboarding.js';
-import { portalTeamInviteHtml, portalResetHtml, portalProjectTasksHtml, PORTAL_URL } from '../_lib/portal/emails.js';
+import { portalTeamInviteHtml, portalResetHtml, PORTAL_URL } from '../_lib/portal/emails.js';
 import { emailLogoUrl } from '../_lib/portal/logo.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 
@@ -450,16 +450,15 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, sent, failed });
     }
 
-    // The production manager's "your project has started — here are your tasks"
-    // email. Sends the admin-editable body (settings.project_tasks_email) plus a
-    // live per-client portal button (invite link = sign up OR log in). The
-    // recipient must be a real deal contact so their portal account links back
-    // to the CRM contact by email on signup.
-    if (op === 'email-project-tasks') {
+    // Generate a per-client portal link for a deal, for the PM to drop into an
+    // intro email they write in the composer. The invite link handles both
+    // sign-up and login, and links the new portal account back to the CRM
+    // contact by email. Returns the URL only — no email is sent here.
+    if (op === 'portal-link') {
       const dealId = trimOrNull(body.dealId);
       const email = lowerOrNull(body.email);
       if (!dealId || !email) return res.status(400).json({ error: 'dealId and recipient email required' });
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email' });
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Add the client’s email first' });
 
       const [deal] = await sql`
         SELECT d.id, d.title, d.company_id, c.name AS company_name
@@ -473,34 +472,8 @@ export default async function handler(req, res) {
       const [contact] = await sql`SELECT name, phone, title FROM contacts WHERE LOWER(email) = ${email} ORDER BY created_at ASC LIMIT 1`;
       const prefill = { name: trimOrNull(body.name) || contact?.name || null, phone: contact?.phone || null, jobTitle: contact?.title || null };
 
-      const [settings] = await sql`SELECT project_tasks_email FROM settings WHERE id = 1`;
-      const stored = settings?.project_tasks_email || {};
-      const subject = trimOrNull(stored.subject) || `Your project has started — a couple of things to choose`;
-
       const { rawToken } = await createPortalInvite({ email, companyId: deal.company_id, prefill, invitedBy: user.email });
-      try {
-        await sendMail({
-          to: email,
-          subject,
-          html: portalProjectTasksHtml({
-            bodyHtml: stored.bodyHtml || '',
-            inviteUrl: inviteUrlFor(rawToken),
-            logoUrl: await emailLogoUrl(deal.company_id),
-          }),
-          text: `Your project ${deal.title} is underway. Head to your portal to choose a voiceover and book your kick-off call: ${inviteUrlFor(rawToken)}`,
-          throwOnError: true,
-        });
-      } catch (err) {
-        console.error('[portal-admin] email-project-tasks send failed', err.message);
-        return res.status(502).json({ error: 'Could not send the email — try again.' });
-      }
-      try {
-        await sql`
-          INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
-          VALUES (${dealId}, 'portal_tasks_emailed', ${JSON.stringify({ email })}, ${user.email || null})
-        `;
-      } catch { /* best-effort */ }
-      return res.status(200).json({ ok: true, sentTo: email });
+      return res.status(200).json({ url: inviteUrlFor(rawToken), companyName: deal.company_name || null });
     }
 
     // Account-level controls from a contact's portal card. Disabling kills every

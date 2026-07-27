@@ -1836,6 +1836,12 @@ export function StoreProvider({ children }) {
     setKickoffProposal(dealId, proposedStartsAt) {
       return api.post('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/kickoff', { proposedStartsAt });
     },
+    // Generate a per-client portal link for a deal (for the intro email). The
+    // invite link signs the client up or logs them in and links their portal
+    // account back to the CRM contact by email.
+    generatePortalLink(dealId, email) {
+      return api.post('/api/crm/portal-admin?op=portal-link', { dealId, email });
+    },
     // Partner-client meeting links (no deal — an explicit chosen host list).
     loadPartnerIntroCall(clientKey, compute) {
       const qs = '?clientKey=' + encodeURIComponent(clientKey) + (compute ? '&compute=1' : '');

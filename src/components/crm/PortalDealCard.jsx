@@ -3,10 +3,11 @@
 // upsells), tune the per-deal discount, and resend the portal welcome invite.
 // Backed by /api/crm/portal-admin.
 import React, { useCallback, useEffect, useState } from 'react';
-import { Check, Eye, EyeOff, Plus, Send, Sparkles, Trash2, UserPlus, X, ListChecks } from 'lucide-react';
+import { Check, Eye, EyeOff, Plus, Send, Sparkles, Trash2, UserPlus, X, Rocket } from 'lucide-react';
 // (Eye is reused for the preview button.)
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
+import { useStore } from '../../store.jsx';
 import { formatGBP } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { Modal } from '../ui.jsx';
@@ -178,70 +179,26 @@ function InviteModal({ dealId, data, onClose, onSent }) {
   );
 }
 
-// Send the client the "your project has started — here are your tasks" email:
-// the admin-editable body plus a live portal sign-up/login button. Recipient
-// defaults to the deal's primary contact so their portal account links back to
-// the CRM contact on signup.
-function ProjectTasksEmailModal({ dealId, data, onClose, onSent }) {
-  const candidates = (data?.candidates || []).filter((c) => c.email);
-  const [email, setEmail] = useState(() => candidates[0]?.email || '');
-  const [custom, setCustom] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-
-  const send = async () => {
-    const to = (custom.trim() || email).toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return setError('Pick or enter a valid email');
-    const name = candidates.find((c) => c.email === to)?.name || null;
-    setBusy(true); setError(null);
-    try {
-      await api.post('/api/crm/portal-admin?op=email-project-tasks', { dealId, email: to, name });
-      onSent(`Project-tasks email sent to ${to}`);
-      onClose();
-    } catch (err) { setError(err.message); } finally { setBusy(false); }
-  };
-
-  return (
-    <Modal onClose={onClose} maxWidth={480}>
-      <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700 }}>Email the client their project tasks</h3>
-      <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 16 }}>
-        Sends your saved “project tasks” wording (edit it in Admin → Voiceovers) with a
-        button to sign up or log into the portal, where they'll choose a voiceover and book their kick-off call.
-      </div>
-      {candidates.length === 0 && !custom && (
-        <Empty text="This deal has no contacts with an email — type one below." />
-      )}
-      {candidates.map((c) => (
-        <label key={c.email} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: '1px solid ' + BRAND.border, cursor: 'pointer' }}>
-          <input type="radio" name="tasks-to" checked={!custom && email === c.email} onChange={() => { setEmail(c.email); setCustom(''); }} style={{ width: 16, height: 16 }} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600, color: BRAND.ink }}>{c.name || c.email}</div>
-            <div style={{ fontSize: 11.5, color: BRAND.muted }}>{c.name ? `${c.email} · ` : ''}{c.source}</div>
-          </div>
-          {c.hasAccess && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#16A34A', flexShrink: 0 }}>HAS ACCESS</span>}
-        </label>
-      ))}
-      <input className="input" type="email" placeholder="…or send to another email" value={custom}
-        onChange={(e) => setCustom(e.target.value)} style={{ marginTop: 12, fontSize: 13, width: '100%' }} />
-      {error && (
-        <div style={{ fontSize: 12.5, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '7px 10px', marginTop: 12 }}>{error}</div>
-      )}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
-        <button className="btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn" disabled={busy} onClick={send}><Send size={13} style={{ verticalAlign: -2, marginRight: 5 }} />{busy ? 'Sending…' : 'Send email'}</button>
-      </div>
-    </Modal>
-  );
+// A ready-to-edit intro email body containing the client's portal link. The PM
+// opens this in the composer, tweaks the wording (or loads a saved template),
+// and sends. bodyHtml is seeded into the rich-text editor.
+function introEmailHtml({ name, url }) {
+  const hi = name ? `Hi ${name},` : 'Hi there,';
+  return `<p>${hi}</p>`
+    + `<p>Great news — your project is underway! To get started, head to your portal where you can choose your voiceover artist and book your kick-off call:</p>`
+    + `<p><a href="${url}" style="color:#2BB8E6;font-weight:600;">Open your Squideo portal &rarr;</a></p>`
+    + `<p>Any questions, just reply to this email.</p>`;
 }
 
-export function PortalDealCard({ dealId }) {
+export function PortalDealCard({ dealId, dealTitle = null, goodToGo = false }) {
+  const { actions, showMsg } = useStore();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   const [showCustom, setShowCustom] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
-  const [showTasksEmail, setShowTasksEmail] = useState(false);
+  const [introBusy, setIntroBusy] = useState(false);
   const [custom, setCustom] = useState({ title: '', description: '', amount: '' });
   const [discountEdit, setDiscountEdit] = useState(null); // % string while editing
 
@@ -259,6 +216,32 @@ export function PortalDealCard({ dealId }) {
   const flash = (msg) => {
     setNotice(msg);
     window.setTimeout(() => setNotice(null), 3000);
+  };
+
+  // Draft the client's intro email: generate their portal link and open the
+  // composer pre-filled with an editable intro that already contains it. The PM
+  // can tweak it (or load a saved template) and send.
+  const sendIntroEmail = async () => {
+    const contact = (data?.candidates || []).find((c) => c.email);
+    if (!contact) return flash('This deal has no contact with an email — add one first.');
+    setIntroBusy(true);
+    try {
+      const { url } = await actions.generatePortalLink(dealId, contact.email);
+      actions.openComposer({
+        dealId,
+        dealTitle,
+        contactEmail: contact.email,
+        initialDraft: {
+          to: contact.email,
+          subject: dealTitle ? `${dealTitle} — let’s get started` : 'Your project — let’s get started',
+          body: introEmailHtml({ name: contact.name?.split(' ')[0] || null, url }),
+        },
+      });
+    } catch (err) {
+      flash(err.message || 'Could not prepare the intro email');
+    } finally {
+      setIntroBusy(false);
+    }
   };
 
   const run = async (fn, okMsg) => {
@@ -329,9 +312,11 @@ export function PortalDealCard({ dealId }) {
           <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data} onClick={() => setShowInvite(true)} title="Invite this deal's contacts to the client portal">
             <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Portal invite
           </button>
-          <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data} onClick={() => setShowTasksEmail(true)} title="Email the client a link to their portal tasks (voiceover + kick-off call)">
-            <ListChecks size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Email project tasks
-          </button>
+          {goodToGo && (
+            <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data || introBusy} onClick={sendIntroEmail} title="Draft the client's intro email with their portal link (voiceover + kick-off call)">
+              <Rocket size={12} style={{ verticalAlign: -1, marginRight: 4 }} />{introBusy ? 'Preparing…' : 'Send intro email'}
+            </button>
+          )}
           <button className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setShowCustom(true)}>
             <Plus size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Custom offer
           </button>
@@ -420,14 +405,6 @@ export function PortalDealCard({ dealId }) {
         />
       )}
 
-      {showTasksEmail && data && (
-        <ProjectTasksEmailModal
-          dealId={dealId}
-          data={data}
-          onClose={() => setShowTasksEmail(false)}
-          onSent={(msg) => { flash(msg); load(); }}
-        />
-      )}
 
       {showCustom && (
         <Modal onClose={() => setShowCustom(false)} maxWidth={420}>

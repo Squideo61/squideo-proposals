@@ -764,7 +764,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             from freelancers / finance-restricted views). */}
         {state.session?.role !== 'freelancer' && !hideFinancials && (
           <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-            <PortalDealCard dealId={dealId} />
+            <PortalDealCard dealId={dealId} dealTitle={deal.title} goodToGo={!!deal.productionPhase} />
           </div>
         )}
 
@@ -3519,6 +3519,36 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
     showMsg(`Loaded template “${t.name}”`);
   };
 
+  // Generate a per-client portal link for this deal and drop it into the body
+  // at the cursor. The link signs the recipient up (or logs them in) and takes
+  // them to their portal to complete tasks (choose a voiceover, book kick-off).
+  const [insertingLink, setInsertingLink] = useState(false);
+  const insertPortalLink = async () => {
+    if (!deal?.id) return showMsg('Open this from a deal to add a portal link.');
+    const email = (to || '').split(',')[0].trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showMsg('Add the client’s email in “To” first.');
+    setInsertingLink(true);
+    try {
+      const { url } = await actions.generatePortalLink(deal.id, email);
+      const anchor = `<a href="${url}" style="color:#2BB8E6;font-weight:600;">Open your Squideo portal &rarr;</a>`;
+      const el = editorRef.current;
+      if (el) {
+        el.focus();
+        // Insert at the caret if it's inside the editor, else append.
+        const sel = window.getSelection();
+        const inEditor = sel && sel.rangeCount && el.contains(sel.anchorNode);
+        if (inEditor) document.execCommand('insertHTML', false, '&nbsp;' + anchor + '&nbsp;');
+        else el.innerHTML = (el.innerHTML || '') + `<p>${anchor}</p>`;
+        setBody(el.innerHTML);
+      }
+      showMsg('Portal link inserted');
+    } catch (err) {
+      showMsg(err.message || 'Could not generate the portal link');
+    } finally {
+      setInsertingLink(false);
+    }
+  };
+
   // Save the current subject/body as a new named template, either team-wide
   // ('team') or just for this user ('private').
   const saveAsNewTemplate = async (visibility) => {
@@ -4132,6 +4162,21 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
                 title="Open the full conversation in the Emails section — your draft stays open"
               >
                 <Mail size={14} /> View thread
+              </button>
+            )}
+            {/* Insert a per-client portal link for this deal — for intro emails
+                that send the client to their portal to complete tasks. */}
+            {deal?.id && (
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={insertPortalLink}
+                disabled={insertingLink}
+                className="btn-ghost"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                title="Insert a portal link for the client (they can choose a voiceover & book a kick-off call)"
+              >
+                <ExternalLink size={14} /> {insertingLink ? 'Linking…' : 'Portal link'}
               </button>
             )}
             {/* Templates menu, pushed to the left so it reads as a separate

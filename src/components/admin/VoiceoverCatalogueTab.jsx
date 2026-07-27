@@ -206,58 +206,6 @@ function PremiumPriceEditor() {
   );
 }
 
-function ProjectTasksEmailEditor() {
-  const { state, actions } = useStore();
-  const cur = state.projectTasksEmail || {};
-  const [subject, setSubject] = useState(cur.subject || '');
-  const [bodyHtml, setBodyHtml] = useState(cur.bodyHtml || '');
-
-  // Keep local fields in sync if settings load after mount.
-  useEffect(() => {
-    setSubject(state.projectTasksEmail?.subject || '');
-    setBodyHtml(state.projectTasksEmail?.bodyHtml || '');
-  }, [state.projectTasksEmail]);
-
-  const persist = (next) => actions.saveProjectTasksEmail({ subject: next.subject ?? subject, bodyHtml: next.bodyHtml ?? bodyHtml });
-
-  return (
-    <div style={{ marginTop: 36, borderTop: '1px solid ' + BRAND.border, paddingTop: 28 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 10, background: '#ECFDF5', color: '#047857', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <Mic size={20} />
-        </div>
-        <div>
-          <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>“Your project tasks” email</h2>
-          <p style={{ margin: 0, fontSize: 13.5, color: BRAND.muted, lineHeight: 1.5, maxWidth: 640 }}>
-            The wording a production manager sends when a project starts, pointing
-            the client to their portal to choose a voiceover and book a kick-off
-            call. A <strong>“Sign in / set up your portal” button</strong> is added
-            automatically per client at send time — you only edit the wording here.
-          </p>
-        </div>
-      </div>
-      <label style={{ fontSize: 12.5, fontWeight: 600, color: BRAND.muted, display: 'block', marginBottom: 4 }}>Subject</label>
-      <input
-        value={subject}
-        onChange={(e) => setSubject(e.target.value)}
-        onBlur={() => persist({ subject })}
-        placeholder="Your project has started — a couple of things to choose"
-        style={{ width: '100%', fontSize: 14, padding: '9px 11px', border: '1px solid ' + BRAND.border, borderRadius: 8, marginBottom: 12 }}
-      />
-      <label style={{ fontSize: 12.5, fontWeight: 600, color: BRAND.muted, display: 'block', marginBottom: 4 }}>Body (HTML supported)</label>
-      <textarea
-        value={bodyHtml}
-        onChange={(e) => setBodyHtml(e.target.value)}
-        onBlur={() => persist({ bodyHtml })}
-        rows={8}
-        placeholder={"Hi there,\n\nYour project is underway! To get started, head to your portal to pick a voiceover artist for each video and book your kick-off call."}
-        style={{ width: '100%', fontSize: 13.5, padding: '10px 12px', border: '1px solid ' + BRAND.border, borderRadius: 8, fontFamily: 'inherit', lineHeight: 1.5, resize: 'vertical' }}
-      />
-      <p style={{ fontSize: 12, color: BRAND.muted, marginTop: 6 }}>Saved automatically.</p>
-    </div>
-  );
-}
-
 export function VoiceoverCatalogueTab() {
   const { state, actions, showMsg } = useStore();
   const artists = state.voiceoverArtists;
@@ -328,7 +276,6 @@ export function VoiceoverCatalogueTab() {
       )}
 
       <PremiumPriceEditor />
-      <ProjectTasksEmailEditor />
     </div>
   );
 }
