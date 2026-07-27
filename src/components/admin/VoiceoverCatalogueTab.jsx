@@ -42,19 +42,19 @@ function ClientPreview({ artists }) {
               <Icon size={17} color={section.accent} />
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: BRAND.ink }}>{section.label}</h3>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 14 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {list.map((a) => (
-                <div key={a.id} style={{ border: '1px solid ' + BRAND.border, borderRadius: 14, padding: 16, background: '#fff', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div>
-                    <div style={{ fontWeight: 800, fontSize: 14.5, color: BRAND.ink }}>{a.name}</div>
-                    {a.description && <div style={{ fontSize: 12.5, color: BRAND.muted, lineHeight: 1.45, marginTop: 2 }}>{a.description}</div>}
+                <div key={a.id} style={{ border: '1px solid ' + BRAND.border, borderRadius: 12, padding: '12px 14px', background: '#fff', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 160px', minWidth: 140 }}>
+                    <div style={{ fontWeight: 800, fontSize: 14, color: BRAND.ink }}>{a.name}</div>
+                    {a.description && <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.4, marginTop: 2 }}>{a.description}</div>}
                   </div>
                   {a.hasSample ? (
-                    <audio controls preload="none" src={sampleSrc(a)} style={{ width: '100%', height: 38 }} />
+                    <audio controls preload="none" src={sampleSrc(a)} style={{ flex: '2 1 240px', minWidth: 200, height: 38 }} />
                   ) : (
-                    <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Sample coming soon</div>
+                    <div style={{ flex: '2 1 240px', minWidth: 200, fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Sample coming soon</div>
                   )}
-                  <button className="btn" disabled style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: section.accent, borderColor: section.accent, opacity: 0.55, cursor: 'not-allowed' }}>
+                  <button className="btn" disabled style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: section.accent, borderColor: section.accent, opacity: 0.55, cursor: 'not-allowed' }}>
                     <Mic size={14} /> Choose this voice
                   </button>
                 </div>

@@ -19,21 +19,21 @@ const videoLabel = (v, reference) =>
 
 function ArtistCard({ artist, accent, onChoose, disabled }) {
   return (
-    <div style={{ border: `1px solid ${BRAND.border}`, borderRadius: 14, padding: 16, background: '#fff', display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div>
-        <div style={{ fontWeight: 800, fontSize: 14.5, color: BRAND.ink }}>{artist.name}</div>
-        {artist.description && <div style={{ fontSize: 12.5, color: BRAND.muted, lineHeight: 1.45, marginTop: 2 }}>{artist.description}</div>}
+    <div style={{ border: `1px solid ${BRAND.border}`, borderRadius: 12, padding: '12px 14px', background: '#fff', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+      <div style={{ flex: '1 1 160px', minWidth: 140 }}>
+        <div style={{ fontWeight: 800, fontSize: 14, color: BRAND.ink }}>{artist.name}</div>
+        {artist.description && <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.4, marginTop: 2 }}>{artist.description}</div>}
       </div>
       {artist.hasSample ? (
-        <audio controls preload="none" src={`/api/portal/voiceover-sample?artistId=${encodeURIComponent(artist.id)}&v=${artist.sizeBytes || 0}`} style={{ width: '100%', height: 38 }} />
+        <audio controls preload="none" src={`/api/portal/voiceover-sample?artistId=${encodeURIComponent(artist.id)}&v=${artist.sizeBytes || 0}`} style={{ flex: '2 1 240px', minWidth: 200, height: 38 }} />
       ) : (
-        <div style={{ fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Sample coming soon</div>
+        <div style={{ flex: '2 1 240px', minWidth: 200, fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Sample coming soon</div>
       )}
       <button
         className="btn"
         disabled={disabled}
         onClick={() => onChoose(artist)}
-        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: accent, borderColor: accent }}
+        style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: accent, borderColor: accent }}
       >
         <Mic size={14} /> Choose this voice
       </button>
@@ -154,7 +154,7 @@ export default function Voiceover({ dealId }) {
                 <Icon size={17} color={section.accent} />
                 <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: BRAND.ink }}>{section.label}</h2>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 14 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {list.map((a) => (
                   <ArtistCard key={a.id} artist={a} accent={section.accent} disabled={busy} onChoose={openChoose} />
                 ))}
