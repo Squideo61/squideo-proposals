@@ -264,6 +264,10 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
     const opts = data?.paymentOptions || ['5050', 'full'];
     return opts[0];
   });
+  // Whether the client has actively chosen a payment option. Until they do, the
+  // selection tracks the proposal's intended default (opts[0]) — see the
+  // corrective effect below. Set the moment they click a radio.
+  const paymentOptionPickedRef = useRef(false);
 
   // Once signed, replay the choices the client locked in so the (now disabled)
   // controls reflect the signed selection instead of resetting to defaults.
@@ -312,18 +316,28 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   }, [partnerSelected, signed, paymentOption, data]);
 
   // paymentOption is seeded at mount (above), but on a public link the proposal
-  // data arrives a beat later — so that seed can be a default ('5050') the
-  // proposal doesn't actually offer. Once the offered list is known, snap the
-  // selection back into it: otherwise the radios (driven by data.paymentOptions)
-  // and both the breakdown line AND the signed submission (driven by this state)
-  // silently disagree — the client sees only "Pay in full" yet gets billed a
-  // 50/50 deposit. Skips signed views, where the locked-in choice is replayed.
+  // data arrives a beat later — so that seed is the hard-coded fallback ('5050'),
+  // which can differ from what the proposal actually offers. Once the offered
+  // list is known, snap the selection to the proposal's intended default
+  // (opts[0]) until the client actively picks something else. Checking only
+  // "is the value in the offered list?" isn't enough: the PO/Content-Credit
+  // template offers ['po','full','5050'], so a stale '5050' seed *is* in the
+  // list and would wrongly stick — the client sees PO recommended yet signs (and
+  // gets billed) a 50/50 deposit. After an explicit pick we only rescue a value
+  // that isn't offered at all. Skips signed views (choice replayed) and defers
+  // to the Partner Programme effect, which owns the choice when it forces off
+  // 50/50 (don't fight it into a loop).
   useEffect(() => {
     if (signed) return;
     const opts = data?.paymentOptions;
-    if (!opts || !opts.length || opts.includes(paymentOption)) return;
-    setPaymentOption(opts[0]);
-  }, [data, signed, paymentOption]);
+    if (!opts || !opts.length) return;
+    const defaultLockedByPartner = opts[0] === '5050' && partnerSelected && data?.partnerProgramme?.mode !== 'oneoff';
+    if (paymentOptionPickedRef.current) {
+      if (!opts.includes(paymentOption)) setPaymentOption(opts[0]);
+      return;
+    }
+    if (!defaultLockedByPartner && paymentOption !== opts[0]) setPaymentOption(opts[0]);
+  }, [data, signed, paymentOption, partnerSelected]);
   const [sigName, setSigName] = useState('');
   const [sigEmail, setSigEmail] = useState('');
   const [sigAccepted, setSigAccepted] = useState(false);
@@ -1497,7 +1511,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                 <PaymentOption
                   key={key}
                   selected={paymentOption === key}
-                  onSelect={() => !signed && !lockedByPartner && setPaymentOption(key)}
+                  onSelect={() => { if (!signed && !lockedByPartner) { paymentOptionPickedRef.current = true; setPaymentOption(key); } }}
                   title={cfg.title}
                   desc={cfg.desc}
                   disabled={disabled}

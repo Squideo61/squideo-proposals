@@ -851,13 +851,22 @@ export default async function handler(req, res) {
       receiptUrl,
     };
 
+    // Idempotent on re-open: verify runs on every load of the Stripe success URL
+    // (?session_id=…), so a bookmarked / re-visited / browser-history hit re-runs
+    // it. When the row already records THIS session, keep the original paid_at —
+    // otherwise each re-open re-stamps it to NOW(), which both makes the deal look
+    // freshly paid and (worse) re-attributes the cash to the current month in the
+    // cash-basis finance reports. Only a genuinely different session updates the
+    // timestamp.
     const upserted = await sql`
       INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email, receipt_url)
       VALUES (${proposalId}, ${payment.amount}, ${payment.paymentType}, ${payment.paidAt},
               ${payment.stripeSessionId}, ${payment.customerEmail}, ${receiptUrl})
       ON CONFLICT (proposal_id) DO UPDATE
         SET amount = EXCLUDED.amount, payment_type = EXCLUDED.payment_type,
-            paid_at = EXCLUDED.paid_at, stripe_session_id = EXCLUDED.stripe_session_id,
+            paid_at = CASE WHEN payments.stripe_session_id = EXCLUDED.stripe_session_id
+                           THEN payments.paid_at ELSE EXCLUDED.paid_at END,
+            stripe_session_id = EXCLUDED.stripe_session_id,
             customer_email = EXCLUDED.customer_email,
             receipt_url = COALESCE(EXCLUDED.receipt_url, payments.receipt_url)
       RETURNING (xmax = 0) AS inserted
