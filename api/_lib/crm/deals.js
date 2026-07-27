@@ -1824,6 +1824,23 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     if (!hasPermission(await getRole(user.role), 'deals.manage_all')) {
       return res.status(403).json({ error: 'You do not have permission to delete deals' });
     }
+    // A deal owns its proposals + signatures, but proposals.deal_id has no FK
+    // cascade — so a bare deal delete leaves them orphaned, and they keep
+    // showing in cash-generated / commission reports as "Unattributed" signings.
+    // Remove the deal's proposal artifacts first (each guarded so a missing
+    // table never blocks the delete).
+    const propIds = (await sql`SELECT id FROM proposals WHERE deal_id = ${id}`.catch(() => []))
+      .map((r) => r.id);
+    if (propIds.length) {
+      await sql`DELETE FROM signatures          WHERE proposal_id = ANY(${propIds})`.catch(() => {});
+      await sql`DELETE FROM payments            WHERE proposal_id = ANY(${propIds})`.catch(() => {});
+      await sql`DELETE FROM partner_invoices    WHERE proposal_id = ANY(${propIds})`.catch(() => {});
+      await sql`DELETE FROM proposal_billing    WHERE proposal_id = ANY(${propIds})`.catch(() => {});
+      await sql`DELETE FROM credit_allocations  WHERE proposal_id = ANY(${propIds})`.catch(() => {});
+      await sql`DELETE FROM invoice_route_intents WHERE proposal_id = ANY(${propIds})`.catch(() => {});
+      await sql`DELETE FROM proposal_views      WHERE proposal_id = ANY(${propIds})`.catch(() => {});
+      await sql`DELETE FROM proposals WHERE deal_id = ${id}`.catch(() => {});
+    }
     await sql`DELETE FROM deals WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }
