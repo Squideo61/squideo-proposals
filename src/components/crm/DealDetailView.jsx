@@ -201,9 +201,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
     || (po && (po.isPo || !!po.number))
   );
   // The intro email is what unlocks the client's portal task list (voiceover,
-  // kick-off, PO). Offer it once the deal is committed — signed or already in
-  // production — so PO deals can launch tasks before the PO lands.
-  const introReady = proposals.some(p => p.signed) || !!deal.productionPhase;
+  // kick-off, PO). Only offer it once the deal is "Good to go" (in production) —
+  // that's mutually exclusive with the "Good to go" button (which needs
+  // !isProject), so the two never show at the same time.
+  const introReady = !!deal.productionPhase;
   // But the kick-off task offers the assigned team's availability, so there must
   // be a team first — otherwise the client lands on a dead "no availability"
   // screen. Block the intro email until someone's assigned (server enforces too).
