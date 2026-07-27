@@ -290,8 +290,25 @@ export default async function handler(req, res) {
     const autoDealId = 'deal_' + id;
     await sql`DELETE FROM proposals WHERE id = ${id}`;
     const stillLinked = await sql`SELECT 1 FROM proposals WHERE deal_id = ${autoDealId} LIMIT 1`;
+    let dealRemoved = false;
     if (!stillLinked.length) {
-      await sql`DELETE FROM deals WHERE id = ${autoDealId}`;
+      const del = await sql`DELETE FROM deals WHERE id = ${autoDealId} RETURNING id`;
+      dealRemoved = del.length > 0;
+    }
+    // When the shadow deal itself is gone, sweep the residue tables that carry
+    // an opaque text key to it instead of a real FK — otherwise they'd linger
+    // (predicted_payments in the Finance "Predicted Payments" tab, and stale
+    // notification bells with now-dead links). Exact-match on the deal id, and
+    // only when we actually deleted the deal: a surviving manually-linked deal
+    // keeps its own legitimately-live rows. Best-effort — never fail the delete
+    // over cleanup (the proposal is already gone).
+    if (dealRemoved) {
+      try {
+        await sql`DELETE FROM predicted_payments WHERE item_key = ${'deal:' + autoDealId}`;
+        await sql`DELETE FROM in_app_notifications WHERE link = ${'#/deal/' + autoDealId}`;
+      } catch (err) {
+        console.error('[proposals] delete residue sweep failed', err);
+      }
     }
     return res.status(200).json({ ok: true });
   }
