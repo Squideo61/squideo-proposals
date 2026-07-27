@@ -48,11 +48,17 @@ export function serialisePortalVideo(v) {
   return {
     id: v.id,
     title: v.title,
+    videoNumber: v.video_number ?? null,
     status: v.status || 'not_started',
     statusLabel: status?.label || 'Not started',
     statusColor: status?.color || '#94A3B8',
     videoLength: v.video_length || null,
     production: stageInfo(v.production_phase, v.production_stage),
+    // The client's voiceover pick, made per video in the portal. Locked once
+    // set (they can't change it). null until chosen.
+    voiceover: v.voiceover_artist_id
+      ? { artistId: v.voiceover_artist_id, artistName: v.voiceover_artist_name || 'Selected artist', category: v.voiceover_category || null, locked: true }
+      : null,
   };
 }
 

@@ -140,7 +140,7 @@ export async function requireDealInOrg(res, dealId, companyIds) {
   const rows = await sql`
     SELECT d.id, d.title, d.company_id, d.stage, d.value, d.vat_rate, d.payment_terms,
            d.production_phase, d.production_stage, d.production_entered_at,
-           d.po_number, d.drive_folder_id, d.revision_project_id,
+           d.po_number, d.drive_folder_id, d.revision_project_id, d.reference,
            d.portal_extras_discount, d.delivery_deadline, d.created_at,
            c.name AS company_name
       FROM deals d

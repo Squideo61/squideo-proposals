@@ -21,6 +21,8 @@ import ProjectDetail from './pages/ProjectDetail.jsx';
 import Library from './pages/Library.jsx';
 import Documents from './pages/Documents.jsx';
 import Extras from './pages/Extras.jsx';
+import Voiceover from './pages/Voiceover.jsx';
+import Kickoff from './pages/Kickoff.jsx';
 import RequestVideo from './pages/RequestVideo.jsx';
 import Team from './pages/Team.jsx';
 import Settings from './pages/Settings.jsx';
@@ -182,6 +184,8 @@ function AuthedApp() {
     case 'library': page = <Library />; break;
     case 'documents': page = <Documents />; break;
     case 'extras': page = <Extras dealId={route.param} />; break;
+    case 'voiceover': page = <Voiceover dealId={route.param} />; break;
+    case 'kickoff': page = <Kickoff dealId={route.param} />; break;
     case 'request': page = <RequestVideo />; break;
     case 'team': page = <Team />; break;
     case 'settings': page = <Settings />; break;

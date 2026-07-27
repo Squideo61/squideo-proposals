@@ -111,15 +111,15 @@ export async function introCallsRoute(req, res, id, action, user) {
     if (req.method === 'POST') {
       const existing = (await sql`
         SELECT token FROM intro_call_links
-         WHERE deal_id = ${id} AND revoked_at IS NULL
+         WHERE deal_id = ${id} AND kind = 'intro' AND revoked_at IS NULL
          ORDER BY created_at DESC LIMIT 1
       `)[0];
       let token = existing?.token;
       if (!token) {
         token = crypto.randomBytes(24).toString('base64url');
         await sql`
-          INSERT INTO intro_call_links (token, deal_id, created_by)
-          VALUES (${token}, ${id}, ${user.email || null})
+          INSERT INTO intro_call_links (token, deal_id, kind, created_by)
+          VALUES (${token}, ${id}, 'intro', ${user.email || null})
         `;
         await sql`
           INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
@@ -129,8 +129,62 @@ export async function introCallsRoute(req, res, id, action, user) {
       return res.status(200).json({ token, url: `${APP_URL}/?introCall=${token}` });
     }
     if (req.method === 'DELETE') {
-      await sql`UPDATE intro_call_links SET revoked_at = NOW() WHERE deal_id = ${id} AND revoked_at IS NULL`;
+      // Revoke only the sales intro link, not any kick-off link on the deal.
+      await sql`UPDATE intro_call_links SET revoked_at = NOW() WHERE deal_id = ${id} AND kind = 'intro' AND revoked_at IS NULL`;
       return res.status(200).json({ ok: true });
+    }
+    return res.status(405).end();
+  }
+
+  // ── Kick-off call (a project task; the client books from their portal) ──────
+  // The PM can optionally propose a specific time here — the portal then offers
+  // the client "confirm this time" instead of the availability picker.
+  if (action === 'kickoff') {
+    const deal = (await sql`SELECT id FROM deals WHERE id = ${id}`)[0];
+    if (!deal) return res.status(404).json({ error: 'Deal not found' });
+
+    if (req.method === 'POST') {
+      const raw = trimOrNull(req.body?.proposedStartsAt);
+      let proposed = null;
+      if (raw) {
+        const d = new Date(raw);
+        if (isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid proposed date/time' });
+        proposed = d.toISOString();
+      }
+      const existing = (await sql`
+        SELECT token FROM intro_call_links
+         WHERE deal_id = ${id} AND kind = 'kickoff' AND revoked_at IS NULL
+         ORDER BY created_at DESC LIMIT 1
+      `)[0];
+      if (existing) {
+        await sql`UPDATE intro_call_links SET proposed_starts_at = ${proposed} WHERE token = ${existing.token}`;
+      } else {
+        const token = crypto.randomBytes(24).toString('base64url');
+        await sql`
+          INSERT INTO intro_call_links (token, deal_id, kind, proposed_starts_at, created_by)
+          VALUES (${token}, ${id}, 'kickoff', ${proposed}, ${user.email || null})
+        `;
+      }
+      return res.status(200).json({ proposedStartsAt: proposed });
+    }
+    if (req.method === 'DELETE') {
+      await sql`UPDATE intro_call_links SET revoked_at = NOW() WHERE deal_id = ${id} AND kind = 'kickoff' AND revoked_at IS NULL`;
+      return res.status(200).json({ ok: true });
+    }
+    if (req.method === 'GET') {
+      const link = (await sql`
+        SELECT proposed_starts_at FROM intro_call_links
+         WHERE deal_id = ${id} AND kind = 'kickoff' AND revoked_at IS NULL
+         ORDER BY created_at DESC LIMIT 1`)[0] || null;
+      const bookings = await sql`
+        SELECT id, client_name, client_email, starts_at, ends_at, meet_url, status
+          FROM intro_call_bookings
+         WHERE deal_id = ${id} AND kind = 'kickoff'
+         ORDER BY starts_at DESC LIMIT 5`;
+      return res.status(200).json({
+        proposedStartsAt: link?.proposed_starts_at || null,
+        bookings: bookings.map(serialiseBooking),
+      });
     }
     return res.status(405).end();
   }
@@ -144,14 +198,14 @@ export async function introCallsRoute(req, res, id, action, user) {
   if (req.method === 'GET') {
     const link = (await sql`
       SELECT token, created_at FROM intro_call_links
-       WHERE deal_id = ${id} AND revoked_at IS NULL
+       WHERE deal_id = ${id} AND kind = 'intro' AND revoked_at IS NULL
        ORDER BY created_at DESC LIMIT 1
     `)[0] || null;
 
     const bookings = await sql`
       SELECT id, client_name, client_email, starts_at, ends_at, meet_url, status
         FROM intro_call_bookings
-       WHERE deal_id = ${id}
+       WHERE deal_id = ${id} AND kind = 'intro'
        ORDER BY starts_at DESC LIMIT 10
     `;
 

@@ -1,7 +1,79 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { CalendarClock, Copy, Check, RefreshCw, Video, AlertTriangle, X } from 'lucide-react';
+import { CalendarClock, Copy, Check, RefreshCw, Video, AlertTriangle, X, Rocket } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
+
+// ISO (UTC) → value for a <input type="datetime-local"> in the PM's local time.
+function isoToLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// The kick-off call sub-panel. The client books from their portal; here the PM
+// can pre-agree a specific time (or leave it open for the client to pick).
+function KickoffSection({ dealId }) {
+  const { actions } = useStore();
+  const [data, setData] = useState(null);
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const load = () => actions.loadKickoffCall(dealId).then((d) => {
+    if (d && !d.error) { setData(d); setValue(isoToLocalInput(d.proposedStartsAt)); }
+  });
+  useEffect(() => { load(); }, [dealId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = (proposedIso) => {
+    setBusy(true);
+    actions.setKickoffProposal(dealId, proposedIso)
+      .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600); return load(); })
+      .finally(() => setBusy(false));
+  };
+
+  const booked = (data?.bookings || []).find((b) => b.status === 'confirmed' && new Date(b.endsAt).getTime() > Date.now());
+
+  return (
+    <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 12, marginTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, marginBottom: 8 }}>
+        <Rocket size={13} /> Kick-off call
+      </div>
+      {booked ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+          <Check size={14} color="#16A34A" style={{ flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 500 }}>Booked by {booked.clientName}</div>
+            <div style={{ color: BRAND.muted, fontSize: 12 }}>{new Date(booked.startsAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div>
+          </div>
+          {booked.meetUrl && <a href={booked.meetUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.blue, flexShrink: 0 }}>Join</a>}
+        </div>
+      ) : (
+        <>
+          <p style={{ margin: '0 0 8px', fontSize: 12, color: BRAND.muted }}>
+            The client books this from their portal. Propose a time if you've already agreed one — otherwise leave it blank and they'll pick from your team's availability.
+          </p>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="datetime-local"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              style={{ flex: 1, minWidth: 170, padding: '7px 9px', border: '1px solid ' + BRAND.border, borderRadius: 6, fontSize: 12.5, fontFamily: 'inherit' }}
+            />
+            <button onClick={() => save(value ? new Date(value).toISOString() : null)} disabled={busy} className="btn" style={{ flexShrink: 0 }}>
+              {saved ? <><Check size={14} /> Saved</> : 'Propose'}
+            </button>
+          </div>
+          {data?.proposedStartsAt && (
+            <button onClick={() => { setValue(''); save(null); }} disabled={busy} className="btn-ghost" style={{ fontSize: 12, marginTop: 6 }}>
+              Clear proposed time
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 // Header button + popover for the deal/project page. Generates an unguessable
 // booking link a PM can share with a client, and shows who (if anyone) still
@@ -146,6 +218,8 @@ export function IntroCallButton({ dealId }) {
               <CalendarClock size={14} /> {busy ? 'Preparing…' : 'New Meeting'}
             </button>
           )}
+
+          <KickoffSection dealId={dealId} />
 
           {upcoming.length > 0 && (
             <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 10, marginTop: 12 }}>

@@ -60,6 +60,12 @@ export async function ensureProductionSchema() {
       // Per-video production schedule (each video in a multi-video deal has its
       // own visuals/production timeline). The deal keeps an optional overall one.
       await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS production_schedule JSONB`;
+      // Client's voiceover-artist pick, made per video in the portal. Soft ref
+      // (artists archive, never hard-delete) so a locked pick always resolves.
+      // A non-null artist id = locked (the client can't change it afterwards).
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS voiceover_artist_id TEXT`;
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS voiceover_selected_at TIMESTAMPTZ`;
+      await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS voiceover_selected_by TEXT`;
       await sql`CREATE INDEX IF NOT EXISTS project_videos_stage_idx ON project_videos(production_phase, production_stage)`;
       // Per-video script uploads + milestone approvals (Script section / board auto-advance).
       await sql`

@@ -125,3 +125,29 @@ export function portalExtraConfirmHtml({ clientName, projectTitle, title, amount
   `;
   return shell(inner, logoUrl);
 }
+
+// Confirmation after a client picks a voiceover artist for a video (or all).
+export function portalVoiceoverConfirmHtml({ clientName, projectTitle, artistName, videoLabel, appliedToAll, logoUrl = null }) {
+  const scope = appliedToAll ? 'all videos in this project' : escapeHtml(videoLabel || 'your video');
+  const inner = `
+    <h2 style="margin:0 0 12px;font-size:19px;font-weight:700;">Voiceover locked in 🎙️</h2>
+    <p style="margin:0 0 14px;">Thanks${clientName ? ', ' + escapeHtml(clientName) : ''} — you've chosen <strong>${escapeHtml(artistName || 'a voiceover artist')}</strong> for ${scope}${projectTitle ? ` on <strong>${escapeHtml(projectTitle)}</strong>` : ''}.</p>
+    <p style="margin:0 0 18px;">Our team will use them for the recording. If you need to change this, just reply and we'll sort it.</p>
+    <p style="margin:0;">${ctaButton(PORTAL_URL, 'Open my portal')}</p>
+  `;
+  return shell(inner, logoUrl);
+}
+
+// The production manager's "your project has started — a couple of things to
+// choose" email. The wording is admin-editable (settings.project_tasks_email);
+// bodyHtml is that stored body, and we append the live portal sign-up/login
+// button. bodyHtml is trusted admin content (not client input) so it isn't
+// escaped — it's rendered as authored.
+export function portalProjectTasksHtml({ bodyHtml, inviteUrl, logoUrl = null }) {
+  const inner = `
+    ${bodyHtml || '<p style="margin:0 0 14px;">Your project is underway! Head to your portal to choose a voiceover artist for each video and book your kick-off call.</p>'}
+    <p style="margin:18px 0 6px;">${ctaButton(inviteUrl, 'Sign in / set up your portal')}</p>
+    <p style="margin:0;font-size:12px;color:#6B7785;word-break:break-all;">Or paste this into your browser: ${escapeHtml(inviteUrl)}</p>
+  `;
+  return shell(inner, logoUrl);
+}

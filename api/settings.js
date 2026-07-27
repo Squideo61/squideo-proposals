@@ -31,6 +31,10 @@ function ensureFinanceTargetsColumn() {
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sales_targets JSONB`;
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cost_items JSONB`;
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS default_proposal JSONB`;
+    // Editable body for the PM's "here are your project tasks" portal email.
+    // { subject, bodyHtml } — the live per-client portal button is appended at
+    // send time. null until an admin saves one (server falls back to a default).
+    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS project_tasks_email JSONB`;
   })().catch((err) => { financeTargetsColumnEnsured = null; throw err; });
   return financeTargetsColumnEnsured;
 }
@@ -45,7 +49,7 @@ export default async function handler(req, res) {
   await ensureFinanceTargetsColumn();
 
   if (req.method === 'GET') {
-    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal FROM settings WHERE id = 1`;
+    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal, project_tasks_email FROM settings WHERE id = 1`;
     const row = rows[0];
     return res.status(200).json({
       extrasBank: row.extras_bank,
@@ -55,6 +59,9 @@ export default async function handler(req, res) {
       // Admin-editable base for every new proposal. null until an admin first
       // saves one — the frontend falls back to the hardcoded DEFAULT_PROPOSAL.
       defaultProposal: row.default_proposal || null,
+      // Admin-editable body for the PM "email project tasks" action. null until
+      // first saved — the send route falls back to a hardcoded default.
+      projectTasksEmail: row.project_tasks_email || null,
       financeTargets: Array.isArray(row.finance_targets) && row.finance_targets.length
         ? row.finance_targets
         : DEFAULT_FINANCE_TARGETS,
@@ -74,7 +81,7 @@ export default async function handler(req, res) {
     if (!hasPermission(await getRole(user.role), 'settings.manage')) {
       return res.status(403).json({ error: 'You do not have permission to edit workspace settings' });
     }
-    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal } = req.body || {};
+    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal, projectTasksEmail } = req.body || {};
     await sql`
       UPDATE settings SET
         extras_bank             = COALESCE(${extrasBank ? JSON.stringify(extrasBank) : null}::jsonb, extras_bank),
@@ -84,7 +91,8 @@ export default async function handler(req, res) {
         finance_targets         = COALESCE(${financeTargets ? JSON.stringify(financeTargets) : null}::jsonb, finance_targets),
         sales_targets           = COALESCE(${salesTargets ? JSON.stringify(salesTargets) : null}::jsonb, sales_targets),
         cost_items              = COALESCE(${Array.isArray(costItems) ? JSON.stringify(costItems) : null}::jsonb, cost_items),
-        default_proposal        = COALESCE(${defaultProposal ? JSON.stringify(defaultProposal) : null}::jsonb, default_proposal)
+        default_proposal        = COALESCE(${defaultProposal ? JSON.stringify(defaultProposal) : null}::jsonb, default_proposal),
+        project_tasks_email     = COALESCE(${projectTasksEmail ? JSON.stringify(projectTasksEmail) : null}::jsonb, project_tasks_email)
       WHERE id = 1
     `;
     return res.status(200).json({ ok: true });

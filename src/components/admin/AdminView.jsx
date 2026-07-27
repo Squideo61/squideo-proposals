@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { permissionsInclude } from '../../lib/permissions.js';
@@ -11,6 +11,7 @@ import { IntroCallRulesTab } from './IntroCallRulesTab.jsx';
 import { StaffCommissionTab } from './StaffCommissionTab.jsx';
 import { HolidayTab } from './HolidayTab.jsx';
 import { DefaultProposalTab } from './DefaultProposalTab.jsx';
+import { VoiceoverCatalogueTab } from './VoiceoverCatalogueTab.jsx';
 
 const TABS = [
   { id: 'users',         label: 'Users + invites',  icon: Users,    perm: 'users.manage' },
@@ -21,6 +22,7 @@ const TABS = [
   { id: 'holiday',       label: 'Holiday',          icon: Plane,    perm: ['schedule.manage_allowance', 'schedule.manage'] },
   { id: 'intro-calls',   label: 'Intro call rules', icon: CalendarClock, perm: 'settings.manage' },
   { id: 'proposals', label: 'Proposals', icon: FileText, perm: 'settings.manage' },
+  { id: 'voiceovers', label: 'Voiceovers', icon: Mic, perm: 'settings.manage' },
 ];
 
 // A tab is visible if the caller holds its permission — `perm` may be a single
@@ -132,6 +134,7 @@ export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, o
         {active?.id === 'holiday' && <HolidayTab />}
         {active?.id === 'intro-calls' && <IntroCallRulesTab />}
         {active?.id === 'proposals' && <DefaultProposalTab onEditDefault={onEditDefault} onCreateTemplate={onCreateTemplate} onEditTemplate={onEditTemplate} />}
+        {active?.id === 'voiceovers' && <VoiceoverCatalogueTab />}
       </div>
     </div>
   );

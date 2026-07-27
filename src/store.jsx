@@ -464,6 +464,9 @@ export function StoreProvider({ children }) {
         // DEFAULT_PROPOSAL (client fields blanked) until an admin saves one, so
         // the default editor and the "new proposal" flow always have content.
         defaultProposal: settings?.defaultProposal || seedDefaultProposal(),
+        // Admin-editable body for the PM "email project tasks" action; null
+        // until first saved (the send route falls back to a default).
+        projectTasksEmail: settings?.projectTasksEmail || null,
         loading: false,
       }));
     });
@@ -1823,6 +1826,14 @@ export function StoreProvider({ children }) {
     cancelIntroCallBooking(dealId, bookingId) {
       return api.post('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/cancel', { bookingId });
     },
+    // Kick-off call (a client project task; they book from their portal). The PM
+    // can optionally propose a specific time here.
+    loadKickoffCall(dealId) {
+      return api.get('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/kickoff').catch(() => null);
+    },
+    setKickoffProposal(dealId, proposedStartsAt) {
+      return api.post('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/kickoff', { proposedStartsAt });
+    },
     // Partner-client meeting links (no deal — an explicit chosen host list).
     loadPartnerIntroCall(clientKey, compute) {
       const qs = '?clientKey=' + encodeURIComponent(clientKey) + (compute ? '&compute=1' : '');
@@ -2685,6 +2696,62 @@ export function StoreProvider({ children }) {
       setState(s => ({ ...s, emailTemplates: (s.emailTemplates || []).filter(t => t.id !== id) }));
       return api.delete('/api/crm/templates/' + encodeURIComponent(id))
         .catch(() => actions.loadEmailTemplates());
+    },
+
+    // ---------- Voiceover artist catalogue (Admin → Voiceovers) ----------
+    // Global catalogue the client picks from per video in the portal. Two
+    // sections: category 'ai' | 'human'. settings.manage-gated server-side.
+    loadVoiceoverArtists() {
+      return api.get('/api/crm/voiceovers')
+        .then((rows) => {
+          const list = Array.isArray(rows) ? rows : [];
+          setState(s => ({ ...s, voiceoverArtists: list }));
+          return list;
+        })
+        .catch(() => []);
+    },
+    createVoiceoverArtist({ category, name, description, sortOrder }) {
+      return api.post('/api/crm/voiceovers', { category, name, description, sortOrder })
+        .then((artist) => {
+          setState(s => ({ ...s, voiceoverArtists: [...(s.voiceoverArtists || []), artist] }));
+          return artist;
+        });
+    },
+    updateVoiceoverArtist(id, fields) {
+      return api.patch('/api/crm/voiceovers/' + encodeURIComponent(id), fields)
+        .then((artist) => {
+          setState(s => ({ ...s, voiceoverArtists: (s.voiceoverArtists || []).map(a => a.id === id ? artist : a) }));
+          return artist;
+        });
+    },
+    deleteVoiceoverArtist(id) {
+      setState(s => ({ ...s, voiceoverArtists: (s.voiceoverArtists || []).filter(a => a.id !== id) }));
+      return api.delete('/api/crm/voiceovers/' + encodeURIComponent(id))
+        .catch(() => actions.loadVoiceoverArtists());
+    },
+    // Upload/replace an artist's sample clip (raw binary body, like uploadVideoScript).
+    async uploadVoiceoverSample(id, file) {
+      const res = await fetch('/api/crm/voiceovers/' + encodeURIComponent(id) + '/sample', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          'X-Filename': encodeURIComponent(file.name),
+        },
+        body: file,
+      });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
+      const artist = await res.json();
+      setState(s => ({ ...s, voiceoverArtists: (s.voiceoverArtists || []).map(a => a.id === id ? artist : a) }));
+      return artist;
+    },
+    // Persist the admin-editable "project tasks" PM email body (Admin → Voiceovers).
+    saveProjectTasksEmail(data) {
+      setState(s => ({ ...s, projectTasksEmail: data }));
+      clearTimeout(saveTimers.current.__projectTasksEmail);
+      saveTimers.current.__projectTasksEmail = setTimeout(() => {
+        api.put('/api/settings', { projectTasksEmail: data }).catch(() => {});
+      }, 800);
     },
     getGmailSignature() {
       // Returns { signatureHtml, fetchedAt, diagnostics? } from the cached

@@ -22,6 +22,7 @@ import { serialiseDeal, ensureDealFileDriveColumns, dealDriveFolder, driveErrorH
 import { getFreshAccessToken } from './gmail.js';
 import { uploadToFolder, ensureSubfolderByPath, ensureNamedSubfolder, deleteDriveFile } from '../googleDrive.js';
 import { enterProduction, ensureProductionSchema } from '../production.js';
+import { ensureVoiceoverCatalogue } from '../voiceover.js';
 import { isValidStage } from '../dealStage.js';
 import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, isValidMilestone, VIDEO_MILESTONE_BY_ID, stageOrderIndex, previewKindForStage, FIRST_PRODUCTION } from '../productionStages.js';
 import { getRole } from '../userRoles.js';
@@ -80,6 +81,8 @@ const VIDEO_SELECT = (whereSql) => sql`
          (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
             FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails,
          d.reference AS project_number,
+         (SELECT va.name FROM voiceover_artists va WHERE va.id = pv.voiceover_artist_id) AS voiceover_artist_name,
+         (SELECT va.category FROM voiceover_artists va WHERE va.id = pv.voiceover_artist_id) AS voiceover_category,
          (SELECT MAX(rv.version_number)
             FROM revision_versions rv
            WHERE rv.video_id = pv.revision_video_id) AS revision_round
@@ -134,6 +137,8 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
   const freelancer = isFreelancer(role);
   const meEmail = (user.email || '').toLowerCase();
   await ensureProductionSchema();
+  // VIDEO_SELECT joins voiceover_artists for the client's chosen voice.
+  await ensureVoiceoverCatalogue();
   // The board query selects deals.drive_folder_id — make sure the column exists.
   await ensureDealFileDriveColumns();
   // …and deals.reference / project_videos.video_number, which VIDEO_SELECT and
@@ -1162,5 +1167,9 @@ export function serialiseVideo(r) {
   if ('production_entered_at' in r) out.enteredProductionAt = r.production_entered_at || null;
   if ('production_start_date' in r) out.productionStartDate = r.production_start_date || null;
   if ('revision_round' in r) out.revisionRound = r.revision_round != null ? Number(r.revision_round) : null;
+  // The client's voiceover pick (chosen in the portal). Read-only on the CRM.
+  out.voiceoverArtistId = r.voiceover_artist_id || null;
+  out.voiceoverArtistName = ('voiceover_artist_name' in r) ? (r.voiceover_artist_name || null) : (r.voiceover_artist_id ? 'Selected artist' : null);
+  out.voiceoverCategory = ('voiceover_category' in r) ? (r.voiceover_category || null) : null;
   return out;
 }

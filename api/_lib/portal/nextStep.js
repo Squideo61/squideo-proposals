@@ -24,6 +24,7 @@ export function deriveNextStep({
   revisionPending = null,   // { shareToken, videoTitle } when a cut awaits client feedback
   storyboardPending = null, // { shareToken, storyboardTitle } when a storyboard awaits feedback
   videos = [],          // project_videos rows
+  tasks = [],           // deriveProjectTasks() output (voiceover, kick-off, …)
 } = {}) {
   const stage = deal?.stage || null;
   const phase = deal?.production_phase || null;
@@ -83,6 +84,25 @@ export function deriveNextStep({
         : 'Your storyboard is ready for review',
       detail: 'Review each frame, pin comments where you’d like changes, then send your feedback or approve.',
       cta: { label: 'Review storyboard', href: `/?storyboard=${encodeURIComponent(storyboardPending.shareToken)}` },
+    };
+  }
+
+  // 5b. Kick-off "project tasks" still open (choose a voiceover, book the
+  // kick-off call). These land right at the start of production, so they take
+  // priority over the generic "we're on it" states below but sit under an
+  // active revision/storyboard review.
+  const openTasks = (tasks || []).filter((t) => t.status === 'todo');
+  if (openTasks.length) {
+    const first = openTasks[0];
+    return {
+      court: 'you',
+      headline: openTasks.length > 1
+        ? 'A couple of things to get your project started'
+        : first.title,
+      detail: openTasks.length > 1
+        ? `To kick things off, ${openTasks.map((t) => t.title.toLowerCase()).join(' and ')}.`
+        : first.detail,
+      cta: first.cta ? { label: first.cta.label, href: first.cta.href } : null,
     };
   }
 

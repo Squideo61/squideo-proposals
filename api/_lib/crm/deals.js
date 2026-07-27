@@ -12,6 +12,7 @@ import { ensureDealFolder, findDealFolders, uploadToFolder, getDriveFileLink, de
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { enterProduction } from '../production.js';
+import { ensureVoiceoverCatalogue } from '../voiceover.js';
 import { syncDealSchedule } from './schedule.js';
 import { sendNotification, ensurePoReceivedNotificationDefault } from '../notifications.js';
 import { getDealCreditProject } from './retainers.js';
@@ -1554,10 +1555,13 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     // applied the production migration still loads the deal page.
     let videos = [];
     try {
+      await ensureVoiceoverCatalogue();
       const vrows = await sql`
         SELECT pv.*,
                (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
                   FROM video_assignees va WHERE va.video_id = pv.id) AS producer_emails,
+               (SELECT vo.name FROM voiceover_artists vo WHERE vo.id = pv.voiceover_artist_id) AS voiceover_artist_name,
+               (SELECT vo.category FROM voiceover_artists vo WHERE vo.id = pv.voiceover_artist_id) AS voiceover_category,
                (SELECT MAX(rv.version_number)
                   FROM revision_versions rv WHERE rv.video_id = pv.revision_video_id) AS revision_round
           FROM project_videos pv WHERE pv.deal_id = ${id} ORDER BY pv.sort_order, pv.created_at`;
@@ -1576,6 +1580,9 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         sortOrder: v.sort_order, videoNumber: v.video_number == null ? null : Number(v.video_number),
         revisionVideoId: v.revision_video_id || null,
         revisionRound: v.revision_round != null ? Number(v.revision_round) : null,
+        voiceoverArtistId: v.voiceover_artist_id || null,
+        voiceoverArtistName: v.voiceover_artist_name || null,
+        voiceoverCategory: v.voiceover_category || null,
         createdAt: v.created_at, updatedAt: v.updated_at || null,
       }));
     } catch (_) { /* project_videos not yet migrated */ }

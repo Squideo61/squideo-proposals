@@ -53,18 +53,28 @@ import {
   clientIp,
 } from './_lib/portal/middleware.js';
 import { deriveNextStep } from './_lib/portal/nextStep.js';
+import { deriveProjectTasks, countOpenTasks } from './_lib/portal/tasks.js';
 import {
   computePortalOffers,
   resolveOfferForAccept,
   extrasWindowOpen,
 } from './_lib/portal/extrasOffers.js';
 import { sendTeamInvite } from './_lib/portal/onboarding.js';
+import {
+  ensureVoiceoverCatalogue,
+  serialiseArtist,
+  getArtist,
+  streamVoiceoverSample,
+} from './_lib/voiceover.js';
+import { ensureIntroCallTables } from './_lib/crm/introCallSlots.js';
+import { bookSlot, computeBookingSlots } from './_lib/introCallBooking.js';
 import { companyHasLogo, portalLogoPath, emailLogoUrl } from './_lib/portal/logo.js';
 import {
   PORTAL_URL,
   portalMagicLinkHtml,
   portalResetHtml,
   portalExtraConfirmHtml,
+  portalVoiceoverConfirmHtml,
 } from './_lib/portal/emails.js';
 import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from './_lib/portal/drive.js';
 import {
@@ -206,10 +216,13 @@ function publicPortalUser(user, memberships = null) {
 // ── Ball-in-court state gathering (shared by overview + project detail) ──────
 // One query per concern across ALL the org's deals, then derived per deal.
 async function gatherDealStates(dealIds) {
-  const empty = { proposals: new Map(), videos: new Map(), revPending: new Map(), sbPending: new Map(), revLinks: new Map(), sbLinks: new Map() };
+  const empty = { proposals: new Map(), videos: new Map(), revPending: new Map(), sbPending: new Map(), revLinks: new Map(), sbLinks: new Map(), kickoffDeals: new Set() };
   if (!dealIds.length) return empty;
 
-  const [proposalRows, videoRows, revRows, sbRows] = await Promise.all([
+  // Self-heal the voiceover columns/table before the video query joins them.
+  await ensureVoiceoverCatalogue();
+
+  const [proposalRows, videoRows, revRows, sbRows, kickoffRows] = await Promise.all([
     sql`
       SELECT p.id, p.deal_id, p.created_at, s.data AS signature_data, s.signed_at
         FROM proposals p
@@ -218,9 +231,13 @@ async function gatherDealStates(dealIds) {
        ORDER BY (s.signed_at IS NOT NULL) DESC, p.created_at DESC
     `,
     sql`
-      SELECT id, deal_id, title, status, sort_order, production_phase, production_stage, video_length
-        FROM project_videos WHERE deal_id = ANY(${dealIds})
-       ORDER BY sort_order ASC, created_at ASC
+      SELECT v.id, v.deal_id, v.title, v.status, v.sort_order, v.video_number,
+             v.production_phase, v.production_stage, v.video_length,
+             v.voiceover_artist_id, va.name AS voiceover_artist_name, va.category AS voiceover_category
+        FROM project_videos v
+        LEFT JOIN voiceover_artists va ON va.id = v.voiceover_artist_id
+       WHERE v.deal_id = ANY(${dealIds})
+       ORDER BY v.sort_order ASC, v.created_at ASC
     `,
     sql`
       SELECT rp.deal_id, rp.share_token, rp.approved_at AS project_approved_at,
@@ -237,6 +254,10 @@ async function gatherDealStates(dealIds) {
         FROM storyboard_projects sp
         JOIN storyboards sb ON sb.project_id = sp.id
        WHERE sp.deal_id = ANY(${dealIds})
+    `.catch(() => []),
+    sql`
+      SELECT DISTINCT deal_id FROM intro_call_bookings
+       WHERE deal_id = ANY(${dealIds}) AND kind = 'kickoff' AND status = 'confirmed'
     `.catch(() => []),
   ]);
 
@@ -290,7 +311,9 @@ async function gatherDealStates(dealIds) {
     }
   }
 
-  return { proposals, videos, revPending, sbPending, revLinks, sbLinks };
+  const kickoffDeals = new Set(kickoffRows.map((r) => r.deal_id));
+
+  return { proposals, videos, revPending, sbPending, revLinks, sbLinks, kickoffDeals };
 }
 
 function nextStepFor(deal, states) {
@@ -302,6 +325,16 @@ function nextStepFor(deal, states) {
     revisionPending: states.revPending.get(deal.id) || null,
     storyboardPending: states.sbPending.get(deal.id) || null,
     videos: states.videos.get(deal.id) || [],
+    tasks: tasksFor(deal, states),
+  });
+}
+
+// The client's "project tasks" for a deal (voiceover, kick-off call, …).
+function tasksFor(deal, states) {
+  return deriveProjectTasks({
+    deal,
+    videos: states.videos.get(deal.id) || [],
+    hasKickoffBooking: states.kickoffDeals.has(deal.id),
   });
 }
 
@@ -335,6 +368,11 @@ export default async function handler(req, res) {
       case 'files': return filesRoutes(req, res, user);
       case 'extras': return extrasRoute(req, res, user);
       case 'extras-accept': return extrasAcceptRoute(req, res, user);
+      case 'voiceover': return voiceoverRoute(req, res, user);
+      case 'voiceover-select': return voiceoverSelectRoute(req, res, user);
+      case 'voiceover-sample': return voiceoverSampleRoute(req, res, user);
+      case 'kickoff': return kickoffRoute(req, res, user);
+      case 'kickoff-book': return kickoffBookRoute(req, res, user);
       case 'request-video': return requestVideoRoute(req, res, user);
       case 'po-number': return poNumberRoute(req, res, user);
       case 'team': return teamRoutes(req, res, user);
@@ -643,9 +681,12 @@ async function overviewRoute(req, res, user) {
     const nextStep = nextStepFor(deal, states);
     const videos = (states.videos.get(deal.id) || []).map(serialisePortalVideo);
     const offers = extrasWindowOpen(deal) ? await computePortalOffers(deal) : [];
+    const tasks = tasksFor(deal, states);
     projects.push(serialisePortalDeal(deal, {
       nextStep,
       videos,
+      tasks,
+      openTasks: countOpenTasks(tasks),
       extrasAvailable: offers.length,
     }));
   }
@@ -692,6 +733,7 @@ async function projectRoute(req, res, user) {
   return res.status(200).json({
     project: serialisePortalDeal(deal, {
       nextStep,
+      tasks: tasksFor(deal, states),
       videos: (states.videos.get(deal.id) || []).map(serialisePortalVideo),
       proposal: prop ? { id: prop.id, signed: !!prop.signature } : null,
       reviews: states.revLinks.get(deal.id) || [],
@@ -1022,6 +1064,231 @@ async function extrasAcceptRoute(req, res, user) {
 
   const [row] = await sql`SELECT id, description, amount, status, created_at FROM deal_extras WHERE id = ${newId}`;
   return res.status(201).json({ extra: serialisePortalExtra(row) });
+}
+
+// ═════════════════════════ voiceover ═════════════════════════
+// The client auditions the global artist catalogue (two sections, matching
+// squideo.com) and picks one PER VIDEO. A pick locks — they can't change it.
+
+// GET voiceover?dealId= — catalogue + this project's videos with any pick.
+async function voiceoverRoute(req, res, user) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  const deal = await requireDealInOrg(res, req.query.dealId ? String(req.query.dealId) : null, user.companyIds);
+  if (!deal) return;
+  await ensureVoiceoverCatalogue();
+
+  const [artists, videos] = await Promise.all([
+    sql`SELECT * FROM voiceover_artists WHERE archived_at IS NULL ORDER BY category, sort_order, created_at`,
+    sql`
+      SELECT v.id, v.title, v.video_number, v.sort_order, v.created_at,
+             v.voiceover_artist_id, va.name AS voiceover_artist_name, va.category AS voiceover_category
+        FROM project_videos v
+        LEFT JOIN voiceover_artists va ON va.id = v.voiceover_artist_id
+       WHERE v.deal_id = ${deal.id}
+       ORDER BY v.sort_order ASC, v.created_at ASC`,
+  ]);
+
+  const grouped = { ai: [], human: [] };
+  for (const a of artists) (grouped[a.category === 'ai' ? 'ai' : 'human']).push(serialiseArtist(a));
+
+  return res.status(200).json({
+    dealId: deal.id,
+    dealTitle: deal.title,
+    reference: deal.reference || null,
+    artists: grouped,
+    videos: videos.map((v) => ({
+      id: v.id,
+      title: v.title,
+      videoNumber: v.video_number ?? null,
+      voiceover: v.voiceover_artist_id
+        ? { artistId: v.voiceover_artist_id, artistName: v.voiceover_artist_name || 'Selected artist', category: v.voiceover_category || null, locked: true }
+        : null,
+    })),
+  });
+}
+
+// POST voiceover-select { dealId, videoId, artistId, applyToAll }
+async function voiceoverSelectRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const body = await readJsonBody(req);
+  const deal = await requireDealInOrg(res, trimOrNull(body.dealId), user.companyIds);
+  if (!deal) return;
+  await ensureVoiceoverCatalogue();
+
+  const videoId = trimOrNull(body.videoId);
+  const artistId = trimOrNull(body.artistId);
+  if (!videoId || !artistId) return res.status(400).json({ error: 'videoId and artistId are required' });
+
+  // The chosen artist must exist and still be live.
+  const artist = await getArtist(artistId);
+  if (!artist || artist.archived_at) {
+    return res.status(400).json({ error: 'That voiceover artist is no longer available — refresh and try again.' });
+  }
+  // The target video must belong to THIS deal (org already checked).
+  const [video] = await sql`SELECT id, title, video_number, voiceover_artist_id FROM project_videos WHERE id = ${videoId} AND deal_id = ${deal.id}`;
+  if (!video) return res.status(404).json({ error: 'Video not found' });
+  if (video.voiceover_artist_id) {
+    return res.status(409).json({ error: 'A voiceover is already locked in for this video. Contact your producer to change it.' });
+  }
+
+  const applyToAll = body.applyToAll === true;
+  if (applyToAll) {
+    // Set the same artist on every video in the deal that isn't already locked.
+    await sql`
+      UPDATE project_videos
+         SET voiceover_artist_id = ${artistId}, voiceover_selected_at = NOW(),
+             voiceover_selected_by = ${user.puid}, updated_at = NOW()
+       WHERE deal_id = ${deal.id} AND voiceover_artist_id IS NULL`;
+  } else {
+    await sql`
+      UPDATE project_videos
+         SET voiceover_artist_id = ${artistId}, voiceover_selected_at = NOW(),
+             voiceover_selected_by = ${user.puid}, updated_at = NOW()
+       WHERE id = ${videoId} AND voiceover_artist_id IS NULL`;
+  }
+
+  const videoLabel = deal.reference && video.video_number
+    ? `${deal.reference}-${String(video.video_number).padStart(2, '0')}`
+    : (video.title || 'your video');
+
+  // Team alert.
+  try {
+    await ensurePortalNotificationDefaults();
+    await sendNotification('portal.voiceover_selected', {
+      subject: `🎙️ Voiceover chosen: ${artist.name} — ${deal.title}`,
+      text: `${user.name || user.email} chose ${artist.name} (${artist.category === 'ai' ? 'AI' : 'Human'}) for ${applyToAll ? 'all videos' : videoLabel} on ${deal.title}.`,
+      inApp: {
+        title: `Voiceover: ${artist.name}`,
+        body: `${user.name || user.email} · ${applyToAll ? 'all videos' : videoLabel} · ${deal.title}`,
+        link: `#/deal/${deal.id}`,
+      },
+      inAppOnly: true,
+    });
+  } catch (err) {
+    console.warn('[portal] voiceover_selected notify failed', err.message);
+  }
+
+  // Client confirmation (best-effort).
+  try {
+    await sendMail({
+      to: user.email,
+      subject: `Voiceover locked in for ${deal.title}`,
+      html: portalVoiceoverConfirmHtml({
+        logoUrl: await emailLogoUrl(deal.company_id),
+        clientName: user.name,
+        projectTitle: deal.title,
+        artistName: artist.name,
+        videoLabel,
+        appliedToAll: applyToAll,
+      }),
+      text: `You chose ${artist.name} for ${applyToAll ? 'all videos in' : videoLabel + ' on'} ${deal.title}.`,
+    });
+  } catch (err) {
+    console.warn('[portal] voiceover confirm email failed', err.message);
+  }
+
+  // Return the refreshed video list so the page re-renders locked rows.
+  const videos = await sql`
+    SELECT v.id, v.title, v.video_number,
+           v.voiceover_artist_id, va.name AS voiceover_artist_name, va.category AS voiceover_category
+      FROM project_videos v
+      LEFT JOIN voiceover_artists va ON va.id = v.voiceover_artist_id
+     WHERE v.deal_id = ${deal.id}
+     ORDER BY v.sort_order ASC, v.created_at ASC`;
+  return res.status(200).json({
+    videos: videos.map((v) => ({
+      id: v.id,
+      title: v.title,
+      videoNumber: v.video_number ?? null,
+      voiceover: v.voiceover_artist_id
+        ? { artistId: v.voiceover_artist_id, artistName: v.voiceover_artist_name || 'Selected artist', category: v.voiceover_category || null, locked: true }
+        : null,
+    })),
+  });
+}
+
+// GET voiceover-sample?artistId= — stream a sample clip (global catalogue, any
+// authenticated client; no deal scoping). Range-capable for <audio> seeking.
+async function voiceoverSampleRoute(req, res, user) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  await ensureVoiceoverCatalogue();
+  const artist = await getArtist(trimOrNull(req.query.artistId));
+  if (!artist || artist.archived_at) return res.status(404).json({ error: 'Sample not found' });
+  return streamVoiceoverSample(req, res, artist);
+}
+
+// ═════════════════════════ kick-off call ═════════════════════════
+// A project task: the client books a kick-off call. Reuses the intro-call
+// engine (team availability + Google Meet). If the PM has proposed a specific
+// time (intro_call_links.kind='kickoff' with proposed_starts_at), we offer
+// "confirm this time"; otherwise the client picks from live availability.
+
+// GET kickoff?dealId= — proposed time (if any), available slots + any booking.
+async function kickoffRoute(req, res, user) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  const deal = await requireDealInOrg(res, req.query.dealId ? String(req.query.dealId) : null, user.companyIds);
+  if (!deal) return;
+  await ensureIntroCallTables();
+
+  // Any confirmed booking already?
+  const [booking] = await sql`
+    SELECT starts_at, ends_at, meet_url FROM intro_call_bookings
+     WHERE deal_id = ${deal.id} AND kind = 'kickoff' AND status = 'confirmed'
+     ORDER BY starts_at DESC LIMIT 1`;
+
+  // The PM's proposed time, if a kick-off link carries one.
+  const [link] = await sql`
+    SELECT proposed_starts_at FROM intro_call_links
+     WHERE deal_id = ${deal.id} AND kind = 'kickoff' AND revoked_at IS NULL
+     ORDER BY created_at DESC LIMIT 1`;
+
+  const { rules, result } = await computeBookingSlots({ dealId: deal.id });
+
+  return res.status(200).json({
+    dealId: deal.id,
+    projectName: deal.title,
+    durationMinutes: rules.durationMinutes,
+    timezone: rules.timezone,
+    ready: result.blocked.length === 0,
+    proposedStartsAt: link?.proposed_starts_at || null,
+    slots: result.slots,
+    booking: booking ? { startsAt: booking.starts_at, endsAt: booking.ends_at, meetUrl: booking.meet_url } : null,
+  });
+}
+
+// POST kickoff-book { dealId, startsAt }
+async function kickoffBookRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const body = await readJsonBody(req);
+  const deal = await requireDealInOrg(res, trimOrNull(body.dealId), user.companyIds);
+  if (!deal) return;
+  await ensureIntroCallTables();
+
+  // One kick-off per deal — if it's already booked, don't double up.
+  const [existing] = await sql`
+    SELECT id FROM intro_call_bookings WHERE deal_id = ${deal.id} AND kind = 'kickoff' AND status = 'confirmed' LIMIT 1`;
+  if (existing) return res.status(409).json({ error: 'Your kick-off call is already booked.' });
+
+  // Link the booking to a kick-off link if one exists (carries the PM context).
+  const [link] = await sql`
+    SELECT token FROM intro_call_links WHERE deal_id = ${deal.id} AND kind = 'kickoff' AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1`;
+
+  const out = await bookSlot({
+    dealId: deal.id,
+    linkToken: link?.token || null,
+    projectName: deal.title,
+    name: user.name || user.email,
+    email: user.email,
+    startISO: body.startsAt,
+    timezone: trimOrNull(body.timezone),
+    kind: 'kickoff',
+  });
+  if (!out.ok) {
+    const payload = { error: out.error };
+    if (out.slots) payload.slots = out.slots;
+    return res.status(out.status).json(payload);
+  }
+  return res.status(200).json({ ok: true, booking: { startsAt: out.start, endsAt: out.end, meetUrl: out.meetUrl } });
 }
 
 // ═════════════════════════ request-video ═════════════════════════

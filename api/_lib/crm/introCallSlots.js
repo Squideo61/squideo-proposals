@@ -60,6 +60,12 @@ export function ensureIntroCallTables() {
     await sql`ALTER TABLE intro_call_links ADD COLUMN IF NOT EXISTS client_key TEXT`;
     await sql`ALTER TABLE intro_call_links ADD COLUMN IF NOT EXISTS client_name TEXT`;
     await sql`ALTER TABLE intro_call_links ADD COLUMN IF NOT EXISTS host_emails TEXT[]`;
+    // Kick-off calls reuse this table. kind distinguishes them from the sales
+    // intro call; proposed_starts_at (optional) is a specific time the PM has
+    // already agreed with the client — the portal then offers "confirm this
+    // time" instead of the full availability picker. Null = client picks a slot.
+    await sql`ALTER TABLE intro_call_links ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'intro'`;
+    await sql`ALTER TABLE intro_call_links ADD COLUMN IF NOT EXISTS proposed_starts_at TIMESTAMPTZ`;
     await sql`CREATE INDEX IF NOT EXISTS intro_call_links_deal_idx ON intro_call_links(deal_id)`;
     await sql`CREATE INDEX IF NOT EXISTS intro_call_links_client_idx ON intro_call_links(client_key)`;
     await sql`CREATE TABLE IF NOT EXISTS intro_call_bookings (
@@ -86,6 +92,7 @@ export function ensureIntroCallTables() {
     await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ`;
     await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS team_task_created_at TIMESTAMPTZ`;
     await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS team_task_id TEXT`;
+    await sql`ALTER TABLE intro_call_bookings ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'intro'`;
     await sql`CREATE INDEX IF NOT EXISTS intro_call_bookings_deal_idx ON intro_call_bookings(deal_id)`;
     await sql`CREATE INDEX IF NOT EXISTS intro_call_bookings_slot_idx ON intro_call_bookings(organizer_email, starts_at)`;
   })().catch((err) => { introCallTablesEnsured = null; throw err; });

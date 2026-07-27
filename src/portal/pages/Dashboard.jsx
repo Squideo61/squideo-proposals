@@ -37,7 +37,14 @@ function ProjectCard({ project }) {
               : project.stageLabel}
           </div>
         </div>
-        <ChevronRight size={18} color={BRAND.muted} style={{ flexShrink: 0, marginTop: 4 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {project.openTasks > 0 && (
+            <span style={{ background: '#FEF3C7', color: '#B45309', border: '1px solid #FDE68A', borderRadius: 999, padding: '2px 9px', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }}>
+              {project.openTasks} task{project.openTasks === 1 ? '' : 's'} to do
+            </span>
+          )}
+          <ChevronRight size={18} color={BRAND.muted} style={{ marginTop: 4 }} />
+        </div>
       </div>
 
       {project.inProduction && (

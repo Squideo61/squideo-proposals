@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Clapperboard, Film, Plus, Trash2, Send, Coins, ExternalLink, ChevronRight, X } from 'lucide-react';
+import { Clapperboard, Film, Plus, Trash2, Send, Coins, ExternalLink, ChevronRight, X, Mic } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_LABEL } from '../../lib/productionStages.js';
@@ -281,6 +281,12 @@ function VideoRow({ dealId, dealReference, video, onOpen }) {
           {video.title}
         </button>
         <RefBadge reference={videoReference(dealReference, video.videoNumber)} size={10} />
+
+        {video.voiceoverArtistName && (
+          <span title="Voiceover chosen by the client" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10.5, fontWeight: 700, color: '#7C3AED', background: '#F3E8FF', border: '1px solid #E9D5FF', borderRadius: 999, padding: '1px 7px', whiteSpace: 'nowrap', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <Mic size={10} /> {video.voiceoverArtistName}
+          </span>
+        )}
 
         {stageLabel && (
           <span style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap' }}>{stageLabel}</span>

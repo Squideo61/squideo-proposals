@@ -150,6 +150,15 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
             </div>
           </div>
           <div>
+            <label style={labelStyle}>Voiceover</label>
+            <div style={{ ...ctrl, display: 'flex', alignItems: 'center', background: '#F8FAFC', color: video.voiceoverArtistName ? BRAND.ink : BRAND.muted }}
+              title={video.voiceoverArtistName ? 'Chosen by the client in their portal' : 'The client hasn’t chosen a voiceover yet'}>
+              {video.voiceoverArtistName
+                ? `${video.voiceoverArtistName}${video.voiceoverCategory === 'ai' ? ' (AI)' : ''}`
+                : 'Not chosen yet'}
+            </div>
+          </div>
+          <div>
             <label style={labelStyle}>Video length</label>
             <select style={ctrl}
               value={VIDEO_LENGTH_VALUES.has(video.videoLength) ? video.videoLength : (video.videoLength || '')}

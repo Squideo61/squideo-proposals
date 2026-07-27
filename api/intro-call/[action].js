@@ -4,36 +4,15 @@
 //
 //   GET  /api/intro-call/public?token=…   — project name + duration + free slots
 //   POST /api/intro-call/book?token=…     — create the booking (Google event + Meet)
-import crypto from 'crypto';
 import sql from '../_lib/db.js';
 import { cors } from '../_lib/middleware.js';
-import { APP_URL } from '../_lib/email.js';
-import { sendNotification, resolveDealTeamEmails, ensureIntroCallNotificationDefault } from '../_lib/notifications.js';
-import { getFreshAccessToken } from '../_lib/crm/gmail.js';
-import { createEventWithMeet } from '../_lib/googleCalendar.js';
-import {
-  ensureIntroCallTables, mergeRules, computeSlots, computeSlotsForHosts, getDealAttendees,
-} from '../_lib/crm/introCallSlots.js';
-
-const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const makeBookingId = () => 'icb_' + Date.now() + '_' + crypto.randomBytes(6).toString('hex');
-
-// Validate a client-supplied IANA timezone against Intl before storing it, so a
-// junk value can never break later timezone maths. Returns the tz or null.
-function validTimezone(tz) {
-  if (!tz || typeof tz !== 'string' || tz.length > 64) return null;
-  try { new Intl.DateTimeFormat('en-GB', { timeZone: tz }); return tz; } catch { return null; }
-}
+import { ensureIntroCallTables } from '../_lib/crm/introCallSlots.js';
+import { bookSlot, computeBookingSlots } from '../_lib/introCallBooking.js';
 
 function parseBody(req) {
   let body = req.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
   return body || {};
-}
-
-async function loadRules() {
-  const rows = await sql`SELECT intro_call_rules FROM settings WHERE id = 1`;
-  return mergeRules(rows[0] && rows[0].intro_call_rules);
 }
 
 // Resolve a live token to its deal OR partner client + a client-safe display
@@ -87,10 +66,7 @@ async function publicSlots(req, res) {
   const ctx = await resolveToken(req.query.token);
   if (!ctx) return res.status(404).json({ error: 'This booking link is no longer active.' });
 
-  const rules = await loadRules();
-  const result = ctx.dealId
-    ? await computeSlots(ctx.dealId, rules)
-    : await computeSlotsForHosts(ctx.hostEmails, rules);
+  const { rules, result } = await computeBookingSlots({ dealId: ctx.dealId, hostEmails: ctx.hostEmails });
 
   // Client-safe shape only: project name, duration and free slots. We don't
   // expose the assigned host (the team can change) or any attendee emails/busy
@@ -110,151 +86,23 @@ async function book(req, res) {
   if (!ctx) return res.status(404).json({ error: 'This booking link is no longer active.' });
 
   const body = parseBody(req);
-  const name = String(body.name || '').trim();
-  const email = String(body.email || '').trim();
-  const company = String(body.company || '').trim();
-  const start = String(body.start || '').trim();
-  if (!name) return res.status(400).json({ error: 'Please enter your name.' });
-  if (!EMAIL_RX.test(email)) return res.status(400).json({ error: 'Please enter a valid email.' });
-  if (!start || isNaN(new Date(start).getTime())) return res.status(400).json({ error: 'Please choose a time.' });
-
-  // Soft rate-limit: cap bookings per token per hour to blunt abuse.
-  const recent = await sql`
-    SELECT COUNT(*)::int AS n FROM intro_call_bookings
-     WHERE link_token = ${ctx.token} AND created_at > NOW() - INTERVAL '1 hour'
-  `;
-  if (recent[0].n >= 5) {
-    return res.status(429).json({ error: 'Too many booking attempts. Please try again later.' });
-  }
-
-  // Server is authoritative: re-compute slots and confirm the chosen start is
-  // still on offer (and learn the duration/attendees/organizer).
-  const rules = await loadRules();
-  const result = ctx.dealId
-    ? await computeSlots(ctx.dealId, rules)
-    : await computeSlotsForHosts(ctx.hostEmails, rules);
-  if (result.blocked.length) {
-    return res.status(409).json({ error: 'Booking is temporarily unavailable. Please try again later.' });
-  }
-  const slot = result.slots.find((s) => s.start === new Date(start).toISOString());
-  if (!slot) {
-    return res.status(409).json({ error: 'That time was just taken. Please pick another slot.', slots: result.slots });
-  }
-  const organizer = result.organizer;
-  const attendees = result.attendees;
-  if (!organizer) return res.status(409).json({ error: 'Booking is temporarily unavailable.' });
-
-  const startUTC = new Date(slot.start);
-  const endUTC = new Date(slot.end);
-  const bookingId = makeBookingId();
-  const clientTz = validTimezone(body.timezone);
-
-  // Insert first as the double-booking lock, then verify no other confirmed
-  // booking overlaps for this organizer (closes the concurrent-request race that
-  // free/busy alone can't, since Google's view lags).
-  await sql`
-    INSERT INTO intro_call_bookings
-      (id, deal_id, client_key, link_token, client_name, client_email, starts_at, ends_at,
-       attendee_emails, organizer_email, status, client_timezone)
-    VALUES (${bookingId}, ${ctx.dealId}, ${ctx.clientKey}, ${ctx.token}, ${name}, ${email},
-       ${startUTC.toISOString()}, ${endUTC.toISOString()},
-       ${attendees}::text[], ${organizer}, 'confirmed', ${clientTz})
-  `;
-  const clash = await sql`
-    SELECT COUNT(*)::int AS n FROM intro_call_bookings
-     WHERE status = 'confirmed' AND id <> ${bookingId}
-       AND organizer_email = ${organizer}
-       AND starts_at < ${endUTC.toISOString()} AND ends_at > ${startUTC.toISOString()}
-  `;
-  if (clash[0].n > 0) {
-    await sql`DELETE FROM intro_call_bookings WHERE id = ${bookingId}`;
-    return res.status(409).json({ error: 'That time was just taken. Please pick another slot.' });
-  }
-
-  // Create the Google Calendar event with a Meet link on the organizer's calendar.
-  let meetUrl = null;
-  try {
-    const token = await getFreshAccessToken(organizer);
-    const event = await createEventWithMeet(token, {
-      summary: `Intro call — ${ctx.projectName}`,
-      description: `Intro call booked by ${name} (${email})${company ? ` from ${company}` : ''} for ${ctx.projectName}.`,
-      start: startUTC,
-      end: endUTC,
-      attendees: [email, ...attendees],
-      requestId: bookingId,
-    });
-    meetUrl = event.meetUrl;
-    await sql`
-      UPDATE intro_call_bookings
-         SET google_event_id = ${event.eventId}, meet_url = ${meetUrl}
-       WHERE id = ${bookingId}
-    `;
-  } catch (err) {
-    console.error('[intro-call] event creation failed', err.message);
-    await sql`DELETE FROM intro_call_bookings WHERE id = ${bookingId}`;
-    return res.status(502).json({ error: 'We could not confirm the booking with our calendar. Please try again.' });
-  }
-
-  // Log a deal event (deal bookings only) + notify the team in-app/email.
-  if (ctx.dealId) {
-    try {
-      await sql`
-        INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
-        VALUES (${ctx.dealId}, 'intro_call_booked',
-          ${JSON.stringify({ clientName: name, clientEmail: email, startsAt: startUTC.toISOString() })}, NULL)
-      `;
-    } catch (err) { console.warn('[intro-call] deal_event failed', err.message); }
-  }
-
-  try {
-    const when = startUTC.toLocaleString('en-GB', {
-      dateStyle: 'full', timeStyle: 'short', timeZone: rules.timezone,
-    });
-    await ensureIntroCallNotificationDefault();
-    // Deal bookings notify the deal team; partner bookings notify the chosen hosts.
-    const teamEmails = ctx.dealId
-      ? await resolveDealTeamEmails(ctx.dealId, organizer)
-      : attendees;
-    await sendNotification('intro_call.booked', {
-      assigneeEmails: teamEmails,
-      subject: `Intro call booked — ${ctx.projectName}`,
-      html: introCallBookedHtml({ projectName: ctx.projectName, name: company ? `${name} (${company})` : name, email, when, meetUrl }),
-      text: `${name}${company ? ` (${company})` : ''} (${email}) booked an intro call for ${ctx.projectName} on ${when}.`,
-      inApp: {
-        title: `Intro call booked — ${ctx.projectName}`,
-        body: `${name} · ${when}`,
-        link: `#/deal/${ctx.dealId}`,
-      },
-    });
-  } catch (err) { console.warn('[intro-call] notify failed', err.message); }
-
-  return res.status(200).json({
-    ok: true,
-    start: slot.start,
-    end: slot.end,
-    meetUrl,
+  const out = await bookSlot({
+    dealId: ctx.dealId,
+    clientKey: ctx.clientKey,
+    linkToken: ctx.token,
+    hostEmails: ctx.hostEmails,
     projectName: ctx.projectName,
+    name: body.name,
+    email: body.email,
+    company: body.company,
+    startISO: body.start,
+    timezone: body.timezone,
+    kind: 'intro',
   });
-}
-
-function escapeHtml(s = '') {
-  return String(s).replace(/[&<>"']/g, (c) => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-  ));
-}
-
-function introCallBookedHtml({ projectName, name, email, when, meetUrl }) {
-  return `<!doctype html><html><body style="margin:0;background:#FAFBFC;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0F2A3D;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;"><tr><td align="center">
-    <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E9EE;border-radius:12px;overflow:hidden;">
-      <tr><td style="padding:24px 28px;">
-        <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">New intro call booked</h2>
-        <p style="margin:0 0 8px;"><strong>${escapeHtml(name)}</strong> (${escapeHtml(email)}) booked an intro call for <strong>${escapeHtml(projectName)}</strong>.</p>
-        <p style="margin:0 0 8px;">🗓 ${escapeHtml(when)}</p>
-        ${meetUrl ? `<p style="margin:12px 0 0;"><a href="${escapeHtml(meetUrl)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Join Google Meet</a></p>` : ''}
-        <p style="margin:16px 0 0;font-size:13px;color:#6B7785;">The event is on your Google Calendar with the client invited.</p>
-      </td></tr>
-    </table>
-  </td></tr></table>
-</body></html>`;
+  if (!out.ok) {
+    const payload = { error: out.error };
+    if (out.slots) payload.slots = out.slots;
+    return res.status(out.status).json(payload);
+  }
+  return res.status(200).json({ ok: true, start: out.start, end: out.end, meetUrl: out.meetUrl, projectName: out.projectName });
 }
