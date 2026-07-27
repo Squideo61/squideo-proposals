@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Lock, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
+import { AlertTriangle, BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Lock, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { useIsMobile, formatGBP, computeBaseDiscount } from '../utils.js';
@@ -1259,6 +1259,25 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         collapsedHint={sectionMeta.find(s => s.id === 'inclusions')?.hint}
         {...sectionProps('inclusions')}
       >
+        {/* Voiceover gating warning: the portal only asks the client to choose a
+            voiceover when the standard AI voiceover is included here (or they buy
+            the human voiceover extra). Removing it silently skips that task. */}
+        {(() => {
+          const hasAiVo = (data.baseInclusions || []).some(inc => /latest-generation ai voiceover/i.test(inc?.title || ''));
+          const hasVoExtra = (data.optionalExtras || []).some(e => e?.id === 'voiceover');
+          if (hasAiVo) return null;
+          return (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
+              <AlertTriangle size={16} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
+              <div style={{ fontSize: 12.5, color: '#92400E', lineHeight: 1.5 }}>
+                <strong>No standard AI voiceover inclusion.</strong>{' '}
+                {hasVoExtra
+                  ? 'The client won’t be asked to choose a voiceover in their portal unless they add the human voiceover extra. Add the “Latest-generation AI voiceover artist” inclusion if this project should include a voice.'
+                  : 'The client won’t be prompted to choose a voiceover in their portal. If this project should include a voice, add the “Latest-generation AI voiceover artist” inclusion.'}
+              </div>
+            </div>
+          );
+        })()}
         {data.baseInclusions.map((inc, i) => (
           <div
             key={i}
