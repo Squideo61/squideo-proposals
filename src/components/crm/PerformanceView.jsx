@@ -1283,7 +1283,7 @@ function TaxPaymentsSection({ isMobile }) {
   const gaps = sameDayGaps(payments);
 
   return (
-    <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${DIRECTOR_ACCENT}`, borderRadius: 12, padding: isMobile ? 14 : '14px 18px', marginTop: 16 }}>
+    <div id="finance-tax-pay-dates" style={{ scrollMarginTop: 80, background: 'white', border: '1px solid ' + BRAND.border, borderLeft: `3px solid ${DIRECTOR_ACCENT}`, borderRadius: 12, padding: isMobile ? 14 : '14px 18px', marginTop: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 700, color: BRAND.ink }}>
           <Coins size={16} color={DIRECTOR_ACCENT} /> Tax pay dates

@@ -81,6 +81,30 @@ async function backfillEmailOpenLinks(email) {
   return fixed;
 }
 
+// Finance tax reminders were persisted with a bare '#/finance' link before they
+// learned to deep-link, so the ones already in a user's bell open the Income tab
+// instead of the tab that shows the figures. The destination is fixed per
+// notification key, so this is a pure string upgrade — idempotent, and only ever
+// touches rows still on the old bare link. Mirrors backfillEmailOpenLinks.
+const FINANCE_LINK_UPGRADES = {
+  'finance.tax_payment_due': '#/finance/directors',
+  'finance.quarter_summary': '#/finance/vat',
+};
+async function backfillFinanceTaxLinks(email) {
+  const fixed = new Map();
+  for (const [key, link] of Object.entries(FINANCE_LINK_UPGRADES)) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const rows = await sql`UPDATE in_app_notifications SET link = ${link}
+                 WHERE user_email = ${email} AND notification_key = ${key}
+                   AND (link IS NULL OR link = '#/finance')
+                 RETURNING id`;
+      for (const r of rows) fixed.set(String(r.id), link);
+    } catch { /* ignore */ }
+  }
+  return fixed;
+}
+
 const mapRow = (r) => ({
   id: String(r.id),
   key: r.notification_key,
@@ -155,6 +179,15 @@ export default async function handler(req, res) {
         }
       }
       const finance = { items: financeRows.map(mapRow), unread: financeUnread[0]?.n || 0 };
+      // Upgrade any stale bare-'#/finance' tax-reminder links still in the feed
+      // (no-op once healed), then patch the response so they deep-link on this
+      // click without waiting for the next poll.
+      if (finance.items.some((it) => FINANCE_LINK_UPGRADES[it.key] && (!it.link || it.link === '#/finance'))) {
+        const fixed = await backfillFinanceTaxLinks(email);
+        if (fixed.size) {
+          finance.items = finance.items.map((it) => (fixed.has(it.id) ? { ...it, link: fixed.get(it.id) } : it));
+        }
+      }
       const general = { items: generalRows.map(mapRow), unread: generalUnread[0]?.n || 0 };
       // `items`/`unread` kept for any legacy reader = the general bell's feed.
       return res.status(200).json({

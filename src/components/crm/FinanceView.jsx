@@ -218,6 +218,9 @@ function buildFinanceView(fin, { mode, qIdx, monthKey, isCurrentYear, monthIdx, 
 // top (which is where Directors / Cash Flow live).
 const DEEPLINK_TO_SECTION = { income: 'income', predicted: 'predicted', pending: 'pending', vat: 'vat' };
 const DEEPLINK_TO_PERF = { sales: 'sales', salesvspp: 'salesvspp', cashflow: 'cashflow', directors: 'directors' };
+// For deep-links that land on a large tab, the element id to scroll into view so
+// the notification's subject is the first thing seen.
+const DEEPLINK_SCROLL_TARGET = { directors: 'finance-tax-pay-dates', vat: 'finance-vat-section' };
 
 export function FinanceView({ initialTab = null, onBack, onOpenDeal, onOpenCompany, onOpenPartner }) {
   const { state, actions, showMsg } = useStore();
@@ -256,6 +259,25 @@ export function FinanceView({ initialTab = null, onBack, onOpenDeal, onOpenCompa
     if (!initialTab) return;
     if (DEEPLINK_TO_SECTION[initialTab]) setSection(DEEPLINK_TO_SECTION[initialTab]);
     if (DEEPLINK_TO_PERF[initialTab]) setPerfSection(DEEPLINK_TO_PERF[initialTab]);
+  }, [initialTab]);
+
+  // Land precisely on the thing the notification is about, not just the tab: a
+  // tax reminder should reveal the "Tax pay dates" card (below the director
+  // expenses), and the VAT summary its "set aside" cards. The target only
+  // appears after the tab switches and its data loads, so poll briefly for the
+  // element, then scroll once and stop.
+  useEffect(() => {
+    const id = DEEPLINK_SCROLL_TARGET[initialTab];
+    if (!id) return;
+    let tries = 0;
+    let timer = null;
+    const tick = () => {
+      const el = document.getElementById(id);
+      if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+      if (tries++ < 40) timer = setTimeout(tick, 120); // give async data ~5s to land
+    };
+    tick();
+    return () => { if (timer) clearTimeout(timer); };
   }, [initialTab]);
 
   // Restore scroll on mount (re-asserting a few times as async content settles),
@@ -585,7 +607,7 @@ export function FinanceView({ initialTab = null, onBack, onOpenDeal, onOpenCompa
       )}
 
       {effectiveSection === 'vat' && (
-        <>
+        <div id="finance-vat-section" style={{ scrollMarginTop: 80 }}>
           {/* VAT and Corporation Tax to set aside, both for the selected period. */}
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
             <StatCard icon={PiggyBank} accent={VAT_COLOR} label={`VAT to set aside — ${view.periodLabel}`} value={formatGBP(view.totals.vat)} sub={`From cash banked in ${view.periodLabel}`} />
@@ -650,7 +672,7 @@ export function FinanceView({ initialTab = null, onBack, onOpenDeal, onOpenCompa
               </table>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {effectiveSection === 'pending' && (
