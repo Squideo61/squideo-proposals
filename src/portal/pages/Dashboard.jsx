@@ -70,7 +70,10 @@ function ProjectCard({ project }) {
             <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink }}>
               <Video size={13} color={BRAND.muted} />
               <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.title}</span>
-              <StatusPill label={v.statusLabel} color={v.statusColor} />
+              {/* Live board stage, not the vestigial per-video `status` (stuck "Not started"). */}
+              {v.production?.stageLabel
+                ? <StatusPill label={v.production.stageLabel} color={v.production.phaseColor || BRAND.blue} />
+                : <StatusPill label={v.statusLabel} color={v.statusColor} />}
             </span>
           ))}
           {project.videos.length > 4 && (
