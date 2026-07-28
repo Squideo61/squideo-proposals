@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic, BellRing } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic, BellRing, FlaskConical } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { permissionsInclude } from '../../lib/permissions.js';
@@ -12,6 +12,7 @@ import { StaffCommissionTab } from './StaffCommissionTab.jsx';
 import { HolidayTab } from './HolidayTab.jsx';
 import { DefaultProposalTab } from './DefaultProposalTab.jsx';
 import { VoiceoverCatalogueTab } from './VoiceoverCatalogueTab.jsx';
+import { DemoTab } from './DemoTab.jsx';
 import { TaskRemindersTab } from './TaskRemindersTab.jsx';
 
 const TABS = [
@@ -25,6 +26,7 @@ const TABS = [
   { id: 'proposals', label: 'Proposals', icon: FileText, perm: 'settings.manage' },
   { id: 'voiceovers', label: 'Voiceovers', icon: Mic, perm: ['voiceovers.manage', 'settings.manage'] },
   { id: 'task-reminders', label: 'Task reminders', icon: BellRing, perm: 'settings.manage' },
+  { id: 'demo', label: 'Testing', icon: FlaskConical, perm: 'settings.manage' },
 ];
 
 // A tab is visible if the caller holds its permission — `perm` may be a single
@@ -138,6 +140,7 @@ export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, o
         {active?.id === 'proposals' && <DefaultProposalTab onEditDefault={onEditDefault} onCreateTemplate={onCreateTemplate} onEditTemplate={onEditTemplate} />}
         {active?.id === 'voiceovers' && <VoiceoverCatalogueTab />}
         {active?.id === 'task-reminders' && <TaskRemindersTab />}
+        {active?.id === 'demo' && <DemoTab />}
       </div>
     </div>
   );
