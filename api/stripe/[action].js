@@ -7,6 +7,7 @@ import { getOrCreateContact, createInvoice, emailInvoice, createPayment } from '
 import { advanceStage, dealIdForProposal, xeroContactIdForProposal } from '../_lib/dealStage.js';
 import { computeProposalCheckout } from '../_lib/proposalPricing.js';
 import { completeVoiceoverUpgrade } from '../_lib/voiceover.js';
+import { completeVideoCreditTopup } from '../_lib/videoCredit.js';
 import { escapeHtml } from '../_lib/crm/shared.js';
 import {
   lineItemsForProject,
@@ -425,6 +426,18 @@ export default async function handler(req, res) {
           await completeVoiceoverUpgrade(session.metadata);
         } catch (err) {
           console.error('[stripe webhook] voiceover upgrade apply failed', err.message);
+        }
+        return res.status(200).json({ received: true });
+      }
+
+      // Portal video-credit top-up (a client bought a block of production
+      // minutes by card). Credit the minutes to the partner-credit ledger; like
+      // the voiceover branch it must NOT touch the proposal-scoped payments row.
+      if (session.payment_status === 'paid' && session.metadata?.kind === 'video_credit_topup') {
+        try {
+          await completeVideoCreditTopup(session);
+        } catch (err) {
+          console.error('[stripe webhook] video credit top-up apply failed', err.message);
         }
         return res.status(200).json({ received: true });
       }

@@ -42,6 +42,12 @@ import { ensurePortalTables } from './_lib/portal/db.js';
 import { logPortalActivity } from './_lib/portal/activity.js';
 import { isFinalReleaseUnlocked, advanceDeliveredIfUnlocked } from './_lib/crm/delivery.js';
 import {
+  companyCreditBalance,
+  videoCreditPricingParams,
+  videoCreditQuote,
+  videoCreditRatePerMin,
+} from './_lib/videoCredit.js';
+import {
   signPortalToken,
   portalCookieHeader,
   clearPortalCookieHeader,
@@ -443,6 +449,9 @@ export default async function handler(req, res) {
       case 'kickoff': return kickoffRoute(req, res, user);
       case 'kickoff-book': return kickoffBookRoute(req, res, user);
       case 'request-video': return requestVideoRoute(req, res, user);
+      case 'video-credit': return videoCreditRoute(req, res, user);
+      case 'video-credit-checkout': return videoCreditCheckoutRoute(req, res, user);
+      case 'video-credit-invoice': return videoCreditInvoiceRoute(req, res, user);
       case 'po-number': return poNumberRoute(req, res, user);
       case 'team': return teamRoutes(req, res, user);
       case 'team-revoke-invite': return teamRevokeInviteRoute(req, res, user);
@@ -1609,6 +1618,7 @@ async function requestVideoRoute(req, res, user) {
   if (!projectDetails) return res.status(400).json({ error: 'Tell us a little about the video you need' });
 
   const company = user.companies.find((c) => c.id === companyId) || null;
+  const useCredit = body.useCredit === true;
   const id = crypto.randomUUID();
   const createdAt = new Date();
 
@@ -1632,11 +1642,11 @@ async function requestVideoRoute(req, res, user) {
   await sql`
     INSERT INTO quote_requests (
       id, name, email, phone, company, project_details, timeline, budget,
-      opt_in, source_url, created_at, source, portal_user_id, portal_discount, company_id
+      opt_in, source_url, created_at, source, portal_user_id, portal_discount, company_id, use_credit
     ) VALUES (
       ${qr.id}, ${qr.name}, ${qr.email}, ${qr.phone}, ${qr.company},
       ${qr.project_details}, ${qr.timeline}, ${qr.budget}, ${qr.opt_in},
-      ${qr.source_url}, ${qr.created_at}, 'portal', ${user.puid}, TRUE, ${companyId}
+      ${qr.source_url}, ${qr.created_at}, 'portal', ${user.puid}, TRUE, ${companyId}, ${useCredit}
     )
   `;
 
@@ -1659,7 +1669,7 @@ async function requestVideoRoute(req, res, user) {
   // per-recipient one-click Qualify/Disqualify links.
   const apiBase = APP_URL.replace(/\/$/, '');
   const crmUrl = `${apiBase}/api/quote-requests?action=open&id=${encodeURIComponent(qr.id)}`;
-  const subject = `New portal quote request (10% discount) from ${qr.name}${qr.company ? ` — ${qr.company}` : ''}`;
+  const subject = `New portal quote request (10% discount) from ${qr.name}${qr.company ? ` — ${qr.company}` : ''}${useCredit ? ' · wants to use video credit' : ''}`;
   const subscribed = await resolveRecipients('quote_request.new', {});
   await Promise.allSettled(subscribed.map(async (to) => {
     const role = await getRoleForUser(to);
@@ -1682,13 +1692,119 @@ async function requestVideoRoute(req, res, user) {
       subject,
       inApp: {
         title: subject,
-        body: [qr.company, qr.budget, qr.timeline, 'Portal · 10% discount'].filter(Boolean).join(' · '),
+        body: [qr.company, qr.budget, qr.timeline, 'Portal · 10% discount', useCredit ? 'wants to use video credit' : null].filter(Boolean).join(' · '),
         link: '#/quote-requests',
       },
     });
   }
 
   return res.status(201).json({ ok: true, id });
+}
+
+// ═════════════════════════ video credit ═════════════════════════
+// The client's current credit balance (minutes) + the pricing params the buy
+// stepper renders. Balance reuses the partner-credit ledger, resolved from the
+// company the same way the CRM company mirror does.
+async function videoCreditRoute(req, res, user) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+  const company = user.companies.find((c) => c.id === companyId) || { id: companyId };
+  const [balance, pricing] = await Promise.all([
+    companyCreditBalance(company).catch(() => ({ issued: 0, used: 0, remaining: 0 })),
+    videoCreditPricingParams(),
+  ]);
+  return res.status(200).json({
+    balance: {
+      issued: Math.round(balance.issued * 100) / 100,
+      used: Math.round(balance.used * 100) / 100,
+      remaining: Math.round(balance.remaining * 100) / 100,
+    },
+    pricing,
+  });
+}
+
+// Buy credit by card. Server recomputes the authoritative amount (never trusts a
+// client-sent price) and opens a Stripe Checkout session; the webhook credits
+// the minutes on payment (kind='video_credit_topup').
+async function videoCreditCheckoutRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const body = await readJsonBody(req);
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+  const company = user.companies.find((c) => c.id === companyId) || null;
+  const minutes = Math.floor(Number(body.minutes) || 0);
+  if (!Number.isFinite(minutes) || minutes < 1 || minutes > 120) {
+    return res.status(400).json({ error: 'Choose between 1 and 120 minutes of credit.' });
+  }
+  const ratePerMin = await videoCreditRatePerMin();
+  const quote = videoCreditQuote(minutes, ratePerMin);
+  try {
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+    const returnTo = (flag) => `${PORTAL_URL}/?${flag}=1#/video-credit`;
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: user.email || undefined,
+      line_items: [{
+        price_data: {
+          currency: 'gbp',
+          product_data: { name: `${minutes} minute${minutes === 1 ? '' : 's'} of video credit` },
+          unit_amount: Math.round(quote.totalIncVat * 100),
+        },
+        quantity: 1,
+      }],
+      metadata: {
+        kind: 'video_credit_topup',
+        companyId,
+        minutes: String(minutes),
+        amountIncVat: quote.totalIncVat.toFixed(2),
+        portalUserId: user.puid || '',
+        portalUserEmail: user.email || '',
+      },
+      success_url: returnTo('credit_paid'),
+      cancel_url: returnTo('credit_cancelled'),
+    });
+    return res.status(200).json({ checkoutUrl: session.url });
+  } catch (err) {
+    console.error('[portal] video-credit checkout failed', err.message);
+    return res.status(502).json({ error: 'Could not start payment — please try again.' });
+  }
+}
+
+// Request an invoice for credit instead of paying by card: notify the team (who
+// raise the Xero invoice and add the credit on payment). Nothing is credited
+// here — credit only lands once the invoice is settled.
+async function videoCreditInvoiceRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const body = await readJsonBody(req);
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+  const company = user.companies.find((c) => c.id === companyId) || null;
+  const minutes = Math.floor(Number(body.minutes) || 0);
+  if (!Number.isFinite(minutes) || minutes < 1 || minutes > 120) {
+    return res.status(400).json({ error: 'Choose between 1 and 120 minutes of credit.' });
+  }
+  const ratePerMin = await videoCreditRatePerMin();
+  const quote = videoCreditQuote(minutes, ratePerMin);
+  const money = (n) => '£' + n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  try {
+    await ensurePortalNotificationDefaults();
+    await sendNotification('portal.video_credit_request', {
+      subject: `🎬 Video credit invoice request — ${company?.name || user.email}`,
+      text: `${user.name || user.email} (${company?.name || 'client portal'}) asked to buy ${minutes} minute${minutes === 1 ? '' : 's'} of video credit by INVOICE.\n\n`
+        + `${money(quote.subtotalExVat)} ex VAT + ${money(quote.vat)} VAT = ${money(quote.totalIncVat)} inc VAT `
+        + `(${Math.round(quote.discount * 100)}% credit discount).\n\nRaise the invoice, then add the ${minutes} min to their credit balance once it's paid.`,
+      inApp: {
+        title: 'Video credit — invoice requested',
+        body: `${company?.name || ''} · ${minutes} min · ${money(quote.totalIncVat)} inc VAT`,
+        link: `#/company/${companyId}`,
+      },
+    });
+  } catch (err) {
+    console.warn('[portal] video-credit invoice request notify failed', err.message);
+    return res.status(502).json({ error: 'Could not send your request — try again shortly.' });
+  }
+  return res.status(200).json({ ok: true });
 }
 
 // ═════════════════════════ po-number ═════════════════════════

@@ -7,7 +7,7 @@ import { SQUIDEO_LOGO } from '../defaults.js';
 import { useIsMobile } from '../utils.js';
 import { Toast } from '../components/ui.jsx';
 import {
-  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut,
+  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet,
 } from 'lucide-react';
 import { Eye } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
@@ -29,6 +29,7 @@ import Team from './pages/Team.jsx';
 import Settings from './pages/Settings.jsx';
 import Review from './pages/Review.jsx';
 import Storyboard from './pages/Storyboard.jsx';
+import VideoCredit from './pages/VideoCredit.jsx';
 
 const MAX_WIDTH = 1080;
 
@@ -46,6 +47,7 @@ const NAV = [
   { view: 'home', label: 'Home', hash: '#/', Icon: Home },
   { view: 'library', label: 'Library', hash: '#/library', Icon: Film },
   { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
+  { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet },
   { view: 'request', label: 'New video', hash: '#/request', Icon: PlusCircle, highlight: true },
   { view: 'team', label: 'Team', hash: '#/team', Icon: Users },
   { view: 'settings', label: 'Settings', hash: '#/settings', Icon: SettingsIcon },
@@ -193,6 +195,7 @@ function AuthedApp() {
     case 'voiceover': page = <Voiceover dealId={route.param} />; break;
     case 'kickoff': page = <Kickoff dealId={route.param} />; break;
     case 'request': page = <RequestVideo />; break;
+    case 'video-credit': page = <VideoCredit />; break;
     case 'team': page = <Team />; break;
     case 'settings': page = <Settings />; break;
     default: page = <Dashboard />;

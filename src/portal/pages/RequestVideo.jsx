@@ -2,12 +2,12 @@
 // with the contact step skipped (identity comes from the session) and the 10%
 // portal discount front and centre. Lands in the CRM quote-requests list with
 // a "Portal · 10%" pill.
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, fmtBytes } from '../components.jsx';
-import { Sparkles, Upload, CheckCircle2, X } from 'lucide-react';
+import { Sparkles, Upload, CheckCircle2, X, Wallet } from 'lucide-react';
 
 // Mirrors the public form's options (src/components/QuoteRequestForm.jsx).
 const TIMELINE_OPTIONS = [
@@ -28,6 +28,16 @@ export default function RequestVideo() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState(null);
+  const [creditRemaining, setCreditRemaining] = useState(0);
+  const [useCredit, setUseCredit] = useState(false);
+
+  // Fetch the company's video-credit balance so we can offer to spend it.
+  useEffect(() => {
+    if (!companyId) return;
+    portalApi.get(`video-credit?companyId=${encodeURIComponent(companyId)}`)
+      .then((d) => setCreditRemaining(d?.balance?.remaining || 0))
+      .catch(() => setCreditRemaining(0));
+  }, [companyId]);
 
   const addFiles = async (list) => {
     const remaining = MAX_FILES - files.length;
@@ -69,6 +79,7 @@ export default function RequestVideo() {
         timeline: timeline || null,
         budget: budget.trim() || null,
         files,
+        useCredit: useCredit && creditRemaining > 0,
       });
       setDone(true);
     } catch (err) {
@@ -169,6 +180,25 @@ export default function RequestVideo() {
               </div>
             )}
           </div>
+
+          {/* Spend existing video credit (if any) against this request. */}
+          {creditRemaining > 0 ? (
+            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: '#F0FAF4', border: `1px solid ${useCredit ? '#16A34A' : '#CDEBD8'}`, borderRadius: 10, padding: '12px 14px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={useCredit} onChange={(e) => setUseCredit(e.target.checked)} style={{ marginTop: 3, width: 16, height: 16, accentColor: '#16A34A' }} />
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Wallet size={14} color="#16A34A" /> Use my video credit
+                </div>
+                <div style={{ fontSize: 12.5, color: BRAND.muted, marginTop: 2 }}>
+                  You have <strong style={{ color: '#16A34A' }}>{Math.round(creditRemaining * 10) / 10} min</strong> of credit. We'll draw it down against this video and only quote for anything beyond it.
+                </div>
+              </div>
+            </label>
+          ) : (
+            <div style={{ fontSize: 12.5, color: BRAND.muted }}>
+              Tip: buy <a href="#/video-credit" style={{ color: BRAND.blue, fontWeight: 600 }}>video credit</a> upfront at a bulk discount and spend it on requests like this.
+            </div>
+          )}
 
           {error && (
             <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, padding: '10px 12px', fontSize: 13 }}>

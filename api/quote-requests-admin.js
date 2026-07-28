@@ -53,6 +53,7 @@ function serialiseQuoteRequest(r, files = []) {
     status: r.status || 'new',
     source: r.source || 'web',
     portalDiscount: r.portal_discount === true,
+    useCredit: r.use_credit === true,
     contactId: r.contact_id || null,
     dealId: r.deal_id || null,
     reviewedAt: r.reviewed_at || null,
@@ -71,7 +72,7 @@ async function loadRequest(id) {
   const rows = await sql`
     SELECT id, form_session_id, name, email, phone, country_code, country_name,
            company, project_details, timeline, budget, opt_in, source_url,
-           status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount
+           status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount, use_credit
     FROM quote_requests WHERE id = ${id}
   `;
   if (!rows[0]) return null;
@@ -265,7 +266,7 @@ export default async function handler(req, res) {
         ? await sql`
             SELECT id, form_session_id, name, email, phone, country_code, country_name,
                    company, project_details, timeline, budget, opt_in, source_url,
-                   status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount
+                   status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount, use_credit
             FROM quote_requests
             ORDER BY created_at DESC
             LIMIT 500
@@ -273,7 +274,7 @@ export default async function handler(req, res) {
         : await sql`
             SELECT id, form_session_id, name, email, phone, country_code, country_name,
                    company, project_details, timeline, budget, opt_in, source_url,
-                   status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount
+                   status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount, use_credit
             FROM quote_requests
             WHERE status = ${status}
             ORDER BY created_at DESC

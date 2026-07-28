@@ -145,6 +145,9 @@ export function ensurePortalTables() {
     await sql`ALTER TABLE quote_requests ADD COLUMN IF NOT EXISTS portal_user_id TEXT`;
     await sql`ALTER TABLE quote_requests ADD COLUMN IF NOT EXISTS portal_discount BOOLEAN NOT NULL DEFAULT FALSE`;
     await sql`ALTER TABLE quote_requests ADD COLUMN IF NOT EXISTS company_id TEXT`;
+    // Video Credit: a "New video" request can flag that the client wants to
+    // spend their credit balance (db/migrations/20260728_video_credit.sql).
+    await sql`ALTER TABLE quote_requests ADD COLUMN IF NOT EXISTS use_credit BOOLEAN NOT NULL DEFAULT FALSE`;
   })().catch((err) => { portalTablesEnsured = null; throw err; });
   return portalTablesEnsured;
 }

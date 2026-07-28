@@ -257,6 +257,11 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onS
               Portal{request.portalDiscount ? ' · 10%' : ''}
             </span>
           )}
+          {request.useCredit && (
+            <span style={{ background: '#16A34A22', color: '#15803D', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              Uses credit
+            </span>
+          )}
           {isQualified && (
             <span style={{ background: '#16A34A22', color: '#16A34A', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
               Qualified
@@ -342,6 +347,11 @@ function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClo
           {request.source === 'portal' && (
             <span style={{ background: '#2BB8E622', color: '#0B6E93', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
               Portal{request.portalDiscount ? ' · 10% discount' : ''}
+            </span>
+          )}
+          {request.useCredit && (
+            <span title="This client asked to spend their video credit — check their balance on the company page and draw it down when you build it." style={{ background: '#16A34A22', color: '#15803D', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              Wants to use credit
             </span>
           )}
         </h2>
