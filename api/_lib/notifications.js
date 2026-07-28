@@ -361,6 +361,16 @@ export async function ensurePortalNotificationDefaults() {
       notification_defaults, '{portal.partner_interest}',
       COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
       WHERE NOT (notification_defaults ? 'portal.partner_interest')`;
+    // Video-credit commerce (invoice request + card purchase). Sales events —
+    // inherit whoever already receives new quote requests.
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{portal.video_credit_request}',
+      COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'portal.video_credit_request')`;
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{portal.video_credit_purchase}',
+      COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'portal.video_credit_purchase')`;
     // Voiceover pick is a production milestone — inherit project.good_to_go like
     // doc_uploaded, and default to the in-app bell only (it can be frequent).
     await sql`UPDATE roles SET notification_defaults = jsonb_set(
