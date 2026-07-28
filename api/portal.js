@@ -366,8 +366,17 @@ async function gatherDealStates(dealIds) {
 
 function nextStepFor(deal, states) {
   const prop = states.proposals.get(deal.id) || null;
+  // The banner must track the SAME live position as the phase bar, which uses
+  // the aggregated video stage (least-advanced video) — not the deal's own
+  // production_phase/stage columns, which are stamped once at production start
+  // and never move. Without this, a project whose videos have all advanced to
+  // "Completed" still shows the stale "We're on it — at <old stage>" banner.
+  const agg = aggregateVideoStage(states.videos.get(deal.id) || []);
+  const effectiveDeal = agg
+    ? { ...deal, production_phase: agg.phase, production_stage: agg.stage }
+    : deal;
   return deriveNextStep({
-    deal,
+    deal: effectiveDeal,
     proposalId: prop?.id || null,
     signature: prop?.signature || null,
     revisionPending: states.revPending.get(deal.id) || null,
@@ -855,7 +864,6 @@ async function projectRoute(req, res, user) {
   if (!deal) return;
 
   const states = await gatherDealStates([deal.id]);
-  const nextStep = nextStepFor(deal, states);
   const prop = states.proposals.get(deal.id) || null;
 
   const files = await sql`
@@ -894,6 +902,10 @@ async function projectRoute(req, res, user) {
       }
     } catch { /* best-effort */ }
   }
+  // Compute the banner AFTER the delivery advance above so a just-delivered
+  // video's project reads "Your video is ready 🎉", not the stale in-production
+  // state (nextStepFor derives from the aggregated video stage).
+  const nextStep = nextStepFor(deal, states);
   return res.status(200).json({
     project: serialisePortalDeal(deal, {
       nextStep,
