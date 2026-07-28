@@ -57,6 +57,7 @@ import {
 } from './_lib/portal/middleware.js';
 import { deriveNextStep } from './_lib/portal/nextStep.js';
 import { serialisePortalNotification } from './_lib/portal/notificationShape.js';
+import { notifyPortalUser } from './_lib/portal/notifications.js';
 import { deriveProjectTasks, countOpenTasks } from './_lib/portal/tasks.js';
 import { voiceoverProposalContext } from './_lib/proposalPricing.js';
 import {
@@ -569,6 +570,44 @@ async function authRoutes(req, res) {
       ON CONFLICT (portal_user_id, company_id) DO UPDATE SET disabled_at = NULL
     `;
     await issuePortalSession(res, user, req);
+
+    // Seed the new member's own notification feed with whatever is already
+    // waiting on them, so the bell is useful on first login — tasks and reviews
+    // that "came in" before they accepted (a pending invitee gets no feed rows).
+    // Targeted at this user only, best-effort.
+    try {
+      const openDeals = await sql`SELECT * FROM deals WHERE company_id = ${inv.company_id} AND stage IN ('signed', 'paid')`;
+      if (openDeals.length) {
+        const states = await gatherDealStates(openDeals.map((d) => d.id));
+        for (const deal of openDeals) {
+          const openCount = countOpenTasks(tasksFor(deal, states));
+          if (openCount > 0) {
+            await notifyPortalUser({
+              portalUserId: user.id, companyId: inv.company_id, dealId: deal.id,
+              key: 'portal.tasks_launched', title: 'Your project is ready',
+              body: `You have ${openCount} task${openCount === 1 ? '' : 's'} to complete to get started on ${deal.title}.`,
+              link: `#/project/${deal.id}`,
+            });
+          }
+          const sb = states.sbPending.get(deal.id);
+          if (sb) await notifyPortalUser({
+            portalUserId: user.id, companyId: inv.company_id, dealId: deal.id,
+            key: 'portal.storyboard_ready', title: 'Your storyboard is ready to review',
+            body: `A storyboard on ${deal.title} is ready for your feedback.`,
+            link: `#/storyboard/${sb.shareToken}`,
+          });
+          const rv = states.revPending.get(deal.id);
+          if (rv) await notifyPortalUser({
+            portalUserId: user.id, companyId: inv.company_id, dealId: deal.id,
+            key: 'portal.revision_ready', title: 'Your video is ready to review',
+            body: `A video on ${deal.title} is ready for your feedback.`,
+            link: `#/review/${rv.shareToken}`,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[portal] seed join notifications failed', err.message);
+    }
 
     // Alert the team (best-effort).
     try {
