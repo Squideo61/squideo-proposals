@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -9,6 +9,7 @@ import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { Badge, CallLink, Modal, RefBadge } from '../ui.jsx';
 import { referenceMonth } from '../../lib/reference.js';
 import { describeSaleStatus } from '../../lib/saleStatus.js';
+import { permissionsInclude } from '../../lib/permissions.js';
 
 // The shared sale-status tones rendered in the deal page's Badge language (the
 // pipeline uses its own denser pill for the same statuses).
@@ -96,6 +97,62 @@ function toEmbedSrc(raw) {
   return null;
 }
 
+// Admin-only inline control on a signed proposal to switch its payment plan
+// (50/50 ↔ full ↔ PO) WITHOUT a re-sign. Writes signatures.data.paymentOption —
+// the single source of truth for the Stripe checkout amount, saleStatus pills,
+// paid-badge label and Pending-Payments split — via PATCH /api/signatures/:id.
+// The server blocks the switch if a payment has already been captured (that
+// balance is collected through Finance → Pending Payments instead).
+const PAYMENT_PLAN_LABELS = {
+  '5050': '50% deposit / 50% balance',
+  full: 'Full payment upfront',
+  po: 'Purchase order',
+};
+function PaymentPlanControl({ proposalId, dealId, value }) {
+  const { actions, showMsg } = useStore();
+  const [busy, setBusy] = useState(false);
+  const onChange = async (e) => {
+    const next = e.target.value;
+    if (next === value || busy) return;
+    const ok = window.confirm(
+      `Change this signed proposal's payment plan to “${PAYMENT_PLAN_LABELS[next]}”?\n\n` +
+      `The client will NOT need to re-sign. This updates what the CRM expects and what the client's “Pay now” button charges.`
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await actions.changePaymentPlan(proposalId, dealId, next);
+      showMsg(`Payment plan changed to ${PAYMENT_PLAN_LABELS[next]}`);
+    } catch (err) {
+      showMsg(err?.message || 'Could not change the payment plan');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <label
+      title="Change the payment plan on this signed proposal — no re-sign needed"
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 600, color: BRAND.muted }}
+    >
+      <CreditCard size={12} />
+      <select
+        value={value}
+        disabled={busy}
+        onChange={onChange}
+        style={{
+          fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, color: BRAND.ink,
+          padding: '3px 6px', border: '1px solid ' + BRAND.border, borderRadius: 6,
+          background: 'white', cursor: busy ? 'wait' : 'pointer',
+        }}
+      >
+        <option value="5050">50 / 50 split</option>
+        <option value="full">Full payment</option>
+        <option value="po">Purchase order</option>
+      </select>
+    </label>
+  );
+}
+
 // `productionOnly` strips the sales/financial chrome (pipeline, order summary,
 // proposals, invoices, edit/delete…) so producers/copywriters get a focused
 // project view — the deal page doubles as the project page once signed.
@@ -171,6 +228,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   const saleStatusPills = describeSaleStatus(
     deal.saleStatus ? deal : { ...deal, saleStatus: state.deals[dealId]?.saleStatus },
   );
+  // Signature managers (admins) can switch a signed proposal's payment plan
+  // (50/50 ↔ full ↔ PO) without a re-sign — e.g. a client who signed 50/50 now
+  // wants to pay in full. Gated on the same permission as clearing a signature.
+  const canManagePaymentPlan = permissionsInclude(state.session?.permissions, 'signatures.manage_all');
   // Value shown on the deal card. A signed proposal's total is the *actual* sale
   // value (incl. selected extras), so it wins. Otherwise the latest *proposed*
   // value takes over — sending a proposal supersedes any manual figure, so the
@@ -634,7 +695,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               {/* Footer: analytics pill on the left, in line with Edit/Preview
                   on the right. */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                <div style={{ minWidth: 0 }}>
+                <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  {p.signed && canManagePaymentPlan && (
+                    <PaymentPlanControl
+                      proposalId={p.id}
+                      dealId={dealId}
+                      value={p.paymentOption || deal.paymentOption || 'full'}
+                    />
+                  )}
                   {(p._views?.opens || 0) > 0 && (
                     <button
                       type="button"

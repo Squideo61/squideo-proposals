@@ -970,6 +970,17 @@ export function StoreProvider({ children }) {
           return resp;
         });
     },
+    // Change the payment plan ('5050' | 'full' | 'po') on an already-signed
+    // proposal without a re-sign. The server rewrites signatures.data.paymentOption
+    // (the pricing/finance source of truth); we reload the deal so its Proposal
+    // card pills, paid-badge label and Pending-Payments split all refresh.
+    changePaymentPlan(proposalId, dealId, paymentOption) {
+      return api.patch('/api/signatures/' + encodeURIComponent(proposalId), { paymentOption })
+        .then((resp) => {
+          if (dealId) return actions.loadDealDetail(dealId).then(() => resp);
+          return resp;
+        });
+    },
     deleteProposal(id) {
       // Cancel any pending debounced save — otherwise an in-flight PUT (e.g.
       // user typed in the builder, hit Back, then deleted within 800ms) fires

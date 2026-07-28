@@ -4,7 +4,7 @@ import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
 import { sendMail, signedHtml, clientSignedThanksHtml, APP_URL } from '../_lib/email.js';
 import { sendNotification } from '../_lib/notifications.js';
-import { advanceStage, regressStage, dealIdForProposal, ensureDealForProposal } from '../_lib/dealStage.js';
+import { advanceStage, regressStage, dealIdForProposal, ensureDealForProposal, logDealEvent } from '../_lib/dealStage.js';
 import { computeProposalTotalExVat } from '../_lib/crm/deals.js';
 import { voidInvoice } from '../_lib/xero.js';
 import { sendPortalWelcome } from '../_lib/portal/onboarding.js';
@@ -99,6 +99,75 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json({ ok: true, voidedInvoiceId: oldInvoiceId });
+  }
+
+  if (req.method === 'PATCH') {
+    // Change the payment plan (50/50 ↔ full ↔ PO) on an ALREADY-SIGNED
+    // proposal, WITHOUT forcing a re-sign. `signatures.data.paymentOption` is
+    // the single source of truth every pricing/finance path reads (Stripe
+    // checkout amount, saleStatus deposit/paid pills, Pending Payments split,
+    // deferred-revenue figure), so rewriting it here is all that's needed for
+    // the CRM to expect the new plan. Used when a client who signed a 50/50
+    // deal decides to pay in full (and vice-versa). Admin/signature-manager
+    // only, like the DELETE below.
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!hasPermission(await getRole(user.role), 'signatures.manage_all')) {
+      return res.status(403).json({ error: 'You do not have permission to change payment terms' });
+    }
+
+    const paymentOption = req.body?.paymentOption;
+    const VALID = ['5050', 'full', 'po'];
+    if (!VALID.includes(paymentOption)) {
+      return res.status(400).json({ error: 'Invalid payment option — expected one of 5050, full, po.' });
+    }
+
+    const existing = await sql`SELECT data FROM signatures WHERE proposal_id = ${id}`;
+    if (!existing.length) {
+      return res.status(404).json({ error: 'This proposal has not been signed yet, so there is no payment plan to change.' });
+    }
+    const current = existing[0].data?.paymentOption || 'full';
+    if (current === paymentOption) {
+      return res.status(200).json({ ok: true, paymentOption, unchanged: true });
+    }
+
+    // Guard: if a payment has already been captured against this proposal, a
+    // plan change would desync what's owed from what "Pay now" charges — a
+    // 'full' checkout re-charges the whole total and does NOT subtract a
+    // deposit already paid, so we'd double-charge. Once money has moved, the
+    // remaining balance is collected via the Finance / Pending Payments flow,
+    // not by flipping the plan here.
+    const [{ n: paidCount }] = await sql`SELECT COUNT(*)::int AS n FROM payments WHERE proposal_id = ${id}`;
+    if (paidCount > 0) {
+      return res.status(409).json({
+        error: 'A payment has already been recorded on this proposal, so the plan can’t be switched automatically. Collect any remaining balance from the Finance → Pending Payments flow instead.',
+      });
+    }
+
+    await sql`
+      UPDATE signatures
+         SET data = jsonb_set(COALESCE(data, '{}'::jsonb), '{paymentOption}', ${JSON.stringify(paymentOption)}::jsonb)
+       WHERE proposal_id = ${id}
+    `;
+
+    // Keep the (cosmetic) production-board "Payment" column in step, and leave
+    // an audit trail on the deal. Best-effort — the pricing-authority write
+    // above has already succeeded, so a board/log hiccup must not fail the call.
+    const boardTerms = paymentOption === '5050' ? '50_50' : paymentOption === 'po' ? 'po' : 'full_upfront';
+    try {
+      const dealId = await dealIdForProposal(id);
+      if (dealId) {
+        await sql`UPDATE deals SET payment_terms = ${boardTerms}, updated_at = NOW() WHERE id = ${dealId}`;
+        await logDealEvent(dealId, 'payment_plan_changed', {
+          actorEmail: user.email || null,
+          payload: { proposalId: id, from: current, to: paymentOption },
+        });
+      }
+    } catch (err) {
+      console.error('[signatures] payment plan mirror/log failed', err.message || err);
+    }
+
+    return res.status(200).json({ ok: true, paymentOption });
   }
 
   if (req.method === 'GET') {

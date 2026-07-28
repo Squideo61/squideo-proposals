@@ -1657,6 +1657,15 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         // one-off project sale only.
         totalExVat: computeProposalTotalExVat(p.data, p.signature_data),
         signed: !!p.signature_data,
+        // The signed payment plan ('5050' | 'full' | 'po'), so the deal page can
+        // offer an admin the "change plan without re-signing" control per
+        // signed proposal. Null when unsigned. Mirrors the deal-level
+        // `paymentOption` above but scoped to this specific proposal.
+        paymentOption: (() => {
+          let sd = p.signature_data;
+          if (typeof sd === 'string') { try { sd = JSON.parse(sd); } catch { sd = null; } }
+          return (sd && sd.paymentOption) || null;
+        })(),
         number: p.number_year && p.number_seq ? { year: p.number_year, seq: p.number_seq } : null,
         createdAt: p.created_at,
         // Viewing engagement (mirrors the proposals list), powering the inline
