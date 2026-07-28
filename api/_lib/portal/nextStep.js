@@ -103,6 +103,10 @@ export function deriveNextStep({
         ? `To kick things off, ${openTasks.map((t) => t.title.toLowerCase()).join(' and ')}.`
         : first.detail,
       cta: first.cta ? { label: first.cta.label, href: first.cta.href } : null,
+      // This banner is derived from the open tasks, which the UI already lists
+      // right below — so the client card can suppress the banner to avoid asking
+      // for the same thing twice (the task list stays).
+      fromTasks: true,
     };
   }
 

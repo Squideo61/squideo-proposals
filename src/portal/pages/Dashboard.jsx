@@ -53,7 +53,10 @@ function ProjectCard({ project }) {
         </div>
       )}
 
-      <CourtBanner nextStep={project.nextStep} onCta={(cta) => runCta(cta, project.id)} compact />
+      {/* Suppress the banner when it's just echoing the task list below it. */}
+      {!(project.nextStep?.fromTasks && project.tasks?.length > 0) && (
+        <CourtBanner nextStep={project.nextStep} onCta={(cta) => runCta(cta, project.id)} compact />
+      )}
 
       {project.tasks?.length > 0 && (
         <div>

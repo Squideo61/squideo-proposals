@@ -100,7 +100,10 @@ export default function ProjectDetail({ dealId }) {
         <Card><PhaseTimeline production={project.production} /></Card>
       )}
 
-      <CourtBanner nextStep={project.nextStep} onCta={(cta) => runCta(cta, project.id)} />
+      {/* Suppress the banner when it's just echoing the task list below it. */}
+      {!(project.nextStep?.fromTasks && project.tasks?.length > 0) && (
+        <CourtBanner nextStep={project.nextStep} onCta={(cta) => runCta(cta, project.id)} />
+      )}
 
       {project.tasks?.length > 0 && <TasksCard tasks={project.tasks} dealId={project.id} />}
 
