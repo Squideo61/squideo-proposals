@@ -67,7 +67,7 @@ function CommentAttachment({ url, name, type }) {
  * fn. When `identity` ({ name, email }) is supplied — a logged-in portal user —
  * the name/email gate is skipped and their verified details are used instead.
  */
-export function VideoRevision({ token, data, api, showMsg, identity = null }) {
+export function VideoRevision({ token, data, api, showMsg, identity = null, embedded = false }) {
   const preIdentified = !!(identity && isEmail(identity.email || ''));
   const videoRef = useRef(null);
   const composerRef = useRef(null);
@@ -420,7 +420,9 @@ export function VideoRevision({ token, data, api, showMsg, identity = null }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div style={embedded
+      ? { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }
+      : { display: 'flex', flexDirection: 'column', height: '100vh' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px',
         borderBottom: `1px solid ${BRAND.border}`, background: '#fff', flexWrap: 'wrap' }}>

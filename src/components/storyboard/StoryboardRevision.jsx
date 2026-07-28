@@ -62,7 +62,7 @@ function CommentAttachment({ url, name, type }) {
  * draft PDF versions. Reviewers must enter their name + email before viewing,
  * then comment per-slide (optionally pinned to a spot) and approve.
  */
-export function StoryboardRevision({ token, data, api, showMsg, identity = null }) {
+export function StoryboardRevision({ token, data, api, showMsg, identity = null, embedded = false }) {
   const preIdentified = !!(identity && isEmail(identity.email || ''));
 
   // ── Name + email gate (skipped for a pre-identified portal user) ────────────
@@ -370,7 +370,9 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null 
   const pages = Array.from({ length: pageCount }, (_, i) => i + 1);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div style={embedded
+      ? { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }
+      : { display: 'flex', flexDirection: 'column', height: '100vh' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px',
         borderBottom: `1px solid ${BRAND.border}`, background: '#fff', flexWrap: 'wrap' }}>

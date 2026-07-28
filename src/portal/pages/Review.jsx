@@ -72,10 +72,10 @@ export default function Review({ token }) {
   }, [token, identity?.email]);
 
   return (
-    <div>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <button
         onClick={() => navigate('#/')}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: BRAND.blue, cursor: 'pointer', fontSize: 13, fontWeight: 600, padding: '4px 0', marginBottom: 8, fontFamily: 'inherit' }}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: BRAND.blue, cursor: 'pointer', fontSize: 13, fontWeight: 600, padding: '10px 16px', fontFamily: 'inherit', flexShrink: 0 }}
       >
         <ArrowLeft size={14} /> Back to projects
       </button>
@@ -84,8 +84,8 @@ export default function Review({ token }) {
       ) : !data ? (
         <div style={{ padding: 40, textAlign: 'center', color: BRAND.muted, fontSize: 14 }}>Loading review…</div>
       ) : (
-        <div style={{ background: BRAND.paper, color: BRAND.ink }}>
-          <VideoRevision token={token} data={data} api={revApi} showMsg={showToast} identity={identity} />
+        <div style={{ flex: 1, minHeight: 0, background: BRAND.paper, color: BRAND.ink }}>
+          <VideoRevision token={token} data={data} api={revApi} showMsg={showToast} identity={identity} embedded />
         </div>
       )}
     </div>

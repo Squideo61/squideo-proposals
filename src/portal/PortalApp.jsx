@@ -198,16 +198,29 @@ function AuthedApp() {
     default: page = <Dashboard />;
   }
 
+  // The review surfaces (video/storyboard) are their own full-height apps with a
+  // fixed comment sidebar — squeezing them into the 1080px content column made
+  // the player narrow while its height stayed tall, letterboxing the video with
+  // huge dark bands. Render them full-bleed and let them fill the space under
+  // the nav instead.
+  const fullBleed = route.view === 'review' || route.view === 'storyboard';
+
   return (
-    <div style={{ minHeight: '100vh', background: BRAND.paper }}>
+    <div style={{ minHeight: '100vh', background: BRAND.paper, display: 'flex', flexDirection: 'column' }}>
       <PreviewBanner />
       <Header />
-      <main style={{
-        maxWidth: MAX_WIDTH, margin: '0 auto',
-        padding: isMobile ? '18px 16px 90px' : '26px 24px 60px',
-      }}>
-        {page}
-      </main>
+      {fullBleed ? (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          {page}
+        </div>
+      ) : (
+        <main style={{
+          maxWidth: MAX_WIDTH, margin: '0 auto', width: '100%',
+          padding: isMobile ? '18px 16px 90px' : '26px 24px 60px',
+        }}>
+          {page}
+        </main>
+      )}
       {isMobile && <MobileTabBar view={route.view} />}
       {toast && <Toast msg={toast} />}
     </div>
