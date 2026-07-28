@@ -130,7 +130,14 @@ function timeOfDayGreeting() {
 }
 
 export default function Dashboard() {
-  const { user, preview, overview, overviewLoading, companyId, showToast } = usePortal();
+  const { user, preview, overview, overviewLoading, companyId, showToast, refreshOverview } = usePortal();
+  // Refetch whenever the client lands on Home so task / next-step state reflects
+  // anything they just did on another page (e.g. uploaded brand files, booked
+  // the kick-off) without needing a full page refresh. refreshOverview keeps the
+  // previous data on screen during the fetch, so there's no flash.
+  React.useEffect(() => {
+    if (companyId) refreshOverview(companyId).catch(() => {});
+  }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
   // In a staff preview there's no real person, so greet the organisation rather
   // than the synthetic "Preview" account name.
   const firstName = preview
