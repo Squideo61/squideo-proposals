@@ -569,12 +569,15 @@ function MilestonePreview({ asset }) {
 
 const reviewPill = (color, bg) => ({ fontSize: 11, fontWeight: 700, color, background: bg, borderRadius: 999, padding: '2px 8px', display: 'inline-flex', alignItems: 'center' });
 
-// The Storyboard + Video milestones no longer take a raw file upload — the
-// reviewable draft is uploaded in the Storyboard/Video Revisions section (the
-// same file the client reviews). This is the in-place summary + gateway: it
-// shows the draft/submit state and links straight into the Revisions section.
-function MilestoneReviewSummary({ kind, status, onOpen, onSubmit, busy }) {
+// The Storyboard + Video milestones upload their reviewable draft right here —
+// the file still lands in the Revisions system (what the client reviews, where
+// comments live), but staff upload + see the summary inline. "Open in Revisions"
+// jumps to the full comment thread. This is the in-place summary + gateway.
+function MilestoneReviewSummary({ kind, status, onOpen, onSubmit, onUpload, uploadProgress, busy }) {
+  const fileRef = useRef(null);
   const label = kind === 'storyboard' ? 'Storyboard Revisions' : 'Video Revisions';
+  const accept = kind === 'storyboard' ? 'application/pdf' : 'video/*';
+  const uploading = uploadProgress != null;
   const versionCount = status?.versionCount || 0;
   const latest = status?.latestVersionNumber || 0;
   const submitted = status?.clientSubmittedVersion ?? 0;
@@ -582,11 +585,7 @@ function MilestoneReviewSummary({ kind, status, onOpen, onSubmit, busy }) {
   const hasUnsent = versionCount > 0 && latest > submitted;
   return (
     <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, background: '#FAFBFC' }}>
-      {versionCount === 0 ? (
-        <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 12, lineHeight: 1.5 }}>
-          No draft uploaded yet — upload the {kind === 'storyboard' ? 'storyboard PDF' : 'draft video'} in the <strong>{label}</strong> section. It becomes the file the client reviews once you submit it.
-        </div>
-      ) : (
+      {versionCount > 0 && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 13.5, fontWeight: 600, color: BRAND.ink }}>
             {versionCount} draft{versionCount === 1 ? '' : 's'} · latest v{latest}{status?.latestVersionAt ? ' · ' + fmtDate(status.latestVersionAt) : ''}
@@ -597,19 +596,46 @@ function MilestoneReviewSummary({ kind, status, onOpen, onSubmit, busy }) {
               : hasUnsent
                 ? <span style={reviewPill('#B45309', '#FEF3C7')}>New draft v{latest} not yet sent — client sees v{submitted}</span>
                 : <span style={reviewPill('#16A34A', '#DCFCE7')}>Sent to client · v{submitted}</span>}
-            {status?.approvedAt && <span style={reviewPill('#16A34A', '#DCFCE7')}>Approved</span>}
+            {status?.approvedAt
+              ? <span style={reviewPill('#16A34A', '#DCFCE7')}>Approved by client</span>
+              : status?.clientSubmittedVersion != null && <span style={reviewPill('#B45309', '#FEF3C7')}>Pending client approval</span>}
             {status?.feedbackSubmittedAt && !status?.approvedAt && <span style={reviewPill('#2563EB', '#DBEAFE')}>Client sent feedback</span>}
-            {status?.openCommentCount > 0 && <span style={reviewPill(BRAND.muted, '#F1F5F9')}>{status.openCommentCount} open comment{status.openCommentCount === 1 ? '' : 's'}</span>}
+            {status?.commentCount > 0 && <span style={reviewPill(BRAND.muted, '#F1F5F9')}>{status.commentCount} comment{status.commentCount === 1 ? '' : 's'}{status.openCommentCount > 0 ? ` · ${status.openCommentCount} open` : ''}</span>}
           </div>
         </div>
       )}
+
+      {/* Inline draft upload — lands in the Revisions system (the client's review). */}
+      <input ref={fileRef} type="file" accept={accept} style={{ display: 'none' }}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f); if (fileRef.current) fileRef.current.value = ''; }} />
+      <div
+        onClick={() => !uploading && fileRef.current?.click()}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); if (!uploading) { const f = e.dataTransfer.files?.[0]; if (f) onUpload(f); } }}
+        style={{ border: `2px dashed ${BRAND.border}`, borderRadius: 10, padding: 14, textAlign: 'center',
+          color: BRAND.muted, cursor: uploading ? 'default' : 'pointer', fontSize: 13, marginBottom: 12, background: 'white' }}>
+        {uploading ? (
+          <div>
+            <div style={{ marginBottom: 8 }}>Uploading… {uploadProgress}%</div>
+            <div style={{ height: 6, background: BRAND.border, borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ width: uploadProgress + '%', height: '100%', background: BRAND.blue, transition: 'width .2s' }} />
+            </div>
+          </div>
+        ) : (
+          <><Upload size={15} /> <span style={{ marginLeft: 6 }}>{versionCount === 0
+            ? `Drop the ${kind === 'storyboard' ? 'storyboard PDF' : 'draft video'} here, or click to upload`
+            : 'Drop a new draft here, or click to upload'}</span></>
+        )}
+      </div>
+
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button className="btn" disabled={busy} onClick={onOpen} style={{ fontSize: 12.5 }}>
+        <button className="btn-ghost" disabled={busy || uploading || versionCount === 0} onClick={onOpen} style={{ fontSize: 12.5 }}
+          title={versionCount === 0 ? 'Upload a draft first' : undefined}>
           <ExternalLink size={13} /> {busy ? 'Opening…' : `Open in ${label}`}
         </button>
-        <button className="btn-ghost" disabled={busy || !hasUnsent} onClick={onSubmit}
+        <button className="btn" disabled={busy || uploading || !hasUnsent} onClick={onSubmit}
           style={{ fontSize: 12.5, opacity: hasUnsent ? 1 : 0.5 }}
-          title={hasUnsent ? undefined : 'Upload a new draft in the Revisions section first'}>
+          title={hasUnsent ? undefined : (versionCount === 0 ? 'Upload a draft first' : 'The latest draft has already been sent to the client')}>
           <Send size={13} /> Submit to client for review
         </button>
       </div>
@@ -657,12 +683,48 @@ function MilestoneRow({ m, index, videoId, video, approval, assets, open, onTogg
   const [progress, setProgress] = useState(null); // null = idle
   const [busy, setBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewUpload, setReviewUpload] = useState(null); // null = idle, else 0-100
 
-  // The Storyboard + Video milestones delegate their media to the Revisions
-  // section (the file the client reviews). Script keeps its own file upload.
+  // The Storyboard + Video milestones store their reviewable draft in the
+  // Revisions system (the file the client reviews). We upload it inline here;
+  // it's the same record the Revisions section shows, so the two stay in sync.
+  // Script keeps its own file upload.
   const isReviewMilestone = m.id === 'storyboard' || m.id === 'video';
   const reviewStatus = m.id === 'storyboard' ? video?.storyboardStatus : video?.revisionStatus;
   const reviewLinkedId = m.id === 'storyboard' ? video?.storyboardId : video?.revisionVideoId;
+
+  // Ensure this video is linked to a revision/storyboard project (lazily create
+  // it if not), returning { projectId, itemId }. Mirrors sendVideoForReview.
+  async function ensureReviewLink() {
+    const isSb = m.id === 'storyboard';
+    let projectId = isSb ? reviewStatus?.storyboardProjectId : reviewStatus?.revisionProjectId;
+    let itemId = reviewLinkedId;
+    if (!itemId || !projectId) {
+      const resp = isSb
+        ? await actions.sendStoryboardForReview(video.dealId, videoId)
+        : await actions.sendVideoForReview(video.dealId, videoId);
+      projectId = isSb ? resp?.storyboardProjectId : resp?.revisionProjectId;
+      itemId = isSb ? resp?.storyboardId : resp?.revisionVideoId;
+    }
+    return { projectId, itemId };
+  }
+
+  async function uploadDraft(file) {
+    if (!file) return;
+    const isSb = m.id === 'storyboard';
+    if (isSb && file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) { showMsg('Please choose a PDF file'); return; }
+    if (!isSb && !file.type.startsWith('video/')) { showMsg('Please choose a video file'); return; }
+    setReviewUpload(0);
+    try {
+      const { projectId, itemId } = await ensureReviewLink();
+      if (!projectId || !itemId) { showMsg('Could not prepare the review'); return; }
+      if (isSb) await actions.uploadStoryboardVersion(projectId, itemId, file, { onProgress: setReviewUpload });
+      else await actions.uploadRevisionVersion(projectId, itemId, file, { onProgress: setReviewUpload });
+      await actions.loadVideo(videoId); // refresh the milestone summary
+      showMsg('Draft uploaded');
+    } catch (e) { showMsg(e.message || 'Upload failed'); }
+    finally { setReviewUpload(null); }
+  }
 
   async function openReview() {
     const go = m.id === 'storyboard' ? onOpenStoryboardReview : onOpenReview;
@@ -772,7 +834,8 @@ function MilestoneRow({ m, index, videoId, video, approval, assets, open, onTogg
       {open && (
         <div style={{ padding: '0 0 16px 26px' }}>
           {isReviewMilestone ? (
-            <MilestoneReviewSummary kind={m.id} status={reviewStatus} onOpen={openReview} onSubmit={submitReview} busy={reviewBusy} />
+            <MilestoneReviewSummary kind={m.id} status={reviewStatus} onOpen={openReview} onSubmit={submitReview}
+              onUpload={uploadDraft} uploadProgress={reviewUpload} busy={reviewBusy} />
           ) : (
           <>
           <input ref={fileRef} type="file" accept={ui.accept} style={{ display: 'none' }}

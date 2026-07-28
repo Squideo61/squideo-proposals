@@ -71,9 +71,9 @@ export function DemoTab() {
         Seeds a self-contained test project so you can experience exactly what a client sees — the portal,
         the revision review (comment &amp; approve), sign-off and the payment-gated download — without a real
         client or going through the whole sign→pay process. It starts with <strong>no drafts</strong>: open the demo
-        video, use <strong>Open in Revisions</strong> to upload a storyboard/video draft, then <strong>Submit to client
-        for review</strong> — only then does it appear in the client&rsquo;s portal. Accept the portal invite with your own
-        email to become the “client”. Delete it any time to remove all the test data.
+        video, drop a storyboard/video draft on its milestone, then <strong>Submit to client for review</strong> — only
+        then does it appear in the client&rsquo;s portal. Accept the portal invite with your own email to become the
+        “client”. Delete it any time to remove all the test data.
       </p>
 
       {notice && (
@@ -106,8 +106,8 @@ export function DemoTab() {
           <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 14, lineHeight: 1.6 }}>
             <p style={{ margin: '0 0 6px' }}>
               To create a review: open the demo video in the CRM (Production board → the video), open the
-              <strong> Storyboard</strong> or <strong>Video</strong> milestone, click <strong>Open in Revisions</strong>,
-              upload a draft, then <strong>Submit to client for review</strong>. It then shows in the client&rsquo;s portal
+              <strong> Storyboard</strong> or <strong>Video</strong> milestone, drop a draft on it, then
+              <strong> Submit to client for review</strong>. It then shows in the client&rsquo;s portal
               <strong> “Reviews &amp; feedback”</strong> card (below “Videos”) and the links above light up.
             </p>
             <p style={{ margin: 0 }}>
