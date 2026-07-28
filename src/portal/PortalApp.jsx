@@ -206,7 +206,15 @@ function AuthedApp() {
   const fullBleed = route.view === 'review' || route.view === 'storyboard';
 
   return (
-    <div style={{ minHeight: '100vh', background: BRAND.paper, display: 'flex', flexDirection: 'column' }}>
+    // On review routes the shell is pinned to exactly the viewport height (and
+    // clips overflow) so the player has a BOUNDED height to scale down into —
+    // with the normal minHeight:100vh the shell just grows with a tall video and
+    // the player runs off the bottom of the screen. Other routes keep the normal
+    // grow-and-scroll behaviour.
+    <div style={{
+      ...(fullBleed ? { height: '100vh', overflow: 'hidden' } : { minHeight: '100vh' }),
+      background: BRAND.paper, display: 'flex', flexDirection: 'column',
+    }}>
       <PreviewBanner />
       <Header />
       {fullBleed ? (
