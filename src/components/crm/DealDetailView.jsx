@@ -97,8 +97,8 @@ function toEmbedSrc(raw) {
   return null;
 }
 
-// Admin-only inline control on a signed proposal to switch its payment plan
-// (50/50 ↔ full ↔ PO) WITHOUT a re-sign. Writes signatures.data.paymentOption —
+// Deal-owner / admin inline control on a signed proposal to switch its payment
+// plan (50/50 ↔ full ↔ PO) WITHOUT a re-sign. Writes signatures.data.paymentOption —
 // the single source of truth for the Stripe checkout amount, saleStatus pills,
 // paid-badge label and Pending-Payments split — via PATCH /api/signatures/:id.
 // The server blocks the switch if a payment has already been captured (that
@@ -121,8 +121,12 @@ function PaymentPlanControl({ proposalId, dealId, value }) {
     if (!ok) return;
     setBusy(true);
     try {
-      await actions.changePaymentPlan(proposalId, dealId, next);
-      showMsg(`Payment plan changed to ${PAYMENT_PLAN_LABELS[next]}`);
+      const resp = await actions.changePaymentPlan(proposalId, dealId, next);
+      showMsg(
+        resp?.voidedInvoiceId
+          ? `Payment plan changed to ${PAYMENT_PLAN_LABELS[next]} — the previous invoice was voided; re-issue when ready`
+          : `Payment plan changed to ${PAYMENT_PLAN_LABELS[next]}`
+      );
     } catch (err) {
       showMsg(err?.message || 'Could not change the payment plan');
     } finally {
@@ -228,10 +232,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   const saleStatusPills = describeSaleStatus(
     deal.saleStatus ? deal : { ...deal, saleStatus: state.deals[dealId]?.saleStatus },
   );
-  // Signature managers (admins) can switch a signed proposal's payment plan
-  // (50/50 ↔ full ↔ PO) without a re-sign — e.g. a client who signed 50/50 now
-  // wants to pay in full. Gated on the same permission as clearing a signature.
-  const canManagePaymentPlan = permissionsInclude(state.session?.permissions, 'signatures.manage_all');
+  // Who can switch a signed proposal's payment plan (50/50 ↔ full ↔ PO) without
+  // a re-sign — e.g. a client who signed 50/50 now wants to pay in full: the
+  // deal owner (the salesperson running it) or an admin/director with
+  // signatures.manage_all. The server enforces the same owner-OR-manage_all
+  // rule; this just mirrors it so the control only shows to those users.
+  const canManagePaymentPlan =
+    permissionsInclude(state.session?.permissions, 'signatures.manage_all') ||
+    (!!deal.ownerEmail && deal.ownerEmail.toLowerCase() === (state.session?.email || '').toLowerCase());
   // Value shown on the deal card. A signed proposal's total is the *actual* sale
   // value (incl. selected extras), so it wins. Otherwise the latest *proposed*
   // value takes over — sending a proposal supersedes any manual figure, so the

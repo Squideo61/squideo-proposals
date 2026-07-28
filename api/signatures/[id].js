@@ -108,13 +108,9 @@ export default async function handler(req, res) {
     // checkout amount, saleStatus deposit/paid pills, Pending Payments split,
     // deferred-revenue figure), so rewriting it here is all that's needed for
     // the CRM to expect the new plan. Used when a client who signed a 50/50
-    // deal decides to pay in full (and vice-versa). Admin/signature-manager
-    // only, like the DELETE below.
+    // deal decides to pay in full (and vice-versa).
     const user = await requireAuth(req, res);
     if (!user) return;
-    if (!hasPermission(await getRole(user.role), 'signatures.manage_all')) {
-      return res.status(403).json({ error: 'You do not have permission to change payment terms' });
-    }
 
     const paymentOption = req.body?.paymentOption;
     const VALID = ['5050', 'full', 'po'];
@@ -127,17 +123,38 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'This proposal has not been signed yet, so there is no payment plan to change.' });
     }
     const current = existing[0].data?.paymentOption || 'full';
+
+    // Authorisation: the deal *owner* (the salesperson running it) can change
+    // their own deal's plan, plus anyone with `signatures.manage_all`
+    // (admins/directors). Mirrors the owner-OR-manage_all pattern used for
+    // proposal deletion. Resolve the linked deal once — also reused below.
+    const dealId = await dealIdForProposal(id);
+    let ownerEmail = null;
+    if (dealId) {
+      const ownerRows = await sql`SELECT owner_email FROM deals WHERE id = ${dealId}`;
+      ownerEmail = ownerRows[0]?.owner_email || null;
+    }
+    const isOwner = !!ownerEmail && ownerEmail.toLowerCase() === (user.email || '').toLowerCase();
+    if (!isOwner && !hasPermission(await getRole(user.role), 'signatures.manage_all')) {
+      return res.status(403).json({ error: 'Only the deal owner or an admin can change the payment plan' });
+    }
+
     if (current === paymentOption) {
       return res.status(200).json({ ok: true, paymentOption, unchanged: true });
     }
 
-    // Guard: if a payment has already been captured against this proposal, a
-    // plan change would desync what's owed from what "Pay now" charges — a
-    // 'full' checkout re-charges the whole total and does NOT subtract a
-    // deposit already paid, so we'd double-charge. Once money has moved, the
-    // remaining balance is collected via the Finance / Pending Payments flow,
-    // not by flipping the plan here.
-    const [{ n: paidCount }] = await sql`SELECT COUNT(*)::int AS n FROM payments WHERE proposal_id = ${id}`;
+    // Guard: if money has already been RECEIVED against this proposal, a plan
+    // change would desync what's owed from what "Pay now" charges — a 'full'
+    // checkout re-charges the whole total and does NOT subtract a deposit
+    // already paid, so we'd double-charge. Once cash has moved, the remaining
+    // balance is collected via the Finance → Pending Payments flow, not by
+    // flipping the plan. Covers both Stripe (`payments`) and a Xero
+    // email-invoice reconciled as (part-)paid (`proposal_billing.paid_amount`).
+    const [{ n: paidCount }] = await sql`
+      SELECT (
+        (SELECT COUNT(*) FROM payments WHERE proposal_id = ${id})
+        + (SELECT COUNT(*) FROM proposal_billing WHERE proposal_id = ${id} AND COALESCE(paid_amount, 0) > 0)
+      )::int AS n`;
     if (paidCount > 0) {
       return res.status(409).json({
         error: 'A payment has already been recorded on this proposal, so the plan can’t be switched automatically. Collect any remaining balance from the Finance → Pending Payments flow instead.',
@@ -150,24 +167,47 @@ export default async function handler(req, res) {
        WHERE proposal_id = ${id}
     `;
 
+    // A Xero invoice issued for the OLD plan (e.g. a 50%-deposit invoice from
+    // the "email me an invoice" route, stored on proposal_billing) no longer
+    // matches the new plan's amount. Void it and clear the reference so the
+    // deal returns to "pending invoice" and a correct invoice for the new plan
+    // can be issued — mirroring the DELETE (unmark) path above. We already know
+    // nothing has been *paid* (guard above), so a void is safe. Best-effort: a
+    // Xero hiccup must not fail the flip (the pricing write already landed).
+    let voidedInvoiceId = null;
+    try {
+      const billing = await sql`SELECT xero_invoice_id FROM proposal_billing WHERE proposal_id = ${id}`;
+      const oldInvoiceId = billing[0]?.xero_invoice_id || null;
+      if (oldInvoiceId) {
+        try { await voidInvoice(oldInvoiceId); voidedInvoiceId = oldInvoiceId; }
+        catch (err) { console.error('[signatures] voidInvoice on plan change failed', err.message || err); }
+        await sql`
+          UPDATE proposal_billing
+             SET xero_invoice_id = NULL, xero_quote_id = NULL, updated_at = NOW()
+           WHERE proposal_id = ${id}
+        `;
+      }
+    } catch (err) {
+      console.error('[signatures] xero reconcile on plan change failed', err.message || err);
+    }
+
     // Keep the (cosmetic) production-board "Payment" column in step, and leave
     // an audit trail on the deal. Best-effort — the pricing-authority write
     // above has already succeeded, so a board/log hiccup must not fail the call.
     const boardTerms = paymentOption === '5050' ? '50_50' : paymentOption === 'po' ? 'po' : 'full_upfront';
     try {
-      const dealId = await dealIdForProposal(id);
       if (dealId) {
         await sql`UPDATE deals SET payment_terms = ${boardTerms}, updated_at = NOW() WHERE id = ${dealId}`;
         await logDealEvent(dealId, 'payment_plan_changed', {
           actorEmail: user.email || null,
-          payload: { proposalId: id, from: current, to: paymentOption },
+          payload: { proposalId: id, from: current, to: paymentOption, voidedInvoiceId },
         });
       }
     } catch (err) {
       console.error('[signatures] payment plan mirror/log failed', err.message || err);
     }
 
-    return res.status(200).json({ ok: true, paymentOption });
+    return res.status(200).json({ ok: true, paymentOption, voidedInvoiceId });
   }
 
   if (req.method === 'GET') {
