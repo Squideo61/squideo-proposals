@@ -171,6 +171,7 @@ export default function ProjectDetail({ dealId }) {
                 >
                   <PlayCircle size={19} color={BRAND.blue} />
                   <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: BRAND.blue }}>Video review</div>
                     <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink }}>{r.title || 'Video review'}</div>
                     <div style={{ fontSize: 11.5, color: BRAND.muted }}>
                       {r.approved ? 'Approved ✓' : r.feedbackSubmitted ? 'Feedback sent — we’re on it' : 'Awaiting your feedback'}
@@ -218,6 +219,7 @@ export default function ProjectDetail({ dealId }) {
               >
                 <LayoutPanelTop size={19} color="#7C3AED" />
                 <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: '#7C3AED' }}>Storyboard review</div>
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink }}>{s.title || 'Storyboard'}</div>
                   <div style={{ fontSize: 11.5, color: BRAND.muted }}>
                     {s.approved ? 'Approved ✓' : s.feedbackSubmitted ? 'Feedback sent — we’re on it' : 'Awaiting your review'}

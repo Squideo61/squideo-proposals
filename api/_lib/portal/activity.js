@@ -155,7 +155,7 @@ export async function dealSteps(dealId) {
   if (!ctx) return [];
   const { deal, tasks } = ctx;
 
-  const [[sig], [dep], [d2]] = await Promise.all([
+  const [[sig], [dep], [d2], [kb]] = await Promise.all([
     sql`SELECT s.signed_at, COALESCE(s.data->>'paymentOption', '') AS pay_option
           FROM signatures s JOIN proposals p ON p.id = s.proposal_id
          WHERE p.deal_id = ${dealId} AND s.signed_at IS NOT NULL
@@ -164,6 +164,13 @@ export async function dealSteps(dealId) {
          WHERE p.deal_id = ${dealId} AND pb.paid_at IS NOT NULL AND COALESCE(pb.paid_amount, 0) > 0
          ORDER BY pb.paid_at ASC LIMIT 1`,
     sql`SELECT po_number, po_received_at, payment_terms FROM deals WHERE id = ${dealId}`,
+    // The current confirmed kick-off booking. A reschedule cancels the old row
+    // and books a new one, so the most-recently-created confirmed booking is
+    // always the live time — this keeps the step in step with any reschedule.
+    sql`SELECT starts_at, ends_at, meet_url, client_timezone
+          FROM intro_call_bookings
+         WHERE deal_id = ${dealId} AND kind = 'kickoff' AND status = 'confirmed'
+         ORDER BY created_at DESC LIMIT 1`.catch(() => []),
   ]);
 
   const steps = [];
@@ -177,7 +184,18 @@ export async function dealSteps(dealId) {
   // The launched kick-off tasks (skip 'po' — handled above as a milestone).
   for (const t of tasks) {
     if (t.key === 'po') continue;
-    steps.push({ key: t.key, label: t.title, done: t.status === 'done', at: null });
+    const step = { key: t.key, label: t.title, done: t.status === 'done', at: null };
+    // Surface the booked kick-off time + join link so staff can see (and join)
+    // the call straight from the step. Updates automatically when rescheduled.
+    if (t.key === 'kickoff' && kb?.starts_at) {
+      step.meeting = {
+        startsAt: kb.starts_at,
+        endsAt: kb.ends_at || null,
+        joinUrl: kb.meet_url || null,
+        timezone: kb.client_timezone || null,
+      };
+    }
+    steps.push(step);
   }
   const current = steps.find((s) => !s.done);
   if (current) current.current = true;

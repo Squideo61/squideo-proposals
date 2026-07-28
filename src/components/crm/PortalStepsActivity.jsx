@@ -4,7 +4,7 @@
 import React, { useState } from 'react';
 import {
   CheckCircle2, Circle, Clock, Upload, Sparkles, FileText, LogIn,
-  PenLine, PoundSterling, FileCheck2, Mic, UserPlus, ChevronRight,
+  PenLine, PoundSterling, FileCheck2, Mic, UserPlus, ChevronRight, Video,
 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { formatRelativeTime } from '../../utils.js';
@@ -17,6 +17,14 @@ const TYPE_ICONS = {
 
 const exactTime = (iso) => { try { return new Date(iso).toLocaleString('en-GB'); } catch { return ''; } };
 const shortDate = (iso) => { try { return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); } catch { return ''; } };
+// e.g. "Tue 5 Aug, 14:30" — the booked kick-off time, in the viewer's locale.
+const meetingWhen = (iso) => {
+  try {
+    return new Date(iso).toLocaleString('en-GB', {
+      weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+    });
+  } catch { return ''; }
+};
 
 function ActivityRow({ a }) {
   const Icon = TYPE_ICONS[a.type] || Clock;
@@ -48,15 +56,35 @@ function DealSteps({ steps }) {
   return (
     <div>
       {steps.map((s) => (
-        <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 12.5 }}>
-          {s.done
-            ? <CheckCircle2 size={14} color="#16A34A" style={{ flexShrink: 0 }} />
-            : <Circle size={14} color={s.current ? BRAND.blue : BRAND.border} style={{ flexShrink: 0 }} />}
-          <span style={{ flex: 1, color: s.done ? BRAND.ink : BRAND.muted, fontWeight: s.current ? 600 : 400 }}>{s.label}</span>
-          {s.current && !s.done && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: BRAND.blue, background: '#EAF3FF', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>Next</span>
+        <div key={s.key} style={{ padding: '4px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+            {s.done
+              ? <CheckCircle2 size={14} color="#16A34A" style={{ flexShrink: 0 }} />
+              : <Circle size={14} color={s.current ? BRAND.blue : BRAND.border} style={{ flexShrink: 0 }} />}
+            <span style={{ flex: 1, color: s.done ? BRAND.ink : BRAND.muted, fontWeight: s.current ? 600 : 400 }}>{s.label}</span>
+            {s.current && !s.done && (
+              <span style={{ fontSize: 10, fontWeight: 700, color: BRAND.blue, background: '#EAF3FF', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>Next</span>
+            )}
+            {s.done && s.at && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{shortDate(s.at)}</span>}
+          </div>
+          {/* Booked kick-off call: show the confirmed time + a one-click join.
+              Reflects the latest reschedule (server returns the live booking). */}
+          {s.meeting?.startsAt && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '3px 0 2px 22px', fontSize: 11.5 }}>
+              <Video size={12} color={BRAND.blue} style={{ flexShrink: 0 }} />
+              <span style={{ color: BRAND.muted }}>{meetingWhen(s.meeting.startsAt)}</span>
+              {s.meeting.joinUrl && (
+                <a
+                  href={s.meeting.joinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: 11, fontWeight: 700, color: BRAND.blue, textDecoration: 'none', background: '#EAF3FF', padding: '2px 8px', borderRadius: 5, whiteSpace: 'nowrap' }}
+                >
+                  Join call
+                </a>
+              )}
+            </div>
           )}
-          {s.done && s.at && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{shortDate(s.at)}</span>}
         </div>
       ))}
     </div>
