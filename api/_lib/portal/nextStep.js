@@ -116,12 +116,14 @@ export function deriveNextStep({
     };
   }
 
-  // 7. Group sign-off needed.
-  if (prodStage === 'pending_group_sign_off') {
+  // 7. Signed off, final invoice out — awaiting payment to release the video.
+  //    (Phase 2 refines this with the deal's live balance; the stage alone is
+  //    the trigger for now.)
+  if (prodStage === 'final_invoice') {
     return {
       court: 'you',
-      headline: 'Your team’s final sign-off is needed',
-      detail: 'The video is ready — gather any remaining stakeholders and confirm sign-off so we can deliver the final files.',
+      headline: 'Settle your final invoice to receive your video',
+      detail: 'Your video is signed off and ready. We’ve sent your final invoice — once it’s paid, the finished video unlocks for download here.',
       cta: null,
     };
   }

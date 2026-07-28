@@ -184,6 +184,11 @@ export async function ensureProductionSchema() {
           FROM deals d
          WHERE d.id = v.deal_id AND v.production_phase IS NULL
       `;
+      // Merge backfill: the 'pending_group_sign_off' stage was folded into
+      // 'signed_off' (db/migrations/20260728_merge_sign_off.sql). Relocate any
+      // stragglers so they don't get mis-grouped into 'in_production'. Idempotent.
+      await sql`UPDATE project_videos SET production_stage = 'signed_off' WHERE production_stage = 'pending_group_sign_off'`;
+      await sql`UPDATE deals SET production_stage = 'signed_off' WHERE production_stage = 'pending_group_sign_off'`;
     } catch (err) {
       productionSchemaEnsured = null;
       console.warn('[production] schema ensure failed', err.message);

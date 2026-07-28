@@ -37,7 +37,7 @@ const CLIENT_STAGE_LABELS = {
   amends_2: 'Video revisions',
   awaiting_feedback_2: 'Awaiting your feedback',
   signed_off: 'Signed off',
-  pending_group_sign_off: 'Final sign-off',
+  final_invoice: 'Awaiting final payment',
   back_up: 'In production',
   on_hold: 'In production',
   reserved: 'In production',

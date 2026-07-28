@@ -33,7 +33,7 @@ export const PRODUCTION_PHASES = [
       { id: 'amends_2',               label: 'Amends 2' },
       { id: 'awaiting_feedback_2',    label: 'Awaiting Feedback' },
       { id: 'signed_off',             label: 'Signed Off' },
-      { id: 'pending_group_sign_off', label: 'Pending Group Sign Off' },
+      { id: 'final_invoice',          label: 'Final invoice' },
       { id: 'back_up',                label: 'Back-up' },
       { id: 'on_hold',                label: 'On Hold' },
       { id: 'reserved',               label: 'Reserved' },
@@ -80,13 +80,13 @@ export function isValidProductionStage(phaseId, stageId) {
 }
 
 // A video counts as "signed off" (for credit-based project line items) once it
-// reaches Signed Off / Pending Group Sign Off, or anything in the Completed
-// phase (Delivered / Invoiced). Everything earlier — and holding stages like
-// On Hold / Back-up — is still "active". Mirror of the copy in
+// reaches Signed Off / Final invoice, or anything in the Completed phase
+// (Delivered / Invoiced). Everything earlier — and holding stages like On Hold /
+// Back-up — is still "active". Mirror of the copy in
 // api/_lib/productionStages.js.
 export function isVideoSignedOff(phaseId, stageId) {
   return phaseId === 'completed' ||
-    (phaseId === 'production' && (stageId === 'signed_off' || stageId === 'pending_group_sign_off'));
+    (phaseId === 'production' && (stageId === 'signed_off' || stageId === 'final_invoice'));
 }
 
 export function isValidVideoStatus(statusId) {

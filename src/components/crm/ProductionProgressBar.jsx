@@ -67,6 +67,7 @@ const VIDEO_STEPS = [
   { label: 'Production',          phase: 'production',     stage: 'in_production' },
   { label: 'Revisions',       phase: 'production',     stage: 'amends_2', key: 'revisions' },
   { label: 'Signed Off',      phase: 'production',     stage: 'signed_off' },
+  { label: 'Final invoice',   phase: 'production',     stage: 'final_invoice' },
   { label: 'Delivered',       phase: 'completed',      stage: 'delivered' },
 ];
 
