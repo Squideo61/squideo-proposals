@@ -818,8 +818,8 @@ async function overviewRoute(req, res, user) {
 
   const projects = [];
   for (const deal of deals) {
-    const nextStep = nextStepFor(deal, states);
     const rawVideos = states.videos.get(deal.id) || [];
+    const nextStep = nextStepFor(deal, states);
     const videos = rawVideos.map(serialisePortalVideo);
     const offers = extrasWindowOpen(deal) ? await computePortalOffers(deal) : [];
     const tasks = tasksFor(deal, states);
