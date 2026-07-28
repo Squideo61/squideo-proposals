@@ -154,14 +154,18 @@ function ensureStoryboardTables() {
       await sql`ALTER TABLE storyboards ADD COLUMN IF NOT EXISTS client_submitted_version INT`;
       await sql`ALTER TABLE storyboards ADD COLUMN IF NOT EXISTS client_submitted_at TIMESTAMPTZ`;
       await sql`ALTER TABLE storyboards ADD COLUMN IF NOT EXISTS client_submitted_by TEXT`;
-      // Backfill in-flight reviews so existing share links keep working.
-      await sql`
-        UPDATE storyboards sb
-           SET client_submitted_version = sub.maxver,
-               client_submitted_at = COALESCE(sb.client_submitted_at, NOW())
-          FROM (SELECT storyboard_id, MAX(version_number) AS maxver
-                  FROM storyboard_versions GROUP BY storyboard_id) sub
-         WHERE sub.storyboard_id = sb.id AND sb.client_submitted_version IS NULL`;
+      // Backfill in-flight reviews so existing share links keep working. Wrapped
+      // separately so a one-off backfill hiccup can never leave the column-adds
+      // un-cached (which would re-run this block on every request).
+      try {
+        await sql`
+          UPDATE storyboards sb
+             SET client_submitted_version = sub.maxver,
+                 client_submitted_at = COALESCE(sb.client_submitted_at, NOW())
+            FROM (SELECT storyboard_id, MAX(version_number) AS maxver
+                    FROM storyboard_versions GROUP BY storyboard_id) sub
+           WHERE sub.storyboard_id = sb.id AND sb.client_submitted_version IS NULL`;
+      } catch (err) { console.warn('[storyboards] submit-gate backfill skipped', err.message); }
     } catch (err) {
       tablesEnsured = null;
       console.warn('[storyboards] ensure tables failed', err.message);

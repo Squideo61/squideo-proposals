@@ -586,58 +586,55 @@ async function withVideoExtras(video) {
          LIMIT 1
       `)[0];
       if (rv?.blob_url) draftVideo = { url: rv.blob_url, mimeType: rv.mime_type || null };
-      // Status block used by the video page to surface "Draft N · uploaded X"
-      // and the review/approval/feedback state alongside the preview.
+      // Base draft count + latest first, so enrichment can't hide an uploaded draft.
       const [{ version_count }] = await sql`
         SELECT COUNT(*)::int AS version_count FROM revision_versions WHERE video_id = ${video.revisionVideoId}
       `;
-      const [vid] = await sql`
-        SELECT approved_at, approved_by, feedback_submitted_at, project_id
-          FROM revision_videos WHERE id = ${video.revisionVideoId}
-      `;
-      // Submit-gate column read separately so a missing column (pre-migration)
-      // can never hide the draft count / status — it just degrades to "not sent".
-      let clientSubmittedVersion = null;
-      try {
-        const [cs] = await sql`SELECT client_submitted_version FROM revision_videos WHERE id = ${video.revisionVideoId}`;
-        clientSubmittedVersion = cs?.client_submitted_version ?? null;
-      } catch { /* gate column not present yet */ }
-      let commentCount = 0, openCommentCount = 0;
-      if (rv?.version_number != null) {
-        const [c] = await sql`
-          SELECT COUNT(*)::int AS total,
-                 COUNT(*) FILTER (WHERE completed_at IS NULL)::int AS open
-            FROM revision_comments rc
-            JOIN revision_versions rv2 ON rv2.id = rc.version_id
-           WHERE rv2.video_id = ${video.revisionVideoId}
-             AND rv2.version_number = ${rv.version_number}
-        `;
-        commentCount = c?.total || 0;
-        openCommentCount = c?.open || 0;
-      }
       revisionStatus = {
         versionCount: Number(version_count) || 0,
         latestVersionNumber: rv?.version_number != null ? Number(rv.version_number) : null,
         latestVersionLabel: rv?.label || null,
         latestVersionAt: rv?.created_at || null,
-        approvedAt: vid?.approved_at || null,
-        approvedBy: vid?.approved_by || null,
-        feedbackSubmittedAt: vid?.feedback_submitted_at || null,
-        clientSubmittedVersion,
-        revisionProjectId: vid?.project_id || null,
-        commentCount,
-        openCommentCount,
+        approvedAt: null, approvedBy: null, feedbackSubmittedAt: null,
+        clientSubmittedVersion: null, revisionProjectId: null,
+        commentCount: 0, openCommentCount: 0,
       };
-    } catch { /* revision tables not present */ }
+      try {
+        const [vid] = await sql`SELECT approved_at, approved_by, feedback_submitted_at, project_id FROM revision_videos WHERE id = ${video.revisionVideoId}`;
+        if (vid) {
+          revisionStatus.approvedAt = vid.approved_at || null;
+          revisionStatus.approvedBy = vid.approved_by || null;
+          revisionStatus.feedbackSubmittedAt = vid.feedback_submitted_at || null;
+          revisionStatus.revisionProjectId = vid.project_id || null;
+        }
+      } catch { /* legacy columns absent */ }
+      try {
+        const [cs] = await sql`SELECT client_submitted_version FROM revision_videos WHERE id = ${video.revisionVideoId}`;
+        revisionStatus.clientSubmittedVersion = cs?.client_submitted_version ?? null;
+      } catch { /* gate column not present yet */ }
+      if (rv?.version_number != null) {
+        try {
+          const [c] = await sql`
+            SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE completed_at IS NULL)::int AS open
+              FROM revision_comments rc
+              JOIN revision_versions rv2 ON rv2.id = rc.version_id
+             WHERE rv2.video_id = ${video.revisionVideoId} AND rv2.version_number = ${rv.version_number}`;
+          revisionStatus.commentCount = c?.total || 0;
+          revisionStatus.openCommentCount = c?.open || 0;
+        } catch { /* comment columns absent */ }
+      }
+    } catch (err) { console.warn('[production] revisionStatus failed', video.revisionVideoId, err.message); }
   }
   // Mirror of revisionStatus for the storyboard side: latest draft, approval,
   // feedback, comment counts. Drives the "Storyboard review" status card on
   // the video page.
   let storyboardStatus = null;
   if (video.storyboardId) {
+    // Base draft count + latest come from their own queries so nothing about the
+    // enrichment (approval / gate / comments) below can hide an uploaded draft.
     try {
       const sv = (await sql`
-        SELECT version_number, label, blob_url, mime_type, created_at
+        SELECT version_number, label, created_at
           FROM storyboard_versions
          WHERE storyboard_id = ${video.storyboardId}
          ORDER BY version_number DESC
@@ -646,42 +643,40 @@ async function withVideoExtras(video) {
       const [{ version_count }] = await sql`
         SELECT COUNT(*)::int AS version_count FROM storyboard_versions WHERE storyboard_id = ${video.storyboardId}
       `;
-      const [sb] = await sql`
-        SELECT approved_at, approved_by, feedback_submitted_at, project_id
-          FROM storyboards WHERE id = ${video.storyboardId}
-      `;
-      let clientSubmittedVersion = null;
-      try {
-        const [cs] = await sql`SELECT client_submitted_version FROM storyboards WHERE id = ${video.storyboardId}`;
-        clientSubmittedVersion = cs?.client_submitted_version ?? null;
-      } catch { /* gate column not present yet */ }
-      let commentCount = 0, openCommentCount = 0;
-      if (sv?.version_number != null) {
-        const [c] = await sql`
-          SELECT COUNT(*)::int AS total,
-                 COUNT(*) FILTER (WHERE completed_at IS NULL)::int AS open
-            FROM storyboard_comments sc
-            JOIN storyboard_versions sv2 ON sv2.id = sc.version_id
-           WHERE sv2.storyboard_id = ${video.storyboardId}
-             AND sv2.version_number = ${sv.version_number}
-        `;
-        commentCount = c?.total || 0;
-        openCommentCount = c?.open || 0;
-      }
       storyboardStatus = {
         versionCount: Number(version_count) || 0,
         latestVersionNumber: sv?.version_number != null ? Number(sv.version_number) : null,
         latestVersionLabel: sv?.label || null,
         latestVersionAt: sv?.created_at || null,
-        approvedAt: sb?.approved_at || null,
-        approvedBy: sb?.approved_by || null,
-        feedbackSubmittedAt: sb?.feedback_submitted_at || null,
-        clientSubmittedVersion,
-        storyboardProjectId: sb?.project_id || null,
-        commentCount,
-        openCommentCount,
+        approvedAt: null, approvedBy: null, feedbackSubmittedAt: null,
+        clientSubmittedVersion: null, storyboardProjectId: null,
+        commentCount: 0, openCommentCount: 0,
       };
-    } catch { /* storyboard tables not present */ }
+      try {
+        const [sb] = await sql`SELECT approved_at, approved_by, feedback_submitted_at, project_id FROM storyboards WHERE id = ${video.storyboardId}`;
+        if (sb) {
+          storyboardStatus.approvedAt = sb.approved_at || null;
+          storyboardStatus.approvedBy = sb.approved_by || null;
+          storyboardStatus.feedbackSubmittedAt = sb.feedback_submitted_at || null;
+          storyboardStatus.storyboardProjectId = sb.project_id || null;
+        }
+      } catch { /* legacy columns absent */ }
+      try {
+        const [cs] = await sql`SELECT client_submitted_version FROM storyboards WHERE id = ${video.storyboardId}`;
+        storyboardStatus.clientSubmittedVersion = cs?.client_submitted_version ?? null;
+      } catch { /* gate column not present yet */ }
+      if (sv?.version_number != null) {
+        try {
+          const [c] = await sql`
+            SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE completed_at IS NULL)::int AS open
+              FROM storyboard_comments sc
+              JOIN storyboard_versions sv2 ON sv2.id = sc.version_id
+             WHERE sv2.storyboard_id = ${video.storyboardId} AND sv2.version_number = ${sv.version_number}`;
+          storyboardStatus.commentCount = c?.total || 0;
+          storyboardStatus.openCommentCount = c?.open || 0;
+        } catch { /* comment columns absent */ }
+      }
+    } catch (err) { console.warn('[production] storyboardStatus failed', video.storyboardId, err.message); }
   }
   video.preview = {
     current: previewKindForStage(video.productionPhase, video.productionStage),
