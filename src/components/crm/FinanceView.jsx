@@ -381,6 +381,24 @@ export function FinanceView({ initialTab = null, onBack, onOpenDeal, onOpenCompa
     });
   };
 
+  // Reverse a "paid" mark on an income-ledger row — currently only imported
+  // pending payments (source 'sheet') can be un-marked here; doing so clears
+  // their paid stamp and drops them back into the Pending Payments list.
+  // Refreshes the finance views and is undoable (redo re-marks paid).
+  const unmarkIncome = (r) => {
+    if (r.source !== 'sheet' || !r.editKey) return;
+    const method = r.method || null;
+    const apply = (paid) => actions.markPendingPaymentPaid(r.editKey, paid, paid ? method : null).then(refreshFinance);
+    apply(false).then(() => {
+      showMsg?.(`Un-marked ${r.company || 'payment'} — back in Pending Payments`);
+      actions.recordUndo && actions.recordUndo({
+        label: `Un-mark ${r.company || 'payment'} paid`,
+        undo: () => apply(true),
+        redo: () => apply(false),
+      });
+    }).catch((err) => showMsg?.(err?.message || 'Could not un-mark payment'));
+  };
+
   const fin = state.financeStats && state.financeStats.year === effectiveYear ? state.financeStats : null;
   const salesFin = state.salesFinanceStats && state.salesFinanceStats.year === effectiveYear ? state.salesFinanceStats : null;
   const salesLedger = state.salesLedger && state.salesLedger.period === periodParam ? state.salesLedger : null;
@@ -569,7 +587,7 @@ export function FinanceView({ initialTab = null, onBack, onOpenDeal, onOpenCompa
           {isSales ? (
             <SalesLedgerPanel ledger={salesLedger} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={firstTab.view.periodLabel} onToggleExclude={toggleInvoiceExcluded} />
           ) : (
-            <IncomePayments income={income} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={firstTab.view.periodLabel} onSetDate={setIncomeDate} />
+            <IncomePayments income={income} onOpenDeal={onOpenDeal} isMobile={isMobile} periodLabel={firstTab.view.periodLabel} onSetDate={setIncomeDate} onUnmark={unmarkIncome} />
           )}
         </>
       )}
@@ -2449,7 +2467,7 @@ function MethodBadge({ method }) {
 // Income — a flat, newest-first ledger of payments received in the selected
 // period. Mirrors the Pending Payments panel visually but each row is one
 // payment (money in) rather than an outstanding deal balance.
-function IncomePayments({ income, onOpenDeal, isMobile, periodLabel, onSetDate }) {
+function IncomePayments({ income, onOpenDeal, isMobile, periodLabel, onSetDate, onUnmark }) {
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginTop: 4 }}>
       <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -2472,7 +2490,7 @@ function IncomePayments({ income, onOpenDeal, isMobile, periodLabel, onSetDate }
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {income.rows.map((r, i) => (
-              <IncomeRow key={i} r={r} onOpenDeal={onOpenDeal} onSetDate={onSetDate} />
+              <IncomeRow key={i} r={r} onOpenDeal={onOpenDeal} onSetDate={onSetDate} onUnmark={onUnmark} />
             ))}
           </div>
         </div>
@@ -2481,13 +2499,16 @@ function IncomePayments({ income, onOpenDeal, isMobile, periodLabel, onSetDate }
   );
 }
 
-function IncomeRow({ r, onOpenDeal, onSetDate }) {
+function IncomeRow({ r, onOpenDeal, onSetDate, onUnmark }) {
   const [editing, setEditing] = useState(false);
   const name = r.company || 'Unattributed';
   const number = r.number ? formatProposalNumber(r.number) : '';
   const date = r.paidAt ? new Date(r.paidAt).toLocaleDateString('en-GB') : '';
   const isoDate = r.paidAt ? r.paidAt.slice(0, 10) : '';
   const canEditDate = !!(onSetDate && r.editKey);
+  // Only imported pending payments can be reversed from the ledger (their
+  // reversal is a clean status flip; other sources are Stripe/deal-authoritative).
+  const canUnmark = !!(onUnmark && r.source === 'sheet' && r.editKey);
   const canOpen = !!(onOpenDeal && r.dealId);
   const open = () => { if (canOpen) onOpenDeal(r.dealId); };
   const commit = (e) => {
@@ -2539,6 +2560,19 @@ function IncomeRow({ r, onOpenDeal, onSetDate }) {
             )
           )}
         </div>
+        {canUnmark && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (window.confirm(`Un-mark ${name} as paid? It will move back to Pending Payments.`)) onUnmark(r);
+            }}
+            title="Un-mark as paid — moves back to Pending Payments"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: BRAND.muted, background: 'none', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', padding: '2px 7px', flexShrink: 0 }}
+          >
+            <RotateCcw size={12} /> Unmark
+          </button>
+        )}
         <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, flexShrink: 0 }}>{formatGBP(r.net)}</div>
       </div>
     </div>
