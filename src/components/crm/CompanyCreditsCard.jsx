@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ChevronDown, ChevronRight, Wallet, FileText, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
 import { fmtValue, fmtCredits, fmtDate, creditBarMeta, CreditUsageBar } from './creditDisplay.jsx';
+
+const fmtGBP = (n) => '£' + Number(n || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // Read-only mirror of every credit allocated against a company, from both
 // sources: deal "Credit Based Projects" (project_retainers, across all the
@@ -15,31 +17,103 @@ export function CompanyCreditsCard({ companyId }) {
   const { showMsg } = useStore();
   const [data, setData] = useState(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!companyId) return;
     api.get('/api/crm/companies/' + encodeURIComponent(companyId) + '/credits')
       .then(setData)
       .catch((err) => {
         showMsg?.(err.message || 'Failed to load credits', 'error');
-        setData({ retainers: [], partnerCredits: [] });
+        setData({ retainers: [], partnerCredits: [], creditOrders: [] });
       });
   }, [companyId, showMsg]);
 
+  useEffect(() => { load(); }, [load]);
+
   const retainers = data?.retainers || [];
   const partnerCredits = data?.partnerCredits || [];
+  const creditOrders = data?.creditOrders || [];
   const count = data ? retainers.length + partnerCredits.length : null;
 
   return (
     <Card title="Current Projects" count={count}>
       {!data && <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>}
-      {data && count === 0 && <Empty text="No credits allocated to this company yet" />}
-      {data && count > 0 && (
+      {data && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <VideoCreditOrders companyId={companyId} orders={creditOrders} onChange={load} showMsg={showMsg} />
+          {count === 0 && creditOrders.length === 0 && <Empty text="No credits allocated to this company yet" />}
           {retainers.map(r => <RetainerRow key={r.id} retainer={r} />)}
           {partnerCredits.map(p => <PartnerRow key={p.clientKey} partner={p} />)}
         </div>
       )}
     </Card>
+  );
+}
+
+// Portal video-credit purchases: pending invoice requests to action + history.
+function VideoCreditOrders({ companyId, orders, onChange, showMsg }) {
+  const [busy, setBusy] = useState(null);
+  if (!orders || orders.length === 0) return null;
+  const pending = orders.filter(o => o.status === 'requested');
+  const others = orders.filter(o => o.status !== 'requested');
+
+  const raise = async (o) => {
+    if (!window.confirm(`Raise a Xero invoice for ${o.minutes} min of video credit (${fmtGBP(o.totalIncVat)} inc VAT)?\n\nIt will appear on Pending Payments and the credit is added automatically once it's paid.`)) return;
+    setBusy(o.id);
+    try {
+      await api.post('/api/crm/companies/' + encodeURIComponent(companyId) + '/credit-order-raise', { orderId: o.id });
+      showMsg?.('Invoice raised — it\'s on Pending Payments now', 'success');
+      onChange();
+    } catch (err) { showMsg?.(err.message || 'Could not raise the invoice', 'error'); }
+    finally { setBusy(null); }
+  };
+  const dismiss = async (o) => {
+    if (!window.confirm('Dismiss this credit request without invoicing it?')) return;
+    setBusy(o.id);
+    try {
+      await api.post('/api/crm/companies/' + encodeURIComponent(companyId) + '/credit-order-cancel', { orderId: o.id });
+      onChange();
+    } catch (err) { showMsg?.(err.message || 'Could not dismiss', 'error'); }
+    finally { setBusy(null); }
+  };
+
+  const STATUS = {
+    invoiced: { label: 'Invoiced · awaiting payment', bg: '#FEF9C3', fg: '#854D0E' },
+    paid: { label: 'Paid · credited', bg: '#DCFCE7', fg: '#15803D' },
+  };
+
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: BRAND.paper, borderBottom: '1px solid ' + BRAND.border }}>
+        <Wallet size={15} color={BRAND.blue} />
+        <span style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink }}>Video credit purchases</span>
+      </div>
+      <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {pending.map(o => (
+          <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: '#F0F7FF', border: '1px solid #CFE4FB', borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink }}>{o.minutes} min requested — {fmtGBP(o.totalIncVat)} inc VAT</div>
+              <div style={{ fontSize: 11.5, color: BRAND.muted }}>{fmtGBP(o.subtotalExVat)} ex VAT · by {o.requestedBy || 'client'} · {fmtDate(o.createdAt)}</div>
+            </div>
+            <button className="btn" onClick={() => raise(o)} disabled={busy === o.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, padding: '7px 12px' }}>
+              <FileText size={14} /> {busy === o.id ? 'Raising…' : 'Raise invoice'}
+            </button>
+            <button className="btn-ghost" onClick={() => dismiss(o)} disabled={busy === o.id} title="Dismiss" style={{ display: 'inline-flex', alignItems: 'center', padding: 6, color: BRAND.muted }}>
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+        {others.map(o => {
+          const s = STATUS[o.status] || { label: o.status, bg: '#E5E7EB', fg: '#475569' };
+          return (
+            <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5 }}>
+              <span style={{ color: BRAND.ink, flex: 1 }}>{o.minutes} min · {fmtGBP(o.totalIncVat)} inc VAT · {o.paymentRoute === 'card' ? 'card' : 'invoice'}</span>
+              <Pill {...s} />
+              <span style={{ color: BRAND.muted, whiteSpace: 'nowrap' }}>{fmtDate(o.creditedAt || o.createdAt)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

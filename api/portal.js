@@ -46,6 +46,8 @@ import {
   videoCreditPricingParams,
   videoCreditQuote,
   videoCreditRatePerMin,
+  createVideoCreditInvoiceOrder,
+  reconcileVideoCreditOrders,
 } from './_lib/videoCredit.js';
 import {
   signPortalToken,
@@ -1710,6 +1712,9 @@ async function videoCreditRoute(req, res, user) {
   const companyId = resolveCompanyId(req, res, user);
   if (!companyId) return;
   const company = user.companies.find((c) => c.id === companyId) || { id: companyId };
+  // Credit any of this company's invoice orders whose Xero invoice has been paid
+  // since last look, so the balance below is up to date.
+  await reconcileVideoCreditOrders([companyId]).catch(() => {});
   const [balance, pricing] = await Promise.all([
     companyCreditBalance(company).catch(() => ({ issued: 0, used: 0, remaining: 0 })),
     videoCreditPricingParams(),
@@ -1787,13 +1792,25 @@ async function videoCreditInvoiceRoute(req, res, user) {
   const ratePerMin = await videoCreditRatePerMin();
   const quote = videoCreditQuote(minutes, ratePerMin);
   const money = (n) => '£' + n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Record the request as a credit order so staff can raise the invoice with one
+  // click (it then lands on Pending Payments + counts as a sale) and the minutes
+  // auto-credit when it's paid.
+  let order;
+  try {
+    order = await createVideoCreditInvoiceOrder({ company: { id: companyId }, minutes, ratePerMin, requestedBy: user.email });
+  } catch (err) {
+    console.error('[portal] video-credit order create failed', err.message);
+    return res.status(502).json({ error: 'Could not log your request — try again shortly.' });
+  }
+
   try {
     await ensurePortalNotificationDefaults();
     await sendNotification('portal.video_credit_request', {
       subject: `🎬 Video credit invoice request — ${company?.name || user.email}`,
       text: `${user.name || user.email} (${company?.name || 'client portal'}) asked to buy ${minutes} minute${minutes === 1 ? '' : 's'} of video credit by INVOICE.\n\n`
         + `${money(quote.subtotalExVat)} ex VAT + ${money(quote.vat)} VAT = ${money(quote.totalIncVat)} inc VAT `
-        + `(${Math.round(quote.discount * 100)}% credit discount).\n\nRaise the invoice, then add the ${minutes} min to their credit balance once it's paid.`,
+        + `(${Math.round(quote.discount * 100)}% credit discount).\n\nRaise the invoice from their company page — the credit is added automatically once it's paid.`,
       inApp: {
         title: 'Video credit — invoice requested',
         body: `${company?.name || ''} · ${minutes} min · ${money(quote.totalIncVat)} inc VAT`,
@@ -1802,9 +1819,9 @@ async function videoCreditInvoiceRoute(req, res, user) {
     });
   } catch (err) {
     console.warn('[portal] video-credit invoice request notify failed', err.message);
-    return res.status(502).json({ error: 'Could not send your request — try again shortly.' });
+    // The order is logged; a failed notification shouldn't fail the request.
   }
-  return res.status(200).json({ ok: true });
+  return res.status(200).json({ ok: true, orderId: order.id });
 }
 
 // ═════════════════════════ po-number ═════════════════════════

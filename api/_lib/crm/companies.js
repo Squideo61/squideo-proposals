@@ -5,6 +5,7 @@ import { hasPermission } from '../permissions.js';
 import { updateContactAddress, getOrCreateContact } from '../xero.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
 import { creditTotalsForKeys } from '../partnerCredits.js';
+import { listVideoCreditOrders, raiseInvoiceForCreditOrder, cancelCreditOrder, reconcileVideoCreditOrders } from '../videoCredit.js';
 
 // Self-heal for db/migrations/20260603_company_address.sql. Called at the top of
 // every companies code path so a workspace that skipped the manual Neon apply
@@ -260,6 +261,9 @@ export async function companiesRoute(req, res, id, action, user) {
   if (action === 'credits' && req.method === 'GET') {
     const [companyRow] = await sql`SELECT id, name, xero_contact_id FROM companies WHERE id = ${id}`;
     if (!companyRow) return res.status(404).json({ error: 'Not found' });
+    // Credit any just-paid video-credit invoices BEFORE computing partner totals
+    // so the balance shown below already includes them.
+    await reconcileVideoCreditOrders([id]).catch(() => {});
 
     // --- Deal credit-based projects (mirrors retainersRoute's read, by company)
     const retainerRows = await sql`
@@ -356,7 +360,45 @@ export async function companiesRoute(req, res, id, action, user) {
       }));
     }
 
-    return res.status(200).json({ retainers, partnerCredits });
+    // Video-credit orders (portal purchases): pending invoice requests to action
+    // + the history. Reconciles any just-paid invoices into the balance first.
+    const creditOrders = await listVideoCreditOrders(id).catch(() => []);
+
+    return res.status(200).json({ retainers, partnerCredits, creditOrders });
+  }
+
+  // POST /companies/:id/credit-order-raise { orderId } — raise the standalone
+  // Xero invoice for a portal video-credit request. It then shows on Pending
+  // Payments + counts as a sale; the minutes auto-credit when it's paid.
+  if (action === 'credit-order-raise' && req.method === 'POST') {
+    if (!hasPermission(await getRole(user.role), 'finance.manage')) {
+      return res.status(403).json({ error: 'You do not have permission to raise invoices' });
+    }
+    const body = req.body || {};
+    const orderId = trimOrNull(body.orderId);
+    if (!orderId) return res.status(400).json({ error: 'orderId required' });
+    try {
+      const result = await raiseInvoiceForCreditOrder(orderId, user);
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(err.status || 500).json({ error: err.message || 'Could not raise the invoice' });
+    }
+  }
+
+  // POST /companies/:id/credit-order-cancel { orderId } — dismiss a still-pending
+  // credit request without invoicing it.
+  if (action === 'credit-order-cancel' && req.method === 'POST') {
+    if (!hasPermission(await getRole(user.role), 'finance.manage')) {
+      return res.status(403).json({ error: 'You do not have permission to manage credit requests' });
+    }
+    const body = req.body || {};
+    const orderId = trimOrNull(body.orderId);
+    if (!orderId) return res.status(400).json({ error: 'orderId required' });
+    try {
+      return res.status(200).json(await cancelCreditOrder(orderId));
+    } catch (err) {
+      return res.status(err.status || 500).json({ error: err.message || 'Could not cancel the request' });
+    }
   }
 
   // POST /companies/:id/create-xero-contact — create a brand-new Xero contact
