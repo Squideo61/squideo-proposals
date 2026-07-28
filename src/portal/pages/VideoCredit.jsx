@@ -178,7 +178,7 @@ export default function VideoCredit() {
       <Card>
         <SectionHeading>How video credit works</SectionHeading>
         <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 13.5, color: BRAND.ink, lineHeight: 1.7 }}>
-          <li>Credit is measured in <strong>minutes of finished video</strong> — a 2-minute video uses 2 minutes of credit.</li>
+          <li>Credit is measured in <strong>minutes of finished video</strong> — a 2 minute video uses 2 credits.</li>
           <li>The more minutes you buy at once, the bigger the discount on them.</li>
           <li>When you request a <strong>New video</strong>, tick “use my credit” and we'll draw it down against your quote.</li>
           <li>Any credit you don't use stays on your balance for up to 2 years.</li>
