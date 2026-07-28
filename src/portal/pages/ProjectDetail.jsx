@@ -152,7 +152,7 @@ export default function ProjectDetail({ dealId }) {
             {(project.reviews || []).map((r, i) => (
               <div key={`rev-${i}`} style={{ display: 'flex', flexDirection: 'column' }}>
                 <a
-                  href={`/?revision=${encodeURIComponent(r.shareToken)}`}
+                  href={`#/review/${encodeURIComponent(r.shareToken)}`}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
                     border: `1px solid ${BRAND.border}`,
@@ -202,7 +202,7 @@ export default function ProjectDetail({ dealId }) {
             {(project.storyboards || []).map((s, i) => (
               <a
                 key={`sb-${i}`}
-                href={`/?storyboard=${encodeURIComponent(s.shareToken)}`}
+                href={`#/storyboard/${encodeURIComponent(s.shareToken)}`}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
                   border: `1px solid ${BRAND.border}`, borderRadius: 10, textDecoration: 'none',

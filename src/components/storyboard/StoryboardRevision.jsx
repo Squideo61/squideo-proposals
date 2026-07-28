@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, Send, Images, Paperclip, X, FileDown, CheckCircle2, CalendarClock, MapPin, ChevronUp, ChevronDown, Pencil, Trash2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
-import { useStore } from '../../store.jsx';
 import { loadPdf } from '../../lib/pdf.js';
 import { PdfPage } from './PdfPage.jsx';
 import { PdfThumb } from './PdfThumb.jsx';
@@ -63,15 +62,20 @@ function CommentAttachment({ url, name, type }) {
  * draft PDF versions. Reviewers must enter their name + email before viewing,
  * then comment per-slide (optionally pinned to a spot) and approve.
  */
-export function StoryboardRevision({ token, data }) {
-  const { actions, showMsg } = useStore();
+export function StoryboardRevision({ token, data, api, showMsg, identity = null }) {
+  const preIdentified = !!(identity && isEmail(identity.email || ''));
 
-  // ── Name + email gate ──────────────────────────────────────────────────────
-  const [name, setName] = useState(() => localStorage.getItem(NAME_KEY) || '');
-  const [email, setEmail] = useState(() => localStorage.getItem(EMAIL_KEY) || '');
-  const [identified, setIdentified] = useState(() => !!localStorage.getItem(NAME_KEY) && isEmail(localStorage.getItem(EMAIL_KEY) || ''));
+  // ── Name + email gate (skipped for a pre-identified portal user) ────────────
+  const [name, setName] = useState(() => identity?.name || localStorage.getItem(NAME_KEY) || '');
+  const [email, setEmail] = useState(() => identity?.email || localStorage.getItem(EMAIL_KEY) || '');
+  const [identified, setIdentified] = useState(() => preIdentified || (!!localStorage.getItem(NAME_KEY) && isEmail(localStorage.getItem(EMAIL_KEY) || '')));
   const [gateName, setGateName] = useState(name);
   const [gateEmail, setGateEmail] = useState(email);
+
+  // A logged-in portal viewer is recorded automatically (no gate to submit).
+  useEffect(() => {
+    if (preIdentified) api.recordStoryboardViewer(token, { name: identity.name || identity.email, email: identity.email }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function submitGate(e) {
     e.preventDefault();
@@ -81,7 +85,7 @@ export function StoryboardRevision({ token, data }) {
     localStorage.setItem(NAME_KEY, n);
     localStorage.setItem(EMAIL_KEY, em);
     setName(n); setEmail(em); setIdentified(true);
-    actions.recordStoryboardViewer(token, { name: n, email: em }).catch(() => {});
+    api.recordStoryboardViewer(token, { name: n, email: em }).catch(() => {});
   }
 
   // ── Storyboard + draft selection ────────────────────────────────────────────
@@ -178,7 +182,7 @@ export function StoryboardRevision({ token, data }) {
     if (file.size > 100 * 1024 * 1024) { showMsg('File too large (max 100 MB)'); return; }
     setAssetUploading(true);
     try {
-      const uploaded = await actions.uploadStoryboardAsset(token, file);
+      const uploaded = await api.uploadStoryboardAsset(token, file);
       setAsset(uploaded);
     } catch (err) {
       showMsg(err.message || 'Could not upload file');
@@ -193,7 +197,7 @@ export function StoryboardRevision({ token, data }) {
     if ((!text && !asset) || !version) return;
     setPosting(true);
     try {
-      const created = await actions.postStoryboardComment(token, {
+      const created = await api.postStoryboardComment(token, {
         versionId: version.id,
         body: text,
         authorName: name,
@@ -232,7 +236,7 @@ export function StoryboardRevision({ token, data }) {
     if (!window.confirm(msg)) return;
     setApproving(true);
     try {
-      const res = await actions.approveStoryboard(token, activeStoryboard.id, name);
+      const res = await api.approveStoryboard(token, activeStoryboard.id, name);
       const at = res.approvedAt || new Date().toISOString();
       setApprovals(prev => ({ ...prev, [activeStoryboard.id]: at }));
       setSubmitted(prev => ({ ...prev, [activeStoryboard.id]: res.feedbackSubmittedAt || new Date().toISOString() }));
@@ -259,7 +263,7 @@ export function StoryboardRevision({ token, data }) {
     if (!id || !text || savingEdit) return;
     setSavingEdit(true);
     try {
-      const updated = await actions.editStoryboardComment(token, id, text, email);
+      const updated = await api.editStoryboardComment(token, id, text, email);
       setComments(prev => prev.map(c => (c.id === id ? { ...c, ...updated } : c)));
       setEditingId(null);
       setEditingText('');
@@ -273,7 +277,7 @@ export function StoryboardRevision({ token, data }) {
     if (approvedAt) return;
     if (!window.confirm('Delete this comment? This cannot be undone.')) return;
     try {
-      await actions.deleteStoryboardComment(token, c.id, email);
+      await api.deleteStoryboardComment(token, c.id, email);
       setComments(prev => prev.filter(x => x.id !== c.id));
       if (editingId === c.id) cancelEdit();
     } catch (err) {
@@ -284,7 +288,7 @@ export function StoryboardRevision({ token, data }) {
   // Record a view whenever the client lands on / switches to a draft.
   useEffect(() => {
     if (!identified || !version) return;
-    actions.recordStoryboardView(token, { versionId: version.id, name, email });
+    api.recordStoryboardView(token, { versionId: version.id, name, email });
   }, [identified, version?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live updates + presence heartbeat: poll publicView every ~6s once the
@@ -296,7 +300,7 @@ export function StoryboardRevision({ token, data }) {
     let alive = true;
     const tick = async () => {
       try {
-        const d = await actions.pollPublicStoryboard(token, email);
+        const d = await api.pollPublicStoryboard(token, email);
         if (!alive || !d) return;
         if (Array.isArray(d.comments)) setComments(d.comments);
         if (Array.isArray(d.activeViewers)) setActiveViewers(d.activeViewers);

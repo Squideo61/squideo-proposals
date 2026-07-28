@@ -8,7 +8,7 @@ import { StoryboardRevision } from './StoryboardRevision.jsx';
 // (/?storyboard=<share_token>). Mirrors RevisionShell: load once, render the
 // viewer, surface a friendly message if the link is dead.
 export function StoryboardShell({ token }) {
-  const { actions, toast } = useStore();
+  const { actions, showMsg, toast } = useStore();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
@@ -29,7 +29,7 @@ export function StoryboardShell({ token }) {
 
   return (
     <div style={{ background: BRAND.paper, color: BRAND.ink }}>
-      <StoryboardRevision token={token} data={data} />
+      <StoryboardRevision token={token} data={data} api={actions} showMsg={showMsg} />
       <Toast msg={toast} />
     </div>
   );

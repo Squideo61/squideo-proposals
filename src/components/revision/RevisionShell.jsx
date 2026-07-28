@@ -8,7 +8,7 @@ import { VideoRevision } from './VideoRevision.jsx';
 // (/?revision=<share_token>). Mirrors PublicClientShell: load once, render the
 // viewer, surface a friendly message if the link is dead.
 export function RevisionShell({ token }) {
-  const { actions, toast } = useStore();
+  const { actions, showMsg, toast } = useStore();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
@@ -31,7 +31,9 @@ export function RevisionShell({ token }) {
 
   return (
     <div style={{ background: BRAND.paper, color: BRAND.ink }}>
-      <VideoRevision token={token} data={data} />
+      {/* Anonymous share-token page: the CRM store IS the data adapter, and no
+          identity is pre-set so the name/email gate is shown. */}
+      <VideoRevision token={token} data={data} api={actions} showMsg={showMsg} />
       <Toast msg={toast} />
     </div>
   );

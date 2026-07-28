@@ -27,6 +27,8 @@ import Kickoff from './pages/Kickoff.jsx';
 import RequestVideo from './pages/RequestVideo.jsx';
 import Team from './pages/Team.jsx';
 import Settings from './pages/Settings.jsx';
+import Review from './pages/Review.jsx';
+import Storyboard from './pages/Storyboard.jsx';
 
 const MAX_WIDTH = 1080;
 
@@ -183,6 +185,8 @@ function AuthedApp() {
   let page;
   switch (route.view) {
     case 'project': page = <ProjectDetail dealId={route.param} />; break;
+    case 'review': page = <Review token={route.param} />; break;
+    case 'storyboard': page = <Storyboard token={route.param} />; break;
     case 'library': page = <Library />; break;
     case 'documents': page = <Documents />; break;
     case 'extras': page = <Extras dealId={route.param} />; break;

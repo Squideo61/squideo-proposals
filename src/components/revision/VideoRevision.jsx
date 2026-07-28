@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock, Eye, Pencil, Trash2, MapPin } from 'lucide-react';
 import { BRAND } from '../../theme.js';
-import { useStore } from '../../store.jsx';
 import { ConflictBanner } from './ConflictBanner.jsx';
 
 const NAME_KEY = 'squideo.revision.name';
@@ -60,19 +59,30 @@ function CommentAttachment({ url, name, type }) {
 /**
  * Frame.io-style revision surface. `data` is the public payload from
  * /api/revisions/public: a project with one or more videos, each with drafts.
- * Reviewers must enter their name + email before viewing.
+ *
+ * Data access is injected via `api` (the same method set as the store's revision
+ * actions) so this component can run both on the anonymous share-token page (fed
+ * from the CRM store) and inside the customer portal (fed from a portal adapter)
+ * without dragging the CRM store into the portal bundle. `showMsg` is the toast
+ * fn. When `identity` ({ name, email }) is supplied — a logged-in portal user —
+ * the name/email gate is skipped and their verified details are used instead.
  */
-export function VideoRevision({ token, data }) {
-  const { actions, showMsg } = useStore();
+export function VideoRevision({ token, data, api, showMsg, identity = null }) {
+  const preIdentified = !!(identity && isEmail(identity.email || ''));
   const videoRef = useRef(null);
   const composerRef = useRef(null);
 
-  // ── Name + email gate ──────────────────────────────────────────────────────
-  const [name, setName] = useState(() => localStorage.getItem(NAME_KEY) || '');
-  const [email, setEmail] = useState(() => localStorage.getItem(EMAIL_KEY) || '');
-  const [identified, setIdentified] = useState(() => !!localStorage.getItem(NAME_KEY) && isEmail(localStorage.getItem(EMAIL_KEY) || ''));
+  // ── Name + email gate (skipped for a pre-identified portal user) ────────────
+  const [name, setName] = useState(() => identity?.name || localStorage.getItem(NAME_KEY) || '');
+  const [email, setEmail] = useState(() => identity?.email || localStorage.getItem(EMAIL_KEY) || '');
+  const [identified, setIdentified] = useState(() => preIdentified || (!!localStorage.getItem(NAME_KEY) && isEmail(localStorage.getItem(EMAIL_KEY) || '')));
   const [gateName, setGateName] = useState(name);
   const [gateEmail, setGateEmail] = useState(email);
+
+  // A logged-in portal viewer is recorded automatically (no gate to submit).
+  useEffect(() => {
+    if (preIdentified) api.recordRevisionViewer(token, { name: identity.name || identity.email, email: identity.email }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function submitGate(e) {
     e.preventDefault();
@@ -82,7 +92,7 @@ export function VideoRevision({ token, data }) {
     localStorage.setItem(NAME_KEY, n);
     localStorage.setItem(EMAIL_KEY, em);
     setName(n); setEmail(em); setIdentified(true);
-    actions.recordRevisionViewer(token, { name: n, email: em }).catch(() => {});
+    api.recordRevisionViewer(token, { name: n, email: em }).catch(() => {});
   }
 
   // ── Video + draft selection ─────────────────────────────────────────────────
@@ -220,7 +230,7 @@ export function VideoRevision({ token, data }) {
     if (file.size > 100 * 1024 * 1024) { showMsg('File too large (max 100 MB)'); return; }
     setAssetUploading(true);
     try {
-      const uploaded = await actions.uploadRevisionAsset(token, file);
+      const uploaded = await api.uploadRevisionAsset(token, file);
       setAsset(uploaded);
     } catch (err) {
       showMsg(err.message || 'Could not upload file');
@@ -235,7 +245,7 @@ export function VideoRevision({ token, data }) {
     if ((!text && !asset) || !version) return;
     setPosting(true);
     try {
-      const created = await actions.postRevisionComment(token, {
+      const created = await api.postRevisionComment(token, {
         versionId: version.id,
         body: text,
         authorName: name,
@@ -277,7 +287,7 @@ export function VideoRevision({ token, data }) {
     if (!window.confirm(msg)) return;
     setApproving(true);
     try {
-      const res = await actions.approveRevision(token, activeVideo.id, name);
+      const res = await api.approveRevision(token, activeVideo.id, name);
       const at = res.approvedAt || new Date().toISOString();
       setApprovals(prev => ({ ...prev, [activeVideo.id]: at }));
       setSubmitted(prev => ({ ...prev, [activeVideo.id]: res.feedbackSubmittedAt || new Date().toISOString() }));
@@ -292,7 +302,7 @@ export function VideoRevision({ token, data }) {
   // Record a view whenever the client lands on / switches to a draft.
   useEffect(() => {
     if (!identified || !version) return;
-    actions.recordRevisionView(token, { versionId: version.id, name, email });
+    api.recordRevisionView(token, { versionId: version.id, name, email });
   }, [identified, version?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live updates + presence heartbeat: poll publicView every ~6s once the
@@ -305,7 +315,7 @@ export function VideoRevision({ token, data }) {
     let alive = true;
     const tick = async () => {
       try {
-        const d = await actions.pollPublicRevision(token, email);
+        const d = await api.pollPublicRevision(token, email);
         if (!alive || !d) return;
         setComments(d.comments || []);
         setActiveViewers(d.activeViewers || []);
@@ -345,7 +355,7 @@ export function VideoRevision({ token, data }) {
     if (!id || !text || savingEdit) return;
     setSavingEdit(true);
     try {
-      const updated = await actions.editRevisionComment(token, id, text, email);
+      const updated = await api.editRevisionComment(token, id, text, email);
       setComments(prev => prev.map(c => (c.id === id ? { ...c, ...updated } : c)));
       setEditingId(null);
       setEditingText('');
@@ -360,7 +370,7 @@ export function VideoRevision({ token, data }) {
     if (approvedAt) return;
     if (!window.confirm('Delete this comment? This cannot be undone.')) return;
     try {
-      await actions.deleteRevisionComment(token, c.id, email);
+      await api.deleteRevisionComment(token, c.id, email);
       setComments(prev => prev.filter(x => x.id !== c.id));
       if (editingId === c.id) cancelEdit();
     } catch (err) {
