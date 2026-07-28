@@ -151,3 +151,22 @@ export function portalProjectTasksHtml({ bodyHtml, inviteUrl, logoUrl = null }) 
   `;
   return shell(inner, logoUrl);
 }
+
+// Automatic reminder that a client still has outstanding project tasks. The
+// intro copy (bodyHtml) is admin-editable (settings.task_reminders.bodyHtml) and
+// trusted, so it isn't escaped; the task list is rendered from the live derived
+// tasks (title/detail are our own strings, escaped defensively).
+export function portalTaskReminderHtml({ bodyHtml, projectTitle, tasks = [], portalUrl = PORTAL_URL, logoUrl = null }) {
+  const items = tasks.map((t) => `
+    <li style="margin:0 0 10px;">
+      <strong>${escapeHtml(t.title || '')}</strong>${t.detail ? `<br/><span style="color:#6B7785;">${escapeHtml(t.detail)}</span>` : ''}
+    </li>`).join('');
+  const inner = `
+    ${bodyHtml || `<h2 style="margin:0 0 12px;font-size:19px;font-weight:700;">A few things still need you 👋</h2>
+    <p style="margin:0 0 14px;">Your project${projectTitle ? ` <strong>${escapeHtml(projectTitle)}</strong>` : ''} is ready to move forward — there ${tasks.length === 1 ? 'is 1 thing' : `are ${tasks.length} things`} waiting on you:</p>`}
+    <ul style="margin:0 0 18px;padding:0 0 0 20px;line-height:1.5;">${items}</ul>
+    <p style="margin:0 0 18px;">${ctaButton(portalUrl, 'Complete my tasks')}</p>
+    <p style="margin:0;font-size:12px;color:#6B7785;">Already sorted? You can ignore this — it'll stop once everything's done.</p>
+  `;
+  return shell(inner, logoUrl);
+}

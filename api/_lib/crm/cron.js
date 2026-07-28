@@ -16,6 +16,12 @@ import { cronGscSync } from './googleSearch.js';
 import { cronGa4Sync } from './googleAnalytics.js';
 import { captureCostSnapshot } from './costSnapshot.js';
 import { timingSafeEqualStr } from '../middleware.js';
+import { ensurePortalTables } from '../portal/db.js';
+import { computeDealTasks } from '../portal/taskContext.js';
+import { notifyPortalUser, resolvePortalRecipients } from '../portal/notifications.js';
+import { shouldRemind } from '../portal/tasks.js';
+import { portalTaskReminderHtml, PORTAL_URL } from '../portal/emails.js';
+import { emailLogoUrl } from '../portal/logo.js';
 
 export async function cronHandler(req, res, action) {
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
@@ -44,6 +50,7 @@ export async function cronHandler(req, res, action) {
     case 'quarterly-tax-summary': return cronQuarterlyTaxSummary(res);
     case 'director-tax-reminders': return cronDirectorTaxReminders(res);
     case 'intro-call-reminders': return cronIntroCallReminders(req, res);
+    case 'client-task-reminders': return cronClientTaskReminders(req, res);
     case 'ad-spend-sync':     return cronAdSpendSync(res);
     case 'gsc-sync':          return cronGscSync(res);
     case 'ga4-sync':          return cronGa4Sync(res);
@@ -313,6 +320,108 @@ export async function cronInvoiceReminders(res) {
     }
   }
   return res.status(200).json({ ok: true, found: due.length, sent });
+}
+
+// Automatic client-task reminders. Chases clients who still have outstanding
+// portal tasks (choose voiceover / book kick-off / send PO) on a cadence the
+// team controls (settings.task_reminders). Each due deal gets an in-portal feed
+// row per registered member + one grouped client email; the per-deal count +
+// timestamp enforce the cadence and cap, and it stops the moment tasks are done.
+// Daily cron; ?force=1 bypasses the cadence window for manual testing.
+export async function cronClientTaskReminders(req, res) {
+  try {
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS client_tasks_reminded_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS client_tasks_reminder_count INT NOT NULL DEFAULT 0`;
+    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS task_reminders JSONB`;
+    await ensurePortalTables();
+  } catch (err) {
+    console.warn('[cron client-task-reminders] ensure schema failed', err.message);
+  }
+
+  const [s] = await sql`SELECT task_reminders FROM settings WHERE id = 1`.catch(() => [null]);
+  const cfg = s?.task_reminders || {};
+  if (!cfg.enabled) return res.status(200).json({ ok: true, skipped: 'disabled' });
+
+  const everyDays = Math.max(1, Number(cfg.everyDays) || 3);
+  const maxReminders = Math.max(1, Number(cfg.maxReminders) || 3);
+  const force = String(req.query?.force || '') === '1';
+  const now = new Date();
+
+  // Coarse prefilter: live projects with tasks launched, under the cap. The
+  // exact cadence + "still has open tasks" decision is made per deal below
+  // (shouldRemind), against the live task list.
+  const candidates = await sql`
+    SELECT id, title, company_id, client_tasks_launched_at,
+           client_tasks_reminded_at, client_tasks_reminder_count
+      FROM deals
+     WHERE client_tasks_launched_at IS NOT NULL
+       AND stage IN ('signed', 'paid')
+       AND client_tasks_reminder_count < ${maxReminders}
+     ORDER BY client_tasks_launched_at ASC
+     LIMIT 200
+  `;
+
+  let sent = 0;
+  for (const d of candidates) {
+    try {
+      const ctx = await computeDealTasks(d.id);
+      const open = (ctx?.tasks || []).filter((t) => t.status === 'todo');
+      const decide = shouldRemind({
+        launchedAt: d.client_tasks_launched_at,
+        remindedAt: d.client_tasks_reminded_at,
+        count: d.client_tasks_reminder_count || 0,
+        everyDays, maxReminders, openCount: open.length, now,
+      });
+      if (!force && !decide) continue;
+      if (!open.length) continue; // done — nothing to chase (auto-stop)
+
+      // Registered members get a feed row + email; pending (un-accepted) invitees
+      // get the email only so reminders still land before they've signed up.
+      const members = await resolvePortalRecipients(d.company_id);
+      for (const m of members) {
+        await notifyPortalUser({
+          portalUserId: m.id,
+          companyId: d.company_id,
+          dealId: d.id,
+          key: 'portal.task_reminder',
+          title: 'Reminder: tasks waiting on you',
+          body: `${open.length} task${open.length === 1 ? '' : 's'} left on ${d.title}.`,
+          link: `#/project/${d.id}`,
+        });
+      }
+      const pending = await sql`
+        SELECT DISTINCT email FROM portal_invites
+         WHERE company_id = ${d.company_id} AND accepted_at IS NULL
+           AND revoked_at IS NULL AND expires_at > NOW()
+      `.catch(() => []);
+      const emails = [...new Set([...members.map((m) => m.email), ...pending.map((p) => p.email)].filter(Boolean))];
+      if (emails.length) {
+        await sendMail({
+          to: emails,
+          subject: cfg.subject || `A few things still need you — ${d.title}`,
+          html: portalTaskReminderHtml({
+            bodyHtml: cfg.bodyHtml,
+            projectTitle: d.title,
+            tasks: open,
+            portalUrl: PORTAL_URL,
+            logoUrl: await emailLogoUrl(d.company_id),
+          }),
+          text: `You still have ${open.length} task(s) to complete for ${d.title}: ${PORTAL_URL}`,
+        });
+      }
+
+      await sql`
+        UPDATE deals
+           SET client_tasks_reminded_at = NOW(),
+               client_tasks_reminder_count = client_tasks_reminder_count + 1
+         WHERE id = ${d.id}
+      `;
+      sent++;
+    } catch (err) {
+      console.error('[cron client-task-reminders] failed', { dealId: d.id, err: err.message });
+    }
+  }
+  return res.status(200).json({ ok: true, found: candidates.length, sent });
 }
 
 const QUARTER_TAX_NOTIFY_TO = process.env.QUARTER_TAX_NOTIFY_TO || 'adam@squideo.co.uk';

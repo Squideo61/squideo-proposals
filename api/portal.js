@@ -54,6 +54,7 @@ import {
   clientIp,
 } from './_lib/portal/middleware.js';
 import { deriveNextStep } from './_lib/portal/nextStep.js';
+import { serialisePortalNotification } from './_lib/portal/notificationShape.js';
 import { deriveProjectTasks, countOpenTasks } from './_lib/portal/tasks.js';
 import { voiceoverProposalContext } from './_lib/proposalPricing.js';
 import {
@@ -381,6 +382,7 @@ export default async function handler(req, res) {
 
     switch (action) {
       case 'me': return meRoutes(req, res, user);
+      case 'notifications': return notificationsRoute(req, res, user);
       case 'overview': return overviewRoute(req, res, user);
       case 'project': return projectRoute(req, res, user);
       case 'library': return libraryRoute(req, res, user);
@@ -404,6 +406,53 @@ export default async function handler(req, res) {
     console.error('[portal] error', err);
     return res.status(500).json({ error: 'Request failed' });
   }
+}
+
+// ═════════════════════════ notifications ═════════════════════════
+// The client's in-portal notification feed + unread badge. Rows are written by
+// notifyPortalUser (api/_lib/portal/notifications.js) at task launch and by the
+// reminder cron. Scoped strictly to the caller's own portal_user id.
+async function notificationsRoute(req, res, user) {
+  // Preview sessions have no puid — nothing to show, nothing to mark.
+  if (!user.puid) return res.status(200).json({ notifications: [], unread: 0 });
+
+  if (req.method === 'GET') {
+    const rows = await sql`
+      SELECT id, notification_key, title, body, link, created_at, read_at
+        FROM portal_notifications
+       WHERE portal_user_id = ${user.puid}
+       ORDER BY created_at DESC
+       LIMIT 50
+    `;
+    const [{ unread }] = await sql`
+      SELECT COUNT(*)::int AS unread FROM portal_notifications
+       WHERE portal_user_id = ${user.puid} AND read_at IS NULL
+    `;
+    return res.status(200).json({
+      notifications: rows.map(serialisePortalNotification),
+      unread,
+    });
+  }
+
+  if (req.method === 'POST') {
+    const body = req.body || {};
+    if (body.all) {
+      await sql`
+        UPDATE portal_notifications SET read_at = NOW()
+         WHERE portal_user_id = ${user.puid} AND read_at IS NULL
+      `;
+      return res.status(200).json({ ok: true });
+    }
+    const id = trimOrNull(body.id);
+    if (!id) return res.status(400).json({ error: 'id or all required' });
+    await sql`
+      UPDATE portal_notifications SET read_at = NOW()
+       WHERE id = ${id} AND portal_user_id = ${user.puid} AND read_at IS NULL
+    `;
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
 }
 
 // ═════════════════════════ auth ═════════════════════════

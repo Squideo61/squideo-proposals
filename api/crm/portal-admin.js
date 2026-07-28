@@ -23,8 +23,10 @@ import { sendMail } from '../_lib/email.js';
 import { ensurePortalTables } from '../_lib/portal/db.js';
 import { createRawToken, hashToken, signPortalPreviewToken } from '../_lib/portal/auth.js';
 import { sendTeamInvite, createPortalInvite, inviteUrlFor } from '../_lib/portal/onboarding.js';
-import { portalTeamInviteHtml, portalResetHtml, PORTAL_URL } from '../_lib/portal/emails.js';
+import { portalTeamInviteHtml, portalResetHtml, portalProjectTasksHtml, PORTAL_URL } from '../_lib/portal/emails.js';
 import { emailLogoUrl } from '../_lib/portal/logo.js';
+import { notifyPortalUser } from '../_lib/portal/notifications.js';
+import { computeDealTasks } from '../_lib/portal/taskContext.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 import { ensureProductionSchema } from '../_lib/production.js';
 
@@ -497,6 +499,44 @@ export default async function handler(req, res) {
           UPDATE deals SET client_tasks_launched_at = COALESCE(client_tasks_launched_at, NOW())
            WHERE id = ${dealId}
         `.catch(() => {});
+
+        // Tell the client their tasks are live: an in-portal feed row (for any
+        // teammates already on the portal) + a branded task email. Best-effort —
+        // never let notification failure break link generation.
+        try {
+          const ctx = await computeDealTasks(dealId);
+          const openCount = ctx?.openCount || 0;
+          await notifyPortalUser({
+            companyId: deal.company_id,
+            dealId,
+            key: 'portal.tasks_launched',
+            title: 'Your project is ready',
+            body: openCount
+              ? `You have ${openCount} task${openCount === 1 ? '' : 's'} to complete to get started.`
+              : 'Track your project and share what we need in the portal.',
+            link: `#/project/${dealId}`,
+          });
+
+          // The branded task email only sends when the team has authored the
+          // task-email copy (settings.project_tasks_email) — an explicit opt-in
+          // so clients don't also get the PM's Gmail-composer intro note twice.
+          const [s] = await sql`SELECT project_tasks_email FROM settings WHERE id = 1`.catch(() => [null]);
+          const tpl = s?.project_tasks_email || null;
+          if (tpl && (tpl.subject || tpl.bodyHtml)) {
+            await sendMail({
+              to: email,
+              subject: tpl.subject || `${deal.title} — a couple of things to get started`,
+              html: portalProjectTasksHtml({
+                bodyHtml: tpl.bodyHtml,
+                inviteUrl: inviteUrlFor(rawToken),
+                logoUrl: await emailLogoUrl(deal.company_id),
+              }),
+              text: `Your project is underway. Open your portal: ${inviteUrlFor(rawToken)}`,
+            });
+          }
+        } catch (err) {
+          console.warn('[portal-admin] task-launch notify failed', err.message);
+        }
       }
 
       return res.status(200).json({ url: inviteUrlFor(rawToken), companyName: deal.company_name || null });

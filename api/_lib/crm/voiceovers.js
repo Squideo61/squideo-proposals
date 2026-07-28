@@ -24,7 +24,8 @@ const cleanCategory = (c) => (VOICEOVER_CATEGORIES.includes(c) ? c : 'human');
 export async function voiceoversRoute(req, res, id, action, user) {
   await ensureVoiceoverCatalogue();
 
-  const manage = hasPermission(await getRole(user.role), 'settings.manage');
+  const role = await getRole(user.role);
+  const manage = hasPermission(role, 'voiceovers.manage') || hasPermission(role, 'settings.manage');
   if (!manage) return res.status(403).json({ error: 'You do not have permission to manage the voiceover catalogue' });
 
   // ── Collection: list + create ──────────────────────────────────────────────

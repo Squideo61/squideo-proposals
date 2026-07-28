@@ -218,6 +218,17 @@ export function ensureSystemRoles() {
          WHERE id = 'member' AND NOT (permissions @> '["commission.view_own"]'::jsonb)
       `;
       if ((commOwn.count || commOwn.rowCount || 0) > 0) invalidateRoleCache('member');
+
+      // ── Voiceover catalogue editing ──
+      // Managing the voiceover artist catalogue + samples → Directors AND
+      // Project/Production Managers (role 'member'), who run production. Admins
+      // via '*'. Back-filled so it applies without a migration.
+      const voManage = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["voiceovers.manage"]'::jsonb, updated_at = NOW()
+         WHERE id IN ('director', 'member') AND NOT (permissions @> '["voiceovers.manage"]'::jsonb)
+      `;
+      if ((voManage.count || voManage.rowCount || 0) > 0) invalidateRoleCache();
     } catch (err) {
       systemRolesEnsured = null;
       console.warn('[roles] ensure system roles failed', err.message);

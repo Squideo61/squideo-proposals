@@ -74,3 +74,16 @@ export function deriveProjectTasks(bundle = {}) {
 export function countOpenTasks(tasks = []) {
   return tasks.filter((t) => t.status === 'todo').length;
 }
+
+// Pure cadence decision for the automatic reminder cron (kept DB-free so it's
+// unit-testable). We remind when: tasks have launched, there's still ≥1 open
+// task, we're under the reminder cap, and the cadence window has elapsed since
+// the last reminder (or since launch, for the first one).
+export function shouldRemind({ launchedAt, remindedAt, count = 0, everyDays = 3, maxReminders = 3, openCount = 0, now = new Date() }) {
+  if (!launchedAt) return false;
+  if (openCount <= 0) return false;
+  if (count >= maxReminders) return false;
+  const since = remindedAt ? new Date(remindedAt) : new Date(launchedAt);
+  const dueAt = since.getTime() + Math.max(1, everyDays) * 24 * 60 * 60 * 1000;
+  return now.getTime() >= dueAt;
+}

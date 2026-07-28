@@ -12,6 +12,7 @@ import {
 import { Eye } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
 import ClientLogo from './ClientLogo.jsx';
+import NotificationBell from './NotificationBell.jsx';
 import { portalApi, setPreviewToken } from './api.js';
 import Login from './pages/Login.jsx';
 import AcceptInvite from './pages/AcceptInvite.jsx';
@@ -105,6 +106,7 @@ function Header() {
             <PlusCircle size={15} /> New video
           </a>
         )}
+        <NotificationBell compact={isMobile} />
         {!isMobile && (
           <span style={{ color: '#B9CBD6', fontSize: 13 }}>{user?.name || user?.email}</span>
         )}

@@ -99,6 +99,22 @@ export function ensurePortalTables() {
         updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await sql`CREATE INDEX IF NOT EXISTS portal_extra_offers_deal_idx ON portal_extra_offers(deal_id)`;
+    // Client-facing notification feed (db/migrations/20260728_portal_notifications.sql).
+    await sql`
+      CREATE TABLE IF NOT EXISTS portal_notifications (
+        id               TEXT        PRIMARY KEY,
+        portal_user_id   TEXT        NOT NULL REFERENCES portal_users(id) ON DELETE CASCADE,
+        company_id       TEXT        REFERENCES companies(id) ON DELETE CASCADE,
+        deal_id          TEXT,
+        notification_key TEXT,
+        title            TEXT        NOT NULL,
+        body             TEXT,
+        link             TEXT,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        read_at          TIMESTAMPTZ
+      )`;
+    await sql`CREATE INDEX IF NOT EXISTS portal_notifications_user_idx ON portal_notifications(portal_user_id, created_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS portal_notifications_unread_idx ON portal_notifications(portal_user_id) WHERE read_at IS NULL`;
     await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS portal_extras_discount NUMERIC NOT NULL DEFAULT 0.10`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'staff'`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS portal_user_id TEXT REFERENCES portal_users(id) ON DELETE SET NULL`;

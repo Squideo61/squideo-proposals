@@ -25,6 +25,8 @@ export function PortalProvider({ children }) {
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [preview, setPreview] = useState(null); // { company } when staff is previewing
   const [toast, setToast] = useState(null);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -71,12 +73,45 @@ export function PortalProvider({ children }) {
     }
   }, [companyId]);
 
+  const refreshNotifications = useCallback(async () => {
+    try {
+      const data = await portalApi.get('notifications');
+      setNotifications(data.notifications || []);
+      setUnreadCount(data.unread || 0);
+      return data;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const markRead = useCallback(async (id) => {
+    // Optimistic — flip locally, then persist.
+    setNotifications((prev) => prev.map((n) => (n.id === id && !n.readAt ? { ...n, readAt: new Date().toISOString() } : n)));
+    setUnreadCount((c) => Math.max(0, c - 1));
+    try { await portalApi.post('notifications', { id }); } catch { /* ignore */ }
+  }, []);
+
+  const markAllRead = useCallback(async () => {
+    setNotifications((prev) => prev.map((n) => (n.readAt ? n : { ...n, readAt: new Date().toISOString() })));
+    setUnreadCount(0);
+    try { await portalApi.post('notifications', { all: true }); } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     (async () => {
       await refreshSession();
       setBooting(false);
     })();
   }, [refreshSession]);
+
+  // Poll the notification feed while signed in (the portal is otherwise
+  // poll-free; this one lightweight endpoint keeps the bell current).
+  useEffect(() => {
+    if (!user) { setNotifications([]); setUnreadCount(0); return; }
+    refreshNotifications();
+    const t = window.setInterval(refreshNotifications, 60_000);
+    return () => window.clearInterval(t);
+  }, [user, refreshNotifications]);
 
   useEffect(() => {
     if (user && companyId) refreshOverview(companyId).catch(() => {});
@@ -104,7 +139,8 @@ export function PortalProvider({ children }) {
     companyId, setActiveCompanyId,
     overview, overviewLoading, refreshOverview, refreshSession,
     preview, logout, toast, showToast,
-  }), [booting, user, companyId, setActiveCompanyId, overview, overviewLoading, refreshOverview, refreshSession, preview, logout, toast, showToast]);
+    notifications, unreadCount, refreshNotifications, markRead, markAllRead,
+  }), [booting, user, companyId, setActiveCompanyId, overview, overviewLoading, refreshOverview, refreshSession, preview, logout, toast, showToast, notifications, unreadCount, refreshNotifications, markRead, markAllRead]);
 
   return <PortalContext.Provider value={value}>{children}</PortalContext.Provider>;
 }

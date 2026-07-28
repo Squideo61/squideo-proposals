@@ -469,6 +469,8 @@ export function StoreProvider({ children }) {
         projectTasksEmail: settings?.projectTasksEmail || null,
         // Flat charge to pick a Premium voiceover artist; null until set.
         voiceoverPricing: settings?.voiceoverPricing || null,
+        // Automatic client-task reminder cadence + copy; null until first saved.
+        taskReminders: settings?.taskReminders || null,
         loading: false,
       }));
     });
@@ -2770,6 +2772,14 @@ export function StoreProvider({ children }) {
       clearTimeout(saveTimers.current.__voiceoverPricing);
       saveTimers.current.__voiceoverPricing = setTimeout(() => {
         api.put('/api/settings', { voiceoverPricing: data }).catch(() => {});
+      }, 800);
+    },
+    // Persist the automatic client-task reminder config (Admin → Task reminders).
+    saveTaskReminders(data) {
+      setState(s => ({ ...s, taskReminders: data }));
+      clearTimeout(saveTimers.current.__taskReminders);
+      saveTimers.current.__taskReminders = setTimeout(() => {
+        api.put('/api/settings', { taskReminders: data }).catch(() => {});
       }, 800);
     },
     getGmailSignature() {

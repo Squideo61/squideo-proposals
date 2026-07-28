@@ -34,6 +34,7 @@ export const PERMISSIONS = [
 
   { slug: 'revisions.access',     group: 'Revisions',  label: 'Access the video revisions section' },
 
+  { slug: 'voiceovers.manage',   group: 'Projects',   label: 'Manage the voiceover artist catalogue + samples' },
   { slug: 'production.access',    group: 'Projects',   label: 'Access the production board' },
   { slug: 'schedule.access',      group: 'Projects',   label: 'See own producer calendar + book annual leave' },
   { slug: 'schedule.manage',      group: 'Projects',   label: 'Manage the weekly schedule — see all producers, Master view, drag/assign/durations' },

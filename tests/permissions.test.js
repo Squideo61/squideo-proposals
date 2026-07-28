@@ -36,6 +36,19 @@ describe('isValidPermission', () => {
     expect(isValidPermission('')).toBe(false);
     expect(isValidPermission(null)).toBe(false);
   });
+  it('includes the voiceover catalogue permission', () => {
+    expect(isValidPermission('voiceovers.manage')).toBe(true);
+  });
+});
+
+describe('voiceovers.manage', () => {
+  it('is granted to a role that holds it, and via wildcard', () => {
+    expect(hasPermission({ permissions: ['voiceovers.manage'] }, 'voiceovers.manage')).toBe(true);
+    expect(hasPermission({ permissions: ['*'] }, 'voiceovers.manage')).toBe(true);
+  });
+  it('is not granted by settings.manage alone (checked separately at the gate)', () => {
+    expect(hasPermission({ permissions: ['settings.manage'] }, 'voiceovers.manage')).toBe(false);
+  });
 });
 
 describe('hasPermission', () => {

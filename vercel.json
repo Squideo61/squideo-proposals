@@ -111,6 +111,10 @@
       "schedule": "0 * * * *"
     },
     {
+      "path": "/api/crm/cron/client-task-reminders",
+      "schedule": "0 9 * * *"
+    },
+    {
       "path": "/api/crm/cron/ad-spend-sync",
       "schedule": "0 6 * * *"
     },
