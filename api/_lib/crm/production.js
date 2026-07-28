@@ -73,6 +73,27 @@ async function ensureLinkLockColumns() {
   return linkLockColumnsEnsured;
 }
 
+// Self-heal for the version-aware "submitted to client" gate columns
+// (db/migrations/20260728_client_submit_gate.sql). withVideoExtras reads
+// revision_videos.client_submitted_version / storyboards.client_submitted_version
+// to build the review status; the revisions/storyboards routers add these too,
+// but this endpoint (api/crm) may run before either has, so ensure them here or
+// the whole status block throws and the video page shows no draft.
+let clientSubmitColumnsEnsured = null;
+async function ensureClientSubmitColumns() {
+  if (clientSubmitColumnsEnsured) return clientSubmitColumnsEnsured;
+  clientSubmitColumnsEnsured = (async () => {
+    try {
+      await sql`ALTER TABLE revision_videos ADD COLUMN IF NOT EXISTS client_submitted_version INT`;
+      await sql`ALTER TABLE storyboards      ADD COLUMN IF NOT EXISTS client_submitted_version INT`;
+    } catch (err) {
+      clientSubmitColumnsEnsured = null;
+      console.warn('[production] ensureClientSubmitColumns failed', err.message);
+    }
+  })();
+  return clientSubmitColumnsEnsured;
+}
+
 // Board / single-video query: a video joined to its project (deal) + customer.
 const VIDEO_SELECT = (whereSql) => sql`
   SELECT pv.*, d.title AS project_title, c.name AS company_name,
@@ -424,6 +445,7 @@ async function moveVideo(req, res, videoId, user) {
 // Attach milestone approvals + per-milestone uploaded assets to a serialised
 // video. Only used on the single-video paths (the board list stays lean).
 async function withVideoExtras(video) {
+  await ensureClientSubmitColumns();
   const [milestones, assets] = await Promise.all([
     sql`SELECT milestone, approved_at, approved_by FROM video_milestones WHERE video_id = ${video.id}`,
     sql`SELECT id, milestone, filename, mime_type, size_bytes, blob_url, web_view_link, uploaded_by, created_at

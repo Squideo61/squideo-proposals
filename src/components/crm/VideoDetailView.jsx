@@ -490,11 +490,19 @@ function RevisionStatusCard({ revisionStatus, sentForReview, dealId, videoId }) 
 function RevisionStatusRow({ revisionStatus, sentForReview }) {
   const rs = revisionStatus || {};
   const hasDraft = rs.latestVersionNumber != null;
+  const submittedVer = rs.clientSubmittedVersion; // null = never sent to client
+  const hasUnsent = hasDraft && rs.latestVersionNumber > (submittedVer ?? 0);
   const pills = [];
-  if (sentForReview && !hasDraft) {
-    pills.push({ text: 'Sent · awaiting first draft', color: BRAND.muted });
-  } else if (sentForReview) {
-    pills.push({ text: 'Sent for review', color: BRAND.blue });
+  // First pill reflects the submit gate: a draft is only "sent" once it's been
+  // submitted to the client, not merely uploaded/linked.
+  if (!hasDraft) {
+    if (sentForReview) pills.push({ text: 'No draft uploaded yet', color: BRAND.muted });
+  } else if (submittedVer == null) {
+    pills.push({ text: 'Draft ready — not sent to client', color: '#B45309' });
+  } else if (hasUnsent) {
+    pills.push({ text: 'New draft not yet sent', color: '#B45309' });
+  } else if (!rs.feedbackSubmittedAt && !rs.approvedAt) {
+    pills.push({ text: 'Sent to client · awaiting feedback', color: BRAND.blue });
   }
   if (hasDraft && rs.versionCount > 1) {
     pills.push({ text: rs.versionCount + ' drafts', color: BRAND.muted });
