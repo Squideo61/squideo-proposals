@@ -5,6 +5,17 @@ import { BRAND } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { formatGBP, useIsMobile } from '../utils.js';
 
+// A labelled form field: the label sits above its input(s). Shared by the deal
+// edit modal and the email composer's To/Cc/Bcc/Subject rows.
+export function FormRow({ label, children }) {
+  return (
+    <label style={{ fontSize: 13, fontWeight: 500, display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
 export function Logo({ size, dark }) {
   const height = size || 36;
   return (

@@ -264,6 +264,16 @@ export function formatAddressLines(addr) {
   ].filter(Boolean);
 }
 
+// Human-readable file size (B / KB / MB). Returns '' for 0/undefined so callers
+// can conditionally join it with a separator. Shared by the deal files card and
+// the email composer's attachment list.
+export function fileSizeLabel(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
 export async function sendNotification(trigger, proposal, signature, payment, recipients) {
   if (!recipients || recipients.length === 0) return 0;
   const subject = trigger === 'signed'

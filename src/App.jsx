@@ -33,7 +33,7 @@ const AdminView = lazyNamed(() => import('./components/admin/AdminView.jsx'), 'A
 const AccountSettings = lazyNamed(() => import('./components/AccountSettings.jsx'), 'AccountSettings');
 const PipelineView = lazyNamed(() => import('./components/crm/PipelineView.jsx'), 'PipelineView');
 const DealDetailView = lazyNamed(() => import('./components/crm/DealDetailView.jsx'), 'DealDetailView');
-const EmailComposerHost = lazyNamed(() => import('./components/crm/DealDetailView.jsx'), 'EmailComposerHost');
+const EmailComposerHost = lazyNamed(() => import('./components/crm/EmailComposer.jsx'), 'EmailComposerHost');
 const ContactsView = lazyNamed(() => import('./components/crm/ContactsView.jsx'), 'ContactsView');
 const ContactDetailView = lazyNamed(() => import('./components/crm/ContactDetailView.jsx'), 'ContactDetailView');
 const CompanyDetailView = lazyNamed(() => import('./components/crm/CompanyDetailView.jsx'), 'CompanyDetailView');

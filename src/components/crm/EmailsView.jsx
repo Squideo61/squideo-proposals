@@ -14,7 +14,7 @@ import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { EmailAttachmentCard } from './EmailAttachment.jsx';
 import { DealContextPanel } from './DealContextPanel.jsx';
 import { FolderView } from './FolderView.jsx';
-import { EmailComposerModal } from './DealDetailView.jsx';
+import { EmailComposerModal } from './EmailComposer.jsx';
 import { TrackingEye, TrackingBanner } from './EmailTracking.jsx';
 import { ActionMenu, Modal } from '../ui.jsx';
 import { NewDealModal } from './PipelineView.jsx';
