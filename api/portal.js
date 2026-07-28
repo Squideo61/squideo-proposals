@@ -40,7 +40,7 @@ import { ensureDealExtrasTable } from './_lib/crm/extras.js';
 import { buildNotificationEmail } from './quote-requests.js';
 import { ensurePortalTables } from './_lib/portal/db.js';
 import { logPortalActivity } from './_lib/portal/activity.js';
-import { isFinalReleaseUnlocked } from './_lib/crm/delivery.js';
+import { isFinalReleaseUnlocked, advanceDeliveredIfUnlocked } from './_lib/crm/delivery.js';
 import {
   signPortalToken,
   portalCookieHeader,
@@ -878,6 +878,22 @@ async function projectRoute(req, res, user) {
   // override) — gates the approved review-cut download below. Best-effort.
   let finalReleaseUnlocked = false;
   try { finalReleaseUnlocked = await isFinalReleaseUnlocked(deal.id); } catch { finalReleaseUnlocked = false; }
+  // Final delivery: once unlocked, a signed-off video is delivered → advance it
+  // to the Completed phase so the client's bar moves off "In production". Mutate
+  // the in-memory rows too so this same response reflects it.
+  if (finalReleaseUnlocked) {
+    try {
+      const advanced = await advanceDeliveredIfUnlocked(deal.id, true);
+      if (advanced > 0) {
+        for (const v of rawVideos) {
+          if (v.production_stage === 'signed_off' || v.production_stage === 'final_invoice') {
+            v.production_phase = 'completed';
+            v.production_stage = 'delivered';
+          }
+        }
+      }
+    } catch { /* best-effort */ }
+  }
   return res.status(200).json({
     project: serialisePortalDeal(deal, {
       nextStep,

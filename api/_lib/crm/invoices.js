@@ -421,6 +421,17 @@ export async function invoicesRoute(req, res, id, action, user) {
              final_release_override_by = ${release ? (user.email || null) : null}
        WHERE id = ${dealId}
     `;
+    // Releasing = the final video is now deliverable, so advance signed-off
+    // videos to Delivered (Completed phase). Inlined (rather than importing the
+    // delivery helper) to avoid a circular import; the override IS the unlock.
+    if (release) {
+      await sql`
+        UPDATE project_videos
+           SET production_phase = 'completed', production_stage = 'delivered',
+               production_stage_changed_at = NOW(), updated_at = NOW()
+         WHERE deal_id = ${dealId} AND production_stage IN ('signed_off', 'final_invoice')
+      `.catch(() => {});
+    }
     return res.status(200).json({ ok: true, overridden: release });
   }
 

@@ -31,6 +31,7 @@ import { archiveRecord } from './recycleBin.js';
 import { getDealCreditProject } from './retainers.js';
 import { isFreelancer, userOnDeal, userOnVideo } from './access.js';
 import { submitRevisionToClient, submitStoryboardToClient } from './clientReview.js';
+import { advanceDeliveredIfUnlocked } from './delivery.js';
 
 // Where scripts live inside a deal's Drive folder (from the FOLDER_TEMPLATE in
 // googleDrive.js).
@@ -686,6 +687,15 @@ async function withVideoExtras(video) {
   };
   video.revisionStatus = revisionStatus;
   video.storyboardStatus = storyboardStatus;
+  // Final delivery: a signed-off video whose final invoice is settled (or
+  // released) is delivered — advance it to Completed so the phase bar moves on.
+  // The unlock check inside only runs because we've gated on the stage here.
+  if (video.productionStage === 'signed_off' || video.productionStage === 'final_invoice') {
+    try {
+      const advanced = await advanceDeliveredIfUnlocked(video.dealId);
+      if (advanced > 0) { video.productionPhase = 'completed'; video.productionStage = 'delivered'; }
+    } catch { /* best-effort */ }
+  }
   video.paymentOption = await paymentOptionForDeal(video.dealId);
   return video;
 }

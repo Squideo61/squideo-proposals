@@ -29,3 +29,33 @@ export async function isFinalReleaseUnlocked(dealId) {
   const outstanding = await dealOutstanding(dealId);
   return (outstanding ?? 0) <= 0;
 }
+
+// Final delivery: once a signed-off video's final invoice is settled (or the
+// staff override is set), it's delivered — advance it to the Completed phase so
+// the client's phase bar moves off "In production". Best-effort self-heal called
+// wherever we already know a video is at a gated stage; safe to call repeatedly.
+// Returns the number of videos advanced. Pass a precomputed `unlocked` to avoid
+// recomputing the balance when the caller already has it.
+export async function advanceDeliveredIfUnlocked(dealId, unlocked = null) {
+  if (!dealId) return 0;
+  try {
+    // Only do the (relatively costly) unlock check when there's actually a video
+    // parked at a gated stage waiting to be delivered.
+    const [{ n }] = await sql`
+      SELECT COUNT(*)::int AS n FROM project_videos
+       WHERE deal_id = ${dealId} AND production_stage IN ('signed_off', 'final_invoice')`;
+    if (!n) return 0;
+    const isUnlocked = unlocked == null ? await isFinalReleaseUnlocked(dealId) : unlocked;
+    if (!isUnlocked) return 0;
+    const rows = await sql`
+      UPDATE project_videos
+         SET production_phase = 'completed', production_stage = 'delivered',
+             production_stage_changed_at = NOW(), updated_at = NOW()
+       WHERE deal_id = ${dealId} AND production_stage IN ('signed_off', 'final_invoice')
+       RETURNING id`;
+    return rows.length;
+  } catch (err) {
+    console.warn('[delivery] advanceDeliveredIfUnlocked failed', dealId, err.message);
+    return 0;
+  }
+}
