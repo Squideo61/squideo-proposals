@@ -90,8 +90,9 @@ export function DemoTab() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
             <LinkRow icon={KeyRound} label="1. Accept your portal invite" hint="Sets a password and logs you into the portal as the demo client." url={data.inviteUrl} />
             <LinkRow icon={PlayCircle} label="2. Open the project in the portal" hint="The client's project page — phase bar, tasks, reviews and (once released) the download." url={data.portalProjectUrl} />
-            <LinkRow icon={Film} label="Review inside the portal" hint="The in-portal revision review — comment and approve as the client." url={data.portalReviewUrl} />
-            <LinkRow icon={ExternalLink} label="Review via the anonymous share link" hint="What a client sees from an emailed link (name/email gate)." url={data.reviewUrl} />
+            <LinkRow icon={Film} label="Video review inside the portal" hint="The in-portal video review — comment and approve as the client." url={data.portalReviewUrl} />
+            <LinkRow icon={Film} label="Storyboard review inside the portal" hint="The in-portal storyboard (PDF) review — comment and approve as the client." url={data.portalStoryboardUrl} />
+            <LinkRow icon={ExternalLink} label="Video review via the anonymous share link" hint="What a client sees from an emailed link (name/email gate)." url={data.reviewUrl} />
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button className="btn-ghost" disabled={busy} onClick={seed} style={{ fontSize: 12.5 }} title="Re-issue the portal invite and refresh links">

@@ -137,8 +137,12 @@ export default function ProjectDetail({ dealId }) {
                     </div>
                   )}
                 </div>
-                {v.production?.stageLabel && <span style={{ fontSize: 11.5, color: BRAND.muted }}>{v.production.stageLabel}</span>}
-                <StatusPill label={v.statusLabel} color={v.statusColor} />
+                {/* Show the live board stage (client-friendly) as the status —
+                    the old per-video `status` field is vestigial and stays
+                    "Not started" while the stage advances. */}
+                {v.production?.stageLabel
+                  ? <StatusPill label={v.production.stageLabel} color={v.production.phaseColor || BRAND.blue} />
+                  : <StatusPill label={v.statusLabel} color={v.statusColor} />}
               </div>
             ))}
           </div>

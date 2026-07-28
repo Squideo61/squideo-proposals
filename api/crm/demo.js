@@ -24,6 +24,7 @@ const REVISION_BLOB_TOKEN = process.env.REVISION_BLOB_READ_WRITE_TOKEN || proces
 // if the fetch/upload fails, the revision is still created and staff can upload
 // their own draft from the Revisions board.
 const SAMPLE_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+const SAMPLE_PDF_URL = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
 
 async function findDemoCompany() {
   const [co] = await sql`SELECT id FROM companies WHERE name = ${DEMO_COMPANY_NAME} ORDER BY created_at ASC LIMIT 1`;
@@ -37,6 +38,7 @@ async function demoLinks(companyId, email) {
   const [rp] = deal.revision_project_id
     ? await sql`SELECT share_token FROM revision_projects WHERE id = ${deal.revision_project_id}`
     : [];
+  const [sp] = await sql`SELECT share_token FROM storyboard_projects WHERE deal_id = ${deal.id} ORDER BY created_at ASC LIMIT 1`.catch(() => []);
   return {
     dealId: deal.id,
     companyId,
@@ -44,6 +46,7 @@ async function demoLinks(companyId, email) {
     reviewUrl: rp?.share_token ? `${REVISION_PUBLIC_BASE}/?revision=${rp.share_token}` : null,
     portalProjectUrl: `${PORTAL_BASE}#/project/${deal.id}`,
     portalReviewUrl: rp?.share_token ? `${PORTAL_BASE}#/review/${rp.share_token}` : null,
+    portalStoryboardUrl: sp?.share_token ? `${PORTAL_BASE}#/storyboard/${sp.share_token}` : null,
   };
 }
 
@@ -114,6 +117,42 @@ async function seed(email) {
     }
   }
 
+  // Ensure a deal-linked storyboard project + item + a sample PDF draft, so the
+  // storyboard side of the review journey is testable too. deal_id is the link
+  // that makes it show in the client's portal "Reviews & feedback" card.
+  {
+    const [existingSb] = await sql`SELECT id FROM storyboard_projects WHERE deal_id = ${deal.id} ORDER BY created_at ASC LIMIT 1`;
+    let sbProjectId = existingSb?.id || null;
+    let sbItemId = null;
+    if (!sbProjectId) {
+      sbProjectId = makeId('sp');
+      const sbToken = makeId('tok').replace(/[^a-z0-9]/gi, '') + makeId('tok').replace(/[^a-z0-9]/gi, '');
+      await sql`INSERT INTO storyboard_projects (id, title, client_name, share_token, created_by, deal_id)
+                VALUES (${sbProjectId}, ${deal.title}, ${DEMO_COMPANY_NAME}, ${sbToken}, ${email || null}, ${deal.id})`;
+      sbItemId = makeId('sb');
+      await sql`INSERT INTO storyboards (id, project_id, title, sort_order) VALUES (${sbItemId}, ${sbProjectId}, ${'Storyboard 1'}, 0)`;
+      await sql`UPDATE deals SET storyboard_project_id = ${sbProjectId} WHERE id = ${deal.id}`.catch(() => {});
+    } else {
+      sbItemId = (await sql`SELECT id FROM storyboards WHERE project_id = ${sbProjectId} ORDER BY sort_order ASC LIMIT 1`)[0]?.id || null;
+    }
+    if (sbItemId && REVISION_BLOB_TOKEN) {
+      const [hasVer] = await sql`SELECT id FROM storyboard_versions WHERE storyboard_id = ${sbItemId} LIMIT 1`;
+      if (!hasVer) {
+        try {
+          const resp = await fetch(SAMPLE_PDF_URL);
+          if (resp.ok) {
+            const buf = Buffer.from(await resp.arrayBuffer());
+            const blob = await put(`storyboard-versions/demo/${makeId('p')}.pdf`, buf, { access: 'public', token: REVISION_BLOB_TOKEN, contentType: 'application/pdf' });
+            await sql`INSERT INTO storyboard_versions (id, project_id, storyboard_id, version_number, label, filename, mime_type, size_bytes, page_count, blob_url, blob_pathname, uploaded_by)
+                      VALUES (${makeId('sver')}, ${sbProjectId}, ${sbItemId}, 1, ${'Draft 1'}, ${'demo-storyboard.pdf'}, ${'application/pdf'}, ${null}, ${1}, ${blob.url}, ${blob.pathname}, ${email || null})`;
+          }
+        } catch (err) {
+          console.warn('[demo] sample storyboard upload failed', err.message);
+        }
+      }
+    }
+  }
+
   // A live portal invite to the requesting admin's own email — click it to
   // become the "client" and walk the journey. Idempotent per (email, company).
   let inviteUrl = null;
@@ -141,12 +180,21 @@ async function teardown() {
           JOIN revision_projects rp ON rp.id = rv.project_id
          WHERE rp.deal_id = ${d.id} AND rv.blob_url IS NOT NULL`;
       for (const v of versions) { try { await del(v.blob_url, { token: REVISION_BLOB_TOKEN }); } catch { /* best-effort */ } }
+      const sbVersions = await sql`
+        SELECT sv.blob_url FROM storyboard_versions sv
+          JOIN storyboard_projects sp ON sp.id = sv.project_id
+         WHERE sp.deal_id = ${d.id} AND sv.blob_url IS NOT NULL`.catch(() => []);
+      for (const v of sbVersions) { try { await del(v.blob_url, { token: REVISION_BLOB_TOKEN }); } catch { /* best-effort */ } }
     } catch { /* ignore */ }
     const q = [
       sql`DELETE FROM revision_versions WHERE project_id IN (SELECT id FROM revision_projects WHERE deal_id = ${d.id})`,
       sql`DELETE FROM revision_comments WHERE version_id IN (SELECT vv.id FROM revision_versions vv JOIN revision_projects rp ON rp.id = vv.project_id WHERE rp.deal_id = ${d.id})`.catch(() => {}),
       sql`DELETE FROM revision_videos WHERE project_id IN (SELECT id FROM revision_projects WHERE deal_id = ${d.id})`,
       sql`DELETE FROM revision_projects WHERE deal_id = ${d.id}`,
+      sql`DELETE FROM storyboard_versions WHERE project_id IN (SELECT id FROM storyboard_projects WHERE deal_id = ${d.id})`.catch(() => {}),
+      sql`DELETE FROM storyboard_comments WHERE version_id IN (SELECT sv.id FROM storyboard_versions sv JOIN storyboard_projects sp ON sp.id = sv.project_id WHERE sp.deal_id = ${d.id})`.catch(() => {}),
+      sql`DELETE FROM storyboards WHERE project_id IN (SELECT id FROM storyboard_projects WHERE deal_id = ${d.id})`.catch(() => {}),
+      sql`DELETE FROM storyboard_projects WHERE deal_id = ${d.id}`.catch(() => {}),
       sql`DELETE FROM signatures WHERE proposal_id IN (SELECT id FROM proposals WHERE deal_id = ${d.id})`,
       sql`DELETE FROM proposals WHERE deal_id = ${d.id}`,
     ];
