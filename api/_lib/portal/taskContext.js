@@ -23,7 +23,7 @@ export async function computeDealTasks(dealId) {
   // (mirrors gatherDealStates in api/portal.js).
   await ensureVoiceoverCatalogue();
 
-  const [propRows, videoRows, kickoffRows] = await Promise.all([
+  const [propRows, videoRows, kickoffRows, brandRows] = await Promise.all([
     sql`
       SELECT p.data AS proposal_data, s.data AS signature_data, s.signed_at
         FROM proposals p
@@ -42,6 +42,12 @@ export async function computeDealTasks(dealId) {
       SELECT DISTINCT deal_id FROM intro_call_bookings
        WHERE deal_id = ${dealId} AND kind = 'kickoff' AND status = 'confirmed'
     `.catch(() => []),
+    sql`
+      SELECT EXISTS (
+        SELECT 1 FROM portal_company_files f
+         WHERE f.company_id = ${deal.company_id} AND f.category = 'brand'
+      ) AS has_brand_assets
+    `.catch(() => [{ has_brand_assets: false }]),
   ]);
 
   const prop = propRows[0] || null;
@@ -58,6 +64,7 @@ export async function computeDealTasks(dealId) {
     videos: videoRows,
     hasKickoffBooking: kickoffRows.length > 0,
     hasVoiceover,
+    hasBrandAssets: brandRows[0]?.has_brand_assets ?? false,
     sigPaymentOption: prop?.signature_data?.paymentOption || null,
   });
   return { deal, tasks, openCount: countOpenTasks(tasks) };

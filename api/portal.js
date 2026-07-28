@@ -226,13 +226,13 @@ function publicPortalUser(user, memberships = null) {
 // ── Ball-in-court state gathering (shared by overview + project detail) ──────
 // One query per concern across ALL the org's deals, then derived per deal.
 async function gatherDealStates(dealIds) {
-  const empty = { proposals: new Map(), videos: new Map(), revPending: new Map(), sbPending: new Map(), revLinks: new Map(), sbLinks: new Map(), kickoffDeals: new Set() };
+  const empty = { proposals: new Map(), videos: new Map(), revPending: new Map(), sbPending: new Map(), revLinks: new Map(), sbLinks: new Map(), kickoffDeals: new Set(), brandCompanies: new Set() };
   if (!dealIds.length) return empty;
 
   // Self-heal the voiceover columns/table before the video query joins them.
   await ensureVoiceoverCatalogue();
 
-  const [proposalRows, videoRows, revRows, sbRows, kickoffRows] = await Promise.all([
+  const [proposalRows, videoRows, revRows, sbRows, kickoffRows, brandRows] = await Promise.all([
     sql`
       SELECT p.id, p.deal_id, p.created_at, p.data AS proposal_data, s.data AS signature_data, s.signed_at
         FROM proposals p
@@ -268,6 +268,18 @@ async function gatherDealStates(dealIds) {
     sql`
       SELECT DISTINCT deal_id FROM intro_call_bookings
        WHERE deal_id = ANY(${dealIds}) AND kind = 'kickoff' AND status = 'confirmed'
+    `.catch(() => []),
+    // Companies (among these deals) that already have brand assets on file — a
+    // brand-category portal file uploaded on any prior project. Used to mark the
+    // "upload brand guidelines" task done for returning organisations.
+    sql`
+      SELECT DISTINCT d.company_id
+        FROM deals d
+       WHERE d.id = ANY(${dealIds})
+         AND EXISTS (
+           SELECT 1 FROM portal_company_files f
+            WHERE f.company_id = d.company_id AND f.category = 'brand'
+         )
     `.catch(() => []),
   ]);
 
@@ -330,8 +342,9 @@ async function gatherDealStates(dealIds) {
   }
 
   const kickoffDeals = new Set(kickoffRows.map((r) => r.deal_id));
+  const brandCompanies = new Set(brandRows.map((r) => r.company_id));
 
-  return { proposals, videos, revPending, sbPending, revLinks, sbLinks, kickoffDeals };
+  return { proposals, videos, revPending, sbPending, revLinks, sbLinks, kickoffDeals, brandCompanies };
 }
 
 function nextStepFor(deal, states) {
@@ -355,6 +368,7 @@ function tasksFor(deal, states) {
     videos: states.videos.get(deal.id) || [],
     hasKickoffBooking: states.kickoffDeals.has(deal.id),
     hasVoiceover: prop?.hasVo ?? false,
+    hasBrandAssets: states.brandCompanies.has(deal.company_id),
     sigPaymentOption: prop?.signature?.data?.paymentOption || null,
   });
 }

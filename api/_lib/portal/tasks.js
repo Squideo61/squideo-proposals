@@ -26,6 +26,19 @@ const TASK_PRODUCERS = [
       cta: { label: done ? 'View' : 'Submit PO', action: 'po-number' },
     };
   },
+  // Send us your logo + brand guidelines. Part of onboarding every project.
+  // If the organisation has already given us brand assets (on a previous
+  // project), it flips to done — "we already have these" — rather than asking
+  // again. hasBrandAssets = the company has a brand-category portal file.
+  ({ hasBrandAssets }) => ({
+    key: 'brand',
+    title: 'Upload your brand guidelines & logo',
+    detail: hasBrandAssets
+      ? 'We already have your brand assets on file — nothing needed here.'
+      : 'Share your logo, fonts and brand guidelines so we can match your look.',
+    status: hasBrandAssets ? 'done' : 'todo',
+    cta: { label: hasBrandAssets ? 'View brand files' : 'Upload brand assets', href: '#/documents' },
+  }),
   // Choose a voiceover artist for each video. Only when the project actually
   // includes a voiceover (the standard AI VO can be removed from the proposal).
   ({ deal, videos, hasVoiceover }) => {
