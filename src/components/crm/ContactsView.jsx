@@ -194,7 +194,23 @@ function Tab({ active, onClick, children }) {
 }
 
 function ContactRow({ contact, onOpen, onEdit }) {
-  const { state } = useStore();
+  const { state, actions, showMsg } = useStore();
+  // Delete is admin/director-only (matches the server's contacts.manage_all gate).
+  const canDelete = permissionsInclude(state.session?.permissions, 'contacts.manage_all');
+  const handleDelete = (e) => {
+    e.stopPropagation(); // don't open the contact
+    const n = contact.dealCount || 0;
+    const hasPortal = contact.portalStatus || contact.portalInvitePending;
+    const msg = [
+      n > 0
+        ? `This contact is linked to ${n} deal${n === 1 ? '' : 's'}. Deleting will unlink it — the deal${n === 1 ? '' : 's'} will stay.`
+        : `Delete ${contact.name || contact.email || 'this contact'}?`,
+      hasPortal ? 'Their portal access will also be revoked.' : null,
+    ].filter(Boolean).join(' ');
+    if (!window.confirm(msg)) return;
+    actions.deleteContact(contact.id);
+    showMsg?.('Contact deleted');
+  };
   // A contact can belong to several organisations. Show them all (primary first).
   const orgIds = (contact.companyIds && contact.companyIds.length)
     ? contact.companyIds
@@ -233,6 +249,18 @@ function ContactRow({ contact, onOpen, onEdit }) {
       >
         <Edit2 size={14} />
       </button>
+      {canDelete && (
+        <button
+          onClick={handleDelete}
+          title="Delete contact"
+          aria-label="Delete contact"
+          style={{ padding: '0 16px', background: 'transparent', border: 'none', cursor: 'pointer', color: BRAND.muted, display: 'flex', alignItems: 'center' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = '#DC2626'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = BRAND.muted; }}
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
     </div>
   );
 }
@@ -426,7 +454,7 @@ export function ContactModal({ contact, onClose, dealContext = null }) {
         <Row label="Notes"><textarea className="input" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ fontFamily: 'inherit', resize: 'vertical' }} /></Row>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 8, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {editing && (
+            {editing && permissionsInclude(state.session?.permissions, 'contacts.manage_all') && (
               <button type="button" onClick={handleDelete} className="btn-ghost is-danger"><Trash2 size={14} /> Delete</button>
             )}
             {/* Promote this contact to the deal's primary (only in a deal

@@ -215,6 +215,24 @@ export async function contactsRoute(req, res, id, action, user, subaction = null
     if (!hasPermission(await getRole(user.role), 'contacts.manage_all')) {
       return res.status(403).json({ error: 'You do not have permission to delete contacts' });
     }
+    // Revoke any portal access for this contact's email first. Portal identities
+    // are matched by email (not FK'd to contacts), so deleting the row wouldn't
+    // otherwise touch them — leaving an orphaned login/invite for a contact
+    // that's often just test data. Mirrors the portal-admin revoke-invite +
+    // user-disable ops: cancel pending invites and soft-disable the login
+    // (reversible via the portal admin card; preserves membership history).
+    // Best-effort — never let a portal hiccup 500 the delete.
+    const [row] = await sql`SELECT email FROM contacts WHERE id = ${id}`;
+    const email = row?.email || null;
+    if (email) {
+      try {
+        await ensurePortalTables().catch(() => {});
+        await sql`UPDATE portal_invites SET revoked_at = NOW()
+                   WHERE LOWER(email) = LOWER(${email}) AND accepted_at IS NULL AND revoked_at IS NULL`;
+        await sql`UPDATE portal_users SET disabled_at = NOW(), token_version = token_version + 1
+                   WHERE LOWER(email) = LOWER(${email}) AND disabled_at IS NULL`;
+      } catch { /* portal cleanup is best-effort; the contact delete must still proceed */ }
+    }
     // Unlink from any deal that has this as its primary contact first. The
     // deals.primary_contact_id FK would otherwise block the delete (or leave a
     // deal pointing at a ghost contact). Other references — deal_contacts,
