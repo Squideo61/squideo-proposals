@@ -9,6 +9,16 @@
 // Tasks only appear once the PM has launched them by sending the client's intro
 // email (deal.client_tasks_launched_at) — that's the "here are your tasks" email.
 
+// Format a booked kick-off time in the client's own timezone, e.g.
+// "Tue 5 Aug at 2:30 PM". Pure (no DB) so it stays inline with the producers.
+function formatKickoffWhen(iso, timezone) {
+  try {
+    const opts = { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' };
+    if (timezone) opts.timeZone = timezone;
+    return new Date(iso).toLocaleString('en-GB', opts).replace(',', '');
+  } catch { return null; }
+}
+
 const TASK_PRODUCERS = [
   // Send us your purchase order. PO-route deals only, first in the list, until
   // the PO number lands. (Mirrors the PO rule in nextStep.js.)
@@ -57,15 +67,22 @@ const TASK_PRODUCERS = [
     };
   },
   // Book the project kick-off call.
-  ({ deal, hasKickoffBooking }) => ({
-    key: 'kickoff',
-    title: 'Book your kick-off call',
-    detail: hasKickoffBooking
-      ? 'Your kick-off call is booked — see you there.'
-      : 'Grab a time to meet the team and get your project moving.',
-    status: hasKickoffBooking ? 'done' : 'todo',
-    cta: { label: hasKickoffBooking ? 'View call' : 'Book kick-off', href: `#/kickoff/${deal.id}` },
-  }),
+  ({ deal, hasKickoffBooking, kickoffBooking }) => {
+    const when = hasKickoffBooking && kickoffBooking?.startsAt
+      ? formatKickoffWhen(kickoffBooking.startsAt, kickoffBooking.timezone)
+      : null;
+    return {
+      key: 'kickoff',
+      title: 'Book your kick-off call',
+      detail: hasKickoffBooking
+        ? (when
+            ? `Booked for ${when} — see you there.`
+            : 'Your kick-off call is booked — see you there.')
+        : 'Grab a time to meet the team and get your project moving.',
+      status: hasKickoffBooking ? 'done' : 'todo',
+      cta: { label: hasKickoffBooking ? 'View call' : 'Book kick-off', href: `#/kickoff/${deal.id}` },
+    };
+  },
 ];
 
 // Returns the ordered task list, or [] until the PM has launched the client's

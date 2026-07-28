@@ -236,7 +236,7 @@ function publicPortalUser(user, memberships = null) {
 // ── Ball-in-court state gathering (shared by overview + project detail) ──────
 // One query per concern across ALL the org's deals, then derived per deal.
 async function gatherDealStates(dealIds) {
-  const empty = { proposals: new Map(), videos: new Map(), revPending: new Map(), sbPending: new Map(), revLinks: new Map(), sbLinks: new Map(), kickoffDeals: new Set(), brandCompanies: new Set() };
+  const empty = { proposals: new Map(), videos: new Map(), revPending: new Map(), sbPending: new Map(), revLinks: new Map(), sbLinks: new Map(), kickoffDeals: new Set(), kickoffBookings: new Map(), brandCompanies: new Set() };
   if (!dealIds.length) return empty;
 
   // Self-heal the voiceover columns/table before the video query joins them.
@@ -278,8 +278,10 @@ async function gatherDealStates(dealIds) {
        WHERE sp.deal_id = ANY(${dealIds}) OR dd.id = ANY(${dealIds})
     `.catch(() => []),
     sql`
-      SELECT DISTINCT deal_id FROM intro_call_bookings
+      SELECT DISTINCT ON (deal_id) deal_id, starts_at, meet_url, client_timezone
+        FROM intro_call_bookings
        WHERE deal_id = ANY(${dealIds}) AND kind = 'kickoff' AND status = 'confirmed'
+       ORDER BY deal_id, created_at DESC
     `.catch(() => []),
     // Companies (among these deals) that already have brand assets on file — a
     // brand-category portal file uploaded on any prior project. Used to mark the
@@ -359,9 +361,12 @@ async function gatherDealStates(dealIds) {
   }
 
   const kickoffDeals = new Set(kickoffRows.map((r) => r.deal_id));
+  const kickoffBookings = new Map(kickoffRows.map((r) => [r.deal_id, {
+    startsAt: r.starts_at, timezone: r.client_timezone || null, joinUrl: r.meet_url || null,
+  }]));
   const brandCompanies = new Set(brandRows.map((r) => r.company_id));
 
-  return { proposals, videos, revPending, sbPending, revLinks, sbLinks, kickoffDeals, brandCompanies };
+  return { proposals, videos, revPending, sbPending, revLinks, sbLinks, kickoffDeals, kickoffBookings, brandCompanies };
 }
 
 function nextStepFor(deal, states) {
@@ -393,6 +398,7 @@ function tasksFor(deal, states) {
     deal,
     videos: states.videos.get(deal.id) || [],
     hasKickoffBooking: states.kickoffDeals.has(deal.id),
+    kickoffBooking: states.kickoffBookings.get(deal.id) || null,
     hasVoiceover: prop?.hasVo ?? false,
     hasBrandAssets: states.brandCompanies.has(deal.company_id),
     sigPaymentOption: prop?.signature?.data?.paymentOption || null,

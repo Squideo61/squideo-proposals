@@ -39,8 +39,9 @@ export async function computeDealTasks(dealId) {
        ORDER BY v.sort_order ASC, v.created_at ASC
     `,
     sql`
-      SELECT DISTINCT deal_id FROM intro_call_bookings
+      SELECT starts_at, meet_url, client_timezone FROM intro_call_bookings
        WHERE deal_id = ${dealId} AND kind = 'kickoff' AND status = 'confirmed'
+       ORDER BY created_at DESC LIMIT 1
     `.catch(() => []),
     sql`
       SELECT EXISTS (
@@ -63,6 +64,9 @@ export async function computeDealTasks(dealId) {
     deal,
     videos: videoRows,
     hasKickoffBooking: kickoffRows.length > 0,
+    kickoffBooking: kickoffRows[0]
+      ? { startsAt: kickoffRows[0].starts_at, timezone: kickoffRows[0].client_timezone || null, joinUrl: kickoffRows[0].meet_url || null }
+      : null,
     hasVoiceover,
     hasBrandAssets: brandRows[0]?.has_brand_assets ?? false,
     sigPaymentOption: prop?.signature_data?.paymentOption || null,
