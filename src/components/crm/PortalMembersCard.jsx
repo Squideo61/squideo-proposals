@@ -2,12 +2,18 @@
 // invites, and the staff controls (invite / resend / revoke / disable).
 // Backed by /api/crm/portal-admin.
 import React, { useCallback, useEffect, useState } from 'react';
-import { Eye, KeyRound, Mail, RefreshCw, Send, UserX, UserCheck } from 'lucide-react';
+import { Eye, KeyRound, Mail, RefreshCw, Send, UserX, UserCheck, Download, FileText } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { formatRelativeTime } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { PortalStepsActivity } from './PortalStepsActivity.jsx';
+
+const formatBytes = (n) => {
+  if (!n || n < 1024) return `${n || 0} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+};
 
 export function PortalMembersCard({ companyId }) {
   const [data, setData] = useState(null);
@@ -57,6 +63,16 @@ export function PortalMembersCard({ companyId }) {
 
   const members = data?.members || [];
   const invites = data?.invites || [];
+  const brandFiles = data?.brandFiles || [];
+
+  const openBrandFile = async (id) => {
+    try {
+      const r = await api.post('/api/crm/portal-admin?op=brand-file-url', { id });
+      if (r?.downloadUrl) window.open(r.downloadUrl, '_blank', 'noopener');
+    } catch (err) {
+      flash(err.message);
+    }
+  };
 
   const preview = async () => {
     setBusy(true);
@@ -176,6 +192,31 @@ export function PortalMembersCard({ companyId }) {
                 onClick={() => run(() => api.post('/api/crm/portal-admin?op=revoke-invite', { inviteId: i.id }), 'Invite revoked')}
               >
                 ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {brandFiles.length > 0 && (
+        <div style={{ marginTop: 12, borderTop: '1px solid ' + BRAND.border, paddingTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+            Brand & documents
+          </div>
+          {brandFiles.map((f) => (
+            <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', fontSize: 12.5 }}>
+              <FileText size={13} color={f.category === 'brand' ? '#7C3AED' : BRAND.muted} style={{ flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.filename}</div>
+                <div style={{ fontSize: 11, color: BRAND.muted }}>
+                  {f.category === 'brand' ? 'Brand' : 'Document'}
+                  {f.sizeBytes ? ` · ${formatBytes(f.sizeBytes)}` : ''}
+                  {f.uploadedBy ? ` · ${f.uploadedBy}` : ''}
+                  {f.createdAt ? ` · ${formatRelativeTime(f.createdAt)}` : ''}
+                </div>
+              </div>
+              <button className="btn-ghost" style={{ fontSize: 11.5, flexShrink: 0 }} title="Download" onClick={() => openBrandFile(f.id)}>
+                <Download size={13} />
               </button>
             </div>
           ))}

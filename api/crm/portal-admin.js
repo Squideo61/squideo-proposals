@@ -16,6 +16,7 @@
 //   POST /api/crm/portal-admin?op=offer-delete    — { id }
 //   POST /api/crm/portal-admin?op=set-discount    — { dealId, discount }
 
+import { getDownloadUrl } from '@vercel/blob';
 import sql from '../_lib/db.js';
 import { cors, requirePermission } from '../_lib/middleware.js';
 import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureDealContactsTable } from '../_lib/crm/shared.js';
@@ -253,13 +254,30 @@ export default async function handler(req, res) {
         `;
         // Per-deal step progress across the org's live projects + the merged
         // activity timeline (member logins + client actions). Best-effort.
-        const [steps, activity] = await Promise.all([
+        // brandFiles: the org's uploaded logo/brand guidelines & documents —
+        // there's no other staff-side view of these (they live in a private blob).
+        const [steps, activity, brandFiles] = await Promise.all([
           companyStepsSummary(companyId).catch(() => []),
           portalTimeline({ companyId }).catch(() => []),
+          sql`
+            SELECT f.id, f.filename, f.category, f.mime_type, f.size_bytes, f.created_at,
+                   COALESCE(pu.name, f.uploaded_by_staff) AS uploaded_by
+              FROM portal_company_files f
+              LEFT JOIN portal_users pu ON pu.id = f.uploaded_by_portal_user
+             WHERE f.company_id = ${companyId}
+             ORDER BY f.created_at DESC`.catch(() => []),
         ]);
         return res.status(200).json({
           steps,
           activity,
+          brandFiles: brandFiles.map((f) => ({
+            id: f.id,
+            filename: f.filename,
+            category: f.category || 'document',
+            sizeBytes: f.size_bytes == null ? null : Number(f.size_bytes),
+            createdAt: f.created_at,
+            uploadedBy: f.uploaded_by || null,
+          })),
           members: members.map((m) => ({
             id: m.id,
             email: m.email,
@@ -621,6 +639,17 @@ export default async function handler(req, res) {
         url: `${PORTAL_URL}?preview=${encodeURIComponent(token)}`,
         companyName: co.name,
       });
+    }
+
+    // Resolve a short-lived download URL for a client-uploaded brand/document
+    // file (private blob). Mirrors the staff deal-file download in deals.js.
+    if (op === 'brand-file-url') {
+      const id = trimOrNull(body.id);
+      if (!id) return res.status(400).json({ error: 'id required' });
+      const [f] = await sql`SELECT blob_url, filename FROM portal_company_files WHERE id = ${id}`;
+      if (!f || !f.blob_url) return res.status(404).json({ error: 'File not found' });
+      const downloadUrl = await getDownloadUrl(f.blob_url);
+      return res.status(200).json({ downloadUrl, filename: f.filename });
     }
 
     if (op === 'offer-create') {
