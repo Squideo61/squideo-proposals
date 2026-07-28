@@ -31,6 +31,7 @@ import { sendNotification, resolveDealTeamEmails } from '../_lib/notifications.j
 import { revisionFeedbackHtml, APP_URL } from '../_lib/email.js';
 import { getRole } from '../_lib/userRoles.js';
 import { isFreelancer, freelancerStoryboardProjectIds } from '../_lib/crm/access.js';
+import { submitStoryboardToClient } from '../_lib/crm/clientReview.js';
 
 // Storyboard PDFs share the PUBLIC revision Blob store (so clients can fetch the
 // bytes directly via the share link), reading REVISION_BLOB_READ_WRITE_TOKEN
@@ -149,6 +150,18 @@ function ensureStoryboardTables() {
       await sql`ALTER TABLE storyboard_comments ADD COLUMN IF NOT EXISTS completed_by TEXT`;
       // 20260606_revision_producer_notes.sql (internal producer note).
       await sql`ALTER TABLE storyboard_comments ADD COLUMN IF NOT EXISTS producer_note TEXT`;
+      // Version-aware "submitted to client" gate (db/migrations/20260728_client_submit_gate.sql).
+      await sql`ALTER TABLE storyboards ADD COLUMN IF NOT EXISTS client_submitted_version INT`;
+      await sql`ALTER TABLE storyboards ADD COLUMN IF NOT EXISTS client_submitted_at TIMESTAMPTZ`;
+      await sql`ALTER TABLE storyboards ADD COLUMN IF NOT EXISTS client_submitted_by TEXT`;
+      // Backfill in-flight reviews so existing share links keep working.
+      await sql`
+        UPDATE storyboards sb
+           SET client_submitted_version = sub.maxver,
+               client_submitted_at = COALESCE(sb.client_submitted_at, NOW())
+          FROM (SELECT storyboard_id, MAX(version_number) AS maxver
+                  FROM storyboard_versions GROUP BY storyboard_id) sub
+         WHERE sub.storyboard_id = sb.id AND sb.client_submitted_version IS NULL`;
     } catch (err) {
       tablesEnsured = null;
       console.warn('[storyboards] ensure tables failed', err.message);
@@ -307,6 +320,17 @@ export default async function handler(req, res) {
       return res.status(405).end();
     }
 
+    // Submit the latest uploaded storyboard draft to the client (client-visible + notify).
+    if (action === 'submit') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const storyboardId = req.query.storyboardId ? String(req.query.storyboardId) : null;
+      if (!storyboardId) return res.status(400).json({ error: 'storyboardId required' });
+      const result = await submitStoryboardToClient({ storyboardId, actorEmail: user.email });
+      if (result.error === 'no-draft') return res.status(400).json({ error: 'Upload a draft before submitting to the client.' });
+      if (result.error) return res.status(404).json({ error: 'Storyboard not found' });
+      return res.status(200).json(result);
+    }
+
     return res.status(404).json({ error: 'Unknown action' });
   } catch (err) {
     console.error('[storyboards]', err);
@@ -438,7 +462,8 @@ async function projectDetail(res, id) {
   if (!project) return res.status(404).json({ error: 'not found' });
 
   const storyboards = await sql`
-    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at FROM storyboards
+    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at,
+           client_submitted_version, client_submitted_at FROM storyboards
     WHERE project_id = ${id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -493,6 +518,8 @@ async function projectDetail(res, id) {
       id: sb.id, title: sb.title, sortOrder: sb.sort_order, createdAt: sb.created_at,
       approvedAt: sb.approved_at || null, approvedBy: sb.approved_by || null,
       feedbackSubmittedAt: sb.feedback_submitted_at || null,
+      clientSubmittedVersion: sb.client_submitted_version ?? null,
+      clientSubmittedAt: sb.client_submitted_at || null,
       linkedProjectVideo: linkByStoryboard[sb.id] || null,
       versions: versions.filter(v => v.storyboard_id === sb.id).map(ver => ({
         ...versionRow(ver), views: viewsByVersion[ver.id] || [],
@@ -586,9 +613,9 @@ async function registerVersion(req, res, user, storyboardId) {
     RETURNING id, storyboard_id, version_number, label, filename, mime_type, size_bytes, page_count,
               blob_url, uploaded_by, created_at
   `;
-  // A new draft reopens that storyboard: clear its approval so the client can
-  // review again and leave comments.
-  await sql`UPDATE storyboards SET approved_at = NULL, approved_by = NULL WHERE id = ${storyboardId}`;
+  // Uploading a draft is now purely internal — it does NOT reopen the review or
+  // make the draft client-visible. The client keeps seeing the last SUBMITTED
+  // version until staff hit "Submit to client for review". See clientReview.js.
   await sql`UPDATE storyboard_projects SET updated_at = NOW() WHERE id = ${storyboard.project_id}`;
   // Surface on the deal timeline so the project page shows that a revised
   // storyboard PDF landed (mirrors revision_draft_uploaded).
@@ -756,7 +783,8 @@ async function publicView(req, res) {
   const [cfg] = await sql`SELECT revision_call_url FROM settings WHERE id = 1`;
 
   const storyboards = await sql`
-    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at FROM storyboards
+    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at,
+           client_submitted_version FROM storyboards
     WHERE project_id = ${project.id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -792,12 +820,16 @@ async function publicView(req, res) {
     title: project.title,
     clientName: project.client_name,
     callUrl: (cfg && cfg.revision_call_url) || null,
-    storyboards: storyboards.map(sb => ({
-      id: sb.id, title: sb.title,
-      approvedAt: sb.approved_at || null, approvedBy: sb.approved_by || null,
-      feedbackSubmittedAt: sb.feedback_submitted_at || null,
-      versions: versions.filter(v => v.storyboard_id === sb.id).map(mapVersion),
-    })),
+    storyboards: storyboards.map(sb => {
+      // Hide internal drafts newer than the last version submitted to the client.
+      const submittedVer = sb.client_submitted_version ?? 0;
+      return {
+        id: sb.id, title: sb.title,
+        approvedAt: sb.approved_at || null, approvedBy: sb.approved_by || null,
+        feedbackSubmittedAt: sb.feedback_submitted_at || null,
+        versions: versions.filter(v => v.storyboard_id === sb.id && v.version_number <= submittedVer).map(mapVersion),
+      };
+    }),
     comments: comments.map(r => publicCommentRow(r, viewerEmail)),
     activeViewers: viewers.map(v => ({
       name: v.name,
@@ -1109,12 +1141,17 @@ async function postComment(req, res) {
   // The version must belong to the project this share_token unlocks, and its
   // storyboard must not yet be approved.
   const [match] = await sql`
-    SELECT ver.id, sb.approved_at FROM storyboard_versions ver
+    SELECT ver.id, ver.version_number, sb.approved_at, sb.client_submitted_version
+      FROM storyboard_versions ver
     JOIN storyboards sb ON sb.id = ver.storyboard_id
     JOIN storyboard_projects sp ON sp.id = ver.project_id
     WHERE ver.id = ${versionId} AND sp.share_token = ${token}
   `;
   if (!match) return res.status(404).json({ error: 'version not found' });
+  // A stale tab can't comment on a draft that isn't (or is no longer) submitted.
+  if (match.version_number > (match.client_submitted_version ?? 0)) {
+    return res.status(403).json({ error: 'This draft is not available for review.' });
+  }
   if (match.approved_at) {
     return res.status(403).json({ error: 'This storyboard has been approved and is now locked.' });
   }

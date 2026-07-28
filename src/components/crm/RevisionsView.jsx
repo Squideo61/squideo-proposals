@@ -334,10 +334,16 @@ function CommentAttachment({ url, name, type }) {
   );
 }
 
-export function RevisionsView({ onBack }) {
+export function RevisionsView({ onBack, projectId, onOpenProject, onCloseProject }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
-  const [selectedId, setSelectedId] = useState(null);
+  // Deep-link support: when the video page routes to a specific project it
+  // passes projectId via the route (App.jsx). Falls back to local selection for
+  // the standalone #/revisions route so both entry points work.
+  const [localSelected, setLocalSelected] = useState(null);
+  const selectedId = projectId !== undefined ? projectId : localSelected;
+  const setSelectedId = onOpenProject || setLocalSelected;
+  const closeProject = onCloseProject || (() => setLocalSelected(null));
   const [creating, setCreating] = useState(false);
   const [analyticsProject, setAnalyticsProject] = useState(null);
   const [query, setQuery] = useState('');
@@ -360,7 +366,7 @@ export function RevisionsView({ onBack }) {
   }, [all, query]);
 
   if (selectedId) {
-    return <ProjectDetail projectId={selectedId} onBack={() => { setSelectedId(null); actions.loadRevisions(); }} />;
+    return <ProjectDetail projectId={selectedId} onBack={() => { closeProject(); actions.loadRevisions(); }} />;
   }
 
   return (
@@ -725,6 +731,7 @@ function VideoCard({ projectId, video, commentsByVersion }) {
   const isMobile = useIsMobile();
   const fileInputRef = useRef(null);
   const [progress, setProgress] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
   // Latest draft is open by default (recomputed each render, so a freshly
   // uploaded draft auto-expands); older ones collapse. Manual toggles override.
   const latestId = (video.versions || [])[0]?.id;
@@ -747,6 +754,22 @@ function VideoCard({ projectId, video, commentsByVersion }) {
   }
 
   const versions = video.versions || [];
+  const latestVersionNumber = versions[0]?.versionNumber ?? 0;
+  const submittedVer = video.clientSubmittedVersion ?? 0;
+  const hasUnsent = latestVersionNumber > submittedVer;
+
+  async function submit() {
+    if (!window.confirm('Submit the latest draft to the client for review? They will be notified and it becomes visible in their portal.')) return;
+    setSubmitting(true);
+    try {
+      await actions.submitRevisionToClient(projectId, video.id);
+      showMsg('Submitted to the client');
+    } catch (err) {
+      showMsg(err.message || 'Could not submit');
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 16, marginBottom: 18 }}>
@@ -763,6 +786,24 @@ function VideoCard({ projectId, video, commentsByVersion }) {
       </div>
 
       <VideoLinkBanner linked={video.linkedProjectVideo} />
+
+      {/* Submit-to-client gate: uploading a draft is internal; the client only
+          sees it (and gets notified) once it's submitted. */}
+      {versions.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '0 0 14px' }}>
+          <button className="btn" disabled={!hasUnsent || submitting} onClick={submit}
+            style={{ fontSize: 12.5, opacity: hasUnsent ? 1 : 0.55 }}>
+            <Send size={13} /> {submitting ? 'Submitting…' : 'Submit to client for review'}
+          </button>
+          {video.clientSubmittedVersion == null ? (
+            <span style={{ fontSize: 12, color: BRAND.muted }}>Not sent to the client yet.</span>
+          ) : hasUnsent ? (
+            <span style={{ fontSize: 12, color: '#B45309', fontWeight: 600 }}>New draft v{latestVersionNumber} not yet sent — client still sees v{submittedVer}.</span>
+          ) : (
+            <span style={{ fontSize: 12, color: '#16A34A', fontWeight: 600 }}>Sent to client · v{submittedVer}</span>
+          )}
+        </div>
+      )}
 
       {/* Upload a new draft for this video */}
       <div

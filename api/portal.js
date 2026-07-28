@@ -261,7 +261,7 @@ async function gatherDealStates(dealIds) {
     sql`
       SELECT rp.deal_id, rp.share_token, rp.approved_at AS project_approved_at,
              rv.id AS video_id, rv.title AS video_title, rv.approved_at, rv.feedback_submitted_at,
-             EXISTS (SELECT 1 FROM revision_versions vv WHERE vv.video_id = rv.id) AS has_version
+             rv.client_submitted_version
         FROM revision_projects rp
         JOIN revision_videos rv ON rv.project_id = rp.id
        WHERE rp.deal_id = ANY(${dealIds})
@@ -269,7 +269,7 @@ async function gatherDealStates(dealIds) {
     sql`
       SELECT sp.deal_id, sp.share_token, sb.id AS storyboard_id, sb.title AS storyboard_title,
              sb.approved_at, sb.feedback_submitted_at,
-             EXISTS (SELECT 1 FROM storyboard_versions sv WHERE sv.storyboard_id = sb.id) AS has_version
+             sb.client_submitted_version
         FROM storyboard_projects sp
         JOIN storyboards sb ON sb.project_id = sp.id
        WHERE sp.deal_id = ANY(${dealIds})
@@ -320,7 +320,10 @@ async function gatherDealStates(dealIds) {
   const revLinks = new Map();   // dealId -> [{ shareToken, title, approved, feedbackSubmitted }]
   for (const r of revRows) {
     if (!revLinks.has(r.deal_id)) revLinks.set(r.deal_id, []);
-    if (r.has_version) {
+    // Only surface a review the client has actually been sent (a draft uploaded
+    // but not yet submitted stays internal). client_submitted_version = highest
+    // draft the client may see; NULL = nothing submitted.
+    if (r.client_submitted_version != null) {
       revLinks.get(r.deal_id).push({
         shareToken: r.share_token,
         videoId: r.video_id,
@@ -338,7 +341,8 @@ async function gatherDealStates(dealIds) {
   const sbLinks = new Map();
   for (const r of sbRows) {
     if (!sbLinks.has(r.deal_id)) sbLinks.set(r.deal_id, []);
-    if (r.has_version) {
+    // Only surface once submitted to the client (see revLinks note above).
+    if (r.client_submitted_version != null) {
       sbLinks.get(r.deal_id).push({
         shareToken: r.share_token,
         title: r.storyboard_title,

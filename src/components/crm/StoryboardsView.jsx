@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Images, Copy, MessageSquare, Plus, Trash2, Upload, FileText, FileDown, CheckCircle2, ChevronDown, ChevronRight, ChevronLeft, MapPin, BarChart3, Link2, Check, Flag } from 'lucide-react';
+import { ArrowLeft, Images, Copy, MessageSquare, Plus, Trash2, Upload, FileText, FileDown, CheckCircle2, ChevronDown, ChevronRight, ChevronLeft, MapPin, BarChart3, Link2, Check, Flag, Send } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
@@ -300,6 +300,7 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
   const { actions, showMsg } = useStore();
   const fileInputRef = useRef(null);
   const [progress, setProgress] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
   const latestId = (storyboard.versions || [])[0]?.id;
   const [overrides, setOverrides] = useState({}); // versionId -> explicit open/closed
   const isDraftOpen = (id) => (id in overrides ? overrides[id] : id === latestId);
@@ -320,6 +321,22 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
   }
 
   const versions = storyboard.versions || [];
+  const latestVersionNumber = versions[0]?.versionNumber ?? 0;
+  const submittedVer = storyboard.clientSubmittedVersion ?? 0;
+  const hasUnsent = latestVersionNumber > submittedVer;
+
+  async function submit() {
+    if (!window.confirm('Submit the latest storyboard draft to the client for review? They will be notified and it becomes visible in their portal.')) return;
+    setSubmitting(true);
+    try {
+      await actions.submitStoryboardToClient(projectId, storyboard.id);
+      showMsg('Submitted to the client');
+    } catch (err) {
+      showMsg(err.message || 'Could not submit');
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 16, marginBottom: 18 }}>
@@ -336,6 +353,24 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
       </div>
 
       <VideoLinkBanner linked={storyboard.linkedProjectVideo} />
+
+      {/* Submit-to-client gate: uploading a draft is internal; the client only
+          sees it (and gets notified) once it's submitted. */}
+      {versions.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '0 0 14px' }}>
+          <button className="btn" disabled={!hasUnsent || submitting} onClick={submit}
+            style={{ fontSize: 12.5, opacity: hasUnsent ? 1 : 0.55 }}>
+            <Send size={13} /> {submitting ? 'Submitting…' : 'Submit to client for review'}
+          </button>
+          {storyboard.clientSubmittedVersion == null ? (
+            <span style={{ fontSize: 12, color: BRAND.muted }}>Not sent to the client yet.</span>
+          ) : hasUnsent ? (
+            <span style={{ fontSize: 12, color: '#B45309', fontWeight: 600 }}>New draft v{latestVersionNumber} not yet sent — client still sees v{submittedVer}.</span>
+          ) : (
+            <span style={{ fontSize: 12, color: '#16A34A', fontWeight: 600 }}>Sent to client · v{submittedVer}</span>
+          )}
+        </div>
+      )}
 
       {/* Upload a new draft PDF for this storyboard */}
       <div

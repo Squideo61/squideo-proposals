@@ -8,7 +8,7 @@
 //   POST /api/crm/demo?op=seed         → create (or refresh) the demo, return links
 //   POST /api/crm/demo?op=delete       → tear it all down
 
-import { put, del } from '@vercel/blob';
+import { del } from '@vercel/blob';
 import { cors, requirePermission } from '../_lib/middleware.js';
 import sql from '../_lib/db.js';
 import { makeId } from '../_lib/crm/shared.js';
@@ -20,36 +20,6 @@ const DEMO_COMPANY_NAME = '[DEMO] Test Client';
 const PORTAL_BASE = process.env.PORTAL_URL || process.env.APP_URL || '';
 const REVISION_PUBLIC_BASE = process.env.APP_URL || '';
 const REVISION_BLOB_TOKEN = process.env.REVISION_BLOB_READ_WRITE_TOKEN || process.env.REVIEW_BLOB_READ_WRITE_TOKEN;
-// A small, stable CC-hosted sample so the review actually plays. Best-effort —
-// if the fetch/upload fails, the revision is still created and staff can upload
-// their own draft from the Revisions board.
-const SAMPLE_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-const SAMPLE_PDF_URL = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
-
-// A self-contained, valid single-page PDF (pdf.js renders it) so the storyboard
-// review ALWAYS has a draft to show even when the external sample can't be
-// fetched. Byte offsets in the xref are computed as the file is assembled.
-function buildMinimalPdf(caption = 'Demo storyboard — page 1') {
-  const content = `BT /F1 24 Tf 72 760 Td (${caption.replace(/[()\\]/g, ' ')}) Tj ET`;
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-  ];
-  let pdf = '%PDF-1.4\n';
-  const offsets = [];
-  objects.forEach((body, i) => {
-    offsets.push(Buffer.byteLength(pdf, 'latin1'));
-    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
-  });
-  const xrefStart = Buffer.byteLength(pdf, 'latin1');
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  offsets.forEach((off) => { pdf += `${String(off).padStart(10, '0')} 00000 n \n`; });
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
-  return Buffer.from(pdf, 'latin1');
-}
 
 async function findDemoCompany() {
   const [co] = await sql`SELECT id FROM companies WHERE name = ${DEMO_COMPANY_NAME} ORDER BY created_at ASC LIMIT 1`;
@@ -100,93 +70,10 @@ async function seed(email) {
     await enterProduction(dealId, { source: 'demo', actorEmail: email });
   }
 
-  // Ensure a revision project + video + a playable draft on the deal's first video.
-  const [deal] = await sql`SELECT id, title, revision_project_id FROM deals WHERE company_id = ${companyId} ORDER BY created_at ASC LIMIT 1`;
-  const [video] = await sql`SELECT id, title, revision_video_id FROM project_videos WHERE deal_id = ${deal.id} ORDER BY sort_order ASC, created_at ASC LIMIT 1`;
-
-  let revProjectId = deal.revision_project_id;
-  let shareToken = revProjectId ? (await sql`SELECT share_token FROM revision_projects WHERE id = ${revProjectId}`)[0]?.share_token : null;
-  if (!revProjectId || !shareToken) {
-    revProjectId = makeId('rp');
-    shareToken = makeId('tok').replace(/[^a-z0-9]/gi, '') + makeId('tok').replace(/[^a-z0-9]/gi, '');
-    await sql`INSERT INTO revision_projects (id, title, client_name, share_token, created_by, deal_id)
-              VALUES (${revProjectId}, ${deal.title}, ${DEMO_COMPANY_NAME}, ${shareToken}, ${email || null}, ${deal.id})`;
-    await sql`UPDATE deals SET revision_project_id = ${revProjectId} WHERE id = ${deal.id}`;
-  }
-  let revVideoId = video?.revision_video_id || null;
-  if (video && !revVideoId) {
-    revVideoId = makeId('rv');
-    await sql`INSERT INTO revision_videos (id, project_id, title, sort_order) VALUES (${revVideoId}, ${revProjectId}, ${video.title}, 0)`;
-    await sql`UPDATE project_videos SET revision_video_id = ${revVideoId} WHERE id = ${video.id}`;
-  }
-
-  // Best-effort: attach a playable sample draft if there isn't one yet.
-  let reviewReady = false;
-  if (revVideoId) {
-    const [existing] = await sql`SELECT id FROM revision_versions WHERE video_id = ${revVideoId} LIMIT 1`;
-    if (existing) {
-      reviewReady = true;
-    } else if (REVISION_BLOB_TOKEN) {
-      try {
-        const resp = await fetch(SAMPLE_VIDEO_URL);
-        if (resp.ok) {
-          const buf = Buffer.from(await resp.arrayBuffer());
-          const blob = await put(`revision-videos/demo/${makeId('v')}.mp4`, buf, { access: 'public', token: REVISION_BLOB_TOKEN, contentType: 'video/mp4' });
-          await sql`INSERT INTO revision_versions (id, project_id, video_id, version_number, label, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by)
-                    VALUES (${makeId('rver')}, ${revProjectId}, ${revVideoId}, 1, ${'Draft 1'}, ${'demo-draft.mp4'}, ${'video/mp4'}, ${buf.length}, ${blob.url}, ${blob.pathname}, ${email || null})`;
-          reviewReady = true;
-        }
-      } catch (err) {
-        console.warn('[demo] sample draft upload failed', err.message);
-      }
-    }
-  }
-
-  // Ensure a deal-linked storyboard project + item + a sample PDF draft, so the
-  // storyboard side of the review journey is testable too. deal_id is the link
-  // that makes it show in the client's portal "Reviews & feedback" card.
-  let storyboardReady = false;
-  {
-    const [existingSb] = await sql`SELECT id FROM storyboard_projects WHERE deal_id = ${deal.id} ORDER BY created_at ASC LIMIT 1`;
-    let sbProjectId = existingSb?.id || null;
-    let sbItemId = null;
-    if (!sbProjectId) {
-      sbProjectId = makeId('sp');
-      const sbToken = makeId('tok').replace(/[^a-z0-9]/gi, '') + makeId('tok').replace(/[^a-z0-9]/gi, '');
-      await sql`INSERT INTO storyboard_projects (id, title, client_name, share_token, created_by, deal_id)
-                VALUES (${sbProjectId}, ${deal.title}, ${DEMO_COMPANY_NAME}, ${sbToken}, ${email || null}, ${deal.id})`;
-      sbItemId = makeId('sb');
-      await sql`INSERT INTO storyboards (id, project_id, title, sort_order) VALUES (${sbItemId}, ${sbProjectId}, ${'Storyboard 1'}, 0)`;
-      await sql`UPDATE deals SET storyboard_project_id = ${sbProjectId} WHERE id = ${deal.id}`.catch(() => {});
-    } else {
-      sbItemId = (await sql`SELECT id FROM storyboards WHERE project_id = ${sbProjectId} ORDER BY sort_order ASC LIMIT 1`)[0]?.id || null;
-    }
-    if (sbItemId && REVISION_BLOB_TOKEN) {
-      const [hasVer] = await sql`SELECT id FROM storyboard_versions WHERE storyboard_id = ${sbItemId} LIMIT 1`;
-      if (hasVer) {
-        storyboardReady = true;
-      } else {
-        // Prefer the external sample; fall back to a self-contained valid PDF so
-        // the storyboard review is always testable regardless of egress.
-        let buf = null;
-        try {
-          const resp = await fetch(SAMPLE_PDF_URL);
-          if (resp.ok) buf = Buffer.from(await resp.arrayBuffer());
-        } catch (err) {
-          console.warn('[demo] sample storyboard fetch failed, using embedded PDF', err.message);
-        }
-        if (!buf) buf = buildMinimalPdf();
-        try {
-          const blob = await put(`storyboard-versions/demo/${makeId('p')}.pdf`, buf, { access: 'public', token: REVISION_BLOB_TOKEN, contentType: 'application/pdf' });
-          await sql`INSERT INTO storyboard_versions (id, project_id, storyboard_id, version_number, label, filename, mime_type, size_bytes, page_count, blob_url, blob_pathname, uploaded_by)
-                    VALUES (${makeId('sver')}, ${sbProjectId}, ${sbItemId}, 1, ${'Draft 1'}, ${'demo-storyboard.pdf'}, ${'application/pdf'}, ${buf.length}, ${1}, ${blob.url}, ${blob.pathname}, ${email || null})`;
-          storyboardReady = true;
-        } catch (err) {
-          console.warn('[demo] sample storyboard upload failed', err.message);
-        }
-      }
-    }
-  }
+  // Intentionally NO storyboard/video drafts are seeded. The demo starts clean so
+  // you walk the real flow: open the demo video → "Open in Revisions" → upload a
+  // draft → "Submit to client for review". The client only sees a review once
+  // it's submitted (that's the whole point of the gate we're testing).
 
   // A live portal invite to the requesting admin's own email — click it to
   // become the "client" and walk the journey. Idempotent per (email, company).
@@ -203,8 +90,6 @@ async function seed(email) {
   return {
     ...(await demoLinks(companyId, email)),
     inviteUrl,
-    reviewReady,
-    storyboardReady,
     blobConfigured: !!REVISION_BLOB_TOKEN,
   };
 }

@@ -23,6 +23,7 @@ import { sendNotification, resolveDealTeamEmails } from '../_lib/notifications.j
 import { revisionFeedbackHtml, APP_URL } from '../_lib/email.js';
 import { getRole } from '../_lib/userRoles.js';
 import { isFreelancer, freelancerRevisionProjectIds } from '../_lib/crm/access.js';
+import { submitRevisionToClient } from '../_lib/crm/clientReview.js';
 
 // Self-heal for db/migrations/20260605_revision_feedback.sql. Idempotent +
 // cached so we only run the ALTERs once per warm lambda.
@@ -49,6 +50,23 @@ function ensureRevisionFeedbackColumns() {
     // normalised [0,1] floats so re-renders at any size resolve cleanly.
     await sql`ALTER TABLE revision_comments ADD COLUMN IF NOT EXISTS anchor_x DOUBLE PRECISION`;
     await sql`ALTER TABLE revision_comments ADD COLUMN IF NOT EXISTS anchor_y DOUBLE PRECISION`;
+    // Version-aware "submitted to client" gate (db/migrations/20260728_client_submit_gate.sql).
+    // A draft is only client-visible once client_submitted_version >= its version_number.
+    await sql`ALTER TABLE revision_videos ADD COLUMN IF NOT EXISTS client_submitted_version INT`;
+    await sql`ALTER TABLE revision_videos ADD COLUMN IF NOT EXISTS client_submitted_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE revision_videos ADD COLUMN IF NOT EXISTS client_submitted_by TEXT`;
+    // Backfill in-flight reviews so existing share links keep working (treat what
+    // the client can already see as already submitted). Wrapped separately so a
+    // one-off backfill hiccup can never break the whole revisions API.
+    try {
+      await sql`
+        UPDATE revision_videos rv
+           SET client_submitted_version = sub.maxver,
+               client_submitted_at = COALESCE(rv.client_submitted_at, NOW())
+          FROM (SELECT video_id, MAX(version_number) AS maxver
+                  FROM revision_versions GROUP BY video_id) sub
+         WHERE sub.video_id = rv.id AND rv.client_submitted_version IS NULL`;
+    } catch (err) { console.warn('[revisions] submit-gate backfill skipped', err.message); }
   })().catch((err) => { revisionFeedbackEnsured = null; throw err; });
   return revisionFeedbackEnsured;
 }
@@ -225,6 +243,18 @@ export default async function handler(req, res) {
       return res.status(405).end();
     }
 
+    // Submit the latest uploaded draft to the client: makes it client-visible +
+    // notifies them. Distinct from uploading (which is internal-only now).
+    if (action === 'submit') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const videoId = req.query.videoId ? String(req.query.videoId) : null;
+      if (!videoId) return res.status(400).json({ error: 'videoId required' });
+      const result = await submitRevisionToClient({ revisionVideoId: videoId, actorEmail: user.email });
+      if (result.error === 'no-draft') return res.status(400).json({ error: 'Upload a draft before submitting to the client.' });
+      if (result.error) return res.status(404).json({ error: 'Revision not found' });
+      return res.status(200).json(result);
+    }
+
     return res.status(404).json({ error: 'Unknown action' });
   } catch (err) {
     console.error('[revisions]', err);
@@ -357,7 +387,8 @@ async function projectDetail(res, id) {
   if (!project) return res.status(404).json({ error: 'not found' });
 
   const videos = await sql`
-    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at FROM revision_videos
+    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at,
+           client_submitted_version, client_submitted_at FROM revision_videos
     WHERE project_id = ${id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -413,6 +444,8 @@ async function projectDetail(res, id) {
       id: vid.id, title: vid.title, sortOrder: vid.sort_order, createdAt: vid.created_at,
       approvedAt: vid.approved_at || null, approvedBy: vid.approved_by || null,
       feedbackSubmittedAt: vid.feedback_submitted_at || null,
+      clientSubmittedVersion: vid.client_submitted_version ?? null,
+      clientSubmittedAt: vid.client_submitted_at || null,
       linkedProjectVideo: linkByRevisionVideo[vid.id] || null,
       versions: versions.filter(v => v.video_id === vid.id).map(ver => ({
         ...versionRow(ver), views: viewsByVersion[ver.id] || [],
@@ -518,9 +551,10 @@ async function registerVersion(req, res, user, videoId) {
     RETURNING id, video_id, version_number, label, filename, mime_type, size_bytes,
               blob_url, uploaded_by, created_at
   `;
-  // A new draft reopens that video: clear its approval so the client can review
-  // again and leave comments.
-  await sql`UPDATE revision_videos SET approved_at = NULL, approved_by = NULL WHERE id = ${videoId}`;
+  // Uploading a draft is now purely internal — it does NOT reopen the review or
+  // make the draft client-visible. The client keeps seeing the last SUBMITTED
+  // version until staff hit "Submit to client for review" (which clears approval
+  // and bumps client_submitted_version). See api/_lib/crm/clientReview.js.
   await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${video.project_id}`;
   // Surface the new draft on the deal/video timeline so the project page shows
   // that a revised cut was uploaded (otherwise the preview silently updates and
@@ -698,7 +732,8 @@ async function publicView(req, res) {
   const [cfg] = await sql`SELECT revision_call_url FROM settings WHERE id = 1`;
 
   const videos = await sql`
-    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at FROM revision_videos
+    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at,
+           client_submitted_version FROM revision_videos
     WHERE project_id = ${project.id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -735,12 +770,16 @@ async function publicView(req, res) {
     title: project.title,
     clientName: project.client_name,
     callUrl: (cfg && cfg.revision_call_url) || null,
-    videos: videos.map(vid => ({
-      id: vid.id, title: vid.title,
-      approvedAt: vid.approved_at || null, approvedBy: vid.approved_by || null,
-      feedbackSubmittedAt: vid.feedback_submitted_at || null,
-      versions: versions.filter(v => v.video_id === vid.id).map(mapVersion),
-    })),
+    videos: videos.map(vid => {
+      // Hide internal drafts newer than the last version submitted to the client.
+      const submittedVer = vid.client_submitted_version ?? 0;
+      return {
+        id: vid.id, title: vid.title,
+        approvedAt: vid.approved_at || null, approvedBy: vid.approved_by || null,
+        feedbackSubmittedAt: vid.feedback_submitted_at || null,
+        versions: versions.filter(v => v.video_id === vid.id && v.version_number <= submittedVer).map(mapVersion),
+      };
+    }),
     comments: comments.map(r => publicCommentRow(r, viewerEmail)),
     activeViewers: viewers.map(v => ({
       name: v.name,
@@ -1100,12 +1139,17 @@ async function postComment(req, res) {
   // The version must belong to the project this share_token unlocks, and its
   // video must not yet be approved.
   const [match] = await sql`
-    SELECT ver.id, vid.approved_at FROM revision_versions ver
+    SELECT ver.id, ver.version_number, vid.approved_at, vid.client_submitted_version
+      FROM revision_versions ver
     JOIN revision_videos vid ON vid.id = ver.video_id
     JOIN revision_projects rp ON rp.id = ver.project_id
     WHERE ver.id = ${versionId} AND rp.share_token = ${token}
   `;
   if (!match) return res.status(404).json({ error: 'version not found' });
+  // A stale tab can't comment on a draft that isn't (or is no longer) submitted.
+  if (match.version_number > (match.client_submitted_version ?? 0)) {
+    return res.status(403).json({ error: 'This draft is not available for review.' });
+  }
   if (match.approved_at) {
     return res.status(403).json({ error: 'This video has been approved and is now locked.' });
   }

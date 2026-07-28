@@ -46,13 +46,7 @@ export function DemoTab() {
     try {
       const r = await api.post('/api/crm/demo?op=seed', {});
       setData({ exists: true, ...r });
-      if (!r.blobConfigured) {
-        flash('Demo created, but review-file storage is not configured (REVISION_BLOB_READ_WRITE_TOKEN). The review cards need a draft — upload one from the Revisions / Storyboards board.');
-      } else if (!r.reviewReady) {
-        flash('Demo ready. The sample video draft could not be attached — upload one from the Revisions board to make the video review card appear.');
-      } else {
-        flash(r.inviteUrl ? 'Demo ready — accept the portal invite below to log in as the client.' : 'Demo ready.');
-      }
+      flash(r.inviteUrl ? 'Demo ready — accept the portal invite below to log in as the client.' : 'Demo ready.');
     } catch (err) { flash(err.message || 'Could not seed the demo'); } finally { setBusy(false); }
   };
 
@@ -76,8 +70,10 @@ export function DemoTab() {
       <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 16px', lineHeight: 1.5 }}>
         Seeds a self-contained test project so you can experience exactly what a client sees — the portal,
         the revision review (comment &amp; approve), sign-off and the payment-gated download — without a real
-        client or going through the whole sign→pay process. Accept the portal invite with your own email to
-        become the “client”. Delete it any time to remove all the test data.
+        client or going through the whole sign→pay process. It starts with <strong>no drafts</strong>: open the demo
+        video, use <strong>Open in Revisions</strong> to upload a storyboard/video draft, then <strong>Submit to client
+        for review</strong> — only then does it appear in the client&rsquo;s portal. Accept the portal invite with your own
+        email to become the “client”. Delete it any time to remove all the test data.
       </p>
 
       {notice && (
@@ -95,8 +91,8 @@ export function DemoTab() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
             <LinkRow icon={KeyRound} label="1. Accept your portal invite" hint="Sets a password and logs you into the portal as the demo client." url={data.inviteUrl} />
             <LinkRow icon={PlayCircle} label="2. Open the project in the portal" hint="The client's project page — phase bar, tasks, reviews and (once released) the download." url={data.portalProjectUrl} />
-            <LinkRow icon={Film} label="Video review inside the portal" hint="The in-portal video review — comment and approve as the client." url={data.portalReviewUrl} />
-            <LinkRow icon={Film} label="Storyboard review inside the portal" hint="The in-portal storyboard (PDF) review — comment and approve as the client." url={data.portalStoryboardUrl} />
+            <LinkRow icon={Film} label="Video review inside the portal" hint="Appears once you've submitted a video draft to the client." url={data.portalReviewUrl} />
+            <LinkRow icon={Film} label="Storyboard review inside the portal" hint="Appears once you've submitted a storyboard draft to the client." url={data.portalStoryboardUrl} />
             <LinkRow icon={ExternalLink} label="Video review via the anonymous share link" hint="What a client sees from an emailed link (name/email gate)." url={data.reviewUrl} />
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -109,9 +105,10 @@ export function DemoTab() {
           </div>
           <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 14, lineHeight: 1.6 }}>
             <p style={{ margin: '0 0 6px' }}>
-              Where the client sees reviews: open the project in the portal, then scroll to the
-              <strong> “Reviews &amp; feedback”</strong> card (below “Videos”). It only appears once a review has an
-              uploaded draft — the buttons above jump straight to each review.
+              To create a review: open the demo video in the CRM (Production board → the video), open the
+              <strong> Storyboard</strong> or <strong>Video</strong> milestone, click <strong>Open in Revisions</strong>,
+              upload a draft, then <strong>Submit to client for review</strong>. It then shows in the client&rsquo;s portal
+              <strong> “Reviews &amp; feedback”</strong> card (below “Videos”) and the links above light up.
             </p>
             <p style={{ margin: 0 }}>
               Tip: to test the payment-gated download, open the deal in the CRM and use “Release now” on its Client-portal

@@ -422,7 +422,8 @@ function AppShell() {
         <div style={producerBoard ? undefined : { maxWidth: APP_MAX_WIDTH, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <Suspense fallback={<ViewFallback />}>
           {view === 'video' && activeId ? (
-            <VideoDetailView videoId={activeId} onBack={() => goBack('production')} onOpenProject={(id) => navigate('project', id)} />
+            <VideoDetailView videoId={activeId} onBack={() => goBack('production')} onOpenProject={(id) => navigate('project', id)}
+              onOpenReview={(id) => navigate('revisions', id)} onOpenStoryboardReview={(id) => navigate('storyboards', id)} />
           ) : (view === 'project' || view === 'deal') && activeId ? (
             <DealDetailView dealId={activeId} productionOnly hideFinancials={freelancer} onBack={() => goBack(freelancer ? 'projects' : 'production')} onOpenVideo={(id) => navigate('video', id)} />
           ) : view === 'schedule' ? (
@@ -437,7 +438,10 @@ function AppShell() {
           ) : view === 'projects' ? (
             <ProjectsOverviewView onBack={() => navigate('production')} onOpenProject={(id) => navigate('project', id)} />
           ) : view === 'revisions' ? (
-            <RevisionsView onBack={() => navigate('production')} />
+            <RevisionsView onBack={() => navigate('production')}
+              projectId={activeId}
+              onOpenProject={(id) => navigate('revisions', id)}
+              onCloseProject={() => navigate('revisions')} />
           ) : view === 'storyboards' ? (
             <StoryboardsView onBack={() => navigate('production')}
               projectId={activeId}
@@ -646,7 +650,10 @@ function AppShell() {
         />
       )}
       {view === 'revisions' && (
-        <RevisionsView onBack={() => navigate('list')} />
+        <RevisionsView onBack={() => navigate('list')}
+          projectId={activeId}
+          onOpenProject={(id) => navigate('revisions', id)}
+          onCloseProject={() => navigate('revisions')} />
       )}
       {view === 'storyboards' && (
         <StoryboardsView onBack={() => navigate('list')}
@@ -673,6 +680,8 @@ function AppShell() {
           videoId={activeId}
           onBack={() => goBack('production')}
           onOpenProject={(id) => navigate('project', id)}
+          onOpenReview={(id) => navigate('revisions', id)}
+          onOpenStoryboardReview={(id) => navigate('storyboards', id)}
         />
       )}
       {/* Performance is now folded into Finance; keep the old route as an alias. */}

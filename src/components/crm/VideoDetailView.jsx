@@ -31,7 +31,7 @@ const labelStyle = { fontSize: 12, color: BRAND.muted, marginBottom: 4, display:
 // A single video's page: its board position (phase + stage), its Monday-style
 // columns, status, and the client review hand-off. Opened from the production
 // board and from the project page.
-export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) {
+export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, onOpenReview, onOpenStoryboardReview }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
 
@@ -193,7 +193,7 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal }) 
           <div style={{ marginTop: 18 }}>
             <ScheduleCard video={video} onOpen={() => setShowSchedule(true)} />
           </div>
-          <MilestonesCard video={video} videoId={videoId} />
+          <MilestonesCard video={video} videoId={videoId} onOpenReview={onOpenReview} onOpenStoryboardReview={onOpenStoryboardReview} />
           {/* Emails + Comments sit side-by-side, full width, growing with their
               content — so the team can read a long comment thread without the
               cramped scroll the old right-column panel forced. */}
@@ -567,10 +567,60 @@ function MilestonePreview({ asset }) {
   return null; // other documents: the file list carries a View link
 }
 
+const reviewPill = (color, bg) => ({ fontSize: 11, fontWeight: 700, color, background: bg, borderRadius: 999, padding: '2px 8px', display: 'inline-flex', alignItems: 'center' });
+
+// The Storyboard + Video milestones no longer take a raw file upload — the
+// reviewable draft is uploaded in the Storyboard/Video Revisions section (the
+// same file the client reviews). This is the in-place summary + gateway: it
+// shows the draft/submit state and links straight into the Revisions section.
+function MilestoneReviewSummary({ kind, status, onOpen, onSubmit, busy }) {
+  const label = kind === 'storyboard' ? 'Storyboard Revisions' : 'Video Revisions';
+  const versionCount = status?.versionCount || 0;
+  const latest = status?.latestVersionNumber || 0;
+  const submitted = status?.clientSubmittedVersion ?? 0;
+  const neverSent = status?.clientSubmittedVersion == null;
+  const hasUnsent = versionCount > 0 && latest > submitted;
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14, background: '#FAFBFC' }}>
+      {versionCount === 0 ? (
+        <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 12, lineHeight: 1.5 }}>
+          No draft uploaded yet — upload the {kind === 'storyboard' ? 'storyboard PDF' : 'draft video'} in the <strong>{label}</strong> section. It becomes the file the client reviews once you submit it.
+        </div>
+      ) : (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: BRAND.ink }}>
+            {versionCount} draft{versionCount === 1 ? '' : 's'} · latest v{latest}{status?.latestVersionAt ? ' · ' + fmtDate(status.latestVersionAt) : ''}
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+            {neverSent
+              ? <span style={reviewPill(BRAND.muted, '#F1F5F9')}>Not sent to client</span>
+              : hasUnsent
+                ? <span style={reviewPill('#B45309', '#FEF3C7')}>New draft v{latest} not yet sent — client sees v{submitted}</span>
+                : <span style={reviewPill('#16A34A', '#DCFCE7')}>Sent to client · v{submitted}</span>}
+            {status?.approvedAt && <span style={reviewPill('#16A34A', '#DCFCE7')}>Approved</span>}
+            {status?.feedbackSubmittedAt && !status?.approvedAt && <span style={reviewPill('#2563EB', '#DBEAFE')}>Client sent feedback</span>}
+            {status?.openCommentCount > 0 && <span style={reviewPill(BRAND.muted, '#F1F5F9')}>{status.openCommentCount} open comment{status.openCommentCount === 1 ? '' : 's'}</span>}
+          </div>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button className="btn" disabled={busy} onClick={onOpen} style={{ fontSize: 12.5 }}>
+          <ExternalLink size={13} /> {busy ? 'Opening…' : `Open in ${label}`}
+        </button>
+        <button className="btn-ghost" disabled={busy || !hasUnsent} onClick={onSubmit}
+          style={{ fontSize: 12.5, opacity: hasUnsent ? 1 : 0.5 }}
+          title={hasUnsent ? undefined : 'Upload a new draft in the Revisions section first'}>
+          <Send size={13} /> Submit to client for review
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Milestones: Script & Text Direction → Storyboard → Video. Each is an
 // expandable panel where producers upload typed content, preview it, and
 // approve — approving advances the card forward on the board.
-function MilestonesCard({ video, videoId }) {
+function MilestonesCard({ video, videoId, onOpenReview, onOpenStoryboardReview }) {
   const approvedMap = Object.fromEntries((video.milestones || []).map(m => [m.id, m]));
   const assetsByMilestone = video.milestoneAssets || {};
   const current = video.preview?.current;
@@ -587,10 +637,11 @@ function MilestonesCard({ video, videoId }) {
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         {VIDEO_MILESTONES.map((m, i) => (
           <MilestoneRow
-            key={m.id} m={m} index={i} videoId={videoId}
+            key={m.id} m={m} index={i} videoId={videoId} video={video}
             approval={approvedMap[m.id] || null}
             assets={assetsByMilestone[m.id] || []}
             open={isOpen(m.id)} onToggle={() => toggleOpen(m.id)}
+            onOpenReview={onOpenReview} onOpenStoryboardReview={onOpenStoryboardReview}
           />
         ))}
       </div>
@@ -598,19 +649,59 @@ function MilestonesCard({ video, videoId }) {
   );
 }
 
-function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
+function MilestoneRow({ m, index, videoId, video, approval, assets, open, onToggle, onOpenReview, onOpenStoryboardReview }) {
   const { actions, showMsg } = useStore();
   const userName = useUserName();
   const ui = MILESTONE_UI[m.id] || MILESTONE_UI.script;
   const fileRef = useRef(null);
   const [progress, setProgress] = useState(null); // null = idle
   const [busy, setBusy] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
+
+  // The Storyboard + Video milestones delegate their media to the Revisions
+  // section (the file the client reviews). Script keeps its own file upload.
+  const isReviewMilestone = m.id === 'storyboard' || m.id === 'video';
+  const reviewStatus = m.id === 'storyboard' ? video?.storyboardStatus : video?.revisionStatus;
+  const reviewLinkedId = m.id === 'storyboard' ? video?.storyboardId : video?.revisionVideoId;
+
+  async function openReview() {
+    const go = m.id === 'storyboard' ? onOpenStoryboardReview : onOpenReview;
+    setReviewBusy(true);
+    try {
+      let projectId = m.id === 'storyboard' ? reviewStatus?.storyboardProjectId : reviewStatus?.revisionProjectId;
+      // Not linked to a review yet → lazily create + link, then jump in.
+      if (!reviewLinkedId || !projectId) {
+        const resp = m.id === 'storyboard'
+          ? await actions.sendStoryboardForReview(video.dealId, videoId)
+          : await actions.sendVideoForReview(video.dealId, videoId);
+        projectId = m.id === 'storyboard' ? resp?.storyboardProjectId : resp?.revisionProjectId;
+      }
+      if (projectId && go) go(projectId);
+      else showMsg('Could not open the Revisions section');
+    } catch (e) { showMsg(e.message || 'Could not open the Revisions section'); }
+    finally { setReviewBusy(false); }
+  }
+  async function submitReview() {
+    if (!window.confirm('Submit the latest draft to the client for review? They will be notified and it becomes visible in their portal.')) return;
+    setReviewBusy(true);
+    try {
+      if (m.id === 'storyboard') await actions.submitStoryboardReviewFromDeal(video.dealId, videoId);
+      else await actions.submitVideoReviewFromDeal(video.dealId, videoId);
+      showMsg('Submitted to the client');
+    } catch (e) { showMsg(e.message || 'Could not submit'); }
+    finally { setReviewBusy(false); }
+  }
   // Inline "link a Google Doc" form (alternative to uploading a file).
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrlInput, setLinkUrlInput] = useState('');
   const [linkTitle, setLinkTitle] = useState('');
   const stageLabel = STAGE_LABEL[m.phase]?.[m.stage] || m.stage;
   const latest = assets[0] || null;
+  // Content that gates the milestone Approve (stage advance). Review milestones
+  // no longer store a file here — their "content" is a draft in the Revisions
+  // section — so gate those on the review draft count instead of milestone assets.
+  const reviewDraftCount = reviewStatus?.versionCount || 0;
+  const hasContent = isReviewMilestone ? reviewDraftCount > 0 : assets.length > 0;
 
   async function handleFile(file) {
     if (!file) return;
@@ -656,7 +747,9 @@ function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
           <div>
             <div style={{ fontWeight: 600, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
               {m.label}
-              {assets.length > 0 && <span style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>· {assets.length} file{assets.length === 1 ? '' : 's'}</span>}
+              {isReviewMilestone
+                ? (reviewDraftCount > 0 && <span style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>· {reviewDraftCount} draft{reviewDraftCount === 1 ? '' : 's'}</span>)
+                : (assets.length > 0 && <span style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>· {assets.length} file{assets.length === 1 ? '' : 's'}</span>)}
             </div>
             <div style={{ fontSize: 12, color: BRAND.muted }}>→ moves to {stageLabel}</div>
           </div>
@@ -669,8 +762,8 @@ function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
             <button onClick={() => approve(false)} disabled={busy} className="btn-ghost" title="Un-approve">Undo</button>
           </>
         ) : (
-          <button onClick={() => approve(true)} disabled={busy || assets.length === 0} className="btn"
-            title={assets.length === 0 ? 'Upload content first' : undefined}>
+          <button onClick={() => approve(true)} disabled={busy || !hasContent} className="btn"
+            title={!hasContent ? (isReviewMilestone ? 'Upload a draft in the Revisions section first' : 'Upload content first') : undefined}>
             {busy ? 'Approving…' : 'Approve'}
           </button>
         )}
@@ -678,6 +771,10 @@ function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
 
       {open && (
         <div style={{ padding: '0 0 16px 26px' }}>
+          {isReviewMilestone ? (
+            <MilestoneReviewSummary kind={m.id} status={reviewStatus} onOpen={openReview} onSubmit={submitReview} busy={reviewBusy} />
+          ) : (
+          <>
           <input ref={fileRef} type="file" accept={ui.accept} style={{ display: 'none' }}
             onChange={e => handleFile(e.target.files?.[0])} />
           <div
@@ -734,6 +831,8 @@ function MilestoneRow({ m, index, videoId, approval, assets, open, onToggle }) {
               </div>
             )}
           </div>
+          </>
+          )}
 
           {latest && <MilestonePreview asset={latest} />}
 

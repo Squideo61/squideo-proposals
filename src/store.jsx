@@ -2208,6 +2208,16 @@ export function StoreProvider({ children }) {
       return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/send-storyboard-for-review', {})
         .then((resp) => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadVideo(videoId)]).then(() => resp));
     },
+    // Submit the latest uploaded draft to the client (makes it client-visible +
+    // sends a portal notification). The video must already be linked with a draft.
+    submitVideoReviewFromDeal(dealId, videoId) {
+      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/submit-revision', {})
+        .then((resp) => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadVideo(videoId)]).then(() => resp));
+    },
+    submitStoryboardReviewFromDeal(dealId, videoId) {
+      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/submit-storyboard', {})
+        .then((resp) => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadVideo(videoId)]).then(() => resp));
+    },
 
     // ---------- Video script + milestones ----------
     // Approve / un-approve a milestone. Approving advances the card forward on
@@ -3801,6 +3811,13 @@ export function StoreProvider({ children }) {
         .catch(() => actions.loadRevisionDetail(projectId));
     },
 
+    // Submit the latest uploaded draft of this revision video to the client
+    // (client-visible + portal notification). Uploading alone is internal-only.
+    submitRevisionToClient(projectId, videoId) {
+      return api.post('/api/revisions/submit?videoId=' + encodeURIComponent(videoId), {})
+        .then((resp) => actions.loadRevisionDetail(projectId).then(() => resp));
+    },
+
     // ---------- Public revision viewer (no auth) ----------
     // The endpoint doubles as a presence heartbeat: when viewerEmail is sent
     // along, the server bumps last_seen and returns activeViewers + per-comment
@@ -3988,6 +4005,12 @@ export function StoreProvider({ children }) {
       return api.delete('/api/storyboards/versions?id=' + encodeURIComponent(versionId))
         .then(() => actions.loadStoryboardDetail(projectId))
         .catch(() => actions.loadStoryboardDetail(projectId));
+    },
+
+    // Submit the latest uploaded storyboard draft to the client.
+    submitStoryboardToClient(projectId, storyboardId) {
+      return api.post('/api/storyboards/submit?storyboardId=' + encodeURIComponent(storyboardId), {})
+        .then((resp) => actions.loadStoryboardDetail(projectId).then(() => resp));
     },
 
     // ---------- Public storyboard viewer (no auth) ----------

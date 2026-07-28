@@ -30,6 +30,7 @@ import { hasPermission } from '../permissions.js';
 import { archiveRecord } from './recycleBin.js';
 import { getDealCreditProject } from './retainers.js';
 import { isFreelancer, userOnDeal, userOnVideo } from './access.js';
+import { submitRevisionToClient, submitStoryboardToClient } from './clientReview.js';
 
 // Where scripts live inside a deal's Drive folder (from the FOLDER_TEMPLATE in
 // googleDrive.js).
@@ -230,6 +231,14 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     if (subaction === 'send-storyboard-for-review') {
       if (req.method !== 'POST') return res.status(405).end();
       return sendStoryboardForReview(res, videoId, user);
+    }
+    if (subaction === 'submit-revision') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return submitVideoToClient(res, videoId, user);
+    }
+    if (subaction === 'submit-storyboard') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return submitStoryboardToClientFromVideo(res, videoId, user);
     }
     if (subaction === 'move') {
       if (req.method !== 'POST') return res.status(405).end();
@@ -561,7 +570,7 @@ async function withVideoExtras(video) {
         SELECT COUNT(*)::int AS version_count FROM revision_versions WHERE video_id = ${video.revisionVideoId}
       `;
       const [vid] = await sql`
-        SELECT approved_at, approved_by, feedback_submitted_at
+        SELECT approved_at, approved_by, feedback_submitted_at, client_submitted_version, project_id
           FROM revision_videos WHERE id = ${video.revisionVideoId}
       `;
       let commentCount = 0, openCommentCount = 0;
@@ -585,6 +594,8 @@ async function withVideoExtras(video) {
         approvedAt: vid?.approved_at || null,
         approvedBy: vid?.approved_by || null,
         feedbackSubmittedAt: vid?.feedback_submitted_at || null,
+        clientSubmittedVersion: vid?.client_submitted_version ?? null,
+        revisionProjectId: vid?.project_id || null,
         commentCount,
         openCommentCount,
       };
@@ -607,7 +618,7 @@ async function withVideoExtras(video) {
         SELECT COUNT(*)::int AS version_count FROM storyboard_versions WHERE storyboard_id = ${video.storyboardId}
       `;
       const [sb] = await sql`
-        SELECT approved_at, approved_by, feedback_submitted_at
+        SELECT approved_at, approved_by, feedback_submitted_at, client_submitted_version, project_id
           FROM storyboards WHERE id = ${video.storyboardId}
       `;
       let commentCount = 0, openCommentCount = 0;
@@ -631,6 +642,8 @@ async function withVideoExtras(video) {
         approvedAt: sb?.approved_at || null,
         approvedBy: sb?.approved_by || null,
         feedbackSubmittedAt: sb?.feedback_submitted_at || null,
+        clientSubmittedVersion: sb?.client_submitted_version ?? null,
+        storyboardProjectId: sb?.project_id || null,
         commentCount,
         openCommentCount,
       };
@@ -1120,6 +1133,31 @@ async function sendStoryboardForReview(res, videoId, user) {
     shareToken,
     reviewUrl: `${REVISION_PUBLIC_BASE}/?storyboard=${shareToken}`,
   });
+}
+
+// Submit this video's latest uploaded draft to the client (from the video page).
+// The video must already be linked to a revision_video with a draft — the UI
+// only enables Submit when a draft exists, so an unlinked video means nothing to
+// send. Delegates to the shared client-review helper (sets client_submitted_version,
+// clears approval, notifies the portal).
+async function submitVideoToClient(res, videoId, user) {
+  const [video] = await sql`SELECT id, revision_video_id FROM project_videos WHERE id = ${videoId}`;
+  if (!video) return res.status(404).json({ error: 'Video not found' });
+  if (!video.revision_video_id) return res.status(400).json({ error: 'Upload a draft in the Revisions section before submitting to the client.' });
+  const result = await submitRevisionToClient({ revisionVideoId: video.revision_video_id, actorEmail: user.email });
+  if (result.error === 'no-draft') return res.status(400).json({ error: 'Upload a draft before submitting to the client.' });
+  if (result.error) return res.status(404).json({ error: 'Revision not found' });
+  return res.status(200).json(result);
+}
+
+async function submitStoryboardToClientFromVideo(res, videoId, user) {
+  const [video] = await sql`SELECT id, storyboard_id FROM project_videos WHERE id = ${videoId}`;
+  if (!video) return res.status(404).json({ error: 'Video not found' });
+  if (!video.storyboard_id) return res.status(400).json({ error: 'Upload a storyboard draft in the Storyboard Revisions section before submitting to the client.' });
+  const result = await submitStoryboardToClient({ storyboardId: video.storyboard_id, actorEmail: user.email });
+  if (result.error === 'no-draft') return res.status(400).json({ error: 'Upload a draft before submitting to the client.' });
+  if (result.error) return res.status(404).json({ error: 'Storyboard not found' });
+  return res.status(200).json(result);
 }
 
 // A video's reference is its deal's reference plus the video's own two-digit
