@@ -936,31 +936,85 @@ async function libraryRoute(req, res, user) {
      WHERE company_id = ${companyId} AND stage IN ('signed', 'paid')
      ORDER BY created_at DESC
   `;
+  const dealIds = deals.map((d) => d.id);
+  if (!dealIds.length) return res.status(200).json({ projects: [] });
+
+  // 1. Delivered review cuts — the approved final cut the client reviewed. A
+  // video only reaches 'delivered' once the deal is paid in full (or a staff
+  // override is set), so surfacing it here is already consistent with the
+  // payment gate; no extra balance check (and no Xero call) is needed. This is
+  // what makes a just-delivered video appear in the library even before anyone
+  // has placed a render in the Drive "Signed Off" folder.
+  const cutRows = await sql`
+    SELECT pv.id AS video_id, pv.deal_id, pv.title,
+           rver.filename, rver.size_bytes, rver.mime_type, rver.created_at
+      FROM project_videos pv
+      JOIN LATERAL (
+        SELECT filename, size_bytes, mime_type, created_at
+          FROM revision_versions
+         WHERE video_id = pv.revision_video_id AND blob_url IS NOT NULL
+         ORDER BY version_number DESC, created_at DESC
+         LIMIT 1
+      ) rver ON true
+     WHERE pv.deal_id = ANY(${dealIds})
+       AND pv.production_stage = 'delivered'
+       AND pv.revision_video_id IS NOT NULL
+  `.catch(() => []);
+  const cutsByDeal = new Map();
+  for (const c of cutRows) {
+    if (!cutsByDeal.has(c.deal_id)) cutsByDeal.set(c.deal_id, []);
+    cutsByDeal.get(c.deal_id).push({
+      kind: 'cut',
+      videoId: c.video_id,
+      name: c.title || c.filename || 'Final video',
+      mimeType: c.mime_type || null,
+      sizeBytes: c.size_bytes != null ? Number(c.size_bytes) : null,
+      createdTime: c.created_at,
+    });
+  }
+
+  // 2. Drive "Signed Off" files — final renders the team places in Drive.
   const withDrive = deals.filter((d) => d.drive_folder_id);
-  if (!withDrive.length) return res.status(200).json({ projects: [] });
+  const driveByDeal = new Map();
+  let driveUnavailable = false;
+  if (withDrive.length) {
+    const token = await anyDriveAccessToken();
+    if (!token) {
+      driveUnavailable = true;
+    } else {
+      await Promise.all(withDrive.map(async (d) => {
+        const files = await listSignedOffFiles(token, d.drive_folder_id).catch(() => []);
+        if (files.length) {
+          driveByDeal.set(d.id, files.map((f) => ({
+            kind: 'drive',
+            // Opaque per-request id; re-validated against a fresh org-scoped
+            // listing at download time (never trusted as a raw Drive capability).
+            fileId: f.driveFileId,
+            name: f.name,
+            mimeType: f.mimeType,
+            sizeBytes: f.sizeBytes,
+            createdTime: f.createdTime,
+          })));
+        }
+      }));
+    }
+  }
 
-  const token = await anyDriveAccessToken();
-  if (!token) return res.status(200).json({ projects: [], unavailable: true });
-
-  const projects = await Promise.all(withDrive.map(async (d) => {
-    const files = await listSignedOffFiles(token, d.drive_folder_id);
-    return {
+  const projects = deals
+    .map((d) => ({
       dealId: d.id,
       title: d.title,
       createdAt: d.created_at,
-      files: files.map((f) => ({
-        // Opaque per-request id; re-validated against a fresh org-scoped
-        // listing at download time (never trusted as a raw Drive capability).
-        fileId: f.driveFileId,
-        name: f.name,
-        mimeType: f.mimeType,
-        sizeBytes: f.sizeBytes,
-        createdTime: f.createdTime,
-      })),
-    };
-  }));
+      files: [...(cutsByDeal.get(d.id) || []), ...(driveByDeal.get(d.id) || [])],
+    }))
+    .filter((p) => p.files.length > 0);
 
-  return res.status(200).json({ projects: projects.filter((p) => p.files.length > 0) });
+  // Only flag "unavailable" when Drive is the sole reason there's nothing to
+  // show — if we surfaced any cuts, the library isn't empty.
+  return res.status(200).json({
+    projects,
+    ...(driveUnavailable && projects.length === 0 ? { unavailable: true } : {}),
+  });
 }
 
 // ═══════════════════ review-cut download (gated) ═══════════════════
@@ -1036,6 +1090,31 @@ async function downloadRoute(req, res, user) {
     if (!f || !f.blob_url || !user.companyIds.includes(f.company_id)) return res.status(404).json({ error: 'File not found' });
     const url = await getDownloadUrl(f.blob_url);
     res.setHeader('Location', url);
+    return res.status(302).end();
+  }
+
+  // Delivered review cut — the approved final cut, streamed from the revision
+  // blob store. Gate is the delivery itself: a video is only at 'delivered'
+  // once the deal is paid in full (or a staff override is set), so we check the
+  // stage rather than re-running the (slow, Xero-hitting) balance check.
+  if (scope === 'cut') {
+    const deal = await requireDealInOrg(res, req.query.dealId ? String(req.query.dealId) : null, user.companyIds);
+    if (!deal) return;
+    const videoId = req.query.videoId ? String(req.query.videoId) : id;
+    const rows = await sql`
+      SELECT rver.blob_url
+        FROM project_videos pv
+        JOIN revision_versions rver ON rver.video_id = pv.revision_video_id
+       WHERE pv.id = ${videoId} AND pv.deal_id = ${deal.id}
+         AND pv.production_stage = 'delivered' AND rver.blob_url IS NOT NULL
+       ORDER BY rver.version_number DESC, rver.created_at DESC
+       LIMIT 1
+    `.catch(() => []);
+    const cut = rows[0];
+    if (!cut || !cut.blob_url) return res.status(404).json({ error: 'File not found' });
+    // Revision cuts live in the public revision blob store — a 302 to the
+    // unguessable URL is sufficient once the delivery gate above has passed.
+    res.setHeader('Location', cut.blob_url);
     return res.status(302).end();
   }
 

@@ -20,8 +20,13 @@ export default function Library() {
       .catch((err) => setError(err.message));
   }, [companyId]);
 
-  const download = (dealId, fileId) => {
-    window.location.href = `/api/portal/download?scope=library&dealId=${encodeURIComponent(dealId)}&id=${encodeURIComponent(fileId)}`;
+  const download = (dealId, file) => {
+    // A delivered review cut streams from the revision store (scope=cut); a
+    // Drive "Signed Off" render streams through us (scope=library).
+    const url = file.kind === 'cut'
+      ? `/api/portal/download?scope=cut&dealId=${encodeURIComponent(dealId)}&videoId=${encodeURIComponent(file.videoId)}`
+      : `/api/portal/download?scope=library&dealId=${encodeURIComponent(dealId)}&id=${encodeURIComponent(file.fileId)}`;
+    window.location.href = url;
   };
 
   return (
@@ -56,7 +61,7 @@ export default function Library() {
           <SectionHeading>{p.title}</SectionHeading>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 12 }}>
             {p.files.map((f) => (
-              <div key={f.fileId} style={{
+              <div key={f.fileId || f.videoId} style={{
                 border: `1px solid ${BRAND.border}`, borderRadius: 12, padding: 14,
                 display: 'flex', flexDirection: 'column', gap: 10,
               }}>
@@ -76,7 +81,7 @@ export default function Library() {
                     </div>
                   </div>
                 </div>
-                <button className="btn" onClick={() => download(p.dealId, f.fileId)} style={{ width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <button className="btn" onClick={() => download(p.dealId, f)} style={{ width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                   <Download size={15} /> Download
                 </button>
               </div>
