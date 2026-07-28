@@ -96,6 +96,7 @@ import {
   serialisePortalExtra,
   serialisePortalMember,
   serialisePortalInvite,
+  aggregateVideoStage,
 } from './_lib/portal/serialisers.js';
 
 export const config = {
@@ -770,7 +771,8 @@ async function overviewRoute(req, res, user) {
   const projects = [];
   for (const deal of deals) {
     const nextStep = nextStepFor(deal, states);
-    const videos = (states.videos.get(deal.id) || []).map(serialisePortalVideo);
+    const rawVideos = states.videos.get(deal.id) || [];
+    const videos = rawVideos.map(serialisePortalVideo);
     const offers = extrasWindowOpen(deal) ? await computePortalOffers(deal) : [];
     const tasks = tasksFor(deal, states);
     projects.push(serialisePortalDeal(deal, {
@@ -779,6 +781,8 @@ async function overviewRoute(req, res, user) {
       tasks,
       openTasks: countOpenTasks(tasks),
       extrasAvailable: offers.length,
+      // Live board position = least-advanced video (see serialisePortalDeal).
+      projectProduction: aggregateVideoStage(rawVideos),
     }));
   }
 
@@ -821,11 +825,13 @@ async function projectRoute(req, res, user) {
   `;
   const offers = extrasWindowOpen(deal) ? await computePortalOffers(deal) : [];
 
+  const rawVideos = states.videos.get(deal.id) || [];
   return res.status(200).json({
     project: serialisePortalDeal(deal, {
       nextStep,
       tasks: tasksFor(deal, states),
-      videos: (states.videos.get(deal.id) || []).map(serialisePortalVideo),
+      projectProduction: aggregateVideoStage(rawVideos),
+      videos: rawVideos.map(serialisePortalVideo),
       proposal: prop ? { id: prop.id, signed: !!prop.signature } : null,
       reviews: states.revLinks.get(deal.id) || [],
       storyboards: states.sbLinks.get(deal.id) || [],
