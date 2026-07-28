@@ -592,9 +592,16 @@ async function withVideoExtras(video) {
         SELECT COUNT(*)::int AS version_count FROM revision_versions WHERE video_id = ${video.revisionVideoId}
       `;
       const [vid] = await sql`
-        SELECT approved_at, approved_by, feedback_submitted_at, client_submitted_version, project_id
+        SELECT approved_at, approved_by, feedback_submitted_at, project_id
           FROM revision_videos WHERE id = ${video.revisionVideoId}
       `;
+      // Submit-gate column read separately so a missing column (pre-migration)
+      // can never hide the draft count / status — it just degrades to "not sent".
+      let clientSubmittedVersion = null;
+      try {
+        const [cs] = await sql`SELECT client_submitted_version FROM revision_videos WHERE id = ${video.revisionVideoId}`;
+        clientSubmittedVersion = cs?.client_submitted_version ?? null;
+      } catch { /* gate column not present yet */ }
       let commentCount = 0, openCommentCount = 0;
       if (rv?.version_number != null) {
         const [c] = await sql`
@@ -616,7 +623,7 @@ async function withVideoExtras(video) {
         approvedAt: vid?.approved_at || null,
         approvedBy: vid?.approved_by || null,
         feedbackSubmittedAt: vid?.feedback_submitted_at || null,
-        clientSubmittedVersion: vid?.client_submitted_version ?? null,
+        clientSubmittedVersion,
         revisionProjectId: vid?.project_id || null,
         commentCount,
         openCommentCount,
@@ -640,9 +647,14 @@ async function withVideoExtras(video) {
         SELECT COUNT(*)::int AS version_count FROM storyboard_versions WHERE storyboard_id = ${video.storyboardId}
       `;
       const [sb] = await sql`
-        SELECT approved_at, approved_by, feedback_submitted_at, client_submitted_version, project_id
+        SELECT approved_at, approved_by, feedback_submitted_at, project_id
           FROM storyboards WHERE id = ${video.storyboardId}
       `;
+      let clientSubmittedVersion = null;
+      try {
+        const [cs] = await sql`SELECT client_submitted_version FROM storyboards WHERE id = ${video.storyboardId}`;
+        clientSubmittedVersion = cs?.client_submitted_version ?? null;
+      } catch { /* gate column not present yet */ }
       let commentCount = 0, openCommentCount = 0;
       if (sv?.version_number != null) {
         const [c] = await sql`
@@ -664,7 +676,7 @@ async function withVideoExtras(video) {
         approvedAt: sb?.approved_at || null,
         approvedBy: sb?.approved_by || null,
         feedbackSubmittedAt: sb?.feedback_submitted_at || null,
-        clientSubmittedVersion: sb?.client_submitted_version ?? null,
+        clientSubmittedVersion,
         storyboardProjectId: sb?.project_id || null,
         commentCount,
         openCommentCount,
