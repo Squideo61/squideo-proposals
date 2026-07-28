@@ -27,6 +27,7 @@ import { portalTeamInviteHtml, portalResetHtml, portalProjectTasksHtml, PORTAL_U
 import { emailLogoUrl } from '../_lib/portal/logo.js';
 import { notifyPortalUser } from '../_lib/portal/notifications.js';
 import { computeDealTasks } from '../_lib/portal/taskContext.js';
+import { portalTimeline, dealSteps, companyStepsSummary } from '../_lib/portal/activity.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 import { ensureProductionSchema } from '../_lib/production.js';
 
@@ -250,7 +251,15 @@ export default async function handler(req, res) {
            WHERE company_id = ${companyId} AND accepted_at IS NULL AND revoked_at IS NULL
            ORDER BY created_at DESC
         `;
+        // Per-deal step progress across the org's live projects + the merged
+        // activity timeline (member logins + client actions). Best-effort.
+        const [steps, activity] = await Promise.all([
+          companyStepsSummary(companyId).catch(() => []),
+          portalTimeline({ companyId }).catch(() => []),
+        ]);
         return res.status(200).json({
+          steps,
+          activity,
           members: members.map((m) => ({
             id: m.id,
             email: m.email,
@@ -284,8 +293,16 @@ export default async function handler(req, res) {
         `;
         // What the client currently sees, for a live preview in the panel.
         const derived = await computePortalOffers(deal);
+        // Steps completed + activity timeline (logins + client actions) for this
+        // deal. Best-effort so the card still renders if either query hiccups.
+        const [steps, activity] = await Promise.all([
+          dealSteps(dealId).catch(() => []),
+          portalTimeline({ dealId }).catch(() => []),
+        ]);
         return res.status(200).json({
           dealId,
+          steps,
+          activity,
           ...(await inviteCandidatesForDeal(dealId)),
           discount: Number(deal.portal_extras_discount ?? 0.10),
           offers: offers.map((o) => ({

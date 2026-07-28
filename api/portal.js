@@ -39,6 +39,7 @@ import { makeId, trimOrNull, lowerOrNull } from './_lib/crm/shared.js';
 import { ensureDealExtrasTable } from './_lib/crm/extras.js';
 import { buildNotificationEmail } from './quote-requests.js';
 import { ensurePortalTables } from './_lib/portal/db.js';
+import { logPortalActivity } from './_lib/portal/activity.js';
 import {
   signPortalToken,
   portalCookieHeader,
@@ -161,10 +162,16 @@ async function clearFailedLogins(email, ip) {
   await sql`DELETE FROM portal_failed_logins WHERE email = ${email} AND ip = ${ip}`;
 }
 
-async function issuePortalSession(res, user) {
+// Pass `req` for a genuine sign-in (records a login row with IP/geo). Omit it
+// when merely re-issuing the cookie after a token-version bump (profile save) —
+// that isn't a login and shouldn't add a login event.
+async function issuePortalSession(res, user, req = null) {
   const jwt = await signPortalToken({ puid: user.id, email: user.email, tv: user.token_version ?? 0 });
   appendSetCookie(res, portalCookieHeader(jwt));
   await sql`UPDATE portal_users SET last_login_at = NOW() WHERE id = ${user.id}`;
+  // Awaited so the row survives the serverless freeze; logPortalActivity is
+  // itself best-effort and never throws.
+  if (req) await logPortalActivity({ req, portalUserId: user.id, eventKey: 'login' });
 }
 
 async function loadPortalUser(email) {
@@ -551,7 +558,7 @@ async function authRoutes(req, res) {
       VALUES (${user.id}, ${inv.company_id}, ${inv.invited_by})
       ON CONFLICT (portal_user_id, company_id) DO UPDATE SET disabled_at = NULL
     `;
-    await issuePortalSession(res, user);
+    await issuePortalSession(res, user, req);
 
     // Alert the team (best-effort).
     try {
@@ -602,7 +609,7 @@ async function authRoutes(req, res) {
     }
     if (user.disabled_at) return res.status(403).json({ error: 'This account has been disabled. Contact Squideo to restore access.' });
     await clearFailedLogins(email, ip);
-    await issuePortalSession(res, user);
+    await issuePortalSession(res, user, req);
     return res.status(200).json({ user: publicPortalUser(user) });
   }
 
@@ -638,7 +645,7 @@ async function authRoutes(req, res) {
     const rows = await sql`SELECT id, email, name, phone, job_title, token_version, disabled_at FROM portal_users WHERE id = ${puid}`;
     const user = rows[0];
     if (!user || user.disabled_at) return res.status(403).json({ error: 'This account has been disabled. Contact Squideo to restore access.' });
-    await issuePortalSession(res, user);
+    await issuePortalSession(res, user, req);
     return res.status(200).json({ user: publicPortalUser(user) });
   }
 
@@ -686,7 +693,7 @@ async function authRoutes(req, res) {
     `;
     const user = rows[0];
     if (!user) return res.status(403).json({ error: 'This account has been disabled. Contact Squideo to restore access.' });
-    await issuePortalSession(res, user);
+    await issuePortalSession(res, user, req);
     return res.status(200).json({ user: publicPortalUser(user) });
   }
 

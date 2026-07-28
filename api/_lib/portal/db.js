@@ -115,6 +115,28 @@ export function ensurePortalTables() {
       )`;
     await sql`CREATE INDEX IF NOT EXISTS portal_notifications_user_idx ON portal_notifications(portal_user_id, created_at DESC)`;
     await sql`CREATE INDEX IF NOT EXISTS portal_notifications_unread_idx ON portal_notifications(portal_user_id) WHERE read_at IS NULL`;
+    // Append-only log of client portal activity that has no home on a domain
+    // table — chiefly LOGINS (last_login_at only keeps the latest). Action
+    // events (uploads, voiceover picks, payments…) are read from their own
+    // authoritative timestamp columns, so they're deliberately NOT duplicated
+    // here. See db/migrations/20260728_portal_activity.sql.
+    await sql`
+      CREATE TABLE IF NOT EXISTS portal_activity (
+        id             TEXT        PRIMARY KEY,
+        portal_user_id TEXT        NOT NULL REFERENCES portal_users(id) ON DELETE CASCADE,
+        company_id     TEXT        REFERENCES companies(id) ON DELETE SET NULL,
+        deal_id        TEXT,
+        event_key      TEXT        NOT NULL,
+        detail         JSONB,
+        ip             TEXT,
+        country        TEXT,
+        region         TEXT,
+        city           TEXT,
+        user_agent     TEXT,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`CREATE INDEX IF NOT EXISTS portal_activity_user_idx ON portal_activity(portal_user_id, created_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS portal_activity_company_idx ON portal_activity(company_id, created_at DESC)`;
     await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS portal_extras_discount NUMERIC NOT NULL DEFAULT 0.10`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'staff'`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS portal_user_id TEXT REFERENCES portal_users(id) ON DELETE SET NULL`;

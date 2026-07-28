@@ -11,6 +11,7 @@ import { useStore } from '../../store.jsx';
 import { formatGBP } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { Modal } from '../ui.jsx';
+import { PortalStepsActivity } from './PortalStepsActivity.jsx';
 
 // Pick who gets a portal invite for this deal. Defaults to the deal's contacts
 // + proposal signer (anyone who doesn't already have access is pre-ticked);
@@ -383,6 +384,8 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
               </button>
             </div>
           ))}
+
+          <PortalStepsActivity variant="deal" steps={data.steps || []} activity={data.activity || []} />
         </>
       )}
 

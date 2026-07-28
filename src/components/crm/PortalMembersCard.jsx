@@ -7,6 +7,7 @@ import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { formatRelativeTime } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
+import { PortalStepsActivity } from './PortalStepsActivity.jsx';
 
 export function PortalMembersCard({ companyId }) {
   const [data, setData] = useState(null);
@@ -179,6 +180,15 @@ export function PortalMembersCard({ companyId }) {
             </div>
           ))}
         </div>
+      )}
+
+      {data && (members.length > 0 || (data.activity && data.activity.length > 0) || (data.steps && data.steps.length > 0)) && (
+        <PortalStepsActivity
+          variant="company"
+          steps={data.steps || []}
+          activity={data.activity || []}
+          onOpenDeal={(id) => { window.location.hash = `#/deal/${id}`; }}
+        />
       )}
     </Card>
   );

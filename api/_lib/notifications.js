@@ -336,8 +336,8 @@ export async function ensurePoReceivedNotificationDefault() {
 // before a seed/migration lands. Each key inherits from the closest existing
 // staff alert: member_joined ← user.invite_accepted, doc_uploaded ←
 // project.good_to_go, extra_accepted ← extra.added (admin/director ON),
-// po_provided + partner_interest ← quote_request.new. Guarded to run at most
-// once per warm instance.
+// po_provided + partner_interest ← quote_request.new; voiceover_selected ←
+// project.good_to_go (bell-only). Guarded to run at most once per warm instance.
 let portalDefaultsReady = false;
 export async function ensurePortalNotificationDefaults() {
   if (portalDefaultsReady) return;
@@ -361,6 +361,15 @@ export async function ensurePortalNotificationDefaults() {
       notification_defaults, '{portal.partner_interest}',
       COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
       WHERE NOT (notification_defaults ? 'portal.partner_interest')`;
+    // Voiceover pick is a production milestone — inherit project.good_to_go like
+    // doc_uploaded, and default to the in-app bell only (it can be frequent).
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{portal.voiceover_selected}',
+      COALESCE(notification_defaults->'project.good_to_go', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'portal.voiceover_selected')`;
+    await sql`UPDATE roles SET notification_channel_defaults = jsonb_set(
+      notification_channel_defaults, '{portal.voiceover_selected}', '"in_app"'::jsonb, true)
+      WHERE NOT (notification_channel_defaults ? 'portal.voiceover_selected')`;
     portalDefaultsReady = true;
   } catch (err) {
     console.warn('[notifications] ensurePortalNotificationDefaults failed', err.message);

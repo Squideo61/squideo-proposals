@@ -307,6 +307,14 @@ export const NOTIFICATIONS = [
     channel: 'finance',
   },
   {
+    key: 'portal.voiceover_selected',
+    label: 'Client selected a voiceover',
+    description: 'A client picks (or upgrades) a voiceover artist for a video from the customer portal.',
+    audience: 'broadcast',
+    group: 'Client portal',
+    channel: 'general',
+  },
+  {
     key: 'finance.quarter_summary',
     label: 'Quarterly VAT & Corp Tax summary',
     description: 'At the end of each calendar quarter, a summary of the VAT and Corporation Tax you should have set aside.',
