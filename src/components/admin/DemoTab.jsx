@@ -46,8 +46,13 @@ export function DemoTab() {
     try {
       const r = await api.post('/api/crm/demo?op=seed', {});
       setData({ exists: true, ...r });
-      flash(r.inviteUrl ? 'Demo ready — accept the portal invite below to log in as the client.' : 'Demo ready.');
-      if (!r.draftAttached) flash('Demo ready, but the sample draft video could not be attached — upload one from the Revisions board to test the player.');
+      if (!r.blobConfigured) {
+        flash('Demo created, but review-file storage is not configured (REVISION_BLOB_READ_WRITE_TOKEN). The review cards need a draft — upload one from the Revisions / Storyboards board.');
+      } else if (!r.reviewReady) {
+        flash('Demo ready. The sample video draft could not be attached — upload one from the Revisions board to make the video review card appear.');
+      } else {
+        flash(r.inviteUrl ? 'Demo ready — accept the portal invite below to log in as the client.' : 'Demo ready.');
+      }
     } catch (err) { flash(err.message || 'Could not seed the demo'); } finally { setBusy(false); }
   };
 
@@ -102,10 +107,17 @@ export function DemoTab() {
               <Trash2 size={14} /> Delete demo project
             </button>
           </div>
-          <p style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 14, lineHeight: 1.5 }}>
-            Tip: to test the payment-gated download, open the deal in the CRM and use “Release now” on its Client-portal
-            card (simulates the balance being settled), then the download unlocks in the portal.
-          </p>
+          <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 14, lineHeight: 1.6 }}>
+            <p style={{ margin: '0 0 6px' }}>
+              Where the client sees reviews: open the project in the portal, then scroll to the
+              <strong> “Reviews &amp; feedback”</strong> card (below “Videos”). It only appears once a review has an
+              uploaded draft — the buttons above jump straight to each review.
+            </p>
+            <p style={{ margin: 0 }}>
+              Tip: to test the payment-gated download, open the deal in the CRM and use “Release now” on its Client-portal
+              card (simulates the balance being settled), then the download unlocks in the portal.
+            </p>
+          </div>
         </>
       )}
     </div>

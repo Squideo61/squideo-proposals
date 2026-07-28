@@ -26,6 +26,31 @@ const REVISION_BLOB_TOKEN = process.env.REVISION_BLOB_READ_WRITE_TOKEN || proces
 const SAMPLE_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
 const SAMPLE_PDF_URL = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
 
+// A self-contained, valid single-page PDF (pdf.js renders it) so the storyboard
+// review ALWAYS has a draft to show even when the external sample can't be
+// fetched. Byte offsets in the xref are computed as the file is assembled.
+function buildMinimalPdf(caption = 'Demo storyboard — page 1') {
+  const content = `BT /F1 24 Tf 72 760 Td (${caption.replace(/[()\\]/g, ' ')}) Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((body, i) => {
+    offsets.push(Buffer.byteLength(pdf, 'latin1'));
+    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xrefStart = Buffer.byteLength(pdf, 'latin1');
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.forEach((off) => { pdf += `${String(off).padStart(10, '0')} 00000 n \n`; });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+  return Buffer.from(pdf, 'latin1');
+}
+
 async function findDemoCompany() {
   const [co] = await sql`SELECT id FROM companies WHERE name = ${DEMO_COMPANY_NAME} ORDER BY created_at ASC LIMIT 1`;
   return co?.id || null;
@@ -96,11 +121,11 @@ async function seed(email) {
   }
 
   // Best-effort: attach a playable sample draft if there isn't one yet.
-  let draftAttached = false;
+  let reviewReady = false;
   if (revVideoId) {
     const [existing] = await sql`SELECT id FROM revision_versions WHERE video_id = ${revVideoId} LIMIT 1`;
     if (existing) {
-      draftAttached = true;
+      reviewReady = true;
     } else if (REVISION_BLOB_TOKEN) {
       try {
         const resp = await fetch(SAMPLE_VIDEO_URL);
@@ -109,7 +134,7 @@ async function seed(email) {
           const blob = await put(`revision-videos/demo/${makeId('v')}.mp4`, buf, { access: 'public', token: REVISION_BLOB_TOKEN, contentType: 'video/mp4' });
           await sql`INSERT INTO revision_versions (id, project_id, video_id, version_number, label, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by)
                     VALUES (${makeId('rver')}, ${revProjectId}, ${revVideoId}, 1, ${'Draft 1'}, ${'demo-draft.mp4'}, ${'video/mp4'}, ${buf.length}, ${blob.url}, ${blob.pathname}, ${email || null})`;
-          draftAttached = true;
+          reviewReady = true;
         }
       } catch (err) {
         console.warn('[demo] sample draft upload failed', err.message);
@@ -120,6 +145,7 @@ async function seed(email) {
   // Ensure a deal-linked storyboard project + item + a sample PDF draft, so the
   // storyboard side of the review journey is testable too. deal_id is the link
   // that makes it show in the client's portal "Reviews & feedback" card.
+  let storyboardReady = false;
   {
     const [existingSb] = await sql`SELECT id FROM storyboard_projects WHERE deal_id = ${deal.id} ORDER BY created_at ASC LIMIT 1`;
     let sbProjectId = existingSb?.id || null;
@@ -137,15 +163,24 @@ async function seed(email) {
     }
     if (sbItemId && REVISION_BLOB_TOKEN) {
       const [hasVer] = await sql`SELECT id FROM storyboard_versions WHERE storyboard_id = ${sbItemId} LIMIT 1`;
-      if (!hasVer) {
+      if (hasVer) {
+        storyboardReady = true;
+      } else {
+        // Prefer the external sample; fall back to a self-contained valid PDF so
+        // the storyboard review is always testable regardless of egress.
+        let buf = null;
         try {
           const resp = await fetch(SAMPLE_PDF_URL);
-          if (resp.ok) {
-            const buf = Buffer.from(await resp.arrayBuffer());
-            const blob = await put(`storyboard-versions/demo/${makeId('p')}.pdf`, buf, { access: 'public', token: REVISION_BLOB_TOKEN, contentType: 'application/pdf' });
-            await sql`INSERT INTO storyboard_versions (id, project_id, storyboard_id, version_number, label, filename, mime_type, size_bytes, page_count, blob_url, blob_pathname, uploaded_by)
-                      VALUES (${makeId('sver')}, ${sbProjectId}, ${sbItemId}, 1, ${'Draft 1'}, ${'demo-storyboard.pdf'}, ${'application/pdf'}, ${null}, ${1}, ${blob.url}, ${blob.pathname}, ${email || null})`;
-          }
+          if (resp.ok) buf = Buffer.from(await resp.arrayBuffer());
+        } catch (err) {
+          console.warn('[demo] sample storyboard fetch failed, using embedded PDF', err.message);
+        }
+        if (!buf) buf = buildMinimalPdf();
+        try {
+          const blob = await put(`storyboard-versions/demo/${makeId('p')}.pdf`, buf, { access: 'public', token: REVISION_BLOB_TOKEN, contentType: 'application/pdf' });
+          await sql`INSERT INTO storyboard_versions (id, project_id, storyboard_id, version_number, label, filename, mime_type, size_bytes, page_count, blob_url, blob_pathname, uploaded_by)
+                    VALUES (${makeId('sver')}, ${sbProjectId}, ${sbItemId}, 1, ${'Draft 1'}, ${'demo-storyboard.pdf'}, ${'application/pdf'}, ${buf.length}, ${1}, ${blob.url}, ${blob.pathname}, ${email || null})`;
+          storyboardReady = true;
         } catch (err) {
           console.warn('[demo] sample storyboard upload failed', err.message);
         }
@@ -165,7 +200,13 @@ async function seed(email) {
     }
   }
 
-  return { ...(await demoLinks(companyId, email)), inviteUrl, draftAttached };
+  return {
+    ...(await demoLinks(companyId, email)),
+    inviteUrl,
+    reviewReady,
+    storyboardReady,
+    blobConfigured: !!REVISION_BLOB_TOKEN,
+  };
 }
 
 async function teardown() {
