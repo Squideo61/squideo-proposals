@@ -40,6 +40,7 @@ import { ensureDealExtrasTable } from './_lib/crm/extras.js';
 import { buildNotificationEmail } from './quote-requests.js';
 import { ensurePortalTables } from './_lib/portal/db.js';
 import { logPortalActivity } from './_lib/portal/activity.js';
+import { isFinalReleaseUnlocked } from './_lib/crm/delivery.js';
 import {
   signPortalToken,
   portalCookieHeader,
@@ -322,6 +323,7 @@ async function gatherDealStates(dealIds) {
     if (r.has_version) {
       revLinks.get(r.deal_id).push({
         shareToken: r.share_token,
+        videoId: r.video_id,
         title: r.video_title,
         approved: !!r.approved_at,
         feedbackSubmitted: !!r.feedback_submitted_at,
@@ -409,6 +411,7 @@ export default async function handler(req, res) {
       case 'project': return projectRoute(req, res, user);
       case 'library': return libraryRoute(req, res, user);
       case 'download': return downloadRoute(req, res, user);
+      case 'review-download': return reviewDownloadRoute(req, res, user);
       case 'files': return filesRoutes(req, res, user);
       case 'extras': return extrasRoute(req, res, user);
       case 'extras-accept': return extrasAcceptRoute(req, res, user);
@@ -826,11 +829,16 @@ async function projectRoute(req, res, user) {
   const offers = extrasWindowOpen(deal) ? await computePortalOffers(deal) : [];
 
   const rawVideos = states.videos.get(deal.id) || [];
+  // Whether the signed-off video may be downloaded (deal paid in full or a staff
+  // override) — gates the approved review-cut download below. Best-effort.
+  let finalReleaseUnlocked = false;
+  try { finalReleaseUnlocked = await isFinalReleaseUnlocked(deal.id); } catch { finalReleaseUnlocked = false; }
   return res.status(200).json({
     project: serialisePortalDeal(deal, {
       nextStep,
       tasks: tasksFor(deal, states),
       projectProduction: aggregateVideoStage(rawVideos),
+      finalReleaseUnlocked,
       videos: rawVideos.map(serialisePortalVideo),
       proposal: prop ? { id: prop.id, signed: !!prop.signature } : null,
       reviews: states.revLinks.get(deal.id) || [],
@@ -880,6 +888,49 @@ async function libraryRoute(req, res, user) {
   }));
 
   return res.status(200).json({ projects: projects.filter((p) => p.files.length > 0) });
+}
+
+// ═══════════════════ review-cut download (gated) ═══════════════════
+// The client can download the signed-off draft video once (a) they've approved
+// it in the review flow AND (b) the deal is paid in full (or staff overrode).
+// Streams the latest revision-version blob for the video.
+async function reviewDownloadRoute(req, res, user) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  const videoId = req.query.videoId ? String(req.query.videoId) : null;
+  if (!videoId) return res.status(400).json({ error: 'videoId required' });
+
+  // Resolve the revision video → its project → the owning deal/company, and
+  // enforce org membership (a cross-org id 404s — no existence oracle).
+  const [rv] = await sql`
+    SELECT rv.approved_at, rp.deal_id, d.company_id
+      FROM revision_videos rv
+      JOIN revision_projects rp ON rp.id = rv.project_id
+      JOIN deals d ON d.id = rp.deal_id
+     WHERE rv.id = ${videoId}
+  `.catch(() => []);
+  if (!rv || !rv.company_id || !user.companyIds.includes(rv.company_id)) {
+    return res.status(404).json({ error: 'Video not found' });
+  }
+  if (!rv.approved_at) {
+    return res.status(403).json({ error: 'Approve this video in the review first, then it can be downloaded.' });
+  }
+  // Payment gate: paid in full, or a staff release override.
+  const unlocked = await isFinalReleaseUnlocked(rv.deal_id).catch(() => false);
+  if (!unlocked) {
+    return res.status(402).json({ error: 'Your final invoice needs to be settled before the finished video can be downloaded.' });
+  }
+
+  const [ver] = await sql`
+    SELECT blob_url, filename FROM revision_versions
+     WHERE video_id = ${videoId} AND blob_url IS NOT NULL
+     ORDER BY version_number DESC, created_at DESC LIMIT 1
+  `.catch(() => []);
+  if (!ver || !ver.blob_url) return res.status(404).json({ error: 'No downloadable file yet' });
+
+  // Revision cuts live in the public revision blob store — a 302 to the
+  // unguessable URL is sufficient once the gate above has passed.
+  res.setHeader('Location', ver.blob_url);
+  return res.status(302).end();
 }
 
 // ═════════════════════════ download ═════════════════════════

@@ -385,6 +385,37 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
             </div>
           ))}
 
+          {data.finalRelease && (
+            <div style={{ marginTop: 12, padding: '10px 12px', border: '1px solid ' + BRAND.border, borderRadius: 8, background: data.finalRelease.unlocked ? '#F0FDF4' : '#FFFBEB' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: BRAND.ink }}>
+                    Final video: {data.finalRelease.unlocked ? 'released to client' : 'locked until paid'}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: BRAND.muted }}>
+                    {data.finalRelease.override
+                      ? 'Released early by staff override.'
+                      : data.finalRelease.unlocked
+                        ? 'The deal is paid in full — the client can download their signed-off video.'
+                        : 'The client can download the signed-off video once the balance is settled.'}
+                  </div>
+                </div>
+                {data.finalRelease.override ? (
+                  <button className="btn-ghost" disabled={busy} style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                    onClick={() => run(() => actions.setFinalReleaseOverride(dealId, false), 'Override removed')}>
+                    Remove override
+                  </button>
+                ) : !data.finalRelease.unlocked && (
+                  <button className="btn" disabled={busy} style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                    title="Release the finished video to the client now, before the balance is paid"
+                    onClick={() => run(() => actions.setFinalReleaseOverride(dealId, true), 'Final video released')}>
+                    Release now
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <PortalStepsActivity variant="deal" steps={data.steps || []} activity={data.activity || []} />
         </>
       )}

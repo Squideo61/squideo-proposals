@@ -20,10 +20,12 @@ export async function dealOutstanding(dealId) {
   return balances[dealId]?.outstanding ?? 0;
 }
 
-// deal must carry at least { id, final_release_override_at }.
-export async function isFinalReleaseUnlocked(deal) {
-  if (!deal || !deal.id) return false;
-  if (deal.final_release_override_at) return true;
-  const outstanding = await dealOutstanding(deal.id);
+// Whether the deal's final video may be released: paid in full OR staff override.
+export async function isFinalReleaseUnlocked(dealId) {
+  if (!dealId) return false;
+  const [d] = await sql`SELECT final_release_override_at FROM deals WHERE id = ${dealId}`;
+  if (!d) return false;
+  if (d.final_release_override_at) return true;
+  const outstanding = await dealOutstanding(dealId);
   return (outstanding ?? 0) <= 0;
 }

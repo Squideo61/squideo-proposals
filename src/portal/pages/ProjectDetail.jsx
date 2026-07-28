@@ -10,7 +10,7 @@ import {
 } from '../components.jsx';
 import { runCta } from './Dashboard.jsx';
 import {
-  ArrowLeft, Video, PlayCircle, LayoutPanelTop, Sparkles, Upload, FileSignature, Mic,
+  ArrowLeft, Video, PlayCircle, LayoutPanelTop, Sparkles, Upload, FileSignature, Mic, Download, Lock,
 } from 'lucide-react';
 
 function TasksCard({ tasks, dealId }) {
@@ -150,26 +150,54 @@ export default function ProjectDetail({ dealId }) {
           <SectionHeading>Reviews & feedback</SectionHeading>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {(project.reviews || []).map((r, i) => (
-              <a
-                key={`rev-${i}`}
-                href={`/?revision=${encodeURIComponent(r.shareToken)}`}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
-                  border: `1px solid ${BRAND.border}`, borderRadius: 10, textDecoration: 'none',
-                  background: r.approved || r.feedbackSubmitted ? '#FAFBFC' : '#EAF7FC',
-                }}
-              >
-                <PlayCircle size={19} color={BRAND.blue} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink }}>{r.title || 'Video review'}</div>
-                  <div style={{ fontSize: 11.5, color: BRAND.muted }}>
-                    {r.approved ? 'Approved ✓' : r.feedbackSubmitted ? 'Feedback sent — we’re on it' : 'Awaiting your feedback'}
+              <div key={`rev-${i}`} style={{ display: 'flex', flexDirection: 'column' }}>
+                <a
+                  href={`/?revision=${encodeURIComponent(r.shareToken)}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
+                    border: `1px solid ${BRAND.border}`,
+                    borderRadius: r.approved && r.videoId ? '10px 10px 0 0' : 10,
+                    borderBottom: r.approved && r.videoId ? 'none' : undefined,
+                    textDecoration: 'none',
+                    background: r.approved || r.feedbackSubmitted ? '#FAFBFC' : '#EAF7FC',
+                  }}
+                >
+                  <PlayCircle size={19} color={BRAND.blue} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink }}>{r.title || 'Video review'}</div>
+                    <div style={{ fontSize: 11.5, color: BRAND.muted }}>
+                      {r.approved ? 'Approved ✓' : r.feedbackSubmitted ? 'Feedback sent — we’re on it' : 'Awaiting your feedback'}
+                    </div>
                   </div>
-                </div>
-                <span className="btn-ghost" style={{ fontSize: 12.5, fontWeight: 700, color: BRAND.blue }}>
-                  {r.approved ? 'Watch' : 'Open review'}
-                </span>
-              </a>
+                  <span className="btn-ghost" style={{ fontSize: 12.5, fontWeight: 700, color: BRAND.blue }}>
+                    {r.approved ? 'Watch' : 'Open review'}
+                  </span>
+                </a>
+                {/* Once approved, the finished cut is downloadable — gated on the
+                    final invoice being paid (or a staff release override). */}
+                {r.approved && r.videoId && (
+                  project.finalReleaseUnlocked ? (
+                    <a
+                      href={`/api/portal/review-download?videoId=${encodeURIComponent(r.videoId)}`}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                        padding: '9px 14px', border: `1px solid ${BRAND.border}`, borderRadius: '0 0 10px 10px',
+                        background: '#16A34A', color: '#fff', fontSize: 12.5, fontWeight: 700, textDecoration: 'none',
+                      }}
+                    >
+                      <Download size={14} /> Download your video
+                    </a>
+                  ) : (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                      padding: '9px 14px', border: `1px solid ${BRAND.border}`, borderRadius: '0 0 10px 10px',
+                      background: '#FFFBEB', color: '#92400E', fontSize: 12, fontWeight: 600,
+                    }}>
+                      <Lock size={13} /> Download unlocks once your final invoice is paid
+                    </div>
+                  )
+                )}
+              </div>
             ))}
             {(project.storyboards || []).map((s, i) => (
               <a

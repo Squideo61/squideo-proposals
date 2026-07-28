@@ -29,6 +29,7 @@ import { emailLogoUrl } from '../_lib/portal/logo.js';
 import { notifyPortalUser } from '../_lib/portal/notifications.js';
 import { computeDealTasks } from '../_lib/portal/taskContext.js';
 import { portalTimeline, dealSteps, companyStepsSummary } from '../_lib/portal/activity.js';
+import { isFinalReleaseUnlocked } from '../_lib/crm/delivery.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 import { ensureProductionSchema } from '../_lib/production.js';
 
@@ -301,10 +302,11 @@ export default async function handler(req, res) {
 
       if (dealId) {
         const [deal] = await sql`
-          SELECT id, title, stage, production_phase, portal_extras_discount
+          SELECT id, title, stage, production_phase, portal_extras_discount, final_release_override_at
             FROM deals WHERE id = ${dealId}
         `;
         if (!deal) return res.status(404).json({ error: 'Deal not found' });
+        const finalReleaseUnlocked = await isFinalReleaseUnlocked(dealId).catch(() => false);
         const offers = await sql`
           SELECT id, kind, proposal_extra_id, title, description, amount, hidden, created_by, created_at
             FROM portal_extra_offers WHERE deal_id = ${dealId} ORDER BY created_at ASC
@@ -321,6 +323,7 @@ export default async function handler(req, res) {
           dealId,
           steps,
           activity,
+          finalRelease: { override: !!deal.final_release_override_at, unlocked: finalReleaseUnlocked },
           ...(await inviteCandidatesForDeal(dealId)),
           discount: Number(deal.portal_extras_discount ?? 0.10),
           offers: offers.map((o) => ({
