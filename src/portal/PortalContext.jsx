@@ -109,8 +109,18 @@ export function PortalProvider({ children }) {
   useEffect(() => {
     if (!user) { setNotifications([]); setUnreadCount(0); return; }
     refreshNotifications();
-    const t = window.setInterval(refreshNotifications, 60_000);
-    return () => window.clearInterval(t);
+    const t = window.setInterval(refreshNotifications, 25_000);
+    // Also refresh the moment the client returns to the tab, so a notification
+    // that landed while they were elsewhere shows up straight away rather than
+    // after the next poll.
+    const onActive = () => { if (document.visibilityState !== 'hidden') refreshNotifications(); };
+    window.addEventListener('focus', onActive);
+    document.addEventListener('visibilitychange', onActive);
+    return () => {
+      window.clearInterval(t);
+      window.removeEventListener('focus', onActive);
+      document.removeEventListener('visibilitychange', onActive);
+    };
   }, [user, refreshNotifications]);
 
   useEffect(() => {

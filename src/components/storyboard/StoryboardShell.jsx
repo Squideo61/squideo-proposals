@@ -3,6 +3,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { Toast } from '../ui.jsx';
 import { StoryboardRevision } from './StoryboardRevision.jsx';
+import { PortalReturnBar } from '../revision/PortalReturnBar.jsx';
 
 // Public, unauthenticated entry point for a client storyboard link
 // (/?storyboard=<share_token>). Mirrors RevisionShell: load once, render the
@@ -29,6 +30,7 @@ export function StoryboardShell({ token }) {
 
   return (
     <div style={{ background: BRAND.paper, color: BRAND.ink }}>
+      <PortalReturnBar />
       <StoryboardRevision token={token} data={data} api={actions} showMsg={showMsg} />
       <Toast msg={toast} />
     </div>

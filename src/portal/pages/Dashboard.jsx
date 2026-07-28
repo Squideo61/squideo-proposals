@@ -21,7 +21,15 @@ export function runCta(cta, dealId) {
     window.location.hash = cta.href;
     return;
   }
-  if (cta.href) window.location.href = cta.href; // proposal / revision deep-links
+  // Keep review deep-links INSIDE the portal. deriveNextStep hands back the
+  // standalone /?revision= / /?storyboard= links (right for emails), but a
+  // logged-in client should stay in the portal chrome (with its back button)
+  // rather than being dumped onto the standalone viewer.
+  const rev = cta.href?.match(/[?&]revision=([^&]+)/);
+  if (rev) { window.location.hash = `#/review/${decodeURIComponent(rev[1])}`; return; }
+  const sb = cta.href?.match(/[?&]storyboard=([^&]+)/);
+  if (sb) { window.location.hash = `#/storyboard/${decodeURIComponent(sb[1])}`; return; }
+  if (cta.href) window.location.href = cta.href; // proposal deep-links
 }
 
 function ProjectCard({ project }) {

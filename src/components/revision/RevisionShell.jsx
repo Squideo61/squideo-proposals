@@ -3,6 +3,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { Toast } from '../ui.jsx';
 import { VideoRevision } from './VideoRevision.jsx';
+import { PortalReturnBar } from './PortalReturnBar.jsx';
 
 // Public, unauthenticated entry point for a client revision link
 // (/?revision=<share_token>). Mirrors PublicClientShell: load once, render the
@@ -31,6 +32,7 @@ export function RevisionShell({ token }) {
 
   return (
     <div style={{ background: BRAND.paper, color: BRAND.ink }}>
+      <PortalReturnBar />
       {/* Anonymous share-token page: the CRM store IS the data adapter, and no
           identity is pre-set so the name/email gate is shown. */}
       <VideoRevision token={token} data={data} api={actions} showMsg={showMsg} />
