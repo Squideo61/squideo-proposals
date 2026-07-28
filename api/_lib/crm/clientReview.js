@@ -26,15 +26,20 @@ async function logDealEvent(dealId, eventType, payload, actorEmail) {
 // Submit the latest uploaded video draft to the client. Returns
 // { clientSubmittedVersion, clientSubmittedAt, shareToken } or { error }.
 export async function submitRevisionToClient({ revisionVideoId, actorEmail }) {
+  // Resolve the deal via EITHER link direction: revision_projects.deal_id OR
+  // deals.revision_project_id (projects created from the video page historically
+  // only set the latter). Without the deal we can't notify the client's company.
   const [row] = await sql`
-    SELECT rv.title, rv.project_id, rp.deal_id, rp.share_token, d.company_id,
+    SELECT rv.title, rv.project_id, COALESCE(rp.deal_id, d.id) AS deal_id, rp.share_token, d.company_id,
            (SELECT MAX(version_number) FROM revision_versions WHERE video_id = rv.id) AS max_ver
       FROM revision_videos rv
       JOIN revision_projects rp ON rp.id = rv.project_id
-      LEFT JOIN deals d ON d.id = rp.deal_id
+      LEFT JOIN deals d ON (d.id = rp.deal_id OR d.revision_project_id = rp.id)
      WHERE rv.id = ${revisionVideoId}`;
   if (!row) return { error: 'not-found' };
   if (row.max_ver == null) return { error: 'no-draft' };
+  // Backfill the reverse link so future portal reads resolve it directly.
+  if (row.deal_id) await sql`UPDATE revision_projects SET deal_id = ${row.deal_id} WHERE id = ${row.project_id} AND deal_id IS NULL`.catch(() => {});
 
   const submittedAt = new Date();
   await sql`
@@ -63,14 +68,15 @@ export async function submitRevisionToClient({ revisionVideoId, actorEmail }) {
 // Submit the latest uploaded storyboard PDF draft to the client.
 export async function submitStoryboardToClient({ storyboardId, actorEmail }) {
   const [row] = await sql`
-    SELECT sb.title, sb.project_id, sp.deal_id, sp.share_token, d.company_id,
+    SELECT sb.title, sb.project_id, COALESCE(sp.deal_id, d.id) AS deal_id, sp.share_token, d.company_id,
            (SELECT MAX(version_number) FROM storyboard_versions WHERE storyboard_id = sb.id) AS max_ver
       FROM storyboards sb
       JOIN storyboard_projects sp ON sp.id = sb.project_id
-      LEFT JOIN deals d ON d.id = sp.deal_id
+      LEFT JOIN deals d ON (d.id = sp.deal_id OR d.storyboard_project_id = sp.id)
      WHERE sb.id = ${storyboardId}`;
   if (!row) return { error: 'not-found' };
   if (row.max_ver == null) return { error: 'no-draft' };
+  if (row.deal_id) await sql`UPDATE storyboard_projects SET deal_id = ${row.deal_id} WHERE id = ${row.project_id} AND deal_id IS NULL`.catch(() => {});
 
   const submittedAt = new Date();
   await sql`

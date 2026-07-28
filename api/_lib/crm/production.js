@@ -998,11 +998,14 @@ async function sendVideoForReview(res, videoId, user) {
       ? (await sql`SELECT name FROM companies WHERE id = ${video.company_id}`)[0]?.name || null
       : null;
     await sql`
-      INSERT INTO revision_projects (id, title, client_name, share_token, created_by)
-      VALUES (${revProjectId}, ${video.deal_title}, ${companyName}, ${shareToken}, ${user.email || null})
+      INSERT INTO revision_projects (id, title, client_name, share_token, created_by, deal_id)
+      VALUES (${revProjectId}, ${video.deal_title}, ${companyName}, ${shareToken}, ${user.email || null}, ${video.deal_id})
     `;
     await sql`UPDATE deals SET revision_project_id = ${revProjectId} WHERE id = ${video.deal_id}`;
   }
+  // Ensure the reverse link is set even for a project created earlier without it —
+  // the portal + client-submit notify resolve the deal via revision_projects.deal_id.
+  await sql`UPDATE revision_projects SET deal_id = ${video.deal_id} WHERE id = ${revProjectId} AND deal_id IS NULL`.catch(() => {});
 
   let revVideoId = video.revision_video_id;
   if (!revVideoId) {
@@ -1137,11 +1140,14 @@ async function sendStoryboardForReview(res, videoId, user) {
       ? (await sql`SELECT name FROM companies WHERE id = ${video.company_id}`)[0]?.name || null
       : null;
     await sql`
-      INSERT INTO storyboard_projects (id, title, client_name, share_token, created_by)
-      VALUES (${projectId}, ${video.deal_title}, ${companyName}, ${shareToken}, ${user.email || null})
+      INSERT INTO storyboard_projects (id, title, client_name, share_token, created_by, deal_id)
+      VALUES (${projectId}, ${video.deal_title}, ${companyName}, ${shareToken}, ${user.email || null}, ${video.deal_id})
     `;
     await sql`UPDATE deals SET storyboard_project_id = ${projectId} WHERE id = ${video.deal_id}`;
   }
+  // Ensure the reverse link is set even for a project created earlier without it —
+  // the portal + client-submit notify resolve the deal via storyboard_projects.deal_id.
+  await sql`UPDATE storyboard_projects SET deal_id = ${video.deal_id} WHERE id = ${projectId} AND deal_id IS NULL`.catch(() => {});
 
   let storyboardId = video.storyboard_id;
   if (!storyboardId) {

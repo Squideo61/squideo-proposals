@@ -259,20 +259,22 @@ async function gatherDealStates(dealIds) {
        ORDER BY v.sort_order ASC, v.created_at ASC
     `,
     sql`
-      SELECT rp.deal_id, rp.share_token, rp.approved_at AS project_approved_at,
+      SELECT COALESCE(rp.deal_id, dd.id) AS deal_id, rp.share_token, rp.approved_at AS project_approved_at,
              rv.id AS video_id, rv.title AS video_title, rv.approved_at, rv.feedback_submitted_at,
              rv.client_submitted_version
         FROM revision_projects rp
         JOIN revision_videos rv ON rv.project_id = rp.id
-       WHERE rp.deal_id = ANY(${dealIds})
+        LEFT JOIN deals dd ON dd.revision_project_id = rp.id
+       WHERE rp.deal_id = ANY(${dealIds}) OR dd.id = ANY(${dealIds})
     `.catch(() => []),
     sql`
-      SELECT sp.deal_id, sp.share_token, sb.id AS storyboard_id, sb.title AS storyboard_title,
+      SELECT COALESCE(sp.deal_id, dd.id) AS deal_id, sp.share_token, sb.id AS storyboard_id, sb.title AS storyboard_title,
              sb.approved_at, sb.feedback_submitted_at,
              sb.client_submitted_version
         FROM storyboard_projects sp
         JOIN storyboards sb ON sb.project_id = sp.id
-       WHERE sp.deal_id = ANY(${dealIds})
+        LEFT JOIN deals dd ON dd.storyboard_project_id = sp.id
+       WHERE sp.deal_id = ANY(${dealIds}) OR dd.id = ANY(${dealIds})
     `.catch(() => []),
     sql`
       SELECT DISTINCT deal_id FROM intro_call_bookings
