@@ -15,7 +15,7 @@ import { advanceStage } from '../dealStage.js';
 import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { sendNotification } from '../notifications.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
-import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber, getInvoicesByIds, updateContactAddress } from '../xero.js';
+import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber, getInvoicesByIds, updateContactAddress, getInvoicePdf } from '../xero.js';
 import {
   lineItemsForProject,
   depositLineItems,
@@ -321,6 +321,107 @@ export async function invoicesRoute(req, res, id, action, user) {
     }
 
     return res.status(200).json({ lineItems, paymentLabel, proposalId: row.id });
+  }
+
+  // --- POST /api/crm/invoices/send-final — raise the 50/50 balance (final)
+  // invoice for a deal in Xero, advance any signed-off videos to the "Final
+  // invoice" stage, and return a pre-filled email draft with the invoice PDF
+  // attached so staff can review and send it themselves (they check the email
+  // and attachment first — we don't auto-email).
+  if (id === 'send-final' && req.method === 'POST') {
+    if (!hasPermission(await getRole(user.role), 'invoices.manage')) {
+      return res.status(403).json({ error: 'You do not have permission to raise invoices' });
+    }
+    const dealId = trimOrNull(req.body?.dealId);
+    if (!dealId) return res.status(400).json({ error: 'dealId required' });
+
+    const [row] = await sql`
+      SELECT p.id, p.data, p.number_year, p.number_seq,
+             s.name AS sig_name, s.email AS sig_email, s.data AS sig_data,
+             d.title AS deal_title, d.po_number
+        FROM proposals p
+        JOIN signatures s ON s.proposal_id = p.id
+        JOIN deals d ON d.id = p.deal_id
+       WHERE p.deal_id = ${dealId}
+       ORDER BY p.created_at DESC
+       LIMIT 1
+    `;
+    if (!row) return res.status(400).json({ error: 'This deal has no signed proposal to invoice' });
+
+    const proposal = row.data || {};
+    const signed = { name: row.sig_name, email: row.sig_email, ...(row.sig_data || {}) };
+    const proposalNumber = formatProposalNumber(row.number_year, row.number_seq);
+    const isDeposit = signed.paymentOption === '5050';
+
+    // The 50% balance (only 50/50 deals have one) plus any outstanding extras.
+    const xeroLines = isDeposit ? balanceLineItems(proposal, signed, 0.5, proposalNumber) : [];
+    const lineItems = xeroLines.map((l) => {
+      const qty = Number(l.quantity) || 1;
+      let unit = Number(l.unitAmount) || 0;
+      if (l.discountRate) unit *= (1 - Number(l.discountRate) / 100);
+      if (l.discountAmount) unit -= Number(l.discountAmount) / qty;
+      return { description: l.description, quantity: qty, unitAmount: Number(unit.toFixed(2)), vatRate: l.taxType === 'OUTPUT2' ? 20 : 0 };
+    });
+    const extras = await pendingExtrasForDeal(dealId);
+    const proposalVatPct = Number(proposal.vatRate) > 0 ? 20 : 0;
+    for (const e of extras) {
+      lineItems.push({
+        description: e.description, quantity: 1, unitAmount: Number((e.amount || 0).toFixed(2)),
+        vatRate: e.vatRate != null ? (e.vatRate > 0 ? 20 : 0) : proposalVatPct,
+      });
+    }
+    if (!lineItems.length) {
+      return res.status(400).json({ error: 'Nothing to invoice — this deal has no 50/50 balance or outstanding extras.' });
+    }
+
+    const created = await createXeroInvoiceForDeal(
+      { dealId, proposalId: row.id, lineItems, extraIds: extras.map((e) => e.id), reference: row.po_number || undefined },
+      user,
+    );
+
+    // Advance any signed-off videos to the Final invoice stage (forward-only).
+    await sql`
+      UPDATE project_videos SET production_stage = 'final_invoice', production_stage_changed_at = NOW(), updated_at = NOW()
+       WHERE deal_id = ${dealId} AND production_phase = 'production' AND production_stage = 'signed_off'
+    `.catch(() => {});
+
+    // Attach the rendered invoice PDF to a review email (best-effort).
+    let attachment = null;
+    try {
+      const pdf = await getInvoicePdf(created.xeroInvoiceId);
+      const safeName = `Invoice-${(created.invoiceNumber || 'final')}.pdf`.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await put(`email-attachments/${user.email}/${makeId('finv')}/${safeName}`, pdf, { access: 'private', contentType: 'application/pdf' });
+      attachment = { filename: safeName, mimeType: 'application/pdf', sizeBytes: pdf.length, blobUrl: blob.url, blobPathname: blob.pathname };
+    } catch (err) {
+      console.warn('[invoices] final-invoice PDF attach failed', err.message);
+    }
+
+    const firstName = (signed.name || '').trim().split(/\s+/)[0] || 'there';
+    const draft = {
+      to: signed.email || null,
+      subject: `Your final invoice — ${row.deal_title || proposalNumber}`,
+      body: `Hi ${firstName},\n\nYour video is signed off and ready — thank you! Please find your final invoice attached. As soon as it's settled, the finished video unlocks for download in your portal.\n\nAny questions, just reply here.\n\nMany thanks,`,
+      attachments: attachment ? [attachment] : [],
+    };
+    return res.status(200).json({ invoice: created, draft, dealTitle: row.deal_title || null, attached: !!attachment });
+  }
+
+  // --- POST /api/crm/invoices/final-release — toggle the staff override that
+  // releases a deal's final video before its balance is settled.
+  if (id === 'final-release' && req.method === 'POST') {
+    if (!hasPermission(await getRole(user.role), 'invoices.manage')) {
+      return res.status(403).json({ error: 'You do not have permission to release the final video' });
+    }
+    const dealId = trimOrNull(req.body?.dealId);
+    if (!dealId) return res.status(400).json({ error: 'dealId required' });
+    const release = req.body?.release !== false; // default → release
+    await sql`
+      UPDATE deals
+         SET final_release_override_at = ${release ? new Date().toISOString() : null},
+             final_release_override_by = ${release ? (user.email || null) : null}
+       WHERE id = ${dealId}
+    `;
+    return res.status(200).json({ ok: true, overridden: release });
   }
 
   // --- GET /api/crm/invoices/order-summary?dealId=... — the deal's full order,

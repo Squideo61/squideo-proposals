@@ -36,6 +36,10 @@ export async function ensureProductionSchema() {
       // When the PM sends the client's intro email, the portal "Your tasks"
       // checklist (voiceover, kick-off call, PO) unlocks. Null = not launched yet.
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS client_tasks_launched_at TIMESTAMPTZ`;
+      // Staff override to release the final video before the deal's balance is
+      // settled (db/migrations/20260728_final_release_override.sql).
+      await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_release_override_at TIMESTAMPTZ`;
+      await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_release_override_by TEXT`;
       await sql`
         CREATE TABLE IF NOT EXISTS project_videos (
           id                 TEXT        PRIMARY KEY,

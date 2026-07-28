@@ -32,7 +32,8 @@ const STATUS_COLOR = {
 };
 
 export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals, vatRate, poNumber, onChanged, openCreateSignal, preselectDealId }) {
-  const { showMsg } = useStore();
+  const { showMsg, actions } = useStore();
+  const [sendingFinal, setSendingFinal] = useState(null); // dealId while raising
   // Figures are stored inc-VAT; show them ex-VAT with "+VAT" to match invoices.
   const vr = Number(vatRate) || 0;
   const vatSuffix = vr > 0 ? ' +VAT' : '';
@@ -100,6 +101,29 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
   }, [reloadInvoices, reloadPayments, reloadExtras]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // Raise the 50/50 final invoice in Xero, then open the composer pre-filled
+  // with a review email + the invoice PDF attached so staff send it themselves.
+  const sendFinalInvoice = async (d) => {
+    if (sendingFinal) return;
+    setSendingFinal(d.id);
+    try {
+      const r = await actions.sendFinalInvoice(d.id);
+      actions.openComposer({
+        dealId: d.id,
+        dealTitle: r.dealTitle || d.title,
+        contactEmail: r.draft?.to || null,
+        initialDraft: r.draft || null,
+      });
+      if (r && r.attached === false) showMsg?.('Invoice raised — the PDF couldn’t be attached automatically; attach it before sending.');
+      reload();
+      onChanged?.();
+    } catch (err) {
+      showMsg?.(err?.message || 'Could not raise the final invoice');
+    } finally {
+      setSendingFinal(null);
+    }
+  };
 
   const loading = invoices === null || payments === null;
   const allInvoices = invoices || [];
@@ -196,13 +220,28 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
                       : `${fmtEx(d.balance.committed)} signed · nothing invoiced yet`}
                   </div>
                 </div>
-                <button
-                  onClick={() => openCreate({ dealId: d.id, mode: d.balance.invoiced > 0 ? 'final' : null })}
-                  className="btn"
-                  style={{ fontSize: 12, whiteSpace: 'nowrap' }}
-                >
-                  <Plus size={12} /> Create invoice
-                </button>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  {/* A deposit's already been raised → this is the 50/50 final
+                      balance. Offer the one-click "raise + review email" path. */}
+                  {d.balance.invoiced > 0 && (
+                    <button
+                      onClick={() => sendFinalInvoice(d)}
+                      className="btn"
+                      disabled={sendingFinal === d.id}
+                      title="Raise the final invoice in Xero and open a review email with it attached"
+                      style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                    >
+                      <FileText size={12} /> {sendingFinal === d.id ? 'Raising…' : 'Send final invoice'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => openCreate({ dealId: d.id, mode: d.balance.invoiced > 0 ? 'final' : null })}
+                    className={d.balance.invoiced > 0 ? 'btn-ghost' : 'btn'}
+                    style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                  >
+                    <Plus size={12} /> Create invoice
+                  </button>
+                </div>
               </div>
             ))}
           </div>

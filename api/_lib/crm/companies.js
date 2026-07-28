@@ -704,7 +704,7 @@ async function computeCompanyLifetime(companyId) {
 // show how much each deal still owes. Same sources as computeCompanyBalance but
 // grouped by deal. Assumes reconcileProposalBillingPaid has already run (the
 // detail route calls computeCompanyBalance first on the same load).
-async function computeCompanyDealBalances(companyId) {
+export async function computeCompanyDealBalances(companyId) {
   const [committedRows, stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows, miInvoicedRows, pbInvoicedRows] = await Promise.all([
     sql`SELECT d.id AS did, COALESCE(SUM((s.data->>'total')::numeric),0) AS v
           FROM signatures s JOIN proposals p ON p.id=s.proposal_id JOIN deals d ON d.id=p.deal_id

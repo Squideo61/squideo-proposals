@@ -2854,6 +2854,17 @@ export function StoreProvider({ children }) {
       saveLocal(COMPOSER_CONTEXT_KEY, ctx);
       setState((s) => ({ ...s, composerContext: ctx }));
     },
+    // Raise a deal's 50/50 final (balance) invoice in Xero and get back a
+    // pre-filled review email (with the invoice PDF attached) to open in the
+    // composer. Also advances signed-off videos to the "Final invoice" stage.
+    sendFinalInvoice(dealId) {
+      return api.post('/api/crm/invoices/send-final', { dealId });
+    },
+    // Toggle the staff override that releases a deal's final video before its
+    // balance is settled.
+    setFinalReleaseOverride(dealId, release = true) {
+      return api.post('/api/crm/invoices/final-release', { dealId, release });
+    },
     closeComposer() {
       saveLocal(COMPOSER_CONTEXT_KEY, null);
       setState((s) => ({ ...s, composerContext: null }));
