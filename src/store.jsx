@@ -3609,6 +3609,12 @@ export function StoreProvider({ children }) {
       return api.get('/api/crm/deals/' + encodeURIComponent(dealId) + '/files/' + encodeURIComponent(fileId));
     },
 
+    // Signed download for a client-uploaded portal file (private blob), scoped to
+    // the deal's company server-side. Read-only in the CRM — no delete action.
+    getClientUploadDownloadUrl(dealId, fileId) {
+      return api.get('/api/crm/deals/' + encodeURIComponent(dealId) + '/client-uploads/' + encodeURIComponent(fileId));
+    },
+
     // ---------- Purchase orders (PO-route deals) ----------
     // Record the received PO number (requires a non-empty number — the server
     // 400s on blank). Updates the deal-detail PO slice when it's loaded.

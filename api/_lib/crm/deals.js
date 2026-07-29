@@ -851,6 +851,22 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     return res.status(200).json({ ok: true });
   }
 
+  // /deals/:id/client-uploads/:fileId — signed download for a file the client
+  // uploaded via the portal "Documents & brand" page (portal_company_files, a
+  // private blob store). Company-scoped, so we verify the file belongs to this
+  // deal's company before signing. Read-only in the CRM: staff view/download
+  // these, the client owns deletion from their portal.
+  if (action === 'client-uploads' && subaction && req.method === 'GET') {
+    const [deal] = await sql`SELECT company_id FROM deals WHERE id = ${id}`;
+    if (!deal?.company_id) return res.status(404).json({ error: 'File not found' });
+    const [f] = await sql`
+      SELECT blob_url, filename FROM portal_company_files
+       WHERE id = ${subaction} AND company_id = ${deal.company_id}`;
+    if (!f) return res.status(404).json({ error: 'File not found' });
+    const downloadUrl = await getDownloadUrl(f.blob_url);
+    return res.status(200).json({ downloadUrl, filename: f.filename });
+  }
+
   // Used by the in-Gmail Boxes RouteView — every thread attached to this deal.
   if (action === 'threads') {
     if (req.method !== 'GET') return res.status(405).end();
@@ -1442,7 +1458,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         console.warn('[deal files] drive reconcile skipped', err.message);
       }
     }
-    const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows, poFileRows] = await Promise.all([
+    const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows, poFileRows, clientUploadRows] = await Promise.all([
       sql`
         SELECT p.id, p.data, p.number_year, p.number_seq, p.created_at,
                s.data AS signature_data,
@@ -1532,6 +1548,18 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       ` : Promise.resolve([]),
       sql`SELECT id, filename, mime_type, size_bytes, uploaded_by, created_at
             FROM deal_po_files WHERE deal_id = ${id} ORDER BY created_at DESC`,
+      // Files the client uploaded via the portal "Documents & brand" page. These
+      // are company-scoped (not per-deal), so they surface on every deal for the
+      // company — brand guidelines apply across projects. Best-effort: a missing
+      // table (portal not yet provisioned) must not 500 the deal page.
+      rows[0].company_id ? sql`
+        SELECT f.id, f.category, f.filename, f.mime_type, f.size_bytes, f.created_at,
+               pu.name AS uploaded_by_name
+          FROM portal_company_files f
+          LEFT JOIN portal_users pu ON pu.id = f.uploaded_by_portal_user
+         WHERE f.company_id = ${rows[0].company_id}
+         ORDER BY f.created_at DESC LIMIT 100
+      `.catch(() => []) : Promise.resolve([]),
     ]);
 
     // Load reactions for all comments in one query and merge into comments.
@@ -1717,6 +1745,14 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         storage: f.drive_file_id ? 'drive' : 'blob',
         uploadedBy: f.uploaded_by || null, source: f.source,
         createdAt: f.created_at,
+      })),
+      // Client-uploaded portal files (company-scoped), split into the two portal
+      // categories so the Files card can head them "Brand guidelines" / "Documents".
+      clientUploads: (clientUploadRows || []).map(f => ({
+        id: f.id, category: f.category === 'document' ? 'document' : 'brand',
+        filename: f.filename, mimeType: f.mime_type || null,
+        sizeBytes: f.size_bytes || null,
+        uploadedByName: f.uploaded_by_name || null, createdAt: f.created_at,
       })),
       comments: comments.map(c => serialiseComment(c, reactionsMap[c.id] || {})),
       secondaryContacts: secondaryContactRows.map(r => ({

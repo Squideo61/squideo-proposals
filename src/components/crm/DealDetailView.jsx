@@ -915,7 +915,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         )}
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <FilesCard dealId={dealId} files={detail?.files || []} driveEnabled={!!detail?.driveFiles} driveFolderId={detail?.driveFolderId || null} />
+          <FilesCard dealId={dealId} files={detail?.files || []} clientUploads={detail?.clientUploads || []} driveEnabled={!!detail?.driveFiles} driveFolderId={detail?.driveFolderId || null} />
         </div>
 
         <Card title="Activity" count={timeline.length}>
@@ -2082,7 +2082,7 @@ function PurchaseOrderCard({ dealId, po, isMobile }) {
   );
 }
 
-export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
+export function FilesCard({ dealId, files, clientUploads = [], driveEnabled, driveFolderId }) {
   const { actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [uploading, setUploading] = useState(false);
@@ -2236,6 +2236,15 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
     if (!window.confirm(`Delete "${filename}"?`)) return;
     await actions.deleteDealFile(dealId, fileId);
     showMsg('File deleted');
+  };
+  // Client portal uploads are read-only here (the client owns them) — download only.
+  const handleDownloadClientUpload = async (fileId) => {
+    try {
+      const { downloadUrl } = await actions.getClientUploadDownloadUrl(dealId, fileId);
+      window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+    } catch {
+      showMsg('Could not generate download link');
+    }
   };
 
   const itemCount = driveEnabled
@@ -2451,6 +2460,43 @@ export function FilesCard({ dealId, files, driveEnabled, driveFolderId }) {
             </div>
           ))}
         </>
+      )}
+
+      {/* Client uploads — files the client shared via their portal "Documents &
+          brand" page (portal_company_files, private blob). Company-scoped, so
+          they show on every deal for the company. Read-only: download only, the
+          client owns deletion from their portal. */}
+      {clientUploads.length > 0 && (
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '2px solid ' + BRAND.border }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Client uploads</span>
+            <span style={{ background: '#2BB8E622', color: '#0B6E93', fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>Portal</span>
+            <span style={{ fontSize: 11, color: BRAND.muted }}>{clientUploads.length}</span>
+          </div>
+          <div style={{ fontSize: 11, color: BRAND.muted, marginBottom: 4 }}>
+            Brand guidelines &amp; documents this customer shared via their portal.
+          </div>
+          {clientUploads.map(f => (
+            <div key={f.id} style={rowStyle}>
+              <div style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 6, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <FileTypeTag mimeType={f.mimeType} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.filename}</div>
+                <div style={{ fontSize: 11, color: BRAND.muted }}>
+                  {fileSizeLabel(f.sizeBytes)}{f.sizeBytes ? ' · ' : ''}{formatRelativeTime(f.createdAt)}
+                  {' · '}{f.category === 'document' ? 'Document' : 'Brand guideline'}
+                  {f.uploadedByName ? ' · by ' + f.uploadedByName : ''}
+                </div>
+              </div>
+              <button onClick={() => handleDownloadClientUpload(f.id)}
+                style={{ padding: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: BRAND.muted, display: 'flex' }}
+                title="Download">
+                <Download size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
       )}
     </Card>
   );
