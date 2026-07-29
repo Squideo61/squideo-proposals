@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, ChevronDown, ChevronRight, BarChart3, Eye, Send, Link2, User, Check, Flag } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, ChevronDown, ChevronRight, BarChart3, Eye, Link2, User, Check, Flag } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
@@ -731,7 +731,6 @@ function VideoCard({ projectId, video, commentsByVersion }) {
   const isMobile = useIsMobile();
   const fileInputRef = useRef(null);
   const [progress, setProgress] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
   // Latest draft is open by default (recomputed each render, so a freshly
   // uploaded draft auto-expands); older ones collapse. Manual toggles override.
   const latestId = (video.versions || [])[0]?.id;
@@ -744,8 +743,11 @@ function VideoCard({ projectId, video, commentsByVersion }) {
     if (!file.type.startsWith('video/')) { showMsg('Please choose a video file'); return; }
     setProgress(0);
     try {
-      await actions.uploadRevisionVersion(projectId, video.id, file, { onProgress: setProgress });
-      showMsg('Draft uploaded');
+      // Uploaded straight into the Video Revisions section → share with viewers
+      // immediately (auto-submit). Submitting-to-client is only a manual gate on
+      // the deal/project video page.
+      await actions.uploadRevisionVersion(projectId, video.id, file, { onProgress: setProgress, autoSubmit: true });
+      showMsg('Draft uploaded and shared with viewers');
     } catch (err) {
       showMsg(err.message || 'Upload failed');
     } finally {
@@ -757,19 +759,6 @@ function VideoCard({ projectId, video, commentsByVersion }) {
   const latestVersionNumber = versions[0]?.versionNumber ?? 0;
   const submittedVer = video.clientSubmittedVersion ?? 0;
   const hasUnsent = latestVersionNumber > submittedVer;
-
-  async function submit() {
-    if (!window.confirm('Submit the latest draft to the client for review? They will be notified and it becomes visible in their portal.')) return;
-    setSubmitting(true);
-    try {
-      await actions.submitRevisionToClient(projectId, video.id);
-      showMsg('Submitted to the client');
-    } catch (err) {
-      showMsg(err.message || 'Could not submit');
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 16, marginBottom: 18 }}>
@@ -787,20 +776,19 @@ function VideoCard({ projectId, video, commentsByVersion }) {
 
       <VideoLinkBanner linked={video.linkedProjectVideo} />
 
-      {/* Submit-to-client gate: uploading a draft is internal; the client only
-          sees it (and gets notified) once it's submitted. */}
+      {/* Drafts uploaded here go live for viewers automatically (no submit-to-
+          client gate — that lives on the project video page). A newer draft only
+          shows as "not shared" if it was uploaded there and not yet submitted. */}
       {versions.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '0 0 14px' }}>
-          <button className="btn" disabled={!hasUnsent || submitting} onClick={submit}
-            style={{ fontSize: 12.5, opacity: hasUnsent ? 1 : 0.55 }}>
-            <Send size={13} /> {submitting ? 'Submitting…' : 'Submit to client for review'}
-          </button>
-          {video.clientSubmittedVersion == null ? (
-            <span style={{ fontSize: 12, color: BRAND.muted }}>Not sent to the client yet.</span>
-          ) : hasUnsent ? (
-            <span style={{ fontSize: 12, color: '#B45309', fontWeight: 600 }}>New draft v{latestVersionNumber} not yet sent — client still sees v{submittedVer}.</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '0 0 14px' }}>
+          {hasUnsent ? (
+            <span style={{ fontSize: 12, color: '#B45309', fontWeight: 600 }}>
+              Draft v{latestVersionNumber} was uploaded on the project page and isn’t shared yet — submit it there. Viewers still see v{submittedVer}.
+            </span>
           ) : (
-            <span style={{ fontSize: 12, color: '#16A34A', fontWeight: 600 }}>Sent to client · v{submittedVer}</span>
+            <span style={{ fontSize: 12, color: '#16A34A', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <CheckCircle2 size={12} /> Shared with viewers · v{submittedVer} — drafts uploaded here go live automatically.
+            </span>
           )}
         </div>
       )}

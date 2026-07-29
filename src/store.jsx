@@ -3796,7 +3796,7 @@ export function StoreProvider({ children }) {
     // Streams a draft straight to Vercel Blob (bypassing the serverless body
     // limit), registers it under a video, then reloads the project detail.
     // `onProgress` receives 0–100.
-    async uploadRevisionVersion(projectId, videoId, file, { label = null, onProgress } = {}) {
+    async uploadRevisionVersion(projectId, videoId, file, { label = null, onProgress, autoSubmit = false } = {}) {
       const { upload } = await import('@vercel/blob/client');
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const blob = await upload('revision-videos/' + videoId + '/' + safeName, file, {
@@ -3815,6 +3815,14 @@ export function StoreProvider({ children }) {
         { blobUrl: blob.url, blobPathname: blob.pathname, filename: file.name,
           mimeType: file.type || null, sizeBytes: file.size, label }
       );
+      // Uploads from the standalone Video Revisions page go live for viewers
+      // straight away (the "old way") — auto-submit so the client sees the new
+      // draft immediately. Deal-card uploads omit this and keep the manual
+      // submit-to-client gate. Best-effort: the draft is uploaded regardless.
+      if (autoSubmit) {
+        try { await api.post('/api/revisions/submit?videoId=' + encodeURIComponent(videoId), {}); }
+        catch (err) { console.warn('[revisions] auto-submit failed', err?.message); }
+      }
       await actions.loadRevisionDetail(projectId);
       return version;
     },
