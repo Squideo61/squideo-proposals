@@ -573,31 +573,31 @@ async function fetchPaidPartnerFees(sinceISO, untilISO) {
 export async function fetchPaidRows(sinceISO, untilISO) {
   const [stripeR, partnerR, manualR, invR, pbR] = await Promise.all([
     sql`SELECT pay.amount AS inc, pay.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
-               d.owner_email, d.id AS deal_id
+               d.owner_email, d.id AS deal_id, d.company_id
           FROM payments pay JOIN proposals pr ON pr.id = pay.proposal_id
           LEFT JOIN deals d ON d.id = pr.deal_id
          WHERE pay.paid_at >= ${sinceISO} AND pay.paid_at < ${untilISO}`,
     sql`SELECT pi.amount AS inc, pi.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
-               d.owner_email, d.id AS deal_id
+               d.owner_email, d.id AS deal_id, d.company_id
           FROM partner_invoices pi JOIN proposals pr ON pr.id = pi.proposal_id
           LEFT JOIN deals d ON d.id = pr.deal_id
          WHERE pi.paid_at >= ${sinceISO} AND pi.paid_at < ${untilISO}`,
     sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
-               d.owner_email, d.id AS deal_id
+               d.owner_email, d.id AS deal_id, d.company_id
           FROM manual_payments mp JOIN proposals pr ON pr.id = mp.proposal_id
           LEFT JOIN deals d ON d.id = pr.deal_id
          WHERE mp.manual_invoice_id IS NULL
            AND mp.paid_at >= ${sinceISO} AND mp.paid_at < ${untilISO}`,
     sql`SELECT mi.amount AS inc, mi.paid_at, mi.subtotal_ex_vat, mi.tax_amount,
                pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
-               d.owner_email, d.id AS deal_id
+               d.owner_email, d.id AS deal_id, COALESCE(mi.company_id, d.company_id) AS company_id
           FROM manual_invoices mi
           LEFT JOIN proposals pr ON pr.id = mi.proposal_id
           LEFT JOIN deals d ON d.id = COALESCE(mi.deal_id, pr.deal_id)
          WHERE mi.status = 'paid'
            AND mi.paid_at >= ${sinceISO} AND mi.paid_at < ${untilISO}`,
     sql`SELECT pb.paid_amount AS inc, pb.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
-               d.owner_email, d.id AS deal_id
+               d.owner_email, d.id AS deal_id, d.company_id
           FROM proposal_billing pb JOIN proposals pr ON pr.id = pb.proposal_id
           LEFT JOIN deals d ON d.id = pr.deal_id
          WHERE pb.paid_amount IS NOT NULL
@@ -605,13 +605,13 @@ export async function fetchPaidRows(sinceISO, untilISO) {
   ]);
 
   const rows = [];
-  const push = (paidAt, parts, proposalId = null, ownerEmail = null, dealId = null) => {
-    if (paidAt) rows.push({ paidAt: new Date(paidAt), proposalId: proposalId || null, ownerEmail: ownerEmail || null, dealId: dealId || null, ...parts });
+  const push = (paidAt, parts, proposalId = null, ownerEmail = null, dealId = null, companyId = null) => {
+    if (paidAt) rows.push({ paidAt: new Date(paidAt), proposalId: proposalId || null, ownerEmail: ownerEmail || null, dealId: dealId || null, companyId: companyId || null, ...parts });
   };
 
-  for (const r of stripeR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id);
-  for (const r of partnerR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id);
-  for (const r of manualR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id);
+  for (const r of stripeR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id, r.company_id);
+  for (const r of partnerR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id, r.company_id);
+  for (const r of manualR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id, r.company_id);
   for (const r of invR) {
     // Prefer the invoice's own stored VAT breakdown (most accurate, incl.
     // company-level invoices with no linked proposal); fall back to the linked
@@ -620,12 +620,12 @@ export async function fetchPaidRows(sinceISO, untilISO) {
     if (r.subtotal_ex_vat != null || r.tax_amount != null) {
       const net = r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : gross - (Number(r.tax_amount) || 0);
       const vat = r.tax_amount != null ? Number(r.tax_amount) : gross - net;
-      push(r.paid_at, { gross, net, vat }, r.proposal_id, r.owner_email, r.deal_id);
+      push(r.paid_at, { gross, net, vat }, r.proposal_id, r.owner_email, r.deal_id, r.company_id);
     } else {
-      push(r.paid_at, splitVat(gross, r.rate), r.proposal_id, r.owner_email, r.deal_id);
+      push(r.paid_at, splitVat(gross, r.rate), r.proposal_id, r.owner_email, r.deal_id, r.company_id);
     }
   }
-  for (const r of pbR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id);
+  for (const r of pbR) push(r.paid_at, splitVat(r.inc, r.rate), r.proposal_id, r.owner_email, r.deal_id, r.company_id);
 
   // Manual pending payments marked paid — net + stored VAT.
   const ppPaid = await fetchPaidManualPps(sinceISO, untilISO);
@@ -820,6 +820,77 @@ async function performanceReport(action) {
   return { period, spanMonths, since, until, days };
 }
 
+// The set of company_ids that had ANY paid income before `sinceISO` — used to
+// classify a paying customer this period as "new" (first income now) vs
+// "existing" (returning). Best-effort across the income sources.
+async function companiesWithIncomeBefore(sinceISO) {
+  const set = new Set();
+  const collect = (rows) => { for (const r of rows) if (r.company_id) set.add(r.company_id); };
+  try {
+    const results = await Promise.all([
+      sql`SELECT DISTINCT d.company_id FROM payments pay JOIN proposals pr ON pr.id = pay.proposal_id JOIN deals d ON d.id = pr.deal_id WHERE pay.paid_at < ${sinceISO}`,
+      sql`SELECT DISTINCT d.company_id FROM partner_invoices pi JOIN proposals pr ON pr.id = pi.proposal_id JOIN deals d ON d.id = pr.deal_id WHERE pi.paid_at < ${sinceISO}`,
+      sql`SELECT DISTINCT d.company_id FROM manual_payments mp JOIN proposals pr ON pr.id = mp.proposal_id JOIN deals d ON d.id = pr.deal_id WHERE mp.manual_invoice_id IS NULL AND mp.paid_at < ${sinceISO}`,
+      sql`SELECT DISTINCT COALESCE(mi.company_id, d.company_id) AS company_id FROM manual_invoices mi LEFT JOIN proposals pr ON pr.id = mi.proposal_id LEFT JOIN deals d ON d.id = COALESCE(mi.deal_id, pr.deal_id) WHERE mi.status = 'paid' AND mi.paid_at < ${sinceISO}`,
+      sql`SELECT DISTINCT d.company_id FROM proposal_billing pb JOIN proposals pr ON pr.id = pb.proposal_id JOIN deals d ON d.id = pr.deal_id WHERE pb.paid_amount IS NOT NULL AND pb.paid_at < ${sinceISO}`,
+    ]);
+    for (const rows of results) collect(rows);
+  } catch { /* best-effort */ }
+  return set;
+}
+
+// Income (net, ex-VAT) this period split by NEW vs EXISTING customers. A customer
+// is "new" if this period holds their first-ever income; "existing" if they'd
+// been paid before. Income with no company attribution (imported pending
+// payments, partner fees, recurring "Other") is reported separately as
+// `unattributed` and left out of the new/existing split. `leader` names which of
+// the two is bigger; `deltaPct` is how much bigger it is than the other.
+async function customerMixReport(action) {
+  const { period, since, until } = parsePerformancePeriod(action);
+  const [rows, prior] = await Promise.all([
+    fetchPaidRows(since, until),
+    companiesWithIncomeBefore(since),
+  ]);
+  const byCompany = new Map();
+  let unattributed = 0;
+  for (const r of rows) {
+    const net = Number(r.net) || 0;
+    if (!r.companyId) { unattributed += net; continue; }
+    byCompany.set(r.companyId, (byCompany.get(r.companyId) || 0) + net);
+  }
+  let newIncome = 0, existingIncome = 0, newCount = 0, existingCount = 0;
+  const newCompanyIds = [];
+  for (const [cid, net] of byCompany) {
+    if (prior.has(cid)) { existingIncome += net; existingCount += 1; }
+    else { newIncome += net; newCount += 1; newCompanyIds.push(cid); }
+  }
+  const attributed = newIncome + existingIncome;
+  let newCustomers = [];
+  if (newCompanyIds.length) {
+    try {
+      const names = await sql`SELECT id, name FROM companies WHERE id = ANY(${newCompanyIds})`;
+      const nameById = new Map(names.map((n) => [n.id, n.name]));
+      newCustomers = newCompanyIds
+        .map((id) => ({ name: nameById.get(id) || 'Unknown', income: round2(byCompany.get(id)) }))
+        .sort((a, b) => b.income - a.income);
+    } catch { /* names are a nicety */ }
+  }
+  const higher = Math.max(newIncome, existingIncome);
+  const lower = Math.min(newIncome, existingIncome);
+  const deltaPct = lower > 0 ? round2((higher / lower - 1) * 100) : (higher > 0 ? null : 0);
+  const leader = newIncome === existingIncome ? 'equal' : (newIncome > existingIncome ? 'new' : 'existing');
+  return {
+    period, since, until,
+    new: { income: round2(newIncome), count: newCount, pct: attributed ? round2((newIncome / attributed) * 100) : 0 },
+    existing: { income: round2(existingIncome), count: existingCount, pct: attributed ? round2((existingIncome / attributed) * 100) : 0 },
+    unattributed: round2(unattributed),
+    total: round2(attributed),
+    leader,
+    deltaPct,
+    newCustomers,
+  };
+}
+
 // Sales performance: new business *signed* in the period, valued at the net
 // (ex-VAT) total — "the cash each sale generates" — bucketed by day. This is the
 // "signed so far" pace headline (Sales-performance tab + Business Overview), so
@@ -831,7 +902,7 @@ async function performanceReport(action) {
 // sale events that day.
 async function salesReport(action) {
   const { period, spanMonths, since, until } = parsePerformancePeriod(action);
-  const [sigRows, extraRows] = await Promise.all([
+  const [sigRows, extraRows, creditRows] = await Promise.all([
     sql`
       SELECT s.signed_at, (s.data->>'total')::numeric AS total, pr.data->>'vatRate' AS rate
         FROM signatures s
@@ -840,6 +911,7 @@ async function salesReport(action) {
          AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
     `,
     fetchExtraRows(since, until, false),
+    fetchVideoCreditSalesRows(since, until),
   ]);
 
   const byDay = {};
@@ -852,6 +924,7 @@ async function salesReport(action) {
   };
   for (const r of sigRows) add(r.signed_at, splitVat(r.total, r.rate).net);
   for (const r of extraRows) add(r.created_at, extraSplit(r.amount, r.vat_rate).net);
+  for (const r of creditRows) add(r.at, Number(r.net) || 0);
 
   const days = Object.entries(byDay)
     .sort(([a], [b]) => (a < b ? -1 : 1))
@@ -926,6 +999,25 @@ async function fetchStandaloneInvoiceRows(since, until, includeExcluded = false)
             WHERE p2.deal_id = COALESCE(mi.deal_id, pr.deal_id)
               AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
          )`;
+  } catch {
+    return [];
+  }
+}
+
+// Video-credit sales in [since, until): portal credit purchases that have become
+// a real sale — an invoice was raised (status='invoiced') or paid by card
+// (status='paid'). Valued at the net (ex-VAT) subtotal, bucketed by order date.
+// Counted in the sales PACE headline (salesReport). The invoice-path also shows
+// as a standalone manual_invoice in salesFinanceReport ("cash generated"); the
+// pace uses this order-based source so card sales count too. Robust to the table
+// not existing → [].
+async function fetchVideoCreditSalesRows(since, until) {
+  try {
+    return await sql`
+      SELECT created_at AS at, subtotal_ex_vat AS net
+        FROM video_credit_orders
+       WHERE status IN ('invoiced', 'paid')
+         AND created_at >= ${since} AND created_at < ${until}`;
   } catch {
     return [];
   }
@@ -3608,6 +3700,10 @@ export async function statsRoute(req, res, id, action, user) {
 
   if (id === 'income') {
     return res.status(200).json(await incomeReport(action));
+  }
+
+  if (id === 'customer-mix') {
+    return res.status(200).json(await customerMixReport(action));
   }
 
   if (id === 'cashflow') {

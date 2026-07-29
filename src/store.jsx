@@ -1193,6 +1193,14 @@ export function StoreProvider({ children }) {
         return data;
       }).catch(() => null);
     },
+    // Business → Finance: income split by new vs existing customers for a period.
+    loadCustomerMix(period) {
+      const path = '/api/crm/stats/customer-mix' + (period ? '/' + period : '');
+      return api.get(path).then((data) => {
+        setState(s => ({ ...s, customerMix: data || null }));
+        return data;
+      }).catch(() => null);
+    },
     // Business → Finance (Cash Flow): costs, monthly profit, CT to set aside and
     // the wage-based revenue targets for a month ('YYYY-MM', default current).
     loadCashflow(month) {
