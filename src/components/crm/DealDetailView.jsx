@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Link2, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -734,6 +734,19 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginLeft: 'auto' }}>
+                  {/* Copy the public proposal share link (same URL as the deals
+                      list "Copy share link" and the client view). */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = 'https://app.squideo.com/?proposal=' + p.id;
+                      navigator.clipboard?.writeText(url)
+                        .then(() => showMsg('Proposal link copied'))
+                        .catch(() => showMsg('Could not copy link'));
+                    }}
+                    title="Copy the client proposal link"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: BRAND.ink }}
+                  ><Link2 size={13} /> Copy link</button>
                   {/* Signed proposals are locked — the client has agreed to these
                       terms, so only Preview is offered. */}
                   {!p.signed && (
