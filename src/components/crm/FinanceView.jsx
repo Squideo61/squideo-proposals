@@ -873,14 +873,26 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
       p = actions.receiveRecurringOther({ id: it.row.id, month: predictMonthKey }, it.name);
     }
     else if (it.type === 'deal' && it.row?.proposalId) {
-      // Signed deals record a real payment against the proposal (advances to paid
-      // + enters production). Confirm the gross amount first — it's heavier than a
-      // sheet row, and the list shows net.
-      const gross = Number(it.row.outstandingGross) || 0;
+      // Signed deals record a real payment against the proposal. The predicted row
+      // is a specific PORTION (e.g. a 50% deposit), not necessarily the whole deal
+      // — record just that portion so the ledger and the remaining balance stay
+      // right. `it.amount` is the portion NET; gross it at the deal's VAT rate
+      // (outstandingGross / outstanding, extras included at the same rate).
       const net = Number(it.amount) || 0;
-      const ok = window.confirm(`Record a ${method === 'bacs' ? 'BACS' : 'Stripe'} payment of ${formatGBP(gross)} (inc VAT · ${formatGBP(net)} net) for "${it.name}"?\n\nThis marks the deal paid and moves it into production.`);
+      const fullNet = Number(it.row.outstanding) || 0;
+      const fullGross = Number(it.row.outstandingGross) || 0;
+      const mult = fullNet > 0.005 ? fullGross / fullNet : 1;
+      const gross = round2Money(net * mult);
+      // Label the portion (drives the receipt/notification wording + the ledger).
+      const lines = it.row.lines || [];
+      const portionType = Math.abs(fullNet - net) < 0.01 ? 'full'
+        : lines.some((l) => l.type === 'deposit' && Math.abs(l.amount - net) < 0.01) ? 'deposit'
+        : lines.some((l) => l.type === 'final' && Math.abs(l.amount - net) < 0.01) ? 'final'
+        : 'full';
+      const portionLabel = portionType === 'deposit' ? '50% deposit' : portionType === 'final' ? '50% final' : 'payment';
+      const ok = window.confirm(`Record a ${method === 'bacs' ? 'BACS' : 'Stripe'} payment of ${formatGBP(gross)} (inc VAT · ${formatGBP(net)} net) for "${it.name}"?\n\nThis records the ${portionLabel} against the deal.`);
       if (!ok) return;
-      p = actions.recordDealPayment(it.row.proposalId, gross, method);
+      p = actions.recordDealPayment(it.row.proposalId, gross, method, portionType);
     }
     if (p) Promise.resolve(p).then(() => onChanged && onChanged());
   };

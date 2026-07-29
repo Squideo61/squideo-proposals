@@ -1657,12 +1657,12 @@ export function StoreProvider({ children }) {
     // Record a manual payment against a signed deal's proposal (e.g. "mark paid
     // — BACS" from the predicted list). Advances the deal to paid + enters
     // production server-side. Caller refreshes the finance figures.
-    recordDealPayment(proposalId, amount, method = 'bacs') {
+    recordDealPayment(proposalId, amount, method = 'bacs', paymentType = 'full') {
       return api.post('/api/crm/payments', {
         proposalId,
         amount: Number(amount) || 0,
         paymentMethod: method,
-        paymentType: 'full',
+        paymentType,
         paidAt: new Date().toISOString(),
       });
     },
