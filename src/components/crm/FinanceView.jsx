@@ -109,7 +109,7 @@ function PredictDateModal({ label, onClose, onConfirm }) {
 // in `partners`). Each item carries the ids needed to open its deal/customer/
 // partner. Shared by the Predicted tab and the Performance projection. Net
 // (ex-VAT) amounts, sorted high→low.
-function collectPredicted(pending, partners, predictKeys, excludedKeys, predictMonthKey) {
+function collectPredicted(pending, partners, predictKeys, excludedKeys, predictMonthKey, amountByKey) {
   const out = [];
   const seen = new Set();
   const excluded = excludedKeys || new Set();
@@ -118,8 +118,17 @@ function collectPredicted(pending, partners, predictKeys, excludedKeys, predictM
   const add = (key, it) => { if (!seen.has(key) && !excluded.has(key)) { seen.add(key); out.push({ key, ...it }); } };
   const keys = predictKeys || new Set();
   const p = pending || {};
-  for (const d of (p.normal || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: dealRowName(d), amount: Number(d.outstanding) || 0, source: 'Signed deal', dealId: d.dealId, type: 'deal', row: d, isPo: false });
-  for (const d of (p.po || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: dealRowName(d), amount: Number(d.outstanding) || 0, source: 'Purchase order', dealId: d.dealId, type: 'deal', row: d, isPo: true });
+  // A signed deal is keyed per-deal, but a part-invoiced deal is shown as two
+  // sub-rows (e.g. an invoiced 50% deposit + a not-yet-invoiced 50% final) that
+  // share that one key — so the live full-deal `outstanding` (£1,000) can't tell
+  // us which portion (£500) was flagged. The amount stored when the row was
+  // flagged captures exactly that, so prefer it; fall back to the live full
+  // outstanding for keys with no stored amount (e.g. rolled-over from an earlier
+  // month). Only applied to manually-flagged deal/PO rows — partners / "other"
+  // recur and keep their live amount.
+  const dealAmt = (key, live) => (amountByKey && amountByKey.has(key)) ? amountByKey.get(key) : (Number(live) || 0);
+  for (const d of (p.normal || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: dealRowName(d), amount: dealAmt(predictKeyForDeal(d.dealId), d.outstanding), source: 'Signed deal', dealId: d.dealId, type: 'deal', row: d, isPo: false });
+  for (const d of (p.po || [])) if (d.dealId && keys.has(predictKeyForDeal(d.dealId))) add(predictKeyForDeal(d.dealId), { name: dealRowName(d), amount: dealAmt(predictKeyForDeal(d.dealId), d.outstanding), source: 'Purchase order', dealId: d.dealId, type: 'deal', row: d, isPo: true });
   for (const r of (p.manual || [])) if (keys.has(predictKeyForManual(r))) add(predictKeyForManual(r), { name: r.company || r.description || 'Pending payment', amount: Number(r.amountExVat) || 0, source: r.kind === 'po' ? 'Imported PO' : 'Imported PP', dealId: r.dealId || null, companyId: r.companyId || null, type: 'manual', row: r });
   for (const r of (p.companyInvoices || [])) if (keys.has(predictKeyForManual(r))) add(predictKeyForManual(r), { name: r.company || r.description || 'Company invoice', amount: Number(r.amountExVat) || 0, source: 'Company invoice', companyId: r.companyId || null, type: 'manual', row: r });
   // Active partners ride along automatically (subscription = next month's fee,
@@ -424,6 +433,14 @@ export function FinanceView({ initialTab = null, onBack, onOpenDeal, onOpenCompa
   const excludedKeys = useMemo(() => new Set(predicted?.excludedKeys || []), [predicted]);
   const rolledKeys = useMemo(() => new Set(predicted?.rolledKeys || []), [predicted]);
   const rolledAwayKeys = useMemo(() => new Set(predicted?.rolledAwayKeys || []), [predicted]);
+  // The amount stored when each item was flagged (key → ex-VAT). Used to project
+  // the portion the user actually predicted for part-invoiced deals, where the
+  // per-deal key can't distinguish the flagged sub-row from the whole deal.
+  const predictedAmounts = useMemo(() => {
+    const m = new Map();
+    for (const it of (predicted?.items || [])) m.set(it.key, Number(it.amount) || 0);
+    return m;
+  }, [predicted]);
   const predictCtx = useMemo(() => ({
     month: predictMonthKey,
     keys: predictKeys,
@@ -439,8 +456,8 @@ export function FinanceView({ initialTab = null, onBack, onOpenDeal, onOpenCompa
   // Live total of everything still predicted to land this month — drives the
   // Predicted tab and the "with predicted" projection on the Performance chart.
   const predictedTotal = useMemo(
-    () => collectPredicted(pending, activePartners, predictKeys, excludedKeys, predictMonthKey).reduce((s, it) => s + it.amount, 0),
-    [pending, activePartners, predictKeys, excludedKeys, predictMonthKey],
+    () => collectPredicted(pending, activePartners, predictKeys, excludedKeys, predictMonthKey, predictedAmounts).reduce((s, it) => s + it.amount, 0),
+    [pending, activePartners, predictKeys, excludedKeys, predictMonthKey, predictedAmounts],
   );
   // Live monthly income targets (Minimum / £4k / £5k) for the Predicted tab's
   // over/under-target metric — same figures the Performance pacing uses.
@@ -604,6 +621,7 @@ export function FinanceView({ initialTab = null, onBack, onOpenDeal, onOpenCompa
           partners={activePartners}
           predictKeys={predictKeys}
           excludedKeys={excludedKeys}
+          predictedAmounts={predictedAmounts}
           rolledKeys={rolledKeys}
           rolledAwayKeys={rolledAwayKeys}
           isPastMonth={isPastPredictMonth}
@@ -787,7 +805,7 @@ function PredictedRowBadges({ item }) {
 // active partners — so a predicted item that's since been paid simply drops off
 // (and is already counted in the banked figure). Projects the month-end position
 // as banked-so-far + everything still predicted to land. All figures ex-VAT (net).
-function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys, rolledKeys, rolledAwayKeys, isPastMonth = false, predictMonthKey, monthName, bankedNet, targets, notes = {}, onSaveNote, onUnpredict, onExclude, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
+function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys, predictedAmounts, rolledKeys, rolledAwayKeys, isPastMonth = false, predictMonthKey, monthName, bankedNet, targets, notes = {}, onSaveNote, onUnpredict, onExclude, onOpenDeal, onOpenCompany, onOpenPartner, actions, onChanged, isMobile }) {
   const [editOther, setEditOther] = useState(null); // the "Other" row being edited
   const [noteTarget, setNoteTarget] = useState(null); // { key, name, note } being edited
   // The deal + portion to invoice when "Create invoice" is picked on a predicted
@@ -795,7 +813,7 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
   const [invTarget, setInvTarget] = useState(null);
   const rolled = rolledKeys || new Set();
   const rolledAway = rolledAwayKeys || new Set();
-  const items = useMemo(() => collectPredicted(pending, partners, predictKeys, excludedKeys, predictMonthKey)
+  const items = useMemo(() => collectPredicted(pending, partners, predictKeys, excludedKeys, predictMonthKey, predictedAmounts)
     // In a past, completed month nothing is still "to come": manual predictions
     // that didn't land have rolled into the current month (rolledAway), and the
     // recurring auto items (partners / other) belong to their own current month —
@@ -807,7 +825,7 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
       open: it.dealId && onOpenDeal ? () => onOpenDeal(it.dealId)
         : it.companyId && onOpenCompany ? () => onOpenCompany(it.companyId)
           : it.clientKey && onOpenPartner ? () => onOpenPartner(it.clientKey) : null,
-    })), [pending, partners, predictKeys, excludedKeys, rolled, rolledAway, isPastMonth, predictMonthKey, onOpenDeal, onOpenCompany, onOpenPartner]);
+    })), [pending, partners, predictKeys, excludedKeys, predictedAmounts, rolled, rolledAway, isPastMonth, predictMonthKey, onOpenDeal, onOpenCompany, onOpenPartner]);
 
   // Auto items (partners / other recurring) switched OFF for this month — shown
   // muted at the bottom so they're easy to add back. Recomputed from the live
