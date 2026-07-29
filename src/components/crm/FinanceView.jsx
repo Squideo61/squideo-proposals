@@ -756,11 +756,32 @@ function predictedSubtitle(item) {
 // The same badges an item carries on the Pending Payments list: proposal number
 // + payment-type + PO pill + invoiced tags for deals; imported/linked badge for
 // manual rows; subscription/credits badge for partners.
+// A predicted signed-deal row carries the WHOLE deal (its per-deal key can't tell
+// the flagged sub-row apart), but the flagged amount pins down which portion the
+// user actually predicted. Return just the lines making up that portion — the
+// invoiced or the not-yet-invoiced set whose sum matches — so the row's pills
+// reflect only what's predicted (e.g. the deposit, not deposit + final). Falls
+// back to all lines when neither matches (full deal, or a rolled-over key with no
+// stored amount). Invoiced is preferred on a tie (50/50), since predictions are
+// usually flagged from the "Invoiced — awaiting payment" panel.
+function predictedDealLines(row, amount) {
+  const lines = (row?.lines && row.lines.length) ? row.lines : [];
+  if (!lines.length) return lines;
+  const target = round2Money(Number(amount) || 0);
+  if (!target) return lines;
+  const inv = lines.filter((l) => l.invoiced === true);
+  const notInv = lines.filter((l) => l.invoiced === false);
+  const sum = (arr) => round2Money(arr.reduce((s, l) => s + (Number(l.amount) || 0), 0));
+  if (inv.length && sum(inv) === target) return inv;
+  if (notInv.length && sum(notInv) === target) return notInv;
+  return lines;
+}
+
 function PredictedRowBadges({ item }) {
   const r = item.row || {};
   if (item.type === 'deal') {
     const number = r.number ? formatProposalNumber(r.number) : '';
-    const lines = (r.lines && r.lines.length) ? r.lines : [];
+    const lines = predictedDealLines(r, item.amount);
     const types = [...new Set(lines.map((l) => l.type))];
     const anyNotInvoiced = lines.some((l) => l.invoiced === false);
     return (
