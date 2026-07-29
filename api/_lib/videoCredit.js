@@ -4,10 +4,11 @@
 // finished video) so a portal purchase shows up in the CRM's Partners & Credits
 // list and the company page mirror with no parallel system.
 //
-// Pricing mirrors the one-off "Content Credit" ladder in src/defaults.js
-// (makeContentCreditTemplate): a per-minute rate discounted more the more
-// minutes you buy. This is the SERVER-SIDE authority — the portal computes the
-// same numbers for display, but the Stripe amount is always recomputed here.
+// Pricing mirrors the standard one-off "Content Credit" discount tiers used on
+// proposals (Base 10% · Per extra 2.5% · Max 20%): a per-minute rate discounted
+// more the more minutes you buy. This is the SERVER-SIDE authority — the portal
+// computes the same numbers for display, but the Stripe amount is always
+// recomputed here.
 
 import sql from './db.js';
 import { creditTotalsForKeys } from './partnerCredits.js';

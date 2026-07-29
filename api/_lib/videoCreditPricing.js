@@ -3,16 +3,18 @@
 // client. The DB-backed helpers (balance, ledger writes, rate lookup) live in
 // videoCredit.js, which re-exports these.
 //
-// Ladder: a per-minute rate discounted more the more minutes you buy — 15% base,
-// +3% per extra minute, capped at 30% (matches makeContentCreditTemplate in
-// src/defaults.js). This is the SERVER-SIDE authority for the Stripe amount.
+// Ladder: a per-minute rate discounted more the more minutes you buy — 10% base,
+// +2.5% per extra minute, capped at 20%. Mirrors the standard one-off Content
+// Credit discount tiers used on proposals (Base 10% · Per extra 2.5% · Max 20%).
+// This is the SERVER-SIDE authority for the Stripe amount.
 
 export const VIDEO_CREDIT = {
-  baseDiscount: 0.15,
-  stepPerMin: 0.03,
-  maxDiscount: 0.30,
+  baseDiscount: 0.10,
+  stepPerMin: 0.025,
+  maxDiscount: 0.20,
   vatRate: 0.20,
-  defaultRatePerMin: 1250, // £/min — matches the Content Credit default
+  defaultRatePerMin: 1250, // £/min fallback — the live rate comes from the
+                           // default proposal's standard rate (see videoCredit.js)
 };
 
 // Effective discount fraction for buying `minutes` minutes (climbs with volume).
