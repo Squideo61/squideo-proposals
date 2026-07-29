@@ -199,7 +199,7 @@ export default function Dashboard() {
               icon={<Film size={34} />}
               title="No live projects just yet"
               body="When a proposal is signed your project appears here with live status, review links and downloads."
-              action={<a className="btn" href="#/request">Request a video — 10% off</a>}
+              action={<a className="btn" href="#/request">Request a video</a>}
             />
           </Card>
         ) : (
@@ -215,8 +215,8 @@ export default function Dashboard() {
           <QuickAction
             Icon={Sparkles}
             title="Request a new video"
-            badge="10% PORTAL DISCOUNT"
-            body="Tell us what you need — portal requests get an exclusive 10% off the quote."
+            badge="10% OFF FUTURE VIDEOS"
+            body="Tell us what you need — future videos requested through the portal get an exclusive 10% off the quote."
             onClick={() => { window.location.hash = '#/request'; }}
             accent="#16A34A"
           />

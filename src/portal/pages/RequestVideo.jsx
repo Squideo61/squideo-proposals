@@ -113,11 +113,11 @@ export default function RequestVideo() {
         borderRadius: 16, padding: '22px 24px', color: '#fff',
       }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#16A34A', borderRadius: 999, padding: '4px 12px', fontSize: 12, fontWeight: 800, marginBottom: 10 }}>
-          <Sparkles size={13} /> PORTAL EXCLUSIVE — 10% OFF
+          <Sparkles size={13} /> PORTAL EXCLUSIVE — 10% OFF FUTURE VIDEOS
         </div>
         <h1 style={{ margin: '0 0 6px', fontSize: 22, fontWeight: 800 }}>Request a new video</h1>
         <p style={{ margin: 0, fontSize: 13.5, color: '#B9CBD6', lineHeight: 1.55 }}>
-          Because you're requesting through the portal, your quote comes with an exclusive
+          Because you're requesting your next video through the portal, your quote comes with an exclusive
           <strong style={{ color: '#7EE2A8' }}> 10% discount</strong> — and we already have your details, so this takes under a minute.
         </p>
       </div>
