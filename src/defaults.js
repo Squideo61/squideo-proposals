@@ -124,11 +124,12 @@ export function makeContentCreditTemplate(base) {
     creditOnly: true,
     quotedMinutes: 1,
     standardRatePerMin: ratePerMin,
-    // A steeper ladder than the subscription default — the whole point is to
-    // reward a bigger single commitment, so the discount keeps climbing further.
-    discountRate: 0.15,
-    extraDiscountPerCredit: 0.03,
-    maxDiscount: 0.30,
+    // The standard one-off Content Credit ladder — kept in step with the portal
+    // video-credit tiers (see api/_lib/videoCreditPricing.js): Base 10% · Per
+    // extra 2.5% · Max 20%.
+    discountRate: 0.10,
+    extraDiscountPerCredit: 0.025,
+    maxDiscount: 0.20,
     description: 'Content Credit lets you lock in a block of production time now and draw it down whenever you\'re ready.\n- Add extra minutes on top of your quote at a bulk-discounted rate\n- Use it on this content, split it across smaller pieces, or save it for later\n- You have 2 years to use your credit – no monthly commitment, no rush to spend\n\nWhy organisations use it:\n- Maximise a fixed budget – the more minutes you add, the lower the rate on them\n- One approval, one Purchase Order – simpler procurement than commissioning piece by piece\n- Consistency – the same team and style across everything you make',
   };
   // Purchase Order first: these are typically larger organisations who raise a
