@@ -23,11 +23,22 @@ export async function dealOutstanding(dealId) {
 // Whether the deal's final video may be released: paid in full OR staff override.
 export async function isFinalReleaseUnlocked(dealId) {
   if (!dealId) return false;
-  const [d] = await sql`SELECT final_release_override_at FROM deals WHERE id = ${dealId}`;
+  const [d] = await sql`SELECT final_release_override_at, company_id FROM deals WHERE id = ${dealId}`;
   if (!d) return false;
+  // Staff can force early release regardless of billing state.
   if (d.final_release_override_at) return true;
-  const outstanding = await dealOutstanding(dealId);
-  return (outstanding ?? 0) <= 0;
+  if (!d.company_id) return false;
+  // Keep the balance fresh against Xero so a just-paid final invoice counts.
+  try {
+    const props = (await sql`SELECT id FROM proposals WHERE deal_id = ${dealId}`).map((r) => r.id);
+    if (props.length) await reconcileProposalBillingPaid(props);
+  } catch { /* freshness is best-effort */ }
+  const bal = (await computeCompanyDealBalances(d.company_id))[dealId];
+  // A deal is "paid in full" only once it's actually been SOLD — a signed proposal
+  // with committed value. A brand-new lead has nothing committed (no balance row),
+  // which is "nothing owed yet", NOT paid — so it must stay locked, not released.
+  if (!bal || !(Number(bal.committed) > 0)) return false;
+  return (Number(bal.outstanding) || 0) <= 0;
 }
 
 // Final delivery: once a signed-off video's final invoice is settled (or the

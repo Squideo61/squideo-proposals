@@ -306,7 +306,14 @@ export default async function handler(req, res) {
             FROM deals WHERE id = ${dealId}
         `;
         if (!deal) return res.status(404).json({ error: 'Deal not found' });
-        const finalReleaseUnlocked = await isFinalReleaseUnlocked(dealId).catch(() => false);
+        // The final-delivery banner only makes sense once there's actually a final
+        // video in play (a cut that's reached sign-off / final invoice / delivered).
+        // On a lead with nothing in production there's nothing to release or gate,
+        // so we omit finalRelease entirely rather than defaulting it "released".
+        const [{ n: finalVideoCount }] = await sql`
+          SELECT COUNT(*)::int AS n FROM project_videos
+           WHERE deal_id = ${dealId} AND production_stage IN ('signed_off', 'final_invoice', 'delivered')`;
+        const finalReleaseUnlocked = finalVideoCount ? await isFinalReleaseUnlocked(dealId).catch(() => false) : false;
         const offers = await sql`
           SELECT id, kind, proposal_extra_id, title, description, amount, hidden, created_by, created_at
             FROM portal_extra_offers WHERE deal_id = ${dealId} ORDER BY created_at ASC
@@ -323,7 +330,7 @@ export default async function handler(req, res) {
           dealId,
           steps,
           activity,
-          finalRelease: { override: !!deal.final_release_override_at, unlocked: finalReleaseUnlocked },
+          finalRelease: finalVideoCount ? { override: !!deal.final_release_override_at, unlocked: finalReleaseUnlocked } : null,
           ...(await inviteCandidatesForDeal(dealId)),
           discount: Number(deal.portal_extras_discount ?? 0.10),
           offers: offers.map((o) => ({

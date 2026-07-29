@@ -340,6 +340,36 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
             <span style={{ marginLeft: 'auto', fontSize: 11.5 }}>Prices follow the proposal — edits there update these offers.</span>
           </div>
 
+          {/* Portal access status — makes it obvious at a glance whether anyone can
+              actually see this portal yet, so "released to client" / offers aren't
+              mistaken for the client having been given access. */}
+          {(() => {
+            const cands = data.candidates || [];
+            const withAccess = cands.filter((c) => c.hasAccess);
+            const pending = cands.filter((c) => !c.hasAccess && c.invitePending);
+            const has = withAccess.length > 0;
+            const pend = !has && pending.length > 0;
+            const dot = has ? '#16A34A' : pend ? '#B45309' : BRAND.muted;
+            const bg = has ? '#F0FDF4' : pend ? '#FFFBEB' : BRAND.paper;
+            const bd = has ? '#BBF7D0' : pend ? '#FDE68A' : BRAND.border;
+            const label = has
+              ? `${withAccess.length} ${withAccess.length === 1 ? 'contact has' : 'contacts have'} portal access`
+              : pend
+                ? `Invite sent — awaiting sign-up (${pending.length})`
+                : 'No one has been invited to the portal yet';
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '7px 10px', borderRadius: 8, background: bg, border: '1px solid ' + bd }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{label}</span>
+                {!has && (
+                  <button className="btn-link" style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700 }} disabled={!data} onClick={() => setShowInvite(true)}>
+                    {pend ? 'Manage invites' : 'Send invite'}
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
           {derived.length === 0 && customOffers.length === 0 && (
             <Empty text="No portal extras to offer — the signed proposal has no remaining optional extras. Add a custom offer to upsell." />
           )}
