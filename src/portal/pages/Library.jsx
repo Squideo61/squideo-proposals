@@ -17,7 +17,7 @@ import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, fmtBytes, fmtDate } from '../components.jsx';
 import {
   Film, Download, Clapperboard, Upload, Trash2, PlusCircle, Pencil, Layers,
-  Image as ImageIcon, Camera, ChevronLeft, ChevronRight,
+  Image as ImageIcon, Camera, ChevronLeft, ChevronRight, PlayCircle,
 } from 'lucide-react';
 
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|ogv|avi|mkv)$/i;
@@ -188,6 +188,8 @@ function FileTile({ dealId, file, manage, projects, seriesOptions, position, tot
   const { companyId } = usePortal();
   const [editing, setEditing] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [ratio, setRatio] = useState(null); // learnt from the thumbnail's own size
   const playable = isVideo(file);
   const poster = posterUrl(file);
   const meta = [file.sizeBytes != null ? fmtBytes(file.sizeBytes) : null, fmtDate(file.createdTime)]
@@ -206,20 +208,51 @@ function FileTile({ dealId, file, manage, projects, seriesOptions, position, tot
           onSaved={() => { setPicking(false); onSaved(); }}
           onError={onError}
         />
+      ) : playable && poster && !playing ? (
+        // A chosen thumbnail is shown as an IMAGE until they press play, not as
+        // the video's poster attribute. With preload="none" the browser never
+        // learns the video's shape, so the element keeps its default 2:1 box and
+        // pillarboxes a 16:9 poster inside it — the black bars down each side.
+        // An <img> sizes to its own dimensions, so there's nothing to letterbox,
+        // and the grid costs one small JPEG per tile instead of a video element.
+        <button
+          type="button"
+          onClick={() => setPlaying(true)}
+          aria-label={`Play ${file.name}`}
+          style={{
+            position: 'relative', display: 'block', width: '100%', padding: 0,
+            border: 'none', background: '#000', cursor: 'pointer', lineHeight: 0,
+          }}
+        >
+          <img
+            src={poster}
+            alt=""
+            onLoad={(e) => {
+              const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+              if (w && h) setRatio(w / h);
+            }}
+            style={{ width: '100%', display: 'block' }}
+          />
+          <span style={{
+            position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
+            color: '#fff', filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.6))',
+          }}>
+            <PlayCircle size={54} strokeWidth={1.4} />
+          </span>
+        </button>
       ) : playable ? (
-        // No forced aspect-ratio box: the video sizes to its own shape, so there
-        // are never letterbox bars (a fractional column width used to leave a
-        // black sliver down one edge) and a vertical cut isn't boxed into 16:9.
-        // With a chosen thumbnail nothing loads until they press play; without
-        // one we pull metadata so the browser has a frame to show.
+        // No forced aspect-ratio box: the video sizes to its own shape, so a
+        // vertical cut isn't boxed into 16:9. `ratio` is only set once the
+        // thumbnail above has told us the shape, which keeps the box steady
+        // through the swap to the player.
         <video
           controls
-          preload={poster ? 'none' : 'metadata'}
-          poster={poster || undefined}
+          autoPlay={playing}
+          preload="metadata"
           playsInline
           controlsList="nodownload"
           src={fileUrl(dealId, file)}
-          style={{ width: '100%', display: 'block', background: '#000' }}
+          style={{ width: '100%', display: 'block', background: '#000', aspectRatio: ratio || undefined }}
         />
       ) : (
         <div style={{ width: '100%', aspectRatio: '16 / 9', display: 'grid', placeItems: 'center', background: '#F2F6F9', color: BRAND.muted }}>
