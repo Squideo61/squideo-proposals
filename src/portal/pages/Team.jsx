@@ -8,8 +8,19 @@ import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, fmtDate } from '../components.jsx';
 import { UserPlus, Mail, Clock, Send } from 'lucide-react';
 
+// Staff in manage mode don't send the standard invite — they hand off to the
+// CRM, which mints the invite and opens the email composer prefilled from the
+// "Client portal invite" template. The composer only exists in the CRM bundle,
+// hence the new tab. Clients inviting their own colleagues never come through
+// here: their invite sends the standard branded email straight away.
+function openComposeInvite({ companyId, email, name }) {
+  const q = new URLSearchParams({ portalInvite: companyId, portalInviteEmail: email });
+  if (name) q.set('portalInviteName', name);
+  window.open(`/?${q.toString()}`, '_blank', 'noopener');
+}
+
 export default function Team() {
-  const { user, companyId, showToast } = usePortal();
+  const { user, companyId, manageMode, showToast } = usePortal();
   const [data, setData] = useState(null);
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
@@ -26,6 +37,11 @@ export default function Team() {
 
   const invite = async (e) => {
     e.preventDefault();
+    if (manageMode) {
+      openComposeInvite({ companyId, email, name });
+      setEmail(''); setName('');
+      return;
+    }
     setBusy(true);
     try {
       await portalApi.post(`team?companyId=${encodeURIComponent(companyId)}`, { email, name });
@@ -41,6 +57,10 @@ export default function Team() {
 
   // One-click invite for someone we already have on file — no retyping.
   const inviteContact = async (c) => {
+    if (manageMode) {
+      openComposeInvite({ companyId, email: c.email, name: c.name });
+      return;
+    }
     setInvitingId(c.id);
     try {
       await portalApi.post(`team?companyId=${encodeURIComponent(companyId)}`, { email: c.email, name: c.name });
@@ -77,11 +97,13 @@ export default function Team() {
           <input className="input" placeholder="Their name (optional)" value={name} onChange={(e) => setName(e.target.value)} style={{ flex: 1, minWidth: 150 }} />
           <input className="input" type="email" required placeholder="colleague@company.com" value={email} onChange={(e) => setEmail(e.target.value)} style={{ flex: 2, minWidth: 200 }} />
           <button className="btn" type="submit" disabled={busy} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <UserPlus size={15} /> {busy ? 'Sending…' : 'Send invite'}
+            <UserPlus size={15} /> {busy ? 'Sending…' : manageMode ? 'Write invite' : 'Send invite'}
           </button>
         </form>
         <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 8 }}>
-          They'll get an email invite to {companyName || 'your organisation'}'s portal — they can only ever see your organisation's projects.
+          {manageMode
+            ? 'Staff: this opens the CRM composer with their invite link, so you can write the email yourself.'
+            : `They'll get an email invite to ${companyName || 'your organisation'}'s portal — they can only ever see your organisation's projects.`}
         </div>
       </Card>
 
@@ -125,7 +147,7 @@ export default function Team() {
                         onClick={() => inviteContact(c)}
                         style={{ fontSize: 12.5, padding: '6px 12px', display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
                       >
-                        <Send size={13} /> {invitingId === c.id ? 'Sending…' : 'Invite'}
+                        <Send size={13} /> {invitingId === c.id ? 'Sending…' : manageMode ? 'Write invite' : 'Invite'}
                       </button>
                     </>
                   }

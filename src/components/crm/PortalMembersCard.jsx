@@ -133,7 +133,12 @@ export function PortalMembersCard({ companyId }) {
               style={{ fontSize: 11.5, padding: 0, color: BRAND.blue, textDecoration: 'underline' }}>
               or send the standard invite
             </button>
-            .
+            {' ('}
+            <a href={`/api/crm/portal-admin?op=invite-preview&companyId=${encodeURIComponent(companyId)}`}
+              target="_blank" rel="noopener noreferrer" style={{ color: BRAND.blue }}>
+              see what that says
+            </a>
+            {').'}
           </div>
         </form>
       )}

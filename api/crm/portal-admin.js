@@ -241,6 +241,28 @@ export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  // Renders the exact automated invite email, so "what does the client actually
+  // receive?" is answerable by looking rather than by asking. Opened as a normal
+  // tab, hence HTML rather than JSON. The link is a dummy — nothing is sent and
+  // no invite is created.
+  if (req.method === 'GET' && trimOrNull(req.query.op) === 'invite-preview') {
+    const user = await requirePermission(req, res, portalPreviewPerms(false));
+    if (!user) return;
+    const companyId = trimOrNull(req.query.companyId);
+    const [co] = companyId ? await sql`SELECT name FROM companies WHERE id = ${companyId}` : [];
+    const html = portalTeamInviteHtml({
+      inviterName: user.name || 'A colleague',
+      companyName: co?.name || 'your team',
+      inviteUrl: `${PORTAL_URL}?invite=EXAMPLE-TOKEN-THIS-IS-A-PREVIEW`,
+      logoUrl: companyId ? await emailLogoUrl(companyId) : null,
+    });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Inert: it's an email body rendered on our own origin.
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox");
+    return res.status(200).end(html);
+  }
+
   // The read-only portal preview is open to the wider production team (anyone
   // with portal.preview — producers and project managers included), so it
   // authorises itself before the narrower admin gate below. Manage mode still

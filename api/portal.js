@@ -2492,7 +2492,10 @@ async function teamRoutes(req, res, user) {
         email,
         companyId,
         companyName: company?.name,
-        inviterName: user.name || user.email,
+        // A manage-mode session has the staff member's email as its name, which
+        // would put a raw address in the subject line ("adam@squideo.co.uk
+        // invited you to…"). Clients see the Squideo team instead.
+        inviterName: user.isPreview ? 'The Squideo team' : (user.name || user.email),
         invitedBy: user.puid,
         prefill: { name: trimOrNull(body.name) },
       });
