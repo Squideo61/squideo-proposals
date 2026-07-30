@@ -14,9 +14,18 @@ import { Card, Empty } from './Card.jsx';
 
 const TONE = {
   received: { bg: '#F0FDF4', border: '#BBF7D0', color: '#15803D' },
+  refining: { bg: '#F3EFFF', border: '#DDD0FB', color: '#6D28D9' },
   squideo:  { bg: '#EAF7FC', border: '#A9E1F5', color: '#0B6E93' },
   waiting:  { bg: '#FFFBEB', border: '#FDE68A', color: '#B45309' },
 };
+
+// Mutually exclusive — where the script stands. Each is what the CLIENT's portal
+// then tells them, so the wording here is about our side of the same fact.
+const STATES = [
+  { id: 'received', label: 'We already have their script', done: 'Marked as received' },
+  { id: 'refining', label: 'We’re refining their draft script', done: 'Marked as ours to refine' },
+  { id: 'squideo',  label: 'We’re writing the script', done: 'Marked as ours to write' },
+];
 
 export function ClientScriptCard({ dealId, clientScript }) {
   const { actions, showMsg } = useStore();
@@ -25,13 +34,13 @@ export function ClientScriptCard({ dealId, clientScript }) {
   const status = clientScript?.status || null;
   const files = clientScript?.files || [];
   const uploaded = files.length > 0;
-  const tone = TONE[status === 'received' ? 'received' : status === 'squideo' ? 'squideo' : 'waiting'];
+  const tone = TONE[status] || (uploaded ? TONE.received : TONE.waiting);
 
   const set = async (next) => {
     setBusy(true);
     try {
       await actions.setDealScriptStatus(dealId, next);
-      showMsg(next === 'received' ? 'Marked as received' : next === 'squideo' ? 'Marked as ours to write' : 'Marked as still needed');
+      showMsg(STATES.find((s) => s.id === next)?.done || 'Marked as still needed');
     } catch (err) {
       showMsg(err.message || 'Could not update');
     } finally {
@@ -48,13 +57,15 @@ export function ClientScriptCard({ dealId, clientScript }) {
     }
   };
 
-  const summary = uploaded
-    ? `The client has sent ${files.length} file${files.length === 1 ? '' : 's'} through their portal.`
-    : status === 'received'
-      ? 'Marked as received — the portal isn’t asking the client for it.'
-      : status === 'squideo'
-        ? 'The client has asked us to write the script.'
-        : 'Nothing received yet — their portal asks for it once their tasks are live.';
+  const summary = status === 'refining'
+    ? 'We’re refining their draft — their portal says we’ll share it back for approval.'
+    : uploaded
+      ? `The client has sent ${files.length} file${files.length === 1 ? '' : 's'} through their portal.`
+      : status === 'received'
+        ? 'Marked as received — the portal isn’t asking the client for it.'
+        : status === 'squideo'
+          ? 'The client has asked us to write the script.'
+          : 'Nothing received yet — their portal asks for it once their tasks are live.';
 
   return (
     <Card
@@ -71,33 +82,27 @@ export function ClientScriptCard({ dealId, clientScript }) {
         <div style={{ fontSize: 12.5, color: BRAND.ink, lineHeight: 1.5 }}>{summary}</div>
       </div>
 
-      {/* The checkbox Adam asked for: "we've already got one" — usually because
-          it arrived by email pre-sale. Uploads answer the step on their own, so
-          it's only offered while nothing has come through the portal. */}
-      {!uploaded && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 13, color: BRAND.ink, cursor: busy ? 'default' : 'pointer' }}>
+      {/* Where the script stands. "We already have their script" is the pre-sale
+          email case; "we're refining their draft" is the client who sent
+          something but wants a hand with it. Shown whether or not they've
+          uploaded — a draft we're polishing usually arrived through the portal. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+        {STATES.map((s) => (
+          <label
+            key={s.id}
+            style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 13, color: BRAND.ink, cursor: busy ? 'default' : 'pointer' }}
+          >
             <input
               type="checkbox"
               disabled={busy}
-              checked={status === 'received'}
-              onChange={(e) => set(e.target.checked ? 'received' : null)}
+              checked={status === s.id}
+              onChange={(e) => set(e.target.checked ? s.id : null)}
               style={{ width: 15, height: 15, flexShrink: 0 }}
             />
-            We already have their script
+            {s.label}
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 13, color: BRAND.ink, cursor: busy ? 'default' : 'pointer' }}>
-            <input
-              type="checkbox"
-              disabled={busy}
-              checked={status === 'squideo'}
-              onChange={(e) => set(e.target.checked ? 'squideo' : null)}
-              style={{ width: 15, height: 15, flexShrink: 0 }}
-            />
-            We’re writing the script
-          </label>
-        </div>
-      )}
+        ))}
+      </div>
 
       {files.length === 0 ? (
         <Empty text="Nothing uploaded through the portal yet." />

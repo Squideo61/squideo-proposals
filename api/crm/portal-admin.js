@@ -714,15 +714,17 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    // "We already have their script" — the client sent it by email (often before
-    // the deal even closed), so the portal shouldn't keep asking. Also used to
-    // clear the flag. 'squideo' (they asked us to write it) is settable here too
-    // for a producer recording the outcome of a call.
+    // Where the script stands, as the client's portal reports it:
+    //   'received' — they sent it by email (often pre-close), so stop asking
+    //   'refining' — they gave us a draft and we're polishing it
+    //   'squideo'  — they've asked us to write it from scratch
+    //   null       — still waiting
+    // Mutually exclusive; a producer sets it from the deal page after a call.
     if (op === 'set-script-status') {
       const dealId = trimOrNull(body.dealId);
       if (!dealId) return res.status(400).json({ error: 'dealId required' });
       const raw = trimOrNull(body.status);
-      const status = raw === 'received' || raw === 'squideo' ? raw : null;
+      const status = ['received', 'refining', 'squideo'].includes(raw) ? raw : null;
       await sql`
         UPDATE deals
            SET script_status = ${status},

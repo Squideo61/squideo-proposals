@@ -52,18 +52,22 @@ const TASK_PRODUCERS = [
   // Send us your script & visual direction. Deliberately ONE step for the
   // client: the script and the look/feel notes arrive together (often before
   // the deal has even closed). Done when they've uploaded something, we've
-  // ticked "we already have it" on the deal, or they've asked us to write it.
-  // Never locks — they can send a new version at any point.
+  // ticked "we already have it" / "we're refining their draft" on the deal, or
+  // they've asked us to write it. Never locks — they can send a new version at
+  // any point. 'refining' is the middle ground: they gave us a draft and want a
+  // hand polishing it, so it outranks the plain "we've got it" wording.
   ({ deal, scriptStatus, scriptFileCount = 0 }) => {
     const uploaded = scriptFileCount > 0;
-    const done = uploaded || scriptStatus === 'received' || scriptStatus === 'squideo';
-    const detail = scriptStatus === 'squideo' && !uploaded
-      ? 'You’ve asked us to write it — we’ll share a draft for your approval.'
-      : uploaded
-        ? `We’ve got ${scriptFileCount} file${scriptFileCount === 1 ? '' : 's'} from you — send an updated version any time.`
-        : scriptStatus === 'received'
-          ? 'We already have your script — thank you. Send an updated version any time.'
-          : 'Share your script and any visual direction — or ask us to write it for you.';
+    const done = uploaded || scriptStatus === 'received' || scriptStatus === 'refining' || scriptStatus === 'squideo';
+    const detail = scriptStatus === 'refining'
+      ? 'We’re refining your draft — we’ll share it back for your approval.'
+      : scriptStatus === 'squideo' && !uploaded
+        ? 'You’ve asked us to write it — we’ll share a draft for your approval.'
+        : uploaded
+          ? `We’ve got ${scriptFileCount} file${scriptFileCount === 1 ? '' : 's'} from you — send an updated version any time.`
+          : scriptStatus === 'received'
+            ? 'We already have your script — thank you. Send an updated version any time.'
+            : 'Share your script and any visual direction — or ask us to write it for you.';
     return {
       key: 'script',
       title: 'Send us your script & visual direction',

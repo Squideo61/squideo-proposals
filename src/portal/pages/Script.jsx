@@ -73,13 +73,15 @@ function StatusBanner({ data }) {
   const tone = sent > 0 || data.status
     ? { bg: '#F0FDF4', border: '#BBF7D0', color: '#15803D' }
     : { bg: '#FFFBEB', border: '#FDE68A', color: '#B45309' };
-  const text = sent > 0
-    ? `We’ve got ${sent} file${sent === 1 ? '' : 's'} from you. Send an updated version any time — your producer is notified straight away.`
-    : wroteByUs
-      ? 'You’ve asked us to write the script — we’ll share a draft for your approval. Changed your mind? Upload yours below.'
-      : data.receivedElsewhere
-        ? 'We already have your script on file — thank you. If anything changes, upload the new version below.'
-        : 'Nothing here yet. Send us your script and any visual direction, or ask us to write it for you.';
+  const text = data.status === 'refining'
+    ? 'We’re refining your draft script — we’ll share it back for your approval. Send another version any time.'
+    : sent > 0
+      ? `We’ve got ${sent} file${sent === 1 ? '' : 's'} from you. Send an updated version any time — your producer is notified straight away.`
+      : wroteByUs
+        ? 'You’ve asked us to write the script — we’ll share a draft for your approval. Changed your mind? Upload yours below.'
+        : data.receivedElsewhere
+          ? 'We already have your script on file — thank you. If anything changes, upload the new version below.'
+          : 'Nothing here yet. Send us your script and any visual direction, or ask us to write it for you.';
   return (
     <div style={{
       display: 'flex', alignItems: 'flex-start', gap: 10,

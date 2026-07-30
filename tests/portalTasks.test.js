@@ -130,6 +130,19 @@ describe('deriveProjectTasks — script & visual direction task', () => {
     expect(t.detail).toContain('write it');
   });
 
+  it('reports "we’re refining your draft" when staff tick that', () => {
+    const t = scriptTask({ scriptStatus: 'refining', scriptFileCount: 1 });
+    expect(t.status).toBe('done');
+    expect(t.detail).toContain('refining your draft');
+  });
+
+  it('keeps the refining wording ahead of the plain "we’ve got your files" line', () => {
+    // A draft we're actively polishing outranks the generic upload count, even
+    // after the client sends another version.
+    const t = scriptTask({ scriptStatus: 'refining', scriptFileCount: 3 });
+    expect(t.detail).not.toContain('3 files');
+  });
+
   it('lets an upload override "we’ll write it"', () => {
     const t = scriptTask({ scriptStatus: 'squideo', scriptFileCount: 1 });
     expect(t.detail).toContain('1 file');

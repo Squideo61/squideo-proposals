@@ -1228,12 +1228,13 @@ async function filesRoutes(req, res, user) {
     const dealCategory = scope === 'deal' && SCRIPT_CATEGORIES.has(String(req.query.category || ''))
       ? String(req.query.category)
       : null;
-    let companyId, dealId = null;
+    let companyId, dealId = null, dealScriptStatus = null;
     if (scope === 'deal') {
       const deal = await requireDealInOrg(res, req.query.dealId ? String(req.query.dealId) : null, user.companyIds);
       if (!deal) return;
       companyId = deal.company_id;
       dealId = deal.id;
+      dealScriptStatus = deal.script_status || null;
     } else {
       companyId = resolveCompanyId(req, res, user);
       if (!companyId) return;
@@ -1263,7 +1264,11 @@ async function filesRoutes(req, res, user) {
       stored = { id: fileId, filename, mimeType, sizeBytes: buf.length, category: dealCategory, createdAt: new Date().toISOString() };
       // A script/direction upload answers the stage — including when they'd
       // previously asked us to write it, or we'd ticked "already received".
-      if (dealCategory) await setScriptStatus(dealId, 'received', `client:${user.email}`);
+      // 'refining' survives: a fresh version of a draft we're already polishing
+      // doesn't change what we're doing with it.
+      if (dealCategory && dealScriptStatus !== 'refining') {
+        await setScriptStatus(dealId, 'received', `client:${user.email}`);
+      }
     } else {
       const id = makeId('pcf');
       const category = req.query.category === 'document' ? 'document' : 'brand';
