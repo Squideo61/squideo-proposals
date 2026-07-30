@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Wallet, FileText, X, Link2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Wallet, FileText, X, Link2, HelpCircle } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { api } from '../../api.js';
@@ -18,6 +18,7 @@ export function CompanyCreditsCard({ companyId }) {
   const { showMsg } = useStore();
   const [data, setData] = useState(null);
   const [linking, setLinking] = useState(false);
+  const [debugging, setDebugging] = useState(false);
 
   const load = useCallback(() => {
     if (!companyId) return;
@@ -41,10 +42,16 @@ export function CompanyCreditsCard({ companyId }) {
       title="Current Projects"
       count={count}
       action={
-        <button className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setLinking(true)}
-          title="Attach a partner-credit balance that didn't match this company automatically">
-          <Link2 size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Link credit
-        </button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setDebugging(true)}
+            title="Show every credit source for this organisation and how each one matched">
+            <HelpCircle size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Check credit
+          </button>
+          <button className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setLinking(true)}
+            title="Attach a partner-credit balance that didn't match this company automatically">
+            <Link2 size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Link credit
+          </button>
+        </div>
       }
     >
       {!data && <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>}
@@ -66,7 +73,124 @@ export function CompanyCreditsCard({ companyId }) {
           showMsg={showMsg}
         />
       )}
+      {debugging && (
+        <CreditCheckModal companyId={companyId} onClose={() => setDebugging(false)} showMsg={showMsg} />
+      )}
     </Card>
+  );
+}
+
+// "Why does their portal say 0 when I can see credit here?"
+//
+// Credit reaches a client through three independent systems — partner
+// subscriptions, portal video-credit purchases (which share that ledger) and
+// per-deal credit-based-project retainers (which don't) — and partner credit is
+// matched to a company by inference. This lays out every source and every match
+// so the answer is read rather than guessed.
+function CreditCheckModal({ companyId, onClose, showMsg }) {
+  const [d, setD] = useState(null);
+
+  useEffect(() => {
+    api.get('/api/crm/companies/' + encodeURIComponent(companyId) + '/credit-debug')
+      .then(setD)
+      .catch(err => { showMsg?.(err.message || 'Could not run the check', 'error'); onClose(); });
+  }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const H = ({ children }) => (
+    <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, margin: '14px 0 6px' }}>{children}</div>
+  );
+
+  return (
+    <Modal onClose={onClose} maxWidth={620}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700 }}>Credit check</h3>
+      {!d ? <Empty text="Checking…" /> : (
+        <>
+          <div style={{
+            marginTop: 10, padding: '10px 12px', borderRadius: 8,
+            background: d.portalRemaining > 0 ? '#F0FDF4' : '#FFFBEB',
+            border: '1px solid ' + (d.portalRemaining > 0 ? '#BBF7D0' : '#FDE68A'),
+            fontSize: 13, color: BRAND.ink,
+          }}>
+            Their portal shows <strong>{fmtCredits(d.portalRemaining)} min</strong>.
+            {d.portalRemaining === 0 && ' Anything listed under “Not matched” or “Deal credit projects” below isn’t reaching it.'}
+          </div>
+
+          <H>Matched to this organisation</H>
+          {d.matched.length === 0 ? (
+            <Empty text="No partner-credit client matched — this is why the portal reads 0." />
+          ) : d.matched.map(m => (
+            <div key={m.clientKey} style={{ display: 'flex', gap: 10, padding: '6px 0', borderBottom: '1px solid ' + BRAND.border, fontSize: 12.5 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, color: BRAND.ink }}>{m.clientName}</div>
+                <div style={{ fontSize: 11, color: BRAND.muted }}>matched by {m.matchedBy.join(' + ') || 'unknown route'}</div>
+              </div>
+              <div style={{ whiteSpace: 'nowrap', fontWeight: 700 }}>{fmtCredits(m.remaining)} left</div>
+            </div>
+          ))}
+
+          <H>Not matched — other credit clients with a balance</H>
+          {d.unmatched.length === 0 ? (
+            <Empty text="None — every credit client with a balance belongs to some organisation." />
+          ) : (
+            <>
+              <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 6 }}>
+                If theirs is here, use “Link credit” to attach it.
+              </div>
+              {d.unmatched.map(u => (
+                <div key={u.clientKey} style={{ display: 'flex', gap: 10, padding: '5px 0', fontSize: 12.5 }}>
+                  <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {u.clientName}
+                    {u.linkedTo && <span style={{ color: BRAND.muted }}> · linked to {u.linkedTo}</span>}
+                  </div>
+                  <div style={{ whiteSpace: 'nowrap', fontWeight: 700 }}>{fmtCredits(u.remaining)}</div>
+                </div>
+              ))}
+            </>
+          )}
+
+          <H>Deal credit projects (a different system)</H>
+          {d.dealRetainers.length === 0 ? (
+            <Empty text="None on this organisation's deals." />
+          ) : (
+            <>
+              <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 6 }}>
+                These show on this page but are scoped to one project — the portal’s video-credit balance
+                deliberately doesn’t include them.
+              </div>
+              {d.dealRetainers.map(r => (
+                <div key={r.dealId + r.title} style={{ display: 'flex', gap: 10, padding: '5px 0', fontSize: 12.5 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {r.title} <span style={{ color: BRAND.muted }}>· {r.dealTitle}</span>
+                  </div>
+                  <div style={{ whiteSpace: 'nowrap', fontWeight: 700 }}>
+                    {fmtCredits(r.remaining)} {r.allocationType === 'credits' ? 'credits' : ''} left
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {d.orphanAllocations.length > 0 && (
+            <>
+              <H>Allocations with no subscription</H>
+              <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 6 }}>
+                Credit logged against a key that has no partner subscription — invisible everywhere. Tell us if
+                one of these is theirs.
+              </div>
+              {d.orphanAllocations.map(o => (
+                <div key={o.clientKey} style={{ display: 'flex', gap: 10, padding: '4px 0', fontSize: 12.5 }}>
+                  <div style={{ flex: 1 }}>{o.clientKey}</div>
+                  <div style={{ fontWeight: 700 }}>{fmtCredits(o.net)}</div>
+                </div>
+              ))}
+            </>
+          )}
+        </>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+        <button className="btn-ghost" onClick={onClose}>Close</button>
+      </div>
+    </Modal>
   );
 }
 

@@ -432,6 +432,111 @@ export async function companiesRoute(req, res, id, action, user) {
     });
   }
 
+  // GET /companies/:id/credit-debug — why does this company's credit balance
+  // read the way it does? Credit reaches a company through several independent
+  // systems (partner subscriptions, portal video credit, deal credit-based
+  // retainers) and is matched by inference, so "it says 0 but they have 9" has
+  // several possible causes. This reports every source and every match route
+  // rather than leaving it to be guessed at.
+  if (action === 'credit-debug' && req.method === 'GET') {
+    const [co] = await sql`SELECT id, name, xero_contact_id FROM companies WHERE id = ${id}`;
+    if (!co) return res.status(404).json({ error: 'Not found' });
+
+    const [keys, allClients, allTotals, retainers, orphanKeys] = await Promise.all([
+      clientKeysForCompany(id),
+      creditClientsWithCompany(),
+      creditTotalsForKeys(null),
+      // Deal "credit-based project" retainers — a SEPARATE system from partner
+      // credits, and one the portal balance deliberately doesn't include.
+      sql`
+        SELECT r.id, r.deal_id, r.title, r.allocation_type, r.allocation_amount, r.status,
+               d.title AS deal_title,
+               COALESCE((SELECT SUM(e.value) FROM project_retainer_entries e WHERE e.retainer_id = r.id), 0) AS used
+          FROM project_retainers r
+          JOIN deals d ON d.id = r.deal_id
+         WHERE d.company_id = ${id}
+         ORDER BY r.created_at DESC
+      `.catch(() => []),
+      // client_keys that hold allocations but have NO partner_subscriptions row.
+      // creditTotalsForKeys builds from subscriptions, so these are invisible
+      // everywhere — worth reporting rather than silently dropping.
+      sql`
+        SELECT ca.client_key, SUM(ca.credit_cost) AS net
+          FROM credit_allocations ca
+         WHERE NOT EXISTS (SELECT 1 FROM partner_subscriptions ps WHERE ps.client_key = ca.client_key)
+         GROUP BY ca.client_key
+      `.catch(() => []),
+    ]);
+
+    // Re-run each match route on its own so the answer names the reason.
+    const routeRows = await sql`
+      SELECT DISTINCT ps.client_key,
+             BOOL_OR(ps.company_id = ${id})                                        AS by_link,
+             BOOL_OR(ps.company_id IS NULL AND d.company_id = ${id})               AS by_proposal,
+             BOOL_OR(ps.company_id IS NULL AND ${co.xero_contact_id}::text IS NOT NULL
+                     AND ps.xero_contact_id = ${co.xero_contact_id})               AS by_xero,
+             BOOL_OR(ps.company_id IS NULL
+                     AND regexp_replace(LOWER(COALESCE(ps.client_name, '')), '[^a-z0-9]', '', 'g')
+                       = regexp_replace(LOWER(COALESCE(${co.name}::text, '')), '[^a-z0-9]', '', 'g')) AS by_name
+        FROM partner_subscriptions ps
+        LEFT JOIN proposals p ON p.id = ps.proposal_id
+        LEFT JOIN deals d ON d.id = p.deal_id
+       GROUP BY ps.client_key
+    `.catch(() => []);
+    const routeByKey = new Map(routeRows.map(r => [r.client_key, r]));
+    const totalByKey = new Map(allTotals.map(t => [t.client_key, t]));
+
+    const matched = keys.map(k => {
+      const r = routeByKey.get(k) || {};
+      const t = totalByKey.get(k);
+      return {
+        clientKey: k,
+        clientName: t?.client_name || k,
+        matchedBy: [r.by_link && 'explicit link', r.by_proposal && 'linked proposal',
+          r.by_xero && 'shared Xero contact', r.by_name && 'name match'].filter(Boolean),
+        issued: t ? Number(t.credits_issued) || 0 : 0,
+        used: t ? Number(t.credits_used) || 0 : 0,
+        remaining: t ? Number(t.credits_remaining) || 0 : 0,
+      };
+    });
+    const portalRemaining = matched.reduce((s, m) => s + m.remaining, 0);
+
+    return res.status(200).json({
+      company: { id: co.id, name: co.name, xeroContactId: co.xero_contact_id || null },
+      // Exactly what the portal's "your credit balance" shows.
+      portalRemaining,
+      matched,
+      // Every partner client with credit left that did NOT match this company —
+      // the shortlist to look through when a balance is "missing".
+      unmatched: allClients
+        .filter(c => !keys.includes(c.client_key))
+        .map(c => {
+          const t = totalByKey.get(c.client_key);
+          return {
+            clientKey: c.client_key,
+            clientName: c.client_name || c.client_key,
+            remaining: t ? Number(t.credits_remaining) || 0 : 0,
+            linkedTo: c.company_name || null,
+          };
+        })
+        .filter(c => c.remaining !== 0),
+      // A different system: per-deal credit allocations. Shown on the company
+      // page's Current Projects card, so 9 credits seen there may be one of
+      // these rather than partner credit — the portal doesn't count them.
+      dealRetainers: retainers.map(r => ({
+        dealId: r.deal_id,
+        dealTitle: r.deal_title,
+        title: r.title,
+        allocationType: r.allocation_type,
+        total: Number(r.allocation_amount) || 0,
+        used: Number(r.used) || 0,
+        remaining: (Number(r.allocation_amount) || 0) - (Number(r.used) || 0),
+        status: r.status || 'active',
+      })),
+      orphanAllocations: orphanKeys.map(o => ({ clientKey: o.client_key, net: Number(o.net) || 0 })),
+    });
+  }
+
   // POST /companies/:id/credit-link { clientKey, link } — bind or unbind a
   // credit client to this company. Binding wins over every heuristic, so this is
   // the fix when a balance sits under a name we can't match.
