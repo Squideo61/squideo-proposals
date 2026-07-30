@@ -7,7 +7,7 @@ import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, fmtDate } from '../components.jsx';
 import { UserPlus, Mail, Clock, Send } from 'lucide-react';
-import InviteComposer from '../InviteComposer.jsx';
+import InviteComposer from '../../components/InviteComposer.jsx';
 
 export default function Team() {
   const { user, companyId, manageMode, preview, showToast } = usePortal();

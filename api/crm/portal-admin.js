@@ -428,19 +428,16 @@ export default async function handler(req, res) {
       const [co] = await sql`SELECT name FROM companies WHERE id = ${companyId}`;
       if (!co) return res.status(404).json({ error: 'Company not found' });
 
-      // compose: mint the invite and hand the link back so the CRM can open a
-      // real, editable email in the composer — no automatic send. The invite
-      // row exists either way, so a link sent by hand behaves exactly like one
-      // sent by the system (same expiry, same "resend" re-keying).
+      // compose: PREPARE a link for an email the user is about to write. This
+      // deliberately writes nothing — an abandoned draft must not leave a
+      // pending invite behind, and must not re-key a live one for someone who
+      // already has a working link. The token comes back to the caller, who
+      // returns it to op=invite-commit once the email has actually gone.
       if (body.compose === true) {
-        const { rawToken } = await createPortalInvite({
-          email,
-          companyId,
-          prefill: { name: trimOrNull(body.name) },
-          invitedBy: user.email,
-        });
-        return res.status(201).json({
+        const rawToken = createRawToken();
+        return res.status(200).json({
           ok: true,
+          token: rawToken,
           inviteUrl: inviteUrlFor(rawToken),
           email,
           companyName: co.name,
@@ -455,6 +452,26 @@ export default async function handler(req, res) {
         inviterName: user.name || 'The Squideo team',
         invitedBy: user.email,
         prefill: { name: trimOrNull(body.name) },
+      });
+      return res.status(201).json({ ok: true });
+    }
+
+    // The other half of the compose flow: the email has just been sent, so make
+    // the link in it real. Called immediately before the send, so a failure
+    // here stops the email going out with a dead link.
+    if (op === 'invite-commit') {
+      const companyId = trimOrNull(body.companyId);
+      const email = lowerOrNull(body.email);
+      const token = trimOrNull(body.token);
+      if (!companyId || !email || !token) return res.status(400).json({ error: 'companyId, email and token required' });
+      const [co] = await sql`SELECT name FROM companies WHERE id = ${companyId}`;
+      if (!co) return res.status(404).json({ error: 'Company not found' });
+      await createPortalInvite({
+        email,
+        companyId,
+        prefill: { name: trimOrNull(body.name) },
+        invitedBy: user.email,
+        rawToken: token,
       });
       return res.status(201).json({ ok: true });
     }

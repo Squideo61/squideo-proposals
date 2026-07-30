@@ -1,43 +1,45 @@
-// Staff-only (manage mode): write the portal invite email without leaving the
-// client's portal.
+// Write the portal invite email yourself. Mounted by the CRM (company and
+// contact pages) and by the client portal's Team page in manage mode, so an
+// invite behaves identically wherever it starts.
 //
 // Deliberately NOT the CRM's full composer — that one is welded to the CRM
 // store (drafts, threading, attachments, scheduling, follow-up tasks) and can't
-// be mounted here. This is the small subset an invite needs: to, subject, an
-// editable body prefilled from the "Client portal invite" template with the
+// mount in the portal bundle. This is the subset an invite needs: to, subject,
+// an editable body prefilled from the "Client portal invite" template with the
 // invite link in it, and your Gmail signature.
 //
-// It talks to the STAFF CRM API on the same origin — minting the invite,
-// reading the template and signature, and sending — all authorised by the staff
-// session cookie that manage mode already requires.
+// The invite itself is created only when the email actually sends. Opening this
+// and thinking better of it leaves nothing behind — and can't re-key the live
+// link of someone who already has one.
 import React, { useEffect, useRef, useState } from 'react';
+import { Send } from 'lucide-react';
 import { BRAND } from '../theme.js';
-import { Modal } from '../components/ui.jsx';
-import { crmApi } from './api.js';
+import { Modal } from './ui.jsx';
+import { crmApi } from '../lib/crmFetch.js';
 import { portalInviteTemplate, fillPortalInvite } from '../lib/portalInviteEmail.js';
 import { sanitizeEmailHtml, htmlToPlainText, isHtmlEmpty } from '../lib/emailHtml.js';
-import { Send } from 'lucide-react';
 
 export default function InviteComposer({ companyId, email, name, senderName, onClose, onSent }) {
   const bodyRef = useRef(null);
   const [subject, setSubject] = useState('');
   const [to, setTo] = useState(email || '');
+  const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
   // Seeded into the contentEditable once, then owned by the DOM — re-rendering
-  // from state on every keystroke would fight the caret.
+  // it from state on every keystroke would fight the caret.
   const [seed, setSeed] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        // Mint the invite first: without a link there's no email worth writing.
+        // Prepare only — this reserves a token and writes nothing.
         const invite = await crmApi('POST', '/api/crm/portal-admin?op=invite', {
           companyId, email, name, compose: true,
         });
-        // The template and signature are nice-to-haves — a failure on either
+        // Template and signature are nice-to-haves; a failure on either
         // shouldn't cost the draft.
         const [templates, sig] = await Promise.all([
           crmApi('GET', '/api/crm/templates').catch(() => []),
@@ -51,6 +53,7 @@ export default function InviteComposer({ companyId, email, name, senderName, onC
           companyName: invite.companyName,
           senderName,
         });
+        setToken(invite.token);
         setSubject(filled.subject);
         setTo(invite.email || email);
         setSeed(filled.bodyHtml + (sig?.signatureHtml ? `<br>${sig.signatureHtml}` : ''));
@@ -76,6 +79,11 @@ export default function InviteComposer({ companyId, email, name, senderName, onC
     setSending(true);
     setError(null);
     try {
+      // Make the link real BEFORE sending: if this fails, no email goes out
+      // carrying a dead link. The reverse order would be worse.
+      await crmApi('POST', '/api/crm/portal-admin?op=invite-commit', {
+        companyId, email: (invitedAddress(to) || email), name, token,
+      });
       await crmApi('POST', '/api/crm/gmail/send', {
         to: to.split(',').map((s) => s.trim()).filter(Boolean),
         subject: subject.trim(),
@@ -94,6 +102,7 @@ export default function InviteComposer({ companyId, email, name, senderName, onC
       <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 800, color: BRAND.ink }}>Invite to the portal</h2>
       <p style={{ margin: '0 0 16px', fontSize: 12.5, color: BRAND.muted }}>
         Sends from your Gmail. Their invite link is already in the message — edit the rest as you like.
+        Nothing is created until you send.
       </p>
 
       {error && (
@@ -133,7 +142,7 @@ export default function InviteComposer({ companyId, email, name, senderName, onC
         <button
           className="btn"
           onClick={send}
-          disabled={loading || sending || !!error && !seed}
+          disabled={loading || sending || !token}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
         >
           <Send size={15} /> {sending ? 'Sending…' : 'Send invite'}
@@ -141,4 +150,10 @@ export default function InviteComposer({ companyId, email, name, senderName, onC
       </div>
     </Modal>
   );
+}
+
+// The invite is bound to ONE address. If the To field was edited to a list, the
+// first entry is the one being invited; the rest are just copied in.
+function invitedAddress(to) {
+  return String(to || '').split(',')[0].trim() || null;
 }

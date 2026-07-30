@@ -9,7 +9,7 @@ import { formatRelativeTime } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { PortalStepsActivity } from './PortalStepsActivity.jsx';
 import { PortalOpenButtons } from './PortalOpenButtons.jsx';
-import { usePortalInviteCompose } from './usePortalInviteCompose.js';
+import InviteComposer from '../InviteComposer.jsx';
 
 const formatBytes = (n) => {
   if (!n || n < 1024) return `${n || 0} B`;
@@ -24,9 +24,7 @@ export function PortalMembersCard({ companyId }) {
   const [inviteEmail, setInviteEmail] = useState('');
   const [showInvite, setShowInvite] = useState(false);
   const [notice, setNotice] = useState(null);
-  const { compose: composeInvite, busy: composing } = usePortalInviteCompose({
-    onError: (m) => flash(m),
-  });
+  const [composeFor, setComposeFor] = useState(null); // { email } while writing an invite
 
   const load = useCallback(async () => {
     try {
@@ -57,16 +55,13 @@ export function PortalMembersCard({ companyId }) {
     }
   };
 
-  // Default: open a real email in the composer, prefilled from the "Client
-  // portal invite" template and carrying this person's own invite link.
-  const invite = async (e) => {
+  // Default: write the email yourself, prefilled from the "Client portal
+  // invite" template and carrying this person's own invite link. The invite is
+  // only created if you actually send it.
+  const invite = (e) => {
     e.preventDefault();
     const email = inviteEmail.trim();
-    if (!email) return;
-    await composeInvite({ companyId, email });
-    setInviteEmail('');
-    setShowInvite(false);
-    load();
+    if (email) setComposeFor({ email });
   };
 
   // The automated, branded invite email — one click, no editing.
@@ -111,6 +106,21 @@ export function PortalMembersCard({ companyId }) {
         </div>
       )}
 
+      {composeFor && (
+        <InviteComposer
+          companyId={companyId}
+          email={composeFor.email}
+          onClose={() => setComposeFor(null)}
+          onSent={(sentTo) => {
+            setComposeFor(null);
+            setInviteEmail('');
+            setShowInvite(false);
+            flash(`Invite sent to ${sentTo}`);
+            load();
+          }}
+        />
+      )}
+
       {showInvite && (
         <form onSubmit={invite} style={{ marginBottom: 12 }}>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -123,13 +133,11 @@ export function PortalMembersCard({ companyId }) {
               onChange={(e) => setInviteEmail(e.target.value)}
               style={{ flex: 1, fontSize: 13 }}
             />
-            <button className="btn" type="submit" disabled={busy || composing} style={{ fontSize: 12.5 }}>
-              {composing ? 'Preparing…' : 'Write email'}
-            </button>
+            <button className="btn" type="submit" disabled={busy} style={{ fontSize: 12.5 }}>Write email</button>
           </div>
           <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 6 }}>
             Opens an editable email with their invite link —{' '}
-            <button type="button" className="btn-ghost" onClick={sendStandard} disabled={busy || composing}
+            <button type="button" className="btn-ghost" onClick={sendStandard} disabled={busy}
               style={{ fontSize: 11.5, padding: 0, color: BRAND.blue, textDecoration: 'underline' }}>
               or send the standard invite
             </button>

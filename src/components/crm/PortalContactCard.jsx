@@ -9,7 +9,7 @@ import { api } from '../../api.js';
 import { formatRelativeTime } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { PortalOpenButtons } from './PortalOpenButtons.jsx';
-import { usePortalInviteCompose } from './usePortalInviteCompose.js';
+import InviteComposer from '../InviteComposer.jsx';
 
 const ACTIVITY_ICONS = { file: Upload, extra: Sparkles, quote: FileText };
 
@@ -19,9 +19,7 @@ export function PortalContactCard({ contactId }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   const [inviteCompanyId, setInviteCompanyId] = useState('');
-  const { compose: composeInvite, busy: composing } = usePortalInviteCompose({
-    onError: (m) => flash(m),
-  });
+  const [composing, setComposing] = useState(false); // writing an invite email
 
   const load = useCallback(async () => {
     try {
@@ -105,6 +103,20 @@ export function PortalContactCard({ contactId }) {
         </div>
       )}
 
+      {composing && (
+        <InviteComposer
+          companyId={inviteCompanyId}
+          email={data.email}
+          name={data.name}
+          onClose={() => setComposing(false)}
+          onSent={(sentTo) => {
+            setComposing(false);
+            flash(`Invite sent to ${sentTo}`);
+            load();
+          }}
+        />
+      )}
+
       {/* ── No account yet: invite them to one of their organisations ── */}
       {!account && (
         <>
@@ -142,18 +154,15 @@ export function PortalContactCard({ contactId }) {
                 </span>
               )}
               {/* Opens an editable email prefilled from the "Client portal
-                  invite" template, carrying this person's own invite link. */}
+                  invite" template, carrying this person's own invite link. The
+                  invite is only created if the email actually sends. */}
               <button
                 className="btn"
                 disabled={busy || composing || !inviteCompanyId}
                 style={{ fontSize: 12.5 }}
-                onClick={async () => {
-                  await composeInvite({ companyId: inviteCompanyId, email: data.email, name: data.name });
-                  load();
-                }}
+                onClick={() => setComposing(true)}
               >
-                <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />
-                {composing ? 'Preparing…' : 'Write invite'}
+                <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Write invite
               </button>
               <button
                 className="btn-ghost"

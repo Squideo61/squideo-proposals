@@ -29,12 +29,17 @@ export function inviteUrlFor(rawToken) {
 // Create (or refresh) an invite for (email, company). An unaccepted pending
 // invite for the same pair is re-keyed and re-dated rather than duplicated, so
 // "resend" always yields exactly one live link. Returns { invite, rawToken }.
-export async function createPortalInvite({ email, companyId, prefill = null, invitedBy = null }) {
+// `rawToken` lets a caller supply the token instead of minting one here. The
+// "write the invite email yourself" flow needs the link BEFORE the invite
+// exists — it prepares a token, puts it in the draft, and only calls this once
+// the email actually sends. Nothing is stored until then, so abandoning a draft
+// leaves no pending invite and can't re-key a live one.
+export async function createPortalInvite({ email, companyId, prefill = null, invitedBy = null, rawToken = null }) {
   await ensurePortalTables();
   const cleanEmail = lowerOrNull(email);
   if (!cleanEmail || !companyId) throw new Error('email and companyId required');
 
-  const rawToken = createRawToken();
+  rawToken = rawToken || createRawToken();
   const tokenHash = hashToken(rawToken);
   const expiresAt = new Date(Date.now() + INVITE_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
