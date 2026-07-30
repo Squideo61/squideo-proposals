@@ -72,8 +72,11 @@ export default function Library() {
         <AddPastWork
           companyId={companyId}
           projects={data?.allProjects || []}
-          onAdded={() => { showToast('Added to their library ✓'); load(); }}
-          onError={showToast}
+          onDone={(added, error) => {
+            if (error) showToast(error);
+            else if (added) showToast(added > 1 ? `${added} videos added to their library ✓` : 'Added to their library ✓');
+            if (added) load();
+          }}
         />
       )}
 
@@ -170,52 +173,76 @@ function FileTile({ dealId, file, onRemove }) {
 // Staff-only (manage mode): stream a past video straight to Blob storage, then
 // record it against the org. Uploads bypass the serverless body limit the same
 // way the CRM's revision drafts do.
-function AddPastWork({ companyId, projects, onAdded, onError }) {
+function AddPastWork({ companyId, projects, onDone }) {
   const fileRef = useRef(null);
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [title, setTitle] = useState('');
   const [dealId, setDealId] = useState('');
-  const [progress, setProgress] = useState(null);
+  const [drag, setDrag] = useState(false);
+  const [progress, setProgress] = useState(null); // { index, total, percent }
 
-  const pick = (f) => {
-    if (!f) return;
-    setFile(f);
-    setTitle((t) => t || f.name.replace(/\.[^.]+$/, ''));
+  // A back catalogue arrives as a handful of files at once, so a multi-drop
+  // uploads the lot rather than silently keeping the first. The title field
+  // only makes sense for a single video — the rest take their filename.
+  const take = (list) => {
+    const picked = Array.from(list || []).filter((f) => f.size > 0);
+    if (!picked.length) return;
+    setFiles(picked);
+    setTitle(picked.length === 1 ? picked[0].name.replace(/\.[^.]+$/, '') : '');
+  };
+
+  const dropProps = {
+    onDragOver: (e) => { e.preventDefault(); setDrag(true); },
+    onDragEnter: (e) => { e.preventDefault(); setDrag(true); },
+    onDragLeave: (e) => { e.preventDefault(); setDrag(false); },
+    onDrop: (e) => { e.preventDefault(); setDrag(false); take(e.dataTransfer?.files); },
   };
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!file || progress != null) return;
-    setProgress(0);
+    if (!files.length || progress != null) return;
+    const { upload } = await import('@vercel/blob/client');
+    let added = 0;
     try {
-      const { upload } = await import('@vercel/blob/client');
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const blob = await upload(`portal-library/${companyId}/${Date.now()}-${safeName}`, file, {
-        access: 'public',
-        handleUploadUrl: mediaUrl('library-upload-token'),
-        contentType: file.type || 'video/mp4',
-        multipart: true, // videos are large: a single-shot PUT fails and retries forever
-        onUploadProgress: (ev) => setProgress(Math.round(ev.percentage)),
-      });
-      await portalApi.post(`library-item?companyId=${encodeURIComponent(companyId)}`, {
-        blobUrl: blob.url,
-        blobPathname: blob.pathname,
-        filename: file.name,
-        mimeType: file.type || null,
-        sizeBytes: file.size,
-        title: title.trim() || file.name,
-        dealId: dealId || null,
-      });
-      setFile(null); setTitle(''); setDealId('');
+      for (const [i, file] of files.entries()) {
+        setProgress({ index: i + 1, total: files.length, percent: 0 });
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        // eslint-disable-next-line no-await-in-loop
+        const blob = await upload(`portal-library/${companyId}/${Date.now()}-${safeName}`, file, {
+          access: 'public',
+          handleUploadUrl: mediaUrl('library-upload-token'),
+          contentType: file.type || 'video/mp4',
+          multipart: true, // videos are large: a single-shot PUT fails and retries forever
+          onUploadProgress: (ev) => setProgress((p) => (p ? { ...p, percent: Math.round(ev.percentage) } : p)),
+        });
+        // eslint-disable-next-line no-await-in-loop
+        await portalApi.post(`library-item?companyId=${encodeURIComponent(companyId)}`, {
+          blobUrl: blob.url,
+          blobPathname: blob.pathname,
+          filename: file.name,
+          mimeType: file.type || null,
+          sizeBytes: file.size,
+          title: (files.length === 1 && title.trim()) || file.name.replace(/\.[^.]+$/, ''),
+          dealId: dealId || null,
+        });
+        added += 1;
+      }
+      setFiles([]); setTitle(''); setDealId('');
       if (fileRef.current) fileRef.current.value = '';
-      onAdded();
+      onDone(added, null);
     } catch (err) {
-      onError(err.message || 'Upload failed');
+      // Whatever landed before the failure is already in their library — say so
+      // rather than implying the whole batch was lost, and still refresh so the
+      // ones that made it show up.
+      onDone(added, added
+        ? `${added} added, then it failed: ${err.message || 'Upload failed'}`
+        : (err.message || 'Upload failed'));
     } finally {
       setProgress(null);
     }
   };
 
+  const busy = progress != null;
   return (
     <Card style={{ border: '1px solid #F5C26B', background: '#FFFCF5' }}>
       <SectionHeading>Add a past video</SectionHeading>
@@ -223,36 +250,75 @@ function AddPastWork({ companyId, projects, onAdded, onError }) {
         Staff only. Drop in work we delivered before the portal existed — the client can watch and download it here alongside everything else.
       </p>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="video/*"
-          onChange={(e) => pick(e.target.files && e.target.files[0])}
-          style={{ fontSize: 13 }}
-        />
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div
+          {...dropProps}
+          onClick={() => !busy && fileRef.current?.click()}
+          style={{
+            border: `2px dashed ${drag ? BRAND.blue : '#E3D3AE'}`,
+            background: drag ? BRAND.blue + '0d' : '#fff',
+            borderRadius: 12, padding: '22px 16px', textAlign: 'center',
+            cursor: busy ? 'default' : 'pointer', transition: 'all 0.15s ease',
+          }}
+        >
+          <Upload size={20} color={drag ? BRAND.blue : BRAND.muted} />
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink, marginTop: 8 }}>
+            {drag
+              ? 'Drop the videos here'
+              : files.length === 1
+                ? files[0].name
+                : files.length > 1
+                  ? `${files.length} videos ready`
+                  : 'Drag videos here, or click to choose'}
+          </div>
+          <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 4 }}>
+            {files.length
+              ? `${fmtBytes(files.reduce((n, f) => n + f.size, 0))} total · drop again to replace`
+              : 'MP4 or MOV — drop several at once for a back catalogue'}
+          </div>
           <input
-            className="input"
-            placeholder="Title the client will see"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            style={{ flex: 2, minWidth: 200 }}
+            ref={fileRef}
+            type="file"
+            accept="video/*"
+            multiple
+            hidden
+            onChange={(e) => { take(e.target.files); e.target.value = ''; }}
           />
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {files.length > 1 ? (
+            <div style={{ flex: 2, minWidth: 200, fontSize: 12.5, color: BRAND.muted, alignSelf: 'center' }}>
+              Each video takes its filename as its title — rename them here after uploading if you'd rather.
+            </div>
+          ) : (
+            <input
+              className="input"
+              placeholder="Title the client will see"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              style={{ flex: 2, minWidth: 200 }}
+            />
+          )}
           <select className="input" value={dealId} onChange={(e) => setDealId(e.target.value)} style={{ flex: 1, minWidth: 180 }}>
             <option value="">Previous work (no project)</option>
             {projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
           </select>
         </div>
-        {progress != null ? (
+
+        {busy ? (
           <div>
             <div style={{ height: 8, borderRadius: 999, background: '#E6EDF2', overflow: 'hidden' }}>
-              <div style={{ width: `${progress}%`, height: '100%', background: BRAND.blue, transition: 'width 0.2s ease' }} />
+              <div style={{ width: `${progress.percent}%`, height: '100%', background: BRAND.blue, transition: 'width 0.2s ease' }} />
             </div>
-            <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 6 }}>Uploading… {progress}%</div>
+            <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 6 }}>
+              {progress.total > 1 ? `Uploading ${progress.index} of ${progress.total}… ` : 'Uploading… '}{progress.percent}%
+            </div>
           </div>
         ) : (
-          <button className="btn" type="submit" disabled={!file} style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            {file ? <><Upload size={15} /> Add to library</> : <><PlusCircle size={15} /> Choose a video first</>}
+          <button className="btn" type="submit" disabled={!files.length} style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {files.length
+              ? <><Upload size={15} /> Add {files.length > 1 ? `${files.length} videos` : ''} to library</>
+              : <><PlusCircle size={15} /> Choose a video first</>}
           </button>
         )}
       </form>
