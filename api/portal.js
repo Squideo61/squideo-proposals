@@ -12,8 +12,9 @@
 //   project         — single project detail
 //   library         — finished videos: delivered cuts, Drive "4. Signed Off",
 //                     plus past work staff added from manage mode
-//   library-item    — add/remove that past work (manage mode only)
+//   library-item    — add/edit/remove that past work (manage mode only)
 //   library-upload-token — client-upload token for it (manage mode only)
+//   company-logo    — the client's brand mark (manage mode only)
 //   download        — org-checked file bytes / signed URLs
 //   files           — brand + per-project documents (list/upload/delete)
 //   script          — the project's script & visual direction stage (GET/POST)
@@ -95,7 +96,9 @@ import {
 } from './_lib/voiceover.js';
 import { ensureIntroCallTables } from './_lib/crm/introCallSlots.js';
 import { bookSlot, computeBookingSlots } from './_lib/introCallBooking.js';
-import { companyHasLogo, portalLogoPath, emailLogoUrl } from './_lib/portal/logo.js';
+import {
+  companyHasLogo, portalLogoPath, emailLogoUrl, decodeLogo, ensureCompanyLogoColumns,
+} from './_lib/portal/logo.js';
 import {
   PORTAL_URL,
   portalMagicLinkHtml,
@@ -497,6 +500,7 @@ export default async function handler(req, res) {
       case 'library': return libraryRoute(req, res, user);
       case 'library-upload-token': return libraryUploadTokenRoute(req, res, user);
       case 'library-item': return libraryItemRoute(req, res, user);
+      case 'company-logo': return companyLogoRoute(req, res, user);
       case 'download': return downloadRoute(req, res, user);
       case 'review-download': return reviewDownloadRoute(req, res, user);
       case 'files': return filesRoutes(req, res, user);
@@ -1270,6 +1274,60 @@ async function libraryItemRoute(req, res, user) {
       catch (err) { console.warn('[portal] library blob delete failed', err.message); }
     }
     return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ═══════════════ the client's logo (manage mode) ═══════════════
+// Same `companies.logo` the CRM's organisation page writes — this is the second
+// door onto it, so staff already inside the client's portal don't have to go
+// back to the CRM to fix the branding they're looking at.
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+
+async function companyLogoRoute(req, res, user) {
+  if (!requireManage(res, user)) return;
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+  await ensureCompanyLogoColumns().catch(() => {});
+
+  if (req.method === 'GET') {
+    const [row] = await sql`
+      SELECT logo, logo_updated_at, logo_updated_by FROM companies WHERE id = ${companyId}
+    `;
+    if (!row) return res.status(404).json({ error: 'Organisation not found' });
+    return res.status(200).json({
+      logo: row.logo || null,
+      updatedAt: row.logo_updated_at || null,
+      updatedBy: row.logo_updated_by || null,
+    });
+  }
+
+  // POST { logo } — a base64 image data URL (what LogoUploader produces), or
+  // null/'' to remove it. Stored as NULL when absent so the has_logo checks stay
+  // a cheap IS NOT NULL that never detoasts the value.
+  if (req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const raw = body.logo;
+    const clearing = raw === null || raw === undefined || raw === '';
+    let value = null;
+    if (!clearing) {
+      const decoded = decodeLogo(raw);
+      if (!decoded) return res.status(400).json({ error: 'That doesn’t look like an image — upload a PNG, JPG, SVG or WEBP.' });
+      if (decoded.bytes.length > MAX_LOGO_BYTES) return res.status(413).json({ error: 'Logo too large — keep it under 2 MB.' });
+      value = String(raw);
+    }
+    const [row] = await sql`
+      UPDATE companies
+         SET logo = ${value},
+             logo_updated_at = ${value ? new Date().toISOString() : null},
+             logo_updated_by = ${value ? (user.previewBy || null) : null},
+             updated_at = NOW()
+       WHERE id = ${companyId}
+      RETURNING id, (logo IS NOT NULL) AS has_logo, logo_updated_at
+    `;
+    if (!row) return res.status(404).json({ error: 'Organisation not found' });
+    return res.status(200).json({ ok: true, hasLogo: !!row.has_logo, updatedAt: row.logo_updated_at || null });
   }
 
   return res.status(405).json({ error: 'Method not allowed' });

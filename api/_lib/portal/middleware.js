@@ -10,6 +10,14 @@ import { ensurePortalTables } from './db.js';
 import { verifyPortalToken, readPortalCookie, readPreviewHeader } from './auth.js';
 import { portalLogoPath } from './logo.js';
 
+// Cache key for the logo URL: null when the org has never had one uploaded (a
+// proposal-derived fallback logo doesn't change, so it needs no version).
+function logoVersion(updatedAt) {
+  if (!updatedAt) return null;
+  const t = new Date(updatedAt).getTime();
+  return Number.isFinite(t) ? String(t) : null;
+}
+
 export async function requirePortalAuth(req, res) {
   // Staff "preview as client" comes in as a per-tab header (never a cookie, so
   // it can't hijack a real client session). It yields a synthetic session scoped
@@ -38,7 +46,7 @@ export async function requirePortalAuth(req, res) {
     // The org's own uploaded logo wins; a proposal's clientLogo is the fallback
     // (see api/_lib/portal/logo.js for the precedence).
     const [logo] = await sql`
-      SELECT 1 FROM companies c
+      SELECT c.logo_updated_at FROM companies c
        WHERE c.id = ${co.id}
          AND (c.logo IS NOT NULL OR EXISTS (
            SELECT 1 FROM proposals p JOIN deals d ON d.id = p.deal_id
@@ -54,7 +62,7 @@ export async function requirePortalAuth(req, res) {
       email: pv.staffEmail || 'preview@squideo.co.uk',
       name: pv.manage === true ? (pv.staffEmail || 'Squideo') : 'Preview',
       companyIds: [co.id],
-      companies: [{ id: co.id, name: co.name, logoUrl: logo ? portalLogoPath(co.id) : null }],
+      companies: [{ id: co.id, name: co.name, logoUrl: logo ? portalLogoPath(co.id, logoVersion(logo.logo_updated_at)) : null }],
     };
   }
 
@@ -89,7 +97,7 @@ export async function requirePortalAuth(req, res) {
   // chrome renders the client's logo on every page, so the session payload is
   // where it belongs.
   const memberships = await sql`
-    SELECT m.company_id, c.name AS company_name,
+    SELECT m.company_id, c.name AS company_name, c.logo_updated_at,
            (c.logo IS NOT NULL OR EXISTS (
              SELECT 1 FROM proposals p
                JOIN deals d ON d.id = p.deal_id
@@ -116,7 +124,7 @@ export async function requirePortalAuth(req, res) {
     companies: memberships.map((m) => ({
       id: m.company_id,
       name: m.company_name,
-      logoUrl: m.has_logo ? portalLogoPath(m.company_id) : null,
+      logoUrl: m.has_logo ? portalLogoPath(m.company_id, logoVersion(m.logo_updated_at)) : null,
     })),
   };
 }

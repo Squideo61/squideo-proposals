@@ -33,10 +33,12 @@ function fakeRes() {
 }
 
 // The company lookup, then the "does this org have a logo" probe.
-function stubCompanyQueries({ company = COMPANY, hasLogo = false } = {}) {
+function stubCompanyQueries({ company = COMPANY, logoUpdatedAt = null } = {}) {
   setSqlHandler((text) => {
     if (text.includes('FROM companies WHERE id')) return company ? [company] : [];
-    if (text.includes('SELECT 1 FROM companies')) return hasLogo ? [{ '?column?': 1 }] : [];
+    if (text.includes('SELECT c.logo_updated_at FROM companies c')) {
+      return logoUpdatedAt ? [{ logo_updated_at: logoUpdatedAt }] : [];
+    }
     return [];
   });
 }
@@ -93,6 +95,20 @@ describe('requirePortalAuth — staff sessions', () => {
     const { user } = await authWith(token);
     expect(user.companyIds).toEqual([COMPANY.id]);
     expect(user.companies).toHaveLength(1);
+  });
+
+  it('versions the logo URL so a replacement is not served from cache', async () => {
+    const updatedAt = '2026-07-30T12:00:00.000Z';
+    stubCompanyQueries({ logoUpdatedAt: updatedAt });
+    const token = await signPortalPreviewToken({ companyId: COMPANY.id, staffEmail: 'adam@squideo.co.uk' });
+    const { user } = await authWith(token);
+    expect(user.companies[0].logoUrl).toContain(`v=${Date.parse(updatedAt)}`);
+  });
+
+  it('leaves the logo URL unversioned when the org has no uploaded logo', async () => {
+    const token = await signPortalPreviewToken({ companyId: COMPANY.id, staffEmail: 'adam@squideo.co.uk' });
+    const { user } = await authWith(token);
+    expect(user.companies[0].logoUrl).toBeNull();
   });
 
   it('rejects a token that is not a preview token', async () => {

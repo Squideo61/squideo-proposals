@@ -1,12 +1,17 @@
 // Profile + password. Password changes sign out every other session.
-import React, { useState } from 'react';
+//
+// In manage mode this is also where staff set the client's logo — the same
+// companies.logo the CRM's organisation page writes, so the branding can be
+// fixed from inside the portal you're looking at.
+import React, { useEffect, useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, SectionHeading } from '../components.jsx';
+import { LogoUploader } from '../../components/LogoUploader.jsx';
 
 export default function Settings() {
-  const { user, showToast, refreshSession } = usePortal();
+  const { user, companyId, manageMode, showToast, refreshSession } = usePortal();
   const [name, setName] = useState(user?.name || '');
   const [phone, setPhone] = useState(user?.phone || '');
   const [jobTitle, setJobTitle] = useState(user?.jobTitle || '');
@@ -60,6 +65,8 @@ export default function Settings() {
     <div style={{ maxWidth: 560, display: 'flex', flexDirection: 'column', gap: 20 }}>
       <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: BRAND.ink }}>Settings</h1>
 
+      {manageMode && <ClientLogoCard companyId={companyId} onSaved={refreshSession} showToast={showToast} />}
+
       <Card>
         <SectionHeading>Your details</SectionHeading>
         <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 14 }}>Signed in as <strong style={{ color: BRAND.ink }}>{user?.email}</strong></div>
@@ -88,5 +95,56 @@ export default function Settings() {
         </form>
       </Card>
     </div>
+  );
+}
+
+// Manage mode only. Writes companies.logo — the same record the CRM's
+// organisation page edits, so a logo set here also pre-fills their next
+// proposal, and one set there shows up here.
+function ClientLogoCard({ companyId, onSaved, showToast }) {
+  const [logo, setLogo] = useState(undefined); // undefined = still loading
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!companyId) return;
+    setLogo(undefined);
+    portalApi.get(`company-logo?companyId=${encodeURIComponent(companyId)}`)
+      .then((d) => setLogo(d.logo || null))
+      .catch(() => setLogo(null));
+  }, [companyId]);
+
+  const save = async (next) => {
+    const previous = logo;
+    setLogo(next); // optimistic — the uploader has already rendered it
+    setBusy(true);
+    try {
+      await portalApi.post(`company-logo?companyId=${encodeURIComponent(companyId)}`, { logo: next });
+      showToast(next ? 'Logo updated ✓' : 'Logo removed ✓');
+      // Refresh the session so the header picks up the new URL (it carries the
+      // logo's timestamp, so the browser fetches the new image rather than the
+      // cached one).
+      await onSaved();
+    } catch (err) {
+      setLogo(previous);
+      showToast(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card style={{ border: '1px solid #F5C26B', background: '#FFFCF5' }}>
+      <SectionHeading>Client logo</SectionHeading>
+      <p style={{ margin: '0 0 14px', fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
+        Staff only. Shows in the portal header and on their sign-in screen, and pre-fills every new proposal for this client.
+      </p>
+      {logo === undefined ? (
+        <div style={{ fontSize: 13, color: BRAND.muted }}>Loading…</div>
+      ) : (
+        <div style={{ opacity: busy ? 0.6 : 1, pointerEvents: busy ? 'none' : undefined }}>
+          <LogoUploader logo={logo} onChange={save} showMsg={showToast} />
+        </div>
+      )}
+    </Card>
   );
 }

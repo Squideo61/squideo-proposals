@@ -30,8 +30,12 @@ export function ensureCompanyLogoColumns() {
 }
 
 // Same-origin path — for the portal SPA.
-export function portalLogoPath(companyId) {
-  return `/api/portal-logo?c=${encodeURIComponent(companyId)}`;
+// `version` (the logo's updated-at, as epoch ms) makes the URL change whenever
+// the logo does, so a replacement shows immediately instead of waiting out the
+// endpoint's 5-minute cache.
+export function portalLogoPath(companyId, version = null) {
+  const v = version ? `&v=${encodeURIComponent(version)}` : '';
+  return `/api/portal-logo?c=${encodeURIComponent(companyId)}${v}`;
 }
 
 // Absolute URL — for emails, which are read outside our origin.
