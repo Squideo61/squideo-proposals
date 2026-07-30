@@ -4,7 +4,7 @@ import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { updateContactAddress, getOrCreateContact } from '../xero.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
-import { creditTotalsForKeys } from '../partnerCredits.js';
+import { creditTotalsForKeys, clientKeysForCompany } from '../partnerCredits.js';
 import { listVideoCreditOrders, raiseInvoiceForCreditOrder, cancelCreditOrder, reconcileVideoCreditOrders } from '../videoCredit.js';
 
 // Self-heal for db/migrations/20260603_company_address.sql. Called at the top of
@@ -313,19 +313,10 @@ export async function companiesRoute(req, res, id, action, user) {
       }));
     }
 
-    // --- Partner credits matched to this company. No company_id on partner
-    // tables, so resolve client_keys three ways (deduped): proposal→deal→company,
-    // shared Xero contact, and an exact (case-insensitive) name match.
-    const keyRows = await sql`
-      SELECT DISTINCT ps.client_key
-        FROM partner_subscriptions ps
-        LEFT JOIN proposals p ON p.id = ps.proposal_id
-        LEFT JOIN deals d ON d.id = p.deal_id
-       WHERE d.company_id = ${id}
-          OR (${companyRow.xero_contact_id}::text IS NOT NULL AND ps.xero_contact_id = ${companyRow.xero_contact_id})
-          OR LOWER(ps.client_name) = LOWER(${companyRow.name})
-    `;
-    const clientKeys = keyRows.map(r => r.client_key);
+    // --- Partner credits matched to this company. Resolved by the shared
+    // clientKeysForCompany (api/_lib/partnerCredits.js) so this page and the
+    // client portal's credit balance always agree on whose credit is whose.
+    const clientKeys = await clientKeysForCompany(id);
     let partnerCredits = [];
     if (clientKeys.length) {
       const [totals, allocRows] = await Promise.all([

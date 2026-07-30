@@ -11,7 +11,7 @@
 // recomputed here.
 
 import sql from './db.js';
-import { creditTotalsForKeys } from './partnerCredits.js';
+import { creditTotalsForKeys, clientKeysForCompany } from './partnerCredits.js';
 import { notifyPortalUser } from './portal/notifications.js';
 import { sendNotification, ensurePortalNotificationDefaults } from './notifications.js';
 import { VIDEO_CREDIT, videoCreditDiscount, videoCreditQuote } from './videoCreditPricing.js';
@@ -49,20 +49,12 @@ export async function videoCreditPricingParams() {
   };
 }
 
-// Resolve a company's partner-credit client_keys the same three ways the CRM
-// company mirror does (proposal→deal→company, shared Xero contact, name match).
-// Returns [] when the company has no credit anchored yet.
+// A company's partner-credit client_keys. Delegates to the shared resolver so
+// the portal balance and the CRM company mirror can never drift apart again —
+// and so it works from an id alone (the portal's session company object has no
+// xero_contact_id, which used to silently lose the Xero match).
 export async function resolveCompanyCreditKeys(company) {
-  if (!company?.id) return [];
-  const rows = await sql`
-    SELECT DISTINCT ps.client_key
-      FROM partner_subscriptions ps
-      LEFT JOIN proposals p ON p.id = ps.proposal_id
-      LEFT JOIN deals d ON d.id = p.deal_id
-     WHERE d.company_id = ${company.id}
-        OR (${company.xero_contact_id}::text IS NOT NULL AND ps.xero_contact_id = ${company.xero_contact_id})
-        OR LOWER(ps.client_name) = LOWER(${company.name})`;
-  return rows.map((r) => r.client_key);
+  return clientKeysForCompany(company?.id || company);
 }
 
 // The company's aggregate credit balance in minutes, summed across every key.
@@ -81,17 +73,23 @@ export async function companyCreditBalance(company) {
 // by the company name — the same shape the CRM uses for a client that just holds
 // a balance — so the purchase is visible everywhere credit is shown.
 export async function ensureCompanyCreditKey(company) {
-  const existing = await resolveCompanyCreditKeys(company);
+  const companyId = company?.id || company;
+  const existing = await clientKeysForCompany(companyId);
   if (existing.length) return existing[0];
-  const key = (String(company.name || '').trim().toLowerCase()) || ('company_' + company.id);
-  const subId = 'manual_portalcredit_' + company.id;
+  // Read the company fresh rather than trusting the caller's object — a portal
+  // session's copy carries no xero_contact_id, and stamping the anchor without
+  // it would leave the new key unmatchable by the Xero route later.
+  const [co] = await sql`SELECT id, name, xero_contact_id FROM companies WHERE id = ${companyId}`;
+  if (!co) return null;
+  const key = (String(co.name || '').trim().toLowerCase()) || ('company_' + co.id);
+  const subId = 'manual_portalcredit_' + co.id;
   await sql`
     INSERT INTO partner_subscriptions
       (stripe_subscription_id, proposal_id, client_key, client_name,
        credits_per_month, status, auto_credit, xero_contact_id)
     VALUES
-      (${subId}, NULL, ${key}, ${company.name || key},
-       0, 'active', FALSE, ${company.xero_contact_id || null})
+      (${subId}, NULL, ${key}, ${co.name || key},
+       0, 'active', FALSE, ${co.xero_contact_id || null})
     ON CONFLICT (stripe_subscription_id) DO NOTHING`;
   return key;
 }

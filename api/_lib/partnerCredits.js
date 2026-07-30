@@ -1,5 +1,46 @@
 import sql from './db.js';
 
+// The partner-credit client_keys that belong to a CRM company — the single
+// source of truth for "whose credit is this?", used by the company page mirror
+// (api/_lib/crm/companies.js) AND the client portal's Video credit balance
+// (api/_lib/videoCredit.js). The two used to keep their own copy of this SQL,
+// which is how they came to disagree.
+//
+// There's no company_id on the partner tables, so it matches three ways
+// (deduped):
+//   1. proposal → deal → company
+//   2. a shared Xero contact
+//   3. the client name, normalised — case, punctuation and spacing are ignored,
+//      so "The Christie N.H.S. Foundation Trust" matches "The Christie NHS
+//      Foundation Trust". (Subsumes a plain case-insensitive match.)
+//
+// Takes a company ID and loads the row ITSELF. Callers used to pass whatever
+// company object they had to hand, and the portal's — built from the session,
+// with no xero_contact_id — silently dropped route 2, so a client matched only
+// by their Xero contact showed a full balance in the CRM and zero in the portal.
+export async function clientKeysForCompany(companyId) {
+  const id = typeof companyId === 'object' ? companyId?.id : companyId;
+  if (!id) return [];
+  const [co] = await sql`SELECT id, name, xero_contact_id FROM companies WHERE id = ${id}`;
+  if (!co) return [];
+  const rows = await sql`
+    SELECT DISTINCT ps.client_key
+      FROM partner_subscriptions ps
+      LEFT JOIN proposals p ON p.id = ps.proposal_id
+      LEFT JOIN deals d ON d.id = p.deal_id
+     WHERE d.company_id = ${co.id}
+        OR (${co.xero_contact_id}::text IS NOT NULL AND ps.xero_contact_id = ${co.xero_contact_id})
+        OR (
+             -- NULLIF guards the empty case: an unnamed company must not match
+             -- every subscription with a blank client_name.
+             NULLIF(regexp_replace(LOWER(COALESCE(${co.name}::text, '')), '[^a-z0-9]', '', 'g'), '') IS NOT NULL
+             AND regexp_replace(LOWER(COALESCE(ps.client_name, '')), '[^a-z0-9]', '', 'g')
+               = regexp_replace(LOWER(COALESCE(${co.name}::text, '')), '[^a-z0-9]', '', 'g')
+           )
+  `;
+  return rows.map((r) => r.client_key);
+}
+
 // Core partner-credit math, shared by the Partners & Credits list
 // (api/partner/[action].js → listCredits) and the company "Current Projects"
 // view (api/_lib/crm/companies.js). Returns issued / used / remaining + a
