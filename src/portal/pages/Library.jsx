@@ -155,7 +155,11 @@ export default function Library() {
             <SectionHeading>
               {p.series ? <><Layers size={16} style={{ verticalAlign: -3, marginRight: 7, color: BRAND.muted }} />{p.title}</> : p.title}
             </SectionHeading>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))', gap: 16 }}>
+            {/* 260px is what fits three across the 1080px content column
+                (3 × 260 + 2 × 16 gap = 812), while four would need more than
+                the column has — so it lands on three on a laptop and falls to
+                two, then one, as the window narrows. */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(260px, 100%), 1fr))', gap: 16 }}>
               {p.files.map((f) => (
                 <FileTile
                   key={f.fileId || f.videoId || f.itemId}
@@ -268,11 +272,13 @@ function FileTile({ dealId, file, manage, projects, seriesOptions, position, tot
             onError={onError}
           />
         ) : (
-          <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
+          {/* Wraps rather than overflows: at three-up the tile is narrow and
+              the manage buttons take most of the row. */}
+          <div style={{ display: 'flex', gap: 8, marginTop: 'auto', flexWrap: 'wrap' }}>
             <a
               className="btn"
               href={fileUrl(dealId, file, { download: true })}
-              style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, textDecoration: 'none' }}
+              style={{ flex: '1 1 120px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, textDecoration: 'none' }}
             >
               <Download size={15} /> Download
             </a>
