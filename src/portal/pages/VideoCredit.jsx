@@ -124,7 +124,7 @@ export default function VideoCredit() {
       {/* Buy */}
       {pricing && (
         <Card>
-          <SectionHeading>Buy more credit</SectionHeading>
+          <SectionHeading>Order more video credit</SectionHeading>
           <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
             {fmtGBP(pricing.ratePerMin)}/min standard — the more minutes you buy, the bigger the discount
             (up to {Math.round(pricing.maxDiscount * 100)}% off). Credit is valid for 2 years.

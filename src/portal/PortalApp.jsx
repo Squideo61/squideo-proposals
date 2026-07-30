@@ -7,7 +7,7 @@ import { SQUIDEO_LOGO } from '../defaults.js';
 import { useIsMobile } from '../utils.js';
 import { Toast } from '../components/ui.jsx';
 import {
-  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet,
+  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus,
 } from 'lucide-react';
 import { Eye } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
@@ -54,6 +54,22 @@ const NAV = [
   { view: 'settings', label: 'Settings', hash: '#/settings', Icon: SettingsIcon },
 ];
 
+// Header actions. The primary is the blue call-to-action; secondaries are
+// outlined so they read as buttons against the navy chrome without competing.
+const HEADER_BTN = {
+  primary: {
+    display: 'inline-flex', alignItems: 'center', gap: 7, whiteSpace: 'nowrap',
+    padding: '8px 15px', borderRadius: 8, textDecoration: 'none',
+    fontSize: 13.5, fontWeight: 700, color: '#0F2A3D', background: BRAND.blue,
+  },
+  secondary: {
+    display: 'inline-flex', alignItems: 'center', gap: 7, whiteSpace: 'nowrap',
+    padding: '7px 13px', borderRadius: 8, textDecoration: 'none',
+    fontSize: 13, fontWeight: 600, color: '#DCEEF7',
+    background: '#1B3A50', border: '1px solid #2E546E',
+  },
+};
+
 function Header() {
   const { user, companyId, setActiveCompanyId, logout } = usePortal();
   const isMobile = useIsMobile();
@@ -65,9 +81,11 @@ function Header() {
       padding: isMobile ? '10px 16px' : '12px 24px',
       position: 'sticky', top: 0, zIndex: 40,
     }}>
+      {/* Wraps rather than overflows: three action buttons plus the org
+          switcher and account controls is a lot for one row on a laptop. */}
       <div style={{
         maxWidth: MAX_WIDTH, margin: '0 auto',
-        display: 'flex', alignItems: 'center', gap: 16,
+        display: 'flex', alignItems: 'center', gap: 10, rowGap: 8, flexWrap: 'wrap',
       }}>
         <a href="#/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
           <img src={SQUIDEO_LOGO} alt="Squideo" style={{ height: isMobile ? 26 : 30, display: 'block' }} />
@@ -99,17 +117,22 @@ function Header() {
             {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         )}
+        {/* The three things a client most often comes here to DO. Secondary
+            styling on the two supporting actions keeps "New video" the primary.
+            Mobile reaches all three through the tab bar instead — the header
+            has no room for them at that width. */}
         {!isMobile && (
-          <a
-            href="#/request"
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 7,
-              padding: '8px 15px', borderRadius: 8, textDecoration: 'none',
-              fontSize: 13.5, fontWeight: 700, color: '#0F2A3D', background: BRAND.blue,
-            }}
-          >
-            <PlusCircle size={15} /> New video
-          </a>
+          <>
+            <a href="#/team" style={HEADER_BTN.secondary}>
+              <UserPlus size={15} /> Invite team
+            </a>
+            <a href="#/video-credit" style={HEADER_BTN.secondary}>
+              <Wallet size={15} /> Order credit
+            </a>
+            <a href="#/request" style={HEADER_BTN.primary}>
+              <PlusCircle size={15} /> New video
+            </a>
+          </>
         )}
         <NotificationBell compact={isMobile} />
         {!isMobile && (
