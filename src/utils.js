@@ -210,7 +210,14 @@ export const formatDuration = (s) => {
   return mm ? h + 'h ' + mm + 'm' : h + 'h';
 };
 
-export function resizeImage(file, maxW, maxH, keepPng) {
+// Scale an image down to fit maxW×maxH and return it as a data URL.
+//
+// keepAlpha: re-encode transparency-capable sources (PNG, WEBP) as PNG instead
+// of JPEG. Logos are usually dark-on-transparent, and flattening one to JPEG
+// paints the transparent area black. WEBP becomes PNG rather than staying WEBP
+// deliberately — the same data URL is embedded in proposal PDFs and emails,
+// where WEBP support isn't a given.
+export function resizeImage(file, maxW, maxH, keepAlpha) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -221,8 +228,8 @@ export function resizeImage(file, maxW, maxH, keepPng) {
         canvas.width = img.width * scale;
         canvas.height = img.height * scale;
         canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        const isPng = keepPng && file.type === 'image/png';
-        resolve(canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', 0.88));
+        const alpha = keepAlpha && (file.type === 'image/png' || file.type === 'image/webp');
+        resolve(canvas.toDataURL(alpha ? 'image/png' : 'image/jpeg', 0.88));
       };
       img.onerror = reject;
       img.src = e.target.result;
