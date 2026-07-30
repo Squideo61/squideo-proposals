@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Wallet, FileText, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Wallet, FileText, X, Link2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { api } from '../../api.js';
+import { Modal } from '../ui.jsx';
 import { Card, Empty } from './Card.jsx';
 import { fmtValue, fmtCredits, fmtDate, creditBarMeta, CreditUsageBar } from './creditDisplay.jsx';
 
@@ -16,6 +17,7 @@ const fmtGBP = (n) => '£' + Number(n || 0).toLocaleString('en-GB', { minimumFra
 export function CompanyCreditsCard({ companyId }) {
   const { showMsg } = useStore();
   const [data, setData] = useState(null);
+  const [linking, setLinking] = useState(false);
 
   const load = useCallback(() => {
     if (!companyId) return;
@@ -35,17 +37,125 @@ export function CompanyCreditsCard({ companyId }) {
   const count = data ? retainers.length + partnerCredits.length : null;
 
   return (
-    <Card title="Current Projects" count={count}>
+    <Card
+      title="Current Projects"
+      count={count}
+      action={
+        <button className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setLinking(true)}
+          title="Attach a partner-credit balance that didn't match this company automatically">
+          <Link2 size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Link credit
+        </button>
+      }
+    >
       {!data && <div style={{ padding: '12px 4px', fontSize: 13, color: BRAND.muted }}>Loading…</div>}
       {data && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <VideoCreditOrders companyId={companyId} orders={creditOrders} onChange={load} showMsg={showMsg} />
-          {count === 0 && creditOrders.length === 0 && <Empty text="No credits allocated to this company yet" />}
+          {count === 0 && creditOrders.length === 0 && (
+            <Empty text="No credits allocated to this company yet — if they hold a balance under a different name, use “Link credit”." />
+          )}
           {retainers.map(r => <RetainerRow key={r.id} retainer={r} />)}
           {partnerCredits.map(p => <PartnerRow key={p.clientKey} partner={p} />)}
         </div>
       )}
+      {linking && (
+        <LinkCreditModal
+          companyId={companyId}
+          onClose={() => setLinking(false)}
+          onChanged={load}
+          showMsg={showMsg}
+        />
+      )}
     </Card>
+  );
+}
+
+// Attach a partner-credit balance to this organisation by hand.
+//
+// Credit clients are matched to companies by inference (linked proposal, shared
+// Xero contact, matching name). When a balance is held under a name that's
+// nothing like the CRM company's, none of that fires and the credit is invisible
+// on the company page and in the client's portal. Linking here is authoritative
+// and turns the guessing off for that client.
+function LinkCreditModal({ companyId, onClose, onChanged, showMsg }) {
+  const [clients, setClients] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [q, setQ] = useState('');
+
+  const load = useCallback(() => {
+    api.get('/api/crm/companies/' + encodeURIComponent(companyId) + '/credit-clients')
+      .then(r => setClients(r.clients || []))
+      .catch(err => { showMsg?.(err.message || 'Could not load credit clients', 'error'); setClients([]); });
+  }, [companyId, showMsg]);
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = async (c, link) => {
+    if (link && c.companyId && c.companyId !== companyId) {
+      if (!window.confirm(`“${c.clientName}” is currently linked to ${c.companyName || 'another organisation'}. Move it to this one?`)) return;
+    }
+    setBusy(c.clientKey);
+    try {
+      await api.post('/api/crm/companies/' + encodeURIComponent(companyId) + '/credit-link', { clientKey: c.clientKey, link });
+      showMsg?.(link ? 'Credit linked to this organisation' : 'Credit unlinked', 'success');
+      load();
+      onChanged();
+    } catch (err) {
+      showMsg?.(err.message || 'Could not update the link', 'error');
+    } finally { setBusy(null); }
+  };
+
+  const term = q.trim().toLowerCase();
+  const visible = (clients || []).filter(c => !term
+    || (c.clientName || '').toLowerCase().includes(term)
+    || (c.clientKey || '').toLowerCase().includes(term));
+
+  return (
+    <Modal onClose={onClose} maxWidth={560}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700 }}>Link a credit balance</h3>
+      <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 14, lineHeight: 1.5 }}>
+        Credit is normally matched to an organisation automatically. Link it here when it’s held under a
+        different name — the balance then shows on this page <em>and</em> in the client’s portal.
+      </div>
+      <input
+        className="input"
+        placeholder="Search credit clients…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        style={{ width: '100%', marginBottom: 10, fontSize: 13 }}
+      />
+      <div style={{ maxHeight: '52vh', overflowY: 'auto' }}>
+        {clients === null && <Empty text="Loading…" />}
+        {clients !== null && visible.length === 0 && <Empty text="No credit clients found" />}
+        {visible.map(c => {
+          const elsewhere = c.companyId && c.companyId !== companyId;
+          return (
+            <div key={c.clientKey} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: '1px solid ' + BRAND.border }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {c.clientName}
+                </div>
+                <div style={{ fontSize: 11.5, color: BRAND.muted }}>
+                  {fmtCredits(c.creditsRemaining)} credits left
+                  {c.linkedHere ? ' · linked here' : elsewhere ? ` · linked to ${c.companyName}` : c.matched ? ' · matched automatically' : ''}
+                </div>
+              </div>
+              {c.linkedHere ? (
+                <button className="btn-ghost" disabled={busy === c.clientKey} style={{ fontSize: 12 }} onClick={() => toggle(c, false)}>
+                  Unlink
+                </button>
+              ) : (
+                <button className="btn" disabled={busy === c.clientKey} style={{ fontSize: 12 }} onClick={() => toggle(c, true)}>
+                  {elsewhere ? 'Move here' : 'Link'}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+        <button className="btn-ghost" onClick={onClose}>Done</button>
+      </div>
+    </Modal>
   );
 }
 

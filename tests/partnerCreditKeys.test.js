@@ -19,13 +19,15 @@ const COMPANY = { id: 'co1', name: 'The Christie NHS Foundation Trust', xero_con
 // returns; the query itself is captured for assertions.
 function mockCompany(company, keys = []) {
   setSqlHandler((text) => {
+    if (text.includes('SELECT DISTINCT ps.client_key')) return keys.map((k) => ({ client_key: k }));
     if (text.includes('FROM companies')) return company ? [company] : [];
-    if (text.includes('partner_subscriptions')) return keys.map((k) => ({ client_key: k }));
     return [];
   });
 }
 
-const keyQuery = () => getSqlCalls().find((c) => c.text.includes('partner_subscriptions'));
+// Match the resolver's own SELECT specifically — the schema self-heal also
+// touches partner_subscriptions, so a looser match would find its ALTER.
+const keyQuery = () => getSqlCalls().find((c) => c.text.includes('SELECT DISTINCT ps.client_key'));
 
 beforeEach(() => { resetSqlMock(); });
 
@@ -67,6 +69,18 @@ describe('clientKeysForCompany', () => {
     mockCompany(COMPANY);
     expect(await clientKeysForCompany(null)).toEqual([]);
     expect(await clientKeysForCompany({})).toEqual([]);
-    expect(getSqlCalls()).toHaveLength(0);
+    expect(keyQuery()).toBeUndefined();
+  });
+
+  it('lets an explicit company_id link win, and bypasses the guesses for it', () => {
+    mockCompany(COMPANY, ['christie']);
+    return clientKeysForCompany('co1').then(() => {
+      const q = keyQuery().text;
+      // Explicitly-linked clients match outright…
+      expect(q).toContain('ps.company_id =');
+      // …and the inferred routes only apply to clients with no link, so a
+      // linked client can't also be claimed by another company's name match.
+      expect(q).toContain('ps.company_id IS NULL');
+    });
   });
 });

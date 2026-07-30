@@ -4,7 +4,10 @@ import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { updateContactAddress, getOrCreateContact } from '../xero.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
-import { creditTotalsForKeys, clientKeysForCompany } from '../partnerCredits.js';
+import {
+  creditTotalsForKeys, clientKeysForCompany,
+  creditClientsWithCompany, setCreditClientCompany,
+} from '../partnerCredits.js';
 import { ensureCompanyLogoColumns, decodeLogo, portalLogoPath } from '../portal/logo.js';
 import { listVideoCreditOrders, raiseInvoiceForCreditOrder, cancelCreditOrder, reconcileVideoCreditOrders } from '../videoCredit.js';
 
@@ -397,6 +400,51 @@ export async function companiesRoute(req, res, id, action, user) {
     } catch (err) {
       return res.status(err.status || 500).json({ error: err.message || 'Could not cancel the request' });
     }
+  }
+
+  // GET /companies/:id/credit-clients — every partner-credit client with its
+  // balance and whichever company it's bound to, so the company page can offer
+  // "this balance is actually ours" for a client whose name we could never have
+  // matched automatically.
+  if (action === 'credit-clients' && req.method === 'GET') {
+    const [clients, totals, mine] = await Promise.all([
+      creditClientsWithCompany(),
+      creditTotalsForKeys(null),
+      clientKeysForCompany(id),
+    ]);
+    const totalByKey = new Map(totals.map(t => [t.client_key, t]));
+    const mineSet = new Set(mine);
+    return res.status(200).json({
+      clients: clients.map(c => {
+        const t = totalByKey.get(c.client_key);
+        return {
+          clientKey: c.client_key,
+          clientName: c.client_name || c.client_key,
+          companyId: c.company_id || null,
+          companyName: c.company_name || null,
+          // Linked here explicitly, vs. merely matched by the heuristics.
+          linkedHere: c.company_id === id,
+          matched: mineSet.has(c.client_key),
+          creditsRemaining: t ? Number(t.credits_remaining) || 0 : 0,
+          creditsIssued: t ? Number(t.credits_issued) || 0 : 0,
+        };
+      }),
+    });
+  }
+
+  // POST /companies/:id/credit-link { clientKey, link } — bind or unbind a
+  // credit client to this company. Binding wins over every heuristic, so this is
+  // the fix when a balance sits under a name we can't match.
+  if (action === 'credit-link' && req.method === 'POST') {
+    if (!hasPermission(await getRole(user.role), 'finance.manage')) {
+      return res.status(403).json({ error: 'You don’t have permission to manage credits' });
+    }
+    const clientKey = trimOrNull(req.body?.clientKey);
+    if (!clientKey) return res.status(400).json({ error: 'clientKey required' });
+    const link = req.body?.link !== false;
+    const n = await setCreditClientCompany(clientKey, link ? id : null);
+    if (!n) return res.status(404).json({ error: 'That credit client no longer exists' });
+    return res.status(200).json({ ok: true, clientKey, linked: link });
   }
 
   // /companies/:id/logo — the organisation's own brand mark.

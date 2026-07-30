@@ -8,6 +8,7 @@ import {
   VIDEO_MILESTONES, STAGE_LABEL, VIDEO_LENGTH_OPTIONS, VIDEO_LENGTH_VALUES,
 } from '../../lib/productionStages.js';
 import { RefBadge } from '../ui.jsx';
+import ClientLogo from '../ClientLogo.jsx';
 import { VideoProgressBar } from './ProductionProgressBar.jsx';
 import { ScheduleCard, ScheduleModal } from './ScheduleModal.jsx';
 import { DealConversation } from './DealConversation.jsx';
@@ -106,6 +107,15 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, on
           />
           {/* Project reference + this video's ordinal, e.g. 2607-014-01. */}
           <RefBadge reference={video.reference} size={12} />
+          {/* The client's own mark — from their organisation, or their newest
+              proposal. Renders nothing when we don't have one. */}
+          <ClientLogo
+            companyId={video.companyId}
+            alt={video.companyName || ''}
+            height={20}
+            maxWidth={120}
+            style={{ marginLeft: 'auto', padding: '3px 6px', border: '1px solid ' + BRAND.border }}
+          />
         </div>
         {(video.projectTitle || video.companyName) && (
           <button onClick={() => onOpenProject && video.dealId && onOpenProject(video.dealId)}

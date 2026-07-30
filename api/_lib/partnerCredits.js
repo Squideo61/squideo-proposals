@@ -1,18 +1,33 @@
 import sql from './db.js';
 
+// Runtime self-heal for db/migrations/20260730_credit_company_link.sql.
+// Module-cached; resets on failure so a later call retries.
+let creditCompanyLinkEnsured = null;
+export function ensureCreditCompanyLink() {
+  if (creditCompanyLinkEnsured) return creditCompanyLinkEnsured;
+  creditCompanyLinkEnsured = (async () => {
+    await sql`ALTER TABLE partner_subscriptions ADD COLUMN IF NOT EXISTS company_id TEXT REFERENCES companies(id) ON DELETE SET NULL`;
+    await sql`CREATE INDEX IF NOT EXISTS partner_subscriptions_company_idx ON partner_subscriptions(company_id)`;
+  })().catch((err) => { creditCompanyLinkEnsured = null; throw err; });
+  return creditCompanyLinkEnsured;
+}
+
 // The partner-credit client_keys that belong to a CRM company — the single
 // source of truth for "whose credit is this?", used by the company page mirror
 // (api/_lib/crm/companies.js) AND the client portal's Video credit balance
 // (api/_lib/videoCredit.js). The two used to keep their own copy of this SQL,
 // which is how they came to disagree.
 //
-// There's no company_id on the partner tables, so it matches three ways
-// (deduped):
+// partner_subscriptions.company_id is the EXPLICIT link (staff set it from the
+// company page). When it's set it's the whole answer for that client; when it's
+// NULL we fall back to inferring it three ways:
 //   1. proposal → deal → company
 //   2. a shared Xero contact
 //   3. the client name, normalised — case, punctuation and spacing are ignored,
 //      so "The Christie N.H.S. Foundation Trust" matches "The Christie NHS
 //      Foundation Trust". (Subsumes a plain case-insensitive match.)
+// A client whose name is materially different ("The Christie" vs the full trust
+// name) matches none of those, which is exactly what the explicit link is for.
 //
 // Takes a company ID and loads the row ITSELF. Callers used to pass whatever
 // company object they had to hand, and the portal's — built from the session,
@@ -21,6 +36,7 @@ import sql from './db.js';
 export async function clientKeysForCompany(companyId) {
   const id = typeof companyId === 'object' ? companyId?.id : companyId;
   if (!id) return [];
+  await ensureCreditCompanyLink().catch(() => {});
   const [co] = await sql`SELECT id, name, xero_contact_id FROM companies WHERE id = ${id}`;
   if (!co) return [];
   const rows = await sql`
@@ -28,17 +44,48 @@ export async function clientKeysForCompany(companyId) {
       FROM partner_subscriptions ps
       LEFT JOIN proposals p ON p.id = ps.proposal_id
       LEFT JOIN deals d ON d.id = p.deal_id
-     WHERE d.company_id = ${co.id}
-        OR (${co.xero_contact_id}::text IS NOT NULL AND ps.xero_contact_id = ${co.xero_contact_id})
-        OR (
-             -- NULLIF guards the empty case: an unnamed company must not match
-             -- every subscription with a blank client_name.
-             NULLIF(regexp_replace(LOWER(COALESCE(${co.name}::text, '')), '[^a-z0-9]', '', 'g'), '') IS NOT NULL
-             AND regexp_replace(LOWER(COALESCE(ps.client_name, '')), '[^a-z0-9]', '', 'g')
-               = regexp_replace(LOWER(COALESCE(${co.name}::text, '')), '[^a-z0-9]', '', 'g')
-           )
+     WHERE ps.company_id = ${co.id}
+        OR (ps.company_id IS NULL AND (
+             d.company_id = ${co.id}
+             OR (${co.xero_contact_id}::text IS NOT NULL AND ps.xero_contact_id = ${co.xero_contact_id})
+             OR (
+                  -- NULLIF guards the empty case: an unnamed company must not
+                  -- match every subscription with a blank client_name.
+                  NULLIF(regexp_replace(LOWER(COALESCE(${co.name}::text, '')), '[^a-z0-9]', '', 'g'), '') IS NOT NULL
+                  AND regexp_replace(LOWER(COALESCE(ps.client_name, '')), '[^a-z0-9]', '', 'g')
+                    = regexp_replace(LOWER(COALESCE(${co.name}::text, '')), '[^a-z0-9]', '', 'g')
+                )
+           ))
   `;
   return rows.map((r) => r.client_key);
+}
+
+// Every credit client, annotated with the company it's bound to (if any) — the
+// data behind the company page's "link a credit balance" picker. Deliberately
+// includes clients that resolve to no company at all: those are the ones that
+// were invisible everywhere except Partners & Credits.
+export async function creditClientsWithCompany() {
+  await ensureCreditCompanyLink().catch(() => {});
+  return await sql`
+    SELECT ps.client_key,
+           MAX(ps.client_name)  AS client_name,
+           MAX(ps.company_id)   AS company_id,
+           MAX(c.name)          AS company_name
+      FROM partner_subscriptions ps
+      LEFT JOIN companies c ON c.id = ps.company_id
+     GROUP BY ps.client_key
+  `.catch(() => []);
+}
+
+// Bind (or unbind) every subscription under a client_key to a company.
+export async function setCreditClientCompany(clientKey, companyId) {
+  await ensureCreditCompanyLink();
+  const rows = await sql`
+    UPDATE partner_subscriptions SET company_id = ${companyId || null}
+     WHERE client_key = ${clientKey}
+    RETURNING client_key
+  `;
+  return rows.length;
 }
 
 // Core partner-credit math, shared by the Partners & Credits list

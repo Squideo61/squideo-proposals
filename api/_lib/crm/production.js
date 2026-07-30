@@ -97,7 +97,7 @@ async function ensureClientSubmitColumns() {
 
 // Board / single-video query: a video joined to its project (deal) + customer.
 const VIDEO_SELECT = (whereSql) => sql`
-  SELECT pv.*, d.title AS project_title, c.name AS company_name,
+  SELECT pv.*, d.title AS project_title, c.name AS company_name, d.company_id AS company_id,
          d.drive_folder_id AS drive_folder_id,
          d.production_entered_at AS production_entered_at,
          d.production_start_date AS production_start_date,
@@ -177,7 +177,7 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       // the deals route's good-to-go action) — payment alone no longer enters
       // production, so there's no paid-deal backfill to run here.
       const rows = await sql`
-        SELECT pv.*, d.title AS project_title, c.name AS company_name,
+        SELECT pv.*, d.title AS project_title, c.name AS company_name, d.company_id AS company_id,
                d.production_entered_at AS production_entered_at,
                d.production_start_date AS production_start_date,
                (SELECT COALESCE(ARRAY_AGG(va.user_email ORDER BY va.assigned_at), '{}')
@@ -1239,6 +1239,8 @@ export function serialiseVideo(r) {
   };
   if ('project_title' in r) out.projectTitle = r.project_title || null;
   if ('company_name' in r) out.companyName = r.company_name || null;
+  // Lets the video/board UI show the client's own logo (/api/portal-logo).
+  if ('company_id' in r) out.companyId = r.company_id || null;
   if ('drive_folder_id' in r) out.driveFolderId = r.drive_folder_id || null;
   // Per-deal ordinal, and the full video reference it renders as when the deal's
   // project number is to hand: 2607-014-01.

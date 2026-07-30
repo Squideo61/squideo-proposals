@@ -26,6 +26,7 @@ import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
 import { PortalDealCard, launchIntroEmail } from './PortalDealCard.jsx';
 import { ClientScriptCard } from './ClientScriptCard.jsx';
+import ClientLogo from '../ClientLogo.jsx';
 import { IntroCallButton } from './IntroCallCard.jsx';
 import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
 import { TrackingEye } from './EmailTracking.jsx';
@@ -3560,6 +3561,15 @@ function SecondaryContactsRow({ dealId, primaryContact, secondaryContacts, defau
 
   return (
     <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      {/* The client's own mark, wherever it came from — the organisation's
+          uploaded logo, or the newest one off their proposals. Renders nothing
+          when they haven't given us one. */}
+      <ClientLogo
+        companyId={defaultCompanyId}
+        height={18}
+        maxWidth={110}
+        style={{ padding: '3px 6px', border: '1px solid ' + BRAND.border }}
+      />
       <span style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
         Contacts
       </span>
