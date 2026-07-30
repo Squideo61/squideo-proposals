@@ -24,7 +24,7 @@ import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureDealContactsTable 
 import { sendMail } from '../_lib/email.js';
 import { ensurePortalTables } from '../_lib/portal/db.js';
 import { createRawToken, hashToken, signPortalPreviewToken } from '../_lib/portal/auth.js';
-import { sendTeamInvite, createPortalInvite, inviteUrlFor } from '../_lib/portal/onboarding.js';
+import { sendTeamInvite, createPortalInvite, inviteUrlFor, INVITE_DAYS } from '../_lib/portal/onboarding.js';
 import { portalTeamInviteHtml, portalResetHtml, portalProjectTasksHtml, PORTAL_URL } from '../_lib/portal/emails.js';
 import { emailLogoUrl } from '../_lib/portal/logo.js';
 import { notifyPortalUser } from '../_lib/portal/notifications.js';
@@ -405,6 +405,27 @@ export default async function handler(req, res) {
       if (!companyId || !email) return res.status(400).json({ error: 'companyId and email required' });
       const [co] = await sql`SELECT name FROM companies WHERE id = ${companyId}`;
       if (!co) return res.status(404).json({ error: 'Company not found' });
+
+      // compose: mint the invite and hand the link back so the CRM can open a
+      // real, editable email in the composer — no automatic send. The invite
+      // row exists either way, so a link sent by hand behaves exactly like one
+      // sent by the system (same expiry, same "resend" re-keying).
+      if (body.compose === true) {
+        const { rawToken } = await createPortalInvite({
+          email,
+          companyId,
+          prefill: { name: trimOrNull(body.name) },
+          invitedBy: user.email,
+        });
+        return res.status(201).json({
+          ok: true,
+          inviteUrl: inviteUrlFor(rawToken),
+          email,
+          companyName: co.name,
+          expiresInDays: INVITE_DAYS,
+        });
+      }
+
       await sendTeamInvite({
         email,
         companyId,

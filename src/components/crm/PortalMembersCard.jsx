@@ -9,6 +9,7 @@ import { formatRelativeTime } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { PortalStepsActivity } from './PortalStepsActivity.jsx';
 import { PortalOpenButtons } from './PortalOpenButtons.jsx';
+import { usePortalInviteCompose } from './usePortalInviteCompose.js';
 
 const formatBytes = (n) => {
   if (!n || n < 1024) return `${n || 0} B`;
@@ -23,6 +24,9 @@ export function PortalMembersCard({ companyId }) {
   const [inviteEmail, setInviteEmail] = useState('');
   const [showInvite, setShowInvite] = useState(false);
   const [notice, setNotice] = useState(null);
+  const { compose: composeInvite, busy: composing } = usePortalInviteCompose({
+    onError: (m) => flash(m),
+  });
 
   const load = useCallback(async () => {
     try {
@@ -53,12 +57,25 @@ export function PortalMembersCard({ companyId }) {
     }
   };
 
-  const invite = (e) => {
+  // Default: open a real email in the composer, prefilled from the "Client
+  // portal invite" template and carrying this person's own invite link.
+  const invite = async (e) => {
     e.preventDefault();
-    if (!inviteEmail.trim()) return;
+    const email = inviteEmail.trim();
+    if (!email) return;
+    await composeInvite({ companyId, email });
+    setInviteEmail('');
+    setShowInvite(false);
+    load();
+  };
+
+  // The automated, branded invite email — one click, no editing.
+  const sendStandard = () => {
+    const email = inviteEmail.trim();
+    if (!email) return;
     run(
-      () => api.post('/api/crm/portal-admin?op=invite', { companyId, email: inviteEmail.trim() }),
-      `Invite sent to ${inviteEmail.trim()}`
+      () => api.post('/api/crm/portal-admin?op=invite', { companyId, email }),
+      `Invite sent to ${email}`
     ).then(() => { setInviteEmail(''); setShowInvite(false); });
   };
 
@@ -95,17 +112,29 @@ export function PortalMembersCard({ companyId }) {
       )}
 
       {showInvite && (
-        <form onSubmit={invite} style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <input
-            className="input"
-            type="email"
-            required
-            placeholder="client@company.com"
-            value={inviteEmail}
-            onChange={(e) => setInviteEmail(e.target.value)}
-            style={{ flex: 1, fontSize: 13 }}
-          />
-          <button className="btn" type="submit" disabled={busy} style={{ fontSize: 12.5 }}>Send</button>
+        <form onSubmit={invite} style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              className="input"
+              type="email"
+              required
+              placeholder="client@company.com"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              style={{ flex: 1, fontSize: 13 }}
+            />
+            <button className="btn" type="submit" disabled={busy || composing} style={{ fontSize: 12.5 }}>
+              {composing ? 'Preparing…' : 'Write email'}
+            </button>
+          </div>
+          <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 6 }}>
+            Opens an editable email with their invite link —{' '}
+            <button type="button" className="btn-ghost" onClick={sendStandard} disabled={busy || composing}
+              style={{ fontSize: 11.5, padding: 0, color: BRAND.blue, textDecoration: 'underline' }}>
+              or send the standard invite
+            </button>
+            .
+          </div>
         </form>
       )}
 

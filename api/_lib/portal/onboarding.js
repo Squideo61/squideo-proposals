@@ -20,7 +20,7 @@ import {
   portalTeamInviteHtml,
 } from './emails.js';
 
-const INVITE_DAYS = 14;
+export const INVITE_DAYS = 14;
 
 export function inviteUrlFor(rawToken) {
   return `${PORTAL_URL}?invite=${encodeURIComponent(rawToken)}`;

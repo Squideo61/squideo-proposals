@@ -9,6 +9,7 @@ import { api } from '../../api.js';
 import { formatRelativeTime } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { PortalOpenButtons } from './PortalOpenButtons.jsx';
+import { usePortalInviteCompose } from './usePortalInviteCompose.js';
 
 const ACTIVITY_ICONS = { file: Upload, extra: Sparkles, quote: FileText };
 
@@ -18,6 +19,9 @@ export function PortalContactCard({ contactId }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   const [inviteCompanyId, setInviteCompanyId] = useState('');
+  const { compose: composeInvite, busy: composing } = usePortalInviteCompose({
+    onError: (m) => flash(m),
+  });
 
   const load = useCallback(async () => {
     try {
@@ -137,16 +141,31 @@ export function PortalContactCard({ contactId }) {
                   Invite them to <strong style={{ color: BRAND.ink }}>{companies[0].name}</strong>'s portal
                 </span>
               )}
+              {/* Opens an editable email prefilled from the "Client portal
+                  invite" template, carrying this person's own invite link. */}
               <button
                 className="btn"
-                disabled={busy || !inviteCompanyId}
+                disabled={busy || composing || !inviteCompanyId}
                 style={{ fontSize: 12.5 }}
+                onClick={async () => {
+                  await composeInvite({ companyId: inviteCompanyId, email: data.email, name: data.name });
+                  load();
+                }}
+              >
+                <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />
+                {composing ? 'Preparing…' : 'Write invite'}
+              </button>
+              <button
+                className="btn-ghost"
+                disabled={busy || composing || !inviteCompanyId}
+                style={{ fontSize: 12 }}
+                title="Send the standard branded invite email instead"
                 onClick={() => run(
-                  () => api.post('/api/crm/portal-admin?op=invite', { companyId: inviteCompanyId, email: data.email, name: account?.name }),
+                  () => api.post('/api/crm/portal-admin?op=invite', { companyId: inviteCompanyId, email: data.email, name: data.name }),
                   'Portal invite sent'
                 )}
               >
-                <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Send invite
+                Standard
               </button>
             </div>
           )}

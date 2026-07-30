@@ -8,6 +8,31 @@ import { hasPermission } from '../permissions.js';
 // query below 500s with 'relation "crm_email_templates" does not exist'. The
 // CREATE is idempotent and module-level cached so we only pay for it on the
 // first templates request per cold start. Same pattern as ensureSignatureColumns.
+// The starting point for "Invite to portal", which opens the composer prefilled
+// rather than firing the system email. It lives in the normal templates table so
+// it's edited the same way as any other — nothing here is special-cased.
+//
+// {{…}} placeholders are filled by the CRM when it opens the composer; see
+// src/lib/portalInviteEmail.js for the list. ON CONFLICT DO NOTHING on a fixed
+// id means an edited copy is never overwritten, and a deleted one stays deleted
+// (the CRM falls back to a terse built-in).
+export const PORTAL_INVITE_TEMPLATE_ID = 'tpl_portal_invite';
+
+const PORTAL_INVITE_BODY = `<p>Hi {{first_name}},</p>
+<p>I've set up your Squideo client portal — it's where you'll find everything for your projects in one place: live progress, videos to review and sign off, your finished video library, and any documents we need from you.</p>
+<p><a href="{{portal_link}}">Set up your login here</a></p>
+<p>It only takes a moment, and you can invite the rest of your team once you're in.</p>
+<p>Any questions, just reply to this email.</p>`;
+
+async function seedPortalInviteTemplate() {
+  await sql`
+    INSERT INTO crm_email_templates (id, name, subject, body_html, visibility, created_by)
+    VALUES (${PORTAL_INVITE_TEMPLATE_ID}, 'Client portal invite',
+            'Your Squideo client portal is ready', ${PORTAL_INVITE_BODY}, 'team', NULL)
+    ON CONFLICT (id) DO NOTHING
+  `;
+}
+
 let templatesTableEnsured = null;
 function ensureEmailTemplatesTable() {
   if (templatesTableEnsured) return templatesTableEnsured;
@@ -29,6 +54,7 @@ function ensureEmailTemplatesTable() {
       `;
       // Self-heal the column for tables created before visibility existed.
       await sql`ALTER TABLE crm_email_templates ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'team'`;
+      await seedPortalInviteTemplate();
     } catch (err) {
       templatesTableEnsured = null; // retry next request on a transient failure
       console.warn('[crm templates] ensureEmailTemplatesTable failed', err.message);
