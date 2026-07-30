@@ -19,6 +19,7 @@
 import { getDownloadUrl } from '@vercel/blob';
 import sql from '../_lib/db.js';
 import { cors, requirePermission } from '../_lib/middleware.js';
+import { PORTAL_ADMIN_PERMS, portalPreviewPerms } from '../_lib/permissions.js';
 import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureDealContactsTable } from '../_lib/crm/shared.js';
 import { sendMail } from '../_lib/email.js';
 import { ensurePortalTables } from '../_lib/portal/db.js';
@@ -33,9 +34,7 @@ import { isFinalReleaseUnlocked } from '../_lib/crm/delivery.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 import { ensureProductionSchema } from '../_lib/production.js';
 
-// Any of these grants access — the panel spans company pages (members) and
-// deal pages (offers/pricing), which different roles legitimately manage.
-const PORTAL_ADMIN_PERMS = ['companies.manage_all', 'deals.manage_all', 'invoices.manage', 'users.manage'];
+// The permission policy lives in api/_lib/permissions.js alongside the catalog.
 
 // Who the "Portal invite" modal offers to invite for a deal: its primary
 // contact, its secondary contacts, and the proposal signer (who may not be a
@@ -206,9 +205,49 @@ async function portalProfileForEmail(email) {
   };
 }
 
+// "Preview as client" — mint a short-lived preview token for an organisation and
+// hand back the portal URL to open. The token lives in the opened tab only
+// (never a cookie), so it can't disturb a real client login.
+//
+// `manage: true` mints the write-capable variant ("manage mode"): staff work
+// inside the client's portal for real — uploading past videos to their library,
+// inviting their team, filing documents. That needs a portal-admin permission;
+// a read-only look needs only portal.preview, which the production team has.
+//
+// This is also what a SHARED preview link resolves against: /portal?previewOf=id
+// carries no credential of its own, so the recipient's own CRM session and role
+// decide whether they get a session at all.
+async function previewOp(req, res) {
+  const body = req.body || {};
+  const manage = body.manage === true;
+  const user = await requirePermission(req, res, portalPreviewPerms(manage));
+  if (!user) return;
+  const companyId = trimOrNull(body.companyId);
+  if (!companyId) return res.status(400).json({ error: 'companyId required' });
+  const [co] = await sql`SELECT id, name FROM companies WHERE id = ${companyId}`;
+  if (!co) return res.status(404).json({ error: 'Company not found' });
+  const token = await signPortalPreviewToken({ companyId, staffEmail: user.email, manage });
+  return res.status(200).json({
+    url: `${PORTAL_URL}?preview=${encodeURIComponent(token)}`,
+    // The link to SHARE: no token in it, so it's only useful to someone who is
+    // themselves signed in to the CRM with the right role.
+    shareUrl: `${PORTAL_URL}?previewOf=${encodeURIComponent(companyId)}`,
+    companyName: co.name,
+    manage,
+  });
+}
+
 export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
+
+  // The read-only portal preview is open to the wider production team (anyone
+  // with portal.preview — producers and project managers included), so it
+  // authorises itself before the narrower admin gate below. Manage mode still
+  // needs a PORTAL_ADMIN_PERM.
+  if (req.method === 'POST' && trimOrNull(req.query.op) === 'preview') {
+    return previewOp(req, res);
+  }
 
   const user = await requirePermission(req, res, PORTAL_ADMIN_PERMS);
   if (!user) return;
@@ -640,26 +679,6 @@ export default async function handler(req, res) {
         throwOnError: true,
       });
       return res.status(200).json({ ok: true, email: pu.email });
-    }
-
-    // "Preview as client" — mint a short-lived preview token for an organisation
-    // and hand back the portal URL to open. The token lives in the opened tab
-    // only (never a cookie), so it can't disturb a real client login.
-    // `manage: true` mints the write-capable variant ("manage mode"): staff work
-    // inside the client's portal for real — uploading past videos to their
-    // library, inviting their team, filing documents.
-    if (op === 'preview') {
-      const companyId = trimOrNull(body.companyId);
-      if (!companyId) return res.status(400).json({ error: 'companyId required' });
-      const [co] = await sql`SELECT id, name FROM companies WHERE id = ${companyId}`;
-      if (!co) return res.status(404).json({ error: 'Company not found' });
-      const manage = body.manage === true;
-      const token = await signPortalPreviewToken({ companyId, staffEmail: user.email, manage });
-      return res.status(200).json({
-        url: `${PORTAL_URL}?preview=${encodeURIComponent(token)}`,
-        companyName: co.name,
-        manage,
-      });
     }
 
     // Resolve a short-lived download URL for a client-uploaded brand/document

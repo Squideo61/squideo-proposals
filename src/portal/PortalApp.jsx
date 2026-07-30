@@ -338,13 +338,50 @@ function PreviewBanner() {
   );
 }
 
+// A shared preview link opened by someone the server wouldn't issue a preview
+// to — usually not signed in to the CRM in this browser, sometimes a role
+// without portal.preview. Says which, and offers the way forward.
+function PreviewLinkError({ message }) {
+  const needsSignIn = /unauthoris|session expired/i.test(message);
+  return (
+    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: BRAND.paper, padding: 20 }}>
+      <div style={{
+        maxWidth: 440, background: '#fff', border: `1px solid ${BRAND.border}`,
+        borderRadius: 14, padding: 28, textAlign: 'center',
+      }}>
+        <div style={{ width: 46, height: 46, borderRadius: 12, background: '#F3E8FF', color: '#7C3AED', display: 'grid', placeItems: 'center', margin: '0 auto 14px' }}>
+          <Eye size={22} />
+        </div>
+        <h1 style={{ margin: '0 0 8px', fontSize: 19, fontWeight: 800, color: BRAND.ink }}>
+          {needsSignIn ? 'Sign in to view this preview' : 'Preview unavailable'}
+        </h1>
+        <p style={{ margin: '0 0 18px', fontSize: 13.5, color: BRAND.muted, lineHeight: 1.55 }}>
+          {needsSignIn
+            ? 'This link shows a client’s portal to Squideo team members. Sign in to the CRM in this browser, then open the link again.'
+            : message}
+        </p>
+        {needsSignIn && (
+          <a href="/" className="btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
+            Go to the Squideo CRM
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Boot() {
   const { booting, user, refreshSession, showToast } = usePortal();
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const inviteToken = params.get('invite');
   const magicToken = params.get('login');
   const resetToken = params.get('reset');
+  // A shared preview link: ?previewOf=<companyId>, carrying no credential of
+  // its own. Whoever opens it gets a preview only if THEY are signed in to the
+  // CRM with the right role.
+  const previewOf = params.get('previewOf');
   const [magicState, setMagicState] = useState(magicToken ? 'pending' : null);
+  const [previewState, setPreviewState] = useState(previewOf ? 'pending' : null);
 
   const clearQuery = useCallback(() => {
     window.history.replaceState(null, '', window.location.pathname + (window.location.hash || ''));
@@ -367,12 +404,44 @@ function Boot() {
     })();
   }, [magicToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (booting || magicState === 'pending') {
+  // Resolve a shared preview link against the viewer's own CRM session. The
+  // endpoint re-checks their role, so the link grants nothing by itself.
+  useEffect(() => {
+    if (!previewOf) return;
+    (async () => {
+      try {
+        const res = await fetch('/api/crm/portal-admin?op=preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ companyId: previewOf }),
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(json?.error || 'Preview unavailable');
+        const token = new URL(json.url, window.location.origin).searchParams.get('preview');
+        if (!token) throw new Error('Preview unavailable');
+        setPreviewToken(token);
+        clearQuery();
+        await refreshSession();
+        setPreviewState('done');
+      } catch (err) {
+        setPreviewState('failed:' + (err.message || 'Preview unavailable'));
+      }
+    })();
+  }, [previewOf]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (booting || magicState === 'pending' || previewState === 'pending') {
     return (
       <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: BRAND.paper }}>
-        <div style={{ color: BRAND.muted, fontSize: 14 }}>Loading your portal…</div>
+        <div style={{ color: BRAND.muted, fontSize: 14 }}>
+          {previewState === 'pending' ? 'Opening the client’s portal…' : 'Loading your portal…'}
+        </div>
       </div>
     );
+  }
+
+  if (typeof previewState === 'string' && previewState.startsWith('failed:')) {
+    return <PreviewLinkError message={previewState.slice(7)} />;
   }
   // An authenticated session wins over a stale ?invite= / ?reset= token: those
   // are read once at boot, so after accepting an invite (which signs you in)

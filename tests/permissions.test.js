@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   PERMISSIONS,
+  PORTAL_ADMIN_PERMS,
+  portalPreviewPerms,
   hasPermission,
   permissionsInclude,
   isValidPermission,
@@ -75,6 +77,46 @@ describe('hasPermission', () => {
   it('malformed permissions field is treated as empty', () => {
     expect(hasPermission({ permissions: null }, 'x.y')).toBe(false);
     expect(hasPermission({ permissions: 'admin' }, 'x.y')).toBe(false);
+  });
+});
+
+// Opening a client's portal. The split matters: a shared preview link resolves
+// against whoever opens it, so the delivery team can look — but looking must
+// never be a route into editing the client's account.
+describe('portalPreviewPerms', () => {
+  const producer = { permissions: ['portal.preview', 'schedule.access', 'production.access'] };
+  const projectManager = { permissions: ['portal.preview', 'deals.manage_all'] };
+  const copywriter = { permissions: ['schedule.access'] };
+  const admin = { permissions: ['*'] };
+  const allows = (role, manage) => portalPreviewPerms(manage).some((p) => hasPermission(role, p));
+
+  it('lets a producer view a preview', () => {
+    expect(allows(producer, false)).toBe(true);
+  });
+
+  it('does NOT let a producer into manage mode', () => {
+    expect(allows(producer, true)).toBe(false);
+  });
+
+  it('lets a project manager do both (they hold deals.manage_all)', () => {
+    expect(allows(projectManager, false)).toBe(true);
+    expect(allows(projectManager, true)).toBe(true);
+  });
+
+  it('keeps roles without portal.preview out entirely', () => {
+    expect(allows(copywriter, false)).toBe(false);
+    expect(allows(copywriter, true)).toBe(false);
+  });
+
+  it('lets an admin wildcard through both', () => {
+    expect(allows(admin, false)).toBe(true);
+    expect(allows(admin, true)).toBe(true);
+  });
+
+  it('every permission it names is a real slug', () => {
+    for (const slug of [...PORTAL_ADMIN_PERMS, ...portalPreviewPerms(false)]) {
+      expect(isValidPermission(slug)).toBe(true);
+    }
   });
 });
 

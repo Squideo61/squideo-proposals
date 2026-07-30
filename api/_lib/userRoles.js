@@ -229,6 +229,20 @@ export function ensureSystemRoles() {
          WHERE id IN ('director', 'member') AND NOT (permissions @> '["voiceovers.manage"]'::jsonb)
       `;
       if ((voManage.count || voManage.rowCount || 0) > 0) invalidateRoleCache();
+
+      // ── Client portal preview ──
+      // Looking at a client's portal read-only is roughly what looking at their
+      // deal already shows, so it goes to everyone who works on delivery:
+      // Directors, Project/Production Managers ('member') and Producers.
+      // Admins via '*'. Copywriters and freelancers are deliberately left out.
+      // WRITING in the portal (manage mode) still needs a portal-admin
+      // permission — see PORTAL_ADMIN_PERMS in api/crm/portal-admin.js.
+      const portalPreview = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["portal.preview"]'::jsonb, updated_at = NOW()
+         WHERE id IN ('director', 'member', 'producer') AND NOT (permissions @> '["portal.preview"]'::jsonb)
+      `;
+      if ((portalPreview.count || portalPreview.rowCount || 0) > 0) invalidateRoleCache();
     } catch (err) {
       systemRolesEnsured = null;
       console.warn('[roles] ensure system roles failed', err.message);

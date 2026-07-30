@@ -32,6 +32,8 @@ export const PERMISSIONS = [
   { slug: 'quote_requests.manage',group: 'CRM',        label: 'View + qualify quote requests' },
   { slug: 'partner_credits.manage', group: 'CRM',      label: 'Manage partner credits' },
 
+  { slug: 'portal.preview',       group: 'CRM',        label: 'View a client’s portal as they see it (read-only)' },
+
   { slug: 'revisions.access',     group: 'Revisions',  label: 'Access the video revisions section' },
 
   { slug: 'voiceovers.manage',   group: 'Projects',   label: 'Manage the voiceover artist catalogue + samples' },
@@ -56,6 +58,21 @@ export function hasPermission(role, slug) {
   if (!role || !Array.isArray(role.permissions)) return false;
   if (role.permissions.includes('*')) return true;
   return role.permissions.includes(slug);
+}
+
+// Who may act on the customer portal from the staff side. Any of these grants
+// access to the portal-admin surface, which spans company pages (members) and
+// deal pages (offers/pricing) — different roles legitimately manage each.
+export const PORTAL_ADMIN_PERMS = [
+  'companies.manage_all', 'deals.manage_all', 'invoices.manage', 'users.manage',
+];
+
+// Opening a client's portal. Looking at it read-only shows roughly what their
+// deal page already does, so it extends to the whole delivery team via
+// `portal.preview`. WRITING in there (manage mode) stays with the portal
+// admins — a preview link handed to a producer must not become an edit session.
+export function portalPreviewPerms(manage) {
+  return manage ? PORTAL_ADMIN_PERMS : [...PORTAL_ADMIN_PERMS, 'portal.preview'];
 }
 
 // Same as hasPermission but takes the raw permissions array directly — handy
