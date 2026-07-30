@@ -16,6 +16,7 @@ import { ensureVoiceoverCatalogue } from '../voiceover.js';
 import { syncDealSchedule } from './schedule.js';
 import { sendNotification, ensurePoReceivedNotificationDefault } from '../notifications.js';
 import { getDealCreditProject } from './retainers.js';
+import { clientKeysForCompany, creditTotalsForKeys } from '../partnerCredits.js';
 import { isFreelancer, userOnDeal } from './access.js';
 import { APP_URL } from '../email.js';
 
@@ -1667,6 +1668,24 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     // The deal's credit project (single active credits-type retainer), or null.
     // Drives the Videos panel's per-video credit deduction on credit-based deals.
     const creditProject = await getDealCreditProject(id).catch(() => null);
+    // The CUSTOMER's own partner/video credit balance (company-scoped, distinct
+    // from the deal's own credit-based-project retainer above). Surfaced on the
+    // deal so whoever's quoting can see the client already holds credit to draw
+    // down. Best-effort: never let a credit lookup 500 the deal page.
+    let companyCredit = null;
+    if (rows[0].company_id && !freelancer) {
+      try {
+        const keys = await clientKeysForCompany(rows[0].company_id);
+        if (keys.length) {
+          const totals = await creditTotalsForKeys(keys);
+          const issued = totals.reduce((s, t) => s + (Number(t.credits_issued) || 0), 0);
+          const used = totals.reduce((s, t) => s + (Number(t.credits_used) || 0), 0);
+          companyCredit = { issued, used, remaining: issued - used };
+        }
+      } catch (err) {
+        console.warn('[deal detail] company credit skipped', err.message);
+      }
+    }
 
     return res.status(200).json({
       ...deal,
@@ -1674,6 +1693,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       paymentOption,
       // Money is hidden from freelancers (credit balances + proposal pricing).
       creditProject: freelancer ? null : creditProject,
+      companyCredit,
       // First-touch marketing attribution for the lead that became this deal
       // (null if it didn't come from the quote form), incl. a returning-client flag.
       leadSource,

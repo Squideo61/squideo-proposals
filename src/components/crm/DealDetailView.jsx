@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Link2, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Link2, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, Wallet, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -485,6 +485,25 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                   ? <button type="button" onClick={() => onOpenCompany(company.id)} className="link-btn" style={{ background: 'none', border: 0, padding: 0, font: 'inherit', color: BRAND.blue, cursor: 'pointer', textAlign: 'left' }}>{company.name}</button>
                   : company.name)
               : <span style={{ color: BRAND.muted }}>—</span>}
+            {/* This customer's own credit balance (partner / portal video
+                credit — company-wide, not this deal's retainer). Shown here so
+                whoever's quoting can see there's credit to draw down. */}
+            {detail?.companyCredit?.remaining > 0 && (
+              <button
+                type="button"
+                onClick={() => company && onOpenCompany?.(company.id)}
+                title="This customer holds credit — open their organisation to see the ledger"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 6,
+                  background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 999,
+                  padding: '2px 9px', font: 'inherit', fontSize: 11.5, fontWeight: 700,
+                  color: '#15803D', cursor: onOpenCompany ? 'pointer' : 'default',
+                }}
+              >
+                <Wallet size={12} />
+                {detail.companyCredit.remaining} min credit
+              </button>
+            )}
           </Field>
           <Field icon={User} label="Primary contact">
             {contact ? (() => {
