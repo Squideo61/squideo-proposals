@@ -230,7 +230,7 @@ function EditItem({ companyId, file, projects, seriesOptions, onClose, onSaved, 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 'auto' }}>
       <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" style={{ fontSize: 13 }} />
-      <SeriesInput value={series} onChange={setSeries} options={seriesOptions} id={`series-${file.itemId}`} />
+      <SeriesPicker value={series} onChange={setSeries} options={seriesOptions} />
       <select className="input" value={dealId} onChange={(e) => setDealId(e.target.value)} style={{ fontSize: 13 }}>
         <option value="">No project</option>
         {projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
@@ -243,23 +243,45 @@ function EditItem({ companyId, file, projects, seriesOptions, onClose, onSaved, 
   );
 }
 
-// Free text, but backed by a datalist of the series already in use — retyping
-// a name with a different capitalisation would silently split the group.
-function SeriesInput({ value, onChange, options, id }) {
+// Pick one of THIS client's existing series, or name a new one. A real <select>
+// rather than a text box with a datalist: with a datalist there's no way to tell
+// a stored series from a suggestion, and retyping a name with different
+// capitalisation silently splits the group in two.
+const NEW_SERIES = '__new__';
+
+function SeriesPicker({ value, onChange, options }) {
+  const [creating, setCreating] = useState(false);
+  // A value that isn't (yet) one of the saved series means we're mid-creation.
+  const typing = creating || (!!value && !options.includes(value));
+
+  const select = (v) => {
+    if (v === NEW_SERIES) { setCreating(true); onChange(''); }
+    else { setCreating(false); onChange(v); }
+  };
+
   return (
-    <>
-      <input
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <select
         className="input"
-        list={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Series (optional) — e.g. Psychosexual Therapy"
+        value={typing ? NEW_SERIES : value}
+        onChange={(e) => select(e.target.value)}
         style={{ fontSize: 13 }}
-      />
-      <datalist id={id}>
-        {options.map((s) => <option key={s} value={s} />)}
-      </datalist>
-    </>
+      >
+        <option value="">No series</option>
+        {options.map((s) => <option key={s} value={s}>{s}</option>)}
+        <option value={NEW_SERIES}>+ New series…</option>
+      </select>
+      {typing && (
+        <input
+          className="input"
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Name the series — e.g. Sexual Difficulties Video Series"
+          style={{ fontSize: 13 }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -417,12 +439,14 @@ function AddPastWork({ companyId, projects, series: seriesOptions, onDone }) {
             it takes precedence over the project, which is what makes a set read
             as a set. Left blank, the video files under its project or
             "Previous work". */}
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 240 }}>
-            <SeriesInput value={series} onChange={setSeries} options={seriesOptions} id="add-series" />
+            <SeriesPicker value={series} onChange={setSeries} options={seriesOptions} />
           </div>
-          <div style={{ flex: 1, minWidth: 200, fontSize: 11.5, color: BRAND.muted }}>
-            Videos sharing a series name get their own group in the library.
+          <div style={{ flex: 1, minWidth: 200, fontSize: 11.5, color: BRAND.muted, paddingTop: 9 }}>
+            {seriesOptions.length
+              ? 'Pick one of this client’s series, or add a new one — each gets its own group in the library.'
+              : 'A series gives a run of videos its own group in the library.'}
           </div>
         </div>
 
