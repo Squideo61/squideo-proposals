@@ -156,6 +156,8 @@ export function ensurePortalTables() {
         created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await sql`CREATE INDEX IF NOT EXISTS portal_library_items_company_idx ON portal_library_items(company_id, created_at DESC)`;
+    // Free-text series name; when set it decides the library group.
+    await sql`ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS series TEXT`;
     await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS portal_extras_discount NUMERIC NOT NULL DEFAULT 0.10`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'staff'`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS portal_user_id TEXT REFERENCES portal_users(id) ON DELETE SET NULL`;

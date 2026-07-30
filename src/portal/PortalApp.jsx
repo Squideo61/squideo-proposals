@@ -45,7 +45,9 @@ export function navigate(hash) {
 }
 
 const NAV = [
-  { view: 'home', label: 'Home', hash: '#/', Icon: Home },
+  // shortLabel is what the mobile tab bar uses — "Current projects" doesn't fit
+  // under an icon at phone width.
+  { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home },
   { view: 'library', label: 'Library', hash: '#/library', Icon: Film },
   { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
   { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet },
@@ -180,7 +182,7 @@ function MobileTabBar({ view }) {
       display: 'flex', justifyContent: 'space-around',
       paddingBottom: 'env(safe-area-inset-bottom)',
     }}>
-      {NAV.map(({ view: v, label, hash, Icon, highlight }) => {
+      {NAV.map(({ view: v, label, shortLabel, hash, Icon, highlight }) => {
         const active = view === v || (v === 'home' && view === 'project');
         return (
           <a key={v} href={hash} style={{
@@ -189,7 +191,7 @@ function MobileTabBar({ view }) {
             color: highlight ? BRAND.blue : active ? BRAND.ink : BRAND.muted,
           }}>
             <Icon size={20} strokeWidth={active || highlight ? 2.4 : 2} />
-            <span style={{ fontSize: 10, fontWeight: active ? 700 : 500 }}>{label}</span>
+            <span style={{ fontSize: 10, fontWeight: active ? 700 : 500 }}>{shortLabel || label}</span>
           </a>
         );
       })}

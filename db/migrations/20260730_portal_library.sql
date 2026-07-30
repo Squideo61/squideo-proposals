@@ -25,3 +25,8 @@ CREATE TABLE IF NOT EXISTS portal_library_items (
 
 CREATE INDEX IF NOT EXISTS portal_library_items_company_idx
   ON portal_library_items(company_id, created_at DESC);
+
+-- Free-text series name — a run of videos the client thinks of as one set
+-- ("Psychosexual Therapy", "Recruitment 2025"). When set it decides the group
+-- the video appears under, ahead of any project link.
+ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS series TEXT;

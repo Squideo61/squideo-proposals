@@ -1027,37 +1027,53 @@ async function libraryRoute(req, res, user) {
   // this client before the portal (or before this deal) existed. Company-scoped,
   // so it shows even for an org with no signed deals at all.
   const archiveRows = await sql`
-    SELECT id, deal_id, title, filename, mime_type, size_bytes, created_at
+    SELECT id, deal_id, series, title, filename, mime_type, size_bytes, created_at
       FROM portal_library_items
      WHERE company_id = ${companyId}
      ORDER BY created_at DESC
   `.catch(() => []);
   const archiveByDeal = new Map();
+  const archiveBySeries = new Map();
   const archiveLoose = [];
   for (const a of archiveRows) {
     const entry = {
       kind: 'archive',
       itemId: a.id,
       name: a.title || a.filename || 'Video',
+      series: a.series || null,
+      dealId: a.deal_id || null,
       mimeType: a.mime_type || null,
       sizeBytes: a.size_bytes != null ? Number(a.size_bytes) : null,
       createdTime: a.created_at,
     };
-    // Filed against one of their live projects when we know which; otherwise it
-    // lands in its own "Previous work" group.
-    if (a.deal_id && dealIds.includes(a.deal_id)) {
+    // A series is how the client thinks about a run of videos, so it wins over
+    // the project link. Failing that it joins one of their live projects, and
+    // failing that it lands in "Previous work".
+    if (a.series) {
+      if (!archiveBySeries.has(a.series)) archiveBySeries.set(a.series, []);
+      archiveBySeries.get(a.series).push(entry);
+    } else if (a.deal_id && dealIds.includes(a.deal_id)) {
       if (!archiveByDeal.has(a.deal_id)) archiveByDeal.set(a.deal_id, []);
       archiveByDeal.get(a.deal_id).push(entry);
     } else {
       archiveLoose.push(entry);
     }
   }
+  // Series groups sit between the live projects and the loose back catalogue.
+  const seriesGroups = [...archiveBySeries.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([name, files]) => ({ dealId: null, series: name, title: name, createdAt: null, files }));
+  const looseGroup = archiveLoose.length
+    ? [{ dealId: null, series: null, title: 'Previous work', createdAt: null, files: archiveLoose }]
+    : [];
+  // Every series we hold, so the manage-mode form can offer them for reuse
+  // rather than relying on staff retyping a name identically.
+  const allSeries = [...archiveBySeries.keys()].sort((a, b) => a.localeCompare(b));
 
   if (!dealIds.length) {
     return res.status(200).json({
-      projects: archiveLoose.length
-        ? [{ dealId: null, title: 'Previous work', createdAt: null, files: archiveLoose }]
-        : [],
+      projects: [...seriesGroups, ...looseGroup],
+      ...(user.canManage ? { allProjects: [], allSeries } : {}),
     });
   }
 
@@ -1134,9 +1150,7 @@ async function libraryRoute(req, res, user) {
       ],
     }))
     .filter((p) => p.files.length > 0);
-  if (archiveLoose.length) {
-    projects.push({ dealId: null, title: 'Previous work', createdAt: null, files: archiveLoose });
-  }
+  projects.push(...seriesGroups, ...looseGroup);
 
   // Only flag "unavailable" when Drive is the sole reason there's nothing to
   // show — if we surfaced any cuts, the library isn't empty.
@@ -1145,7 +1159,7 @@ async function libraryRoute(req, res, user) {
     ...(driveUnavailable && projects.length === 0 ? { unavailable: true } : {}),
     // Manage mode files an upload against a project — the picker needs every
     // project, not just the ones that already have something in the library.
-    ...(user.canManage ? { allProjects: deals.map((d) => ({ id: d.id, title: d.title })) } : {}),
+    ...(user.canManage ? { allProjects: deals.map((d) => ({ id: d.id, title: d.title })), allSeries } : {}),
   });
 }
 
@@ -1208,12 +1222,38 @@ async function libraryItemRoute(req, res, user) {
     const id = makeId('pli');
     await sql`
       INSERT INTO portal_library_items
-        (id, company_id, deal_id, title, filename, mime_type, size_bytes, blob_url, blob_pathname, created_by)
-      VALUES (${id}, ${companyId}, ${dealId}, ${title}, ${filename},
+        (id, company_id, deal_id, series, title, filename, mime_type, size_bytes, blob_url, blob_pathname, created_by)
+      VALUES (${id}, ${companyId}, ${dealId}, ${trimOrNull(body.series)}, ${title}, ${filename},
               ${trimOrNull(body.mimeType)}, ${Number.isFinite(Number(body.sizeBytes)) ? Number(body.sizeBytes) : null},
               ${blobUrl}, ${trimOrNull(body.blobPathname)}, ${user.previewBy || null})
     `;
     return res.status(201).json({ id });
+  }
+
+  // Retitle / regroup an item already in the library. Without this a mistyped
+  // series would mean deleting and re-uploading the whole video.
+  if (req.method === 'PATCH') {
+    const body = await readJsonBody(req);
+    const id = trimOrNull(body.id) || (req.query.id ? String(req.query.id) : null);
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const [cur] = await sql`
+      SELECT id, title, series, deal_id FROM portal_library_items
+       WHERE id = ${id} AND company_id = ${companyId}
+    `;
+    if (!cur) return res.status(404).json({ error: 'Not found' });
+    const title = 'title' in body ? (trimOrNull(body.title) || cur.title) : cur.title;
+    const series = 'series' in body ? trimOrNull(body.series) : cur.series;
+    let dealId = 'dealId' in body ? trimOrNull(body.dealId) : cur.deal_id;
+    if (dealId && dealId !== cur.deal_id) {
+      const [ok] = await sql`SELECT id FROM deals WHERE id = ${dealId} AND company_id = ${companyId}`;
+      if (!ok) dealId = null;
+    }
+    await sql`
+      UPDATE portal_library_items
+         SET title = ${title}, series = ${series}, deal_id = ${dealId}
+       WHERE id = ${id} AND company_id = ${companyId}
+    `;
+    return res.status(200).json({ ok: true });
   }
 
   if (req.method === 'DELETE') {

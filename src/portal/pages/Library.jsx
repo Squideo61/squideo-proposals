@@ -3,14 +3,19 @@
 // past work staff have added by hand. Each video plays right here; every file
 // has its own download button.
 //
+// Videos are grouped by project, except that a hand-added video with a SERIES
+// name groups under that instead — a run of videos the client thinks of as one
+// set rarely maps to one deal.
+//
 // In manage mode (staff inside the client's portal) an upload panel appears at
-// the top for adding back-catalogue videos, and hand-added items can be removed.
+// the top, and each hand-added video can be retitled, moved between series or
+// removed.
 import React, { useEffect, useRef, useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, fmtBytes, fmtDate } from '../components.jsx';
-import { Film, Download, Clapperboard, Upload, Trash2, PlusCircle } from 'lucide-react';
+import { Film, Download, Clapperboard, Upload, Trash2, PlusCircle, Pencil, Layers } from 'lucide-react';
 
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|ogv|avi|mkv)$/i;
 
@@ -72,6 +77,7 @@ export default function Library() {
         <AddPastWork
           companyId={companyId}
           projects={data?.allProjects || []}
+          series={data?.allSeries || []}
           onDone={(added, error) => {
             if (error) showToast(error);
             else if (added) showToast(added > 1 ? `${added} videos added to their library ✓` : 'Added to their library ✓');
@@ -99,15 +105,22 @@ export default function Library() {
       )}
 
       {data && (data.projects || []).map((p) => (
-        <Card key={p.dealId || 'archive'}>
-          <SectionHeading>{p.title}</SectionHeading>
+        <Card key={p.series ? `series:${p.series}` : p.dealId || 'archive'}>
+          <SectionHeading>
+            {p.series ? <><Layers size={16} style={{ verticalAlign: -3, marginRight: 7, color: BRAND.muted }} />{p.title}</> : p.title}
+          </SectionHeading>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))', gap: 16 }}>
             {p.files.map((f) => (
               <FileTile
                 key={f.fileId || f.videoId || f.itemId}
-                dealId={p.dealId}
+                dealId={p.dealId || f.dealId}
                 file={f}
-                onRemove={manageMode && f.kind === 'archive' ? () => removeItem(f) : null}
+                manage={manageMode && f.kind === 'archive'}
+                projects={data.allProjects || []}
+                seriesOptions={data.allSeries || []}
+                onRemove={() => removeItem(f)}
+                onSaved={load}
+                onError={showToast}
               />
             ))}
           </div>
@@ -117,7 +130,9 @@ export default function Library() {
   );
 }
 
-function FileTile({ dealId, file, onRemove }) {
+function FileTile({ dealId, file, manage, projects, seriesOptions, onRemove, onSaved, onError }) {
+  const { companyId } = usePortal();
+  const [editing, setEditing] = useState(false);
   const playable = isVideo(file);
   const meta = [file.sizeBytes != null ? fmtBytes(file.sizeBytes) : null, fmtDate(file.createdTime)]
     .filter(Boolean).join(' · ');
@@ -128,15 +143,18 @@ function FileTile({ dealId, file, onRemove }) {
       display: 'flex', flexDirection: 'column', background: '#fff',
     }}>
       {playable ? (
-        // preload="metadata" so a shelf of videos doesn't pull megabytes each on
-        // page load — the poster frame and duration are enough until they press play.
+        // No forced aspect-ratio box: the video sizes to its own shape, so there
+        // are never letterbox bars (a fractional column width used to leave a
+        // black sliver down one edge) and a vertical cut isn't boxed into 16:9.
+        // preload="metadata" keeps a shelf of videos from pulling megabytes each
+        // on load — the poster frame and duration are enough until they press play.
         <video
           controls
           preload="metadata"
           playsInline
           controlsList="nodownload"
           src={fileUrl(dealId, file)}
-          style={{ width: '100%', aspectRatio: '16 / 9', display: 'block', background: '#000', objectFit: 'contain' }}
+          style={{ width: '100%', display: 'block', background: '#000' }}
         />
       ) : (
         <div style={{ width: '100%', aspectRatio: '16 / 9', display: 'grid', placeItems: 'center', background: '#F2F6F9', color: BRAND.muted }}>
@@ -151,32 +169,108 @@ function FileTile({ dealId, file, onRemove }) {
           </div>
           {meta && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>{meta}</div>}
         </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
-          <a
-            className="btn"
-            href={fileUrl(dealId, file, { download: true })}
-            style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, textDecoration: 'none' }}
-          >
-            <Download size={15} /> Download
-          </a>
-          {onRemove && (
-            <button className="btn-ghost" onClick={onRemove} title="Remove from the library" style={{ color: '#DC2626', padding: '0 12px' }}>
-              <Trash2 size={15} />
-            </button>
-          )}
-        </div>
+
+        {editing ? (
+          <EditItem
+            companyId={companyId}
+            file={file}
+            projects={projects}
+            seriesOptions={seriesOptions}
+            onClose={() => setEditing(false)}
+            onSaved={() => { setEditing(false); onSaved(); }}
+            onError={onError}
+          />
+        ) : (
+          <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
+            <a
+              className="btn"
+              href={fileUrl(dealId, file, { download: true })}
+              style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, textDecoration: 'none' }}
+            >
+              <Download size={15} /> Download
+            </a>
+            {manage && (
+              <>
+                <button className="btn-ghost" onClick={() => setEditing(true)} title="Rename or move to a series" style={{ padding: '0 12px' }}>
+                  <Pencil size={15} />
+                </button>
+                <button className="btn-ghost" onClick={onRemove} title="Remove from the library" style={{ color: '#DC2626', padding: '0 12px' }}>
+                  <Trash2 size={15} />
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+// Manage mode: retitle a library video or move it into a series, without
+// having to delete and re-upload it.
+function EditItem({ companyId, file, projects, seriesOptions, onClose, onSaved, onError }) {
+  const [title, setTitle] = useState(file.name || '');
+  const [series, setSeries] = useState(file.series || '');
+  const [dealId, setDealId] = useState(file.dealId || '');
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await portalApi.patch(`library-item?companyId=${encodeURIComponent(companyId)}`, {
+        id: file.itemId, title, series, dealId: dealId || null,
+      });
+      onSaved();
+    } catch (err) {
+      onError(err.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 'auto' }}>
+      <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" style={{ fontSize: 13 }} />
+      <SeriesInput value={series} onChange={setSeries} options={seriesOptions} id={`series-${file.itemId}`} />
+      <select className="input" value={dealId} onChange={(e) => setDealId(e.target.value)} style={{ fontSize: 13 }}>
+        <option value="">No project</option>
+        {projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+      </select>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn" onClick={save} disabled={busy} style={{ flex: 1 }}>{busy ? 'Saving…' : 'Save'}</button>
+        <button className="btn-ghost" onClick={onClose} disabled={busy} style={{ padding: '0 12px' }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// Free text, but backed by a datalist of the series already in use — retyping
+// a name with a different capitalisation would silently split the group.
+function SeriesInput({ value, onChange, options, id }) {
+  return (
+    <>
+      <input
+        className="input"
+        list={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Series (optional) — e.g. Psychosexual Therapy"
+        style={{ fontSize: 13 }}
+      />
+      <datalist id={id}>
+        {options.map((s) => <option key={s} value={s} />)}
+      </datalist>
+    </>
   );
 }
 
 // Staff-only (manage mode): stream a past video straight to Blob storage, then
 // record it against the org. Uploads bypass the serverless body limit the same
 // way the CRM's revision drafts do.
-function AddPastWork({ companyId, projects, onDone }) {
+function AddPastWork({ companyId, projects, series: seriesOptions, onDone }) {
   const fileRef = useRef(null);
   const [files, setFiles] = useState([]);
   const [title, setTitle] = useState('');
+  const [series, setSeries] = useState('');
   const [dealId, setDealId] = useState('');
   const [drag, setDrag] = useState(false);
   const [progress, setProgress] = useState(null); // { index, total, percent }
@@ -234,10 +328,13 @@ function AddPastWork({ companyId, projects, onDone }) {
           mimeType: file.type || null,
           sizeBytes: file.size,
           title: (files.length === 1 && title.trim()) || file.name.replace(/\.[^.]+$/, ''),
+          series: series.trim() || null,
           dealId: dealId || null,
         });
         added += 1;
       }
+      // The series is deliberately kept: a back catalogue usually goes up in
+      // batches that belong to the same set.
       setFiles([]); setTitle(''); setDealId('');
       if (fileRef.current) fileRef.current.value = '';
       onDone(added, null);
@@ -299,7 +396,7 @@ function AddPastWork({ companyId, projects, onDone }) {
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {files.length > 1 ? (
             <div style={{ flex: 2, minWidth: 200, fontSize: 12.5, color: BRAND.muted, alignSelf: 'center' }}>
-              Each video takes its filename as its title — rename them here after uploading if you'd rather.
+              Each video takes its filename as its title — rename them on the tile afterwards if you'd rather.
             </div>
           ) : (
             <input
@@ -311,9 +408,22 @@ function AddPastWork({ companyId, projects, onDone }) {
             />
           )}
           <select className="input" value={dealId} onChange={(e) => setDealId(e.target.value)} style={{ flex: 1, minWidth: 180 }}>
-            <option value="">Previous work (no project)</option>
+            <option value="">No project</option>
             {projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
           </select>
+        </div>
+
+        {/* A series groups a run of videos under its own heading in the library —
+            it takes precedence over the project, which is what makes a set read
+            as a set. Left blank, the video files under its project or
+            "Previous work". */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <SeriesInput value={series} onChange={setSeries} options={seriesOptions} id="add-series" />
+          </div>
+          <div style={{ flex: 1, minWidth: 200, fontSize: 11.5, color: BRAND.muted }}>
+            Videos sharing a series name get their own group in the library.
+          </div>
         </div>
 
         {busy ? (
