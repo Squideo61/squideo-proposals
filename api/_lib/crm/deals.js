@@ -1458,7 +1458,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         console.warn('[deal files] drive reconcile skipped', err.message);
       }
     }
-    const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows, poFileRows, clientUploadRows] = await Promise.all([
+    const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows, poFileRows, clientUploadRows, scriptFileRows] = await Promise.all([
       sql`
         SELECT p.id, p.data, p.number_year, p.number_seq, p.created_at,
                s.data AS signature_data,
@@ -1560,6 +1560,17 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
          WHERE f.company_id = ${rows[0].company_id}
          ORDER BY f.created_at DESC LIMIT 100
       `.catch(() => []) : Promise.resolve([]),
+      // The client's script & visual direction, sent through their portal.
+      // Best-effort: deal_files.category only exists once the portal schema has
+      // self-healed, and a missing column must not 500 the deal page.
+      sql`
+        SELECT f.id, f.filename, f.category, f.mime_type, f.size_bytes, f.created_at,
+               pu.name AS uploaded_by_name
+          FROM deal_files f
+          LEFT JOIN portal_users pu ON pu.id = f.portal_user_id
+         WHERE f.deal_id = ${id} AND f.category IN ('script', 'visual_direction')
+         ORDER BY f.created_at DESC LIMIT 50
+      `.catch(() => []),
     ]);
 
     // Load reactions for all comments in one query and merge into comments.
@@ -1754,6 +1765,23 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         sizeBytes: f.size_bytes || null,
         uploadedByName: f.uploaded_by_name || null, createdAt: f.created_at,
       })),
+      // The client-facing "Script & visual direction" stage: what they've sent
+      // through the portal, plus the flag staff tick when the script arrived by
+      // another route ('received') or the client asked us to write it ('squideo').
+      clientScript: {
+        status: rows[0].script_status || null,
+        statusAt: rows[0].script_status_at || null,
+        statusBy: rows[0].script_status_by || null,
+        files: (scriptFileRows || []).map(f => ({
+          id: f.id,
+          filename: f.filename,
+          category: f.category === 'visual_direction' ? 'visual_direction' : 'script',
+          mimeType: f.mime_type || null,
+          sizeBytes: f.size_bytes == null ? null : Number(f.size_bytes),
+          uploadedByName: f.uploaded_by_name || null,
+          createdAt: f.created_at,
+        })),
+      },
       comments: comments.map(c => serialiseComment(c, reactionsMap[c.id] || {})),
       secondaryContacts: secondaryContactRows.map(r => ({
         ...serialiseContact(r),

@@ -16,13 +16,13 @@ describe('deriveProjectTasks — gating', () => {
   it('unlocks once the intro email has been sent', () => {
     const deal = { ...launched, payment_terms: null };
     const tasks = deriveProjectTasks({ deal, videos: [{ id: 'v1' }], hasVoiceover: true });
-    expect(tasks.map((t) => t.key)).toEqual(['brand', 'voiceover', 'kickoff']);
+    expect(tasks.map((t) => t.key)).toEqual(['brand', 'script', 'voiceover', 'kickoff']);
   });
 
   it('also unlocks for a project already in production (pre-feature deals)', () => {
     const deal = { id: 'd1', client_tasks_launched_at: null, production_phase: 'pre_pro' };
     const tasks = deriveProjectTasks({ deal, videos: [{ id: 'v1' }], hasVoiceover: true });
-    expect(tasks.length).toBe(3);
+    expect(tasks.length).toBe(4);
   });
 });
 
@@ -33,7 +33,7 @@ describe('deriveProjectTasks — PO task', () => {
     expect(tasks[0].key).toBe('po');
     expect(tasks[0].status).toBe('todo');
     expect(tasks[0].cta.action).toBe('po-number');
-    expect(tasks.map((t) => t.key)).toEqual(['po', 'brand', 'voiceover', 'kickoff']);
+    expect(tasks.map((t) => t.key)).toEqual(['po', 'brand', 'script', 'voiceover', 'kickoff']);
   });
 
   it('detects the PO route from the signature payment option too', () => {
@@ -60,7 +60,7 @@ describe('deriveProjectTasks — voiceover task', () => {
   it('is omitted when the project has no voiceover', () => {
     const deal = { ...launched, payment_terms: null };
     const tasks = deriveProjectTasks({ deal, videos: [{ id: 'v1' }], hasVoiceover: false });
-    expect(tasks.map((t) => t.key)).toEqual(['brand', 'kickoff']);
+    expect(tasks.map((t) => t.key)).toEqual(['brand', 'script', 'kickoff']);
   });
 
   it('is todo until every video has an artist, then done', () => {
@@ -100,6 +100,42 @@ describe('deriveProjectTasks — brand assets task', () => {
   });
 });
 
+describe('deriveProjectTasks — script & visual direction task', () => {
+  const deal = { ...launched, payment_terms: null };
+  const scriptTask = (bundle) =>
+    deriveProjectTasks({ deal, videos: [], hasVoiceover: false, ...bundle }).find((t) => t.key === 'script');
+
+  it('is todo, and deep-links to its own page, until we have something', () => {
+    const t = scriptTask({});
+    expect(t.status).toBe('todo');
+    expect(t.cta.href).toBe('#/script/d1');
+  });
+
+  it('is done once the client has uploaded a file, and invites a new version', () => {
+    const t = scriptTask({ scriptFileCount: 2 });
+    expect(t.status).toBe('done');
+    expect(t.detail).toContain('2 files');
+    expect(t.detail).toContain('updated version');
+  });
+
+  it('is done when staff tick "we already have it" — the pre-sale email case', () => {
+    const t = scriptTask({ scriptStatus: 'received' });
+    expect(t.status).toBe('done');
+    expect(t.detail).toContain('already have');
+  });
+
+  it('is done when the client asks us to write it', () => {
+    const t = scriptTask({ scriptStatus: 'squideo' });
+    expect(t.status).toBe('done');
+    expect(t.detail).toContain('write it');
+  });
+
+  it('lets an upload override "we’ll write it"', () => {
+    const t = scriptTask({ scriptStatus: 'squideo', scriptFileCount: 1 });
+    expect(t.detail).toContain('1 file');
+  });
+});
+
 describe('deriveProjectTasks — kick-off task', () => {
   it('flips to done once a kick-off booking exists', () => {
     const deal = { ...launched, payment_terms: null };
@@ -120,8 +156,9 @@ describe('countOpenTasks', () => {
       hasVoiceover: true,
       hasKickoffBooking: true,
       hasBrandAssets: true,
+      scriptStatus: 'received',
     });
-    // PO todo, brand done, voiceover done, kickoff done → 1 open
+    // PO todo; brand, script, voiceover and kickoff all done → 1 open
     expect(countOpenTasks(tasks)).toBe(1);
   });
 });

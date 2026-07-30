@@ -7,14 +7,19 @@
 import sql from '../db.js';
 import { ensureVoiceoverCatalogue } from '../voiceover.js';
 import { voiceoverProposalContext } from '../proposalPricing.js';
+import { ensurePortalTables } from './db.js';
 import { deriveProjectTasks, countOpenTasks } from './tasks.js';
 
 // → { deal, tasks, openCount } or null if the deal is missing.
 export async function computeDealTasks(dealId) {
   if (!dealId) return null;
+  // Callers include the reminder cron and the CRM steps checklist, which may
+  // run before any portal request has warmed the schema — so self-heal the
+  // portal columns (deals.script_status, deal_files.category) first.
+  await ensurePortalTables();
   const [deal] = await sql`
     SELECT id, company_id, title, po_number, payment_terms,
-           client_tasks_launched_at, production_phase
+           client_tasks_launched_at, production_phase, script_status
       FROM deals WHERE id = ${dealId}
   `;
   if (!deal) return null;
@@ -23,7 +28,7 @@ export async function computeDealTasks(dealId) {
   // (mirrors gatherDealStates in api/portal.js).
   await ensureVoiceoverCatalogue();
 
-  const [propRows, videoRows, kickoffRows, brandRows] = await Promise.all([
+  const [propRows, videoRows, kickoffRows, brandRows, scriptRows] = await Promise.all([
     sql`
       SELECT p.data AS proposal_data, s.data AS signature_data, s.signed_at
         FROM proposals p
@@ -49,6 +54,10 @@ export async function computeDealTasks(dealId) {
          WHERE f.company_id = ${deal.company_id} AND f.category = 'brand'
       ) AS has_brand_assets
     `.catch(() => [{ has_brand_assets: false }]),
+    sql`
+      SELECT COUNT(*)::int AS n FROM deal_files
+       WHERE deal_id = ${dealId} AND category IN ('script', 'visual_direction')
+    `.catch(() => [{ n: 0 }]),
   ]);
 
   const prop = propRows[0] || null;
@@ -69,6 +78,8 @@ export async function computeDealTasks(dealId) {
       : null,
     hasVoiceover,
     hasBrandAssets: brandRows[0]?.has_brand_assets ?? false,
+    scriptStatus: deal.script_status || null,
+    scriptFileCount: scriptRows[0]?.n ?? 0,
     sigPaymentOption: prop?.signature_data?.paymentOption || null,
   });
   return { deal, tasks, openCount: countOpenTasks(tasks) };

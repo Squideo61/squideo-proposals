@@ -215,7 +215,7 @@ export function SectionHeading({ children, right }) {
 }
 
 // Icon per task key, so a new task type gets a sensible default.
-const TASK_ICON = { po: ClipboardList, voiceover: Mic, kickoff: CalendarClock };
+const TASK_ICON = { po: ClipboardList, voiceover: Mic, kickoff: CalendarClock, script: FileText };
 
 // The client's "Your tasks" checklist, shared by the dashboard project card and
 // the project detail page. `onCta(cta)` runs the task's action/deep-link.

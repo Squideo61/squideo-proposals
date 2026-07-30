@@ -13,6 +13,7 @@
 //   library         — finished files from each deal's Drive "4. Signed Off"
 //   download        — org-checked file bytes / signed URLs
 //   files           — brand + per-project documents (list/upload/delete)
+//   script          — the project's script & visual direction stage (GET/POST)
 //   extras          — discounted extras offers (GET) — accept via extras-accept
 //   extras-accept   — server-priced accept → deal_extras row
 //   request-video   — prefilled quote request with the 10% portal discount
@@ -244,13 +245,13 @@ function publicPortalUser(user, memberships = null) {
 // ── Ball-in-court state gathering (shared by overview + project detail) ──────
 // One query per concern across ALL the org's deals, then derived per deal.
 async function gatherDealStates(dealIds) {
-  const empty = { proposals: new Map(), videos: new Map(), revPending: new Map(), sbPending: new Map(), revLinks: new Map(), sbLinks: new Map(), kickoffDeals: new Set(), kickoffBookings: new Map(), brandCompanies: new Set() };
+  const empty = { proposals: new Map(), videos: new Map(), revPending: new Map(), sbPending: new Map(), revLinks: new Map(), sbLinks: new Map(), kickoffDeals: new Set(), kickoffBookings: new Map(), brandCompanies: new Set(), scriptFiles: new Map() };
   if (!dealIds.length) return empty;
 
   // Self-heal the voiceover columns/table before the video query joins them.
   await ensureVoiceoverCatalogue();
 
-  const [proposalRows, videoRows, revRows, sbRows, kickoffRows, brandRows] = await Promise.all([
+  const [proposalRows, videoRows, revRows, sbRows, kickoffRows, brandRows, scriptRows] = await Promise.all([
     sql`
       SELECT p.id, p.deal_id, p.created_at, p.data AS proposal_data, s.data AS signature_data, s.signed_at
         FROM proposals p
@@ -302,6 +303,14 @@ async function gatherDealStates(dealIds) {
            SELECT 1 FROM portal_company_files f
             WHERE f.company_id = d.company_id AND f.category = 'brand'
          )
+    `.catch(() => []),
+    // How many script / visual-direction files the client has sent per deal —
+    // one half of the "script & visual direction" step (the other is the
+    // deals.script_status flag staff tick, or the client's "you write it").
+    sql`
+      SELECT deal_id, COUNT(*)::int AS n FROM deal_files
+       WHERE deal_id = ANY(${dealIds}) AND category IN ('script', 'visual_direction')
+       GROUP BY deal_id
     `.catch(() => []),
   ]);
 
@@ -373,8 +382,9 @@ async function gatherDealStates(dealIds) {
     startsAt: r.starts_at, timezone: r.client_timezone || null, joinUrl: r.meet_url || null,
   }]));
   const brandCompanies = new Set(brandRows.map((r) => r.company_id));
+  const scriptFiles = new Map(scriptRows.map((r) => [r.deal_id, r.n]));
 
-  return { proposals, videos, revPending, sbPending, revLinks, sbLinks, kickoffDeals, kickoffBookings, brandCompanies };
+  return { proposals, videos, revPending, sbPending, revLinks, sbLinks, kickoffDeals, kickoffBookings, brandCompanies, scriptFiles };
 }
 
 function nextStepFor(deal, states) {
@@ -409,6 +419,8 @@ function tasksFor(deal, states) {
     kickoffBooking: states.kickoffBookings.get(deal.id) || null,
     hasVoiceover: prop?.hasVo ?? false,
     hasBrandAssets: states.brandCompanies.has(deal.company_id),
+    scriptStatus: deal.script_status || null,
+    scriptFileCount: states.scriptFiles.get(deal.id) || 0,
     sigPaymentOption: prop?.signature?.data?.paymentOption || null,
   });
 }
@@ -451,6 +463,7 @@ export default async function handler(req, res) {
       case 'kickoff': return kickoffRoute(req, res, user);
       case 'kickoff-book': return kickoffBookRoute(req, res, user);
       case 'request-video': return requestVideoRoute(req, res, user);
+      case 'script': return scriptRoute(req, res, user);
       case 'video-credit': return videoCreditRoute(req, res, user);
       case 'video-credit-checkout': return videoCreditCheckoutRoute(req, res, user);
       case 'video-credit-invoice': return videoCreditInvoiceRoute(req, res, user);
@@ -832,7 +845,7 @@ async function overviewRoute(req, res, user) {
   const deals = await sql`
     SELECT d.id, d.title, d.company_id, d.stage, d.payment_terms, d.po_number,
            d.production_phase, d.production_stage, d.delivery_deadline,
-           d.client_tasks_launched_at,
+           d.client_tasks_launched_at, d.script_status,
            d.portal_extras_discount, d.created_at, c.name AS company_name
       FROM deals d JOIN companies c ON c.id = d.company_id
      WHERE d.company_id = ${companyId}
@@ -883,10 +896,14 @@ async function projectRoute(req, res, user) {
   const states = await gatherDealStates([deal.id]);
   const prop = states.proposals.get(deal.id) || null;
 
+  // General project documents. Script / visual-direction uploads are filed
+  // under their own stage (#/script/<dealId>), so they're kept out of this list
+  // rather than appearing twice.
   const files = await sql`
     SELECT id, filename, mime_type, size_bytes, portal_user_id, created_at
       FROM deal_files
      WHERE deal_id = ${deal.id} AND source = 'portal'
+       AND (category IS NULL OR category NOT IN ('script', 'visual_direction'))
      ORDER BY created_at DESC
   `.catch(() => []);
 
@@ -1173,6 +1190,11 @@ async function filesRoutes(req, res, user) {
       `;
       return res.status(200).json({ files: rows.map(serialisePortalDealFile) });
     }
+    if (scope === 'script') {
+      const deal = await requireDealInOrg(res, req.query.dealId ? String(req.query.dealId) : null, user.companyIds);
+      if (!deal) return;
+      return res.status(200).json({ files: await scriptFilesFor(deal.id) });
+    }
     const companyId = resolveCompanyId(req, res, user);
     if (!companyId) return;
     const rows = await sql`
@@ -1200,6 +1222,12 @@ async function filesRoutes(req, res, user) {
 
     // Deal-scoped documents land on deal_files (source='portal') so they show
     // in the CRM Files card automatically; brand/org docs live on their own table.
+    // A script / visual-direction upload is the same row, filed by category so
+    // it also lands on the deal's "Script & visual direction" card.
+    // (Deal scope only — on the org/brand path `category` means brand|document.)
+    const dealCategory = scope === 'deal' && SCRIPT_CATEGORIES.has(String(req.query.category || ''))
+      ? String(req.query.category)
+      : null;
     let companyId, dealId = null;
     if (scope === 'deal') {
       const deal = await requireDealInOrg(res, req.query.dealId ? String(req.query.dealId) : null, user.companyIds);
@@ -1229,10 +1257,13 @@ async function filesRoutes(req, res, user) {
       const fileId = crypto.randomUUID();
       const blob = await put(`deal-files/${dealId}/${fileId}/${safeName}`, buf, { access: 'private', contentType: mimeType });
       await sql`
-        INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by, source, portal_user_id)
-        VALUES (${fileId}, ${dealId}, ${filename}, ${mimeType}, ${buf.length}, ${blob.url}, ${blob.pathname}, NULL, 'portal', ${user.puid})
+        INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by, source, portal_user_id, category)
+        VALUES (${fileId}, ${dealId}, ${filename}, ${mimeType}, ${buf.length}, ${blob.url}, ${blob.pathname}, NULL, 'portal', ${user.puid}, ${dealCategory})
       `;
-      stored = { id: fileId, filename, mimeType, sizeBytes: buf.length, createdAt: new Date().toISOString() };
+      stored = { id: fileId, filename, mimeType, sizeBytes: buf.length, category: dealCategory, createdAt: new Date().toISOString() };
+      // A script/direction upload answers the stage — including when they'd
+      // previously asked us to write it, or we'd ticked "already received".
+      if (dealCategory) await setScriptStatus(dealId, 'received', `client:${user.email}`);
     } else {
       const id = makeId('pcf');
       const category = req.query.category === 'document' ? 'document' : 'brand';
@@ -1244,22 +1275,30 @@ async function filesRoutes(req, res, user) {
       stored = { id, category, filename, mimeType, sizeBytes: buf.length, createdAt: new Date().toISOString() };
     }
 
-    // Best-effort team ping (in-app only — uploads can be frequent).
+    // Best-effort team ping (in-app only — uploads can be frequent). A script or
+    // visual-direction file gets its own key so producers can be alerted to it
+    // without subscribing to every document upload — and so a re-sent version
+    // reads as "a new version", which is what they actually need to act on.
     try {
       await ensurePortalNotificationDefaults();
       const [co] = await sql`SELECT name FROM companies WHERE id = ${companyId}`;
-      await sendNotification('portal.doc_uploaded', {
-        subject: `📎 ${user.name || user.email} uploaded ${filename}`,
-        text: `${user.name || user.email} uploaded ${filename} via the client portal (${co?.name || companyId}).`,
+      const what = dealCategory === 'visual_direction' ? 'visual direction' : 'script';
+      await sendNotification(dealCategory ? 'portal.script_uploaded' : 'portal.doc_uploaded', {
+        subject: dealCategory
+          ? `✍️ ${user.name || user.email} sent a ${what}: ${filename}`
+          : `📎 ${user.name || user.email} uploaded ${filename}`,
+        text: dealCategory
+          ? `${user.name || user.email} uploaded a ${what} (${filename}) via the client portal (${co?.name || companyId}).`
+          : `${user.name || user.email} uploaded ${filename} via the client portal (${co?.name || companyId}).`,
         inApp: {
-          title: `Client file: ${filename}`,
+          title: dealCategory ? `Client ${what}: ${filename}` : `Client file: ${filename}`,
           body: `${user.name || user.email} · ${co?.name || ''}`,
           link: dealId ? `#/deal/${dealId}` : `#/company/${companyId}`,
         },
         inAppOnly: true,
       });
     } catch (err) {
-      console.warn('[portal] doc_uploaded notify failed', err.message);
+      console.warn('[portal] upload notify failed', err.message);
     }
 
     return res.status(201).json({ file: stored });
@@ -1291,6 +1330,91 @@ async function filesRoutes(req, res, user) {
     }
     if (f.blob_url) { try { await del(f.blob_url); } catch (err) { console.warn('[portal] blob delete failed', err.message); } }
     await sql`DELETE FROM portal_company_files WHERE id = ${id}`;
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ═════════════════════════ script & visual direction ═════════════════════════
+// One client-facing stage covering both halves. The files themselves go through
+// filesRoutes (scope=deal&category=script|visual_direction) — this route reads
+// the stage back and takes the "we'd like you to write it" answer.
+const SCRIPT_CATEGORIES = new Set(['script', 'visual_direction']);
+
+async function scriptFilesFor(dealId) {
+  const rows = await sql`
+    SELECT f.id, f.filename, f.category, f.mime_type, f.size_bytes, f.portal_user_id,
+           f.created_at, pu.name AS uploaded_by_name
+      FROM deal_files f
+      LEFT JOIN portal_users pu ON pu.id = f.portal_user_id
+     WHERE f.deal_id = ${dealId} AND f.category IN ('script', 'visual_direction')
+     ORDER BY f.created_at DESC
+  `.catch(() => []);
+  return rows.map((f) => ({
+    ...serialisePortalDealFile(f),
+    category: f.category,
+    uploadedByName: f.uploaded_by_name || null,
+  }));
+}
+
+// Stamp the deal's script stage. Only ever moves it forward to a real answer —
+// an upload always wins ('received'), so a client who first asked us to write it
+// and then sends one themselves ends up in the right state.
+async function setScriptStatus(dealId, status, by) {
+  await sql`
+    UPDATE deals
+       SET script_status = ${status}, script_status_at = ${status ? new Date().toISOString() : null},
+           script_status_by = ${status ? by : null}, updated_at = NOW()
+     WHERE id = ${dealId}
+  `.catch((err) => { console.warn('[portal] script status update failed', err.message); });
+}
+
+async function scriptRoute(req, res, user) {
+  const deal = await requireDealInOrg(res, req.query.dealId ? String(req.query.dealId) : null, user.companyIds);
+  if (!deal) return;
+
+  if (req.method === 'GET') {
+    const files = await scriptFilesFor(deal.id);
+    return res.status(200).json({
+      dealId: deal.id,
+      dealTitle: deal.title,
+      status: deal.script_status || null,
+      statusAt: deal.script_status_at || null,
+      // True when we ticked "we already have their script" and nothing has been
+      // uploaded here — so the page can say "we've already got it" rather than
+      // showing an empty file list under a done step.
+      receivedElsewhere: deal.script_status === 'received' && files.length === 0,
+      files,
+    });
+  }
+
+  if (req.method === 'POST') {
+    const body = await readJsonBody(req);
+    // The only status a client sets directly: "we'd like Squideo to write it"
+    // (and undoing that). 'received' is stamped by an upload, or by staff.
+    const wantsUs = body?.writeForUs === true;
+    if (wantsUs) {
+      await setScriptStatus(deal.id, 'squideo', `client:${user.email}`);
+      try {
+        await ensurePortalNotificationDefaults();
+        const [co] = await sql`SELECT name FROM companies WHERE id = ${deal.company_id}`;
+        await sendNotification('portal.script_uploaded', {
+          subject: `✍️ ${co?.name || 'A client'} would like us to write the script`,
+          text: `${user.name || user.email} asked Squideo to write the script for ${deal.title || 'their project'}.`,
+          inApp: {
+            title: 'Script: client wants us to write it',
+            body: `${user.name || user.email} · ${deal.title || co?.name || ''}`,
+            link: `#/deal/${deal.id}`,
+          },
+          inAppOnly: true,
+        });
+      } catch (err) {
+        console.warn('[portal] script notify failed', err.message);
+      }
+    } else if (deal.script_status === 'squideo') {
+      await setScriptStatus(deal.id, null, null);
+    }
     return res.status(200).json({ ok: true });
   }
 

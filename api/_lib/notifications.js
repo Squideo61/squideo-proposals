@@ -371,6 +371,14 @@ export async function ensurePortalNotificationDefaults() {
       notification_defaults, '{portal.video_credit_purchase}',
       COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
       WHERE NOT (notification_defaults ? 'portal.video_credit_purchase')`;
+    // Script / visual direction sent by the client (or "please write it for
+    // us") — a production milestone the producer acts on, so it inherits
+    // whoever already gets doc_uploaded / project.good_to_go.
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{portal.script_uploaded}',
+      COALESCE(notification_defaults->'portal.doc_uploaded',
+               notification_defaults->'project.good_to_go', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'portal.script_uploaded')`;
     // Voiceover pick is a production milestone — inherit project.good_to_go like
     // doc_uploaded, and default to the in-app bell only (it can be frequent).
     await sql`UPDATE roles SET notification_defaults = jsonb_set(

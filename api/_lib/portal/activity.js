@@ -98,11 +98,12 @@ export async function portalTimeline({ companyId = null, dealId = null, limit = 
            WHERE p.deal_id = ANY(${dealIds}) AND pb.paid_at IS NOT NULL AND COALESCE(pb.paid_amount, 0) > 0`,
       sql`SELECT po_received_at AS at, po_number, id AS deal_id, title FROM deals
            WHERE id = ANY(${dealIds}) AND po_received_at IS NOT NULL`,
-      sql`SELECT f.created_at AS at, f.filename, f.deal_id, d.title, pu.name AS actor
+      sql`SELECT f.created_at AS at, f.filename, f.category, f.deal_id, d.title, pu.name AS actor
             FROM deal_files f JOIN deals d ON d.id = f.deal_id
             LEFT JOIN portal_users pu ON pu.id = f.portal_user_id
            WHERE f.deal_id = ANY(${dealIds}) AND f.source = 'portal'
-           ORDER BY f.created_at DESC LIMIT ${limit}`,
+           ORDER BY f.created_at DESC LIMIT ${limit}`
+        .catch(() => []),
       sql`SELECT e.created_at AS at, e.description, e.amount, e.deal_id, d.title, pu.name AS actor
             FROM deal_extras e JOIN deals d ON d.id = e.deal_id
             LEFT JOIN portal_users pu ON pu.id = e.portal_user_id
@@ -120,7 +121,14 @@ export async function portalTimeline({ companyId = null, dealId = null, limit = 
     for (const r of signed) push({ type: 'signed', at: r.at, actor: r.actor || null, text: `Signed the proposal${suffix(r.title)}`, link: link(r.deal_id) });
     for (const r of paid) push({ type: 'paid', at: r.at, actor: null, text: `Paid £${Number(r.paid_amount || 0).toFixed(2)}${suffix(r.title)}`, link: link(r.deal_id) });
     for (const r of pos) push({ type: 'po', at: r.at, actor: null, text: `Submitted PO ${r.po_number || ''}`.trim() + suffix(r.title), link: link(r.deal_id) });
-    for (const r of files) push({ type: 'file', at: r.at, actor: r.actor || null, text: `Uploaded ${r.filename}${suffix(r.title)}`, link: link(r.deal_id) });
+    for (const r of files) {
+      const what = r.category === 'script' ? 'a script' : r.category === 'visual_direction' ? 'visual direction' : null;
+      push({
+        type: 'file', at: r.at, actor: r.actor || null,
+        text: what ? `Sent ${what}: ${r.filename}${suffix(r.title)}` : `Uploaded ${r.filename}${suffix(r.title)}`,
+        link: link(r.deal_id),
+      });
+    }
     for (const r of extras) push({ type: 'extra', at: r.at, actor: r.actor || null, text: `Added an extra: ${r.description} (£${Number(r.amount || 0).toFixed(2)} ex VAT)`, link: link(r.deal_id) });
     for (const r of voiceovers) push({ type: 'voiceover', at: r.at, actor: r.actor || null, text: `Selected voiceover${r.artist ? ` — ${r.artist}` : ''}${r.video_title ? ` for ${r.video_title}` : ''}${suffix(r.title)}`, link: link(r.deal_id) });
   }

@@ -25,6 +25,7 @@ import { OrderSummaryCard } from './OrderSummaryCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
 import { PortalDealCard, launchIntroEmail } from './PortalDealCard.jsx';
+import { ClientScriptCard } from './ClientScriptCard.jsx';
 import { IntroCallButton } from './IntroCallCard.jsx';
 import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgressBar.jsx';
 import { TrackingEye } from './EmailTracking.jsx';
@@ -926,6 +927,10 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           </Card>
         </div>
         )}
+
+        {/* The client's script & visual direction — their portal stage, mirrored
+            here with the "we already have it" tick. */}
+        <ClientScriptCard dealId={dealId} clientScript={detail?.clientScript || null} />
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
           <FilesCard dealId={dealId} files={detail?.files || []} clientUploads={detail?.clientUploads || []} driveEnabled={!!detail?.driveFiles} driveFolderId={detail?.driveFolderId || null} />

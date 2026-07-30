@@ -714,6 +714,26 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    // "We already have their script" — the client sent it by email (often before
+    // the deal even closed), so the portal shouldn't keep asking. Also used to
+    // clear the flag. 'squideo' (they asked us to write it) is settable here too
+    // for a producer recording the outcome of a call.
+    if (op === 'set-script-status') {
+      const dealId = trimOrNull(body.dealId);
+      if (!dealId) return res.status(400).json({ error: 'dealId required' });
+      const raw = trimOrNull(body.status);
+      const status = raw === 'received' || raw === 'squideo' ? raw : null;
+      await sql`
+        UPDATE deals
+           SET script_status = ${status},
+               script_status_at = ${status ? new Date().toISOString() : null},
+               script_status_by = ${status ? (user.email || null) : null},
+               updated_at = NOW()
+         WHERE id = ${dealId}
+      `;
+      return res.status(200).json({ ok: true, status });
+    }
+
     return res.status(400).json({ error: 'Unknown op' });
   } catch (err) {
     console.error('[portal-admin] error', err);

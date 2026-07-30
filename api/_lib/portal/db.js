@@ -148,6 +148,14 @@ export function ensurePortalTables() {
     // Video Credit: a "New video" request can flag that the client wants to
     // spend their credit balance (db/migrations/20260728_video_credit.sql).
     await sql`ALTER TABLE quote_requests ADD COLUMN IF NOT EXISTS use_credit BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Script & visual direction — the client's own upload stage
+    // (db/migrations/20260730_client_script.sql). script_status: NULL = waiting,
+    // 'received' = we have it, 'squideo' = they've asked us to write it.
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS script_status TEXT`;
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS script_status_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS script_status_by TEXT`;
+    await sql`ALTER TABLE deal_files ADD COLUMN IF NOT EXISTS category TEXT`;
+    await sql`CREATE INDEX IF NOT EXISTS deal_files_category_idx ON deal_files(deal_id, category)`;
   })().catch((err) => { portalTablesEnsured = null; throw err; });
   return portalTablesEnsured;
 }

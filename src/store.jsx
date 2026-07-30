@@ -3615,6 +3615,26 @@ export function StoreProvider({ children }) {
       return api.get('/api/crm/deals/' + encodeURIComponent(dealId) + '/client-uploads/' + encodeURIComponent(fileId));
     },
 
+    // The deal's "Script & visual direction" stage as the client sees it.
+    // status: 'received' (we already have their script — stop the portal asking)
+    // | 'squideo' (they've asked us to write it) | null (still waiting).
+    setDealScriptStatus(dealId, status) {
+      return api.post('/api/crm/portal-admin?op=set-script-status', { dealId, status }).then((r) => {
+        const next = r?.status ?? status ?? null;
+        setState(s => {
+          const detail = s.dealDetail[dealId];
+          if (!detail) return s;
+          const clientScript = {
+            ...(detail.clientScript || { files: [] }),
+            status: next,
+            statusAt: next ? new Date().toISOString() : null,
+          };
+          return { ...s, dealDetail: { ...s.dealDetail, [dealId]: { ...detail, clientScript } } };
+        });
+        return r;
+      });
+    },
+
     // ---------- Purchase orders (PO-route deals) ----------
     // Record the received PO number (requires a non-empty number — the server
     // 400s on blank). Updates the deal-detail PO slice when it's loaded.

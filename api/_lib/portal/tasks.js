@@ -49,6 +49,29 @@ const TASK_PRODUCERS = [
     status: hasBrandAssets ? 'done' : 'todo',
     cta: { label: hasBrandAssets ? 'View brand files' : 'Upload brand assets', href: '#/documents' },
   }),
+  // Send us your script & visual direction. Deliberately ONE step for the
+  // client: the script and the look/feel notes arrive together (often before
+  // the deal has even closed). Done when they've uploaded something, we've
+  // ticked "we already have it" on the deal, or they've asked us to write it.
+  // Never locks — they can send a new version at any point.
+  ({ deal, scriptStatus, scriptFileCount = 0 }) => {
+    const uploaded = scriptFileCount > 0;
+    const done = uploaded || scriptStatus === 'received' || scriptStatus === 'squideo';
+    const detail = scriptStatus === 'squideo' && !uploaded
+      ? 'You’ve asked us to write it — we’ll share a draft for your approval.'
+      : uploaded
+        ? `We’ve got ${scriptFileCount} file${scriptFileCount === 1 ? '' : 's'} from you — send an updated version any time.`
+        : scriptStatus === 'received'
+          ? 'We already have your script — thank you. Send an updated version any time.'
+          : 'Share your script and any visual direction — or ask us to write it for you.';
+    return {
+      key: 'script',
+      title: 'Send us your script & visual direction',
+      detail,
+      status: done ? 'done' : 'todo',
+      cta: { label: done ? 'View or update' : 'Send script', href: `#/script/${deal.id}` },
+    };
+  },
   // Choose a voiceover artist for each video. Only when the project actually
   // includes a voiceover (the standard AI VO can be removed from the proposal).
   ({ deal, videos, hasVoiceover }) => {

@@ -283,6 +283,14 @@ export const NOTIFICATIONS = [
     channel: 'general',
   },
   {
+    key: 'portal.script_uploaded',
+    label: 'Client sent a script or visual direction',
+    description: 'A client uploads a script or visual direction (including a new version) — or asks us to write the script for them.',
+    audience: 'broadcast',
+    group: 'Client portal',
+    channel: 'general',
+  },
+  {
     key: 'portal.extra_accepted',
     label: 'Client added a portal extra',
     description: 'A client adds a discounted extra to a live project from the customer portal.',
