@@ -12,11 +12,14 @@
 // and thinking better of it leaves nothing behind — and can't re-key the live
 // link of someone who already has one.
 import React, { useEffect, useRef, useState } from 'react';
-import { Send } from 'lucide-react';
+import { Send, FileText } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { Modal } from './ui.jsx';
 import { crmApi } from '../lib/crmFetch.js';
-import { portalInviteTemplate, fillPortalInvite } from '../lib/portalInviteEmail.js';
+import {
+  portalInviteTemplate, fillPortalInvite, unfillPortalInvite, wrapSignature,
+  PORTAL_INVITE_TEMPLATE_ID,
+} from '../lib/portalInviteEmail.js';
 import { sanitizeEmailHtml, htmlToPlainText, isHtmlEmpty } from '../lib/emailHtml.js';
 
 export default function InviteComposer({ companyId, email, name, senderName, onClose, onSent }) {
@@ -27,6 +30,12 @@ export default function InviteComposer({ companyId, email, name, senderName, onC
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
+  // What "Save as template" would store, shown for confirmation before it's
+  // written — the placeholders going back in shouldn't be a silent transform.
+  const [pendingTemplate, setPendingTemplate] = useState(null);
+  // The values that were substituted in, needed to reverse them on save.
+  const varsRef = useRef(null);
   // Seeded into the contentEditable once, then owned by the DOM — re-rendering
   // it from state on every keystroke would fight the caret.
   const [seed, setSeed] = useState(null);
@@ -46,17 +55,19 @@ export default function InviteComposer({ companyId, email, name, senderName, onC
           crmApi('GET', '/api/crm/gmail/signature').catch(() => null),
         ]);
         if (cancelled) return;
-        const filled = fillPortalInvite(portalInviteTemplate(templates), {
+        const vars = {
           inviteUrl: invite.inviteUrl,
           email: invite.email || email,
           name,
           companyName: invite.companyName,
           senderName,
-        });
+        };
+        varsRef.current = vars;
+        const filled = fillPortalInvite(portalInviteTemplate(templates), vars);
         setToken(invite.token);
         setSubject(filled.subject);
         setTo(invite.email || email);
-        setSeed(filled.bodyHtml + (sig?.signatureHtml ? `<br>${sig.signatureHtml}` : ''));
+        setSeed(filled.bodyHtml + (sig?.signatureHtml ? `<br>${wrapSignature(sig.signatureHtml)}` : ''));
       } catch (err) {
         if (!cancelled) setError(err.message || 'Could not prepare the invite');
       } finally {
@@ -69,6 +80,33 @@ export default function InviteComposer({ companyId, email, name, senderName, onC
   useEffect(() => {
     if (seed != null && bodyRef.current) bodyRef.current.innerHTML = seed;
   }, [seed]);
+
+  // Turn the current draft back into a template and show it for confirmation.
+  const reviewTemplate = () => {
+    const html = bodyRef.current?.innerHTML || '';
+    const vars = varsRef.current || {};
+    setPendingTemplate({
+      subject: subject.trim(),
+      bodyHtml: unfillPortalInvite(html, vars),
+    });
+    setError(null);
+  };
+
+  const saveTemplate = async () => {
+    setSending(true);
+    try {
+      await crmApi('PATCH', `/api/crm/templates/${PORTAL_INVITE_TEMPLATE_ID}`, {
+        subject: pendingTemplate.subject,
+        bodyHtml: pendingTemplate.bodyHtml,
+      });
+      setPendingTemplate(null);
+      setNotice('Template updated — the next invite starts from this.');
+    } catch (err) {
+      setError(err.message || 'Could not save the template');
+    } finally {
+      setSending(false);
+    }
+  };
 
   const send = async () => {
     const html = bodyRef.current?.innerHTML || '';
@@ -110,8 +148,32 @@ export default function InviteComposer({ companyId, email, name, senderName, onC
           {error}
         </div>
       )}
+      {notice && (
+        <div style={{ background: '#EAF7FC', border: '1px solid #A9E1F5', color: '#0B6E93', borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 12 }}>
+          {notice}
+        </div>
+      )}
 
-      {loading ? (
+      {pendingTemplate ? (
+        <>
+          <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5 }}>
+            This is what will be saved. The recipient's details and their one-time link have been
+            put back as placeholders, so the next invite fills in its own.
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>Subject</div>
+          <div style={{ border: `1px solid ${BRAND.border}`, borderRadius: 8, padding: '8px 12px', fontSize: 13.5, marginBottom: 10 }}>
+            {pendingTemplate.subject}
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>Message</div>
+          <div
+            style={{
+              border: `1px solid ${BRAND.border}`, borderRadius: 8, padding: 12,
+              maxHeight: '40vh', overflowY: 'auto', fontSize: 14, lineHeight: 1.6, color: BRAND.ink,
+            }}
+            dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(pendingTemplate.bodyHtml) }}
+          />
+        </>
+      ) : loading ? (
         <div style={{ color: BRAND.muted, fontSize: 13, padding: '30px 0', textAlign: 'center' }}>Preparing the invite…</div>
       ) : (
         <>
@@ -137,17 +199,39 @@ export default function InviteComposer({ companyId, email, name, senderName, onC
         </>
       )}
 
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-        <button className="btn-ghost" onClick={onClose} disabled={sending}>Cancel</button>
-        <button
-          className="btn"
-          onClick={send}
-          disabled={loading || sending || !token}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
-        >
-          <Send size={15} /> {sending ? 'Sending…' : 'Send invite'}
-        </button>
-      </div>
+      {pendingTemplate ? (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <button className="btn-ghost" onClick={() => setPendingTemplate(null)} disabled={sending}>Back to the email</button>
+          <button className="btn" onClick={saveTemplate} disabled={sending}>
+            {sending ? 'Saving…' : 'Save template'}
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 16 }}>
+          {/* Editing the wording here is usually editing it for good, so the
+              way to keep it is right next to the draft. */}
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={reviewTemplate}
+            disabled={loading || sending}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}
+            title="Save this wording as the template every future invite starts from"
+          >
+            <FileText size={14} /> Save as template
+          </button>
+          <div style={{ flex: 1 }} />
+          <button className="btn-ghost" onClick={onClose} disabled={sending}>Cancel</button>
+          <button
+            className="btn"
+            onClick={send}
+            disabled={loading || sending || !token}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+          >
+            <Send size={15} /> {sending ? 'Sending…' : 'Send invite'}
+          </button>
+        </div>
+      )}
     </Modal>
   );
 }

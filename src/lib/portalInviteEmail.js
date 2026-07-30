@@ -46,6 +46,52 @@ const escapeHtml = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => (
 // Body values are HTML-escaped (a company name with an ampersand shouldn't
 // break the message, and the link has to survive being an href); the subject is
 // plain text, so it takes the raw value.
+// The signature is appended to the draft, not part of the template. Marking it
+// means "save as template" can drop it precisely, rather than trying to match
+// signature HTML that contentEditable may have reformatted.
+export const SIGNATURE_MARKER = 'data-sq-signature';
+
+export function wrapSignature(html) {
+  return html ? `<div ${SIGNATURE_MARKER}="1">${html}</div>` : '';
+}
+
+// The reverse of fillPortalInvite: take an edited DRAFT and turn it back into a
+// template. Without this, saving Dan's draft would bake "Hi Dan", his company
+// and — worst of all — his one-time invite link into the copy every future
+// client receives.
+//
+// Values are put back in the order they were substituted, longest first, so a
+// company name that contains the first name is matched as the company. Both the
+// raw and HTML-escaped forms are tried, since the body carries the escaped one.
+export function unfillPortalInvite(html, vars) {
+  // The signature was appended last, so everything from its marker on goes.
+  let out = String(html || '').replace(
+    new RegExp(`<div[^>]*${SIGNATURE_MARKER}[\\s\\S]*$`, 'i'), '',
+  );
+
+  const subs = [
+    [vars.inviteUrl, 'portal_link'],
+    [vars.email, 'email'],
+    [vars.companyName, 'company'],
+    [firstNameFor(vars), 'first_name'],
+  ].filter(([value]) => value && String(value).trim());
+
+  for (const [value, key] of subs) {
+    for (const form of new Set([String(value), escapeHtml(String(value))])) {
+      // Word boundaries only for short human values — a URL has punctuation at
+      // both ends that \b would refuse to match.
+      const isWordy = /^[\w][\w\s.'&-]*$/.test(form) && form.length < 60;
+      const pattern = isWordy
+        ? new RegExp(`\\b${escapeRegExp(form)}\\b`, 'g')
+        : new RegExp(escapeRegExp(form), 'g');
+      out = out.replace(pattern, `{{${key}}}`);
+    }
+  }
+  return out.trim();
+}
+
+const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 export function fillPortalInvite(template, vars) {
   const map = {
     portal_link: vars.inviteUrl || '',
