@@ -11,6 +11,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, fileSizeLabel } from '../../utils.js';
 import { Modal, FormRow } from '../ui.jsx';
+import { sanitizeEmailHtml, htmlToPlainText, isHtmlEmpty } from '../../lib/emailHtml.js';
 import { NewDealModal } from './PipelineView.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 
@@ -1405,42 +1406,9 @@ function SignatureEmptyHint({ diagnostics }) {
 // Gmail's 25 MB message limit once base64 inflates the payload ~33%.
 const EMAIL_ATTACH_MAX_BYTES = 20 * 1024 * 1024;
 
-// Tags the rich-text toolbar can produce. Anything else (scripts, styles,
-// inline event handlers) is stripped before the HTML leaves the browser.
-const EMAIL_HTML_SANITIZE = {
-  // `style` is allowed so the toolbar's text/highlight colours survive (DOMPurify
-  // still strips dangerous CSS); `font` + `color` covers the <font> tags older
-  // browsers emit for foreColor/backColor.
-  ALLOWED_TAGS: ['b', 'strong', 'i', 'em', 'u', 'a', 'ul', 'ol', 'li', 'p', 'br', 'span', 'div', 'font'],
-  ALLOWED_ATTR: ['href', 'target', 'rel', 'style', 'color'],
-};
-
-function sanitizeEmailHtml(html) {
-  const clean = DOMPurify.sanitize(html || '', EMAIL_HTML_SANITIZE);
-  // Wrap so recipients get a sensible default font/size/colour even if the
-  // body has no block wrapper of its own.
-  return '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:14px;line-height:1.6;color:#0F2A3D;">'
-    + clean + '</div>';
-}
-
-// Plain-text fallback for the multipart/alternative text part: turn block ends
-// and <br> into newlines, strip the rest, decode entities.
-function htmlToPlainText(html) {
-  if (!html) return '';
-  const withBreaks = String(html)
-    .replace(/<\/(p|div|li)>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '');
-  const ta = document.createElement('textarea');
-  ta.innerHTML = withBreaks;
-  return ta.value.replace(/\n{3,}/g, '\n\n').trim();
-}
-
-function isHtmlEmpty(html) {
-  if (!html) return true;
-  const stripped = String(html).replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, '').replace(/\s/g, '');
-  return stripped.length === 0;
-}
+// sanitizeEmailHtml / htmlToPlainText / isHtmlEmpty / EMAIL_HTML_SANITIZE now
+// live in src/lib/emailHtml.js — the portal's invite composer sends through the
+// same helpers, and two sanitisers would eventually diverge.
 
 // Format a Date as the value a <input type="datetime-local"> expects (local
 // time, no timezone, minute precision): "YYYY-MM-DDTHH:mm".

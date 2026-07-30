@@ -16,7 +16,6 @@ import { NotificationBell } from './components/NotificationBell.jsx';
 import { DesktopNotifier } from './components/DesktopNotifier.jsx';
 import { InstallNudge } from './components/InstallNudge.jsx';
 import { CrmTopBar } from './components/crm/CrmTopBar.jsx';
-import { PortalInviteDeepLink } from './components/crm/PortalInviteDeepLink.jsx';
 
 const lazyNamed = (loader, name) => lazy(() => loader().then((m) => ({ default: m[name] })));
 
@@ -822,9 +821,6 @@ function AppShell() {
           <EmailComposerHost onViewThread={(threadId) => navigate('email', 'inbox~' + threadId)} />
         </Suspense>
       )}
-      {/* "Invite" from the client portal's Team page in manage mode lands here
-          to open the composer (the portal bundle has no composer of its own). */}
-      <PortalInviteDeepLink />
       {/* The top bar hosts the bell on CRM views; on the focused editor /
           public views (no top bar) keep the floating bell so it's never lost. */}
       {NO_TOPBAR_VIEWS.has(view) && <NotificationBell onOpenLink={openLink} />}

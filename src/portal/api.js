@@ -58,6 +58,22 @@ async function request(method, path, body) {
   return json;
 }
 
+// Same-origin calls to the STAFF CRM API, authorised by the staff session
+// cookie. Only ever reached from manage mode, where the person driving the
+// portal is a signed-in team member; a client has no such cookie and every one
+// of these endpoints refuses them.
+export async function crmApi(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+    credentials: 'include',
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.error || 'Request failed');
+  return json;
+}
+
 export const portalApi = {
   get:    (path)       => request('GET', path),
   post:   (path, body) => request('POST', path, body ?? {}),

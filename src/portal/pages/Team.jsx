@@ -7,25 +7,16 @@ import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, fmtDate } from '../components.jsx';
 import { UserPlus, Mail, Clock, Send } from 'lucide-react';
-
-// Staff in manage mode don't send the standard invite — they hand off to the
-// CRM, which mints the invite and opens the email composer prefilled from the
-// "Client portal invite" template. The composer only exists in the CRM bundle,
-// hence the new tab. Clients inviting their own colleagues never come through
-// here: their invite sends the standard branded email straight away.
-function openComposeInvite({ companyId, email, name }) {
-  const q = new URLSearchParams({ portalInvite: companyId, portalInviteEmail: email });
-  if (name) q.set('portalInviteName', name);
-  window.open(`/?${q.toString()}`, '_blank', 'noopener');
-}
+import InviteComposer from '../InviteComposer.jsx';
 
 export default function Team() {
-  const { user, companyId, manageMode, showToast } = usePortal();
+  const { user, companyId, manageMode, preview, showToast } = usePortal();
   const [data, setData] = useState(null);
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [invitingId, setInvitingId] = useState(null);
+  const [composeFor, setComposeFor] = useState(null); // { email, name } in manage mode
   const companyName = user?.companies?.find((c) => c.id === companyId)?.name;
 
   const load = useCallback(async () => {
@@ -35,11 +26,12 @@ export default function Team() {
 
   useEffect(() => { load().catch((err) => showToast(err.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Staff in manage mode write the email themselves; a client inviting their
+  // own colleague sends the standard branded invite immediately.
   const invite = async (e) => {
     e.preventDefault();
     if (manageMode) {
-      openComposeInvite({ companyId, email, name });
-      setEmail(''); setName('');
+      setComposeFor({ email, name });
       return;
     }
     setBusy(true);
@@ -58,7 +50,7 @@ export default function Team() {
   // One-click invite for someone we already have on file — no retyping.
   const inviteContact = async (c) => {
     if (manageMode) {
-      openComposeInvite({ companyId, email: c.email, name: c.name });
+      setComposeFor({ email: c.email, name: c.name });
       return;
     }
     setInvitingId(c.id);
@@ -84,6 +76,21 @@ export default function Team() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {composeFor && (
+        <InviteComposer
+          companyId={companyId}
+          email={composeFor.email}
+          name={composeFor.name}
+          senderName={preview?.staffEmail || null}
+          onClose={() => setComposeFor(null)}
+          onSent={(sentTo) => {
+            setComposeFor(null);
+            setEmail(''); setName('');
+            showToast(`Invite sent to ${sentTo} ✓`);
+            load().catch(() => {});
+          }}
+        />
+      )}
       <div>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: BRAND.ink }}>Your team</h1>
         <p style={{ margin: '6px 0 0', fontSize: 13.5, color: BRAND.muted }}>
@@ -102,7 +109,7 @@ export default function Team() {
         </form>
         <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 8 }}>
           {manageMode
-            ? 'Staff: this opens the CRM composer with their invite link, so you can write the email yourself.'
+            ? 'Staff: opens an editable email with their invite link, sent from your Gmail.'
             : `They'll get an email invite to ${companyName || 'your organisation'}'s portal — they can only ever see your organisation's projects.`}
         </div>
       </Card>
