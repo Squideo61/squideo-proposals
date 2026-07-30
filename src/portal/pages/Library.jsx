@@ -180,6 +180,17 @@ function AddPastWork({ companyId, projects, onDone }) {
   const [dealId, setDealId] = useState('');
   const [drag, setDrag] = useState(false);
   const [progress, setProgress] = useState(null); // { index, total, percent }
+  const [stalled, setStalled] = useState(false);
+
+  // The Blob SDK retries a failed request 10 times with backoff, so a blocked
+  // or flaky connection sits at 0% for minutes before it finally throws. Say
+  // something rather than leaving a dead progress bar.
+  useEffect(() => {
+    setStalled(false);
+    if (!progress || progress.percent > 0) return undefined;
+    const t = window.setTimeout(() => setStalled(true), 25_000);
+    return () => window.clearTimeout(t);
+  }, [progress?.index, progress?.percent > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A back catalogue arrives as a handful of files at once, so a multi-drop
   // uploads the lot rather than silently keeping the first. The title field
@@ -313,6 +324,11 @@ function AddPastWork({ companyId, projects, onDone }) {
             <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 6 }}>
               {progress.total > 1 ? `Uploading ${progress.index} of ${progress.total}… ` : 'Uploading… '}{progress.percent}%
             </div>
+            {stalled && (
+              <div style={{ fontSize: 12, color: '#B45309', marginTop: 4 }}>
+                Still trying to start — we're retrying. If it doesn't move, check the connection and try again.
+              </div>
+            )}
           </div>
         ) : (
           <button className="btn" type="submit" disabled={!files.length} style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
