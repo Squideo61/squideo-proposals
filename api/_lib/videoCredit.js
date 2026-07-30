@@ -11,7 +11,7 @@
 // recomputed here.
 
 import sql from './db.js';
-import { creditTotalsForKeys, clientKeysForCompany } from './partnerCredits.js';
+import { creditTotalsForKeys, clientKeysForCompany, companyCreditTotals } from './partnerCredits.js';
 import { notifyPortalUser } from './portal/notifications.js';
 import { sendNotification, ensurePortalNotificationDefaults } from './notifications.js';
 import { VIDEO_CREDIT, videoCreditDiscount, videoCreditQuote } from './videoCreditPricing.js';
@@ -57,14 +57,11 @@ export async function resolveCompanyCreditKeys(company) {
   return clientKeysForCompany(company?.id || company);
 }
 
-// The company's aggregate credit balance in minutes, summed across every key.
+// The company's aggregate credit balance in minutes — BOTH ledgers (partner
+// credits and deal credit-based projects), because to the client that's one
+// number. See companyCreditTotals for why they're separate underneath.
 export async function companyCreditBalance(company) {
-  const keys = await resolveCompanyCreditKeys(company);
-  if (!keys.length) return { issued: 0, used: 0, remaining: 0, keys: [] };
-  const totals = await creditTotalsForKeys(keys);
-  const issued = totals.reduce((s, t) => s + (Number(t.credits_issued) || 0), 0);
-  const used = totals.reduce((s, t) => s + (Number(t.credits_used) || 0), 0);
-  return { issued, used, remaining: issued - used, keys };
+  return companyCreditTotals(company?.id || company);
 }
 
 // Ensure the company has a client_key its credit can attach to. If it already

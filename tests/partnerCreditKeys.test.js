@@ -4,7 +4,7 @@ vi.mock('../api/_lib/db.js', async () => ({
   default: (await import('./helpers/mockDb.js')).sqlMock,
 }));
 
-import { clientKeysForCompany } from '../api/_lib/partnerCredits.js';
+import { clientKeysForCompany, companyCreditTotals } from '../api/_lib/partnerCredits.js';
 import { setSqlHandler, resetSqlMock, getSqlCalls } from './helpers/mockDb.js';
 
 // The client portal and the CRM company page both ask this one function whose
@@ -70,6 +70,35 @@ describe('clientKeysForCompany', () => {
     expect(await clientKeysForCompany(null)).toEqual([]);
     expect(await clientKeysForCompany({})).toEqual([]);
     expect(keyQuery()).toBeUndefined();
+  });
+
+  it('counts BOTH ledgers — partner credit and deal credit-based projects', async () => {
+    // A client can hold credit in two unrelated places. Counting only partner
+    // credit is what made a deal card read "9 credits remaining" while the same
+    // client's portal read "0 min".
+    setSqlHandler((text) => {
+      if (text.includes('SELECT DISTINCT ps.client_key')) return [{ client_key: 'christie' }];
+      if (text.includes('FROM companies')) return [COMPANY];
+      if (text.includes('WITH sub_totals')) return [{ client_key: 'christie', credits_issued: 4, credits_used: 1 }];
+      if (text.includes('FROM project_retainers')) return [{ id: 'r1', allocation_amount: 9, used: 3 }];
+      return [];
+    });
+    const t = await companyCreditTotals('co1');
+    expect(t.partner.remaining).toBe(3);   // 4 issued − 1 used
+    expect(t.retainers.remaining).toBe(6); // 9 allocated − 3 logged
+    expect(t.remaining).toBe(9);
+  });
+
+  it('still reports retainer credit when no partner client matches at all', async () => {
+    setSqlHandler((text) => {
+      if (text.includes('SELECT DISTINCT ps.client_key')) return [];
+      if (text.includes('FROM companies')) return [COMPANY];
+      if (text.includes('FROM project_retainers')) return [{ id: 'r1', allocation_amount: 9, used: 0 }];
+      return [];
+    });
+    const t = await companyCreditTotals('co1');
+    expect(t.remaining).toBe(9);
+    expect(t.keys).toEqual([]);
   });
 
   it('lets an explicit company_id link win, and bypasses the guesses for it', () => {

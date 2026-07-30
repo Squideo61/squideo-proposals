@@ -77,6 +77,63 @@ export async function creditClientsWithCompany() {
   `.catch(() => []);
 }
 
+// A company's TOTAL credit, across both ledgers that hold it:
+//
+//   · partner credits — partner_subscriptions + credit_allocations, matched to
+//     the company by clientKeysForCompany. Portal video-credit purchases land
+//     here too.
+//   · deal credit-based projects — project_retainers with
+//     allocation_type='credits' on any of the company's deals, drawn down by
+//     project_retainer_entries.
+//
+// They're separate systems for good operational reasons, but to the client
+// "credit" is one number: a deal card reading "9 credits remaining" and a portal
+// reading "0 min" is just wrong. Everything that shows a client's balance — the
+// portal, the deal page, the company page — goes through here so they agree.
+//
+// Money-type retainers are excluded: those are a £ pot, not minutes.
+export async function companyCreditTotals(companyId) {
+  const id = typeof companyId === 'object' ? companyId?.id : companyId;
+  const empty = { issued: 0, used: 0, remaining: 0, keys: [], partner: null, retainers: null };
+  if (!id) return empty;
+
+  const keys = await clientKeysForCompany(id);
+  const [totals, retainerRows] = await Promise.all([
+    keys.length ? creditTotalsForKeys(keys) : Promise.resolve([]),
+    sql`
+      SELECT r.id, r.allocation_amount,
+             COALESCE((SELECT SUM(e.value) FROM project_retainer_entries e WHERE e.retainer_id = r.id), 0) AS used
+        FROM project_retainers r
+        JOIN deals d ON d.id = r.deal_id
+       WHERE d.company_id = ${id}
+         AND r.allocation_type = 'credits'
+         AND COALESCE(r.status, 'active') = 'active'
+    `.catch(() => []),
+  ]);
+
+  const partner = {
+    issued: totals.reduce((s, t) => s + (Number(t.credits_issued) || 0), 0),
+    used: totals.reduce((s, t) => s + (Number(t.credits_used) || 0), 0),
+  };
+  partner.remaining = partner.issued - partner.used;
+
+  const retainers = {
+    issued: retainerRows.reduce((s, r) => s + (Number(r.allocation_amount) || 0), 0),
+    used: retainerRows.reduce((s, r) => s + (Number(r.used) || 0), 0),
+    count: retainerRows.length,
+  };
+  retainers.remaining = retainers.issued - retainers.used;
+
+  return {
+    issued: partner.issued + retainers.issued,
+    used: partner.used + retainers.used,
+    remaining: partner.remaining + retainers.remaining,
+    keys,
+    partner,
+    retainers,
+  };
+}
+
 // Bind (or unbind) every subscription under a client_key to a company.
 export async function setCreditClientCompany(clientKey, companyId) {
   await ensureCreditCompanyLink();

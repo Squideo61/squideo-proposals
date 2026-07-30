@@ -5,7 +5,7 @@ import { hasPermission } from '../permissions.js';
 import { updateContactAddress, getOrCreateContact } from '../xero.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
 import {
-  creditTotalsForKeys, clientKeysForCompany,
+  creditTotalsForKeys, clientKeysForCompany, companyCreditTotals,
   creditClientsWithCompany, setCreditClientCompany,
 } from '../partnerCredits.js';
 import { ensureCompanyLogoColumns, decodeLogo, portalLogoPath } from '../portal/logo.js';
@@ -486,6 +486,7 @@ export async function companiesRoute(req, res, id, action, user) {
     const routeByKey = new Map(routeRows.map(r => [r.client_key, r]));
     const totalByKey = new Map(allTotals.map(t => [t.client_key, t]));
 
+    const totals = await companyCreditTotals(id).catch(() => null);
     const matched = keys.map(k => {
       const r = routeByKey.get(k) || {};
       const t = totalByKey.get(k);
@@ -499,12 +500,12 @@ export async function companiesRoute(req, res, id, action, user) {
         remaining: t ? Number(t.credits_remaining) || 0 : 0,
       };
     });
-    const portalRemaining = matched.reduce((s, m) => s + m.remaining, 0);
-
     return res.status(200).json({
       company: { id: co.id, name: co.name, xeroContactId: co.xero_contact_id || null },
-      // Exactly what the portal's "your credit balance" shows.
-      portalRemaining,
+      // Exactly what the portal's "your credit balance" shows — both ledgers.
+      portalRemaining: totals ? totals.remaining : 0,
+      partnerRemaining: totals?.partner?.remaining ?? 0,
+      retainerRemaining: totals?.retainers?.remaining ?? 0,
       matched,
       // Every partner client with credit left that did NOT match this company —
       // the shortlist to look through when a balance is "missing".
@@ -520,9 +521,8 @@ export async function companiesRoute(req, res, id, action, user) {
           };
         })
         .filter(c => c.remaining !== 0),
-      // A different system: per-deal credit allocations. Shown on the company
-      // page's Current Projects card, so 9 credits seen there may be one of
-      // these rather than partner credit — the portal doesn't count them.
+      // Per-deal credit allocations — a separate ledger from partner credits,
+      // but counted in the same client-facing balance.
       dealRetainers: retainers.map(r => ({
         dealId: r.deal_id,
         dealTitle: r.deal_title,

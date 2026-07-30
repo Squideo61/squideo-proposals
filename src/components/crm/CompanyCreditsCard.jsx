@@ -111,8 +111,11 @@ function CreditCheckModal({ companyId, onClose, showMsg }) {
             border: '1px solid ' + (d.portalRemaining > 0 ? '#BBF7D0' : '#FDE68A'),
             fontSize: 13, color: BRAND.ink,
           }}>
-            Their portal shows <strong>{fmtCredits(d.portalRemaining)} min</strong>.
-            {d.portalRemaining === 0 && ' Anything listed under “Not matched” or “Deal credit projects” below isn’t reaching it.'}
+            Their portal shows <strong>{fmtCredits(d.portalRemaining)} min</strong>
+            {d.portalRemaining > 0 && (
+              <> — {fmtCredits(d.partnerRemaining)} partner credit + {fmtCredits(d.retainerRemaining)} from credit-based projects</>
+            )}.
+            {d.portalRemaining === 0 && ' Anything under “Not matched” below isn’t reaching it.'}
           </div>
 
           <H>Matched to this organisation</H>
@@ -148,14 +151,13 @@ function CreditCheckModal({ companyId, onClose, showMsg }) {
             </>
           )}
 
-          <H>Deal credit projects (a different system)</H>
+          <H>Credit-based projects</H>
           {d.dealRetainers.length === 0 ? (
             <Empty text="None on this organisation's deals." />
           ) : (
             <>
               <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 6 }}>
-                These show on this page but are scoped to one project — the portal’s video-credit balance
-                deliberately doesn’t include them.
+                A separate ledger from partner credit, but counted in the same balance the client sees.
               </div>
               {d.dealRetainers.map(r => (
                 <div key={r.dealId + r.title} style={{ display: 'flex', gap: 10, padding: '5px 0', fontSize: 12.5 }}>
