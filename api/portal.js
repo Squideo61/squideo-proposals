@@ -25,6 +25,8 @@
 //   po-number       — submit a purchase-order number
 //   team            — members + invites + not-yet-invited contacts (GET/POST),
 //                     revoke via team-revoke-invite
+//   team-contact    — search the CRM contact book / attach someone to this
+//                     organisation (manage mode only)
 //   partner-interest— "I'm interested" ping to the team
 
 import crypto from 'node:crypto';
@@ -521,6 +523,7 @@ export default async function handler(req, res) {
       case 'video-credit-invoice': return videoCreditInvoiceRoute(req, res, user);
       case 'po-number': return poNumberRoute(req, res, user);
       case 'team': return teamRoutes(req, res, user);
+      case 'team-contact': return teamContactRoute(req, res, user);
       case 'team-revoke-invite': return teamRevokeInviteRoute(req, res, user);
       case 'partner-interest': return partnerInterestRoute(req, res, user);
       default: return res.status(404).json({ error: 'Not found' });
@@ -1223,9 +1226,9 @@ async function libraryRoute(req, res, user) {
 const MAX_POSTER_BYTES = 1024 * 1024;
 const POSTER_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
-function requireManage(res, user) {
+function requireManage(res, user, message = 'Only Squideo staff can add to the library.') {
   if (!user.canManage) {
-    res.status(403).json({ error: 'Only Squideo staff can add to the library.' });
+    res.status(403).json({ error: message });
     return false;
   }
   return true;
@@ -2554,6 +2557,116 @@ async function teamRoutes(req, res, user) {
       return res.status(502).json({ error: 'Could not send the invite email — try again shortly' });
     }
     return res.status(201).json({ ok: true });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ═══════════ team-contact: fill in the team from the CRM (manage mode) ═══════════
+// Staff-only. The team list can only show people we actually hold at the
+// organisation, so this is how the gaps get closed from inside the portal:
+// find someone already in the contact book and attach them to this org, or add
+// a new person outright. Either way it writes a real CRM contact linked to the
+// organisation — the same record the org page shows — never a portal-only copy.
+//
+// GETs skip the router's preview gate (it only guards writes), so the manage
+// check lives in here and covers both methods: the contact book is ours to
+// search, never the client's.
+async function teamContactRoute(req, res, user) {
+  if (!requireManage(res, user, 'Only Squideo staff can add contacts.')) return;
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+  await ensureContactCompanies().catch(() => {});
+
+  // ── Search: who could we attach? ──
+  if (req.method === 'GET') {
+    const q = trimOrNull(req.query.q);
+    if (!q || q.length < 2) return res.status(200).json({ results: [] });
+    // Escape the LIKE wildcards so a typed % or _ matches itself (Postgres
+    // treats backslash as the escape character by default).
+    const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+    const rows = await sql`
+      SELECT c.id, c.name, c.email, c.title, co.name AS company_name
+        FROM contacts c
+        LEFT JOIN companies co ON co.id = c.company_id
+       WHERE c.provisional = FALSE
+         AND c.email IS NOT NULL
+         AND (c.name ILIKE ${like} OR c.email ILIKE ${like})
+         AND c.company_id IS DISTINCT FROM ${companyId}
+         AND NOT EXISTS (SELECT 1 FROM contact_companies cc
+                          WHERE cc.contact_id = c.id AND cc.company_id = ${companyId})
+       ORDER BY c.name ASC NULLS LAST, c.email ASC
+       LIMIT 10
+    `.catch(() => []);
+    return res.status(200).json({
+      results: rows.map((c) => ({
+        id: c.id,
+        name: c.name || null,
+        email: c.email,
+        jobTitle: c.title || null,
+        companyName: c.company_name || null,
+      })),
+    });
+  }
+
+  // ── Attach: an existing contact by id, or a new one by email ──
+  if (req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const contactId = trimOrNull(body.contactId);
+    const name = trimOrNull(body.name);
+    const title = trimOrNull(body.title);
+    let row = null;
+
+    if (contactId) {
+      [row] = await sql`SELECT id, email, name, title, company_id FROM contacts WHERE id = ${contactId}`;
+      if (!row) return res.status(404).json({ error: 'That contact no longer exists' });
+    } else {
+      const email = lowerOrNull(body.email);
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ error: 'A valid email address is required' });
+      }
+      [row] = await sql`
+        SELECT id, email, name, title, company_id FROM contacts
+         WHERE LOWER(email) = ${email} ORDER BY created_at ASC LIMIT 1
+      `;
+      if (row) {
+        // We already hold this address — attach that person rather than making a
+        // second record for them. Fill in anything we were missing, and promote
+        // a provisional stub (an unreviewed quote-request contact, which would
+        // otherwise be purged) now that someone has deliberately added them.
+        await sql`
+          UPDATE contacts
+             SET provisional = FALSE,
+                 name = COALESCE(name, ${name}),
+                 title = COALESCE(title, ${title}),
+                 updated_at = NOW()
+           WHERE id = ${row.id}
+        `;
+        row = { ...row, name: row.name || name, title: row.title || title };
+      } else {
+        const id = makeId('ct');
+        await sql`
+          INSERT INTO contacts (id, email, name, title, company_id, provisional, source)
+          VALUES (${id}, ${email}, ${name}, ${title}, ${companyId}, FALSE, 'portal_team')
+        `;
+        row = { id, email, name, title, company_id: companyId };
+      }
+    }
+
+    await sql`
+      INSERT INTO contact_companies (contact_id, company_id)
+      VALUES (${row.id}, ${companyId}) ON CONFLICT DO NOTHING
+    `;
+    // The first organisation a contact gets becomes its primary, so deals and
+    // Xero always have one to point at. Someone who already belongs elsewhere
+    // keeps their primary and simply gains this org (mirrors the CRM's own
+    // contact → organisation linking).
+    if (!row.company_id) {
+      await sql`UPDATE contacts SET company_id = ${companyId}, updated_at = NOW() WHERE id = ${row.id}`;
+    }
+    return res.status(200).json({
+      contact: { id: row.id, name: row.name || null, email: row.email, jobTitle: row.title || null },
+    });
   }
 
   return res.status(405).json({ error: 'Method not allowed' });
