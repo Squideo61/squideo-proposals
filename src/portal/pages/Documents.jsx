@@ -2,7 +2,7 @@
 // general documents. Per-project docs live on each project page.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { BRAND } from '../../theme.js';
-import { portalApi } from '../api.js';
+import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, FileRow, SectionHeading } from '../components.jsx';
 import { Palette, Upload, FolderOpen } from 'lucide-react';
@@ -133,7 +133,7 @@ export default function Documents() {
                   sizeBytes={f.sizeBytes}
                   createdAt={f.createdAt}
                   meta={f.uploadedByName ? `by ${f.uploadedByName}` : null}
-                  onDownload={() => { window.location.href = `/api/portal/download?scope=company&id=${encodeURIComponent(f.id)}`; }}
+                  onDownload={() => { window.location.href = mediaUrl(`download?scope=company&id=${encodeURIComponent(f.id)}`); }}
                   onDelete={() => remove(f.id)}
                 />
               ))}

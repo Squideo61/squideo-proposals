@@ -4,7 +4,7 @@
 // Backed by /api/crm/portal-admin.
 import React, { useCallback, useEffect, useState } from 'react';
 import { Check, Eye, EyeOff, Plus, Send, Sparkles, Trash2, UserPlus, X } from 'lucide-react';
-// (Eye is reused for the preview button.)
+// (Eye/EyeOff mark an offer hidden or shown.)
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { useStore } from '../../store.jsx';
@@ -12,6 +12,7 @@ import { formatGBP } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { Modal } from '../ui.jsx';
 import { PortalStepsActivity } from './PortalStepsActivity.jsx';
+import { PortalOpenButtons } from './PortalOpenButtons.jsx';
 
 // Pick who gets a portal invite for this deal. Defaults to the deal's contacts
 // + proposal signer (anyone who doesn't already have access is pre-ticked);
@@ -293,18 +294,7 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
       title={<><Sparkles size={12} style={{ verticalAlign: -1, marginRight: 5 }} />Client portal</>}
       action={
         <div style={{ display: 'flex', gap: 6 }}>
-          {data?.companyId && (
-            <button className="btn-ghost" style={{ fontSize: 12 }} disabled={busy} title="Open this client's portal exactly as they see it (read-only)"
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  const r = await api.post('/api/crm/portal-admin?op=preview', { companyId: data.companyId });
-                  window.open(r.url, '_blank', 'noopener');
-                } catch (err) { flash(err.message); } finally { setBusy(false); }
-              }}>
-              <Eye size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Preview
-            </button>
-          )}
+          <PortalOpenButtons companyId={data?.companyId} onError={flash} />
           <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data} onClick={() => setShowInvite(true)} title="Invite this deal's contacts to the client portal">
             <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Portal invite
           </button>

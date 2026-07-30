@@ -10,7 +10,10 @@
 //   me              — profile (GET/PATCH)
 //   overview        — dashboard payload (projects + ball-in-court)
 //   project         — single project detail
-//   library         — finished files from each deal's Drive "4. Signed Off"
+//   library         — finished videos: delivered cuts, Drive "4. Signed Off",
+//                     plus past work staff added from manage mode
+//   library-item    — add/remove that past work (manage mode only)
+//   library-upload-token — client-upload token for it (manage mode only)
 //   download        — org-checked file bytes / signed URLs
 //   files           — brand + per-project documents (list/upload/delete)
 //   script          — the project's script & visual direction stage (GET/POST)
@@ -18,13 +21,15 @@
 //   extras-accept   — server-priced accept → deal_extras row
 //   request-video   — prefilled quote request with the 10% portal discount
 //   po-number       — submit a purchase-order number
-//   team            — members + invites (GET/POST), revoke via team-revoke-invite
+//   team            — members + invites + not-yet-invited contacts (GET/POST),
+//                     revoke via team-revoke-invite
 //   partner-interest— "I'm interested" ping to the team
 
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import Stripe from 'stripe';
 import { put, del, getDownloadUrl } from '@vercel/blob';
+import { handleUpload } from '@vercel/blob/client';
 import sql from './_lib/db.js';
 import { sendMail, APP_URL } from './_lib/email.js';
 import {
@@ -36,7 +41,7 @@ import {
 import { signQuoteRequestActionToken } from './_lib/auth.js';
 import { getRoleForUser } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
-import { makeId, trimOrNull, lowerOrNull } from './_lib/crm/shared.js';
+import { makeId, trimOrNull, lowerOrNull, ensureContactCompanies } from './_lib/crm/shared.js';
 import { ensureDealExtrasTable } from './_lib/crm/extras.js';
 import { buildNotificationEmail } from './quote-requests.js';
 import { ensurePortalTables } from './_lib/portal/db.js';
@@ -121,6 +126,25 @@ const MAGIC_SENDS_PER_10MIN = 3;
 const INVITES_PER_DAY_PER_ORG = 10;
 const UPLOADS_PER_DAY_PER_ORG = 50;
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
+
+// Library videos go to the PUBLIC revision blob store rather than the private
+// deal-files one, so a <video> tag can stream them (the same store delivered
+// cuts already play from). Same env fallback as api/revisions/[action].js.
+const REVISION_BLOB_TOKEN =
+  process.env.REVISION_BLOB_READ_WRITE_TOKEN || process.env.REVIEW_BLOB_READ_WRITE_TOKEN;
+
+// Actions whose requests the browser issues itself, so a staff preview session
+// may present its token as ?pv= (see the router).
+const PV_QUERY_ACTIONS = new Set([
+  'download', 'review-download', 'voiceover-sample', 'library-upload-token',
+]);
+
+// Actions that stay read-only even in manage mode. Everything here either
+// commits the client to a spend or belongs to their own account — staff have a
+// proper CRM path for each, and doing it "as them" would misattribute it.
+const MANAGE_BLOCKED = new Set([
+  'me', 'extras-accept', 'video-credit-checkout', 'video-credit-invoice',
+]);
 
 const UPLOAD_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'csv', 'txt', 'md',
@@ -435,15 +459,34 @@ export default async function handler(req, res) {
     // ═════════════════════════ PUBLIC: auth ═════════════════════════
     if (action === 'auth') return authRoutes(req, res);
 
+    // Requests the BROWSER makes directly — a <video>/<audio> source, a download
+    // link, the Blob SDK's own fetch for an upload token — can't carry our
+    // per-tab X-Portal-Preview header, so a staff preview/manage session passes
+    // the same signed token as ?pv=. Restricted to these actions: nothing that
+    // our own fetch wrapper calls should ever take a token from the query string
+    // (see src/portal/api.js mediaUrl).
+    if (PV_QUERY_ACTIONS.has(action) && req.query.pv && !req.headers['x-portal-preview']) {
+      req.headers['x-portal-preview'] = String(req.query.pv);
+    }
+
     // Everything else requires a portal session.
     const user = await requirePortalAuth(req, res);
     if (!user) return;
 
-    // Preview sessions (staff viewing as a client) are strictly read-only — all
-    // portal reads are GET, so blocking non-GET blocks every side-effect
-    // (uploads, extras, requests, PO, invites, profile edits) in one place.
+    // Preview sessions (staff viewing as a client) are read-only — all portal
+    // reads are GET, so blocking non-GET blocks every side-effect (uploads,
+    // extras, requests, PO, invites, profile edits) in one place.
+    //
+    // Manage mode (a preview token minted with the `manage` claim) lifts that so
+    // staff can act in the portal for real — except for the handful of actions
+    // that are the client's alone to take: spending money and their own account.
     if (user.isPreview && req.method !== 'GET') {
-      return res.status(403).json({ error: 'Preview mode — changes are disabled. This is a read-only view of the client’s portal.' });
+      if (!user.canManage) {
+        return res.status(403).json({ error: 'Preview mode — changes are disabled. This is a read-only view of the client’s portal.' });
+      }
+      if (MANAGE_BLOCKED.has(action)) {
+        return res.status(403).json({ error: 'That one stays with the client — payments, extras and their own account settings can’t be actioned from manage mode. Use the CRM instead.' });
+      }
     }
 
     switch (action) {
@@ -452,6 +495,8 @@ export default async function handler(req, res) {
       case 'overview': return overviewRoute(req, res, user);
       case 'project': return projectRoute(req, res, user);
       case 'library': return libraryRoute(req, res, user);
+      case 'library-upload-token': return libraryUploadTokenRoute(req, res, user);
+      case 'library-item': return libraryItemRoute(req, res, user);
       case 'download': return downloadRoute(req, res, user);
       case 'review-download': return reviewDownloadRoute(req, res, user);
       case 'files': return filesRoutes(req, res, user);
@@ -799,7 +844,13 @@ async function meRoutes(req, res, user) {
   if (req.method === 'GET') {
     return res.status(200).json({
       user: publicPortalUser(user, user.companies),
-      preview: user.isPreview ? { company: user.companies[0] || null } : null,
+      preview: user.isPreview
+        ? {
+          company: user.companies[0] || null,
+          manage: user.canManage === true,
+          staffEmail: user.previewBy || null,
+        }
+        : null,
     });
   }
   if (req.method === 'PATCH') {
@@ -971,7 +1022,44 @@ async function libraryRoute(req, res, user) {
      ORDER BY created_at DESC
   `;
   const dealIds = deals.map((d) => d.id);
-  if (!dealIds.length) return res.status(200).json({ projects: [] });
+
+  // 0. Past work added by staff in manage mode — the back catalogue we made for
+  // this client before the portal (or before this deal) existed. Company-scoped,
+  // so it shows even for an org with no signed deals at all.
+  const archiveRows = await sql`
+    SELECT id, deal_id, title, filename, mime_type, size_bytes, created_at
+      FROM portal_library_items
+     WHERE company_id = ${companyId}
+     ORDER BY created_at DESC
+  `.catch(() => []);
+  const archiveByDeal = new Map();
+  const archiveLoose = [];
+  for (const a of archiveRows) {
+    const entry = {
+      kind: 'archive',
+      itemId: a.id,
+      name: a.title || a.filename || 'Video',
+      mimeType: a.mime_type || null,
+      sizeBytes: a.size_bytes != null ? Number(a.size_bytes) : null,
+      createdTime: a.created_at,
+    };
+    // Filed against one of their live projects when we know which; otherwise it
+    // lands in its own "Previous work" group.
+    if (a.deal_id && dealIds.includes(a.deal_id)) {
+      if (!archiveByDeal.has(a.deal_id)) archiveByDeal.set(a.deal_id, []);
+      archiveByDeal.get(a.deal_id).push(entry);
+    } else {
+      archiveLoose.push(entry);
+    }
+  }
+
+  if (!dealIds.length) {
+    return res.status(200).json({
+      projects: archiveLoose.length
+        ? [{ dealId: null, title: 'Previous work', createdAt: null, files: archiveLoose }]
+        : [],
+    });
+  }
 
   // 1. Delivered review cuts — the approved final cut the client reviewed. A
   // video only reaches 'delivered' once the deal is paid in full (or a staff
@@ -1039,16 +1127,112 @@ async function libraryRoute(req, res, user) {
       dealId: d.id,
       title: d.title,
       createdAt: d.created_at,
-      files: [...(cutsByDeal.get(d.id) || []), ...(driveByDeal.get(d.id) || [])],
+      files: [
+        ...(cutsByDeal.get(d.id) || []),
+        ...(driveByDeal.get(d.id) || []),
+        ...(archiveByDeal.get(d.id) || []),
+      ],
     }))
     .filter((p) => p.files.length > 0);
+  if (archiveLoose.length) {
+    projects.push({ dealId: null, title: 'Previous work', createdAt: null, files: archiveLoose });
+  }
 
   // Only flag "unavailable" when Drive is the sole reason there's nothing to
   // show — if we surfaced any cuts, the library isn't empty.
   return res.status(200).json({
     projects,
     ...(driveUnavailable && projects.length === 0 ? { unavailable: true } : {}),
+    // Manage mode files an upload against a project — the picker needs every
+    // project, not just the ones that already have something in the library.
+    ...(user.canManage ? { allProjects: deals.map((d) => ({ id: d.id, title: d.title })) } : {}),
   });
+}
+
+// ═══════════════ library: past work added in manage mode ═══════════════
+// Staff-only (a manage-mode preview session). Videos are large, so the browser
+// streams them straight to Blob storage with a short-lived client token — the
+// same bypass the CRM uses for revision drafts — and only the resulting URL
+// comes back here to be recorded.
+function requireManage(res, user) {
+  if (!user.canManage) {
+    res.status(403).json({ error: 'Only Squideo staff can add to the library.' });
+    return false;
+  }
+  return true;
+}
+
+async function libraryUploadTokenRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (!requireManage(res, user)) return;
+  if (!REVISION_BLOB_TOKEN) return res.status(503).json({ error: 'Video storage not configured (REVISION_BLOB_READ_WRITE_TOKEN missing)' });
+  const body = await readJsonBody(req);
+  try {
+    const jsonResponse = await handleUpload({
+      body,
+      request: req,
+      token: REVISION_BLOB_TOKEN,
+      // Authorisation already happened above (a manage token, scoped to this
+      // org). Deliberately no onUploadCompleted — see api/revisions/[action].js:
+      // it makes the Blob API wait for a server callback that never lands in dev
+      // and adds a fragile round-trip in prod. The row is written by the
+      // library-item POST as soon as upload() resolves.
+      onBeforeGenerateToken: async () => ({ addRandomSuffix: true }),
+    });
+    return res.status(200).json(jsonResponse);
+  } catch (err) {
+    if (res.headersSent) return;
+    return res.status(400).json({ error: err?.message || 'Upload authorisation failed' });
+  }
+}
+
+async function libraryItemRoute(req, res, user) {
+  if (!requireManage(res, user)) return;
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+
+  if (req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const blobUrl = trimOrNull(body.blobUrl);
+    if (!blobUrl) return res.status(400).json({ error: 'blobUrl required' });
+    const filename = trimOrNull(body.filename) || 'video.mp4';
+    const title = trimOrNull(body.title) || filename.replace(/\.[^.]+$/, '');
+    // A deal id is optional — file it against one of their projects when we know
+    // which, else it lands in "Previous work". Cross-org ids are ignored rather
+    // than rejected: the upload has already happened, losing it would be worse.
+    let dealId = trimOrNull(body.dealId);
+    if (dealId) {
+      const [ok] = await sql`SELECT id FROM deals WHERE id = ${dealId} AND company_id = ${companyId}`;
+      if (!ok) dealId = null;
+    }
+    const id = makeId('pli');
+    await sql`
+      INSERT INTO portal_library_items
+        (id, company_id, deal_id, title, filename, mime_type, size_bytes, blob_url, blob_pathname, created_by)
+      VALUES (${id}, ${companyId}, ${dealId}, ${title}, ${filename},
+              ${trimOrNull(body.mimeType)}, ${Number.isFinite(Number(body.sizeBytes)) ? Number(body.sizeBytes) : null},
+              ${blobUrl}, ${trimOrNull(body.blobPathname)}, ${user.previewBy || null})
+    `;
+    return res.status(201).json({ id });
+  }
+
+  if (req.method === 'DELETE') {
+    const id = req.query.id ? String(req.query.id) : null;
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const rows = await sql`
+      DELETE FROM portal_library_items
+       WHERE id = ${id} AND company_id = ${companyId}
+      RETURNING blob_url
+    `;
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    if (rows[0].blob_url) {
+      try { await del(rows[0].blob_url, { token: REVISION_BLOB_TOKEN }); }
+      catch (err) { console.warn('[portal] library blob delete failed', err.message); }
+    }
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
 }
 
 // ═══════════════════ review-cut download (gated) ═══════════════════
@@ -1095,11 +1279,34 @@ async function reviewDownloadRoute(req, res, user) {
 }
 
 // ═════════════════════════ download ═════════════════════════
+// Blob-store 302. `?download=1` asks Vercel Blob for an attachment disposition
+// so the browser saves the file instead of playing it in the tab — without it a
+// video URL just navigates away from the portal.
+function blobRedirect(res, url, wantDownload) {
+  const target = wantDownload ? url + (url.includes('?') ? '&' : '?') + 'download=1' : url;
+  res.setHeader('Location', target);
+  return res.status(302).end();
+}
+
 async function downloadRoute(req, res, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const scope = req.query.scope ? String(req.query.scope) : null;
   const id = req.query.id ? String(req.query.id) : null;
+  const wantDownload = req.query.download === '1';
   if (!scope || !id) return res.status(400).json({ error: 'scope and id required' });
+
+  // Past-work item added by staff — org-checked, then streamed from the public
+  // revision blob store (same place delivered cuts live).
+  if (scope === 'archive') {
+    const rows = await sql`
+      SELECT blob_url, company_id FROM portal_library_items WHERE id = ${id}
+    `.catch(() => []);
+    const item = rows[0];
+    if (!item || !item.blob_url || !user.companyIds.includes(item.company_id)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    return blobRedirect(res, item.blob_url, wantDownload);
+  }
 
   // Org/brand documents — signed private-blob URL, 302 redirect.
   if (scope === 'company') {
@@ -1148,8 +1355,7 @@ async function downloadRoute(req, res, user) {
     if (!cut || !cut.blob_url) return res.status(404).json({ error: 'File not found' });
     // Revision cuts live in the public revision blob store — a 302 to the
     // unguessable URL is sufficient once the delivery gate above has passed.
-    res.setHeader('Location', cut.blob_url);
-    return res.status(302).end();
+    return blobRedirect(res, cut.blob_url, wantDownload);
   }
 
   // Library — Drive "Signed Off" file, streamed through us. The file id must
@@ -1320,7 +1526,11 @@ async function filesRoutes(req, res, user) {
       `;
       const f = rows[0];
       if (!f || !user.companyIds.includes(f.company_id)) return res.status(404).json({ error: 'File not found' });
-      if (f.portal_user_id !== user.puid) return res.status(403).json({ error: 'You can only remove files you uploaded' });
+      // Manage mode is staff acting in the portal — they can tidy up anything
+      // in the org, not just their own uploads.
+      if (!user.canManage && f.portal_user_id !== user.puid) {
+        return res.status(403).json({ error: 'You can only remove files you uploaded' });
+      }
       if (f.blob_url) { try { await del(f.blob_url); } catch (err) { console.warn('[portal] blob delete failed', err.message); } }
       await sql`DELETE FROM deal_files WHERE id = ${id}`;
       return res.status(200).json({ ok: true });
@@ -1330,7 +1540,7 @@ async function filesRoutes(req, res, user) {
     `;
     const f = rows[0];
     if (!f || !user.companyIds.includes(f.company_id)) return res.status(404).json({ error: 'File not found' });
-    if (f.uploaded_by_portal_user && f.uploaded_by_portal_user !== user.puid) {
+    if (!user.canManage && f.uploaded_by_portal_user && f.uploaded_by_portal_user !== user.puid) {
       return res.status(403).json({ error: 'You can only remove files you uploaded' });
     }
     if (f.blob_url) { try { await del(f.blob_url); } catch (err) { console.warn('[portal] blob delete failed', err.message); } }
@@ -2004,9 +2214,35 @@ async function teamRoutes(req, res, user) {
          AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()
        ORDER BY created_at DESC
     `;
+    // Everyone else we already hold at this organisation. Showing them (rather
+    // than an empty invite box) is what lets a client see at a glance who's
+    // missing and invite them in one click — no re-typing addresses we have.
+    await ensureContactCompanies().catch(() => {});
+    const contacts = await sql`
+      SELECT c.id, c.name, c.email, c.title
+        FROM contacts c
+       WHERE c.email IS NOT NULL
+         AND (c.company_id = ${companyId}
+              OR EXISTS (SELECT 1 FROM contact_companies cc
+                          WHERE cc.contact_id = c.id AND cc.company_id = ${companyId}))
+       ORDER BY c.name ASC NULLS LAST, c.email ASC
+    `.catch(() => []);
+
+    const activeMembers = members.filter((m) => !m.disabled_at && !m.membership_disabled_at);
+    // Anyone with an account (even a disabled one) or a live invite is already
+    // represented above — don't offer to invite them twice.
+    const covered = new Set([
+      ...members.map((m) => String(m.email || '').toLowerCase()),
+      ...invites.map((i) => String(i.email || '').toLowerCase()),
+    ]);
+    const others = contacts
+      .filter((c) => !covered.has(String(c.email).toLowerCase()))
+      .map((c) => ({ id: c.id, name: c.name || null, email: c.email, jobTitle: c.title || null }));
+
     return res.status(200).json({
-      members: members.filter((m) => !m.disabled_at && !m.membership_disabled_at).map(serialisePortalMember),
+      members: activeMembers.map(serialisePortalMember),
       invites: invites.map(serialisePortalInvite),
+      contacts: others,
     });
   }
 

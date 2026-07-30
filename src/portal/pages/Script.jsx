@@ -6,7 +6,7 @@
 // closed, the team ticks "we already have it" and this page reflects that.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { BRAND } from '../../theme.js';
-import { portalApi } from '../api.js';
+import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, FileRow, SectionHeading } from '../components.jsx';
 import { ArrowLeft, FileText, Palette, Check, PenLine } from 'lucide-react';
@@ -227,7 +227,7 @@ export default function Script({ dealId }) {
                   f.category === 'visual_direction' ? 'Visual direction' : 'Script',
                   f.uploadedByName ? `by ${f.uploadedByName}` : null,
                 ].filter(Boolean).join(' · ')}
-                onDownload={() => { window.location.href = `/api/portal/download?scope=deal&id=${encodeURIComponent(f.id)}`; }}
+                onDownload={() => { window.location.href = mediaUrl(`download?scope=deal&id=${encodeURIComponent(f.id)}`); }}
               />
             ))}
           </div>

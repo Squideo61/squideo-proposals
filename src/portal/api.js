@@ -28,6 +28,17 @@ function withPreview(headers = {}) {
   return t ? { ...headers, 'X-Portal-Preview': t } : headers;
 }
 
+// For URLs the BROWSER loads directly — <video>/<audio> sources, download links,
+// the Blob upload-token endpoint. Those requests are made by the platform, not
+// by our fetch wrapper, so they can't carry the preview header; a staff session
+// passes the same signed token as ?pv= instead. A real client session rides on
+// its HttpOnly cookie and gets the URL back unchanged.
+export function mediaUrl(path) {
+  const t = getPreviewToken();
+  if (!t) return `/api/portal/${path}`;
+  return `/api/portal/${path}${path.includes('?') ? '&' : '?'}pv=${encodeURIComponent(t)}`;
+}
+
 async function request(method, path, body) {
   const base = body !== undefined ? { 'Content-Type': 'application/json' } : {};
   const res = await fetch(`/api/portal/${path}`, {

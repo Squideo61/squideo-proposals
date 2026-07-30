@@ -23,7 +23,9 @@ export function PortalProvider({ children }) {
   });
   const [overview, setOverview] = useState(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
-  const [preview, setPreview] = useState(null); // { company } when staff is previewing
+  // { company, manage, staffEmail } when staff is in the client's portal.
+  // manage:false is the read-only preview; manage:true means writes are live.
+  const [preview, setPreview] = useState(null);
   const [toast, setToast] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -148,7 +150,7 @@ export function PortalProvider({ children }) {
     booting, user, setUser,
     companyId, setActiveCompanyId,
     overview, overviewLoading, refreshOverview, refreshSession,
-    preview, logout, toast, showToast,
+    preview, manageMode: preview?.manage === true, logout, toast, showToast,
     notifications, unreadCount, refreshNotifications, markRead, markAllRead,
   }), [booting, user, companyId, setActiveCompanyId, overview, overviewLoading, refreshOverview, refreshSession, preview, logout, toast, showToast, notifications, unreadCount, refreshNotifications, markRead, markAllRead]);
 

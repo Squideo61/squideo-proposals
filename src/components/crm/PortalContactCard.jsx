@@ -8,6 +8,7 @@ import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { formatRelativeTime } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
+import { PortalOpenButtons } from './PortalOpenButtons.jsx';
 
 const ACTIVITY_ICONS = { file: Upload, extra: Sparkles, quote: FileText };
 
@@ -54,7 +55,10 @@ export function PortalContactCard({ contactId }) {
 
   if (data.noEmail) {
     return (
-      <Card title={<><KeyRound size={12} style={{ verticalAlign: -1, marginRight: 5 }} />Client portal</>}>
+      <Card
+        title={<><KeyRound size={12} style={{ verticalAlign: -1, marginRight: 5 }} />Client portal</>}
+        action={<PortalOpenButtons companyId={data.companies?.[0]?.id} onError={flash} />}
+      >
         <Empty text="Add an email address to this contact to give them portal access." />
       </Card>
     );
@@ -71,13 +75,24 @@ export function PortalContactCard({ contactId }) {
       ? { label: 'Invite pending', bg: '#F59E0B22', color: '#B45309' }
       : { label: 'No portal access', bg: '#94A3B822', color: '#64748B' });
 
+  // Which org's portal the "open portal" buttons target: the one they're a
+  // member of if they have an account, else the first org they're linked to.
+  // (A contact with no organisation has no portal to open — the buttons hide.)
+  const portalCompanyId = memberships.find((m) => !m.disabled)?.companyId
+    || memberships[0]?.companyId
+    || companies[0]?.id
+    || null;
+
   return (
     <Card
       title={<><KeyRound size={12} style={{ verticalAlign: -1, marginRight: 5 }} />Client portal</>}
       action={
-        <span style={{ background: statusPill.bg, color: statusPill.color, fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-          {statusPill.label}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <PortalOpenButtons companyId={portalCompanyId} onError={flash} />
+          <span style={{ background: statusPill.bg, color: statusPill.color, fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            {statusPill.label}
+          </span>
+        </div>
       }
     >
       {notice && (

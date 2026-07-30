@@ -30,11 +30,15 @@ export async function verifyPortalToken(token) {
 
 // Staff "preview as this client" token. Same portal audience so it flows through
 // requirePortalAuth, but carries `pv:true` + the org it's scoped to and no puid —
-// requirePortalAuth turns it into a synthetic, READ-ONLY session for that one
-// organisation. Short-lived; delivered in a URL and held per-tab (never a
-// cookie), so it can't collide with a real client's login in the same browser.
-export async function signPortalPreviewToken({ companyId, staffEmail }) {
-  return new SignJWT({ pv: true, companyId, staffEmail })
+// requirePortalAuth turns it into a synthetic session for that one organisation.
+// Short-lived; delivered in a URL and held per-tab (never a cookie), so it can't
+// collide with a real client's login in the same browser.
+//
+// `manage:true` is the opt-in write capability ("manage mode"): staff act INSIDE
+// the client's portal for real. It's a distinct claim rather than a client-side
+// switch so a plain preview link can never be talked into writing.
+export async function signPortalPreviewToken({ companyId, staffEmail, manage = false }) {
+  return new SignJWT({ pv: true, manage: manage === true, companyId, staffEmail })
     .setProtectedHeader({ alg: 'HS256' })
     .setAudience(PORTAL_SESSION_AUD)
     .setExpirationTime('2h')

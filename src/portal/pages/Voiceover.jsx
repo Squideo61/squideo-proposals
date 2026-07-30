@@ -8,7 +8,7 @@
 // "use this artist for all videos" shortcut (charged once).
 import React, { useEffect, useState } from 'react';
 import { BRAND } from '../../theme.js';
-import { portalApi } from '../api.js';
+import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, StatusPill } from '../components.jsx';
 import { ArrowLeft, Check, Mic, Lock, CreditCard } from 'lucide-react';
@@ -27,7 +27,7 @@ function ArtistCard({ artist, section, charge, onChoose, disabled }) {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         {artist.hasSample ? (
-          <audio controls preload="none" src={`/api/portal/voiceover-sample?artistId=${encodeURIComponent(artist.id)}&v=${artist.sizeBytes || 0}`} style={{ flex: '1 1 240px', minWidth: 200, height: 38 }} />
+          <audio controls preload="none" src={mediaUrl(`voiceover-sample?artistId=${encodeURIComponent(artist.id)}&v=${artist.sizeBytes || 0}`)} style={{ flex: '1 1 240px', minWidth: 200, height: 38 }} />
         ) : (
           <div style={{ flex: '1 1 240px', minWidth: 200, fontSize: 12, color: BRAND.muted, fontStyle: 'italic' }}>Sample coming soon</div>
         )}

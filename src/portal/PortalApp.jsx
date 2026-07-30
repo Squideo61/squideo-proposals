@@ -9,7 +9,7 @@ import { Toast } from '../components/ui.jsx';
 import {
   Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus,
 } from 'lucide-react';
-import { Eye } from 'lucide-react';
+import { Eye, PencilLine } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
 import ClientLogo from './ClientLogo.jsx';
 import NotificationBell from './NotificationBell.jsx';
@@ -263,33 +263,38 @@ function AuthedApp() {
   );
 }
 
-// Persistent bar shown only when staff are previewing a client's portal. Makes
-// it unmistakable this isn't the real thing and that actions are disabled.
+// Persistent bar shown only when staff are inside a client's portal. Read-only
+// preview is purple and says so; manage mode is amber — the warning colour —
+// because everything done from there is real and lands on the client's account.
 function PreviewBanner() {
   const { preview } = usePortal();
   if (!preview) return null;
+  const manage = preview.manage === true;
   const exit = () => {
     setPreviewToken(null);
-    // Closing the preview tab is the natural exit; if it can't self-close
-    // (not script-opened), fall back to a neutral page.
+    // Closing the tab is the natural exit; if it can't self-close (not
+    // script-opened), fall back to a neutral page.
     window.close();
     window.setTimeout(() => { window.location.href = 'about:blank'; }, 150);
   };
+  const who = preview.company?.name || 'this client';
   return (
     <div style={{
-      background: '#7C3AED', color: '#fff', padding: '8px 16px',
+      background: manage ? '#B45309' : '#7C3AED', color: '#fff', padding: '8px 16px',
       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
       fontSize: 13, fontWeight: 600, flexWrap: 'wrap', textAlign: 'center',
     }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-        <Eye size={15} />
-        Preview — you’re viewing {preview.company?.name || 'this client'}’s portal as they’d see it. Changes are disabled.
+        {manage ? <PencilLine size={15} /> : <Eye size={15} />}
+        {manage
+          ? <>Manage mode — you’re editing {who}’s portal for real. Payments, extras and their account settings stay locked.</>
+          : <>Preview — you’re viewing {who}’s portal as they’d see it. Changes are disabled.</>}
       </span>
       <button
         onClick={exit}
         style={{ background: 'rgba(255,255,255,0.2)', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
       >
-        Exit preview
+        {manage ? 'Exit manage mode' : 'Exit preview'}
       </button>
     </div>
   );

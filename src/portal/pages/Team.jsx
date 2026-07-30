@@ -1,11 +1,12 @@
-// Org team: everyone with portal access, plus self-serve colleague invites
-// (hard-bound to this organisation server-side).
+// Org team: everyone with portal access, everyone else we hold at the
+// organisation (so nobody has to remember who's missing), plus self-serve
+// colleague invites — hard-bound to this organisation server-side.
 import React, { useCallback, useEffect, useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, fmtDate } from '../components.jsx';
-import { UserPlus, Mail, Clock } from 'lucide-react';
+import { UserPlus, Mail, Clock, Send } from 'lucide-react';
 
 export default function Team() {
   const { user, companyId, showToast } = usePortal();
@@ -13,6 +14,7 @@ export default function Team() {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [invitingId, setInvitingId] = useState(null);
   const companyName = user?.companies?.find((c) => c.id === companyId)?.name;
 
   const load = useCallback(async () => {
@@ -37,6 +39,20 @@ export default function Team() {
     }
   };
 
+  // One-click invite for someone we already have on file — no retyping.
+  const inviteContact = async (c) => {
+    setInvitingId(c.id);
+    try {
+      await portalApi.post(`team?companyId=${encodeURIComponent(companyId)}`, { email: c.email, name: c.name });
+      showToast(`Invite sent to ${c.email} ✓`);
+      await load();
+    } catch (err) {
+      showToast(err.message);
+    } finally {
+      setInvitingId(null);
+    }
+  };
+
   const revoke = async (inviteId) => {
     try {
       await portalApi.post('team-revoke-invite', { inviteId });
@@ -51,7 +67,7 @@ export default function Team() {
       <div>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: BRAND.ink }}>Your team</h1>
         <p style={{ margin: '6px 0 0', fontSize: 13.5, color: BRAND.muted }}>
-          Everyone at {companyName || 'your organisation'} with portal access — invite colleagues so nobody's out of the loop.
+          Everyone we have at {companyName || 'your organisation'} — invite the ones who aren't on the portal yet so nobody's out of the loop.
         </p>
       </div>
 
@@ -77,26 +93,43 @@ export default function Team() {
           <>
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               {data.members.map((m) => (
-                <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 4px', borderBottom: `1px solid ${BRAND.border}` }}>
-                  <div style={{
-                    width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
-                    background: BRAND.blue + '22', color: BRAND.blue,
-                    display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 13,
-                  }}>
-                    {(m.name || m.email)[0].toUpperCase()}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink }}>
-                      {m.name || m.email} {m.email === user?.email && <span style={{ color: BRAND.muted, fontWeight: 500 }}>(you)</span>}
-                    </div>
-                    <div style={{ fontSize: 11.5, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {[m.email, m.jobTitle].filter(Boolean).join(' · ')}
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 11.5, color: BRAND.muted, flexShrink: 0 }}>
-                    Joined {fmtDate(m.joinedAt)}
-                  </div>
-                </div>
+                <PersonRow
+                  key={m.id}
+                  name={m.name}
+                  email={m.email}
+                  jobTitle={m.jobTitle}
+                  isYou={m.email === user?.email}
+                  right={
+                    <>
+                      <Pill label="Portal access" bg="#DCFCE7" color="#15803D" />
+                      <span style={{ fontSize: 11.5, color: BRAND.muted, flexShrink: 0 }}>Joined {fmtDate(m.joinedAt)}</span>
+                    </>
+                  }
+                />
+              ))}
+              {/* People we hold at the organisation who've never been invited.
+                  Shown so the client can see the gaps and close them in a click. */}
+              {(data.contacts || []).map((c) => (
+                <PersonRow
+                  key={c.id}
+                  name={c.name}
+                  email={c.email}
+                  jobTitle={c.jobTitle}
+                  muted
+                  right={
+                    <>
+                      <Pill label="Not on the portal" bg="#F1F5F9" color="#64748B" />
+                      <button
+                        className="btn"
+                        disabled={invitingId === c.id}
+                        onClick={() => inviteContact(c)}
+                        style={{ fontSize: 12.5, padding: '6px 12px', display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
+                      >
+                        <Send size={13} /> {invitingId === c.id ? 'Sending…' : 'Invite'}
+                      </button>
+                    </>
+                  }
+                />
               ))}
             </div>
             {(data.invites || []).length > 0 && (
@@ -116,12 +149,46 @@ export default function Team() {
                 ))}
               </div>
             )}
-            {data.members.length === 0 && (data.invites || []).length === 0 && (
+            {data.members.length === 0 && (data.invites || []).length === 0 && (data.contacts || []).length === 0 && (
               <EmptyState title="Just you so far" body="Invite colleagues above so your whole team can follow progress." />
             )}
           </>
         )}
       </Card>
+    </div>
+  );
+}
+
+function Pill({ label, bg, color }) {
+  return (
+    <span style={{
+      background: bg, color, fontSize: 10.5, fontWeight: 700, flexShrink: 0,
+      padding: '3px 8px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: 0.4,
+    }}>
+      {label}
+    </span>
+  );
+}
+
+function PersonRow({ name, email, jobTitle, isYou, muted, right }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 4px', borderBottom: `1px solid ${BRAND.border}`, flexWrap: 'wrap' }}>
+      <div style={{
+        width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
+        background: muted ? '#F1F5F9' : BRAND.blue + '22', color: muted ? '#94A3B8' : BRAND.blue,
+        display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 13,
+      }}>
+        {(name || email || '?')[0].toUpperCase()}
+      </div>
+      <div style={{ flex: 1, minWidth: 140 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink }}>
+          {name || email} {isYou && <span style={{ color: BRAND.muted, fontWeight: 500 }}>(you)</span>}
+        </div>
+        <div style={{ fontSize: 11.5, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {[email, jobTitle].filter(Boolean).join(' · ')}
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>{right}</div>
     </div>
   );
 }

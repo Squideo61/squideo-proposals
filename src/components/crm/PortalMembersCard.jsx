@@ -2,12 +2,13 @@
 // invites, and the staff controls (invite / resend / revoke / disable).
 // Backed by /api/crm/portal-admin.
 import React, { useCallback, useEffect, useState } from 'react';
-import { Eye, KeyRound, Mail, RefreshCw, Send, UserX, UserCheck, Download, FileText } from 'lucide-react';
+import { KeyRound, Mail, RefreshCw, Send, UserX, UserCheck, Download, FileText } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { formatRelativeTime } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { PortalStepsActivity } from './PortalStepsActivity.jsx';
+import { PortalOpenButtons } from './PortalOpenButtons.jsx';
 
 const formatBytes = (n) => {
   if (!n || n < 1024) return `${n || 0} B`;
@@ -74,29 +75,13 @@ export function PortalMembersCard({ companyId }) {
     }
   };
 
-  const preview = async () => {
-    setBusy(true);
-    try {
-      const r = await api.post('/api/crm/portal-admin?op=preview', { companyId });
-      // Cookie-free: the token rides in the URL and is stashed per-tab by the
-      // portal on load, so opening it can't disturb a real client's session.
-      window.open(r.url, '_blank', 'noopener');
-    } catch (err) {
-      flash(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <Card
       title={<><KeyRound size={12} style={{ verticalAlign: -1, marginRight: 5 }} />Customer portal</>}
       count={members.length || undefined}
       action={
         <div style={{ display: 'flex', gap: 6 }}>
-          <button className="btn-ghost" style={{ fontSize: 12 }} disabled={busy} onClick={preview} title="Open this client's portal exactly as they see it (read-only)">
-            <Eye size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Preview
-          </button>
+          <PortalOpenButtons companyId={companyId} onError={flash} />
           <button className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setShowInvite((v) => !v)}>
             <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Invite
           </button>

@@ -12,9 +12,10 @@ import { portalLogoPath } from './logo.js';
 
 export async function requirePortalAuth(req, res) {
   // Staff "preview as client" comes in as a per-tab header (never a cookie, so
-  // it can't hijack a real client session). It yields a synthetic, read-only
-  // session scoped to the one organisation being previewed — writes are blocked
-  // in the router by the `isPreview` flag.
+  // it can't hijack a real client session). It yields a synthetic session scoped
+  // to the one organisation being previewed — read-only by default (writes are
+  // blocked in the router by the `isPreview` flag), or writable when the token
+  // carries the `manage` claim ("manage mode").
   const previewToken = readPreviewHeader(req);
   if (previewToken) {
     let pv;
@@ -48,9 +49,10 @@ export async function requirePortalAuth(req, res) {
     return {
       puid: null,
       isPreview: true,
+      canManage: pv.manage === true,
       previewBy: pv.staffEmail || null,
       email: pv.staffEmail || 'preview@squideo.co.uk',
-      name: 'Preview',
+      name: pv.manage === true ? (pv.staffEmail || 'Squideo') : 'Preview',
       companyIds: [co.id],
       companies: [{ id: co.id, name: co.name, logoUrl: logo ? portalLogoPath(co.id) : null }],
     };

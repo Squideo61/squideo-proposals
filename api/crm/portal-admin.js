@@ -224,17 +224,23 @@ export default async function handler(req, res) {
       if (contactId) {
         const [ct] = await sql`SELECT id, email, name FROM contacts WHERE id = ${contactId}`;
         if (!ct) return res.status(404).json({ error: 'Contact not found' });
-        if (!ct.email) return res.status(200).json({ contactId, noEmail: true, account: null, invites: [], memberships: [], activity: [] });
-        const profile = await portalProfileForEmail(ct.email);
-        // Which of the contact's organisations they could be invited to.
-        const companies = await sql`
+        // Which of the contact's organisations they could be invited to — and,
+        // for the card's "open their portal" buttons, whose portal to open.
+        // Returned even without an email: they still belong to an organisation.
+        const companies = (await sql`
           SELECT c.id, c.name FROM companies c
            WHERE c.id = (SELECT company_id FROM contacts WHERE id = ${contactId})
               OR c.id IN (SELECT company_id FROM contact_companies WHERE contact_id = ${contactId})
-        `.catch(() => []);
+        `.catch(() => [])).map((c) => ({ id: c.id, name: c.name }));
+        if (!ct.email) {
+          return res.status(200).json({
+            contactId, noEmail: true, account: null,
+            invites: [], memberships: [], activity: [], companies,
+          });
+        }
+        const profile = await portalProfileForEmail(ct.email);
         return res.status(200).json({
-          contactId, email: ct.email, ...profile,
-          companies: companies.map((c) => ({ id: c.id, name: c.name })),
+          contactId, email: ct.email, ...profile, companies,
         });
       }
 
@@ -636,18 +642,23 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, email: pu.email });
     }
 
-    // "Preview as client" — mint a short-lived read-only preview token for an
-    // organisation and hand back the portal URL to open. The token lives in the
-    // opened tab only (never a cookie), so it can't disturb a real client login.
+    // "Preview as client" — mint a short-lived preview token for an organisation
+    // and hand back the portal URL to open. The token lives in the opened tab
+    // only (never a cookie), so it can't disturb a real client login.
+    // `manage: true` mints the write-capable variant ("manage mode"): staff work
+    // inside the client's portal for real — uploading past videos to their
+    // library, inviting their team, filing documents.
     if (op === 'preview') {
       const companyId = trimOrNull(body.companyId);
       if (!companyId) return res.status(400).json({ error: 'companyId required' });
       const [co] = await sql`SELECT id, name FROM companies WHERE id = ${companyId}`;
       if (!co) return res.status(404).json({ error: 'Company not found' });
-      const token = await signPortalPreviewToken({ companyId, staffEmail: user.email });
+      const manage = body.manage === true;
+      const token = await signPortalPreviewToken({ companyId, staffEmail: user.email, manage });
       return res.status(200).json({
         url: `${PORTAL_URL}?preview=${encodeURIComponent(token)}`,
         companyName: co.name,
+        manage,
       });
     }
 

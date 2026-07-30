@@ -3,7 +3,7 @@
 // and the extras teaser.
 import React, { useEffect, useState } from 'react';
 import { BRAND } from '../../theme.js';
-import { portalApi } from '../api.js';
+import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import {
   Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, FileRow, SectionHeading, ProjectTasks, fmtDate,
@@ -186,7 +186,7 @@ export default function ProjectDetail({ dealId }) {
                 {r.approved && r.videoId && (
                   project.finalReleaseUnlocked ? (
                     <a
-                      href={`/api/portal/review-download?videoId=${encodeURIComponent(r.videoId)}`}
+                      href={mediaUrl(`review-download?videoId=${encodeURIComponent(r.videoId)}`)}
                       style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
                         padding: '9px 14px', border: `1px solid ${BRAND.border}`, borderRadius: '0 0 10px 10px',
@@ -291,7 +291,7 @@ export default function ProjectDetail({ dealId }) {
                 filename={f.filename}
                 sizeBytes={f.sizeBytes}
                 createdAt={f.createdAt}
-                onDownload={() => { window.location.href = `/api/portal/download?scope=deal&id=${encodeURIComponent(f.id)}`; }}
+                onDownload={() => { window.location.href = mediaUrl(`download?scope=deal&id=${encodeURIComponent(f.id)}`); }}
               />
             ))}
           </div>

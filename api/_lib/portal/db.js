@@ -138,6 +138,24 @@ export function ensurePortalTables() {
       )`;
     await sql`CREATE INDEX IF NOT EXISTS portal_activity_user_idx ON portal_activity(portal_user_id, created_at DESC)`;
     await sql`CREATE INDEX IF NOT EXISTS portal_activity_company_idx ON portal_activity(company_id, created_at DESC)`;
+    // Past work added to the client's video library by staff, alongside the two
+    // live sources (delivered cuts + Drive "Signed Off").
+    // See db/migrations/20260730_portal_library.sql.
+    await sql`
+      CREATE TABLE IF NOT EXISTS portal_library_items (
+        id            TEXT        PRIMARY KEY,
+        company_id    TEXT        NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        deal_id       TEXT        REFERENCES deals(id) ON DELETE SET NULL,
+        title         TEXT        NOT NULL,
+        filename      TEXT,
+        mime_type     TEXT,
+        size_bytes    BIGINT,
+        blob_url      TEXT        NOT NULL,
+        blob_pathname TEXT,
+        created_by    TEXT,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await sql`CREATE INDEX IF NOT EXISTS portal_library_items_company_idx ON portal_library_items(company_id, created_at DESC)`;
     await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS portal_extras_discount NUMERIC NOT NULL DEFAULT 0.10`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'staff'`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS portal_user_id TEXT REFERENCES portal_users(id) ON DELETE SET NULL`;
