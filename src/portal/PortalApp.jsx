@@ -200,7 +200,7 @@ function MobileTabBar({ view }) {
 }
 
 function AuthedApp() {
-  const { toast } = usePortal();
+  const { toast, companyId, preview } = usePortal();
   const isMobile = useIsMobile();
   const [route, setRoute] = useState(parseHash);
 
@@ -209,6 +209,18 @@ function AuthedApp() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  // Tell the team what the client is looking at. Silent and best-effort — this
+  // must never interrupt them. Staff sessions are skipped outright so browsing
+  // a client's portal doesn't show up as the client browsing it.
+  useEffect(() => {
+    if (preview) return;
+    portalApi.post('track', {
+      view: route.view,
+      companyId,
+      dealId: ['project', 'extras', 'voiceover', 'kickoff', 'script'].includes(route.view) ? route.param : null,
+    }).catch(() => {});
+  }, [route.view, route.param, companyId, preview]);
 
   let page;
   switch (route.view) {

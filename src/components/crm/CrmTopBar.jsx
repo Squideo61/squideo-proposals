@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Bell, CalendarDays, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Gauge, Globe, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, PoundSterling, Search, Settings, Square, Undo2, Redo2, UserCog, X } from 'lucide-react';
+import { Activity, BarChart3, Bell, CalendarDays, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Gauge, Globe, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, PoundSterling, Search, Settings, Square, Undo2, Redo2, UserCog, X } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -78,7 +78,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   // Requests = quote_requests.manage, Projects/board = production.access, etc.).
   const {
     canRevisions, canProduction, canSchedule, canQuoteRequests,
-    canAdmin, canPendingPayments, canMarketing,
+    canAdmin, canPendingPayments, canMarketing, canPortalPreview,
   } = navFlags(perms);
   // The £ (sales & finance) notifications bell — Admin, Directors, Project Managers.
   const canFinanceBell = permissionsInclude(perms, 'finance.notifications');
@@ -122,7 +122,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     {
       key: 'projects',
       label: 'Projects',
-      views: ['production', 'projects', 'project', 'video', 'storyboards', 'revisions', 'schedule', 'prod-dashboard', 'partner-credits', 'partner-credit-detail'],
+      views: ['production', 'projects', 'project', 'video', 'storyboards', 'revisions', 'schedule', 'prod-dashboard', 'partner-credits', 'partner-credit-detail', 'portal-activity'],
       items: [
         ...(canProduction ? [{ label: 'Projects', icon: LayoutGrid, go: () => navigate('projects') }] : []),
         ...(canProduction ? [{ label: 'Production board', icon: KanbanSquare, go: () => navigate('production') }] : []),
@@ -130,6 +130,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         ...(canRevisions ? [{ label: 'Storyboard Revisions', icon: Images, go: () => navigate('storyboards') }] : []),
         ...(canRevisions ? [{ label: 'Video Revisions', icon: Clapperboard, go: () => navigate('revisions') }] : []),
         { label: 'Partners & Credits', icon: Coins, go: () => navigate('partner-credits') },
+        ...(canPortalPreview ? [{ label: 'Client Portal Activity', icon: Activity, go: () => navigate('portal-activity') }] : []),
       ],
     },
   ].filter(s => s.items.length > 0);

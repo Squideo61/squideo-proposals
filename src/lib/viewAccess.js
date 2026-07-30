@@ -30,6 +30,11 @@ export function navFlags(perms) {
     canPendingPayments: canBusiness || permissionsInclude(perms, 'finance.pending_payments'),
     canMarketing: permissionsInclude(perms, 'marketing.access'),
     canInvoices: permissionsInclude(perms, 'invoices.manage'),
+    // Same permission that opens a client's portal read-only — the activity feed
+    // shows what you'd see by looking, so it's gated the same way.
+    canPortalPreview: permissionsInclude(perms, 'portal.preview')
+      || permissionsInclude(perms, 'companies.manage_all')
+      || permissionsInclude(perms, 'deals.manage_all'),
   };
 }
 
@@ -50,6 +55,7 @@ const VIEW_GUARDS = {
   schedule:         (f) => f.canSchedule,
   'xero-duplicates': (f) => f.canInvoices,
   admin:            (f) => f.canAdmin,
+  'portal-activity': (f) => f.canPortalPreview,
 };
 
 // Can this permission set reach this view? Unknown/unguarded views are allowed.

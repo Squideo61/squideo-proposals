@@ -495,6 +495,7 @@ export default async function handler(req, res) {
 
     switch (action) {
       case 'me': return meRoutes(req, res, user);
+      case 'track': return trackRoute(req, res, user);
       case 'notifications': return notificationsRoute(req, res, user);
       case 'overview': return overviewRoute(req, res, user);
       case 'project': return projectRoute(req, res, user);
@@ -528,6 +529,41 @@ export default async function handler(req, res) {
     console.error('[portal] error', err);
     return res.status(500).json({ error: 'Request failed' });
   }
+}
+
+// ═════════════════════════ track ═════════════════════════
+// Which pages a client opens. Actions (uploads, extras, payments) are read from
+// their own authoritative timestamps and are deliberately NOT logged here —
+// this fills the one real gap, which is knowing what they looked at.
+//
+// logPortalActivity no-ops without a portal_user_id, so a staff preview or
+// manage session silently records nothing: the client's activity stays theirs.
+const TRACKED_VIEWS = new Set([
+  'home', 'project', 'library', 'documents', 'extras', 'voiceover', 'kickoff',
+  'script', 'request', 'video-credit', 'team', 'settings', 'review', 'storyboard',
+]);
+
+async function trackRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  // Always 200: tracking must never be something the client notices failing.
+  if (!user.puid) return res.status(200).json({ ok: true });
+  const body = await readJsonBody(req);
+  const view = trimOrNull(body.view);
+  if (!view || !TRACKED_VIEWS.has(view)) return res.status(200).json({ ok: true });
+  const companyId = user.companyIds.includes(String(body.companyId)) ? String(body.companyId) : null;
+  // A deal id is only recorded once it's checked against the caller's org.
+  let dealId = trimOrNull(body.dealId);
+  if (dealId) {
+    const [ok] = await sql`
+      SELECT id FROM deals WHERE id = ${dealId} AND company_id = ANY(${user.companyIds})
+    `.catch(() => []);
+    if (!ok) dealId = null;
+  }
+  await logPortalActivity({
+    req, portalUserId: user.puid, companyId, dealId,
+    eventKey: 'view', detail: { view },
+  });
+  return res.status(200).json({ ok: true });
 }
 
 // ═════════════════════════ notifications ═════════════════════════
@@ -711,7 +747,9 @@ async function authRoutes(req, res) {
           body: co?.name || user.email,
           link: `#/company/${inv.company_id}`,
         },
-        inAppOnly: true,
+        // Deliberately NOT inAppOnly: accepting an invite is one of the few
+        // portal events worth being told about wherever you are, so it honours
+        // each person's in-app/email/both preference rather than forcing the bell.
       });
     } catch (err) {
       console.warn('[portal] member_joined notify failed', err.message);
@@ -1484,6 +1522,18 @@ async function downloadRoute(req, res, user) {
   const id = req.query.id ? String(req.query.id) : null;
   const wantDownload = req.query.download === '1';
   if (!scope || !id) return res.status(400).json({ error: 'scope and id required' });
+
+  // Worth knowing who actually took delivery. Only a real download counts —
+  // scope=poster is a thumbnail and stream=1 is the thumbnail picker, both of
+  // which fire constantly and would drown the log. Best-effort and not awaited
+  // beyond the helper's own catch.
+  if (user.puid && scope !== 'poster' && req.query.stream !== '1' && req.query.inline !== '1') {
+    logPortalActivity({
+      req, portalUserId: user.puid,
+      dealId: trimOrNull(req.query.dealId),
+      eventKey: 'download', detail: { scope },
+    }).catch(() => {});
+  }
 
   // Past-work item added by staff — org-checked, then streamed from the public
   // revision blob store (same place delivered cuts live).

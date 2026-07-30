@@ -154,6 +154,76 @@ export async function portalTimeline({ companyId = null, dealId = null, limit = 
   return items.slice(0, limit);
 }
 
+// Every client's portal activity in one feed, newest first — the staff-side
+// "what are they all doing in there" view.
+//
+// portalTimeline above answers "what has THIS client done", scoped to one
+// company or deal and reading each action from its own domain table. This one
+// is deliberately narrower in kind and wider in scope: it reads portal_activity
+// (logins, page views, downloads), which is now the record of client *presence*
+// in the portal. Actions still live on their own tables and show on the deal.
+const ACTIVITY_LABELS = {
+  login: 'Signed in',
+  download: 'Downloaded a file',
+};
+
+const VIEW_LABELS = {
+  home: 'Opened their dashboard',
+  project: 'Opened a project',
+  library: 'Browsed the video library',
+  documents: 'Opened documents',
+  extras: 'Looked at the extras on offer',
+  voiceover: 'Opened the voiceover picker',
+  kickoff: 'Opened the kick-off booking',
+  script: 'Opened script & visual direction',
+  request: 'Opened the new-video request',
+  'video-credit': 'Looked at video credit',
+  team: 'Opened their team',
+  settings: 'Opened settings',
+  review: 'Opened a video review',
+  storyboard: 'Opened a storyboard review',
+};
+
+export async function portalActivityFeed({ limit = 100, companyId = null, before = null } = {}) {
+  await ensurePortalTables();
+  const rows = await sql`
+    SELECT a.id, a.event_key, a.detail, a.created_at, a.deal_id,
+           a.ip, a.country, a.region, a.city, a.user_agent,
+           pu.name AS actor, pu.email AS actor_email,
+           c.id AS company_id, c.name AS company_name,
+           d.title AS deal_title
+      FROM portal_activity a
+      JOIN portal_users pu ON pu.id = a.portal_user_id
+      LEFT JOIN companies c ON c.id = a.company_id
+      LEFT JOIN deals d ON d.id = a.deal_id
+     WHERE (${companyId}::text IS NULL OR a.company_id = ${companyId})
+       AND (${before}::timestamptz IS NULL OR a.created_at < ${before})
+     ORDER BY a.created_at DESC
+     LIMIT ${Math.min(Number(limit) || 100, 300)}
+  `.catch(() => []);
+
+  return rows.map((r) => {
+    const view = r.detail && typeof r.detail === 'object' ? r.detail.view : null;
+    const text = r.event_key === 'view'
+      ? (VIEW_LABELS[view] || 'Opened the portal')
+      : (ACTIVITY_LABELS[r.event_key] || r.event_key);
+    return {
+      id: r.id,
+      type: r.event_key,
+      at: r.created_at,
+      actor: r.actor || r.actor_email || null,
+      actorEmail: r.actor_email || null,
+      companyId: r.company_id || null,
+      companyName: r.company_name || null,
+      dealId: r.deal_id || null,
+      dealTitle: r.deal_title || null,
+      text: text + (r.deal_title ? ` · ${r.deal_title}` : ''),
+      loc: locLabel(r),
+      ua: r.user_agent || null,
+    };
+  });
+}
+
 // The ordered "steps completed" checklist for one deal: sign → deposit/PO →
 // kick-off tasks (brand / voiceover / kick-off call). Reuses the portal's own
 // task engine so applicability (PO route, whether a voiceover is included, etc.)

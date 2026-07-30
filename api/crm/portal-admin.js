@@ -29,7 +29,7 @@ import { portalTeamInviteHtml, portalResetHtml, portalProjectTasksHtml, PORTAL_U
 import { emailLogoUrl } from '../_lib/portal/logo.js';
 import { notifyPortalUser } from '../_lib/portal/notifications.js';
 import { computeDealTasks } from '../_lib/portal/taskContext.js';
-import { portalTimeline, dealSteps, companyStepsSummary } from '../_lib/portal/activity.js';
+import { portalTimeline, dealSteps, companyStepsSummary, portalActivityFeed } from '../_lib/portal/activity.js';
 import { isFinalReleaseUnlocked } from '../_lib/crm/delivery.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 import { ensureProductionSchema } from '../_lib/production.js';
@@ -269,6 +269,20 @@ export default async function handler(req, res) {
   // needs a PORTAL_ADMIN_PERM.
   if (req.method === 'POST' && trimOrNull(req.query.op) === 'preview') {
     return previewOp(req, res);
+  }
+
+  // The cross-client activity feed. Open to anyone who can already look at a
+  // client's portal (portal.preview), which is the same information seen live.
+  if (req.method === 'GET' && trimOrNull(req.query.op) === 'activity') {
+    const user = await requirePermission(req, res, portalPreviewPerms(false));
+    if (!user) return;
+    await ensurePortalTables();
+    const items = await portalActivityFeed({
+      limit: Number(req.query.limit) || 100,
+      companyId: trimOrNull(req.query.companyId),
+      before: trimOrNull(req.query.before),
+    });
+    return res.status(200).json({ items });
   }
 
   const user = await requirePermission(req, res, PORTAL_ADMIN_PERMS);
