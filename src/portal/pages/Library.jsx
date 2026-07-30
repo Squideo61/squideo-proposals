@@ -15,7 +15,10 @@ import { BRAND } from '../../theme.js';
 import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, fmtBytes, fmtDate } from '../components.jsx';
-import { Film, Download, Clapperboard, Upload, Trash2, PlusCircle, Pencil, Layers } from 'lucide-react';
+import {
+  Film, Download, Clapperboard, Upload, Trash2, PlusCircle, Pencil, Layers,
+  Image as ImageIcon, Camera,
+} from 'lucide-react';
 
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|ogv|avi|mkv)$/i;
 
@@ -38,6 +41,9 @@ function fileUrl(dealId, f, { download = false } = {}) {
   // the download button.
   return mediaUrl(`download?scope=library&dealId=${q(dealId)}&id=${q(f.fileId)}${download ? '' : '&inline=1'}`);
 }
+
+const posterUrl = (f) =>
+  f.posterVersion ? mediaUrl(`download?scope=poster&id=${encodeURIComponent(f.itemId)}&v=${f.posterVersion}`) : null;
 
 export default function Library() {
   const { companyId, manageMode, showToast } = usePortal();
@@ -133,7 +139,9 @@ export default function Library() {
 function FileTile({ dealId, file, manage, projects, seriesOptions, onRemove, onSaved, onError }) {
   const { companyId } = usePortal();
   const [editing, setEditing] = useState(false);
+  const [picking, setPicking] = useState(false);
   const playable = isVideo(file);
+  const poster = posterUrl(file);
   const meta = [file.sizeBytes != null ? fmtBytes(file.sizeBytes) : null, fmtDate(file.createdTime)]
     .filter(Boolean).join(' · ');
 
@@ -142,15 +150,24 @@ function FileTile({ dealId, file, manage, projects, seriesOptions, onRemove, onS
       border: `1px solid ${BRAND.border}`, borderRadius: 12, overflow: 'hidden',
       display: 'flex', flexDirection: 'column', background: '#fff',
     }}>
-      {playable ? (
+      {picking ? (
+        <PosterPicker
+          file={file}
+          companyId={companyId}
+          onClose={() => setPicking(false)}
+          onSaved={() => { setPicking(false); onSaved(); }}
+          onError={onError}
+        />
+      ) : playable ? (
         // No forced aspect-ratio box: the video sizes to its own shape, so there
         // are never letterbox bars (a fractional column width used to leave a
         // black sliver down one edge) and a vertical cut isn't boxed into 16:9.
-        // preload="metadata" keeps a shelf of videos from pulling megabytes each
-        // on load — the poster frame and duration are enough until they press play.
+        // With a chosen thumbnail nothing loads until they press play; without
+        // one we pull metadata so the browser has a frame to show.
         <video
           controls
-          preload="metadata"
+          preload={poster ? 'none' : 'metadata'}
+          poster={poster || undefined}
           playsInline
           controlsList="nodownload"
           src={fileUrl(dealId, file)}
@@ -191,6 +208,11 @@ function FileTile({ dealId, file, manage, projects, seriesOptions, onRemove, onS
             </a>
             {manage && (
               <>
+                {playable && (
+                  <button className="btn-ghost" onClick={() => setPicking(true)} title="Choose the thumbnail from a frame of the video" style={{ padding: '0 12px' }}>
+                    <ImageIcon size={15} />
+                  </button>
+                )}
                 <button className="btn-ghost" onClick={() => setEditing(true)} title="Rename or move to a series" style={{ padding: '0 12px' }}>
                   <Pencil size={15} />
                 </button>
@@ -201,6 +223,93 @@ function FileTile({ dealId, file, manage, projects, seriesOptions, onRemove, onS
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Manage mode: pick the tile's thumbnail from a still in the video, the way
+// Vimeo does — scrub to the frame you want and grab it.
+//
+// The frame is drawn onto a canvas, which browsers refuse to read back from if
+// the video came from another origin. The player above streams via a 302 to the
+// blob host, so this one asks for the bytes to be relayed through us instead
+// (&stream=1) — same origin, clean canvas.
+function PosterPicker({ file, companyId, onClose, onSaved, onError }) {
+  const videoRef = useRef(null);
+  const [shot, setShot] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const capture = () => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return;
+    // 960 wide is plenty for a tile on a retina screen and keeps the stored
+    // JPEG around 100 KB.
+    const width = Math.min(v.videoWidth, 960);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = Math.round((v.videoHeight / v.videoWidth) * width);
+    canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
+    try {
+      setShot(canvas.toDataURL('image/jpeg', 0.78));
+    } catch {
+      onError("Couldn't read that frame — try reloading the page.");
+    }
+  };
+
+  const save = async (poster) => {
+    setBusy(true);
+    try {
+      await portalApi.patch(`library-item?companyId=${encodeURIComponent(companyId)}`, { id: file.itemId, poster });
+      onSaved();
+    } catch (err) {
+      onError(err.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ background: '#0F2A3D', padding: 10 }}>
+      {shot ? (
+        <img src={shot} alt="Chosen thumbnail" style={{ width: '100%', display: 'block', borderRadius: 6 }} />
+      ) : (
+        <video
+          ref={videoRef}
+          controls
+          preload="metadata"
+          playsInline
+          src={mediaUrl(`download?scope=archive&id=${encodeURIComponent(file.itemId)}&stream=1`)}
+          style={{ width: '100%', display: 'block', borderRadius: 6, background: '#000' }}
+        />
+      )}
+      <div style={{ fontSize: 11.5, color: '#B9CBD6', margin: '8px 0', lineHeight: 1.45 }}>
+        {shot ? 'Use this frame?' : 'Scrub to the frame you want, then grab it.'}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {shot ? (
+          <>
+            <button className="btn" onClick={() => save(shot)} disabled={busy} style={{ flex: 1 }}>
+              {busy ? 'Saving…' : 'Use this frame'}
+            </button>
+            <button className="btn-ghost" onClick={() => setShot(null)} disabled={busy} style={{ color: '#DCEEF7', padding: '0 12px' }}>
+              Pick another
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="btn" onClick={capture} style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <Camera size={15} /> Grab this frame
+            </button>
+            {file.posterVersion && (
+              <button className="btn-ghost" onClick={() => save(null)} disabled={busy} style={{ color: '#F5A3A3', padding: '0 12px' }}>
+                Clear
+              </button>
+            )}
+          </>
+        )}
+        <button className="btn-ghost" onClick={onClose} disabled={busy} style={{ color: '#B9CBD6', padding: '0 12px' }}>
+          Cancel
+        </button>
       </div>
     </div>
   );

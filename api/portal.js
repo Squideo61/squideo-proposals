@@ -1031,7 +1031,8 @@ async function libraryRoute(req, res, user) {
   // this client before the portal (or before this deal) existed. Company-scoped,
   // so it shows even for an org with no signed deals at all.
   const archiveRows = await sql`
-    SELECT id, deal_id, series, title, filename, mime_type, size_bytes, created_at
+    SELECT id, deal_id, series, title, filename, mime_type, size_bytes, created_at,
+           (poster IS NOT NULL) AS has_poster, poster_updated_at
       FROM portal_library_items
      WHERE company_id = ${companyId}
      ORDER BY created_at DESC
@@ -1049,6 +1050,12 @@ async function libraryRoute(req, res, user) {
       mimeType: a.mime_type || null,
       sizeBytes: a.size_bytes != null ? Number(a.size_bytes) : null,
       createdTime: a.created_at,
+      // The poster is served as bytes (scope=poster) rather than inlined — a
+      // shelf of base64 JPEGs would be megabytes of JSON. posterVersion is the
+      // cache key, so a re-chosen frame isn't served from cache.
+      posterVersion: a.has_poster
+        ? (a.poster_updated_at ? new Date(a.poster_updated_at).getTime() : 1)
+        : null,
     };
     // A series is how the client thinks about a run of videos, so it wins over
     // the project link. Failing that it joins one of their live projects, and
@@ -1172,6 +1179,10 @@ async function libraryRoute(req, res, user) {
 // streams them straight to Blob storage with a short-lived client token — the
 // same bypass the CRM uses for revision drafts — and only the resulting URL
 // comes back here to be recorded.
+// A 960px-wide JPEG frame lands around 100 KB; the cap is headroom, not a target.
+const MAX_POSTER_BYTES = 1024 * 1024;
+const POSTER_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
 function requireManage(res, user) {
   if (!user.canManage) {
     res.status(403).json({ error: 'Only Squideo staff can add to the library.' });
@@ -1245,6 +1256,32 @@ async function libraryItemRoute(req, res, user) {
        WHERE id = ${id} AND company_id = ${companyId}
     `;
     if (!cur) return res.status(404).json({ error: 'Not found' });
+
+    // A thumbnail captured from a frame of the video, or null to clear it.
+    // Handled on its own so the picker doesn't have to resend title/series.
+    if ('poster' in body) {
+      const raw = body.poster;
+      let value = null;
+      if (raw) {
+        const img = decodeLogo(raw);
+        // Raster only. A poster is always canvas output, and accepting SVG here
+        // would let a script-bearing image be served from our own origin.
+        if (!img || !POSTER_TYPES.has(img.contentType)) {
+          return res.status(400).json({ error: 'That frame could not be read as an image.' });
+        }
+        if (img.bytes.length > MAX_POSTER_BYTES) return res.status(413).json({ error: 'That frame is too large — try a smaller capture.' });
+        value = String(raw);
+      }
+      await sql`
+        UPDATE portal_library_items
+           SET poster = ${value}, poster_updated_at = ${value ? new Date().toISOString() : null}
+         WHERE id = ${id} AND company_id = ${companyId}
+      `;
+      if (!('title' in body) && !('series' in body) && !('dealId' in body)) {
+        return res.status(200).json({ ok: true });
+      }
+    }
+
     const title = 'title' in body ? (trimOrNull(body.title) || cur.title) : cur.title;
     const series = 'series' in body ? trimOrNull(body.series) : cur.series;
     let dealId = 'dealId' in body ? trimOrNull(body.dealId) : cur.deal_id;
@@ -1386,6 +1423,38 @@ function blobRedirect(res, url, wantDownload) {
   return res.status(302).end();
 }
 
+// Relay a blob's bytes through this origin, passing the client's Range header
+// through so <video> scrubbing works. Mirrors streamDriveFile — used only where
+// the redirect won't do (a canvas capture needs a same-origin video).
+async function streamBlob(req, res, url, mimeType) {
+  const headers = {};
+  if (req.headers.range) headers.Range = req.headers.range;
+  const upstream = await fetch(url, { headers }).catch(() => null);
+  if (!upstream || (!upstream.ok && upstream.status !== 206)) {
+    return res.status(502).json({ error: 'Could not fetch the file — try again shortly' });
+  }
+  res.status(upstream.status === 206 ? 206 : 200);
+  for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+    const v = upstream.headers.get(h);
+    if (v) res.setHeader(h, v);
+  }
+  if (!upstream.headers.get('content-type') && mimeType) res.setHeader('Content-Type', mimeType);
+  const reader = upstream.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!res.write(Buffer.from(value))) {
+        await new Promise((resolve) => res.once('drain', resolve));
+      }
+    }
+  } catch (err) {
+    console.warn('[portal] blob stream interrupted', err.message);
+  } finally {
+    res.end();
+  }
+}
+
 async function downloadRoute(req, res, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const scope = req.query.scope ? String(req.query.scope) : null;
@@ -1397,13 +1466,42 @@ async function downloadRoute(req, res, user) {
   // revision blob store (same place delivered cuts live).
   if (scope === 'archive') {
     const rows = await sql`
-      SELECT blob_url, company_id FROM portal_library_items WHERE id = ${id}
+      SELECT blob_url, mime_type, company_id FROM portal_library_items WHERE id = ${id}
     `.catch(() => []);
     const item = rows[0];
     if (!item || !item.blob_url || !user.companyIds.includes(item.company_id)) {
       return res.status(404).json({ error: 'File not found' });
     }
+    // stream=1 relays the bytes through us instead of redirecting. Only the
+    // thumbnail picker asks for this: drawing a frame onto a canvas taints it
+    // unless the video is same-origin, and a redirect to the blob host isn't.
+    // Playback and downloads keep the cheap 302.
+    if (req.query.stream === '1') {
+      return streamBlob(req, res, item.blob_url, item.mime_type || 'video/mp4');
+    }
     return blobRedirect(res, item.blob_url, wantDownload);
+  }
+
+  // The thumbnail chosen for a library item — image bytes, org-checked.
+  if (scope === 'poster') {
+    const rows = await sql`
+      SELECT poster, company_id FROM portal_library_items WHERE id = ${id}
+    `.catch(() => []);
+    const item = rows[0];
+    if (!item || !item.poster || !user.companyIds.includes(item.company_id)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    const img = decodeLogo(item.poster);
+    if (!img || !POSTER_TYPES.has(img.contentType)) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', img.contentType);
+    res.setHeader('Content-Length', String(img.bytes.length));
+    // The URL carries a version, so this can cache hard.
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    // Same lockdown as /api/portal-logo: an image served from our own origin
+    // must not be able to do anything if opened directly.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    return res.status(200).end(img.bytes);
   }
 
   // Org/brand documents — signed private-blob URL, 302 redirect.

@@ -30,3 +30,9 @@ CREATE INDEX IF NOT EXISTS portal_library_items_company_idx
 -- ("Psychosexual Therapy", "Recruitment 2025"). When set it decides the group
 -- the video appears under, ahead of any project link.
 ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS series TEXT;
+
+-- Thumbnail chosen from a still in the video itself (staff scrub to a frame and
+-- capture it, Vimeo-style). A base64 JPEG data URL, served as bytes by
+-- /api/portal/download?scope=poster so the library JSON stays small.
+ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS poster TEXT;
+ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS poster_updated_at TIMESTAMPTZ;
