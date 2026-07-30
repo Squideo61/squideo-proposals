@@ -6,6 +6,7 @@
 //
 //   GET  /api/crm/demo                 → { exists, links }
 //   POST /api/crm/demo?op=seed         → create (or refresh) the demo, return links
+//   POST /api/crm/demo?op=portal-link  → a fresh one-click way INTO the portal
 //   POST /api/crm/demo?op=delete       → tear it all down
 
 import { del } from '@vercel/blob';
@@ -14,16 +15,59 @@ import sql from '../_lib/db.js';
 import { makeId } from '../_lib/crm/shared.js';
 import { enterProduction } from '../_lib/production.js';
 import { ensurePortalTables } from '../_lib/portal/db.js';
+import { createRawToken, hashToken } from '../_lib/portal/auth.js';
 import { createPortalInvite, inviteUrlFor } from '../_lib/portal/onboarding.js';
+import { PORTAL_URL } from '../_lib/portal/emails.js';
 
 const DEMO_COMPANY_NAME = '[DEMO] Test Client';
-const PORTAL_BASE = process.env.PORTAL_URL || process.env.APP_URL || '';
+// The portal lives at <app>/portal — use the same constant every portal email
+// uses. (A local `process.env.PORTAL_URL || APP_URL` guess silently degraded to
+// the CRM's own origin when PORTAL_URL wasn't set, so every "open the portal"
+// link here landed back in the CRM.)
+const PORTAL_BASE = PORTAL_URL;
 const REVISION_PUBLIC_BASE = process.env.APP_URL || '';
 const REVISION_BLOB_TOKEN = process.env.REVISION_BLOB_READ_WRITE_TOKEN || process.env.REVIEW_BLOB_READ_WRITE_TOKEN;
 
 async function findDemoCompany() {
   const [co] = await sql`SELECT id FROM companies WHERE name = ${DEMO_COMPANY_NAME} ORDER BY created_at ASC LIMIT 1`;
   return co?.id || null;
+}
+
+// Does this staff email already have a portal account with access to the demo
+// org? Decides whether "open the portal" hands back a sign-in link or an invite.
+async function demoPortalAccount(email, companyId) {
+  if (!email || !companyId) return null;
+  const [row] = await sql`
+    SELECT pu.id, pu.disabled_at
+      FROM portal_users pu
+      JOIN portal_memberships m ON m.portal_user_id = pu.id AND m.company_id = ${companyId}
+     WHERE pu.email = ${String(email).toLowerCase()} AND m.disabled_at IS NULL
+     LIMIT 1
+  `.catch(() => []);
+  return row && !row.disabled_at ? row.id : null;
+}
+
+// A fresh, working way INTO the demo client's portal, minted on demand.
+// Invite tokens are stored hashed, so a previously-issued link can never be
+// re-read — which is why this is a POST that always mints a new one rather than
+// something GET could return. Already got an account? A one-shot magic link
+// signs you straight in; otherwise it's the invite (set a password once).
+async function portalSignInLink(email, companyId) {
+  await ensurePortalTables();
+  const puid = await demoPortalAccount(email, companyId);
+  if (puid) {
+    const raw = createRawToken();
+    await sql`
+      INSERT INTO portal_login_tokens (id, portal_user_id, token_hash, purpose, expires_at)
+      VALUES (${makeId('plt')}, ${puid}, ${hashToken(raw)}, ${'magic_link'},
+              ${new Date(Date.now() + 30 * 60 * 1000).toISOString()})
+    `;
+    return { url: `${PORTAL_BASE}?login=${encodeURIComponent(raw)}`, kind: 'signin' };
+  }
+  const { rawToken } = await createPortalInvite({
+    email, companyId, prefill: { name: 'Demo Client' }, invitedBy: email,
+  });
+  return { url: inviteUrlFor(rawToken), kind: 'invite' };
 }
 
 // The share token + review link for the demo deal's revision, if any.
@@ -39,6 +83,10 @@ async function demoLinks(companyId, email) {
     companyId,
     shareToken: rp?.share_token || null,
     reviewUrl: rp?.share_token ? `${REVISION_PUBLIC_BASE}/?revision=${rp.share_token}` : null,
+    portalUrl: PORTAL_BASE,
+    // Whether "open the portal" will sign you straight in or ask you to accept
+    // the invite first — only affects the hint we show.
+    hasPortalAccount: !!(await demoPortalAccount(email, companyId)),
     portalProjectUrl: `${PORTAL_BASE}#/project/${deal.id}`,
     portalReviewUrl: rp?.share_token ? `${PORTAL_BASE}#/review/${rp.share_token}` : null,
     portalStoryboardUrl: sp?.share_token ? `${PORTAL_BASE}#/storyboard/${sp.share_token}` : null,
@@ -148,6 +196,11 @@ export default async function handler(req, res) {
       const op = (req.query.op || '').toString();
       if (op === 'seed') return res.status(200).json({ ok: true, ...(await seed(user.email)) });
       if (op === 'delete') return res.status(200).json({ ok: true, ...(await teardown()) });
+      if (op === 'portal-link') {
+        const companyId = await findDemoCompany();
+        if (!companyId) return res.status(404).json({ error: 'No demo project — seed one first.' });
+        return res.status(200).json({ ok: true, ...(await portalSignInLink(user.email, companyId)) });
+      }
       return res.status(400).json({ error: 'Unknown op' });
     }
     return res.status(405).json({ error: 'Method not allowed' });

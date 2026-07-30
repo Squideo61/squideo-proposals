@@ -8,6 +8,28 @@ import { FlaskConical, Trash2, PlayCircle, KeyRound, Film, ExternalLink, Copy, C
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 
+// Step 1 can't be a plain link: invite tokens are stored hashed, so a link
+// issued at seed time is unreadable once the page reloads — which used to leave
+// this panel with no way into the portal at all. Mint a fresh one per click.
+function SignInRow({ hasAccount, onOpen, busy }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: '1px solid ' + BRAND.border, borderRadius: 8 }}>
+      <KeyRound size={16} color={BRAND.blue} style={{ flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink }}>1. Open the portal as the demo client</div>
+        <div style={{ fontSize: 11.5, color: BRAND.muted }}>
+          {hasAccount
+            ? 'Signs you straight in as the demo client — a fresh one-shot link each time.'
+            : 'Opens your portal invite: set a password once, and you’re the demo client.'}
+        </div>
+      </div>
+      <button className="btn" style={{ fontSize: 12 }} disabled={busy} onClick={onOpen}>
+        <ExternalLink size={13} /> {busy ? 'Opening…' : 'Open'}
+      </button>
+    </div>
+  );
+}
+
 function LinkRow({ icon: Icon, label, hint, url }) {
   const [copied, setCopied] = useState(false);
   if (!url) return null;
@@ -32,6 +54,7 @@ function LinkRow({ icon: Icon, label, hint, url }) {
 export function DemoTab() {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [linking, setLinking] = useState(false);
   const [notice, setNotice] = useState(null);
 
   const load = useCallback(() => {
@@ -46,8 +69,22 @@ export function DemoTab() {
     try {
       const r = await api.post('/api/crm/demo?op=seed', {});
       setData({ exists: true, ...r });
-      flash(r.inviteUrl ? 'Demo ready — accept the portal invite below to log in as the client.' : 'Demo ready.');
+      flash('Demo ready — use “Open the portal as the demo client” below to log in as the client.');
     } catch (err) { flash(err.message || 'Could not seed the demo'); } finally { setBusy(false); }
+  };
+
+  // Open the tab synchronously (before the await) so the browser attributes it
+  // to the click and doesn't treat it as a pop-up.
+  const openPortal = async () => {
+    const tab = window.open('', '_blank', 'noopener');
+    setLinking(true);
+    try {
+      const r = await api.post('/api/crm/demo?op=portal-link', {});
+      if (tab) tab.location = r.url; else window.location.href = r.url;
+    } catch (err) {
+      if (tab) tab.close();
+      flash(err.message || 'Could not open the portal');
+    } finally { setLinking(false); }
   };
 
   const remove = async () => {
@@ -89,15 +126,15 @@ export function DemoTab() {
       ) : (
         <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-            <LinkRow icon={KeyRound} label="1. Accept your portal invite" hint="Sets a password and logs you into the portal as the demo client." url={data.inviteUrl} />
+            <SignInRow hasAccount={!!data.hasPortalAccount} busy={linking} onOpen={openPortal} />
             <LinkRow icon={PlayCircle} label="2. Open the project in the portal" hint="The client's project page — phase bar, tasks, reviews and (once released) the download." url={data.portalProjectUrl} />
             <LinkRow icon={Film} label="Video review inside the portal" hint="Appears once you've submitted a video draft to the client." url={data.portalReviewUrl} />
             <LinkRow icon={Film} label="Storyboard review inside the portal" hint="Appears once you've submitted a storyboard draft to the client." url={data.portalStoryboardUrl} />
             <LinkRow icon={ExternalLink} label="Video review via the anonymous share link" hint="What a client sees from an emailed link (name/email gate)." url={data.reviewUrl} />
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="btn-ghost" disabled={busy} onClick={seed} style={{ fontSize: 12.5 }} title="Re-issue the portal invite and refresh links">
-              Refresh invite
+            <button className="btn-ghost" disabled={busy} onClick={seed} style={{ fontSize: 12.5 }} title="Re-create anything missing from the demo project and refresh these links">
+              Refresh demo
             </button>
             <button className="btn-ghost is-danger" disabled={busy} onClick={remove} style={{ fontSize: 12.5 }}>
               <Trash2 size={14} /> Delete demo project
