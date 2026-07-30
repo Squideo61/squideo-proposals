@@ -267,7 +267,8 @@ function AuthedApp() {
 // preview is purple and says so; manage mode is amber — the warning colour —
 // because everything done from there is real and lands on the client's account.
 function PreviewBanner() {
-  const { preview } = usePortal();
+  const { preview, showToast } = usePortal();
+  const [switching, setSwitching] = useState(false);
   if (!preview) return null;
   const manage = preview.manage === true;
   const exit = () => {
@@ -277,11 +278,46 @@ function PreviewBanner() {
     window.close();
     window.setTimeout(() => { window.location.href = 'about:blank'; }, 150);
   };
+
+  // Flip between read-only and manage without going back to the CRM. The new
+  // token is minted by the CRM endpoint, which re-checks the staff session
+  // (HttpOnly sq_session cookie, same origin) and their portal-admin
+  // permission — so this is a request to be upgraded, never a self-grant.
+  const switchMode = async () => {
+    setSwitching(true);
+    try {
+      const res = await fetch('/api/crm/portal-admin?op=preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ companyId: preview.company?.id, manage: !manage }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error || 'Could not switch mode');
+      const token = new URL(json.url, window.location.origin).searchParams.get('preview');
+      if (!token) throw new Error('Could not switch mode');
+      // Swap the per-tab token and reload in place, so we stay on this page.
+      setPreviewToken(token);
+      window.location.reload();
+    } catch (err) {
+      showToast(
+        err.message === 'Unauthorised' || err.message === 'Session expired'
+          ? 'Sign in to the CRM in this browser first, then try again.'
+          : err.message
+      );
+      setSwitching(false);
+    }
+  };
+
   const who = preview.company?.name || 'this client';
+  const btn = {
+    background: 'rgba(255,255,255,0.2)', color: '#fff', border: 'none', borderRadius: 6,
+    padding: '4px 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+  };
   return (
     <div style={{
       background: manage ? '#B45309' : '#7C3AED', color: '#fff', padding: '8px 16px',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
       fontSize: 13, fontWeight: 600, flexWrap: 'wrap', textAlign: 'center',
     }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
@@ -290,10 +326,10 @@ function PreviewBanner() {
           ? <>Manage mode — you’re editing {who}’s portal for real. Payments, extras and their account settings stay locked.</>
           : <>Preview — you’re viewing {who}’s portal as they’d see it. Changes are disabled.</>}
       </span>
-      <button
-        onClick={exit}
-        style={{ background: 'rgba(255,255,255,0.2)', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
-      >
+      <button onClick={switchMode} disabled={switching} style={{ ...btn, background: manage ? 'rgba(255,255,255,0.2)' : '#fff', color: manage ? '#fff' : '#5B21B6' }}>
+        {switching ? 'Switching…' : manage ? 'Back to read-only' : 'Switch to manage mode'}
+      </button>
+      <button onClick={exit} style={btn}>
         {manage ? 'Exit manage mode' : 'Exit preview'}
       </button>
     </div>
