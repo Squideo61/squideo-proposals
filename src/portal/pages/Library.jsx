@@ -464,9 +464,14 @@ function SeriesPicker({ value, onChange, options }) {
   );
 }
 
-// Staff-only (manage mode): stream a past video straight to Blob storage, then
-// record it against the org. Uploads bypass the serverless body limit the same
-// way the CRM's revision drafts do.
+// Identifies a queued file well enough to spot the same one being added twice.
+const fileKey = (f) => `${f.name}|${f.size}|${f.lastModified}`;
+
+// Staff-only (manage mode): stream past videos straight to Blob storage, then
+// record them against the org. Uploads bypass the serverless body limit the
+// same way the CRM's revision drafts do, and run one at a time — these are
+// hundreds of megabytes each, and the Blob SDK already parallelises the parts
+// within a single file.
 function AddPastWork({ companyId, projects, series: seriesOptions, onDone }) {
   const fileRef = useRef(null);
   const [files, setFiles] = useState([]);
@@ -487,15 +492,26 @@ function AddPastWork({ companyId, projects, series: seriesOptions, onDone }) {
     return () => window.clearTimeout(t);
   }, [progress?.index, progress?.percent > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // A back catalogue arrives as a handful of files at once, so a multi-drop
-  // uploads the lot rather than silently keeping the first. The title field
-  // only makes sense for a single video — the rest take their filename.
+  // A back catalogue arrives as a handful of files, often not all in one go —
+  // so each drop or selection ADDS to the queue rather than replacing it, and
+  // a file already queued is ignored rather than uploaded twice. The title
+  // field only makes sense for a single video; the rest take their filename.
   const take = (list) => {
     const picked = Array.from(list || []).filter((f) => f.size > 0);
     if (!picked.length) return;
-    setFiles(picked);
-    setTitle(picked.length === 1 ? picked[0].name.replace(/\.[^.]+$/, '') : '');
+    setFiles((prev) => {
+      const seen = new Set(prev.map(fileKey));
+      const next = [...prev, ...picked.filter((f) => !seen.has(fileKey(f)))];
+      setTitle(next.length === 1 ? next[0].name.replace(/\.[^.]+$/, '') : '');
+      return next;
+    });
   };
+
+  const drop = (file) => setFiles((prev) => {
+    const next = prev.filter((f) => fileKey(f) !== fileKey(file));
+    setTitle(next.length === 1 ? next[0].name.replace(/\.[^.]+$/, '') : '');
+    return next;
+  });
 
   const dropProps = {
     onDragOver: (e) => { e.preventDefault(); setDrag(true); },
@@ -572,17 +588,15 @@ function AddPastWork({ companyId, projects, series: seriesOptions, onDone }) {
           <Upload size={20} color={drag ? BRAND.blue : BRAND.muted} />
           <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink, marginTop: 8 }}>
             {drag
-              ? 'Drop the videos here'
-              : files.length === 1
-                ? files[0].name
-                : files.length > 1
-                  ? `${files.length} videos ready`
-                  : 'Drag videos here, or click to choose'}
+              ? 'Drop them here'
+              : files.length
+                ? `Add more — ${files.length} video${files.length === 1 ? '' : 's'} queued`
+                : 'Drag videos here, or click to choose'}
           </div>
           <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 4 }}>
             {files.length
-              ? `${fmtBytes(files.reduce((n, f) => n + f.size, 0))} total · drop again to replace`
-              : 'MP4 or MOV — drop several at once for a back catalogue'}
+              ? `${fmtBytes(files.reduce((n, f) => n + f.size, 0))} total · they upload one after another`
+              : 'MP4 or MOV — select or drop as many as you like, in as many goes as you like'}
           </div>
           <input
             ref={fileRef}
@@ -593,6 +607,37 @@ function AddPastWork({ companyId, projects, series: seriesOptions, onDone }) {
             onChange={(e) => { take(e.target.files); e.target.value = ''; }}
           />
         </div>
+
+        {/* The queue, spelled out. A bare count gave no way to see what was
+            actually going up, or to drop one file without starting over. */}
+        {files.length > 0 && (
+          <div style={{ border: `1px solid ${BRAND.border}`, borderRadius: 10, background: '#fff', overflow: 'hidden' }}>
+            {files.map((f, i) => {
+              const state = !busy ? 'queued'
+                : i < progress.index - 1 ? 'done'
+                  : i === progress.index - 1 ? 'uploading' : 'waiting';
+              return (
+                <div key={fileKey(f)} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', fontSize: 12.5,
+                  borderTop: i ? `1px solid ${BRAND.border}` : 'none',
+                  background: state === 'uploading' ? '#F5FBFE' : undefined,
+                }}>
+                  <span style={{ color: BRAND.muted, minWidth: 16, textAlign: 'right' }}>{i + 1}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.name}>{f.name}</div>
+                    <div style={{ fontSize: 11, color: BRAND.muted }}>{fmtBytes(f.size)}</div>
+                  </div>
+                  {state === 'done' && <span style={{ color: '#16A34A', fontSize: 11.5, fontWeight: 700 }}>Added ✓</span>}
+                  {state === 'uploading' && <span style={{ color: BRAND.blue, fontSize: 11.5, fontWeight: 700 }}>{progress.percent}%</span>}
+                  {state === 'waiting' && <span style={{ color: BRAND.muted, fontSize: 11.5 }}>Waiting</span>}
+                  {state === 'queued' && (
+                    <button type="button" className="btn-ghost" onClick={() => drop(f)} title="Remove from the queue" style={{ color: '#DC2626', padding: '2px 8px' }}>✕</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {files.length > 1 ? (
@@ -635,7 +680,8 @@ function AddPastWork({ companyId, projects, series: seriesOptions, onDone }) {
               <div style={{ width: `${progress.percent}%`, height: '100%', background: BRAND.blue, transition: 'width 0.2s ease' }} />
             </div>
             <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 6 }}>
-              {progress.total > 1 ? `Uploading ${progress.index} of ${progress.total}… ` : 'Uploading… '}{progress.percent}%
+              {progress.total > 1 ? `Uploading ${progress.index} of ${progress.total} — ` : 'Uploading '}
+              {files[progress.index - 1]?.name || ''} {progress.percent}%
             </div>
             {stalled && (
               <div style={{ fontSize: 12, color: '#B45309', marginTop: 4 }}>
@@ -647,7 +693,7 @@ function AddPastWork({ companyId, projects, series: seriesOptions, onDone }) {
           <button className="btn" type="submit" disabled={!files.length} style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             {files.length
               ? <><Upload size={15} /> Add {files.length > 1 ? `${files.length} videos` : ''} to library</>
-              : <><PlusCircle size={15} /> Choose a video first</>}
+              : <><PlusCircle size={15} /> Choose your videos first</>}
           </button>
         )}
       </form>
