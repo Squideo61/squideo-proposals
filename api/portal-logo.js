@@ -25,7 +25,10 @@ export default async function handler(req, res) {
 
   res.setHeader('Content-Type', logo.contentType);
   res.setHeader('Content-Length', String(logo.bytes.length));
-  res.setHeader('Cache-Control', 'public, max-age=3600');
+  // Short cache: a logo is now editable on the organisation page, and staff
+  // expect the portal to reflect a change straight away rather than an hour
+  // later. Still long enough that the portal header doesn't refetch per page.
+  res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=3600');
   // A client logo can be an SVG, which is script-capable — served from our own
   // origin that would be an XSS vector if opened directly. Same lockdown as the
   // email-image proxy: no scripts, no sniffing, no ambient authority.

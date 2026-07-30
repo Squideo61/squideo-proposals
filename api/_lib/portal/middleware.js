@@ -34,9 +34,16 @@ export async function requirePortalAuth(req, res) {
       res.status(404).json({ error: 'Organisation not found' });
       return null;
     }
+    // The org's own uploaded logo wins; a proposal's clientLogo is the fallback
+    // (see api/_lib/portal/logo.js for the precedence).
     const [logo] = await sql`
-      SELECT 1 FROM proposals p JOIN deals d ON d.id = p.deal_id
-       WHERE d.company_id = ${co.id} AND COALESCE(p.data->>'clientLogo', '') <> '' LIMIT 1
+      SELECT 1 FROM companies c
+       WHERE c.id = ${co.id}
+         AND (c.logo IS NOT NULL OR EXISTS (
+           SELECT 1 FROM proposals p JOIN deals d ON d.id = p.deal_id
+            WHERE d.company_id = c.id AND COALESCE(p.data->>'clientLogo', '') <> ''
+         ))
+       LIMIT 1
     `;
     return {
       puid: null,
@@ -81,12 +88,12 @@ export async function requirePortalAuth(req, res) {
   // where it belongs.
   const memberships = await sql`
     SELECT m.company_id, c.name AS company_name,
-           EXISTS (
+           (c.logo IS NOT NULL OR EXISTS (
              SELECT 1 FROM proposals p
                JOIN deals d ON d.id = p.deal_id
               WHERE d.company_id = m.company_id
                 AND COALESCE(p.data->>'clientLogo', '') <> ''
-           ) AS has_logo
+           )) AS has_logo
       FROM portal_memberships m
       JOIN companies c ON c.id = m.company_id
      WHERE m.portal_user_id = ${u.id} AND m.disabled_at IS NULL

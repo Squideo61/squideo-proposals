@@ -5,6 +5,7 @@
 // call short-circuits for the lifetime of the Vercel instance.
 
 import sql from '../db.js';
+import { ensureCompanyLogoColumns } from './logo.js';
 
 let portalTablesEnsured = null;
 export function ensurePortalTables() {
@@ -156,6 +157,9 @@ export function ensurePortalTables() {
     await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS script_status_by TEXT`;
     await sql`ALTER TABLE deal_files ADD COLUMN IF NOT EXISTS category TEXT`;
     await sql`CREATE INDEX IF NOT EXISTS deal_files_category_idx ON deal_files(deal_id, category)`;
+    // companies.logo — the org's own brand mark. Must exist before the session
+    // queries below read it (db/migrations/20260730_company_logo.sql).
+    await ensureCompanyLogoColumns();
   })().catch((err) => { portalTablesEnsured = null; throw err; });
   return portalTablesEnsured;
 }

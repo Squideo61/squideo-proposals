@@ -5,6 +5,7 @@ import { hasPermission } from '../permissions.js';
 import { updateContactAddress, getOrCreateContact } from '../xero.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
 import { creditTotalsForKeys, clientKeysForCompany } from '../partnerCredits.js';
+import { ensureCompanyLogoColumns, decodeLogo, portalLogoPath } from '../portal/logo.js';
 import { listVideoCreditOrders, raiseInvoiceForCreditOrder, cancelCreditOrder, reconcileVideoCreditOrders } from '../videoCredit.js';
 
 // Self-heal for db/migrations/20260603_company_address.sql. Called at the top of
@@ -43,8 +44,12 @@ function ensureProposalBillingPaidColumns() {
   return proposalBillingPaidColumnsEnsured;
 }
 
+// Decoded size cap for an organisation logo. The uploader already resizes
+// rasters to 600×300, so this only ever catches a pathological SVG.
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+
 export async function companiesRoute(req, res, id, action, user) {
-  await Promise.all([ensureCompanyAddressColumns(), ensureProposalBillingPaidColumns()]);
+  await Promise.all([ensureCompanyAddressColumns(), ensureProposalBillingPaidColumns(), ensureCompanyLogoColumns()]);
   // POST /companies/from-xero-contact — find or create a local company linked
   // to a given Xero contact ID. Used by the contact picker so deals/proposals
   // always resolve to a local company with a stable xero_contact_id link.
@@ -169,6 +174,8 @@ export async function companiesRoute(req, res, id, action, user) {
              c.customer_verified_at, c.customer_verified_by,
              c.address_line1, c.address_line2, c.city, c.postcode, c.country,
              c.created_at, c.updated_at,
+             (c.logo IS NOT NULL) AS has_logo,
+             c.logo_updated_at,
              xc.name AS xero_contact_name,
              xc.address_line1 AS xero_address_line1,
              xc.address_line2 AS xero_address_line2,
@@ -390,6 +397,57 @@ export async function companiesRoute(req, res, id, action, user) {
     } catch (err) {
       return res.status(err.status || 500).json({ error: err.message || 'Could not cancel the request' });
     }
+  }
+
+  // /companies/:id/logo — the organisation's own brand mark.
+  //
+  // GET returns the data URL itself (not served through /api/portal-logo)
+  // because the two callers need the bytes inline: the uploader's preview, and
+  // the "new proposal" flow, which copies it into proposals.data.clientLogo so
+  // the proposal stays a self-contained snapshot of what was sent.
+  if (action === 'logo' && req.method === 'GET') {
+    const [row] = await sql`SELECT logo, logo_updated_at, logo_updated_by FROM companies WHERE id = ${id}`;
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    return res.status(200).json({
+      logo: row.logo || null,
+      updatedAt: row.logo_updated_at || null,
+      updatedBy: row.logo_updated_by || null,
+    });
+  }
+
+  // POST { logo } — a base64 image data URL (what LogoUploader produces), or
+  // null/'' to remove it. Stored as NULL when absent so the has_logo checks stay
+  // a cheap IS NOT NULL that never detoasts the value.
+  if (action === 'logo' && req.method === 'POST') {
+    const raw = req.body?.logo;
+    const clearing = raw === null || raw === undefined || raw === '';
+    let value = null;
+    if (!clearing) {
+      const decoded = decodeLogo(raw);
+      if (!decoded) {
+        return res.status(400).json({ error: 'That doesn’t look like an image — upload a PNG, JPG or SVG.' });
+      }
+      if (decoded.bytes.length > MAX_LOGO_BYTES) {
+        return res.status(413).json({ error: 'Logo too large — keep it under 2 MB.' });
+      }
+      value = String(raw);
+    }
+    const [row] = await sql`
+      UPDATE companies
+         SET logo = ${value},
+             logo_updated_at = ${value ? new Date().toISOString() : null},
+             logo_updated_by = ${value ? (user.email || null) : null},
+             updated_at = NOW()
+       WHERE id = ${id}
+      RETURNING id, (logo IS NOT NULL) AS has_logo, logo_updated_at
+    `;
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    return res.status(200).json({
+      ok: true,
+      hasLogo: !!row.has_logo,
+      logoUrl: row.has_logo ? portalLogoPath(id) : null,
+      updatedAt: row.logo_updated_at || null,
+    });
   }
 
   // POST /companies/:id/create-xero-contact — create a brand-new Xero contact
@@ -914,6 +972,13 @@ export function serialiseCompany(r) {
     xeroContactName: r.xero_contact_name || null,
     customerVerifiedAt: verifiedAt,
     customerVerifiedBy: r.customer_verified_by || null,
+    // The org's own logo. Only the detail query selects has_logo — elsewhere
+    // it's undefined, which the SPA reads as "unknown", same as
+    // hasSignedProposal below. The bytes are served by /api/portal-logo (the
+    // same endpoint the client portal uses), never inlined into this payload.
+    hasLogo: r.has_logo !== undefined ? !!r.has_logo : null,
+    logoUrl: r.has_logo ? portalLogoPath(r.id) : null,
+    logoUpdatedAt: r.logo_updated_at || null,
     // hasSignedProposal is only present on rows that came from a list/detail
     // SELECT — older serialise call-sites (e.g. quote-request qualify) just
     // get `undefined` here, which the SPA treats as `false`. That's fine

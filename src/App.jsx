@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 
 import { BRAND, APP_MAX_WIDTH } from './theme.js';
 import { DEFAULT_PROPOSAL } from './defaults.js';
 import { StoreProvider, useStore } from './store.jsx';
+import { api } from './api.js';
 import { canAccessView } from './lib/viewAccess.js';
 import { makeId } from './utils.js';
 import { ErrorBoundary } from './components/ErrorBoundary.jsx';
@@ -264,7 +265,7 @@ function AppShell() {
 
   // Create a proposal pre-linked to an existing deal, pre-filling client and
   // company from the deal so the builder isn't blank.
-  const createFrom = (base, { dealId } = {}) => {
+  const createFrom = async (base, { dealId } = {}) => {
     const id = makeId();
     const copy = JSON.parse(JSON.stringify(base));
     delete copy.id;
@@ -278,19 +279,34 @@ function AppShell() {
     // got a contact/company yet.
     let prefillClient = '';
     let prefillBusiness = '';
+    let companyId = null;
     if (dealId) {
       const deal = state.deals[dealId];
       const contact = deal?.primaryContactId ? state.contacts[deal.primaryContactId] : null;
-      const company = deal?.companyId ? state.companies[deal.companyId] : null;
+      companyId = deal?.companyId || null;
+      const company = companyId ? state.companies[companyId] : null;
       prefillClient = contact?.name || '';
       prefillBusiness = company?.name || deal?.title || '';
+    }
+
+    // The organisation's logo (uploaded on its CRM page) seeds clientLogo, so a
+    // returning client's proposal is already branded. Copied in rather than
+    // referenced: a proposal is a snapshot of what was sent, and must not change
+    // if the org's logo is replaced later. Best-effort — a failure just leaves
+    // the builder's own uploader empty.
+    let prefillLogo = null;
+    if (companyId) {
+      try {
+        const r = await api.get('/api/crm/companies/' + encodeURIComponent(companyId) + '/logo');
+        prefillLogo = r?.logo || null;
+      } catch { /* no logo on file, or the lookup failed */ }
     }
 
     const data = {
       ...copy,
       clientName: prefillClient,
       contactBusinessName: prefillBusiness,
-      clientLogo: null,
+      clientLogo: prefillLogo,
       projectVision: '',
       preparedBy: user.name || 'Adam Shelton',
       preparedByEmail: user.email || null,

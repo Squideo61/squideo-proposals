@@ -1,10 +1,12 @@
 // The client's own logo, for portal chrome and portal emails.
 //
-// There is no logo column anywhere in the schema: the only place a customer's
-// brand mark exists is the proposal we built for them, as a base64 data URL in
-// proposals.data->>'clientLogo' (set by the builder's LogoUploader). An org's
-// logo is therefore the newest one across that org's proposals, resolved on
-// read so it follows whatever their latest proposal shows.
+// Two sources, in precedence order:
+//   1. companies.logo — uploaded once on the organisation in the CRM. This is
+//      the one that follows the client: it pre-fills every new proposal and is
+//      what their portal shows.
+//   2. proposals.data->>'clientLogo' — the original home (a base64 data URL set
+//      by the builder's LogoUploader), kept as the fallback so every client who
+//      had a logo before this feature still has one, without a backfill.
 //
 // It's exposed as an <img src> pointing at /api/portal-logo rather than as the
 // data URL itself: email clients (Gmail's image proxy especially) won't render
@@ -13,6 +15,19 @@
 
 import sql from '../db.js';
 import { APP_URL } from '../email.js';
+
+// Runtime self-heal for db/migrations/20260730_company_logo.sql. Module-cached;
+// on failure the cache is reset so a later call can retry.
+let logoColumnsEnsured = null;
+export function ensureCompanyLogoColumns() {
+  if (logoColumnsEnsured) return logoColumnsEnsured;
+  logoColumnsEnsured = (async () => {
+    await sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS logo TEXT`;
+    await sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS logo_updated_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS logo_updated_by TEXT`;
+  })().catch((err) => { logoColumnsEnsured = null; throw err; });
+  return logoColumnsEnsured;
+}
 
 // Same-origin path — for the portal SPA.
 export function portalLogoPath(companyId) {
@@ -26,7 +41,12 @@ export function portalLogoUrl(companyId) {
 
 export async function companyHasLogo(companyId) {
   if (!companyId) return false;
+  await ensureCompanyLogoColumns().catch(() => {});
   const rows = await sql`
+    SELECT 1 FROM companies WHERE id = ${companyId} AND logo IS NOT NULL LIMIT 1
+  `.catch(() => []);
+  if (rows.length) return true;
+  const fallback = await sql`
     SELECT 1
       FROM proposals p
       JOIN deals d ON d.id = p.deal_id
@@ -34,7 +54,7 @@ export async function companyHasLogo(companyId) {
        AND COALESCE(p.data->>'clientLogo', '') <> ''
      LIMIT 1
   `;
-  return rows.length > 0;
+  return fallback.length > 0;
 }
 
 // The absolute logo URL for an email, or null when the client has no logo —
@@ -46,6 +66,9 @@ export async function emailLogoUrl(companyId) {
 
 export async function companyLogoDataUrl(companyId) {
   if (!companyId) return null;
+  await ensureCompanyLogoColumns().catch(() => {});
+  const own = await sql`SELECT logo FROM companies WHERE id = ${companyId}`.catch(() => []);
+  if (own[0]?.logo) return own[0].logo;
   const rows = await sql`
     SELECT p.data->>'clientLogo' AS logo
       FROM proposals p

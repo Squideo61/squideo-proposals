@@ -6,6 +6,7 @@ import { useIsMobile, formatGBP, formatRelativeTime, effectiveAddress, formatAdd
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
 import { CompanyCreditsCard } from './CompanyCreditsCard.jsx';
+import { CompanyLogoCard } from './CompanyLogoCard.jsx';
 import { PortalMembersCard } from './PortalMembersCard.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { PIPELINE_STAGES } from './PipelineView.jsx';
@@ -293,6 +294,11 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
           credit-based projects + matched partner credits). */}
       <div style={{ marginBottom: 16 }}>
         <CompanyCreditsCard companyId={companyId} />
+      </div>
+
+      {/* The client's own logo — used on every new proposal and in their portal. */}
+      <div style={{ marginBottom: 16 }}>
+        <CompanyLogoCard companyId={companyId} companyName={detail.name} onSaved={reload} />
       </div>
 
       {/* Customer-portal access for this organisation (members + invites). */}
