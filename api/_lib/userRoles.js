@@ -243,6 +243,17 @@ export function ensureSystemRoles() {
          WHERE id IN ('director', 'member', 'producer') AND NOT (permissions @> '["portal.preview"]'::jsonb)
       `;
       if ((portalPreview.count || portalPreview.rowCount || 0) > 0) invalidateRoleCache();
+
+      // ── Staff activity log ──
+      // Reading everyone's work (and the before → after on records they change)
+      // is a management view, so it stays with Directors. Admins via '*'. Any
+      // other role has to be granted it deliberately in the role editor.
+      const activityView = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["activity.view"]'::jsonb, updated_at = NOW()
+         WHERE id = 'director' AND NOT (permissions @> '["activity.view"]'::jsonb)
+      `;
+      if ((activityView.count || activityView.rowCount || 0) > 0) invalidateRoleCache('director');
     } catch (err) {
       systemRolesEnsured = null;
       console.warn('[roles] ensure system roles failed', err.message);

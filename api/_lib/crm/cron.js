@@ -15,6 +15,7 @@ import { cronAdSpendSync } from './googleAds.js';
 import { cronGscSync } from './googleSearch.js';
 import { cronGa4Sync } from './googleAnalytics.js';
 import { captureCostSnapshot } from './costSnapshot.js';
+import { pruneStaffActivity } from './staffActivity.js';
 import { timingSafeEqualStr } from '../middleware.js';
 import { ensurePortalTables } from '../portal/db.js';
 import { computeDealTasks } from '../portal/taskContext.js';
@@ -240,8 +241,11 @@ export async function cronPruneViews(res) {
   const result = await sql`
     DELETE FROM proposal_views WHERE opened_at < NOW() - INTERVAL '12 months'
   `;
-  console.log('[cron prune-views] deleted', { count: result.count || result.rowCount || 0 });
-  return res.status(200).json({ ok: true, deleted: result.count || result.rowCount || 0 });
+  // Staff activity carries IP + user agent for the same reason and gets the
+  // same 12-month ceiling. Best-effort: it must not fail the views prune.
+  const staff = await pruneStaffActivity();
+  console.log('[cron prune-views] deleted', { count: result.count || result.rowCount || 0, staffActivity: staff });
+  return res.status(200).json({ ok: true, deleted: result.count || result.rowCount || 0, staffActivity: staff });
 }
 
 // CRM-cost snapshot. Runs daily and upserts the CURRENT month's row (Blob +

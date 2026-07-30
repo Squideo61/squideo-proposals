@@ -23,7 +23,10 @@ export function navFlags(perms) {
       || permissionsInclude(perms, 'roles.manage')
       || permissionsInclude(perms, 'settings.manage')
       || permissionsInclude(perms, 'commission.manage')
-      || permissionsInclude(perms, 'commission.view_own'),
+      || permissionsInclude(perms, 'commission.view_own')
+      // Staff activity lives under Admin too — someone granted only that still
+      // needs the section to open (AdminView shows them the one tab).
+      || permissionsInclude(perms, 'activity.view'),
     canBusiness,
     // Pending-Payments-only access (Project/Production Managers) still reaches
     // the Finance page (they just see the one tab).

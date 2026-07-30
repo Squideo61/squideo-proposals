@@ -33,6 +33,7 @@ import { portalTimeline, dealSteps, companyStepsSummary, portalActivityFeed } fr
 import { isFinalReleaseUnlocked } from '../_lib/crm/delivery.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 import { ensureProductionSchema } from '../_lib/production.js';
+import { logStaffActivity } from '../_lib/crm/staffActivity.js';
 
 // The permission policy lives in api/_lib/permissions.js alongside the catalog.
 
@@ -487,6 +488,14 @@ export default async function handler(req, res) {
         invitedBy: user.email,
         rawToken: token,
       });
+      logStaffActivity({
+        actorEmail: user.email,
+        action: 'portal.invite.create',
+        entity: 'portal',
+        entityId: companyId,
+        entityLabel: co.name,
+        summary: `invited ${email} to the client portal`,
+      }).catch(() => {});
       return res.status(201).json({ ok: true });
     }
 
@@ -540,6 +549,18 @@ export default async function handler(req, res) {
            WHERE portal_user_id = ${portalUserId} AND company_id = ${companyId}
         `;
       }
+      // Access granted or taken away — the kind of thing an audit trail is for.
+      const [pu] = await sql`SELECT email FROM portal_users WHERE id = ${portalUserId}`;
+      logStaffActivity({
+        actorEmail: user.email,
+        action: op === 'disable-member' ? 'portal.member.disable' : 'portal.member.enable',
+        entity: 'portal',
+        entityId: companyId,
+        entityLabel: pu?.email || null,
+        summary: op === 'disable-member'
+          ? 'removed a client’s portal access'
+          : 'restored a client’s portal access',
+      }).catch(() => {});
       return res.status(200).json({ ok: true });
     }
 

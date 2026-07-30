@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic, BellRing, FlaskConical } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic, BellRing, FlaskConical, Activity } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { permissionsInclude } from '../../lib/permissions.js';
@@ -14,11 +14,13 @@ import { DefaultProposalTab } from './DefaultProposalTab.jsx';
 import { VoiceoverCatalogueTab } from './VoiceoverCatalogueTab.jsx';
 import { DemoTab } from './DemoTab.jsx';
 import { TaskRemindersTab } from './TaskRemindersTab.jsx';
+import { StaffActivityTab } from './StaffActivityTab.jsx';
 
 const TABS = [
   { id: 'users',         label: 'Users + invites',  icon: Users,    perm: 'users.manage' },
   { id: 'roles',         label: 'Roles',            icon: Shield,   perm: 'roles.manage' },
   { id: 'notifications', label: 'Notifications',    icon: Bell,     perm: 'users.manage' },
+  { id: 'activity',      label: 'Staff activity',   icon: Activity, perm: 'activity.view' },
   { id: 'storage',       label: 'Storage & CRM costs', icon: Wallet, perm: 'finance.manage' },
   { id: 'commission',    label: 'Staff Commission', icon: Percent,  perm: ['commission.manage', 'commission.view_own'] },
   { id: 'holiday',       label: 'Holiday',          icon: Plane,    perm: ['schedule.manage_allowance', 'schedule.manage'] },
@@ -34,7 +36,7 @@ const TABS = [
 const tabVisible = (perms, perm) =>
   Array.isArray(perm) ? perm.some((p) => permissionsInclude(perms, p)) : permissionsInclude(perms, perm);
 
-export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, onCreateTemplate, onEditTemplate }) {
+export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, onCreateTemplate, onEditTemplate, onOpenRecord }) {
   const { state } = useStore();
   const session = state.session;
   const permissions = session?.permissions || [];
@@ -133,6 +135,7 @@ export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, o
         {active?.id === 'users' && <UsersTab />}
         {active?.id === 'roles' && <RolesTab />}
         {active?.id === 'notifications' && <NotificationsTab />}
+        {active?.id === 'activity' && <StaffActivityTab onOpenRecord={onOpenRecord} />}
         {active?.id === 'storage' && <StorageTab />}
         {active?.id === 'commission' && <StaffCommissionTab />}
         {active?.id === 'holiday' && <HolidayTab />}

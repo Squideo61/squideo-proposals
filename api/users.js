@@ -12,6 +12,7 @@ import { sendMail, inviteHtml, APP_URL } from './_lib/email.js';
 import { getRole } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
 import { getEffectivePrefs, ensureNotificationChannelColumns } from './_lib/notifications.js';
+import { logStaffActivity } from './_lib/crm/staffActivity.js';
 import { NOTIFICATIONS, isValidNotificationKey } from './_lib/notificationsCatalog.js';
 
 const INVITE_EXPIRY_DAYS = 7;
@@ -79,9 +80,20 @@ async function usersHandler(req, res) {
       }
       const newRoleRow = await getRole(newRole);
       if (!newRoleRow) return res.status(400).json({ error: 'Unknown role' });
-      const targetRows = await sql`SELECT email FROM users WHERE email = ${targetEmailLower}`;
+      const targetRows = await sql`SELECT email, name, role FROM users WHERE email = ${targetEmailLower}`;
       if (!targetRows[0]) return res.status(404).json({ error: 'User not found' });
       await sql`UPDATE users SET role = ${newRole} WHERE email = ${targetEmailLower}`;
+      // Who moved whom, and from what — the audit question people actually ask
+      // of a permission change.
+      logStaffActivity({
+        actorEmail: payload.email,
+        action: 'users.role.update',
+        entity: 'users',
+        entityId: targetEmailLower,
+        entityLabel: targetRows[0].name || targetEmailLower,
+        summary: 'changed a teammate’s role',
+        changes: [{ field: 'role', from: targetRows[0].role || null, to: newRole }],
+      }).catch(() => {});
       // Invalidate the target's existing sessions: their session JWT bakes in the
       // role they had at login, and every permission check reads it from the
       // token (not the DB). Without this, a role change wouldn't take effect until
@@ -130,6 +142,14 @@ async function usersHandler(req, res) {
     if (!email) return res.status(400).json({ error: 'email query parameter is required' });
     if (email === admin.email) return res.status(400).json({ error: 'You cannot delete your own account' });
     await sql`DELETE FROM users WHERE email = ${email}`;
+    logStaffActivity({
+      actorEmail: admin.email,
+      action: 'users.delete',
+      entity: 'users',
+      entityId: email,
+      entityLabel: email,
+      summary: 'removed a teammate’s account',
+    }).catch(() => {});
     return res.status(200).json({ ok: true });
   }
 
@@ -239,6 +259,12 @@ async function invitesHandler(req, res) {
       WHERE token = ${token} AND used_at IS NULL AND revoked_at IS NULL
       RETURNING token`;
     if (!updated.length) return res.status(404).json({ error: 'Invite not found or already used/revoked' });
+    logStaffActivity({
+      actorEmail: admin.email,
+      action: 'users.invite.delete',
+      entity: 'users',
+      summary: 'revoked a CRM invite',
+    }).catch(() => {});
     return res.status(200).json({ ok: true });
   }
 
@@ -293,6 +319,15 @@ async function invitesHandler(req, res) {
       html: inviteHtml({ inviterName: admin.name, link, expiresInDays: INVITE_EXPIRY_DAYS }),
       text: `${admin.name || 'A teammate'} has invited you to join Squideo CRM. Accept here: ${link}`,
     });
+
+    logStaffActivity({
+      actorEmail: admin.email,
+      action: 'users.invite.create',
+      entity: 'users',
+      entityId: cleanEmail,
+      entityLabel: cleanEmail,
+      summary: `invited someone to the CRM as ${wantedRole}`,
+    }).catch(() => {});
 
     return res.status(201).json({
       token: newToken,

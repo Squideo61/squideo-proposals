@@ -8,6 +8,14 @@ import { cors, requireAuth } from '../_lib/middleware.js';
 import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
 import { ensureDealForProposal, advanceStage } from '../_lib/dealStage.js';
+import { logStaffActivity } from '../_lib/crm/staffActivity.js';
+
+// What to call a proposal in the activity log — it keeps reading properly after
+// the proposal itself is deleted.
+function proposalLabel(data) {
+  const d = data || {};
+  return d.proposalTitle || d.contactBusinessName || d.clientName || null;
+}
 
 // Allowlist of fields the public client view (ClientView + ThankYouView +
 // SignedBlock + printProposal) actually consumes. The full `data` JSONB on
@@ -104,6 +112,14 @@ export default async function handler(req, res) {
       await sql`UPDATE proposals SET data = ${JSON.stringify(frozen)}, updated_at = NOW() WHERE id = ${id}`;
       const meta = await sql`SELECT number_year, number_seq, deal_id FROM proposals WHERE id = ${id}`;
       const m = meta[0];
+      logStaffActivity({
+        actorEmail: user.email,
+        action: data.archived ? 'proposals.archive' : 'proposals.unarchive',
+        entity: 'proposals',
+        entityId: id,
+        entityLabel: proposalLabel(cur[0].data),
+        summary: data.archived ? 'archived a signed proposal' : 'unarchived a signed proposal',
+      }).catch(() => {});
       return res.status(200).json({
         ok: true,
         locked: true,
@@ -184,6 +200,16 @@ export default async function handler(req, res) {
 
     const rows = await sql`SELECT number_year, number_seq, deal_id FROM proposals WHERE id = ${id}`;
     const n = rows[0];
+    // One line per editing session, not per auto-save: repeats inside ten
+    // minutes move the existing line rather than adding another.
+    logStaffActivity({
+      actorEmail: user.email,
+      action: 'proposals.update',
+      entity: 'proposals',
+      entityId: id,
+      entityLabel: proposalLabel(data),
+      summary: 'edited a proposal',
+    }).catch(() => {});
     return res.status(200).json({
       ok: true,
       number: n && n.number_year && n.number_seq ? { year: n.number_year, seq: n.number_seq } : null,
@@ -267,6 +293,14 @@ export default async function handler(req, res) {
         console.error('[proposals] link advanceStage failed', err);
       }
     }
+    logStaffActivity({
+      actorEmail: user.email,
+      action: newDealId ? 'proposals.link.update' : 'proposals.unlink.update',
+      entity: 'proposals',
+      entityId: id,
+      summary: newDealId ? 'linked a proposal to a deal' : 'unlinked a proposal from its deal',
+      changes: [{ field: 'deal', from: oldDealId, to: newDealId }],
+    }).catch(() => {});
     return res.status(200).json({ ok: true, dealId: newDealId, advanced });
   }
 
@@ -288,6 +322,9 @@ export default async function handler(req, res) {
     // "Untitled deal" rows that show up in the CRM list and the Gmail
     // extension's deal nav.
     const autoDealId = 'deal_' + id;
+    // Read the name before it's gone — a deleted proposal is exactly the one
+    // someone will later want the log to identify.
+    const [doomed] = await sql`SELECT data FROM proposals WHERE id = ${id}`;
     await sql`DELETE FROM proposals WHERE id = ${id}`;
     const stillLinked = await sql`SELECT 1 FROM proposals WHERE deal_id = ${autoDealId} LIMIT 1`;
     let dealRemoved = false;
@@ -310,6 +347,14 @@ export default async function handler(req, res) {
         console.error('[proposals] delete residue sweep failed', err);
       }
     }
+    logStaffActivity({
+      actorEmail: user.email,
+      action: 'proposals.delete',
+      entity: 'proposals',
+      entityId: id,
+      entityLabel: proposalLabel(doomed?.data),
+      summary: dealRemoved ? 'deleted a proposal and its deal' : 'deleted a proposal',
+    }).catch(() => {});
     return res.status(200).json({ ok: true });
   }
 

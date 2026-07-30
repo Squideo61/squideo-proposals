@@ -585,6 +585,11 @@ function AppShell() {
           onEditDefault={() => navigate('default-builder')}
           onCreateTemplate={createTemplate}
           onEditTemplate={editTemplate}
+          onOpenRecord={(entity, id) => {
+            if (entity === 'deals') navigate('deal', id);
+            else if (entity === 'companies') navigate('company', id);
+            else if (entity === 'contacts') navigate('contact', id);
+          }}
         />
       )}
       {view === 'pipeline' && (

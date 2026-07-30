@@ -33,6 +33,9 @@ import { restoreRoute } from '../_lib/crm/recycleBin.js';
 import { introCallsRoute } from '../_lib/crm/introCalls.js';
 import { scheduleRoute } from '../_lib/crm/schedule.js';
 import { voiceoversRoute } from '../_lib/crm/voiceovers.js';
+import { staffActivityRoute, beginWrite, finishWrite } from '../_lib/crm/staffActivity.js';
+import { getRole } from '../_lib/userRoles.js';
+import { hasPermission } from '../_lib/permissions.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -95,6 +98,27 @@ export default async function handler(req, res) {
   const user = await requireAuth(req, res);
   if (!user) return;
 
+  // The staff activity log itself — who did what, with before → after on the
+  // records we track. Gated tightly: it spans everyone's work.
+  if (resource === 'activity') {
+    const role = await getRole(user.role);
+    if (!hasPermission(role, 'activity.view')) {
+      return res.status(403).json({ error: 'You do not have permission to view the staff activity log' });
+    }
+    return staffActivityRoute(req, res, id, action, user);
+  }
+
+  // Snapshot the record BEFORE the handler changes it — this is the only moment
+  // the old values still exist. Returns null (and costs nothing) for reads.
+  const pending = await beginWrite({ resource, id, action, method: req.method });
+  // A create POSTs to the collection, so the new record's id only appears in
+  // the response — catch it on the way past so the log line can link to it.
+  let result = null;
+  if (pending) {
+    const sendJson = res.json.bind(res);
+    res.json = (payload) => { result = payload; return sendJson(payload); };
+  }
+
   try {
     switch (resource) {
       case 'companies': return await companiesRoute(req, res, id, action, user);
@@ -132,5 +156,20 @@ export default async function handler(req, res) {
     // Generic message only — never echo the raw error (could carry DB/internal
     // detail). The detail is in the server log above.
     return res.status(500).json({ error: 'Server error' });
+  } finally {
+    // Describe what just happened for the staff activity log. The response has
+    // already been sent by the handler, so this costs the caller nothing — and
+    // it must never be able to affect the outcome of the write it describes.
+    try {
+      await finishWrite(pending, {
+        statusCode: res.statusCode,
+        actorEmail: user.email,
+        body: req.body,
+        result,
+        req,
+      });
+    } catch (err) {
+      console.warn('[crm] activity log failed', err?.message);
+    }
   }
 }

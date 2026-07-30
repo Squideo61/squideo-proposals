@@ -18,6 +18,7 @@ import { getTokenVersion, bumpTokenVersion } from '../_lib/sessions.js';
 import { sendMail, twoFactorCodeHtml, inviteAcceptedHtml, APP_URL } from '../_lib/email.js';
 import { sendNotification } from '../_lib/notifications.js';
 import { getRole, ensureSystemRoles } from '../_lib/userRoles.js';
+import { logStaffActivity } from '../_lib/crm/staffActivity.js';
 import {
   generateTotpSecret,
   verifyTotp,
@@ -183,12 +184,30 @@ async function issueTrustedDevice(res, email, userAgent) {
   appendSetCookie(res, trustedDeviceCookieHeader(raw));
 }
 
-async function issueSession(res, user) {
+// Every successful sign-in funnels through here — password + trusted device,
+// password + 2FA, and the first session after enrolling. `via` says which.
+async function issueSession(res, user, via = null, req = null) {
   // Stamp the user's current token version into the session so it can be
   // revoked later by bumping that version (see api/_lib/sessions.js).
   const tv = await getTokenVersion(user.email);
   const jwt = await signToken({ email: user.email, name: user.name, role: user.role || 'member', tv: tv ?? 0 });
   appendSetCookie(res, sessionCookieHeader(jwt));
+  // Presence for the staff activity log. Nothing else records a staff sign-in —
+  // last_login_at exists on portal_users (clients) but never on staff. Fire and
+  // forget: a logging hiccup must not cost someone their login.
+  if (via) {
+    logStaffActivity({
+      actorEmail: user.email,
+      action: 'auth.login',
+      entity: 'auth',
+      summary: 'signed in',
+      meta: {
+        via,
+        ip: String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim() || null,
+        ua: req?.headers?.['user-agent'] || null,
+      },
+    }).catch(() => {});
+  }
   return jwt;
 }
 
@@ -318,7 +337,7 @@ export default async function handler(req, res) {
 
     const tdCookie = parseCookie(req.headers.cookie, 'sq_td');
     if (tdCookie && (await consumeTrustedDevice(tdCookie, user.email))) {
-      await issueSession(res, user);
+      await issueSession(res, user, 'trusted device', req);
       return res.status(200).json({ user: publicUser(user) });
     }
 
@@ -456,7 +475,7 @@ export default async function handler(req, res) {
     if (remember_device) {
       await issueTrustedDevice(res, email, req.headers['user-agent']);
     }
-    await issueSession(res, user);
+    await issueSession(res, user, 'password + 2FA', req);
     return res.status(200).json({ user: publicUser(user) });
   }
 
@@ -512,7 +531,7 @@ export default async function handler(req, res) {
       SET totp_enrolled = TRUE, backup_code_hashes = ${hashes}
       WHERE email = ${email}
     `;
-    await issueSession(res, user);
+    await issueSession(res, user, '2FA enrolment', req);
     return res.status(200).json({ user: publicUser(user), backup_codes: codes });
   }
 
@@ -535,7 +554,15 @@ export default async function handler(req, res) {
     // A 2FA reset is a security event — invalidate every other session for this
     // user, then re-issue the current one so the caller isn't logged out.
     await bumpTokenVersion(payload.email);
+    // Not a sign-in (they already were) — but resetting 2FA and dropping every
+    // trusted device is a security event the log should carry.
     await issueSession(res, user);
+    logStaffActivity({
+      actorEmail: payload.email,
+      action: 'auth.2fa_reset',
+      entity: 'auth',
+      summary: 'reset their two-factor authentication',
+    }).catch(() => {});
     return res.status(200).json({ ok: true });
   }
 

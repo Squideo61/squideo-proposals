@@ -17,6 +17,7 @@ export const PERMISSIONS = [
   { slug: 'marketing.access',     group: 'Workspace',  label: 'View Marketing (lead attribution + ad ROAS)' },
   { slug: 'commission.manage',    group: 'Workspace',  label: 'Manage Staff Commission (view all, edit bands, toggle staff on/off)' },
   { slug: 'commission.view_own',  group: 'Workspace',  label: 'View own staff commission' },
+  { slug: 'activity.view',        group: 'Workspace',  label: 'View the staff activity log (everyone’s work, with before → after changes)' },
 
   { slug: 'proposals.manage_all', group: 'Proposals',  label: 'Edit / delete any proposal' },
   { slug: 'signatures.manage_all',group: 'Proposals',  label: 'Edit / delete any signature record' },

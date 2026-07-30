@@ -12,6 +12,20 @@ import { cors, requireAuth, requirePermission } from './_lib/middleware.js';
 import { listRoles, invalidateRoleCache, getRole } from './_lib/userRoles.js';
 import { PERMISSIONS, isValidPermission } from './_lib/permissions.js';
 import { NOTIFICATIONS, isValidNotificationKey } from './_lib/notifications.js';
+import { logStaffActivity } from './_lib/crm/staffActivity.js';
+
+// Which permissions a role gained and lost — the shape the activity log wants,
+// rather than two long unordered lists to compare by eye.
+function permissionDelta(before, after) {
+  const had = new Set(Array.isArray(before) ? before : []);
+  const has = new Set(Array.isArray(after) ? after : []);
+  const added = [...has].filter((p) => !had.has(p));
+  const removed = [...had].filter((p) => !has.has(p));
+  const changes = [];
+  if (added.length) changes.push({ field: 'granted', from: null, to: added.join(', ') });
+  if (removed.length) changes.push({ field: 'revoked', from: removed.join(', '), to: null });
+  return changes;
+}
 
 function slugify(name) {
   return String(name || '')
@@ -85,6 +99,15 @@ export default async function handler(req, res) {
     `;
     invalidateRoleCache();
     const created = await getRole(id);
+    logStaffActivity({
+      actorEmail: payload.email,
+      action: 'roles.create',
+      entity: 'roles',
+      entityId: id,
+      entityLabel: created?.name || id,
+      summary: 'created a role',
+      changes: permissionDelta([], perms),
+    }).catch(() => {});
     return res.status(201).json(created);
   }
 
@@ -117,6 +140,19 @@ export default async function handler(req, res) {
     `;
     invalidateRoleCache(id);
     const updated = await getRole(id);
+    logStaffActivity({
+      actorEmail: payload.email,
+      action: 'roles.update',
+      entity: 'roles',
+      entityId: id,
+      entityLabel: updated?.name || id,
+      summary: 'edited a role',
+      changes: [
+        ...(updates.name && updates.name !== existing.name
+          ? [{ field: 'name', from: existing.name, to: updates.name }] : []),
+        ...(updates.permissions ? permissionDelta(existing.permissions, updates.permissions) : []),
+      ],
+    }).catch(() => {});
     return res.status(200).json(updated);
   }
 
@@ -142,6 +178,14 @@ export default async function handler(req, res) {
     }
     await sql`DELETE FROM roles WHERE id = ${id}`;
     invalidateRoleCache(id);
+    logStaffActivity({
+      actorEmail: payload.email,
+      action: 'roles.delete',
+      entity: 'roles',
+      entityId: id,
+      entityLabel: existing.name || id,
+      summary: 'deleted a role',
+    }).catch(() => {});
     return res.status(200).json({ ok: true });
   }
 
