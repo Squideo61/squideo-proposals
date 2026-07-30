@@ -272,8 +272,8 @@ function FileTile({ dealId, file, manage, projects, seriesOptions, position, tot
             onError={onError}
           />
         ) : (
-          {/* Wraps rather than overflows: at three-up the tile is narrow and
-              the manage buttons take most of the row. */}
+          // Wraps rather than overflows: at three-up the tile is narrow and the
+          // manage buttons take most of the row.
           <div style={{ display: 'flex', gap: 8, marginTop: 'auto', flexWrap: 'wrap' }}>
             <a
               className="btn"
