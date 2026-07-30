@@ -48,7 +48,7 @@ const NAV = [
   // shortLabel is what the mobile tab bar uses — "Current projects" doesn't fit
   // under an icon at phone width.
   { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home },
-  { view: 'library', label: 'Library', hash: '#/library', Icon: Film },
+  { view: 'library', label: 'Video library', shortLabel: 'Library', hash: '#/library', Icon: Film },
   { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
   { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet },
   { view: 'request', label: 'New video', hash: '#/request', Icon: PlusCircle, highlight: true },

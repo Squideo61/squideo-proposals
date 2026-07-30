@@ -17,7 +17,7 @@ import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, fmtBytes, fmtDate } from '../components.jsx';
 import {
   Film, Download, Clapperboard, Upload, Trash2, PlusCircle, Pencil, Layers,
-  Image as ImageIcon, Camera,
+  Image as ImageIcon, Camera, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|ogv|avi|mkv)$/i;
@@ -45,6 +45,23 @@ function fileUrl(dealId, f, { download = false } = {}) {
 const posterUrl = (f) =>
   f.posterVersion ? mediaUrl(`download?scope=poster&id=${encodeURIComponent(f.itemId)}&v=${f.posterVersion}`) : null;
 
+// Re-sort the hand-added videos in every group to match `order` (a list of item
+// ids), leaving cuts and Drive files where they are. Used to show a reorder
+// straight away rather than waiting on the round trip.
+function reorderLocally(data, order) {
+  const rank = new Map(order.map((id, i) => [id, i]));
+  return {
+    ...data,
+    projects: (data.projects || []).map((p) => {
+      if (!p.files.some((f) => rank.has(f.itemId))) return p;
+      const others = p.files.filter((f) => !rank.has(f.itemId));
+      const moved = p.files.filter((f) => rank.has(f.itemId))
+        .sort((a, b) => rank.get(a.itemId) - rank.get(b.itemId));
+      return { ...p, files: [...others, ...moved] };
+    }),
+  };
+}
+
 export default function Library() {
   const { companyId, manageMode, showToast } = usePortal();
   const [data, setData] = useState(null);
@@ -58,6 +75,25 @@ export default function Library() {
   };
 
   useEffect(() => { setData(null); setError(null); load(); }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Swap a video with its neighbour, then send the group's whole new order.
+  // Optimistic: the grid re-sorts immediately and the reload confirms it.
+  const move = async (group, file, delta) => {
+    const from = group.findIndex((f) => f.itemId === file.itemId);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= group.length) return;
+    const next = group.slice();
+    [next[from], next[to]] = [next[to], next[from]];
+    const order = next.map((f) => f.itemId);
+    setData((d) => d && reorderLocally(d, order));
+    try {
+      await portalApi.post(`library-reorder?companyId=${encodeURIComponent(companyId)}`, { ids: order });
+      load();
+    } catch (err) {
+      showToast(err.message);
+      load();
+    }
+  };
 
   const removeItem = async (f) => {
     if (!window.confirm(`Remove “${f.name}” from the client's library?`)) return;
@@ -110,33 +146,41 @@ export default function Library() {
         </Card>
       )}
 
-      {data && (data.projects || []).map((p) => (
-        <Card key={p.series ? `series:${p.series}` : p.dealId || 'archive'}>
-          <SectionHeading>
-            {p.series ? <><Layers size={16} style={{ verticalAlign: -3, marginRight: 7, color: BRAND.muted }} />{p.title}</> : p.title}
-          </SectionHeading>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))', gap: 16 }}>
-            {p.files.map((f) => (
-              <FileTile
-                key={f.fileId || f.videoId || f.itemId}
-                dealId={p.dealId || f.dealId}
-                file={f}
-                manage={manageMode && f.kind === 'archive'}
-                projects={data.allProjects || []}
-                seriesOptions={data.allSeries || []}
-                onRemove={() => removeItem(f)}
-                onSaved={load}
-                onError={showToast}
-              />
-            ))}
-          </div>
-        </Card>
-      ))}
+      {data && (data.projects || []).map((p) => {
+        // Only hand-added videos carry an order; delivered cuts and Drive files
+        // have no row to store one on, so the arrows are scoped to those.
+        const ordered = p.files.filter((f) => f.kind === 'archive');
+        return (
+          <Card key={p.series ? `series:${p.series}` : p.dealId || 'archive'}>
+            <SectionHeading>
+              {p.series ? <><Layers size={16} style={{ verticalAlign: -3, marginRight: 7, color: BRAND.muted }} />{p.title}</> : p.title}
+            </SectionHeading>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))', gap: 16 }}>
+              {p.files.map((f) => (
+                <FileTile
+                  key={f.fileId || f.videoId || f.itemId}
+                  dealId={p.dealId || f.dealId}
+                  file={f}
+                  manage={manageMode && f.kind === 'archive'}
+                  projects={data.allProjects || []}
+                  seriesOptions={data.allSeries || []}
+                  position={f.kind === 'archive' ? ordered.findIndex((o) => o.itemId === f.itemId) : -1}
+                  total={ordered.length}
+                  onMove={(delta) => move(ordered, f, delta)}
+                  onRemove={() => removeItem(f)}
+                  onSaved={load}
+                  onError={showToast}
+                />
+              ))}
+            </div>
+          </Card>
+        );
+      })}
     </div>
   );
 }
 
-function FileTile({ dealId, file, manage, projects, seriesOptions, onRemove, onSaved, onError }) {
+function FileTile({ dealId, file, manage, projects, seriesOptions, position, total, onMove, onRemove, onSaved, onError }) {
   const { companyId } = usePortal();
   const [editing, setEditing] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -186,6 +230,32 @@ function FileTile({ dealId, file, manage, projects, seriesOptions, onRemove, onS
           </div>
           {meta && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>{meta}</div>}
         </div>
+
+        {/* Running order within this group. Its own row rather than two more
+            icons in the action row, which is already full. */}
+        {manage && !editing && !picking && total > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: BRAND.muted }}>
+            <button
+              className="btn-ghost"
+              onClick={() => onMove(-1)}
+              disabled={position <= 0}
+              title="Move earlier"
+              style={{ padding: '2px 7px' }}
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <span style={{ minWidth: 62, textAlign: 'center' }}>{position + 1} of {total}</span>
+            <button
+              className="btn-ghost"
+              onClick={() => onMove(1)}
+              disabled={position < 0 || position >= total - 1}
+              title="Move later"
+              style={{ padding: '2px 7px' }}
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
+        )}
 
         {editing ? (
           <EditItem

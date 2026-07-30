@@ -13,6 +13,7 @@
 //   library         — finished videos: delivered cuts, Drive "4. Signed Off",
 //                     plus past work staff added from manage mode
 //   library-item    — add/edit/remove that past work (manage mode only)
+//   library-reorder — set a library group's running order (manage mode only)
 //   library-upload-token — client-upload token for it (manage mode only)
 //   company-logo    — the client's brand mark (manage mode only)
 //   download        — org-checked file bytes / signed URLs
@@ -31,7 +32,7 @@ import bcrypt from 'bcryptjs';
 import Stripe from 'stripe';
 import { put, del, getDownloadUrl } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
-import sql from './_lib/db.js';
+import sql, { batchWrite } from './_lib/db.js';
 import { sendMail, APP_URL } from './_lib/email.js';
 import {
   sendNotification,
@@ -500,6 +501,7 @@ export default async function handler(req, res) {
       case 'library': return libraryRoute(req, res, user);
       case 'library-upload-token': return libraryUploadTokenRoute(req, res, user);
       case 'library-item': return libraryItemRoute(req, res, user);
+      case 'library-reorder': return libraryReorderRoute(req, res, user);
       case 'company-logo': return companyLogoRoute(req, res, user);
       case 'download': return downloadRoute(req, res, user);
       case 'review-download': return reviewDownloadRoute(req, res, user);
@@ -1035,7 +1037,7 @@ async function libraryRoute(req, res, user) {
            (poster IS NOT NULL) AS has_poster, poster_updated_at
       FROM portal_library_items
      WHERE company_id = ${companyId}
-     ORDER BY created_at DESC
+     ORDER BY sort_order ASC NULLS LAST, created_at DESC
   `.catch(() => []);
   const archiveByDeal = new Map();
   const archiveBySeries = new Map();
@@ -1314,6 +1316,27 @@ async function libraryItemRoute(req, res, user) {
   }
 
   return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// Set the running order of a library group. Takes the full ordered list of ids
+// and stamps 0..n-1 across them in one transaction, so a group is never left
+// half-ordered (which is why the client sends the whole group, not a swap).
+async function libraryReorderRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (!requireManage(res, user)) return;
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+  const body = await readJsonBody(req);
+  const ids = Array.isArray(body.ids) ? body.ids.map((x) => String(x)).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: 'ids required' });
+  if (ids.length > 500) return res.status(400).json({ error: 'Too many items' });
+  // company_id in the WHERE is the org check — a foreign id simply updates
+  // nothing rather than leaking whether it exists.
+  await batchWrite(ids.map((id, i) => sql`
+    UPDATE portal_library_items SET sort_order = ${i}
+     WHERE id = ${id} AND company_id = ${companyId}
+  `));
+  return res.status(200).json({ ok: true });
 }
 
 // ═══════════════ the client's logo (manage mode) ═══════════════

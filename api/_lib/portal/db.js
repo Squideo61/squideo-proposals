@@ -161,6 +161,8 @@ export function ensurePortalTables() {
     // Thumbnail captured from a frame of the video itself.
     await sql`ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS poster TEXT`;
     await sql`ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS poster_updated_at TIMESTAMPTZ`;
+    // Hand-set running order within a library group (NULL = newest-first).
+    await sql`ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS sort_order INTEGER`;
     await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS portal_extras_discount NUMERIC NOT NULL DEFAULT 0.10`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'staff'`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS portal_user_id TEXT REFERENCES portal_users(id) ON DELETE SET NULL`;

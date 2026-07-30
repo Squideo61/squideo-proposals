@@ -36,3 +36,8 @@ ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS series TEXT;
 -- /api/portal/download?scope=poster so the library JSON stays small.
 ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS poster TEXT;
 ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS poster_updated_at TIMESTAMPTZ;
+
+-- Hand-set running order within a group. NULL means "never reordered", which
+-- sorts newest-first as before; the reorder endpoint stamps every item in the
+-- group at once so a group is either fully ordered or not at all.
+ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS sort_order INTEGER;
