@@ -2596,6 +2596,12 @@ async function cashflowReport(action) {
   });
   const wageTargets = {
     minimum: round2(sel.costs),
+    // The same target with the compulsory set-aside taken back out: what the
+    // month has to bank to cover the running of the business before it starts
+    // building savings. Paced alongside the minimum on the day-performance
+    // chart so both bars are visible.
+    savings: round2(sel.savings),
+    minimumExSavings: round2(sel.costs - sel.savings),
     baseline: WAGE_BASELINE,
     directors: numDirectors,
     surplus: {

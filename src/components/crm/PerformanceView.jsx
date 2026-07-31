@@ -10,6 +10,10 @@ import { formatGBP, useIsMobile, workingDaysBetween, ukBankHolidays, todayKey, f
 
 const PPS_COLOR = '#F59E0B';
 const PREDICT_COLOR = '#7C3AED';
+// The break-even before the compulsory savings set-aside — always below the
+// Minimum, so it reads as "the business is covered from here" and the gap
+// between the two lines is the month's savings.
+const EX_SAVINGS_COLOR = '#16A34A';
 // The two company directors — the Directors tab (and its API) is limited to these
 // two email addresses. Mirrors DIRECTOR_EMAILS in api/_lib/crm/stats.js.
 const DIRECTOR_EMAILS = new Set(['adam@squideo.co.uk', 'ben@squideo.co.uk']);
@@ -202,19 +206,34 @@ export function PerformancePanel({
     const showPredicted = !isSales && period === predictedMonthKey && period >= todayKey().slice(0, 7) && predTotal > 0 && lastActualIdx > 0 && lastActualIdx < N;
     const predictedMonthEnd = netSoFar + predTotal;
 
+    // The break-even before the compulsory savings set-aside. Paced the same way
+    // as the minimum, so the gap between the two lines is exactly the month's
+    // savings — the point at which the business is covered and everything after
+    // is going into the pot.
+    const exSavingsMonthly = !isSales && Number(cfTargets?.savings) > 0
+      ? Number(cfTargets.minimumExSavings ?? (cfTargets.minimum - cfTargets.savings))
+      : null;
+
     const data = workingDays.map((wd, i) => {
       const dayNum = i + 1;
       const point = { day: dayNum, date: wd };
       point.actual = dayNum <= lastActualIdx ? Number(cumTo(wd).toFixed(2)) : null;
       for (const t of targets) point[t.key] = Number(((Number(t.amount) || 0) * spanMonths * dayNum / N).toFixed(2));
+      if (exSavingsMonthly != null) {
+        point.exSavings = Number((exSavingsMonthly * spanMonths * dayNum / N).toFixed(2));
+      }
       // A flat reference line across the whole graph at the theoretical maximum
       // income (banked so far + everything predicted) — not a diagonal projection.
       point.predicted = showPredicted ? Number(predictedMonthEnd.toFixed(2)) : null;
       return point;
     });
 
-    return { N, lastActualIdx, data, netSoFar, projected, status, spanMonths, label, showPredicted, predictedMonthEnd, predTotal };
-  }, [perf, period, targets, holidays, isSales, predictedTotal, predictedMonthKey]);
+    return {
+      N, lastActualIdx, data, netSoFar, projected, status, spanMonths, label,
+      showPredicted, predictedMonthEnd, predTotal,
+      exSavingsTotal: exSavingsMonthly != null ? Number((exSavingsMonthly * spanMonths).toFixed(2)) : null,
+    };
+  }, [perf, period, targets, holidays, isSales, predictedTotal, predictedMonthKey, cfTargets]);
 
   return (
     <section style={{ marginBottom: 28 }}>
@@ -367,6 +386,9 @@ export function PerformancePanel({
               {targets.map((t) => (
                 <Line key={t.key} type="monotone" dataKey={t.key} name={t.label} stroke={t.color} strokeWidth={1.5} dot={false} />
               ))}
+              {model.exSavingsTotal != null && (
+                <Line type="monotone" dataKey="exSavings" name="Minimum before savings" stroke={EX_SAVINGS_COLOR} strokeWidth={1.5} strokeDasharray="6 4" dot={false} isAnimationActive={false} />
+              )}
               <Line type="monotone" dataKey="actual" name={isSales ? 'Sales signed (net)' : 'Cash received (net)'} stroke={BRAND.blue} strokeWidth={2.75} dot={false} connectNulls={false} />
               {model.showPredicted && (
                 <Line type="monotone" dataKey="predicted" name="Theoretical max (with predicted)" stroke={PREDICT_COLOR} strokeWidth={1.5} strokeDasharray="5 4" strokeOpacity={0.32} dot={false} connectNulls isAnimationActive={false} />
