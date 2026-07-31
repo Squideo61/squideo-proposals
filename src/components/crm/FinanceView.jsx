@@ -3156,11 +3156,14 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
       />
     )}
     {payingInvoice && (
+      // Deliberately no xeroInvoiceId: these are OUR invoice records, and the
+      // manual route (PATCH the invoice to paid) records the payment in Xero
+      // itself. The xero-pay route is only for invoices that live solely in
+      // Xero with no record of ours — it rejects anything else as unknown.
       <MarkInvoicePaidModal
         invoiceId={payingInvoice.id}
         invoiceNumber={payingInvoice.number || undefined}
         amount={payingInvoice.amount}
-        xeroInvoiceId={payingInvoice.xeroInvoiceId || undefined}
         onClose={() => setPayingInvoice(null)}
         onMarked={() => { setPayingInvoice(null); if (onChanged) onChanged(); }}
       />

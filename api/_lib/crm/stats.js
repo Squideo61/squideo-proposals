@@ -1378,22 +1378,20 @@ async function pendingPaymentsReport() {
   const openInvoices = new Map();
   {
     const rows = await sql`
-      SELECT COALESCE(mi.deal_id, dp.id) AS did, mi.id, mi.invoice_number, mi.amount, mi.xero_invoice_id
+      SELECT COALESCE(mi.deal_id, dp.id) AS did, mi.id, mi.invoice_number, mi.amount
         FROM manual_invoices mi
         LEFT JOIN proposals pr ON pr.id = mi.proposal_id
         LEFT JOIN deals dp ON dp.id = pr.deal_id
        WHERE mi.status = 'issued'
        ORDER BY mi.issued_at ASC NULLS LAST, mi.created_at ASC
     `.catch(() => []);
+    // No Xero id on purpose: paying one of these goes through OUR invoice
+    // record (which settles it in Xero as part of the same write). The Xero-only
+    // payment route rejects an invoice we hold a record for.
     for (const r of rows) {
       if (!r.did) continue;
       const list = openInvoices.get(r.did) || [];
-      list.push({
-        id: r.id,
-        number: r.invoice_number || null,
-        amount: round2(Number(r.amount) || 0),
-        xeroInvoiceId: r.xero_invoice_id || null,
-      });
+      list.push({ id: r.id, number: r.invoice_number || null, amount: round2(Number(r.amount) || 0) });
       openInvoices.set(r.did, list);
     }
   }
