@@ -1232,6 +1232,16 @@ export function StoreProvider({ children }) {
     removeCommissionMember(email) {
       return api.delete('/api/crm/commission/members/' + encodeURIComponent(email));
     },
+    // Take a single sale off the plan (or put it back). The reason is stored with
+    // it and shown on the sheet — see commission_disqualifications.
+    disqualifyCommission(sale, reason) {
+      return api.post('/api/crm/commission/disqualify', {
+        key: sale.key, dealId: sale.dealId, reason,
+      });
+    },
+    requalifyCommission(key) {
+      return api.delete('/api/crm/commission/disqualify/' + encodeURIComponent(key));
+    },
     // Just the current-month Cash Flow & Targets figures (minimum + £4k/£5k wage
     // targets), so the Income performance graph can mirror them live. Kept in its
     // own slice — independent of the month-specific `cashflow` the tab browses.

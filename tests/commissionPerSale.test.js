@@ -13,7 +13,9 @@ vi.mock('../api/_lib/permissions.js', () => ({ hasPermission: vi.fn() }));
 const { commissionPerSale, computeCommission } = await import('../api/_lib/crm/commission.js');
 
 const CFG = { bandARate: 0.05, bandACap: 5000, bandBRate: 0.02 };
-const sale = (date, amount) => ({ date, amount, company: 'X', title: 'Y', dealId: 'd', kind: 'deposit' });
+const sale = (date, amount) => ({
+  date, amount, company: 'X', title: 'Y', dealId: 'd', kind: 'deposit', key: `d:${date}`,
+});
 const sum = (rows, key) => Number(rows.reduce((s, r) => s + r[key], 0).toFixed(2));
 
 describe('commissionPerSale', () => {
@@ -65,5 +67,10 @@ describe('commissionPerSale', () => {
   it('carries the sale through untouched and never earns on nothing', () => {
     const [row] = commissionPerSale([{ ...sale('2026-07-01', 0), company: 'Acme', kind: 'extra' }], CFG);
     expect(row).toMatchObject({ company: 'Acme', kind: 'extra', commission: 0, rate: 0 });
+  });
+
+  it('keeps each sale’s key — it is what a disqualification is stored against', () => {
+    const rows = commissionPerSale([sale('2026-07-02', 100), sale('2026-07-09', 200)], CFG);
+    expect(rows.map((r) => r.key)).toEqual(['d:2026-07-02', 'd:2026-07-09']);
   });
 });

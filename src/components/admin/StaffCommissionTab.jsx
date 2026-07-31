@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Percent, Coins, UserPlus, Trash2, ChevronDown, ChevronRight, Check, X, Pencil } from 'lucide-react';
+import { Percent, Coins, UserPlus, Trash2, ChevronDown, ChevronRight, Check, X, Pencil, Ban, RotateCcw } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
@@ -86,7 +86,10 @@ export function StaffCommissionTab() {
               </div>
             ) : (
               <>
-                {data.members.map((m) => <MemberResult key={m.email} m={m} isMobile={isMobile} />)}
+                {data.members.map((m) => (
+                  <MemberResult key={m.email} m={m} isMobile={isMobile} canManage={canManage}
+                    actions={actions} showMsg={showMsg} reload={reload} />
+                ))}
                 {canManage && data.members.length > 1 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 4px 2px', borderTop: '2px solid ' + BRAND.border, marginTop: 6, fontWeight: 700 }}>
                     <span>Total commission ({monthLabelShort(month)})</span>
@@ -255,9 +258,21 @@ function MembersCard({ members, candidates, actions, showMsg, reload }) {
   );
 }
 
-function MemberResult({ m, isMobile }) {
+function MemberResult({ m, isMobile, canManage, actions, showMsg, reload }) {
   const [open, setOpen] = useState(false);
+  const [disqualifying, setDisqualifying] = useState(null); // the sale being taken off
   const inactive = !m.active;
+
+  const requalify = async (s) => {
+    if (!window.confirm(`Put ${s.company || 'this sale'} back on ${m.name}'s commission?`)) return;
+    try {
+      await actions.requalifyCommission(s.key);
+      showMsg('Back on the plan');
+      reload();
+    } catch (err) {
+      showMsg(err.message || 'Could not restore it');
+    }
+  };
   return (
     <div style={{ borderTop: '1px solid ' + BRAND.border, padding: '10px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -269,7 +284,14 @@ function MemberResult({ m, isMobile }) {
             <div style={{ fontSize: 12, color: BRAND.muted }}>
               {inactive
                 ? (m.enabled ? `Joins ${monthLabelShort(m.effectiveFrom)}` : 'Paused')
-                : `${m.sales.length} item${m.sales.length === 1 ? '' : 's'} · ${formatGBP(m.qualifyingNet)} net qualifying`}
+                : (
+                  <>
+                    {m.sales.length} item{m.sales.length === 1 ? '' : 's'} · {formatGBP(m.qualifyingNet)} net qualifying
+                    {m.disqualifiedNet > 0 && (
+                      <span style={{ color: '#B45309' }}> · {formatGBP(m.disqualifiedNet)} disqualified</span>
+                    )}
+                  </>
+                )}
             </div>
           </div>
         </button>
@@ -292,24 +314,54 @@ function MemberResult({ m, isMobile }) {
                 <th style={{ textAlign: 'right', padding: '6px 8px' }}>Net counted</th>
                 <th style={{ textAlign: 'right', padding: '6px 8px' }}>Rate</th>
                 <th style={{ textAlign: 'right', padding: '6px 8px' }}>Commission</th>
+                {canManage && <th style={{ width: 34 }} />}
               </tr>
             </thead>
             <tbody>
-              {m.sales.map((s, i) => (
-                <tr key={i} style={{ borderTop: '1px solid ' + BRAND.border }}>
-                  <td style={{ padding: '6px 8px' }}>{s.company || '—'}</td>
-                  <td style={{ padding: '6px 8px', color: BRAND.muted }}>{s.title || '—'}</td>
-                  <td style={{ padding: '6px 8px' }}><KindTag kind={s.kind} /></td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: BRAND.muted, whiteSpace: 'nowrap' }}>{fmtDate(s.date)}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>{formatGBP(s.net)}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: BRAND.muted, whiteSpace: 'nowrap' }}>
-                    <RateCell sale={s} />
-                  </td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: BRAND.blue, whiteSpace: 'nowrap' }}>
-                    {formatGBP(s.commission ?? 0)}
-                  </td>
-                </tr>
-              ))}
+              {m.sales.map((s, i) => {
+                const off = !!s.disqualified;
+                return (
+                  <React.Fragment key={s.key || i}>
+                    <tr style={{ borderTop: '1px solid ' + BRAND.border, opacity: off ? 0.6 : 1 }}>
+                      <td style={{ padding: '6px 8px', textDecoration: off ? 'line-through' : 'none' }}>{s.company || '—'}</td>
+                      <td style={{ padding: '6px 8px', color: BRAND.muted }}>{s.title || '—'}</td>
+                      <td style={{ padding: '6px 8px' }}>
+                        {off ? <KindTag kind="disqualified" /> : <KindTag kind={s.kind} />}
+                      </td>
+                      <td style={{ padding: '6px 8px', textAlign: 'right', color: BRAND.muted, whiteSpace: 'nowrap' }}>{fmtDate(s.date)}</td>
+                      <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600, textDecoration: off ? 'line-through' : 'none' }}>{formatGBP(s.net)}</td>
+                      <td style={{ padding: '6px 8px', textAlign: 'right', color: BRAND.muted, whiteSpace: 'nowrap' }}>
+                        {off ? '—' : <RateCell sale={s} />}
+                      </td>
+                      <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: off ? BRAND.muted : BRAND.blue, whiteSpace: 'nowrap' }}>
+                        {formatGBP(s.commission ?? 0)}
+                      </td>
+                      {canManage && (
+                        <td style={{ padding: '6px 4px', textAlign: 'right' }}>
+                          <button
+                            className="btn-ghost"
+                            title={off ? 'Put this sale back on the plan' : 'Disqualify this sale'}
+                            onClick={() => (off ? requalify(s) : setDisqualifying(s))}
+                            style={{ padding: '2px 4px', color: off ? BRAND.blue : '#B45309' }}
+                          >
+                            {off ? <RotateCcw size={13} /> : <Ban size={13} />}
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                    {off && (
+                      <tr>
+                        <td colSpan={canManage ? 8 : 7} style={{ padding: '0 8px 7px 8px' }}>
+                          <div style={{ fontSize: 11.5, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6, padding: '5px 8px' }}>
+                            <strong>Disqualified</strong>{s.disqualified.by ? ` by ${s.disqualified.by}` : ''}
+                            {s.disqualified.at ? ` · ${fmtDate(s.disqualified.at)}` : ''} — {s.disqualified.reason}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
             <tfoot>
               <tr style={{ borderTop: '2px solid ' + BRAND.border }}>
@@ -317,12 +369,81 @@ function MemberResult({ m, isMobile }) {
                 <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700 }}>{formatGBP(m.qualifyingNet)}</td>
                 <td />
                 <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: BRAND.blue }}>{formatGBP(m.commission.total)}</td>
+                {canManage && <td />}
               </tr>
             </tfoot>
           </table>
         </div>
       )}
+
+      {disqualifying && (
+        <DisqualifyModal
+          sale={disqualifying}
+          memberName={m.name || m.email}
+          onClose={() => setDisqualifying(null)}
+          onConfirm={async (reason) => {
+            await actions.disqualifyCommission(disqualifying, reason);
+            setDisqualifying(null);
+            showMsg('Sale disqualified');
+            reload();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// Taking a sale off someone's commission. The reason is mandatory and is kept
+// with the decision — this is money a person was expecting, and "why?" will be
+// asked later, quite possibly by them.
+function DisqualifyModal({ sale, memberName, onClose, onConfirm }) {
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!reason.trim() || saving) return;
+    setSaving(true);
+    try {
+      await onConfirm(reason.trim());
+    } catch (err) {
+      setError(err.message || 'Could not disqualify this sale');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} maxWidth={460}>
+      <h2 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700 }}>Disqualify this sale</h2>
+      <p style={{ margin: '0 0 14px', fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
+        <strong style={{ color: BRAND.ink }}>{sale.company || 'This sale'}</strong> ({formatGBP(sale.net)} net) stops
+        counting towards {memberName}'s commission, and the month is rebanded without it. It stays on the sheet with
+        your reason against it, and can be put back at any time.
+      </p>
+      <form onSubmit={submit}>
+        <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 5 }}>
+          Reason (required)
+        </label>
+        <textarea
+          className="input"
+          rows={3}
+          autoFocus
+          maxLength={500}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. inherited account, not a new sale"
+          style={{ width: '100%', boxSizing: 'border-box' }}
+        />
+        {error && <div style={{ fontSize: 12.5, color: '#B91C1C', marginTop: 8 }}>{error}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button type="button" onClick={onClose} className="btn-ghost" disabled={saving}>Cancel</button>
+          <button type="submit" className="btn" disabled={!reason.trim() || saving}>
+            {saving ? 'Saving…' : 'Disqualify'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -350,6 +471,7 @@ function KindTag({ kind }) {
     deposit: { label: 'Deposit', color: '#0891B2', bg: '#ECFEFF' },
     po_paid: { label: 'PO paid', color: '#7C3AED', bg: '#F3E8FF' },
     extra: { label: 'Extra', color: '#CA8A04', bg: '#FEF9C3' },
+    disqualified: { label: 'Disqualified', color: '#B45309', bg: '#FFFBEB' },
   };
   const s = map[kind] || { label: kind || '—', color: BRAND.muted, bg: BRAND.paper };
   return (

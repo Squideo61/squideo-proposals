@@ -50,6 +50,19 @@ export function ensureCommission() {
         created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
+    // Sales taken off the plan by hand. Keyed on the SALE (deal + what triggered
+    // it), not on a month, so the decision follows the sale if it re-dates. The
+    // reason is required — a disqualification someone can't explain later is
+    // worse than none.
+    await sql`
+      CREATE TABLE IF NOT EXISTS commission_disqualifications (
+        event_key       TEXT PRIMARY KEY,
+        deal_id         TEXT,
+        owner_email     TEXT,
+        reason          TEXT NOT NULL,
+        disqualified_by TEXT,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
   })().catch((err) => { commissionEnsured = null; throw err; });
   return commissionEnsured;
 }
@@ -112,6 +125,8 @@ export function commissionPerSale(items, cfg) {
       paidB = round2(exactB);
       const commission = round2(bandA + bandB);
       return {
+        // The sale's stable identity — what a disqualification is keyed on.
+        key: e.key,
         dealId: e.dealId,
         company: e.company,
         title: e.title,
@@ -190,7 +205,7 @@ async function loadRecognitionEvents() {
          WHERE deal_id IS NOT NULL
          GROUP BY deal_id`,
     // Extras (net amounts), with the durable paid date (falls back to updated_at).
-    sql`SELECT e.id, e.deal_id, e.amount, e.status, e.created_at,
+    sql`SELECT e.id AS extra_id, e.deal_id, e.amount, e.status, e.created_at,
                COALESCE(e.paid_at, e.updated_at) AS paid_at,
                d.owner_email, d.title, c.name AS company
           FROM deal_extras e
@@ -217,6 +232,7 @@ async function loadRecognitionEvents() {
   for (const r of extraRows) {
     if (!extrasByDeal.has(r.deal_id)) extrasByDeal.set(r.deal_id, []);
     extrasByDeal.get(r.deal_id).push({
+      id: r.extra_id,
       amount: Number(r.amount) || 0, status: r.status,
       createdAt: r.created_at ? new Date(r.created_at) : null,
       paidAt: r.paid_at ? new Date(r.paid_at) : null,
@@ -238,8 +254,10 @@ async function loadRecognitionEvents() {
       for (const x of dealExtras) if (x.createdAt && x.createdAt <= triggerDate) base += x.amount;
       base = round2(base);
       if (base > 0) {
+        const kind = d.isPo ? 'po_paid' : 'deposit';
         events.push({ ownerEmail: d.ownerEmail, dealId, company: d.company, title: d.title,
-          month: monthKey(triggerDate), amount: base, kind: d.isPo ? 'po_paid' : 'deposit', date: triggerDate.toISOString() });
+          month: monthKey(triggerDate), amount: base, kind, date: triggerDate.toISOString(),
+          key: `${dealId}:${kind}` });
       }
     }
 
@@ -247,10 +265,26 @@ async function loadRecognitionEvents() {
       if (x.status !== 'paid' || !x.paidAt || x.amount <= 0) continue;
       if (triggerDate && x.createdAt && x.createdAt <= triggerDate) continue; // folded into BASE
       events.push({ ownerEmail: d.ownerEmail, dealId, company: d.company, title: d.title,
-        month: monthKey(x.paidAt), amount: round2(x.amount), kind: 'extra', date: x.paidAt.toISOString() });
+        month: monthKey(x.paidAt), amount: round2(x.amount), kind: 'extra', date: x.paidAt.toISOString(),
+        key: `${dealId}:extra:${x.id}` });
     }
   }
   return events;
+}
+
+// ── Disqualifications ──
+// event_key → { reason, by, at }. Keyed on the sale, so it holds even if the
+// sale re-dates into another month.
+async function loadDisqualifications() {
+  await ensureCommission();
+  const rows = await sql`
+    SELECT event_key, reason, disqualified_by, created_at FROM commission_disqualifications
+  `.catch(() => []);
+  return new Map(rows.map((r) => [r.event_key, {
+    reason: r.reason,
+    by: r.disqualified_by || null,
+    at: r.created_at,
+  }]));
 }
 
 // Full per-member commission report for a month.
@@ -258,18 +292,24 @@ async function loadRecognitionEvents() {
 //   opts.includeCandidates — attach users not yet on the plan (manage picker)
 export async function commissionForMonth(month, opts = {}) {
   const mk = isMonth(month) ? month : curMonthKey();
-  const [cfg, memberRows, events] = await Promise.all([loadConfig(), loadMembers(), loadRecognitionEvents()]);
+  const [cfg, memberRows, events, disqualified] = await Promise.all([
+    loadConfig(), loadMembers(), loadRecognitionEvents(), loadDisqualifications(),
+  ]);
 
   let members = memberRows;
   if (opts.scopeEmail) members = memberRows.filter((m) => lc(m.email) === lc(opts.scopeEmail));
 
-  // Events recognised this month, grouped by owner.
+  // Events recognised this month, grouped by owner. A disqualified sale is kept
+  // out of the qualifying net but still listed — the sheet has to show what was
+  // taken off and why, or the decision disappears the moment it's made.
   const byOwner = new Map();
   for (const e of events) {
     if (e.month !== mk) continue;
     const email = lc(e.ownerEmail);
-    if (!byOwner.has(email)) byOwner.set(email, { net: 0, items: [] });
+    if (!byOwner.has(email)) byOwner.set(email, { net: 0, items: [], excluded: [] });
     const b = byOwner.get(email);
+    const dq = disqualified.get(e.key);
+    if (dq) { b.excluded.push({ ...e, disqualified: dq }); continue; }
     b.net += e.amount;
     b.items.push(e);
   }
@@ -280,7 +320,17 @@ export async function commissionForMonth(month, opts = {}) {
     const net = active && b ? b.net : 0;
     const commission = computeCommission(net, cfg);
     // Banded oldest-first (that's the order the cap fills in), shown newest-first.
-    const sales = active && b ? commissionPerSale(b.items, cfg).reverse() : [];
+    const earning = active && b ? commissionPerSale(b.items, cfg) : [];
+    // Disqualified sales earn nothing and take no part in the banding, so they're
+    // simply folded back into the list at their own date.
+    const excluded = active && b
+      ? b.excluded.map((e) => ({
+        dealId: e.dealId, company: e.company, title: e.title, net: round2(e.amount),
+        date: e.date, kind: e.kind, key: e.key,
+        bandA: 0, bandB: 0, commission: 0, rate: 0, disqualified: e.disqualified,
+      }))
+      : [];
+    const sales = [...earning, ...excluded].sort((a, z) => (a.date < z.date ? 1 : -1));
     return {
       email: m.email,
       name: m.name || m.email,
@@ -288,6 +338,7 @@ export async function commissionForMonth(month, opts = {}) {
       effectiveFrom: m.effective_from,
       active,
       qualifyingNet: round2(net),
+      disqualifiedNet: round2(excluded.reduce((s, e) => s + e.net, 0)),
       commission,
       sales,
     };
@@ -324,10 +375,11 @@ export async function commissionTotalsForMonths(monthKeys) {
   if (!active.length) return zero;
 
   const wanted = new Set(keys);
-  const events = await loadRecognitionEvents();
+  const [events, disqualified] = await Promise.all([loadRecognitionEvents(), loadDisqualifications()]);
   const netBy = new Map(); // `${ownerEmail}|${monthKey}` -> net recognised
   for (const e of events) {
     if (!wanted.has(e.month)) continue;
+    if (disqualified.has(e.key)) continue; // taken off the plan by hand
     const key = `${lc(e.ownerEmail)}|${e.month}`;
     netBy.set(key, (netBy.get(key) || 0) + e.amount);
   }
@@ -350,10 +402,12 @@ export async function commissionTotalsForMonths(monthKeys) {
 // month (enabled + enrolled), including £0 so the plan members always show.
 export async function commissionByMemberForMonth(month) {
   const mk = isMonth(month) ? month : curMonthKey();
-  const [cfg, memberRows, events] = await Promise.all([loadConfig(), loadMembers(), loadRecognitionEvents()]);
+  const [cfg, memberRows, events, disqualified] = await Promise.all([
+    loadConfig(), loadMembers(), loadRecognitionEvents(), loadDisqualifications(),
+  ]);
   const netBy = new Map();
   for (const e of events) {
-    if (e.month !== mk) continue;
+    if (e.month !== mk || disqualified.has(e.key)) continue;
     netBy.set(lc(e.ownerEmail), (netBy.get(lc(e.ownerEmail)) || 0) + e.amount);
   }
   const out = [];
@@ -373,6 +427,8 @@ export async function commissionByMemberForMonth(month) {
 //   POST   /members {email}        → enrol a member (manage)
 //   PATCH  /members/<email>        → { enabled?, effectiveFrom? } (manage)
 //   DELETE /members/<email>        → remove from plan (manage)
+//   POST   /disqualify {key, reason} → take a sale off the plan (manage)
+//   DELETE /disqualify/<key>       → put it back (manage)
 export async function commissionRoute(req, res, id, action, user) {
   res.setHeader('Cache-Control', 'no-store');
   await ensureCommission();
@@ -397,6 +453,39 @@ export async function commissionRoute(req, res, id, action, user) {
                updated_at = NOW(), updated_by = ${(user.email || '').toLowerCase() || null}
          WHERE id = 1`;
       return res.status(200).json(await loadConfig());
+    }
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // ── Disqualifying a sale ──
+  // Directors and admins only (commission.manage). A reason is required and is
+  // kept with the decision — this is money someone was expecting.
+  if (id === 'disqualify') {
+    if (!canManage) return res.status(403).json({ error: 'Forbidden' });
+
+    if (req.method === 'POST') {
+      const b = req.body || {};
+      const key = String(b.key || '').trim();
+      const reason = String(b.reason || '').trim();
+      if (!key) return res.status(400).json({ error: 'key required' });
+      if (!reason) return res.status(400).json({ error: 'A reason is required to disqualify a sale' });
+      if (reason.length > 500) return res.status(400).json({ error: 'Keep the reason under 500 characters' });
+      await sql`
+        INSERT INTO commission_disqualifications (event_key, deal_id, owner_email, reason, disqualified_by)
+        VALUES (${key}, ${String(b.dealId || '').trim() || null}, ${lc(b.ownerEmail) || null},
+                ${reason}, ${lc(user.email) || null})
+        ON CONFLICT (event_key) DO UPDATE
+          SET reason = EXCLUDED.reason,
+              disqualified_by = EXCLUDED.disqualified_by,
+              created_at = NOW()`;
+      return res.status(200).json({ ok: true });
+    }
+
+    if (req.method === 'DELETE') {
+      const key = String(action || (req.body || {}).key || '').trim();
+      if (!key) return res.status(400).json({ error: 'key required' });
+      await sql`DELETE FROM commission_disqualifications WHERE event_key = ${key}`;
+      return res.status(200).json({ ok: true });
     }
     return res.status(405).json({ error: 'Method not allowed' });
   }
