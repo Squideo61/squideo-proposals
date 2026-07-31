@@ -80,6 +80,53 @@ export function computeCommission(net, cfg) {
   return { qualifying: round2(q), bandA, bandB, total: round2(bandA + bandB) };
 }
 
+// What each individual sale earned. The bands are cumulative across the month,
+// so a sale's rate depends on how much had already been counted before it: the
+// earliest sale fills Band A first, and a sale that straddles the cap earns 5%
+// on the part inside and 2% on the part above. Items are therefore walked in
+// recognition order (oldest first) whatever order they're displayed in.
+//
+// Rounding is done on the RUNNING total and taken as a difference, so the per-
+// sale figures always add up to the month's Band A / Band B / total exactly —
+// rounding each sale on its own could leave the rows a penny off the header.
+export function commissionPerSale(items, cfg) {
+  const cap = Math.max(0, Number(cfg.bandACap) || 0);
+  const rateA = Number(cfg.bandARate) || 0;
+  const rateB = Number(cfg.bandBRate) || 0;
+  let counted = 0;      // net recognised so far this month
+  let exactA = 0, exactB = 0, paidA = 0, paidB = 0;
+  return items
+    .slice()
+    .sort((a, z) => (a.date < z.date ? -1 : a.date > z.date ? 1 : 0))
+    .map((e) => {
+      const net = Math.max(0, Number(e.amount) || 0);
+      const inA = Math.max(0, Math.min(net, cap - counted));
+      const inB = net - inA;
+      counted += net;
+      exactA += inA * rateA;
+      exactB += inB * rateB;
+      const bandA = round2(round2(exactA) - paidA);
+      const bandB = round2(round2(exactB) - paidB);
+      paidA = round2(exactA);
+      paidB = round2(exactB);
+      const commission = round2(bandA + bandB);
+      return {
+        dealId: e.dealId,
+        company: e.company,
+        title: e.title,
+        net: round2(net),
+        date: e.date,
+        kind: e.kind,
+        bandA,
+        bandB,
+        commission,
+        // The rate actually earned on this sale — the band rate when it sits
+        // wholly in one band, a blend when it straddles the cap.
+        rate: net > 0 ? commission / net : 0,
+      };
+    });
+}
+
 // ── Members ──
 async function loadMembers() {
   await ensureCommission();
@@ -212,11 +259,8 @@ export async function commissionForMonth(month, opts = {}) {
     const b = byOwner.get(lc(m.email));
     const net = active && b ? b.net : 0;
     const commission = computeCommission(net, cfg);
-    const sales = active && b
-      ? b.items
-          .map((e) => ({ dealId: e.dealId, company: e.company, title: e.title, net: e.amount, date: e.date, kind: e.kind }))
-          .sort((a, z) => (a.date < z.date ? 1 : -1))
-      : [];
+    // Banded oldest-first (that's the order the cap fills in), shown newest-first.
+    const sales = active && b ? commissionPerSale(b.items, cfg).reverse() : [];
     return {
       email: m.email,
       name: m.name || m.email,

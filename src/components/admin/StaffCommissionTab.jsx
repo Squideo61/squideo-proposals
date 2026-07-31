@@ -289,6 +289,8 @@ function MemberResult({ m, isMobile }) {
                 <th style={{ textAlign: 'left', padding: '6px 8px' }}>Type</th>
                 <th style={{ textAlign: 'right', padding: '6px 8px' }}>Recognised</th>
                 <th style={{ textAlign: 'right', padding: '6px 8px' }}>Net counted</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px' }}>Rate</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px' }}>Commission</th>
               </tr>
             </thead>
             <tbody>
@@ -299,13 +301,44 @@ function MemberResult({ m, isMobile }) {
                   <td style={{ padding: '6px 8px' }}><KindTag kind={s.kind} /></td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', color: BRAND.muted, whiteSpace: 'nowrap' }}>{fmtDate(s.date)}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>{formatGBP(s.net)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: BRAND.muted, whiteSpace: 'nowrap' }}>
+                    <RateCell sale={s} />
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: BRAND.blue, whiteSpace: 'nowrap' }}>
+                    {formatGBP(s.commission ?? 0)}
+                  </td>
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr style={{ borderTop: '2px solid ' + BRAND.border }}>
+                <td colSpan={4} />
+                <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700 }}>{formatGBP(m.qualifyingNet)}</td>
+                <td />
+                <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: BRAND.blue }}>{formatGBP(m.commission.total)}</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}
     </div>
+  );
+}
+
+// The rate this sale actually earned. Usually it sits wholly in one band, so
+// it's simply that band's rate; a sale that straddles the Band A cap earns a
+// blend, and says so rather than showing a percentage that matches neither band.
+function RateCell({ sale }) {
+  const pct = (n) => `${(n * 100).toFixed(n * 100 % 1 === 0 ? 0 : 1)}%`;
+  const straddles = (sale.bandA || 0) > 0 && (sale.bandB || 0) > 0;
+  if (!sale.net) return <span>—</span>;
+  return (
+    <span title={straddles
+      ? `${formatGBP(sale.bandA)} in Band A + ${formatGBP(sale.bandB)} in Band B`
+      : undefined}>
+      {pct(sale.rate || 0)}
+      {straddles && <span style={{ fontSize: 10, marginLeft: 3 }}>blended</span>}
+    </span>
   );
 }
 
