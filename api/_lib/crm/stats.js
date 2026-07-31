@@ -1370,6 +1370,34 @@ async function pendingPaymentsReport() {
     for (const r of rows) { if (!r.did) continue; paid.set(r.did, (paid.get(r.did) || 0) + (Number(r.v) || 0)); }
   }
 
+  // The individual raised-but-unpaid invoices behind each deal, so Pending
+  // Payments can bank one from the list. An invoiced portion has to be paid
+  // THROUGH its invoice (which also settles it in Xero) — a loose payment
+  // alongside a live invoice would be counted twice once that invoice syncs
+  // back as paid.
+  const openInvoices = new Map();
+  {
+    const rows = await sql`
+      SELECT COALESCE(mi.deal_id, dp.id) AS did, mi.id, mi.invoice_number, mi.amount, mi.xero_invoice_id
+        FROM manual_invoices mi
+        LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+        LEFT JOIN deals dp ON dp.id = pr.deal_id
+       WHERE mi.status = 'issued'
+       ORDER BY mi.issued_at ASC NULLS LAST, mi.created_at ASC
+    `.catch(() => []);
+    for (const r of rows) {
+      if (!r.did) continue;
+      const list = openInvoices.get(r.did) || [];
+      list.push({
+        id: r.id,
+        number: r.invoice_number || null,
+        amount: round2(Number(r.amount) || 0),
+        xeroInvoiceId: r.xero_invoice_id || null,
+      });
+      openInvoices.set(r.did, list);
+    }
+  }
+
   // Inc-VAT raised-and-unpaid total per deal (the new basis for "pending").
   const invoicedDue = new Map();
   for (const rows of [miIssuedRows, pbInvoicedRows]) {
@@ -1466,6 +1494,9 @@ async function pendingPaymentsReport() {
       // has been received.
       poNumber: inf.po_number || null,
       poReceivedAt: inf.po_received_at || null,
+      // Raised-and-unpaid invoices on this deal — "mark paid" on an invoiced
+      // row goes through these rather than recording a loose payment.
+      openInvoices: openInvoices.get(did) || [],
     };
     (isPo ? po : normal).push(item);
   }

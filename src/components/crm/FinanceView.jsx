@@ -54,6 +54,33 @@ function predictDateMenuItem(predict, item, onOpen) {
   return { label: 'Add predicted pay date', icon: CalendarCheck, onClick: onOpen };
 }
 
+// What recording `netAmount` against a signed-deal row actually means. A row is
+// often a PORTION of the deal (a 50% deposit, the final), not the whole thing,
+// so the ledger needs the portion type as well as the money — and the money has
+// to be GROSS, because that's what the client pays. The deal's VAT rate is
+// recovered from the row's own outstanding pair (extras included at the same
+// rate) rather than assumed.
+//
+// Shared by the Predicted tab and the Pending Payments rows so the two can never
+// disagree about what "mark paid" banks.
+function dealPortionPayment(row, netAmount) {
+  const net = round2Money(Number(netAmount) || 0);
+  const fullNet = Number(row?.outstanding) || 0;
+  const fullGross = Number(row?.outstandingGross) || 0;
+  const mult = fullNet > 0.005 ? fullGross / fullNet : 1;
+  const lines = row?.lines || [];
+  const portionType = Math.abs(fullNet - net) < 0.01 ? 'full'
+    : lines.some((l) => l.type === 'deposit' && Math.abs(l.amount - net) < 0.01) ? 'deposit'
+    : lines.some((l) => l.type === 'final' && Math.abs(l.amount - net) < 0.01) ? 'final'
+    : 'full';
+  return {
+    net,
+    gross: round2Money(net * mult),
+    portionType,
+    portionLabel: portionType === 'deposit' ? '50% deposit' : portionType === 'final' ? '50% final' : 'payment',
+  };
+}
+
 // Pick an expected pay date for a pending payment. Predicted lists are
 // month-scoped, so the chosen date marks the row predicted in that date's month
 // (shown immediately when that's the current month; saved for later otherwise).
@@ -876,20 +903,8 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
       // Signed deals record a real payment against the proposal. The predicted row
       // is a specific PORTION (e.g. a 50% deposit), not necessarily the whole deal
       // — record just that portion so the ledger and the remaining balance stay
-      // right. `it.amount` is the portion NET; gross it at the deal's VAT rate
-      // (outstandingGross / outstanding, extras included at the same rate).
-      const net = Number(it.amount) || 0;
-      const fullNet = Number(it.row.outstanding) || 0;
-      const fullGross = Number(it.row.outstandingGross) || 0;
-      const mult = fullNet > 0.005 ? fullGross / fullNet : 1;
-      const gross = round2Money(net * mult);
-      // Label the portion (drives the receipt/notification wording + the ledger).
-      const lines = it.row.lines || [];
-      const portionType = Math.abs(fullNet - net) < 0.01 ? 'full'
-        : lines.some((l) => l.type === 'deposit' && Math.abs(l.amount - net) < 0.01) ? 'deposit'
-        : lines.some((l) => l.type === 'final' && Math.abs(l.amount - net) < 0.01) ? 'final'
-        : 'full';
-      const portionLabel = portionType === 'deposit' ? '50% deposit' : portionType === 'final' ? '50% final' : 'payment';
+      // right.
+      const { gross, net, portionType, portionLabel } = dealPortionPayment(it.row, it.amount);
       const ok = window.confirm(`Record a ${method === 'bacs' ? 'BACS' : 'Stripe'} payment of ${formatGBP(gross)} (inc VAT · ${formatGBP(net)} net) for "${it.name}"?\n\nThis records the ${portionLabel} against the deal.`);
       if (!ok) return;
       p = actions.recordDealPayment(it.row.proposalId, gross, method, portionType);
@@ -1280,6 +1295,8 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
             onOpenDeal={onOpenDeal}
             onCreateInvoice={setInvTarget}
             isMobile={isMobile}
+            actions={actions}
+            onChanged={onChanged}
           />
           {pps.length > 0 && (
             <ManualPendingGroup
@@ -1412,7 +1429,7 @@ function splitSignedByInvoiced(deals) {
 // Signed deals (non-PO) with a NOT-yet-invoiced balance — each line tagged, with
 // an INV action on the not-yet-invoiced portions (the invoiced portions move to
 // the Invoiced — awaiting payment panel).
-function SignedDealsPanel({ rows, total, onOpenDeal, onCreateInvoice, isMobile }) {
+function SignedDealsPanel({ rows, total, onOpenDeal, onCreateInvoice, isMobile, actions, onChanged }) {
   if (!rows || rows.length === 0) return null;
   return (
     <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
@@ -1421,10 +1438,10 @@ function SignedDealsPanel({ rows, total, onOpenDeal, onCreateInvoice, isMobile }
           <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Signed deals — outstanding</span>
           <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(total)}</span>
         </div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Signed work still to invoice · {rows.length} {rows.length === 1 ? 'deal' : 'deals'} · use the ⋮ menu to raise an invoice (invoiced portions move to “Invoiced — awaiting payment”)</div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Signed work still to invoice · {rows.length} {rows.length === 1 ? 'deal' : 'deals'} · use the ⋮ menu to raise an invoice (invoiced portions move to “Invoiced — awaiting payment”) or to mark a payment received</div>
       </div>
       {rows.map((d) => (
-        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isMobile={isMobile} />
+        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isMobile={isMobile} actions={actions} onChanged={onChanged} />
       ))}
     </div>
   );
@@ -1449,10 +1466,10 @@ function InvoicedAwaitingPanel({ dealRows, manualRows, actions, onChanged, onOpe
           <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>Invoiced — awaiting payment</span>
           <span style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>{formatGBP(grand)}</span>
         </div>
-        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Invoiced items awaiting payment · {count} {count === 1 ? 'item' : 'items'} · signed-deal invoices auto-clear when paid in Xero; use the ⋮ menu on imported rows to mark paid</div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Invoiced items awaiting payment · {count} {count === 1 ? 'item' : 'items'} · these clear themselves when the invoice is paid in Xero — or use a row's ⋮ menu to mark it paid here</div>
       </div>
       {deals.map((d) => (
-        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} isMobile={isMobile} />
+        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} isMobile={isMobile} actions={actions} onChanged={onChanged} />
       ))}
       {manual.length > 0 && (
         <ManualPendingGroup
@@ -2457,7 +2474,7 @@ function PurchaseOrdersPanel({ crmRows, crmTotal, importedRows, actions, onChang
         <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>Paid regardless of project stage · signed deals + imported sheet · {count} {count === 1 ? 'item' : 'items'} · use the ⋮ menu on a row for its actions</div>
       </div>
       {crmRows.map((d) => (
-        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isPo onMarkPoReceived={onMarkPoReceived} isMobile={isMobile} />
+        <PendingRow key={d.dealId} d={d} onOpenDeal={onOpenDeal} onCreateInvoice={onCreateInvoice} isPo onMarkPoReceived={onMarkPoReceived} isMobile={isMobile} actions={actions} onChanged={onChanged} />
       ))}
       <ManualPendingGroup
         bare
@@ -2957,9 +2974,11 @@ function RowActionsMenu({ items }) {
   );
 }
 
-function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoReceived, isMobile = false }) {
+function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoReceived, isMobile = false, actions, onChanged }) {
   const predict = usePredict();
   const [predictingDate, setPredictingDate] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [payingInvoice, setPayingInvoice] = useState(null);
   const company = realCompany(d.company);
   const name = dealRowName(d);
   // Only keep the deal title as a second line when it adds something beyond the
@@ -2982,6 +3001,13 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
   const invoiceLines = lines.filter(canInvoice);
   // Pending-only users (Project/Production Managers) get only Open + predict.
   const canManage = predict?.canManage !== false;
+  // This row's raised-but-unpaid invoices, and the portions with no invoice
+  // behind them — the two are paid by different routes (see the menu below).
+  // A deal is split across panels by invoiced state, so the invoice actions only
+  // belong on the row that's actually showing the invoiced part.
+  const openInvoices = lines.some((l) => l.invoiced === true) ? (d.openInvoices || []) : [];
+  const directLines = openInvoices.length ? lines.filter((l) => l.invoiced === false) : lines;
+  const directNet = round2Money(directLines.reduce((s, l) => s + (Number(l.amount) || 0), 0));
   // The PO action is offered on PO-route deals (still waiting on their PO) and on
   // any deal that already has one recorded — a PO uploaded from the deal page can
   // be corrected here.
@@ -2996,6 +3022,25 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
       icon: FileText,
       onClick: () => onCreateInvoice({ dealId: d.dealId, companyId: d.companyId, title: d.title || d.company, stage: d.stage, mode: l.type === 'final' ? 'final' : undefined, reference: d.poNumber || undefined }),
     })) : []),
+    // Banking a payment doesn't wait on the row being predicted — money lands
+    // when it lands, and this is the list you're looking at when it does.
+    //
+    // An invoiced portion is paid THROUGH its invoice (which settles it in Xero
+    // too): recording a loose payment beside a live invoice would count twice
+    // the moment that invoice syncs back as paid. Only a portion with no invoice
+    // behind it takes a direct payment.
+    ...(canManage ? openInvoices.map((inv) => ({
+      label: openInvoices.length > 1
+        ? `Mark ${inv.number || 'invoice'} paid…`
+        : 'Mark invoice paid…',
+      icon: Check,
+      onClick: () => setPayingInvoice(inv),
+    })) : []),
+    canManage && actions && d.proposalId && directNet > 0.005 && {
+      label: openInvoices.length ? 'Mark uninvoiced portion paid…' : 'Mark paid…',
+      icon: Check,
+      onClick: () => setPaying(true),
+    },
     onOpenDeal && { label: 'Open deal', icon: ExternalLink, onClick: open },
     d.dealId && predictMenuItem(predict, { key: predictKeyForDeal(d.dealId), label: name, amount: d.outstanding }),
     d.dealId && predictDateMenuItem(predict, { key: predictKeyForDeal(d.dealId) }, () => setPredictingDate(true)),
@@ -3099,7 +3144,127 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
         onConfirm={(month) => predict.predictInMonth({ key: predictKeyForDeal(d.dealId), label: name, amount: d.outstanding }, month)}
       />
     )}
+    {paying && (
+      <MarkDealPaidModal
+        row={d}
+        name={name}
+        lines={directLines}
+        total={directNet}
+        actions={actions}
+        onClose={() => setPaying(false)}
+        onPaid={() => { setPaying(false); if (onChanged) onChanged(); }}
+      />
+    )}
+    {payingInvoice && (
+      <MarkInvoicePaidModal
+        invoiceId={payingInvoice.id}
+        invoiceNumber={payingInvoice.number || undefined}
+        amount={payingInvoice.amount}
+        xeroInvoiceId={payingInvoice.xeroInvoiceId || undefined}
+        onClose={() => setPayingInvoice(null)}
+        onMarked={() => { setPayingInvoice(null); if (onChanged) onChanged(); }}
+      />
+    )}
     </>
+  );
+}
+
+// Bank a payment against a signed deal straight from Pending Payments. A deal
+// row can be several portions at once (a deposit and a final, plus extras), so
+// the portion is chosen here rather than assumed — default is whatever the row
+// is showing. The amount recorded is GROSS, because that's what the client pays;
+// the net is shown alongside so the figure can be checked against a remittance.
+function MarkDealPaidModal({ row, name, lines: payable, total, actions, onClose, onPaid }) {
+  const { showMsg } = useStore();
+  const lines = (payable || []).filter((l) => (Number(l.amount) || 0) > 0.005);
+  const multi = lines.length > 1;
+  const options = multi
+    ? [
+      { key: 'all', label: `Everything outstanding — ${formatGBP(total)}`, amount: Number(total) || 0 },
+      ...lines.map((l, i) => ({
+        key: `line${i}`,
+        label: `${PAYMENT_TYPE_META[l.type]?.label || l.label || 'Portion'} — ${formatGBP(l.amount)}`,
+        amount: Number(l.amount) || 0,
+      })),
+    ]
+    : [{ key: 'all', label: `${formatGBP(total)}`, amount: Number(total) || 0 }];
+  const [pick, setPick] = useState('all');
+  const [method, setMethod] = useState('bacs');
+  const [saving, setSaving] = useState(false);
+  const chosen = options.find((o) => o.key === pick) || options[0];
+  const { gross, net, portionType, portionLabel } = dealPortionPayment(row, chosen.amount);
+
+  const submit = async () => {
+    if (saving || gross <= 0) return;
+    setSaving(true);
+    try {
+      await actions.recordDealPayment(row.proposalId, gross, method, portionType);
+      showMsg(`Recorded ${formatGBP(gross)} for ${name}`);
+      onPaid();
+    } catch (err) {
+      showMsg(err.message || 'Could not record the payment');
+      setSaving(false);
+    }
+  };
+
+  const label = { display: 'block', fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 5 };
+  return (
+    <Modal onClose={onClose} maxWidth={460}>
+      <h2 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700 }}>Mark paid</h2>
+      <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 16 }}>
+        Records a payment against <strong style={{ color: BRAND.ink }}>{name}</strong>. It banks into this month's
+        income and the row drops off Pending Payments.
+      </div>
+
+      {multi && (
+        <div style={{ marginBottom: 14 }}>
+          <span style={label}>What's been paid</span>
+          <select className="input" value={pick} onChange={(e) => setPick(e.target.value)} style={{ width: '100%' }}>
+            {options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+        </div>
+      )}
+
+      <div style={{ marginBottom: 14 }}>
+        <span style={label}>Paid by</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {[{ v: 'bacs', t: 'BACS / transfer' }, { v: 'stripe', t: 'Stripe / card' }].map((m) => (
+            <button
+              key={m.v}
+              onClick={() => setMethod(m.v)}
+              className="btn-ghost"
+              style={{
+                flex: 1, fontSize: 13, padding: '9px 10px', borderRadius: 8,
+                border: '1px solid ' + (method === m.v ? BRAND.blue : BRAND.border),
+                background: method === m.v ? BRAND.blue + '10' : 'white',
+                color: method === m.v ? BRAND.blue : BRAND.ink,
+                fontWeight: method === m.v ? 700 : 500,
+              }}
+            >
+              {m.t}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '10px 12px', fontSize: 13 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span style={{ color: BRAND.muted }}>Recording</span>
+          <strong style={{ color: BRAND.ink }}>{formatGBP(gross)} inc VAT</strong>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 12, color: BRAND.muted }}>
+          <span>as the {portionLabel}</span>
+          <span>{formatGBP(net)} net</span>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+        <button onClick={onClose} className="btn-ghost" disabled={saving}>Cancel</button>
+        <button onClick={submit} className="btn-primary" disabled={saving || gross <= 0}>
+          {saving ? 'Recording…' : 'Mark paid'}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
