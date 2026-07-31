@@ -1,10 +1,11 @@
 // Staff Commission — automatic sales commission for on-plan staff.
 //
 // Recognition is EVENT-based (ex-VAT), per member, per month, resetting to £0
-// each month. Commission on a deal's full proposal balance is granted in full at
-// a trigger event, attributed to the deal owner (deals.owner_email):
-//   • Normal deals — when the DEPOSIT (first payment) lands.
-//   • PO-route deals (signature paymentOption 'po') — when the proposal is SIGNED.
+// each month. Commission on a deal's full proposal balance is granted in full
+// when the FIRST PAYMENT lands, attributed to the deal owner (deals.owner_email)
+// — the deposit on a 50/50, the lot on a full-up-front deal, the invoice being
+// marked paid on PO work. Nothing is commissioned on a signature: signed work
+// can still fall over, and commission paid on it would have to be clawed back.
 // The base amount is the signed proposal net (computeProposalTotalExVat) plus any
 // extras already on the deal at the trigger. Extras added AFTER the trigger are
 // recognised individually when they're paid (deal_extras.paid_at). A deal with no
@@ -144,8 +145,9 @@ const accruesIn = (m, month) => m.enabled !== false && String(m.effective_from) 
 // ── Recognition events ──
 // Every commission-qualifying EVENT across all deals with a signed proposal:
 //   • BASE — the full proposal net (+ any extras already on the deal at the
-//     trigger), recognised in full when the DEPOSIT (first payment) lands for a
-//     normal deal, or when the proposal is SIGNED for a PO-route deal.
+//     trigger), recognised in full when the FIRST PAYMENT lands. That's the
+//     deposit on a 50/50, the whole thing on a full-up-front deal, and the
+//     invoice being marked paid on PO work — money in, whatever the route.
 //   • EXTRA — each PAID extra ADDED AFTER the trigger, recognised in the month
 //     its cash landed (deal_extras.paid_at). Extras that existed at/before the
 //     trigger are folded into BASE, so they're never counted twice.
@@ -160,17 +162,33 @@ async function loadRecognitionEvents() {
           JOIN proposals p ON p.id = s.proposal_id
           JOIN deals d ON d.id = p.deal_id
           LEFT JOIN companies c ON c.id = d.company_id`,
-    // Earliest payment per deal (the "deposit") across the proposal-linked money
-    // sources — the trigger date for non-PO deals.
-    sql`SELECT p.deal_id AS deal_id, MIN(x.paid_at) AS first_paid
+    // Earliest payment per deal — the trigger for every base event. Every way
+    // money can be recorded against a deal has to be in here: a deal that was
+    // paid through its INVOICE (the usual route for PO work and anything billed
+    // up front) would otherwise never trigger, and the sale would silently never
+    // be commissioned.
+    sql`SELECT deal_id, MIN(paid_at) AS first_paid
           FROM (
-            SELECT proposal_id, paid_at FROM payments WHERE paid_at IS NOT NULL
-            UNION ALL SELECT proposal_id, paid_at FROM manual_payments WHERE manual_invoice_id IS NULL AND paid_at IS NOT NULL
-            UNION ALL SELECT proposal_id, paid_at FROM proposal_billing WHERE paid_at IS NOT NULL
-            UNION ALL SELECT proposal_id, paid_at FROM partner_invoices WHERE paid_at IS NOT NULL
-          ) x
-          JOIN proposals p ON p.id = x.proposal_id
-         GROUP BY p.deal_id`,
+            SELECT p.deal_id, x.paid_at
+              FROM (
+                SELECT proposal_id, paid_at FROM payments WHERE paid_at IS NOT NULL
+                UNION ALL SELECT proposal_id, paid_at FROM manual_payments WHERE manual_invoice_id IS NULL AND paid_at IS NOT NULL
+                UNION ALL SELECT proposal_id, paid_at FROM proposal_billing WHERE paid_at IS NOT NULL
+                UNION ALL SELECT proposal_id, paid_at FROM partner_invoices WHERE paid_at IS NOT NULL
+              ) x
+              JOIN proposals p ON p.id = x.proposal_id
+            UNION ALL
+            -- An invoice marked paid is money in. It may be linked to the deal
+            -- directly or only through its proposal, so take whichever it has.
+            -- Invoices flagged out of the stats don't count.
+            SELECT COALESCE(mi.deal_id, pr.deal_id) AS deal_id, mi.paid_at
+              FROM manual_invoices mi
+              LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+             WHERE mi.status = 'paid' AND mi.paid_at IS NOT NULL
+               AND COALESCE(mi.exclude_from_stats, false) = false
+          ) y
+         WHERE deal_id IS NOT NULL
+         GROUP BY deal_id`,
     // Extras (net amounts), with the durable paid date (falls back to updated_at).
     sql`SELECT e.id, e.deal_id, e.amount, e.status, e.created_at,
                COALESCE(e.paid_at, e.updated_at) AS paid_at,
@@ -208,9 +226,11 @@ async function loadRecognitionEvents() {
   const events = [];
   for (const [dealId, d] of deals) {
     if (!d.ownerEmail) continue;
-    // Trigger: PO → when signed; else → the deposit (first payment). No trigger
-    // yet (non-PO, unpaid) → no base event, but a paid extra can still recognise.
-    const triggerDate = d.isPo ? d.signedAt : (firstPaid.get(dealId) || null);
+    // Trigger: the first payment, for every deal. Nothing is commissioned on a
+    // signature alone — PO work included: a PO can be signed and then not go
+    // ahead, and paying commission on it would mean clawing it back. No payment
+    // yet → no base event, though a paid extra can still recognise on its own.
+    const triggerDate = firstPaid.get(dealId) || null;
     const dealExtras = extrasByDeal.get(dealId) || [];
 
     if (triggerDate) {
@@ -219,7 +239,7 @@ async function loadRecognitionEvents() {
       base = round2(base);
       if (base > 0) {
         events.push({ ownerEmail: d.ownerEmail, dealId, company: d.company, title: d.title,
-          month: monthKey(triggerDate), amount: base, kind: d.isPo ? 'signing' : 'deposit', date: triggerDate.toISOString() });
+          month: monthKey(triggerDate), amount: base, kind: d.isPo ? 'po_paid' : 'deposit', date: triggerDate.toISOString() });
       }
     }
 

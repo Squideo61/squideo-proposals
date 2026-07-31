@@ -63,9 +63,10 @@ export function StaffCommissionTab() {
         </select>
       </div>
       <p style={{ margin: '0 0 18px', fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
-        Commission (ex-VAT) is granted in full on a deal's whole proposal balance when its <strong>deposit is paid</strong>
-        {' '}— or when the proposal is <strong>signed</strong> for PO projects. Extras added afterwards are commissioned
-        when they're paid. It resets to £0 each month and feeds the Cash Flow "Staff Commission" cost line for {monthLabelLong(month)}.
+        Commission (ex-VAT) is granted in full on a deal's whole proposal balance when the <strong>first payment
+        lands</strong> — the deposit on a 50/50, the whole amount up front, or the invoice being marked paid on PO
+        work. Signing alone doesn't earn it. Extras added afterwards are commissioned when they're paid. It resets
+        to £0 each month and feeds the Cash Flow "Staff Commission" cost line for {monthLabelLong(month)}.
       </p>
 
       {!data ? (
@@ -347,7 +348,7 @@ function RateCell({ sale }) {
 function KindTag({ kind }) {
   const map = {
     deposit: { label: 'Deposit', color: '#0891B2', bg: '#ECFEFF' },
-    signing: { label: 'PO signed', color: '#7C3AED', bg: '#F3E8FF' },
+    po_paid: { label: 'PO paid', color: '#7C3AED', bg: '#F3E8FF' },
     extra: { label: 'Extra', color: '#CA8A04', bg: '#FEF9C3' },
   };
   const s = map[kind] || { label: kind || '—', color: BRAND.muted, bg: BRAND.paper };
