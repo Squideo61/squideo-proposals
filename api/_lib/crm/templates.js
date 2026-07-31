@@ -33,6 +33,44 @@ async function seedPortalInviteTemplate() {
   `;
 }
 
+// "Submit to client for review" opens the same kind of editable draft as the
+// portal invite — the producer writes the covering email rather than the client
+// getting a bare system notification. Two templates because a storyboard round
+// and a cut of the film ask for different things.
+//
+// Placeholders filled when the composer opens: {{first_name}} {{name}}
+// {{email}} {{company}} {{video_title}} {{project_title}} {{review_link}}
+// {{version}} {{sender}}. See src/lib/reviewEmail.js.
+export const REVIEW_VIDEO_TEMPLATE_ID = 'tpl_review_video';
+export const REVIEW_STORYBOARD_TEMPLATE_ID = 'tpl_review_storyboard';
+
+const REVIEW_VIDEO_BODY = `<p>Hi {{first_name}},</p>
+<p>The latest cut of <strong>{{video_title}}</strong> is ready for you to watch.</p>
+<p><a href="{{review_link}}">Watch it and leave your feedback here</a></p>
+<p>You can pause at any point and leave a comment on that exact moment, which makes it much easier for us to pick up than a written list. When you're happy with it, hit approve and we'll get it finished.</p>
+<p>Any questions, just reply to this email.</p>`;
+
+const REVIEW_STORYBOARD_BODY = `<p>Hi {{first_name}},</p>
+<p>The storyboard for <strong>{{video_title}}</strong> is ready for you to look over.</p>
+<p><a href="{{review_link}}">View the storyboard and leave your feedback here</a></p>
+<p>You can comment on any individual frame, so we know exactly which bit you mean. Once you've approved it we'll start production.</p>
+<p>Any questions, just reply to this email.</p>`;
+
+async function seedReviewTemplates() {
+  await sql`
+    INSERT INTO crm_email_templates (id, name, subject, body_html, visibility, created_by)
+    VALUES (${REVIEW_VIDEO_TEMPLATE_ID}, 'Video ready to review',
+            '{{video_title}} — ready for you to review', ${REVIEW_VIDEO_BODY}, 'team', NULL)
+    ON CONFLICT (id) DO NOTHING
+  `;
+  await sql`
+    INSERT INTO crm_email_templates (id, name, subject, body_html, visibility, created_by)
+    VALUES (${REVIEW_STORYBOARD_TEMPLATE_ID}, 'Storyboard ready to review',
+            '{{video_title}} — your storyboard is ready to review', ${REVIEW_STORYBOARD_BODY}, 'team', NULL)
+    ON CONFLICT (id) DO NOTHING
+  `;
+}
+
 let templatesTableEnsured = null;
 function ensureEmailTemplatesTable() {
   if (templatesTableEnsured) return templatesTableEnsured;
@@ -55,6 +93,7 @@ function ensureEmailTemplatesTable() {
       // Self-heal the column for tables created before visibility existed.
       await sql`ALTER TABLE crm_email_templates ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'team'`;
       await seedPortalInviteTemplate();
+      await seedReviewTemplates();
     } catch (err) {
       templatesTableEnsured = null; // retry next request on a transient failure
       console.warn('[crm templates] ensureEmailTemplatesTable failed', err.message);

@@ -14,6 +14,7 @@ import { ScheduleCard, ScheduleModal } from './ScheduleModal.jsx';
 import { DealConversation } from './DealConversation.jsx';
 import { AssigneePicker } from './TaskFormModal.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
+import ReviewEmailComposer from './ReviewEmailComposer.jsx';
 
 const sectionCard = {
   background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20, marginTop: 18,
@@ -651,10 +652,15 @@ function MilestoneReviewSummary({ kind, status, onOpen, onSubmit, onUpload, uplo
           title={versionCount === 0 ? 'Upload a draft first' : undefined}>
           <ExternalLink size={13} /> {busy ? 'Opening…' : `Open in ${label}`}
         </button>
-        <button className="btn" disabled={busy || uploading || !hasUnsent} onClick={onSubmit}
-          style={{ fontSize: 12.5, opacity: hasUnsent ? 1 : 0.5 }}
-          title={hasUnsent ? undefined : (versionCount === 0 ? 'Upload a draft first' : 'The latest draft has already been sent to the client')}>
-          <Send size={13} /> Submit to client for review
+        {/* Once the client has the latest draft this becomes a resend — the
+            covering email is how they actually hear about it, so being unable
+            to send it again (lost link, chasing a reply) is worse than the
+            small risk of a duplicate. Nothing is re-submitted either way. */}
+        <button className="btn" disabled={busy || uploading || versionCount === 0} onClick={onSubmit}
+          style={{ fontSize: 12.5, opacity: versionCount === 0 ? 0.5 : 1 }}
+          title={versionCount === 0 ? 'Upload a draft first'
+            : hasUnsent ? undefined : 'The client already has this draft — this just emails them the link again'}>
+          <Send size={13} /> {hasUnsent ? 'Submit to client for review' : 'Resend review email'}
         </button>
       </div>
     </div>
@@ -761,16 +767,12 @@ function MilestoneRow({ m, index, videoId, video, approval, assets, open, onTogg
     } catch (e) { showMsg(e.message || 'Could not open the Revisions section'); }
     finally { setReviewBusy(false); }
   }
-  async function submitReview() {
-    if (!window.confirm('Submit the latest draft to the client for review? They will be notified and it becomes visible in their portal.')) return;
-    setReviewBusy(true);
-    try {
-      if (m.id === 'storyboard') await actions.submitStoryboardReviewFromDeal(video.dealId, videoId);
-      else await actions.submitVideoReviewFromDeal(video.dealId, videoId);
-      showMsg('Submitted to the client');
-    } catch (e) { showMsg(e.message || 'Could not submit'); }
-    finally { setReviewBusy(false); }
-  }
+  // Submitting opens the covering email rather than firing a silent gate —
+  // see ReviewEmailComposer.
+  const [composerOpen, setComposerOpen] = useState(false);
+  function submitReview() { setComposerOpen(true); }
+  const reviewHasUnsent = (reviewStatus?.versionCount || 0) > 0
+    && (reviewStatus?.latestVersionNumber || 0) > (reviewStatus?.clientSubmittedVersion ?? 0);
   // Inline "link a Google Doc" form (alternative to uploading a file).
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrlInput, setLinkUrlInput] = useState('');
@@ -852,8 +854,23 @@ function MilestoneRow({ m, index, videoId, video, approval, assets, open, onTogg
       {open && (
         <div style={{ padding: '0 0 16px 26px' }}>
           {isReviewMilestone ? (
+            <>
             <MilestoneReviewSummary kind={m.id} status={reviewStatus} onOpen={openReview} onSubmit={submitReview}
               onUpload={uploadDraft} uploadProgress={reviewUpload} busy={reviewBusy} />
+            {composerOpen && (
+              <ReviewEmailComposer
+                kind={m.id === 'storyboard' ? 'storyboard' : 'video'}
+                resendOnly={!reviewHasUnsent}
+                contextUrl={'/api/crm/production/video/' + encodeURIComponent(videoId)
+                  + '/review-email?kind=' + (m.id === 'storyboard' ? 'storyboard' : 'video')}
+                onSubmit={(email) => (m.id === 'storyboard'
+                  ? actions.submitStoryboardReviewFromDeal(video.dealId, videoId, email)
+                  : actions.submitVideoReviewFromDeal(video.dealId, videoId, email))}
+                onDone={(msg) => { setComposerOpen(false); showMsg(msg); }}
+                onClose={() => setComposerOpen(false)}
+              />
+            )}
+            </>
           ) : (
           <>
           <input ref={fileRef} type="file" accept={ui.accept} style={{ display: 'none' }}

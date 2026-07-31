@@ -23,7 +23,7 @@ import { sendNotification, resolveDealTeamEmails } from '../_lib/notifications.j
 import { revisionFeedbackHtml, APP_URL } from '../_lib/email.js';
 import { getRole } from '../_lib/userRoles.js';
 import { isFreelancer, freelancerRevisionProjectIds } from '../_lib/crm/access.js';
-import { submitRevisionToClient } from '../_lib/crm/clientReview.js';
+import { submitRevisionToClient, reviewEmailContext } from '../_lib/crm/clientReview.js';
 
 // Self-heal for db/migrations/20260605_revision_feedback.sql. Idempotent +
 // cached so we only run the ALTERs once per warm lambda.
@@ -249,10 +249,24 @@ export default async function handler(req, res) {
       if (req.method !== 'POST') return res.status(405).end();
       const videoId = req.query.videoId ? String(req.query.videoId) : null;
       if (!videoId) return res.status(400).json({ error: 'videoId required' });
-      const result = await submitRevisionToClient({ revisionVideoId: videoId, actorEmail: user.email });
+      const result = await submitRevisionToClient({
+        revisionVideoId: videoId, actorEmail: user.email,
+        actor: user, email: req.body?.email || null,
+      });
       if (result.error === 'no-draft') return res.status(400).json({ error: 'Upload a draft before submitting to the client.' });
       if (result.error) return res.status(404).json({ error: 'Revision not found' });
       return res.status(200).json(result);
+    }
+
+    // What the "Submit to client" composer opens with: the review link, who the
+    // client is, and whether this user's Gmail can send.
+    if (action === 'review-email') {
+      if (req.method !== 'GET') return res.status(405).end();
+      const videoId = req.query.videoId ? String(req.query.videoId) : null;
+      if (!videoId) return res.status(400).json({ error: 'videoId required' });
+      const ctx = await reviewEmailContext({ kind: 'video', itemId: videoId, actorEmail: user.email });
+      if (ctx.error) return res.status(404).json({ error: 'Revision not found' });
+      return res.status(200).json(ctx);
     }
 
     return res.status(404).json({ error: 'Unknown action' });

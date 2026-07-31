@@ -2228,12 +2228,14 @@ export function StoreProvider({ children }) {
     },
     // Submit the latest uploaded draft to the client (makes it client-visible +
     // sends a portal notification). The video must already be linked with a draft.
-    submitVideoReviewFromDeal(dealId, videoId) {
-      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/submit-revision', {})
+    // `email` is the composed covering note from ReviewEmailComposer
+    // ({ to, subject, html, text, via }) — null submits without emailing.
+    submitVideoReviewFromDeal(dealId, videoId, email = null) {
+      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/submit-revision', { email })
         .then((resp) => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadVideo(videoId)]).then(() => resp));
     },
-    submitStoryboardReviewFromDeal(dealId, videoId) {
-      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/submit-storyboard', {})
+    submitStoryboardReviewFromDeal(dealId, videoId, email = null) {
+      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/submit-storyboard', { email })
         .then((resp) => Promise.all([dealId ? actions.loadDealDetail(dealId) : null, actions.loadVideo(videoId)]).then(() => resp));
     },
 
@@ -4060,8 +4062,8 @@ export function StoreProvider({ children }) {
     },
 
     // Submit the latest uploaded storyboard draft to the client.
-    submitStoryboardToClient(projectId, storyboardId) {
-      return api.post('/api/storyboards/submit?storyboardId=' + encodeURIComponent(storyboardId), {})
+    submitStoryboardToClient(projectId, storyboardId, email = null) {
+      return api.post('/api/storyboards/submit?storyboardId=' + encodeURIComponent(storyboardId), { email })
         .then((resp) => actions.loadStoryboardDetail(projectId).then(() => resp));
     },
 

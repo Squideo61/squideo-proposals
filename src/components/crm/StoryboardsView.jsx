@@ -9,6 +9,7 @@ import { PdfPage } from '../storyboard/PdfPage.jsx';
 import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
 import { DealLinkSummary, AssigneeSelect, CommentDone, CommentFlag, InternalNote, VideoLinkBanner } from './RevisionsView.jsx';
 import { SearchBox } from './ProductionView.jsx';
+import ReviewEmailComposer from './ReviewEmailComposer.jsx';
 
 const APPROVED_CHIP = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
   borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: 11, fontWeight: 700 };
@@ -300,7 +301,6 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
   const { actions, showMsg } = useStore();
   const fileInputRef = useRef(null);
   const [progress, setProgress] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
   const latestId = (storyboard.versions || [])[0]?.id;
   const [overrides, setOverrides] = useState({}); // versionId -> explicit open/closed
   const isDraftOpen = (id) => (id in overrides ? overrides[id] : id === latestId);
@@ -325,18 +325,9 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
   const submittedVer = storyboard.clientSubmittedVersion ?? 0;
   const hasUnsent = latestVersionNumber > submittedVer;
 
-  async function submit() {
-    if (!window.confirm('Submit the latest storyboard draft to the client for review? They will be notified and it becomes visible in their portal.')) return;
-    setSubmitting(true);
-    try {
-      await actions.submitStoryboardToClient(projectId, storyboard.id);
-      showMsg('Submitted to the client');
-    } catch (err) {
-      showMsg(err.message || 'Could not submit');
-    } finally {
-      setSubmitting(false);
-    }
-  }
+  // Submitting opens the covering email first — same composer as the project
+  // video page, so the client hears about it the same way from either side.
+  const [composerOpen, setComposerOpen] = useState(false);
 
   return (
     <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 16, marginBottom: 18 }}>
@@ -356,11 +347,22 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
 
       {/* Submit-to-client gate: uploading a draft is internal; the client only
           sees it (and gets notified) once it's submitted. */}
+      {composerOpen && (
+        <ReviewEmailComposer
+          kind="storyboard"
+          resendOnly={!hasUnsent}
+          contextUrl={'/api/storyboards/review-email?storyboardId=' + encodeURIComponent(storyboard.id)}
+          onSubmit={(email) => actions.submitStoryboardToClient(projectId, storyboard.id, email)}
+          onDone={(msg) => { setComposerOpen(false); showMsg(msg); }}
+          onClose={() => setComposerOpen(false)}
+        />
+      )}
+
       {versions.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '0 0 14px' }}>
-          <button className="btn" disabled={!hasUnsent || submitting} onClick={submit}
-            style={{ fontSize: 12.5, opacity: hasUnsent ? 1 : 0.55 }}>
-            <Send size={13} /> {submitting ? 'Submitting…' : 'Submit to client for review'}
+          <button className="btn" onClick={() => setComposerOpen(true)} style={{ fontSize: 12.5 }}
+            title={hasUnsent ? undefined : 'The client already has this draft — this just emails them the link again'}>
+            <Send size={13} /> {hasUnsent ? 'Submit to client for review' : 'Resend review email'}
           </button>
           {storyboard.clientSubmittedVersion == null ? (
             <span style={{ fontSize: 12, color: BRAND.muted }}>Not sent to the client yet.</span>

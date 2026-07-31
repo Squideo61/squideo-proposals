@@ -28,11 +28,13 @@ function getClient() {
 // API route doesn't 500 on a transient SMTP issue. Callers that need to know
 // whether the send succeeded (e.g. the 2FA code flow) should pass
 // `{ throwOnError: true }` and handle the rejection.
-export async function sendMail({ to, subject, html, text, throwOnError = false }) {
+export async function sendMail({ to, cc, subject, html, text, replyTo = null, throwOnError = false }) {
   const c = getClient();
-  const recipients = (Array.isArray(to) ? to : [to])
+  const clean = (v) => (Array.isArray(v) ? v : [v])
     .map(r => (typeof r === 'string' ? r.trim() : r))
     .filter(Boolean);
+  const recipients = clean(to);
+  const copied = clean(cc);
   if (!recipients.length) return;
   if (!c) {
     console.warn('[email] RESEND_API_KEY missing — skipping send', { subject, to: recipients });
@@ -40,7 +42,13 @@ export async function sendMail({ to, subject, html, text, throwOnError = false }
     return;
   }
   try {
-    await c.emails.send({ from: FROM, to: recipients, subject, html, text });
+    // replyTo matters when we send ON BEHALF of a staff member (e.g. a client
+    // review email from someone whose Gmail isn't connected) — the client
+    // replies to a person, not to the no-reply sender.
+    const message = { from: FROM, to: recipients, subject, html, text };
+    if (copied.length) message.cc = copied;
+    if (replyTo) message.replyTo = replyTo;
+    await c.emails.send(message);
   } catch (err) {
     console.error('[email] send failed', { subject, to: recipients, err: err.message });
     if (throwOnError) throw err;

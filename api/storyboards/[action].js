@@ -31,7 +31,7 @@ import { sendNotification, resolveDealTeamEmails } from '../_lib/notifications.j
 import { revisionFeedbackHtml, APP_URL } from '../_lib/email.js';
 import { getRole } from '../_lib/userRoles.js';
 import { isFreelancer, freelancerStoryboardProjectIds } from '../_lib/crm/access.js';
-import { submitStoryboardToClient } from '../_lib/crm/clientReview.js';
+import { submitStoryboardToClient, reviewEmailContext } from '../_lib/crm/clientReview.js';
 
 // Storyboard PDFs share the PUBLIC revision Blob store (so clients can fetch the
 // bytes directly via the share link), reading REVISION_BLOB_READ_WRITE_TOKEN
@@ -329,10 +329,23 @@ export default async function handler(req, res) {
       if (req.method !== 'POST') return res.status(405).end();
       const storyboardId = req.query.storyboardId ? String(req.query.storyboardId) : null;
       if (!storyboardId) return res.status(400).json({ error: 'storyboardId required' });
-      const result = await submitStoryboardToClient({ storyboardId, actorEmail: user.email });
+      const result = await submitStoryboardToClient({
+        storyboardId, actorEmail: user.email,
+        actor: user, email: req.body?.email || null,
+      });
       if (result.error === 'no-draft') return res.status(400).json({ error: 'Upload a draft before submitting to the client.' });
       if (result.error) return res.status(404).json({ error: 'Storyboard not found' });
       return res.status(200).json(result);
+    }
+
+    // What the "Submit to client" composer opens with (see the revisions router).
+    if (action === 'review-email') {
+      if (req.method !== 'GET') return res.status(405).end();
+      const storyboardId = req.query.storyboardId ? String(req.query.storyboardId) : null;
+      if (!storyboardId) return res.status(400).json({ error: 'storyboardId required' });
+      const ctx = await reviewEmailContext({ kind: 'storyboard', itemId: storyboardId, actorEmail: user.email });
+      if (ctx.error) return res.status(404).json({ error: 'Storyboard not found' });
+      return res.status(200).json(ctx);
     }
 
     return res.status(404).json({ error: 'Unknown action' });

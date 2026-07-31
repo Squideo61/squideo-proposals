@@ -12,6 +12,9 @@
 //   PATCH  /api/crm/production/video/:videoId    { title?, status?, paymentTerms?, videoLength?, deliveryDeadline?, textDirectionDeadline?, producerEmail?, sortOrder? }
 //   DELETE /api/crm/production/video/:videoId
 //   POST   /api/crm/production/video/:videoId/send-for-review — hand off to Revisions
+//   GET    /api/crm/production/video/:videoId/review-email?kind=video|storyboard — composer prefill
+//   POST   /api/crm/production/video/:videoId/submit-revision   { email? } — submit + covering email
+//   POST   /api/crm/production/video/:videoId/submit-storyboard { email? }
 import crypto from 'node:crypto';
 import { put, del, getDownloadUrl } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
@@ -30,7 +33,7 @@ import { hasPermission } from '../permissions.js';
 import { archiveRecord } from './recycleBin.js';
 import { getDealCreditProject } from './retainers.js';
 import { isFreelancer, userOnDeal, userOnVideo } from './access.js';
-import { submitRevisionToClient, submitStoryboardToClient } from './clientReview.js';
+import { submitRevisionToClient, submitStoryboardToClient, reviewEmailContext } from './clientReview.js';
 import { advanceDeliveredIfUnlocked } from './delivery.js';
 
 // Where scripts live inside a deal's Drive folder (from the FOLDER_TEMPLATE in
@@ -256,11 +259,16 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     }
     if (subaction === 'submit-revision') {
       if (req.method !== 'POST') return res.status(405).end();
-      return submitVideoToClient(res, videoId, user);
+      return submitVideoToClient(req, res, videoId, user);
     }
     if (subaction === 'submit-storyboard') {
       if (req.method !== 'POST') return res.status(405).end();
-      return submitStoryboardToClientFromVideo(res, videoId, user);
+      return submitStoryboardToClientFromVideo(req, res, videoId, user);
+    }
+    // Opens the "Submit to client for review" email composer on the video page.
+    if (subaction === 'review-email') {
+      if (req.method !== 'GET') return res.status(405).end();
+      return reviewEmailForVideo(req, res, videoId, user);
     }
     if (subaction === 'move') {
       if (req.method !== 'POST') return res.status(405).end();
@@ -1185,24 +1193,46 @@ async function sendStoryboardForReview(res, videoId, user) {
 // only enables Submit when a draft exists, so an unlinked video means nothing to
 // send. Delegates to the shared client-review helper (sets client_submitted_version,
 // clears approval, notifies the portal).
-async function submitVideoToClient(res, videoId, user) {
+async function submitVideoToClient(req, res, videoId, user) {
   const [video] = await sql`SELECT id, revision_video_id FROM project_videos WHERE id = ${videoId}`;
   if (!video) return res.status(404).json({ error: 'Video not found' });
   if (!video.revision_video_id) return res.status(400).json({ error: 'Upload a draft in the Revisions section before submitting to the client.' });
-  const result = await submitRevisionToClient({ revisionVideoId: video.revision_video_id, actorEmail: user.email });
+  const result = await submitRevisionToClient({
+    revisionVideoId: video.revision_video_id, actorEmail: user.email,
+    actor: user, email: req.body?.email || null,
+  });
   if (result.error === 'no-draft') return res.status(400).json({ error: 'Upload a draft before submitting to the client.' });
   if (result.error) return res.status(404).json({ error: 'Revision not found' });
   return res.status(200).json(result);
 }
 
-async function submitStoryboardToClientFromVideo(res, videoId, user) {
+async function submitStoryboardToClientFromVideo(req, res, videoId, user) {
   const [video] = await sql`SELECT id, storyboard_id FROM project_videos WHERE id = ${videoId}`;
   if (!video) return res.status(404).json({ error: 'Video not found' });
   if (!video.storyboard_id) return res.status(400).json({ error: 'Upload a storyboard draft in the Storyboard Revisions section before submitting to the client.' });
-  const result = await submitStoryboardToClient({ storyboardId: video.storyboard_id, actorEmail: user.email });
+  const result = await submitStoryboardToClient({
+    storyboardId: video.storyboard_id, actorEmail: user.email,
+    actor: user, email: req.body?.email || null,
+  });
   if (result.error === 'no-draft') return res.status(400).json({ error: 'Upload a draft before submitting to the client.' });
   if (result.error) return res.status(404).json({ error: 'Storyboard not found' });
   return res.status(200).json(result);
+}
+
+// The composer's prefill, keyed by the PROJECT video (the page the producer is
+// on) rather than the revision/storyboard id it happens to be linked to.
+async function reviewEmailForVideo(req, res, videoId, user) {
+  // reviewEmailContext reads client_submitted_version, and this endpoint can be
+  // the first thing a cold instance serves.
+  await ensureClientSubmitColumns();
+  const kind = req.query?.kind === 'storyboard' ? 'storyboard' : 'video';
+  const [video] = await sql`SELECT id, revision_video_id, storyboard_id FROM project_videos WHERE id = ${videoId}`;
+  if (!video) return res.status(404).json({ error: 'Video not found' });
+  const itemId = kind === 'storyboard' ? video.storyboard_id : video.revision_video_id;
+  if (!itemId) return res.status(400).json({ error: 'Upload a draft before submitting to the client.' });
+  const ctx = await reviewEmailContext({ kind, itemId, actorEmail: user.email });
+  if (ctx.error) return res.status(404).json({ error: 'Review not found' });
+  return res.status(200).json(ctx);
 }
 
 // A video's reference is its deal's reference plus the video's own two-digit
