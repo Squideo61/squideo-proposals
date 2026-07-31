@@ -2,6 +2,7 @@ import React from 'react';
 import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic, BellRing, FlaskConical, Activity } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
+import { useIsMobile } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { UsersTab } from './UsersTab.jsx';
 import { RolesTab } from './RolesTab.jsx';
@@ -38,6 +39,8 @@ const tabVisible = (perms, perm) =>
 
 export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, onCreateTemplate, onEditTemplate, onOpenRecord }) {
   const { state } = useStore();
+  const isMobile = useIsMobile();
+  const [hovered, setHovered] = React.useState(null);
   const session = state.session;
   const permissions = session?.permissions || [];
   const visibleTabs = TABS.filter(t => tabVisible(permissions, t.perm));
@@ -84,66 +87,112 @@ export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, o
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Admin</h1>
       </div>
 
-      <div
-        className="hide-scrollbar"
-        style={{
-          background: 'white',
-          borderBottom: '1px solid ' + BRAND.border,
-          padding: '0 16px',
-          display: 'flex',
-          gap: 4,
-          // Scroll the tab strip itself instead of the whole page: without this
-          // the five buttons lay out wider than a phone and drag the entire page
-          // sideways. flexShrink:0 + nowrap on the buttons keep them full-size.
-          overflowX: 'auto',
-          flexWrap: 'nowrap',
-          WebkitOverflowScrolling: 'touch',
-        }}
-      >
-        {visibleTabs.map((t) => {
-          const Icon = t.icon;
-          const isActive = active?.id === t.id;
-          return (
-            <button
-              key={t.id}
-              onClick={() => onChangeTab && onChangeTab(t.id)}
-              style={{
-                padding: '12px 16px',
-                background: 'transparent',
-                border: 'none',
-                borderBottom: '2px solid ' + (isActive ? BRAND.blue : 'transparent'),
-                color: isActive ? BRAND.blue : BRAND.ink,
-                fontWeight: isActive ? 700 : 500,
-                fontSize: 14,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                marginBottom: -1,
-                flexShrink: 0,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              <Icon size={16} />
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
+      {/* Phones keep the scrolling strip — a 220px rail would eat the screen.
+          Everywhere else the sections live in a sticky column on the left:
+          there are a dozen of them now, and laid out in a row they ran off the
+          side of the page with no sign there was more to the right. */}
+      {isMobile && (
+        <div
+          className="hide-scrollbar"
+          style={{
+            background: 'white',
+            borderBottom: '1px solid ' + BRAND.border,
+            padding: '0 16px',
+            display: 'flex',
+            gap: 4,
+            // Scroll the tab strip itself instead of the whole page: without this
+            // the buttons lay out wider than a phone and drag the entire page
+            // sideways. flexShrink:0 + nowrap on the buttons keep them full-size.
+            overflowX: 'auto',
+            flexWrap: 'nowrap',
+            WebkitOverflowScrolling: 'touch',
+          }}
+        >
+          {visibleTabs.map((t) => {
+            const Icon = t.icon;
+            const isActive = active?.id === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => onChangeTab && onChangeTab(t.id)}
+                style={{
+                  padding: '12px 16px',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: '2px solid ' + (isActive ? BRAND.blue : 'transparent'),
+                  color: isActive ? BRAND.blue : BRAND.ink,
+                  fontWeight: isActive ? 700 : 500,
+                  fontSize: 14,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  marginBottom: -1,
+                  flexShrink: 0,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <Icon size={16} />
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
-      <div style={{ padding: '24px', maxWidth: 1100, margin: '0 auto' }}>
-        {active?.id === 'users' && <UsersTab />}
-        {active?.id === 'roles' && <RolesTab />}
-        {active?.id === 'notifications' && <NotificationsTab />}
-        {active?.id === 'activity' && <StaffActivityTab onOpenRecord={onOpenRecord} />}
-        {active?.id === 'storage' && <StorageTab />}
-        {active?.id === 'commission' && <StaffCommissionTab />}
-        {active?.id === 'holiday' && <HolidayTab />}
-        {active?.id === 'intro-calls' && <IntroCallRulesTab />}
-        {active?.id === 'proposals' && <DefaultProposalTab onEditDefault={onEditDefault} onCreateTemplate={onCreateTemplate} onEditTemplate={onEditTemplate} />}
-        {active?.id === 'voiceovers' && <VoiceoverCatalogueTab />}
-        {active?.id === 'task-reminders' && <TaskRemindersTab />}
-        {active?.id === 'demo' && <DemoTab />}
+      <div style={{
+        display: 'flex', alignItems: 'flex-start', gap: isMobile ? 0 : 20,
+        padding: isMobile ? 0 : '20px 24px 60px', maxWidth: 1360, margin: '0 auto',
+      }}>
+        {!isMobile && (
+          <nav style={{
+            width: 224, flexShrink: 0, background: 'white',
+            border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 8,
+            display: 'flex', flexDirection: 'column', gap: 2,
+            // Sticks under the app's own 56px top bar so the sections stay
+            // reachable on the long tabs (Roles, Notifications, Staff activity).
+            position: 'sticky', top: 72,
+          }}>
+            {visibleTabs.map((t) => {
+              const Icon = t.icon;
+              const isActive = active?.id === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => onChangeTab && onChangeTab(t.id)}
+                  onMouseEnter={() => setHovered(t.id)}
+                  onMouseLeave={() => setHovered(null)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                    padding: '9px 11px', borderRadius: 8, border: 'none',
+                    cursor: 'pointer', textAlign: 'left', fontSize: 13.5,
+                    background: isActive ? BRAND.blue + '14' : (hovered === t.id ? '#F1F5F9' : 'transparent'),
+                    color: isActive ? BRAND.blue : BRAND.ink,
+                    fontWeight: isActive ? 700 : 500,
+                  }}
+                >
+                  <Icon size={16} style={{ flexShrink: 0 }} />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
+
+        <div style={{ flex: 1, minWidth: 0, ...(isMobile ? { padding: '24px' } : {}) }}>
+          {active?.id === 'users' && <UsersTab />}
+          {active?.id === 'roles' && <RolesTab />}
+          {active?.id === 'notifications' && <NotificationsTab />}
+          {active?.id === 'activity' && <StaffActivityTab onOpenRecord={onOpenRecord} />}
+          {active?.id === 'storage' && <StorageTab />}
+          {active?.id === 'commission' && <StaffCommissionTab />}
+          {active?.id === 'holiday' && <HolidayTab />}
+          {active?.id === 'intro-calls' && <IntroCallRulesTab />}
+          {active?.id === 'proposals' && <DefaultProposalTab onEditDefault={onEditDefault} onCreateTemplate={onCreateTemplate} onEditTemplate={onEditTemplate} />}
+          {active?.id === 'voiceovers' && <VoiceoverCatalogueTab />}
+          {active?.id === 'task-reminders' && <TaskRemindersTab />}
+          {active?.id === 'demo' && <DemoTab />}
+        </div>
       </div>
     </div>
   );
