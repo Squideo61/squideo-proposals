@@ -358,12 +358,19 @@ async function loadDisqualifications() {
 // if it landed today — i.e. stacked on top of what the current month has already
 // counted, oldest first. It's a forecast, not a promise: the actual figure
 // depends on the month the money lands in and what else lands with it, which is
-// why the UI says so plainly. Sales taken off the plan are excluded outright.
+// why the UI says so plainly.
 //
 // Deliberately keyed off the CURRENT month, not the month being viewed — money
 // that hasn't arrived can't be recognised in a month that's already been and
 // gone, so looking back at June must not re-price June's pending as if it were.
-function pendingCommissionFor(items, currentMonthNet, cfg) {
+//
+// A cancelled sale earns nothing and takes no part in the banding, but stays on
+// the list with its reason: it's money someone was expecting, and it vanishing
+// silently is exactly the version of this that causes an argument later. The
+// decision is keyed on the sale, so it still holds when the payment lands.
+function pendingCommissionFor(bucket, currentMonthNet, cfg) {
+  const items = bucket?.items || [];
+  const cancelled = bucket?.cancelled || [];
   // Keyed rather than positional: commissionPerSale re-sorts, so lining the
   // annotations up by index would quietly attach the wrong invoice date.
   const invoiced = new Map(items.map((p) => [p.key, p.invoicedAt || null]));
@@ -374,11 +381,17 @@ function pendingCommissionFor(items, currentMonthNet, cfg) {
   const net = round2(priced.reduce((s, p) => s + p.net, 0));
   const bandA = round2(priced.reduce((s, p) => s + p.bandA, 0));
   const bandB = round2(priced.reduce((s, p) => s + p.bandB, 0));
+  const off = cancelled.map((p) => ({
+    key: p.key, dealId: p.dealId, company: p.company, title: p.title,
+    net: round2(p.amount), date: p.date, kind: p.kind, invoicedAt: p.invoicedAt || null,
+    bandA: 0, bandB: 0, commission: 0, rate: 0, disqualified: p.disqualified,
+  }));
   return {
     net,
     commission: { bandA, bandB, total: round2(bandA + bandB) },
+    cancelledNet: round2(off.reduce((s, p) => s + p.net, 0)),
     // Newest first, matching the earned table above it.
-    items: priced.slice().reverse(),
+    items: [...priced, ...off].sort((a, z) => (a.date < z.date ? 1 : -1)),
   };
 }
 
@@ -421,10 +434,11 @@ export async function commissionForMonth(month, opts = {}) {
   }
   const pendingByOwner = new Map();
   for (const p of pendingEvents) {
-    if (disqualified.has(p.key)) continue; // already taken off the plan
     const email = lc(p.ownerEmail);
-    if (!pendingByOwner.has(email)) pendingByOwner.set(email, []);
-    pendingByOwner.get(email).push(p);
+    if (!pendingByOwner.has(email)) pendingByOwner.set(email, { items: [], cancelled: [] });
+    const dq = disqualified.get(p.key);
+    if (dq) pendingByOwner.get(email).cancelled.push({ ...p, disqualified: dq });
+    else pendingByOwner.get(email).items.push(p);
   }
 
   const out = members.map((m) => {
@@ -450,8 +464,8 @@ export async function commissionForMonth(month, opts = {}) {
     const onPlanNow = accruesIn(m, nowKey);
     const basisNet = round2(currentNet.get(lc(m.email)) || 0);
     const pending = onPlanNow
-      ? pendingCommissionFor(pendingByOwner.get(lc(m.email)) || [], basisNet, cfg)
-      : { net: 0, commission: { bandA: 0, bandB: 0, total: 0 }, items: [] };
+      ? pendingCommissionFor(pendingByOwner.get(lc(m.email)), basisNet, cfg)
+      : { net: 0, commission: { bandA: 0, bandB: 0, total: 0 }, cancelledNet: 0, items: [] };
     return {
       email: m.email,
       name: m.name || m.email,

@@ -37,7 +37,7 @@ const TABS = [
 const tabVisible = (perms, perm) =>
   Array.isArray(perm) ? perm.some((p) => permissionsInclude(perms, p)) : permissionsInclude(perms, perm);
 
-export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, onCreateTemplate, onEditTemplate, onOpenRecord, onOpenLink }) {
+export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, onCreateTemplate, onEditTemplate, onOpenRecord }) {
   const { state } = useStore();
   const isMobile = useIsMobile();
   const [hovered, setHovered] = React.useState(null);
@@ -185,7 +185,7 @@ export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, o
           {active?.id === 'notifications' && <NotificationsTab />}
           {active?.id === 'activity' && <StaffActivityTab onOpenRecord={onOpenRecord} />}
           {active?.id === 'storage' && <StorageTab />}
-          {active?.id === 'commission' && <StaffCommissionTab onOpenRecord={onOpenRecord} onOpenLink={onOpenLink} />}
+          {active?.id === 'commission' && <StaffCommissionTab onOpenRecord={onOpenRecord} />}
           {active?.id === 'holiday' && <HolidayTab />}
           {active?.id === 'intro-calls' && <IntroCallRulesTab />}
           {active?.id === 'proposals' && <DefaultProposalTab onEditDefault={onEditDefault} onCreateTemplate={onCreateTemplate} onEditTemplate={onEditTemplate} />}

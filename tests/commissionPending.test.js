@@ -85,13 +85,32 @@ describe('pending commission', () => {
     expect(m.pending.commission.total).toBe(0);
   });
 
-  it('never forecasts a sale already taken off the plan', async () => {
+  // Cancelling a pending sale is the same decision as disqualifying an earned
+  // one, keyed on the sale — so it earns nothing now AND nothing when the money
+  // eventually lands, without anyone having to remember to do it again.
+  it('earns nothing on a cancelled sale, but keeps it on the list with the reason', async () => {
     install({
       sigs: [signed('off-plan', 8000)],
       disqualified: [{ event_key: 'off-plan:deposit', reason: 'inherited account', disqualified_by: 'adam@squideo.co.uk' }],
     });
     const m = member(await commissionForMonth(thisMonth));
-    expect(m.pending.items).toEqual([]);
+    expect(m.pending.net).toBe(0);
+    expect(m.pending.commission.total).toBe(0);
+    expect(m.pending.cancelledNet).toBe(8000);
+    expect(m.pending.items).toHaveLength(1);
+    expect(m.pending.items[0]).toMatchObject({ commission: 0, net: 8000 });
+    expect(m.pending.items[0].disqualified.reason).toBe('inherited account');
+  });
+
+  it('does not let a cancelled sale eat into the Band A cap for the others', async () => {
+    install({
+      sigs: [signed('off-plan', 5000), signed('live', 2000)],
+      disqualified: [{ event_key: 'off-plan:deposit', reason: 'not their sale', disqualified_by: 'adam@squideo.co.uk' }],
+    });
+    const m = member(await commissionForMonth(thisMonth));
+    // The live £2,000 sits wholly inside Band A — the cancelled £5,000 takes no
+    // part in the banding at all.
+    expect(m.pending.commission).toMatchObject({ bandA: 100, bandB: 0, total: 100 });
   });
 
   it('forecasts an unpaid extra added after the deal was paid, but not a paid one', async () => {

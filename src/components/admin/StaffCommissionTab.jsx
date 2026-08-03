@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Percent, Coins, UserPlus, Trash2, ChevronDown, ChevronRight, Check, X, Pencil, Ban, RotateCcw, Hourglass, ArrowUpRight, FileText } from 'lucide-react';
+import { Percent, Coins, UserPlus, Trash2, ChevronDown, ChevronRight, Check, X, Pencil, Ban, RotateCcw, Hourglass, FileText } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
@@ -39,7 +39,7 @@ const CARD = { background: 'white', border: '1px solid ' + BRAND.border, borderR
 // Admin → Staff Commission. Managers (commission.manage) see everyone, edit the
 // bands and toggle staff on/off; on-plan staff (commission.view_own) see only
 // their own figures — the server scopes the response, this just adapts the UI.
-export function StaffCommissionTab({ onOpenRecord, onOpenLink }) {
+export function StaffCommissionTab({ onOpenRecord }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [month, setMonth] = useState(() => recentMonths(1)[0]);
@@ -102,7 +102,7 @@ export function StaffCommissionTab({ onOpenRecord, onOpenLink }) {
 
           {data.members.length > 0 && (
             <PendingCard data={data} canManage={canManage} isMobile={isMobile}
-              onOpenRecord={onOpenRecord} onOpenLink={onOpenLink} />
+              onOpenRecord={onOpenRecord} actions={actions} showMsg={showMsg} reload={reload} />
           )}
         </>
       )}
@@ -118,7 +118,7 @@ export function StaffCommissionTab({ onOpenRecord, onOpenLink }) {
 // The figures move on their own: everything here is derived from the same
 // payments the earned table reads, so ticking an invoice paid moves the sale out
 // of this card and into the month it landed in, with no bookkeeping in between.
-function PendingCard({ data, canManage, isMobile, onOpenRecord, onOpenLink }) {
+function PendingCard({ data, canManage, isMobile, onOpenRecord, actions, showMsg, reload }) {
   const members = (data.members || []).filter((m) => (m.pending?.items || []).length > 0);
   const total = Number(data.pendingTotal) || 0;
   const net = Number(data.pendingNet) || 0;
@@ -148,13 +148,14 @@ function PendingCard({ data, canManage, isMobile, onOpenRecord, onOpenLink }) {
             <strong>Not earned yet.</strong> {formatGBP(net)} of signed work is still waiting on its money — a PO
             invoice, a deposit, or an extra to be paid. Each one is commissioned in full the month its payment lands,
             so nothing below counts until we mark it paid. The estimate is what it would pay <em>if it landed
-            today</em>{solo ? `, on top of the ${formatGBP(solo.pending.basisNet)} already counted this month` : ''} —
-            land it in a fresh month and it may earn more.
+            today</em>{solo && solo.pending.basisNet > 0 ? `, on top of the ${formatGBP(solo.pending.basisNet)} already counted this month` : ''} —
+            land it in a month that's already busy and it may earn less.
           </p>
 
           {members.map((m) => (
             <PendingMember key={m.email} m={m} isMobile={isMobile} showName={canManage}
-              onOpenRecord={onOpenRecord} />
+              canManage={canManage} onOpenRecord={onOpenRecord}
+              actions={actions} showMsg={showMsg} reload={reload} />
           ))}
 
           {canManage && members.length > 1 && (
@@ -163,95 +164,148 @@ function PendingCard({ data, canManage, isMobile, onOpenRecord, onOpenLink }) {
               <span style={{ color: '#B45309' }}>{formatGBP(total)}</span>
             </div>
           )}
-
-          {onOpenLink && (
-            <button className="btn-ghost" onClick={() => onOpenLink('finance/pending')}
-              style={{ marginTop: 12, fontSize: 12.5, color: '#B45309' }}
-              title="The same money, from the invoicing side — chase it, invoice it, or mark it paid">
-              Open Finance → Pending Payments <ArrowUpRight size={13} style={{ verticalAlign: -2 }} />
-            </button>
-          )}
         </>
       )}
     </div>
   );
 }
 
-// One person's pending sales. Open by default when it's your own sheet (there's
-// one of you, and the detail is the point); collapsed on a manager's view where
-// several people stack up.
-function PendingMember({ m, isMobile, showName, onOpenRecord }) {
-  const [open, setOpen] = useState(!showName);
+// One person's pending sales — always open. There's nothing to hide behind a
+// chevron: the list IS the answer to "what's coming?".
+//
+// Directors and admins can cancel one before it ever pays out (a PO that won't
+// go ahead, work being handed to someone else). It's the same disqualification
+// the earned sheet uses, keyed on the sale — so the decision still holds when
+// the money finally lands, rather than needing to be made again.
+function PendingMember({ m, isMobile, showName, canManage, onOpenRecord, actions, showMsg, reload }) {
+  const [cancelling, setCancelling] = useState(null);
   const items = m.pending.items || [];
+  const cols = (isMobile ? 5 : 7) + (canManage ? 1 : 0);
+
+  const restore = async (s) => {
+    if (!window.confirm(`Put ${s.company || 'this sale'} back on ${m.name || m.email}'s pending commission?`)) return;
+    try {
+      await actions.requalifyCommission(s.key);
+      showMsg('Back on the plan');
+      reload();
+    } catch (err) {
+      showMsg(err.message || 'Could not restore it');
+    }
+  };
 
   return (
     <div style={{ borderTop: '1px solid #FDE68A', padding: '10px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <button onClick={() => setOpen((v) => !v)}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: 0, flex: 1, minWidth: 160, textAlign: 'left' }}>
-          {open ? <ChevronDown size={16} color="#B45309" /> : <ChevronRight size={16} color="#B45309" />}
-          <div>
-            {showName && <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink }}>{m.name || m.email}</div>}
-            <div style={{ fontSize: 12, color: BRAND.muted }}>
-              {items.length} sale{items.length === 1 ? '' : 's'} waiting · {formatGBP(m.pending.net)} net
-            </div>
+        <div style={{ flex: 1, minWidth: 160 }}>
+          {showName && <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink }}>{m.name || m.email}</div>}
+          <div style={{ fontSize: 12, color: BRAND.muted }}>
+            {items.length} sale{items.length === 1 ? '' : 's'} waiting · {formatGBP(m.pending.net)} net
+            {m.pending.cancelledNet > 0 && (
+              <span style={{ color: '#B45309' }}> · {formatGBP(m.pending.cancelledNet)} cancelled</span>
+            )}
           </div>
-        </button>
+        </div>
         <Stat label="Est. commission" value={formatGBP(m.pending.commission.total)} pending />
       </div>
 
-      {open && (
-        <div style={{ overflowX: 'auto', marginTop: 8 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ color: BRAND.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-                <th style={{ textAlign: 'left', padding: '6px 8px' }}>Company</th>
-                {!isMobile && <th style={{ textAlign: 'left', padding: '6px 8px' }}>Deal</th>}
-                <th style={{ textAlign: 'left', padding: '6px 8px' }}>Type</th>
-                <th style={{ textAlign: 'left', padding: '6px 8px' }}>Waiting on</th>
-                <th style={{ textAlign: 'right', padding: '6px 8px' }}>Net</th>
-                {!isMobile && <th style={{ textAlign: 'right', padding: '6px 8px' }}>Rate</th>}
-                <th style={{ textAlign: 'right', padding: '6px 8px' }}>Est. commission</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((s, i) => (
-                <tr key={s.key || i} style={{ borderTop: '1px solid #FDE68A' }}>
-                  <td style={{ padding: '6px 8px' }}>
-                    {s.dealId && onOpenRecord ? (
-                      <button className="btn-link" style={{ fontSize: 13, textAlign: 'left' }}
-                        onClick={() => onOpenRecord('deals', s.dealId)}>{s.company || s.title || '—'}</button>
-                    ) : (s.company || '—')}
-                  </td>
-                  {!isMobile && <td style={{ padding: '6px 8px', color: BRAND.muted }}>{s.title || '—'}</td>}
-                  <td style={{ padding: '6px 8px' }}><PendingKindTag kind={s.kind} /></td>
-                  <td style={{ padding: '6px 8px', color: BRAND.muted, whiteSpace: 'nowrap' }}>
-                    <WaitingOn sale={s} />
-                  </td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>{formatGBP(s.net)}</td>
-                  {!isMobile && (
-                    <td style={{ padding: '6px 8px', textAlign: 'right', color: BRAND.muted, whiteSpace: 'nowrap' }}>
-                      <RateCell sale={s} />
+      <div style={{ overflowX: 'auto', marginTop: 8 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ color: BRAND.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              <th style={{ textAlign: 'left', padding: '6px 8px' }}>Company</th>
+              {!isMobile && <th style={{ textAlign: 'left', padding: '6px 8px' }}>Deal</th>}
+              <th style={{ textAlign: 'left', padding: '6px 8px' }}>Type</th>
+              <th style={{ textAlign: 'left', padding: '6px 8px' }}>Waiting on</th>
+              <th style={{ textAlign: 'right', padding: '6px 8px' }}>Net</th>
+              {!isMobile && <th style={{ textAlign: 'right', padding: '6px 8px' }}>Rate</th>}
+              <th style={{ textAlign: 'right', padding: '6px 8px' }}>Est. commission</th>
+              {canManage && <th style={{ width: 34 }} />}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((s, i) => {
+              const off = !!s.disqualified;
+              return (
+                <React.Fragment key={s.key || i}>
+                  <tr style={{ borderTop: '1px solid #FDE68A', opacity: off ? 0.6 : 1 }}>
+                    <td style={{ padding: '6px 8px', textDecoration: off ? 'line-through' : 'none' }}>
+                      {s.dealId && onOpenRecord ? (
+                        <button className="btn-link" style={{ fontSize: 13, textAlign: 'left' }}
+                          onClick={() => onOpenRecord('deals', s.dealId)}>{s.company || s.title || '—'}</button>
+                      ) : (s.company || '—')}
                     </td>
+                    {!isMobile && <td style={{ padding: '6px 8px', color: BRAND.muted }}>{s.title || '—'}</td>}
+                    <td style={{ padding: '6px 8px' }}>
+                      {off ? <PendingKindTag kind="cancelled" /> : <PendingKindTag kind={s.kind} />}
+                    </td>
+                    <td style={{ padding: '6px 8px', color: BRAND.muted, whiteSpace: 'nowrap' }}>
+                      {off ? '—' : <WaitingOn sale={s} />}
+                    </td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600, textDecoration: off ? 'line-through' : 'none' }}>
+                      {formatGBP(s.net)}
+                    </td>
+                    {!isMobile && (
+                      <td style={{ padding: '6px 8px', textAlign: 'right', color: BRAND.muted, whiteSpace: 'nowrap' }}>
+                        {off ? '—' : <RateCell sale={s} />}
+                      </td>
+                    )}
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: off ? BRAND.muted : '#B45309', whiteSpace: 'nowrap' }}>
+                      {formatGBP(s.commission ?? 0)}
+                    </td>
+                    {canManage && (
+                      <td style={{ padding: '6px 4px', textAlign: 'right' }}>
+                        <button
+                          className="btn-ghost"
+                          title={off ? 'Put this sale back on the plan' : 'Cancel this commission before it pays out'}
+                          onClick={() => (off ? restore(s) : setCancelling(s))}
+                          style={{ padding: '2px 4px', color: off ? BRAND.blue : '#B45309' }}
+                        >
+                          {off ? <RotateCcw size={13} /> : <Ban size={13} />}
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                  {off && (
+                    <tr>
+                      <td colSpan={cols} style={{ padding: '0 8px 7px 8px' }}>
+                        <div style={{ fontSize: 11.5, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6, padding: '5px 8px' }}>
+                          <strong>Cancelled</strong>{s.disqualified.by ? ` by ${s.disqualified.by}` : ''}
+                          {s.disqualified.at ? ` · ${fmtDate(s.disqualified.at)}` : ''} — {s.disqualified.reason}
+                        </div>
+                      </td>
+                    </tr>
                   )}
-                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: '#B45309', whiteSpace: 'nowrap' }}>
-                    {formatGBP(s.commission ?? 0)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr style={{ borderTop: '2px solid #FDE68A' }}>
-                <td colSpan={isMobile ? 3 : 4} />
-                <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700 }}>{formatGBP(m.pending.net)}</td>
-                {!isMobile && <td />}
-                <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: '#B45309' }}>
-                  {formatGBP(m.pending.commission.total)}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr style={{ borderTop: '2px solid #FDE68A' }}>
+              <td colSpan={isMobile ? 3 : 4} />
+              <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700 }}>{formatGBP(m.pending.net)}</td>
+              {!isMobile && <td />}
+              <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: '#B45309' }}>
+                {formatGBP(m.pending.commission.total)}
+              </td>
+              {canManage && <td />}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {cancelling && (
+        <DisqualifyModal
+          sale={cancelling}
+          memberName={m.name || m.email}
+          pending
+          onClose={() => setCancelling(null)}
+          onConfirm={async (reason) => {
+            await actions.disqualifyCommission(cancelling, reason);
+            setCancelling(null);
+            showMsg('Commission cancelled');
+            reload();
+          }}
+        />
       )}
     </div>
   );
@@ -277,6 +331,7 @@ function PendingKindTag({ kind }) {
     deposit: { label: 'Awaiting deposit', color: '#B45309', bg: '#FFFBEB' },
     po_paid: { label: 'PO — awaiting payment', color: '#7C3AED', bg: '#F3E8FF' },
     extra: { label: 'Extra — unpaid', color: '#CA8A04', bg: '#FEF9C3' },
+    cancelled: { label: 'Cancelled', color: '#B45309', bg: '#FFFBEB' },
   };
   const s = map[kind] || { label: kind || '—', color: BRAND.muted, bg: BRAND.paper };
   return (
@@ -575,7 +630,9 @@ function MemberResult({ m, isMobile, canManage, actions, showMsg, reload }) {
 // Taking a sale off someone's commission. The reason is mandatory and is kept
 // with the decision — this is money a person was expecting, and "why?" will be
 // asked later, quite possibly by them.
-function DisqualifyModal({ sale, memberName, onClose, onConfirm }) {
+// `pending` switches the copy for a sale that hasn't paid out yet — nothing is
+// being taken back, it's being stopped before it lands.
+function DisqualifyModal({ sale, memberName, pending = false, onClose, onConfirm }) {
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -594,11 +651,17 @@ function DisqualifyModal({ sale, memberName, onClose, onConfirm }) {
 
   return (
     <Modal onClose={onClose} maxWidth={460}>
-      <h2 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700 }}>Disqualify this sale</h2>
+      <h2 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700 }}>
+        {pending ? 'Cancel this commission' : 'Disqualify this sale'}
+      </h2>
       <p style={{ margin: '0 0 14px', fontSize: 13, color: BRAND.muted, lineHeight: 1.5 }}>
-        <strong style={{ color: BRAND.ink }}>{sale.company || 'This sale'}</strong> ({formatGBP(sale.net)} net) stops
-        counting towards {memberName}'s commission, and the month is rebanded without it. It stays on the sheet with
-        your reason against it, and can be put back at any time.
+        <strong style={{ color: BRAND.ink }}>{sale.company || 'This sale'}</strong> ({formatGBP(sale.net)} net)
+        {pending
+          ? <> won't earn {memberName} anything when its payment lands. The decision sticks to the sale, so it still
+            applies the day the money comes in. It stays on their pending list with your reason against it, and can be
+            put back at any time.</>
+          : <> stops counting towards {memberName}'s commission, and the month is rebanded without it. It stays on the
+            sheet with your reason against it, and can be put back at any time.</>}
       </p>
       <form onSubmit={submit}>
         <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 5 }}>

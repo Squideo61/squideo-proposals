@@ -585,7 +585,6 @@ function AppShell() {
           onEditDefault={() => navigate('default-builder')}
           onCreateTemplate={createTemplate}
           onEditTemplate={editTemplate}
-          onOpenLink={openLink}
           onOpenRecord={(entity, id) => {
             if (entity === 'deals') navigate('deal', id);
             else if (entity === 'companies') navigate('company', id);
