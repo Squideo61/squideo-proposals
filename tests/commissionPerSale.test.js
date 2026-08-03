@@ -74,3 +74,35 @@ describe('commissionPerSale', () => {
     expect(rows.map((r) => r.key)).toEqual(['d:2026-07-02', 'd:2026-07-09']);
   });
 });
+
+// The pending forecast prices money that hasn't landed yet as though it landed
+// on top of the month as it stands — so it has to start the ladder part-used,
+// not at Band A, or it would promise someone a rate they can no longer earn.
+describe('commissionPerSale with a part-used month (pending forecast)', () => {
+  it('charges the marginal rate, not a fresh Band A', () => {
+    // £3,625 already counted → only £1,375 of the 5% band is left.
+    const [row] = commissionPerSale([sale('2026-08-01', 3000)], CFG, 3625);
+    expect(row.bandA).toBe(68.75);   // 1,375 @ 5%
+    expect(row.bandB).toBe(32.5);    // 1,625 @ 2%
+    expect(row.commission).toBe(101.25);
+  });
+
+  it('pays Band B only once the month has already used the cap', () => {
+    const [row] = commissionPerSale([sale('2026-08-01', 2000)], CFG, 5000);
+    expect(row).toMatchObject({ bandA: 0, bandB: 40, commission: 40, rate: 0.02 });
+  });
+
+  it('is the same answer as banding the whole month at once', () => {
+    const earned = [sale('2026-08-02', 3625)];
+    const pending = [sale('2026-08-20', 3000), sale('2026-08-25', 900)];
+    const forecast = commissionPerSale(pending, CFG, 3625);
+    const together = commissionPerSale([...earned, ...pending], CFG);
+    const sumOf = (rows) => sum(rows, 'commission');
+    expect(sumOf(forecast)).toBe(Number((sumOf(together) - together[0].commission).toFixed(2)));
+  });
+
+  it('an untouched month behaves exactly as before', () => {
+    const items = [sale('2026-08-01', 4000), sale('2026-08-09', 4000)];
+    expect(commissionPerSale(items, CFG, 0)).toEqual(commissionPerSale(items, CFG));
+  });
+});

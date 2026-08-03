@@ -104,12 +104,20 @@ export function computeCommission(net, cfg) {
 // Rounding is done on the RUNNING total and taken as a difference, so the per-
 // sale figures always add up to the month's Band A / Band B / total exactly —
 // rounding each sale on its own could leave the rows a penny off the header.
-export function commissionPerSale(items, cfg) {
+//
+// `startCounted` seeds the ladder with net already counted before these items —
+// used by the pending forecast, which prices what's still owed at the MARGINAL
+// rate it would earn if it landed on top of the month as it stands today.
+export function commissionPerSale(items, cfg, startCounted = 0) {
   const cap = Math.max(0, Number(cfg.bandACap) || 0);
   const rateA = Number(cfg.bandARate) || 0;
   const rateB = Number(cfg.bandBRate) || 0;
-  let counted = 0;      // net recognised so far this month
-  let exactA = 0, exactB = 0, paidA = 0, paidB = 0;
+  let counted = Math.max(0, Number(startCounted) || 0); // net recognised so far this month
+  // The commission already earned on `counted`, so the first row below is priced
+  // at the rate the NEXT pound earns rather than restarting at Band A.
+  let exactA = Math.min(counted, cap) * rateA;
+  let exactB = Math.max(0, counted - cap) * rateB;
+  let paidA = round2(exactA), paidB = round2(exactB);
   return items
     .slice()
     .sort((a, z) => (a.date < z.date ? -1 : a.date > z.date ? 1 : 0))
@@ -168,11 +176,19 @@ const accruesIn = (m, month) => m.enabled !== false && String(m.effective_from) 
 //     its cash landed (deal_extras.paid_at). Extras that existed at/before the
 //     trigger are folded into BASE, so they're never counted twice.
 // Deals with NO signed proposal earn nothing (no proposal balance to base on).
-// Returns [{ ownerEmail, dealId, company, title, month, amount, kind, date }].
+//
+// Returns { events, pending }:
+//   events  — [{ ownerEmail, dealId, company, title, month, amount, kind, date }]
+//             money already in, i.e. commission EARNED.
+//   pending — the same sales seen from the other side: signed work whose money
+//             hasn't landed yet (PO work waiting on its invoice, a deposit not
+//             yet paid) and unpaid extras. Nothing here is earned — it's what
+//             WILL be recognised, in the month the payment lands. See
+//             `pendingCommissionFor`.
 async function loadRecognitionEvents() {
-  const [sigRows, payRows, extraRows] = await Promise.all([
+  const [sigRows, payRows, extraRows, invoicedRows] = await Promise.all([
     // Signed proposals (base candidates). data columns are JSONB → parsed objects.
-    sql`SELECT d.id AS deal_id, d.owner_email, d.title, c.name AS company, d.company_id,
+    sql`SELECT d.id AS deal_id, d.owner_email, d.title, d.stage, c.name AS company, d.company_id,
                s.signed_at, s.data AS sig_data, p.data AS prop_data
           FROM signatures s
           JOIN proposals p ON p.id = s.proposal_id
@@ -212,6 +228,15 @@ async function loadRecognitionEvents() {
           FROM deal_extras e
           JOIN deals d ON d.id = e.deal_id
           LEFT JOIN companies c ON c.id = d.company_id`,
+    // Has an invoice actually gone out on this deal and not been paid? Only used
+    // to annotate the pending list ("invoiced 12 Jul" vs "not invoiced yet") —
+    // never to decide whether something is pending, so a missing table is fine.
+    sql`SELECT COALESCE(mi.deal_id, pr.deal_id) AS deal_id,
+               MIN(COALESCE(mi.issued_at, mi.created_at)) AS invoiced_at
+          FROM manual_invoices mi
+          LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+         WHERE mi.status = 'issued'
+         GROUP BY COALESCE(mi.deal_id, pr.deal_id)`.catch(() => []),
   ]);
 
   // The seeded demo project is a signed £2,400 deal you're meant to pay during
@@ -226,7 +251,7 @@ async function loadRecognitionEvents() {
   for (const r of sigRows) {
     if (EXCLUDED_IMPORT_DEAL_IDS.has(r.deal_id) || isDemo(r)) continue;
     let d = deals.get(r.deal_id);
-    if (!d) { d = { ownerEmail: r.owner_email, title: r.title, company: r.company, isPo: false, signedAt: null, net: 0 }; deals.set(r.deal_id, d); }
+    if (!d) { d = { ownerEmail: r.owner_email, title: r.title, company: r.company, stage: r.stage, isPo: false, signedAt: null, net: 0 }; deals.set(r.deal_id, d); }
     d.net += Number(computeProposalTotalExVat(r.prop_data, r.sig_data)) || 0;
     if (r.sig_data && r.sig_data.paymentOption === 'po') d.isPo = true;
     const signedAt = r.signed_at ? new Date(r.signed_at) : null;
@@ -245,7 +270,11 @@ async function loadRecognitionEvents() {
     });
   }
 
+  const invoicedAt = new Map();
+  for (const r of invoicedRows) if (r.deal_id && r.invoiced_at) invoicedAt.set(r.deal_id, new Date(r.invoiced_at).toISOString());
+
   const events = [];
+  const pending = [];
   for (const [dealId, d] of deals) {
     if (!d.ownerEmail) continue;
     // Trigger: the first payment, for every deal. Nothing is commissioned on a
@@ -265,6 +294,21 @@ async function loadRecognitionEvents() {
           month: monthKey(triggerDate), amount: base, kind, date: triggerDate.toISOString(),
           key: `${dealId}:${kind}` });
       }
+    } else if (d.stage !== 'lost') {
+      // Signed, nothing paid yet — the whole balance is COMING, not earned. Same
+      // amount and same key the base event will carry when the money lands, so a
+      // sale keeps its identity (and any disqualification) across the line.
+      // Extras already recognised on their own (paid ones) are left out: they'd
+      // otherwise be forecast and earned at the same time.
+      let base = d.net;
+      for (const x of dealExtras) if (x.status !== 'paid') base += x.amount;
+      base = round2(base);
+      if (base > 0) {
+        const kind = d.isPo ? 'po_paid' : 'deposit';
+        pending.push({ ownerEmail: d.ownerEmail, dealId, company: d.company, title: d.title,
+          amount: base, kind, date: (d.signedAt || new Date()).toISOString(),
+          invoicedAt: invoicedAt.get(dealId) || null, key: `${dealId}:${kind}` });
+      }
     }
 
     for (const x of dealExtras) {
@@ -274,8 +318,25 @@ async function loadRecognitionEvents() {
         month: monthKey(x.paidAt), amount: round2(x.amount), kind: 'extra', date: x.paidAt.toISOString(),
         key: `${dealId}:extra:${x.id}` });
     }
+
+    // Unpaid extras added AFTER the deal triggered — each is commissioned on its
+    // own when its cash lands, so each is pending on its own. Quoted extras are
+    // only a quote, so they're left out (same rule as Finance's Pending
+    // Payments); an extra on a not-yet-triggered deal is already inside its
+    // pending base above.
+    if (triggerDate) {
+      for (const x of dealExtras) {
+        if (x.status === 'paid' || x.status === 'quoted' || x.amount <= 0) continue;
+        if (x.createdAt && x.createdAt <= triggerDate) continue; // inside the base already
+        pending.push({ ownerEmail: d.ownerEmail, dealId, company: d.company, title: d.title,
+          amount: round2(x.amount), kind: 'extra',
+          date: (x.createdAt || new Date()).toISOString(),
+          invoicedAt: x.status === 'invoiced' ? (invoicedAt.get(dealId) || null) : null,
+          key: `${dealId}:extra:${x.id}` });
+      }
+    }
   }
-  return events;
+  return { events, pending };
 }
 
 // ── Disqualifications ──
@@ -293,14 +354,43 @@ async function loadDisqualifications() {
   }]));
 }
 
+// What a member is owed but hasn't earned yet, priced at the rate it WOULD earn
+// if it landed today — i.e. stacked on top of what the current month has already
+// counted, oldest first. It's a forecast, not a promise: the actual figure
+// depends on the month the money lands in and what else lands with it, which is
+// why the UI says so plainly. Sales taken off the plan are excluded outright.
+//
+// Deliberately keyed off the CURRENT month, not the month being viewed — money
+// that hasn't arrived can't be recognised in a month that's already been and
+// gone, so looking back at June must not re-price June's pending as if it were.
+function pendingCommissionFor(items, currentMonthNet, cfg) {
+  // Keyed rather than positional: commissionPerSale re-sorts, so lining the
+  // annotations up by index would quietly attach the wrong invoice date.
+  const invoiced = new Map(items.map((p) => [p.key, p.invoicedAt || null]));
+  const priced = commissionPerSale(items, cfg, currentMonthNet).map((s) => ({
+    ...s,
+    invoicedAt: invoiced.get(s.key) || null,
+  }));
+  const net = round2(priced.reduce((s, p) => s + p.net, 0));
+  const bandA = round2(priced.reduce((s, p) => s + p.bandA, 0));
+  const bandB = round2(priced.reduce((s, p) => s + p.bandB, 0));
+  return {
+    net,
+    commission: { bandA, bandB, total: round2(bandA + bandB) },
+    // Newest first, matching the earned table above it.
+    items: priced.slice().reverse(),
+  };
+}
+
 // Full per-member commission report for a month.
 //   opts.scopeEmail   — restrict `members` to this one email (own-view scoping)
 //   opts.includeCandidates — attach users not yet on the plan (manage picker)
 export async function commissionForMonth(month, opts = {}) {
   const mk = isMonth(month) ? month : curMonthKey();
-  const [cfg, memberRows, events, disqualified] = await Promise.all([
+  const [cfg, memberRows, recognition, disqualified] = await Promise.all([
     loadConfig(), loadMembers(), loadRecognitionEvents(), loadDisqualifications(),
   ]);
+  const { events, pending: pendingEvents } = recognition;
 
   let members = memberRows;
   if (opts.scopeEmail) members = memberRows.filter((m) => lc(m.email) === lc(opts.scopeEmail));
@@ -320,6 +410,23 @@ export async function commissionForMonth(month, opts = {}) {
     b.items.push(e);
   }
 
+  // Pending is always priced against the CURRENT month's ladder, whichever month
+  // is on screen — so the same £ figure is quoted in July as in August.
+  const nowKey = curMonthKey();
+  const currentNet = new Map();
+  for (const e of events) {
+    if (e.month !== nowKey || disqualified.has(e.key)) continue;
+    const email = lc(e.ownerEmail);
+    currentNet.set(email, (currentNet.get(email) || 0) + e.amount);
+  }
+  const pendingByOwner = new Map();
+  for (const p of pendingEvents) {
+    if (disqualified.has(p.key)) continue; // already taken off the plan
+    const email = lc(p.ownerEmail);
+    if (!pendingByOwner.has(email)) pendingByOwner.set(email, []);
+    pendingByOwner.get(email).push(p);
+  }
+
   const out = members.map((m) => {
     const active = accruesIn(m, mk);
     const b = byOwner.get(lc(m.email));
@@ -337,6 +444,14 @@ export async function commissionForMonth(month, opts = {}) {
       }))
       : [];
     const sales = [...earning, ...excluded].sort((a, z) => (a.date < z.date ? 1 : -1));
+    // Pending belongs to whoever is on the plan NOW (enabled + enrolled by this
+    // month), not to the month being looked at — a paused member is forecast
+    // nothing, and someone who joins next month sees what's coming with them.
+    const onPlanNow = accruesIn(m, nowKey);
+    const basisNet = round2(currentNet.get(lc(m.email)) || 0);
+    const pending = onPlanNow
+      ? pendingCommissionFor(pendingByOwner.get(lc(m.email)) || [], basisNet, cfg)
+      : { net: 0, commission: { bandA: 0, bandB: 0, total: 0 }, items: [] };
     return {
       email: m.email,
       name: m.name || m.email,
@@ -347,16 +462,24 @@ export async function commissionForMonth(month, opts = {}) {
       disqualifiedNet: round2(excluded.reduce((s, e) => s + e.net, 0)),
       commission,
       sales,
+      // Not yet earned — see pendingCommissionFor. `basisNet`/`basisMonth` say
+      // what the estimate was stacked on, so the UI can explain the rate.
+      pending: { ...pending, basisNet, basisMonth: nowKey },
     };
   });
 
   const total = round2(out.reduce((s, m) => s + (m.active ? m.commission.total : 0), 0));
+  const pendingTotal = round2(out.reduce((s, m) => s + m.pending.commission.total, 0));
+  const pendingNet = round2(out.reduce((s, m) => s + m.pending.net, 0));
 
   const result = {
     month: mk,
     config: { ...cfg, maxBandA: round2(cfg.bandACap * cfg.bandARate) },
     members: out,
     total,
+    pendingTotal,
+    pendingNet,
+    pendingMonth: nowKey,
   };
 
   if (opts.includeCandidates) {
@@ -381,7 +504,7 @@ export async function commissionTotalsForMonths(monthKeys) {
   if (!active.length) return zero;
 
   const wanted = new Set(keys);
-  const [events, disqualified] = await Promise.all([loadRecognitionEvents(), loadDisqualifications()]);
+  const [{ events }, disqualified] = await Promise.all([loadRecognitionEvents(), loadDisqualifications()]);
   const netBy = new Map(); // `${ownerEmail}|${monthKey}` -> net recognised
   for (const e of events) {
     if (!wanted.has(e.month)) continue;
@@ -408,7 +531,7 @@ export async function commissionTotalsForMonths(monthKeys) {
 // month (enabled + enrolled), including £0 so the plan members always show.
 export async function commissionByMemberForMonth(month) {
   const mk = isMonth(month) ? month : curMonthKey();
-  const [cfg, memberRows, events, disqualified] = await Promise.all([
+  const [cfg, memberRows, { events }, disqualified] = await Promise.all([
     loadConfig(), loadMembers(), loadRecognitionEvents(), loadDisqualifications(),
   ]);
   const netBy = new Map();

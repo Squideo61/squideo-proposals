@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Percent, Coins, UserPlus, Trash2, ChevronDown, ChevronRight, Check, X, Pencil, Ban, RotateCcw } from 'lucide-react';
+import { Percent, Coins, UserPlus, Trash2, ChevronDown, ChevronRight, Check, X, Pencil, Ban, RotateCcw, Hourglass, ArrowUpRight, FileText } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
@@ -39,7 +39,7 @@ const CARD = { background: 'white', border: '1px solid ' + BRAND.border, borderR
 // Admin → Staff Commission. Managers (commission.manage) see everyone, edit the
 // bands and toggle staff on/off; on-plan staff (commission.view_own) see only
 // their own figures — the server scopes the response, this just adapts the UI.
-export function StaffCommissionTab() {
+export function StaffCommissionTab({ onOpenRecord, onOpenLink }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [month, setMonth] = useState(() => recentMonths(1)[0]);
@@ -99,9 +99,188 @@ export function StaffCommissionTab() {
               </>
             )}
           </div>
+
+          {data.members.length > 0 && (
+            <PendingCard data={data} canManage={canManage} isMobile={isMobile}
+              onOpenRecord={onOpenRecord} onOpenLink={onOpenLink} />
+          )}
         </>
       )}
     </div>
+  );
+}
+
+// Commission that hasn't been earned yet — signed work whose money hasn't
+// landed (PO invoices above all), and extras still to be paid. It's the answer
+// to "what's coming?", which is what someone on the plan actually wants to know
+// mid-month, so it's stated as a forecast and never mixed into the earned total.
+//
+// The figures move on their own: everything here is derived from the same
+// payments the earned table reads, so ticking an invoice paid moves the sale out
+// of this card and into the month it landed in, with no bookkeeping in between.
+function PendingCard({ data, canManage, isMobile, onOpenRecord, onOpenLink }) {
+  const members = (data.members || []).filter((m) => (m.pending?.items || []).length > 0);
+  const total = Number(data.pendingTotal) || 0;
+  const net = Number(data.pendingNet) || 0;
+  // Every member's estimate is stacked on their own month-to-date, so there's a
+  // single sensible basis to quote only when we're looking at one person.
+  const solo = members.length === 1 ? members[0] : null;
+
+  return (
+    <div style={{ ...CARD, background: '#FFFDF7', borderColor: '#FDE68A' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: 0.6, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Hourglass size={14} color="#B45309" /> Pending — commission when the payment comes in
+        </h3>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 10, color: '#92400E', textTransform: 'uppercase', letterSpacing: 0.4 }}>Est. when paid</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#B45309' }}>{formatGBP(total)}</div>
+        </div>
+      </div>
+
+      {members.length === 0 ? (
+        <div style={{ fontSize: 13, color: BRAND.muted, padding: '6px 0 2px' }}>
+          Nothing waiting on payment{canManage ? '' : ' — every signed sale of yours has been paid'}.
+        </div>
+      ) : (
+        <>
+          <p style={{ margin: '0 0 12px', fontSize: 12.5, color: '#92400E', lineHeight: 1.5 }}>
+            <strong>Not earned yet.</strong> {formatGBP(net)} of signed work is still waiting on its money — a PO
+            invoice, a deposit, or an extra to be paid. Each one is commissioned in full the month its payment lands,
+            so nothing below counts until we mark it paid. The estimate is what it would pay <em>if it landed
+            today</em>{solo ? `, on top of the ${formatGBP(solo.pending.basisNet)} already counted this month` : ''} —
+            land it in a fresh month and it may earn more.
+          </p>
+
+          {members.map((m) => (
+            <PendingMember key={m.email} m={m} isMobile={isMobile} showName={canManage}
+              onOpenRecord={onOpenRecord} />
+          ))}
+
+          {canManage && members.length > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 4px 2px', borderTop: '2px solid #FDE68A', marginTop: 6, fontWeight: 700 }}>
+              <span>Total pending</span>
+              <span style={{ color: '#B45309' }}>{formatGBP(total)}</span>
+            </div>
+          )}
+
+          {onOpenLink && (
+            <button className="btn-ghost" onClick={() => onOpenLink('finance/pending')}
+              style={{ marginTop: 12, fontSize: 12.5, color: '#B45309' }}
+              title="The same money, from the invoicing side — chase it, invoice it, or mark it paid">
+              Open Finance → Pending Payments <ArrowUpRight size={13} style={{ verticalAlign: -2 }} />
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// One person's pending sales. Open by default when it's your own sheet (there's
+// one of you, and the detail is the point); collapsed on a manager's view where
+// several people stack up.
+function PendingMember({ m, isMobile, showName, onOpenRecord }) {
+  const [open, setOpen] = useState(!showName);
+  const items = m.pending.items || [];
+
+  return (
+    <div style={{ borderTop: '1px solid #FDE68A', padding: '10px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <button onClick={() => setOpen((v) => !v)}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: 0, flex: 1, minWidth: 160, textAlign: 'left' }}>
+          {open ? <ChevronDown size={16} color="#B45309" /> : <ChevronRight size={16} color="#B45309" />}
+          <div>
+            {showName && <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink }}>{m.name || m.email}</div>}
+            <div style={{ fontSize: 12, color: BRAND.muted }}>
+              {items.length} sale{items.length === 1 ? '' : 's'} waiting · {formatGBP(m.pending.net)} net
+            </div>
+          </div>
+        </button>
+        <Stat label="Est. commission" value={formatGBP(m.pending.commission.total)} pending />
+      </div>
+
+      {open && (
+        <div style={{ overflowX: 'auto', marginTop: 8 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ color: BRAND.muted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                <th style={{ textAlign: 'left', padding: '6px 8px' }}>Company</th>
+                {!isMobile && <th style={{ textAlign: 'left', padding: '6px 8px' }}>Deal</th>}
+                <th style={{ textAlign: 'left', padding: '6px 8px' }}>Type</th>
+                <th style={{ textAlign: 'left', padding: '6px 8px' }}>Waiting on</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px' }}>Net</th>
+                {!isMobile && <th style={{ textAlign: 'right', padding: '6px 8px' }}>Rate</th>}
+                <th style={{ textAlign: 'right', padding: '6px 8px' }}>Est. commission</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((s, i) => (
+                <tr key={s.key || i} style={{ borderTop: '1px solid #FDE68A' }}>
+                  <td style={{ padding: '6px 8px' }}>
+                    {s.dealId && onOpenRecord ? (
+                      <button className="btn-link" style={{ fontSize: 13, textAlign: 'left' }}
+                        onClick={() => onOpenRecord('deals', s.dealId)}>{s.company || s.title || '—'}</button>
+                    ) : (s.company || '—')}
+                  </td>
+                  {!isMobile && <td style={{ padding: '6px 8px', color: BRAND.muted }}>{s.title || '—'}</td>}
+                  <td style={{ padding: '6px 8px' }}><PendingKindTag kind={s.kind} /></td>
+                  <td style={{ padding: '6px 8px', color: BRAND.muted, whiteSpace: 'nowrap' }}>
+                    <WaitingOn sale={s} />
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>{formatGBP(s.net)}</td>
+                  {!isMobile && (
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: BRAND.muted, whiteSpace: 'nowrap' }}>
+                      <RateCell sale={s} />
+                    </td>
+                  )}
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: '#B45309', whiteSpace: 'nowrap' }}>
+                    {formatGBP(s.commission ?? 0)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ borderTop: '2px solid #FDE68A' }}>
+                <td colSpan={isMobile ? 3 : 4} />
+                <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700 }}>{formatGBP(m.pending.net)}</td>
+                {!isMobile && <td />}
+                <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: '#B45309' }}>
+                  {formatGBP(m.pending.commission.total)}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// What has to happen before this one pays out — an invoice already sent (and
+// when), or one still to raise. Vaguer than a date, but it's the honest state.
+function WaitingOn({ sale }) {
+  if (sale.invoicedAt) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#B45309' }} title="Invoice raised — waiting for the client to pay">
+        <FileText size={12} /> Invoiced {fmtDate(sale.invoicedAt)}
+      </span>
+    );
+  }
+  return <span title={sale.date ? `Signed ${fmtDate(sale.date)}` : undefined}>Not invoiced yet</span>;
+}
+
+// The pending equivalent of KindTag — says what the payment will be, not what it
+// was, so nobody reads a forecast row as money already banked.
+function PendingKindTag({ kind }) {
+  const map = {
+    deposit: { label: 'Awaiting deposit', color: '#B45309', bg: '#FFFBEB' },
+    po_paid: { label: 'PO — awaiting payment', color: '#7C3AED', bg: '#F3E8FF' },
+    extra: { label: 'Extra — unpaid', color: '#CA8A04', bg: '#FEF9C3' },
+  };
+  const s = map[kind] || { label: kind || '—', color: BRAND.muted, bg: BRAND.paper };
+  return (
+    <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, padding: '1px 6px', borderRadius: 999, color: s.color, background: s.bg, border: '1px solid ' + s.color + '33', whiteSpace: 'nowrap' }}>{s.label}</span>
   );
 }
 
@@ -479,11 +658,11 @@ function KindTag({ kind }) {
   );
 }
 
-function Stat({ label, value, accent }) {
+function Stat({ label, value, accent, pending }) {
   return (
     <div style={{ textAlign: 'right' }}>
       <div style={{ fontSize: 10, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
-      <div style={{ fontSize: 15, fontWeight: 700, color: accent ? '#0891B2' : BRAND.ink }}>{value}</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: pending ? '#B45309' : accent ? '#0891B2' : BRAND.ink }}>{value}</div>
     </div>
   );
 }
