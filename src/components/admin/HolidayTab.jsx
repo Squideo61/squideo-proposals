@@ -51,11 +51,14 @@ export function HolidayTab() {
   // negative. `renewal` is the next renewal date; the window is the year before.
   const leaveForEditing = useMemo(() => {
     if (!editing) return [];
+    const email = (editing.userEmail || '').toLowerCase();
     const next = editing.renewal || null;
     let start = null;
     if (next) { const d = new Date(next); d.setFullYear(d.getFullYear() - 1); start = d.toISOString().slice(0, 10); }
     return (sched.leave || [])
-      .filter(l => l.userEmail === editing.userEmail && l.status !== 'denied')
+      // Case-insensitive email match — leave rows and allowance rows can differ
+      // in casing, and an exact match would hide a person's bookings entirely.
+      .filter(l => (l.userEmail || '').toLowerCase() === email && l.status !== 'denied')
       .filter(l => !start || (l.startDate >= start && l.startDate < next))
       .sort((a, b) => b.startDate.localeCompare(a.startDate));
   }, [editing, sched.leave]);
