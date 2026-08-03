@@ -1092,6 +1092,14 @@ export function AllowanceModal({ row, onClose, onSave, leaveEntries, onDeleteLea
   // booking (incl. past + pending) so a manager can delete stray/test entries
   // that are inflating someone's total — the fix for figures like Hannah's -16.
   const leave = leaveEntries || null;
+  // Live Taken / Days-left, recomputed as the editor changes the opening balance
+  // or deletes bookings — so "Taken" and "Days left" visibly move to the target.
+  // Taken = opening balance ("days already taken") + approved annual bookings.
+  const bookedApprovedDays = (leave || [])
+    .filter(l => l.status === 'approved' && l.kind !== 'compulsory')
+    .reduce((s, l) => s + (Number(l.days) || 0), 0);
+  const liveTaken = Math.round(((Number(used) || 0) + bookedApprovedDays) * 10) / 10;
+  const liveLeft = Math.round(((Number(allowance) || 0) - (Number(compulsory) || 0) - liveTaken) * 10) / 10;
   return (
     <Modal onClose={onClose} dismissible={false} maxWidth={420}>
       <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>{row.name}</h3>
@@ -1110,8 +1118,22 @@ export function AllowanceModal({ row, onClose, onSave, leaveEntries, onDeleteLea
         <div style={{ fontSize: 12, color: BRAND.muted, margin: '-6px 0 12px' }}>Opening balance for leave taken before it was tracked here. Leave booked in the app is added on top.</div>
         <Field label="Renewal date (renews yearly on this day)"><input type="date" className="input" value={anniversary} onChange={e => setAnniversary(e.target.value)} style={selStyle} /></Field>
       </div>
-      {leave && (
+      {leave && track && (
         <div style={{ marginTop: 6, paddingTop: 14, borderTop: '1px solid ' + BRAND.paper }}>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1, background: BRAND.paper, borderRadius: 8, padding: '8px 10px' }}>
+              <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>Taken</div>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>{liveTaken}</div>
+            </div>
+            <div style={{ flex: 1, background: BRAND.paper, borderRadius: 8, padding: '8px 10px' }}>
+              <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>Days left</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: liveLeft < 0 ? '#DC2626' : liveLeft <= 3 ? '#D97706' : '#16A34A' }}>{liveLeft}</div>
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 12 }}>
+            Taken = <strong>{Number(used) || 0}</strong> opening balance (the field above) + <strong>{bookedApprovedDays}</strong> from approved bookings below.
+            To reach a target, adjust the opening balance and/or delete bookings — the figures update live and save when you press Save.
+          </div>
           <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
             Booked leave this year {leave.length > 0 && <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· {leave.length}</span>}
           </div>
