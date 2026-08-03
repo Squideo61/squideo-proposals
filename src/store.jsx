@@ -1038,10 +1038,13 @@ export function StoreProvider({ children }) {
     },
     // Marketing → aggregated lead-attribution report grouped by source / medium /
     // campaign / keyword / channel over an optional date range (YYYY-MM-DD).
-    loadMarketingReports(groupBy, from, to) {
+    // `basis` picks the counting basis: 'event' (default — each milestone counts
+    // in the period it happened) or 'lead' (cohort — credited to the lead's period).
+    loadMarketingReports(groupBy, from, to, basis) {
       const qs = new URLSearchParams();
       if (from) qs.set('from', from);
       if (to) qs.set('to', to);
+      if (basis) qs.set('basis', basis);
       const q = qs.toString();
       const path = '/api/crm/analytics/reports/' + (groupBy || 'campaign') + (q ? '?' + q : '');
       return api.get(path).then((data) => {

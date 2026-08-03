@@ -66,6 +66,20 @@ async function getMarketingCutoff() {
   } catch { return null; }
 }
 
+// Counting basis — which date puts a number in the selected period.
+//   'event' (default): every funnel stage is counted in the period it actually
+//     happened, so a deal signed in August lands in August even though its lead
+//     came in back in July. Answers "what did we do this month?".
+//   'lead' (cohort): everything a lead ever produced is credited to the period
+//     the lead arrived in. Answers "what were this month's leads worth?" and is
+//     the only basis that gives a true per-cohort ROAS.
+function parseBasis(req) {
+  try {
+    const u = new URL(req.url, 'http://localhost');
+    return u.searchParams.get('basis') === 'lead' ? 'lead' : 'event';
+  } catch { return 'event'; }
+}
+
 // parseRange, but floored at the marketing cutoff so the lead-based reports never
 // reach back before it (whatever range the user picked).
 async function leadRange(req) {
@@ -80,13 +94,14 @@ async function leadRange(req) {
 
 // Per-deal info for the lead reports, via annotateDeals (so values match the
 // pipeline) plus the signature signed_at (the sale date). Returns
-// Map<dealId, { value, stage, proposalValue, isSale, saleAt }>:
+// Map<dealId, { value, stage, proposalValue, isSale, saleAt, proposalAt }>:
 //   value         — effectiveValue (signed > latest proposal > manual)
 //   proposalValue — effectiveValue when a proposal exists (else null)
 //   isSale        — genuine signed sale per ./signedSale.js (signature or a
 //                   signed/paid stage, real value, not an import; bare long_term
 //                   with no signature does NOT count)
 //   saleAt        — earliest signature signed_at (fallback: stage_changed_at)
+//   proposalAt    — earliest proposal created_at (when the proposal went out)
 async function dealInfoMap(dealIds) {
   const map = new Map();
   const ids = [...new Set(dealIds.filter(Boolean))];
@@ -105,6 +120,16 @@ async function dealInfoMap(dealIds) {
        GROUP BY p.deal_id`;
     signedMap = new Map(sig.map((r) => [r.did, r.signed_at]));
   } catch { /* signatures table not present */ }
+
+  // Proposal date = earliest proposal on the deal, i.e. when we first put a
+  // price in front of them. Used by the by-event counting basis.
+  let proposalAtMap = new Map();
+  try {
+    const props = await sql`
+      SELECT deal_id AS did, MIN(created_at) AS created_at
+        FROM proposals WHERE deal_id = ANY(${ids}) GROUP BY deal_id`;
+    proposalAtMap = new Map(props.map((r) => [r.did, r.created_at]));
+  } catch { /* proposals table not present */ }
 
   // Stage-change history — lets the shared predicate credit a deal that reached
   // signed/paid even if it has since moved on (e.g. to long_term).
@@ -134,6 +159,7 @@ async function dealInfoMap(dealIds) {
       proposalValue: hasProposal ? value : null,
       isSale,
       saleAt: signedAt || (isSale ? (si.stageChangedAt || null) : null),
+      proposalAt: proposalAtMap.get(d.id) || null,
     });
   }
   return map;
@@ -266,16 +292,27 @@ async function leadsLog(req) {
 }
 
 // GET /api/crm/analytics/reports/:groupBy — aggregated per source/medium/
-// campaign/keyword/channel.
+// campaign/keyword/channel. ?basis=event (default) counts each milestone in the
+// period it happened; ?basis=lead is the cohort view (see parseBasis).
 async function reports(req, groupBy) {
   const dim = ['source', 'medium', 'campaign', 'keyword', 'channel'].includes(groupBy) ? groupBy : 'campaign';
   const { fromDate, toExcl, fromStr, toStr } = await leadRange(req);
+  const basis = parseBasis(req);
+
+  // On the event basis a sale can belong to this period while its lead arrived
+  // long before it, so we have to scan back past `from` — as far as the
+  // marketing cutoff (leads before that have incomplete attribution and are
+  // excluded from these reports by design). Attribution still comes from the
+  // originating lead, so the sale lands on the right campaign/keyword.
+  const cutoff = basis === 'event' ? await getMarketingCutoff() : null;
+  const scanFrom = cutoff ? new Date(cutoff + 'T00:00:00Z') : fromDate;
+
   const rows = await sql`
-    SELECT qr.id, qr.status, qr.deal_id, qr.created_at,
+    SELECT qr.id, qr.status, qr.deal_id, qr.created_at, qr.reviewed_at,
            qr.attr_channel, qr.attr_source, qr.attr_medium,
            qr.attr_campaign, qr.attr_campaign_id, qr.attr_keyword, qr.attr_term
       FROM quote_requests qr
-     WHERE qr.created_at >= ${fromDate} AND qr.created_at < ${toExcl}`;
+     WHERE qr.created_at >= ${scanFrom} AND qr.created_at < ${toExcl}`;
   const info = await dealInfoMap(rows.map((r) => r.deal_id));
   const { byCampaign, byKeyword, total: totalSpend } = await spendBuckets(fromStr, toStr);
   const names = dim === 'campaign' ? await campaignNameMap() : null;
@@ -299,23 +336,58 @@ async function reports(req, groupBy) {
   let saleTimeMs = 0;
   let saleTimeCount = 0;
 
+  // Does a date fall inside the selected period?
+  const inPeriod = (d) => {
+    if (!d) return false;
+    const t = new Date(d).getTime();
+    return t >= fromDate.getTime() && t < toExcl.getTime();
+  };
+
+  // Which of this lead's milestones count towards the selected period.
+  // Event basis: each milestone on its own date, falling back to the lead date
+  // when we never recorded one (older rows). Lead basis: the lead is in range by
+  // construction, so everything it produced counts with it.
+  const milestones = (r, dv) => {
+    const reviewed = r.status === 'qualified' || r.status === 'disqualified' || r.status === 'spam';
+    if (basis === 'lead') {
+      return {
+        lead: true,
+        qualified: r.status === 'qualified',
+        disqualified: r.status === 'disqualified' || r.status === 'spam',
+        proposal: !!dv && dv.proposalValue != null,
+        sale: !!dv && dv.isSale,
+      };
+    }
+    const reviewedAt = r.reviewed_at || r.created_at;
+    return {
+      lead: inPeriod(r.created_at),
+      qualified: r.status === 'qualified' && reviewed && inPeriod(reviewedAt),
+      disqualified: (r.status === 'disqualified' || r.status === 'spam') && inPeriod(reviewedAt),
+      proposal: !!dv && dv.proposalValue != null && inPeriod(dv.proposalAt || r.created_at),
+      sale: !!dv && dv.isSale && inPeriod(dv.saleAt || r.created_at),
+    };
+  };
+
   for (const r of rows) {
+    const dv = r.deal_id ? info.get(r.deal_id) : null;
+    const m = milestones(r, dv);
+    // On the event basis we scanned back past `from`, so skip leads that
+    // contribute nothing to the selected period.
+    if (!m.lead && !m.qualified && !m.disqualified && !m.proposal && !m.sale) continue;
+
     const { key, label, campaignId } = keyFor(r);
     let g = groups.get(key);
     if (!g) { g = { key, label, campaignId: campaignId || null, leads: 0, qualified: 0, disqualified: 0, proposals: 0, sales: 0, revenue: 0, proposalValue: 0 }; groups.set(key, g); }
-    g.leads += 1;
-    if (r.status === 'qualified') g.qualified += 1;
-    else if (r.status === 'disqualified' || r.status === 'spam') g.disqualified += 1;
-    const dv = r.deal_id ? info.get(r.deal_id) : null;
-    if (dv) {
-      if (dv.proposalValue != null) { g.proposals += 1; g.proposalValue += dv.proposalValue; }
-      if (dv.isSale) {
-        g.sales += 1;
-        g.revenue += dv.value;
-        if (dv.saleAt && r.created_at) {
-          const ms = new Date(dv.saleAt).getTime() - new Date(r.created_at).getTime();
-          if (ms >= 0) { saleTimeMs += ms; saleTimeCount += 1; }
-        }
+    if (m.lead) g.leads += 1;
+    if (m.qualified) g.qualified += 1;
+    if (m.disqualified) g.disqualified += 1;
+    if (m.proposal) { g.proposals += 1; g.proposalValue += dv.proposalValue; }
+    if (m.sale) {
+      g.sales += 1;
+      g.revenue += dv.value;
+      if (dv.saleAt && r.created_at) {
+        const ms = new Date(dv.saleAt).getTime() - new Date(r.created_at).getTime();
+        if (ms >= 0) { saleTimeMs += ms; saleTimeCount += 1; }
       }
     }
   }
@@ -356,18 +428,15 @@ async function reports(req, groupBy) {
     };
   }).sort((a, b) => b.revenue - a.revenue || b.leads - a.leads);
 
-  // Totals across every lead in range (spend = whole-account spend in range).
-  const tLeads = rows.length;
-  const tQualified = rows.filter((r) => r.status === 'qualified').length;
-  const tDisqualified = rows.filter((r) => r.status === 'disqualified' || r.status === 'spam').length;
-  const tReviewed = tQualified + tDisqualified;
-  let tSales = 0, tRevenue = 0, tProposalValue = 0, tProposals = 0;
-  for (const r of rows) {
-    const dv = r.deal_id ? info.get(r.deal_id) : null;
-    if (!dv) continue;
-    if (dv.proposalValue != null) { tProposals += 1; tProposalValue += dv.proposalValue; }
-    if (dv.isSale) { tSales += 1; tRevenue += dv.value; }
+  // Totals across the period (spend = whole-account spend in range). Every row
+  // lands in exactly one group, so the totals are just the column sums.
+  let tLeads = 0, tQualified = 0, tDisqualified = 0, tSales = 0, tRevenue = 0, tProposalValue = 0, tProposals = 0;
+  for (const g of groups.values()) {
+    tLeads += g.leads; tQualified += g.qualified; tDisqualified += g.disqualified;
+    tProposals += g.proposals; tProposalValue += g.proposalValue;
+    tSales += g.sales; tRevenue += g.revenue;
   }
+  const tReviewed = tQualified + tDisqualified;
   const tSpend = adsConfigured() ? totalSpend : null;
   const totals = {
     leads: tLeads,
@@ -390,7 +459,7 @@ async function reports(req, groupBy) {
     qualityRate: tReviewed > 0 ? round2((tQualified / tReviewed) * 100) : null,
   };
 
-  return { groupBy: dim, from: fromStr, to: toStr, adsConfigured: adsConfigured(), rows: out, totals };
+  return { groupBy: dim, basis, from: fromStr, to: toStr, adsConfigured: adsConfigured(), rows: out, totals };
 }
 
 // GET /api/crm/analytics/snippet — copy-ready setup strings for the Settings tab.

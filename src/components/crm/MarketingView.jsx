@@ -9,7 +9,21 @@ import { computeRange, rangeHeading, fmtRangeDates, segBtn, RangeControl, thisMo
 
 // Remembers the Marketing page's view state across navigation (mirrors
 // financeViewMemory): the active tab, report grouping, date range and scroll.
-const marketingViewMemory = { section: 'overview', groupBy: 'campaign', range: { mode: 'month', month: thisMonthStr() }, scrollY: 0 };
+const marketingViewMemory = { section: 'overview', groupBy: 'campaign', basis: 'event', range: { mode: 'month', month: thisMonthStr() }, scrollY: 0 };
+
+// Counting basis — which date decides whether something lands in the selected
+// period. 'event' counts each milestone when it happened (a deal signed in
+// August is an August sale, even if its lead came in during July); 'lead'
+// credits everything back to the period the lead arrived in, which is the only
+// basis that gives a true per-cohort ROAS.
+const BASIS_OPTIONS = [
+  { key: 'event', label: 'When it happened' },
+  { key: 'lead', label: 'By lead date' },
+];
+const BASIS_HINT = {
+  event: 'Each stage counts in the period it happened — a deal signed this period counts now, whenever its lead came in.',
+  lead: "Everything counts against the period its lead arrived in — so this period's spend, leads and revenue are the same cohort.",
+};
 
 const CHANNEL_LABELS = {
   paid_search: 'Paid search',
@@ -63,6 +77,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany }) {
   const [section, setSection] = useState(sectionProp || marketingViewMemory.section);
   const [range, setRange] = useState(marketingViewMemory.range);
   const [groupBy, setGroupBy] = useState(marketingViewMemory.groupBy);
+  const [basis, setBasis] = useState(marketingViewMemory.basis);
 
   const [overview, setOverview] = useState(null);   // reports grouped by channel
   const [report, setReport] = useState(null);       // reports grouped by groupBy
@@ -78,6 +93,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany }) {
   useEffect(() => { marketingViewMemory.section = section; }, [section]);
   useEffect(() => { marketingViewMemory.range = range; }, [range]);
   useEffect(() => { marketingViewMemory.groupBy = groupBy; }, [groupBy]);
+  useEffect(() => { marketingViewMemory.basis = basis; }, [basis]);
 
   const { from, to } = useMemo(() => computeRange(range), [range]);
 
@@ -96,21 +112,21 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany }) {
     if (section !== 'overview') return;
     let active = true;
     setLoading(true);
-    actions.loadMarketingReports('channel', from, to)
+    actions.loadMarketingReports('channel', from, to, basis)
       .then((d) => { if (active) setOverview(d); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [section, from, to, actions, reload]);
+  }, [section, from, to, basis, actions, reload]);
 
   useEffect(() => {
     if (section !== 'reports') return;
     let active = true;
     setLoading(true);
-    actions.loadMarketingReports(groupBy, from, to)
+    actions.loadMarketingReports(groupBy, from, to, basis)
       .then((d) => { if (active) setReport(d); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [section, groupBy, from, to, actions, reload]);
+  }, [section, groupBy, from, to, basis, actions, reload]);
 
   useEffect(() => {
     if (section !== 'leads') return;
@@ -189,13 +205,19 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany }) {
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '0 0 18px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 17, fontWeight: 700, color: BRAND.ink }}>{rangeHeading(range)}</span>
           <span style={{ fontSize: 13, color: BRAND.muted }}>{fmtRangeDates(from, to)}</span>
+          {(section === 'overview' || section === 'reports') && (
+            <>
+              <div style={{ flex: 1 }} />
+              <BasisControl basis={basis} setBasis={setBasis} />
+            </>
+          )}
         </div>
       )}
 
-      {section === 'overview' && <OverviewTab data={overview} loading={loading} adsConfigured={adsConfigured} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} isMobile={isMobile} />}
+      {section === 'overview' && <OverviewTab data={overview} loading={loading} adsConfigured={adsConfigured} basis={basis} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} isMobile={isMobile} />}
       {section === 'reports' && (
         <ReportsTab
-          data={report} loading={loading} groupBy={groupBy} setGroupBy={setGroupBy} adsConfigured={adsConfigured}
+          data={report} loading={loading} groupBy={groupBy} setGroupBy={setGroupBy} adsConfigured={adsConfigured} basis={basis}
           onRetry={() => setReload((n) => n + 1)}
         />
       )}
@@ -208,6 +230,22 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany }) {
 }
 
 // ---- shared bits ---------------------------------------------------------
+
+// Segmented "how do we count it" switch, sat next to the period heading. The
+// hint underneath spells out what the numbers mean so nobody has to guess why a
+// sale shows up in one month and not the other.
+function BasisControl({ basis, setBasis }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 12, color: BRAND.muted, fontWeight: 600 }}>Count</span>
+      <div style={{ display: 'inline-flex', gap: 2, background: BRAND.paper, borderRadius: 8, padding: 2 }}>
+        {BASIS_OPTIONS.map((o) => (
+          <button key={o.key} onClick={() => setBasis(o.key)} style={segBtn(basis === o.key)} title={BASIS_HINT[o.key]}>{o.label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // `compact` shrinks the tile so three of them sit comfortably on one row (used
 // by the Traffic tab, which only has three metrics); the four-metric tabs keep
@@ -344,7 +382,7 @@ function LastSync({ status, name }) {
 
 // ---- Dashboard -----------------------------------------------------------
 
-function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry, isMobile }) {
+function OverviewTab({ data, loading, adsConfigured, basis, onOpenSettings, onRetry, isMobile }) {
   if (loading && !data) return <Loading />;
   // A valid response is always an object (even with zero leads). `data == null`
   // after loading means the request failed — show a retry, never the misleading
@@ -354,9 +392,13 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry, is
   const channels = (data?.rows || []).slice().sort((a, b) => b.leads - a.leads);
   const chartData = channels.map((r) => ({ name: prettyChannel(r.key), leads: r.leads, revenue: r.revenue, key: r.key }));
 
-  const ofLeads = (n) => (t.leads ? Math.round(((n || 0) / t.leads) * 100) : null);
+  // Percentages are a cohort idea (x% of *these* leads got this far), so they
+  // only make sense on the lead basis. Counting by event date mixes cohorts —
+  // this period's sales can come from last period's leads — so we drop them.
+  const cohort = basis === 'lead';
+  const ofLeads = (n) => (cohort && t.leads ? Math.round(((n || 0) / t.leads) * 100) : null);
   const funnel = [
-    { label: 'Leads', value: t.leads, color: '#64748B', icon: Users, pct: t.leads ? 100 : 0 },
+    { label: 'Leads', value: t.leads, color: '#64748B', icon: Users, pct: cohort && t.leads ? 100 : null },
     { label: 'Qualified', value: t.qualified, color: '#2BB8E6', icon: UserCheck, pct: ofLeads(t.qualified) },
     { label: 'Proposals sent', value: t.proposalsSent || 0, color: '#F59E0B', icon: FileText, pct: ofLeads(t.proposalsSent) },
     { label: 'Sales', value: t.sales, color: '#16A34A', icon: Trophy, pct: ofLeads(t.sales) },
@@ -376,14 +418,15 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry, is
       {/* Funnel + headline outcomes */}
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1.35fr) minmax(0, 1fr)', gap: 16, marginBottom: 26, alignItems: 'start' }}>
         <div>
-          <SectionLabel>Lead funnel</SectionLabel>
+          <SectionLabel>{cohort ? 'Lead funnel' : 'Activity this period'}</SectionLabel>
           <Funnel stages={funnel} />
+          <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 8, lineHeight: 1.45 }}>{BASIS_HINT[basis] || BASIS_HINT.event}</div>
         </div>
         <div>
           <SectionLabel>Outcome</SectionLabel>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <StatCard icon={Trophy} label="Sales" value={t.sales} sub={pct(t.leadToSaleRate) + ' lead→sale'} accent="#16A34A" colorValue big />
-            <StatCard icon={PoundSterling} label="Revenue" value={gbp0(t.revenue)} sub="signed value" accent="#16A34A" big />
+            <StatCard icon={Trophy} label="Sales" value={t.sales} sub={cohort ? pct(t.leadToSaleRate) + ' lead→sale' : 'signed this period'} accent="#16A34A" colorValue big />
+            <StatCard icon={PoundSterling} label="Revenue" value={gbp0(t.revenue)} sub={cohort ? 'signed value, these leads' : 'signed value'} accent="#16A34A" big />
             <StatCard icon={FileText} label="Proposal value" value={gbp0(t.proposalValueSent)} sub="sent in period" accent="#0EA5E9" />
             <StatCard icon={Clock} label="Avg lead→sale" value={t.avgLeadToSaleDays == null ? '—' : t.avgLeadToSaleDays + ' days'} accent="#7C3AED" />
           </div>
@@ -396,14 +439,14 @@ function OverviewTab({ data, loading, adsConfigured, onOpenSettings, onRetry, is
         <StatCard icon={Wallet} label="Ad spend" value={dash(t.spend, gbp0)} accent="#F59E0B" />
         <StatCard icon={Target} label="Cost / lead" value={dash(t.costPerLead, gbp0)} accent="#F59E0B" />
         <StatCard icon={Coins} label="Cost / sale" value={dash(t.costPerSale, gbp0)} accent="#F59E0B" />
-        <StatCard icon={TrendingUp} label="ROAS" value={fmtRoas(t.roas)} accent={t.roas != null && t.roas >= 1 ? '#16A34A' : '#64748B'} colorValue />
+        <StatCard icon={TrendingUp} label="ROAS" value={fmtRoas(t.roas)} sub={cohort ? 'these leads ÷ their spend' : 'signed ÷ spend, this period'} accent={t.roas != null && t.roas >= 1 ? '#16A34A' : '#64748B'} colorValue />
         <StatCard icon={Gauge} label="Lead quality" value={t.qualityRate == null ? '—' : Math.round(t.qualityRate) + '%'} sub="qualified of reviewed" accent={qualityAccent} colorValue />
         <StatCard icon={XCircle} label="Disqualified" value={t.disqualified ?? 0} sub={t.leads ? ofLeads(t.disqualified) + '% of leads' : null} accent="#DC2626" />
       </div>
 
       {/* By channel */}
       <SectionLabel>By channel</SectionLabel>
-      {channels.length === 0 ? <Empty>No leads in this period yet.</Empty> : (
+      {channels.length === 0 ? <Empty>{cohort ? 'No leads in this period yet.' : 'Nothing happened in this period yet.'}</Empty> : (
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 14, boxShadow: CARD_SHADOW, padding: '18px 20px' }}>
           <div style={{ height: 220, marginBottom: 18, maxWidth: 620 }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -457,7 +500,7 @@ function ChannelTable({ rows, adsConfigured }) {
 
 // ---- Reports -------------------------------------------------------------
 
-function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured, onRetry }) {
+function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured, basis, onRetry }) {
   const [sortKey, setSortKey] = useState('revenue');
   const [sortDir, setSortDir] = useState('desc');
   const rows = useMemo(() => {
@@ -480,7 +523,7 @@ function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured, onRetry
           <button key={g.key} onClick={() => setGroupBy(g.key)} style={segBtn(groupBy === g.key)}>{g.label}</button>
         ))}
       </div>
-      {loading && !data ? <Loading /> : !data ? <LoadFailed onRetry={onRetry} /> : rows.length === 0 ? <Empty>No leads in this period yet.</Empty> : (
+      {loading && !data ? <Loading /> : !data ? <LoadFailed onRetry={onRetry} /> : rows.length === 0 ? <Empty>{basis === 'lead' ? 'No leads in this period yet.' : 'Nothing happened in this period yet.'}</Empty> : (
         <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
