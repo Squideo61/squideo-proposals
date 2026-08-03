@@ -34,6 +34,7 @@ export const PERMISSIONS = [
   { slug: 'partner_credits.manage', group: 'CRM',      label: 'Manage partner credits' },
 
   { slug: 'portal.preview',       group: 'CRM',        label: 'View a client’s portal as they see it (read-only)' },
+  { slug: 'portal.manage',        group: 'CRM',        label: 'Manage client portals — the portal cards, invite people, portal offers' },
 
   { slug: 'revisions.access',     group: 'Revisions',  label: 'Access the video revisions section' },
 
@@ -64,8 +65,13 @@ export function hasPermission(role, slug) {
 // Who may act on the customer portal from the staff side. Any of these grants
 // access to the portal-admin surface, which spans company pages (members) and
 // deal pages (offers/pricing) — different roles legitimately manage each.
+//
+// `portal.manage` is the one that says only that: it's for the people who run
+// client delivery (Production Managers) and need the portal cards + invites
+// without being handed edit rights over every company, deal and invoice.
 export const PORTAL_ADMIN_PERMS = [
   'companies.manage_all', 'deals.manage_all', 'invoices.manage', 'users.manage',
+  'portal.manage',
 ];
 
 // Opening a client's portal. Looking at it read-only shows roughly what their

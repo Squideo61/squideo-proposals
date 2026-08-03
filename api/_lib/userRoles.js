@@ -244,6 +244,20 @@ export function ensureSystemRoles() {
       `;
       if ((portalPreview.count || portalPreview.rowCount || 0) > 0) invalidateRoleCache();
 
+      // ── Client portal management ──
+      // Running a client's portal — the portal cards on deal/company/contact
+      // pages, inviting their people, the offers panel, manage mode — belongs
+      // with whoever runs delivery: Directors and Project/Production Managers
+      // (role 'member', e.g. Callum). They previously fell through the
+      // PORTAL_ADMIN_PERMS gate because that meant "can edit any company /
+      // deal / invoice", which a PM deliberately isn't. Admins via '*'.
+      const portalManage = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["portal.manage"]'::jsonb, updated_at = NOW()
+         WHERE id IN ('director', 'member') AND NOT (permissions @> '["portal.manage"]'::jsonb)
+      `;
+      if ((portalManage.count || portalManage.rowCount || 0) > 0) invalidateRoleCache();
+
       // ── Staff activity log ──
       // Reading everyone's work (and the before → after on records they change)
       // is a management view, so it stays with Directors. Admins via '*'. Any

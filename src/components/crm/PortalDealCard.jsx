@@ -8,6 +8,7 @@ import { Check, Eye, EyeOff, Plus, Send, Sparkles, Trash2, UserPlus, X } from 'l
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { useStore } from '../../store.jsx';
+import { permissionsInclude } from '../../lib/permissions.js';
 import { formatGBP } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { Modal } from '../ui.jsx';
@@ -215,7 +216,11 @@ export async function launchIntroEmail({ actions, dealId, dealTitle = null }) {
 }
 
 export function PortalDealCard({ dealId, dealTitle = null }) {
-  const { actions, showMsg } = useStore();
+  const { state, actions, showMsg } = useStore();
+  // Production Managers run the portal (portal.manage) but releasing the final
+  // video before it's paid for is a money call — that stays with invoices.manage,
+  // so don't offer them a button the server will refuse.
+  const canRelease = permissionsInclude(state.session?.permissions, 'invoices.manage');
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -420,7 +425,7 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
                         : 'The client can download the signed-off video once the balance is settled.'}
                   </div>
                 </div>
-                {data.finalRelease.override ? (
+                {!canRelease ? null : data.finalRelease.override ? (
                   <button className="btn-ghost" disabled={busy} style={{ fontSize: 12, whiteSpace: 'nowrap' }}
                     onClick={() => run(() => actions.setFinalReleaseOverride(dealId, false), 'Override removed')}>
                     Remove override

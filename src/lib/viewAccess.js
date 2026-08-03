@@ -36,6 +36,7 @@ export function navFlags(perms) {
     // Same permission that opens a client's portal read-only — the activity feed
     // shows what you'd see by looking, so it's gated the same way.
     canPortalPreview: permissionsInclude(perms, 'portal.preview')
+      || permissionsInclude(perms, 'portal.manage')
       || permissionsInclude(perms, 'companies.manage_all')
       || permissionsInclude(perms, 'deals.manage_all'),
   };

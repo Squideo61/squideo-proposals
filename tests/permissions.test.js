@@ -103,6 +103,16 @@ describe('portalPreviewPerms', () => {
     expect(allows(projectManager, true)).toBe(true);
   });
 
+  // A Production Manager runs client delivery but isn't an editor of every
+  // company/deal/invoice — portal.manage is what gets them the portal cards,
+  // invites and manage mode on its own.
+  it('lets portal.manage alone through both preview and manage', () => {
+    const productionManager = { permissions: ['portal.preview', 'portal.manage', 'production.access'] };
+    expect(allows(productionManager, false)).toBe(true);
+    expect(allows(productionManager, true)).toBe(true);
+    expect(hasPermission(productionManager, 'deals.manage_all')).toBe(false);
+  });
+
   it('keeps roles without portal.preview out entirely', () => {
     expect(allows(copywriter, false)).toBe(false);
     expect(allows(copywriter, true)).toBe(false);
