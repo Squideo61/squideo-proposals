@@ -17,6 +17,7 @@
 
 import sql from '../db.js';
 import { EXCLUDED_IMPORT_DEAL_IDS } from './signedSale.js';
+import { demoScope } from './demoScope.js';
 import { computeProposalTotalExVat } from './deals.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
@@ -171,7 +172,7 @@ const accruesIn = (m, month) => m.enabled !== false && String(m.effective_from) 
 async function loadRecognitionEvents() {
   const [sigRows, payRows, extraRows] = await Promise.all([
     // Signed proposals (base candidates). data columns are JSONB → parsed objects.
-    sql`SELECT d.id AS deal_id, d.owner_email, d.title, c.name AS company,
+    sql`SELECT d.id AS deal_id, d.owner_email, d.title, c.name AS company, d.company_id,
                s.signed_at, s.data AS sig_data, p.data AS prop_data
           FROM signatures s
           JOIN proposals p ON p.id = s.proposal_id
@@ -207,11 +208,15 @@ async function loadRecognitionEvents() {
     // Extras (net amounts), with the durable paid date (falls back to updated_at).
     sql`SELECT e.id AS extra_id, e.deal_id, e.amount, e.status, e.created_at,
                COALESCE(e.paid_at, e.updated_at) AS paid_at,
-               d.owner_email, d.title, c.name AS company
+               d.owner_email, d.title, c.name AS company, d.company_id
           FROM deal_extras e
           JOIN deals d ON d.id = e.deal_id
           LEFT JOIN companies c ON c.id = d.company_id`,
   ]);
+
+  // The seeded demo project is a signed £2,400 deal you're meant to pay during
+  // testing — it must never earn anyone commission.
+  const { isDemo } = await demoScope();
 
   const firstPaid = new Map();
   for (const r of payRows) if (r.first_paid) firstPaid.set(r.deal_id, new Date(r.first_paid));
@@ -219,7 +224,7 @@ async function loadRecognitionEvents() {
   // Aggregate signed proposals per deal (a deal can carry more than one).
   const deals = new Map();
   for (const r of sigRows) {
-    if (EXCLUDED_IMPORT_DEAL_IDS.has(r.deal_id)) continue;
+    if (EXCLUDED_IMPORT_DEAL_IDS.has(r.deal_id) || isDemo(r)) continue;
     let d = deals.get(r.deal_id);
     if (!d) { d = { ownerEmail: r.owner_email, title: r.title, company: r.company, isPo: false, signedAt: null, net: 0 }; deals.set(r.deal_id, d); }
     d.net += Number(computeProposalTotalExVat(r.prop_data, r.sig_data)) || 0;
@@ -230,6 +235,7 @@ async function loadRecognitionEvents() {
 
   const extrasByDeal = new Map();
   for (const r of extraRows) {
+    if (isDemo(r)) continue;
     if (!extrasByDeal.has(r.deal_id)) extrasByDeal.set(r.deal_id, []);
     extrasByDeal.get(r.deal_id).push({
       id: r.extra_id,

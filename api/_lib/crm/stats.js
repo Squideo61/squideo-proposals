@@ -12,6 +12,7 @@ import { sendNotification } from '../notifications.js';
 import { ensureDealPo } from './deals.js';
 import { commissionTotalsForMonths, commissionByMemberForMonth } from './commission.js';
 import { crmCostGbpByMonth } from './costSnapshot.js';
+import { demoScope } from './demoScope.js';
 import { zipStore } from '../zip.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
@@ -459,7 +460,7 @@ function normCompany(name) {
 // earliest proposal number. Shared by the auto-linker and the link picker.
 async function signedDealsAgg() {
   const rows = await sql`
-    SELECT d.id AS did, d.title AS title, c.name AS company,
+    SELECT d.id AS did, d.title AS title, c.name AS company, d.company_id,
            s.data->>'total' AS total, p.data->>'vatRate' AS rate,
            p.number_year AS ny, p.number_seq AS ns
       FROM signatures s
@@ -467,8 +468,10 @@ async function signedDealsAgg() {
       JOIN deals d ON d.id = p.deal_id
       LEFT JOIN companies c ON c.id = d.company_id
      WHERE (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'`;
+  const { isDemo } = await demoScope();
   const byDeal = new Map();
   for (const r of rows) {
+    if (isDemo(r)) continue;
     const cur = byDeal.get(r.did) || { did: r.did, title: r.title || null, company: r.company || null, incTotal: 0, rate: 0, number: null };
     cur.incTotal += Number(r.total) || 0;
     cur.rate = Math.max(cur.rate, Number(r.rate) || 0);
@@ -658,7 +661,11 @@ export async function fetchPaidRows(sinceISO, untilISO) {
     push(r.paid_at, { net, vat, gross: net + vat });
   }
 
-  return dedupePaymentRows(rows);
+  // The seeded demo project's money never counts. One filter here covers every
+  // report that draws its cash-in from this funnel — Finance, Performance,
+  // Customer mix, the 36-month trend and Cash Flow.
+  const { notDemo } = await demoScope();
+  return dedupePaymentRows(rows.filter(notDemo));
 }
 
 // Collapse rows that are the SAME payment recorded via two mechanisms — e.g. a
@@ -757,8 +764,11 @@ async function financeReport(year) {
   // Outstanding across all customers (inc-VAT — it's the cash still to come in).
   let outstanding = 0;
   try {
-    const balances = await allCompanyBalances();
-    for (const b of Object.values(balances)) outstanding += Number(b.outstanding) || 0;
+    const [balances, { companyIds: demoCompanies }] = await Promise.all([allCompanyBalances(), demoScope()]);
+    for (const [cid, b] of Object.entries(balances)) {
+      if (demoCompanies.has(cid)) continue;
+      outstanding += Number(b.outstanding) || 0;
+    }
   } catch { /* non-fatal — the finance figures are the headline */ }
 
   return {
@@ -825,7 +835,8 @@ async function performanceReport(action) {
 // "existing" (returning). Best-effort across the income sources.
 async function companiesWithIncomeBefore(sinceISO) {
   const set = new Set();
-  const collect = (rows) => { for (const r of rows) if (r.company_id) set.add(r.company_id); };
+  const { companyIds: demoCompanies } = await demoScope();
+  const collect = (rows) => { for (const r of rows) if (r.company_id && !demoCompanies.has(r.company_id)) set.add(r.company_id); };
   try {
     const results = await Promise.all([
       sql`SELECT DISTINCT d.company_id FROM payments pay JOIN proposals pr ON pr.id = pay.proposal_id JOIN deals d ON d.id = pr.deal_id WHERE pay.paid_at < ${sinceISO}`,
@@ -902,9 +913,10 @@ async function customerMixReport(action) {
 // sale events that day.
 async function salesReport(action) {
   const { period, spanMonths, since, until } = parsePerformancePeriod(action);
-  const [sigRows, extraRows, creditRows] = await Promise.all([
+  const [allSigRows, extraRows, creditRows, { notDemo }] = await Promise.all([
+    // pr.deal_id is selected only so the demo project can be filtered out.
     sql`
-      SELECT s.signed_at, (s.data->>'total')::numeric AS total, pr.data->>'vatRate' AS rate
+      SELECT s.signed_at, (s.data->>'total')::numeric AS total, pr.data->>'vatRate' AS rate, pr.deal_id
         FROM signatures s
         JOIN proposals pr ON pr.id = s.proposal_id
        WHERE s.signed_at >= ${since} AND s.signed_at < ${until}
@@ -912,7 +924,9 @@ async function salesReport(action) {
     `,
     fetchExtraRows(since, until, false),
     fetchVideoCreditSalesRows(since, until),
+    demoScope(),
   ]);
+  const sigRows = allSigRows.filter(notDemo);
 
   const byDay = {};
   const add = (dateVal, net) => {
@@ -947,18 +961,22 @@ function extraSplit(amount, rate) {
 async function fetchExtraRows(since, until, withMeta) {
   try {
     await ensureDealExtrasTable();
+    const { notDemo } = await demoScope();
     if (withMeta) {
-      return await sql`
+      const rows = await sql`
         SELECT x.id, x.created_at, x.amount, x.vat_rate, x.description,
                d.id AS deal_id, c.name AS company
           FROM deal_extras x
           LEFT JOIN deals d ON d.id = x.deal_id
           LEFT JOIN companies c ON c.id = d.company_id
          WHERE x.created_at >= ${since} AND x.created_at < ${until}`;
+      return rows.filter(notDemo);
     }
-    return await sql`
-      SELECT created_at, amount, vat_rate FROM deal_extras
+    // deal_id is selected only so the demo filter has something to match on.
+    const rows = await sql`
+      SELECT created_at, amount, vat_rate, deal_id FROM deal_extras
        WHERE created_at >= ${since} AND created_at < ${until}`;
+    return rows.filter(notDemo);
   } catch {
     return [];
   }
@@ -976,11 +994,13 @@ async function fetchExtraRows(since, until, withMeta) {
 async function fetchStandaloneInvoiceRows(since, until, includeExcluded = false) {
   try {
     await ensureInvoiceExcludeColumn();
-    return await sql`
+    const { notDemo } = await demoScope();
+    const rows = await sql`
       SELECT mi.id, mi.invoice_number, mi.amount, mi.subtotal_ex_vat, mi.tax_amount,
              mi.status, COALESCE(mi.exclude_from_stats, false) AS exclude_from_stats,
              COALESCE(mi.issued_at, mi.created_at) AS at,
              COALESCE(mi.deal_id, pr.deal_id) AS deal_id,
+             COALESCE(mi.company_id, dd.company_id, dp.company_id) AS company_id,
              COALESCE(c.name, ddc.name, dpc.name) AS company
         FROM manual_invoices mi
         LEFT JOIN proposals pr  ON pr.id  = mi.proposal_id
@@ -999,6 +1019,7 @@ async function fetchStandaloneInvoiceRows(since, until, includeExcluded = false)
             WHERE p2.deal_id = COALESCE(mi.deal_id, pr.deal_id)
               AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
          )`;
+    return rows.filter(notDemo);
   } catch {
     return [];
   }
@@ -1013,11 +1034,13 @@ async function fetchStandaloneInvoiceRows(since, until, includeExcluded = false)
 // not existing → [].
 async function fetchVideoCreditSalesRows(since, until) {
   try {
-    return await sql`
-      SELECT created_at AS at, subtotal_ex_vat AS net
+    const { notDemo } = await demoScope();
+    const rows = await sql`
+      SELECT created_at AS at, subtotal_ex_vat AS net, company_id
         FROM video_credit_orders
        WHERE status IN ('invoiced', 'paid')
          AND created_at >= ${since} AND created_at < ${until}`;
+    return rows.filter(notDemo);
   } catch {
     return [];
   }
@@ -1040,12 +1063,13 @@ async function salesFinanceReport(year) {
   const since = `${year}-01-01T00:00:00.000Z`;
   const until = `${year + 1}-01-01T00:00:00.000Z`;
 
-  const sigRows = await sql`
-    SELECT s.signed_at, s.data->>'total' AS total, pr.data->>'vatRate' AS rate
+  const { notDemo } = await demoScope();
+  const sigRows = (await sql`
+    SELECT s.signed_at, s.data->>'total' AS total, pr.data->>'vatRate' AS rate, pr.deal_id
       FROM signatures s
       JOIN proposals pr ON pr.id = s.proposal_id
      WHERE s.signed_at >= ${since} AND s.signed_at < ${until}
-       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'`;
+       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'`).filter(notDemo);
   const extraRows = await fetchExtraRows(since, until, false);
 
   const monthsMap = {};
@@ -1113,7 +1137,8 @@ async function salesFinanceReport(year) {
 async function salesLedgerReport(action) {
   const { period, since, until } = parseIncomePeriod(action);
 
-  const sigRows = await sql`
+  const { notDemo } = await demoScope();
+  const sigRows = (await sql`
     SELECT s.signed_at, s.data->>'total' AS total, pr.data->>'vatRate' AS rate,
            d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
       FROM signatures s
@@ -1121,7 +1146,7 @@ async function salesLedgerReport(action) {
       LEFT JOIN deals d ON d.id = pr.deal_id
       LEFT JOIN companies c ON c.id = d.company_id
      WHERE s.signed_at >= ${since} AND s.signed_at < ${until}
-       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'`;
+       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'`).filter(notDemo);
   const extraRows = await fetchExtraRows(since, until, true);
 
   const rows = [];
@@ -1201,12 +1226,14 @@ async function trendReport(action) {
   }
 
   // Signings — cash generated + the deferred (owed) portion they create.
-  const sigRows = await sql`
-    SELECT s.signed_at, s.data->>'total' AS total, s.data->>'paymentOption' AS opt, pr.data->>'vatRate' AS rate
+  const { notDemo } = await demoScope();
+  const sigRows = (await sql`
+    SELECT s.signed_at, s.data->>'total' AS total, s.data->>'paymentOption' AS opt,
+           pr.data->>'vatRate' AS rate, pr.deal_id
       FROM signatures s
       JOIN proposals pr ON pr.id = s.proposal_id
      WHERE s.signed_at >= ${since} AND s.signed_at < ${until}
-       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'`;
+       AND (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'`).filter(notDemo);
   for (const r of sigRows) {
     if (!r.signed_at) continue;
     const b = buckets[monthKey(new Date(r.signed_at))];
@@ -1288,14 +1315,15 @@ async function pendingPaymentsReport() {
   } catch (err) { console.error('[stats] proposal-billing reconcile failed', err?.message || err); }
   // Per signature so we can aggregate committed + the deal's VAT rate + PO flag
   // in JS (vatRate parsed as text → avoids a risky SQL numeric cast).
-  const sigRows = await sql`
-    SELECT d.id AS did, p.id AS pid, s.data->>'total' AS total, p.data->>'vatRate' AS rate,
+  const { isDemo } = await demoScope();
+  const sigRows = (await sql`
+    SELECT d.id AS did, d.company_id, p.id AS pid, s.data->>'total' AS total, p.data->>'vatRate' AS rate,
            s.data->>'paymentOption' AS opt, p.number_year AS ny, p.number_seq AS ns
       FROM signatures s
       JOIN proposals p ON p.id = s.proposal_id
       JOIN deals d ON d.id = p.deal_id
      WHERE (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
-  `;
+  `).filter((r) => !isDemo(r));
   if (!sigRows.length) {
     const manual = await fetchManualPending();
     const other = await fetchRecurringOther();
@@ -1406,7 +1434,10 @@ async function pendingPaymentsReport() {
   // the deal's row as their own line.
   const extrasByDeal = await outstandingExtrasByDeal();
 
-  const dealIds = [...new Set([...committed.keys(), ...extrasByDeal.keys()])];
+  // committed is already demo-free (sigRows was filtered); extras come in by
+  // deal, so they need the same treatment.
+  const dealIds = [...new Set([...committed.keys(), ...extrasByDeal.keys()])]
+    .filter((did) => !isDemo({ dealId: did }));
   await ensureDealPo();
   const infoRows = await sql`
     SELECT d.id, d.title, d.stage, d.company_id, c.name AS company_name,
@@ -1543,6 +1574,7 @@ async function pendingPaymentsReport() {
   const companyInvoices = [];
   let companyInvoicedNet = 0;
   for (const r of companyInvRows) {
+    if (isDemo(r)) continue;
     const net = r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : (Number(r.amount) || 0);
     if (net <= 0.005) continue;
     const vat = r.tax_amount != null ? Number(r.tax_amount) : Math.max(0, (Number(r.amount) || 0) - net);
@@ -2024,9 +2056,12 @@ async function incomeReport(action) {
            AND pb.paid_at >= ${since} AND pb.paid_at < ${until}`,
   ]);
 
+  // Same exclusion as fetchPaidRows — this report unions the money sources
+  // itself (it needs the per-row edit keys), so it needs its own filter.
+  const { isDemo } = await demoScope();
   const rows = [];
   const push = (r, source, parts) => {
-    if (!r.paid_at) return;
+    if (!r.paid_at || isDemo(r)) return;
     rows.push({
       paidAt: new Date(r.paid_at).toISOString(),
       net: round2(parts.net), vat: round2(parts.vat), gross: round2(parts.gross),

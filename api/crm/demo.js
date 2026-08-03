@@ -18,8 +18,10 @@ import { ensurePortalTables } from '../_lib/portal/db.js';
 import { createRawToken, hashToken } from '../_lib/portal/auth.js';
 import { createPortalInvite, inviteUrlFor } from '../_lib/portal/onboarding.js';
 import { PORTAL_URL } from '../_lib/portal/emails.js';
+import { DEMO_COMPANY_NAME, invalidateDemoScope } from '../_lib/crm/demoScope.js';
 
-const DEMO_COMPANY_NAME = '[DEMO] Test Client';
+// The name lives in demoScope.js because Finance uses it to keep this project
+// out of every money figure — see the note there.
 // The portal lives at <app>/portal — use the same constant every portal email
 // uses. (A local `process.env.PORTAL_URL || APP_URL` guess silently degraded to
 // the CRM's own origin when PORTAL_URL wasn't set, so every "open the portal"
@@ -194,8 +196,18 @@ export default async function handler(req, res) {
     }
     if (req.method === 'POST') {
       const op = (req.query.op || '').toString();
-      if (op === 'seed') return res.status(200).json({ ok: true, ...(await seed(user.email)) });
-      if (op === 'delete') return res.status(200).json({ ok: true, ...(await teardown()) });
+      // Seeding/tearing down changes which deals Finance ignores — drop the
+      // cached set so the next report doesn't read a stale one.
+      if (op === 'seed') {
+        const out = await seed(user.email);
+        invalidateDemoScope();
+        return res.status(200).json({ ok: true, ...out });
+      }
+      if (op === 'delete') {
+        const out = await teardown();
+        invalidateDemoScope();
+        return res.status(200).json({ ok: true, ...out });
+      }
       if (op === 'portal-link') {
         const companyId = await findDemoCompany();
         if (!companyId) return res.status(404).json({ error: 'No demo project — seed one first.' });
