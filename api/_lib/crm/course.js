@@ -14,6 +14,7 @@
 //   PATCH  /api/crm/course/:id            → edit metadata / publish / reorder
 //   GET    /api/crm/course/:id/video      → same-origin byte relay (for PosterPicker)
 //   POST   /api/crm/course/:id/video      → attach a freshly-uploaded blob
+//   GET    /api/crm/course/:id/poster     → thumbnail bytes (drafts included)
 //   POST   /api/crm/course/:id/poster     → set the thumbnail (base64 JPEG)
 //   DELETE /api/crm/course/:id            → delete the module and its blob
 //
@@ -30,6 +31,9 @@ import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { ensureCourseTables } from '../course/db.js';
 import { adminModule } from '../course/serialisers.js';
+// Generic "base64 image data URL → bytes"; it lives in logo.js because that's
+// where the first caller was, but there's nothing logo-specific about it.
+import { decodeLogo as decodeImageDataUrl } from '../portal/logo.js';
 
 const REVISION_BLOB_TOKEN =
   process.env.REVISION_BLOB_READ_WRITE_TOKEN || process.env.REVIEW_BLOB_READ_WRITE_TOKEN;
@@ -202,7 +206,23 @@ async function attachVideo(req, res, existing) {
 }
 
 // The thumbnail, captured from a frame of the video itself by PosterPicker.
+//
+// GET serves the bytes. The public /api/course poster endpoint can't be reused
+// for the admin list because it (correctly) serves published videos only, and
+// choosing a thumbnail happens BEFORE publishing — so the admin would be shown
+// a broken image for the frame they had just picked. This one is behind
+// settings.manage and so has no reason to care whether the video is published.
 async function setPoster(req, res, existing) {
+  if (req.method === 'GET') {
+    const decoded = existing.poster ? decodeImageDataUrl(existing.poster) : null;
+    if (!decoded) return res.status(404).end();
+    res.setHeader('Content-Type', decoded.contentType);
+    res.setHeader('Content-Length', decoded.bytes.length);
+    // The URL carries ?v= stamped from poster_updated_at, so a replacement is a
+    // new URL and this can be cached hard. `private` — it's behind auth.
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    return res.status(200).end(decoded.bytes);
+  }
   if (req.method !== 'POST') return res.status(405).end();
   const poster = trimOrNull((req.body || {}).poster);
   if (!poster) {

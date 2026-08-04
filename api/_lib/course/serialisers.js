@@ -13,9 +13,20 @@
 
 // Poster bytes are served by the API rather than inlined: posters are base64
 // JPEGs and eight of them would bloat the landing payload by ~1MB.
+//
+// Two paths, because the two callers have opposite requirements. The public one
+// serves PUBLISHED videos only. The admin one must serve DRAFTS too — picking a
+// thumbnail is something you do before publishing, so a published-only endpoint
+// would show the admin a broken image at exactly the moment they need to see
+// the frame they just grabbed.
 export const posterPath = (slug, version) =>
   `/api/course?action=poster&slug=${encodeURIComponent(slug)}` +
   (version ? `&v=${encodeURIComponent(version)}` : '');
+
+// Behind CRM auth (settings.manage), so it can ignore `published`.
+export const adminPosterPath = (id, version) =>
+  `/api/crm/course/${encodeURIComponent(id)}/poster` +
+  (version ? `?v=${encodeURIComponent(version)}` : '');
 
 const posterVersion = (updatedAt) => {
   if (!updatedAt) return null;
@@ -58,7 +69,7 @@ export function adminModule(row) {
     sizeBytes: row.size_bytes != null ? Number(row.size_bytes) : null,
     durationSeconds: row.duration_seconds ?? null,
     hasPoster: !!row.poster,
-    posterUrl: row.poster ? posterPath(row.slug, posterVersion(row.poster_updated_at)) : null,
+    posterUrl: row.poster ? adminPosterPath(row.id, posterVersion(row.poster_updated_at)) : null,
     free: !!row.free,
     published: !!row.published,
     sortOrder: row.sort_order ?? null,
