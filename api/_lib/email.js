@@ -2,6 +2,15 @@ import { Resend } from 'resend';
 import sql from './db.js';
 
 const FROM = process.env.MAIL_FROM || 'Squideo CRM <noreply@squideo.co.uk>';
+
+// Marketing sends should leave from a SEPARATE sending subdomain (set
+// MAIL_FROM_MARKETING, e.g. "Squideo <hello@mail.squideo.co.uk>"). Marketing
+// volume to semi-cold addresses attracts complaints, and a reputation hit on
+// the main domain would degrade delivery of invoices and password resets —
+// the emails that actually matter. Falls back to FROM so nothing breaks
+// before the subdomain is set up, but set it before the first campaign.
+const MARKETING_FROM = process.env.MAIL_FROM_MARKETING || FROM;
+
 export const APP_URL = process.env.APP_URL || 'https://app.squideo.com';
 
 // Admin recipients for payment-received notifications, minus the proposal
@@ -24,18 +33,55 @@ function getClient() {
   return client;
 }
 
-// Sends a transactional email. Failures are caught and logged so the calling
-// API route doesn't 500 on a transient SMTP issue. Callers that need to know
-// whether the send succeeded (e.g. the 2FA code flow) should pass
-// `{ throwOnError: true }` and handle the rejection.
-export async function sendMail({ to, cc, subject, html, text, replyTo = null, throwOnError = false }) {
+// Sends an email. Failures are caught and logged so the calling API route
+// doesn't 500 on a transient SMTP issue. Callers that need to know whether the
+// send succeeded (e.g. the 2FA code flow) should pass `{ throwOnError: true }`
+// and handle the rejection.
+//
+// `scope` decides two things:
+//   'transactional' (default) — invoices, resets, review requests, portal
+//        notifications. Sent from MAIL_FROM. Only ever blocked by an 'all'
+//        suppression (a hard bounce or spam complaint).
+//   'marketing' — the course nudges and anything else that sells rather than
+//        serves. Sent from MAIL_FROM_MARKETING when configured, and filtered
+//        through the suppression list.
+//
+// Enforcing it HERE rather than in each campaign is the whole point: a
+// suppression list that individual senders have to remember to consult is one
+// forgotten call away from a PECR complaint.
+//
+// `headers` carries List-Unsubscribe for marketing sends.
+export async function sendMail({
+  to, cc, subject, html, text, replyTo = null, throwOnError = false,
+  scope = 'transactional', headers = null,
+}) {
   const c = getClient();
   const clean = (v) => (Array.isArray(v) ? v : [v])
     .map(r => (typeof r === 'string' ? r.trim() : r))
     .filter(Boolean);
-  const recipients = clean(to);
-  const copied = clean(cc);
+  let recipients = clean(to);
+  let copied = clean(cc);
   if (!recipients.length) return;
+
+  // Suppression check. A marketing send drops anyone who has unsubscribed; any
+  // send drops an address suppressed with scope 'all'.
+  try {
+    const { suppressedAmong } = await import('./emailSuppression.js');
+    const blocked = await suppressedAmong([...recipients, ...copied], scope);
+    if (blocked.size) {
+      const keep = (e) => !blocked.has(String(e).trim().toLowerCase());
+      recipients = recipients.filter(keep);
+      copied = copied.filter(keep);
+      if (!recipients.length) {
+        console.info('[email] all recipients suppressed — not sending', { subject, scope });
+        return;
+      }
+    }
+  } catch (err) {
+    // Never let the suppression lookup take down a transactional send.
+    console.warn('[email] suppression check failed', err.message);
+  }
+
   if (!c) {
     console.warn('[email] RESEND_API_KEY missing — skipping send', { subject, to: recipients });
     if (throwOnError) throw new Error('Email transport not configured');
@@ -45,9 +91,13 @@ export async function sendMail({ to, cc, subject, html, text, replyTo = null, th
     // replyTo matters when we send ON BEHALF of a staff member (e.g. a client
     // review email from someone whose Gmail isn't connected) — the client
     // replies to a person, not to the no-reply sender.
-    const message = { from: FROM, to: recipients, subject, html, text };
+    const message = {
+      from: scope === 'marketing' ? MARKETING_FROM : FROM,
+      to: recipients, subject, html, text,
+    };
     if (copied.length) message.cc = copied;
     if (replyTo) message.replyTo = replyTo;
+    if (headers && Object.keys(headers).length) message.headers = headers;
     await c.emails.send(message);
   } catch (err) {
     console.error('[email] send failed', { subject, to: recipients, err: err.message });

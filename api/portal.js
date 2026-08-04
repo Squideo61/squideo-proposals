@@ -114,6 +114,7 @@ import {
 import { ensureCourseTables } from './_lib/course/db.js';
 import { createCourseSignup, SignupError } from './_lib/course/signup.js';
 import { applyTag } from './_lib/crm/tags.js';
+import { scheduleCourseEmails, cancelCourseEmails } from './_lib/course/emails.js';
 import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from './_lib/portal/drive.js';
 import {
   serialisePortalDeal,
@@ -719,6 +720,9 @@ async function stampCourseCompletionIfDone(req, puid) {
     await applyTag(updated[0].contact_id, 'course-completed', {
       label: 'Course completed', colour: '#15803D', by: 'system:course',
     });
+    // Stop the nudges. The cron re-checks this anyway, but cancelling now means
+    // the rows are visibly dead rather than looking due until the sweep runs.
+    await cancelCourseEmails(updated[0].id);
   }
 }
 
@@ -984,6 +988,9 @@ async function authRoutes(req, res) {
     if (result.outcome === 'created') {
       await issuePortalSession(res, result.user, req);
       await logPortalActivity({ req, portalUserId: result.user.id, eventKey: 'course.signup' });
+      // Queue the nudge series. Nothing sends until the cron is enabled in
+      // Admin → Crash course, and every step re-checks its gates at send time.
+      await scheduleCourseEmails(result.signupId, result.user.email);
       // Best-effort: a failed welcome email must not cost them the account they
       // just created and are already signed in to.
       try {

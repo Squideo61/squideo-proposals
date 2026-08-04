@@ -20,7 +20,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   GraduationCap, Plus, Upload, Trash2, Eye, EyeOff, Image as ImageIcon,
-  Loader2, PlayCircle, Unlock, Lock, ArrowUp, ArrowDown, ExternalLink,
+  Loader2, PlayCircle, Unlock, Lock, ArrowUp, ArrowDown, ExternalLink, Mail,
 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
@@ -177,7 +177,91 @@ export function CourseTab() {
           <Plus size={14} /> Add a video
         </button>
       )}
+
+      <NudgeEmails />
     </div>
+  );
+}
+
+// The follow-up sequence. Deliberately a single on/off switch rather than a
+// copy editor: the emails are behaviour-aware (they name the video someone
+// stopped at, and cancel themselves when a person finishes or gets in touch),
+// so free-text editing would break more than it enabled. Copy changes go
+// through api/_lib/course/emails.js.
+const STEPS = [
+  { day: 2,  name: 'Nudge 1', what: 'Names the video they stopped at, or that they haven\'t started.' },
+  { day: 5,  name: 'Nudge 2', what: 'The storyboard video — the expensive mistake.' },
+  { day: 9,  name: 'Nudge 3', what: 'Distribution. "Nobody plans it."' },
+  { day: 14, name: 'Offer 1', what: 'Offers to sanity-check their brief.', consent: true },
+  { day: 25, name: 'Offer 2', what: 'Asks if they want a price. Last one.', consent: true },
+];
+
+function NudgeEmails() {
+  const { state, actions, showMsg } = useStore();
+  const enabled = state.courseEmails?.enabled === true;
+  const [busy, setBusy] = useState(false);
+
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      await actions.saveCourseEmails({ ...(state.courseEmails || {}), enabled: !enabled });
+      showMsg(enabled ? 'Follow-up emails paused' : 'Follow-up emails switched on');
+    } catch (err) {
+      showMsg(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section style={{ marginTop: 34, borderTop: '1px solid ' + BRAND.border, paddingTop: 22 }}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 15.5, fontWeight: 700, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Mail size={16} color={BRAND.blue} /> Follow-up emails
+      </h3>
+      <p style={{ margin: '0 0 14px', fontSize: 12.5, color: BRAND.muted, lineHeight: 1.55 }}>
+        Five emails over 25 days, to people who signed up but haven't finished. Each one
+        re-checks before it sends: anyone who finishes the course, sends an enquiry or
+        unsubscribes drops out of the rest of the sequence automatically.
+      </p>
+
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', marginBottom: 14,
+        borderRadius: 10, background: enabled ? '#EDFBF2' : '#FFF8EB',
+        border: '1px solid ' + (enabled ? '#9BE0B7' : '#F5C26B'),
+      }}>
+        <div style={{ flex: 1, fontSize: 13, color: enabled ? '#15803D' : '#B45309', lineHeight: 1.5 }}>
+          <strong>{enabled ? 'Sending' : 'Paused'}</strong>
+          {' — '}
+          {enabled
+            ? 'the daily job is sending these to eligible signups.'
+            : 'nothing is being sent. Signups are still queued, so switching on picks them up.'}
+        </div>
+        <button className={enabled ? 'btn-ghost' : 'btn'} onClick={toggle} disabled={busy} style={{ fontSize: 12.5, flexShrink: 0 }}>
+          {busy ? 'Saving…' : enabled ? 'Pause' : 'Switch on'}
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {STEPS.map((s) => (
+          <div key={s.name} style={{ display: 'flex', gap: 10, fontSize: 12.5, alignItems: 'baseline' }}>
+            <span style={{ width: 52, flexShrink: 0, color: BRAND.muted, fontWeight: 700 }}>Day {s.day}</span>
+            <span style={{ width: 62, flexShrink: 0, fontWeight: 600, color: BRAND.ink }}>{s.name}</span>
+            <span style={{ flex: 1, color: BRAND.muted, lineHeight: 1.5 }}>
+              {s.what}
+              {s.consent && (
+                <span style={{ color: '#B45309', fontWeight: 600 }}> · only to people who ticked the marketing box</span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 14, fontSize: 11.5, color: BRAND.muted, lineHeight: 1.55 }}>
+        Every email carries a one-click unsubscribe. Unsubscribing stops <em>all</em> Squideo
+        marketing, not just this sequence — invoices, review requests and project updates keep
+        working, because those aren't marketing.
+      </div>
+    </section>
   );
 }
 

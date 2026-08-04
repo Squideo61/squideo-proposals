@@ -43,6 +43,10 @@ function ensureFinanceTargetsColumn() {
     // { enabled, everyDays, maxReminders, subject, bodyHtml } — read by
     // cronClientTaskReminders. null until an admin saves one.
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS task_reminders JSONB`;
+    // Crash-course nudge sequence config (Admin → Crash course). { enabled }
+    // — read by cronCourseNudges. Off until an admin turns it on, so the
+    // sequence can never start sending the moment it deploys.
+    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS course_emails JSONB`;
   })().catch((err) => { financeTargetsColumnEnsured = null; throw err; });
   return financeTargetsColumnEnsured;
 }
@@ -57,7 +61,7 @@ export default async function handler(req, res) {
   await ensureFinanceTargetsColumn();
 
   if (req.method === 'GET') {
-    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal, project_tasks_email, voiceover_pricing, task_reminders FROM settings WHERE id = 1`;
+    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal, project_tasks_email, voiceover_pricing, task_reminders, course_emails FROM settings WHERE id = 1`;
     const row = rows[0];
     return res.status(200).json({
       extrasBank: row.extras_bank,
@@ -74,6 +78,9 @@ export default async function handler(req, res) {
       voiceoverPricing: row.voiceover_pricing || null,
       // Automatic client-task reminder cadence + copy. null until first saved.
       taskReminders: row.task_reminders || null,
+      // Crash-course nudge sequence. null until first saved (cron treats that
+      // as disabled).
+      courseEmails: row.course_emails || null,
       financeTargets: Array.isArray(row.finance_targets) && row.finance_targets.length
         ? row.finance_targets
         : DEFAULT_FINANCE_TARGETS,
@@ -93,7 +100,7 @@ export default async function handler(req, res) {
     if (!hasPermission(await getRole(user.role), 'settings.manage')) {
       return res.status(403).json({ error: 'You do not have permission to edit workspace settings' });
     }
-    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal, projectTasksEmail, voiceoverPricing, taskReminders } = req.body || {};
+    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal, projectTasksEmail, voiceoverPricing, taskReminders, courseEmails } = req.body || {};
     await sql`
       UPDATE settings SET
         extras_bank             = COALESCE(${extrasBank ? JSON.stringify(extrasBank) : null}::jsonb, extras_bank),
@@ -106,7 +113,8 @@ export default async function handler(req, res) {
         default_proposal        = COALESCE(${defaultProposal ? JSON.stringify(defaultProposal) : null}::jsonb, default_proposal),
         project_tasks_email     = COALESCE(${projectTasksEmail ? JSON.stringify(projectTasksEmail) : null}::jsonb, project_tasks_email),
         voiceover_pricing       = COALESCE(${voiceoverPricing ? JSON.stringify(voiceoverPricing) : null}::jsonb, voiceover_pricing),
-        task_reminders          = COALESCE(${taskReminders ? JSON.stringify(taskReminders) : null}::jsonb, task_reminders)
+        task_reminders          = COALESCE(${taskReminders ? JSON.stringify(taskReminders) : null}::jsonb, task_reminders),
+        course_emails           = COALESCE(${courseEmails ? JSON.stringify(courseEmails) : null}::jsonb, course_emails)
       WHERE id = 1
     `;
     return res.status(200).json({ ok: true });

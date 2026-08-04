@@ -12,6 +12,8 @@ import { signTaskActionToken } from '../auth.js';
 import { spawnRecurringSuccessor } from './tasks.js';
 import { quarterTaxSummary } from './stats.js';
 import { cronAdSpendSync } from './googleAds.js';
+import { ensureSuppressionTable, listUnsubscribeHeaders } from '../emailSuppression.js';
+import { ensureCourseEmails, cancelCourseEmails, buildCourseEmail, firstName, SEQUENCE } from '../course/emails.js';
 import { cronGscSync } from './googleSearch.js';
 import { cronGa4Sync } from './googleAnalytics.js';
 import { captureCostSnapshot } from './costSnapshot.js';
@@ -56,6 +58,7 @@ export async function cronHandler(req, res, action) {
     case 'gsc-sync':          return cronGscSync(res);
     case 'ga4-sync':          return cronGa4Sync(res);
     case 'cost-snapshot':     return cronCostSnapshot(res);
+    case 'course-nudges':     return cronCourseNudges(req, res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }
@@ -1164,4 +1167,107 @@ async function cronIntroCallReminders(req, res) {
   }
 
   return res.status(200).json({ ok: true, candidates: bookings.length, emailed, tasksCreated });
+}
+
+// ═════════════════ crash-course nudges ═════════════════
+// Daily. Sends the next due nudge to anyone still working through the course.
+//
+// Every gate is re-checked HERE, at send time, not when the row was scheduled
+// nine days ago. The whole failure mode this avoids is sending "you stopped
+// after video 2" to someone who finished the course a week ago — which reads
+// as though nobody is paying attention, and is worse than sending nothing.
+export async function cronCourseNudges(req, res) {
+  await ensureCourseEmails();
+  await ensureSuppressionTable();
+
+  // Off by default so the sequence can't start sending the moment it deploys.
+  // Turn it on in Admin → Crash course when the copy has been read.
+  const [cfg] = await sql`SELECT course_emails FROM settings WHERE id = 1`.catch(() => []);
+  const config = cfg?.course_emails || {};
+  const force = req?.query?.force === '1';
+  if (!config.enabled && !force) {
+    return res.status(200).json({ ok: true, skipped: 'disabled', found: 0, sent: 0 });
+  }
+
+  const due = await sql`
+    SELECT e.id, e.kind, e.email, e.course_signup_id,
+           s.name, s.completed_at, s.marketing_consent, s.portal_user_id,
+           (SELECT COUNT(*)::int FROM course_progress p
+              JOIN course_modules m ON m.id = p.module_id
+             WHERE p.portal_user_id = s.portal_user_id
+               AND m.published AND p.completed_at IS NOT NULL) AS videos_done,
+           (SELECT COUNT(*)::int FROM course_modules WHERE published) AS total_videos,
+           (SELECT COUNT(*)::int FROM quote_requests q
+             WHERE LOWER(q.email) = LOWER(s.email)) AS enquiries,
+           (SELECT m2.title FROM course_modules m2
+             WHERE m2.published
+               AND NOT EXISTS (SELECT 1 FROM course_progress p2
+                                WHERE p2.module_id = m2.id
+                                  AND p2.portal_user_id = s.portal_user_id
+                                  AND p2.completed_at IS NOT NULL)
+             ORDER BY COALESCE(m2.sort_order, m2.module_number) LIMIT 1) AS next_title
+      FROM course_emails e
+      JOIN course_signups s ON s.id = e.course_signup_id
+     WHERE e.sent_at IS NULL AND e.cancelled_at IS NULL AND e.scheduled_for <= NOW()
+     ORDER BY e.scheduled_for ASC
+     LIMIT 200
+  `.catch((err) => { console.error('[cron course-nudges] query failed', err.message); return []; });
+
+  let sent = 0;
+  let skipped = 0;
+
+  for (const row of due) {
+    try {
+      const step = SEQUENCE.find((s) => s.kind === row.kind);
+
+      // Finished the course → every remaining nudge is redundant. Cancel the
+      // lot rather than just this one, so we stop asking every day.
+      if (row.completed_at) {
+        await cancelCourseEmails(row.course_signup_id);
+        skipped++;
+        continue;
+      }
+      // Already in touch → stop selling. They're a conversation now, not a list.
+      if (row.enquiries > 0) {
+        await cancelCourseEmails(row.course_signup_id);
+        skipped++;
+        continue;
+      }
+      // The two sales emails need the marketing tick. Cancel rather than defer:
+      // consent isn't going to appear on its own.
+      if (step?.needsConsent && row.marketing_consent !== true) {
+        await cancelCourseEmails(row.course_signup_id, [row.kind]);
+        skipped++;
+        continue;
+      }
+
+      const built = buildCourseEmail(row.kind, {
+        email: row.email,
+        name: firstName(row.name),
+        videosDone: Number(row.videos_done || 0),
+        totalVideos: Number(row.total_videos || 0),
+        nextTitle: row.next_title || null,
+      });
+      if (!built) { skipped++; continue; }
+
+      // scope:'marketing' routes this through the suppression list and the
+      // marketing sending domain inside sendMail itself.
+      await sendMail({
+        to: row.email,
+        subject: built.subject,
+        html: built.html,
+        text: built.text,
+        scope: 'marketing',
+        headers: listUnsubscribeHeaders(row.email, 'course'),
+      });
+
+      await sql`UPDATE course_emails SET sent_at = NOW() WHERE id = ${row.id}`;
+      sent++;
+    } catch (err) {
+      // One bad row must not stop the sweep.
+      console.error('[cron course-nudges] send failed', { id: row.id, err: err.message });
+    }
+  }
+
+  return res.status(200).json({ ok: true, found: due.length, sent, skipped });
 }

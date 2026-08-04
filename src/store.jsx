@@ -476,6 +476,7 @@ export function StoreProvider({ children }) {
         voiceoverPricing: settings?.voiceoverPricing || null,
         // Automatic client-task reminder cadence + copy; null until first saved.
         taskReminders: settings?.taskReminders || null,
+        courseEmails: settings?.courseEmails || null,
         loading: false,
       }));
     });
@@ -2879,6 +2880,14 @@ export function StoreProvider({ children }) {
       saveTimers.current.__taskReminders = setTimeout(() => {
         api.put('/api/settings', { taskReminders: data }).catch(() => {});
       }, 800);
+    },
+    // Crash-course follow-up sequence on/off (Admin → Crash course).
+    // Not debounced like the others: this is a single switch that decides
+    // whether marketing email sends, so the caller needs to know it landed —
+    // and a "saved" toast over a failed write would be a real problem here.
+    saveCourseEmails(data) {
+      setState(s => ({ ...s, courseEmails: data }));
+      return api.put('/api/settings', { courseEmails: data });
     },
     getGmailSignature() {
       // Returns { signatureHtml, fetchedAt, diagnostics? } from the cached

@@ -46,6 +46,11 @@ async function notifyFirstOpen(token, geo) {
         FROM email_tracking WHERE token = ${token}`;
     const t = rows[0];
     if (!t || !t.user_email || t.open_notified_at) return;
+    // System-sent campaigns (course nudges and anything else marked
+    // `system:*`) aren't anyone's personal email. Without this, every prospect
+    // opening a marketing email rings a staff bell — hundreds of notifications
+    // that mean nothing, which is how people learn to ignore the bell.
+    if (String(t.user_email).startsWith('system:')) return;
     // Skip the delivery-time prefetch; a later genuine open will notify.
     if (Date.now() < new Date(t.sent_at).getTime() + OPEN_PREFETCH_MS) return;
 

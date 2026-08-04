@@ -79,6 +79,10 @@
       "schedule": "0 7 * * *"
     },
     {
+      "path": "/api/crm/cron/course-nudges",
+      "schedule": "0 10 * * *"
+    },
+    {
       "path": "/api/crm/cron/gmail-watch-renew",
       "schedule": "0 5 * * *"
     },
