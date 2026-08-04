@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, Images, Paperclip, X, FileDown, CheckCircle2, CalendarClock, MapPin, ChevronUp, ChevronDown, Pencil, Trash2 } from 'lucide-react';
+import { MessageSquare, Send, Images, Paperclip, X, FileDown, CheckCircle2, CalendarClock, MapPin, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Pencil, Trash2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
+import { useIsMobile } from '../../utils.js';
 import { loadPdf } from '../../lib/pdf.js';
 import { PdfPage } from './PdfPage.jsx';
 import { PdfThumb } from './PdfThumb.jsx';
@@ -21,13 +22,53 @@ const DRAFT_SVG = encodeURIComponent(
 const isEmail = (e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 
 // Round prev/next slide button (disabled state dims + blocks the click).
-function navBtn(disabled) {
+// Bigger on a phone so it clears the ~44px touch target.
+function navBtn(disabled, big = false) {
+  const size = big ? 44 : 34;
   return {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    width: 34, height: 34, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.25)',
-    background: 'rgba(255,255,255,0.08)', color: '#fff',
+    width: size, height: size, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.25)',
+    background: 'rgba(255,255,255,0.08)', color: '#fff', padding: 0,
     cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1,
   };
+}
+
+// Slide picker. Vertical column on desktop; on a phone the same thumbnails run
+// as a horizontally-scrolling filmstrip so they cost ~90px of height instead of
+// 148px of width.
+function SlideRail({ pages, pageNumber, goToPage, comments, versionId, pdfUrl, horizontal = false }) {
+  const thumbWidth = horizontal ? 84 : 120;
+  return (
+    <div style={horizontal
+      ? { flexShrink: 0, display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch',
+          background: '#0B1B26', borderTop: '1px solid rgba(255,255,255,0.08)', padding: '8px 10px' }
+      : { width: 148, flexShrink: 0, overflowY: 'auto', background: '#0B1B26',
+          borderRight: '1px solid rgba(255,255,255,0.08)', padding: 10 }}>
+      {pages.map(n => {
+        const count = comments.filter(c => c.versionId === versionId && (c.pageNumber || 1) === n).length;
+        const active = n === pageNumber;
+        return (
+          <button key={n} onClick={() => goToPage(n)}
+            style={{ display: 'block', flexShrink: horizontal ? 0 : undefined,
+              width: horizontal ? undefined : '100%', marginBottom: horizontal ? 0 : 10,
+              padding: 4, borderRadius: 6,
+              border: active ? `2px solid ${BRAND.blue}` : '2px solid transparent', background: 'transparent',
+              cursor: 'pointer', position: 'relative' }}>
+            <PdfThumb url={pdfUrl} pageNumber={n} width={thumbWidth} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              color: active ? '#fff' : 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 3 }}>
+              <span>{horizontal ? n : `Slide ${n}`}</span>
+              {count > 0 && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                  <MessageSquare size={11} /> {count}
+                </span>
+              )}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // A draft's display name. Older drafts auto-labelled "Version N" fall back to
@@ -64,6 +105,12 @@ function CommentAttachment({ url, name, type }) {
  */
 export function StoryboardRevision({ token, data, api, showMsg, identity = null, embedded = false }) {
   const preIdentified = !!(identity && isEmail(identity.email || ''));
+  // Phones get a stacked layout: the desktop three-column split (148px slide
+  // rail + slide + 380px thread) leaves the slide a few pixels wide on a 390px
+  // screen, so the client sees an empty page.
+  const isMobile = useIsMobile();
+  // ≥16px inputs stop iOS Safari zooming in when the field takes focus.
+  const inputFont = isMobile ? 16 : 13;
 
   // ── Name + email gate (skipped for a pre-identified portal user) ────────────
   const [name, setName] = useState(() => identity?.name || localStorage.getItem(NAME_KEY) || '');
@@ -341,13 +388,14 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
             Please enter your details to view and comment on this storyboard.
           </p>
           <label style={{ fontSize: 12, color: BRAND.muted }}>Your name</label>
-          <input value={gateName} onChange={e => setGateName(e.target.value)} autoFocus
+          <input value={gateName} onChange={e => setGateName(e.target.value)} autoFocus={!isMobile}
             style={{ width: '100%', padding: 9, borderRadius: 8, border: `1px solid ${BRAND.border}`,
-              margin: '4px 0 12px', boxSizing: 'border-box', fontSize: 14 }} />
+              margin: '4px 0 12px', boxSizing: 'border-box', fontSize: isMobile ? 16 : 14 }} />
           <label style={{ fontSize: 12, color: BRAND.muted }}>Your email</label>
           <input value={gateEmail} onChange={e => setGateEmail(e.target.value)} type="email"
+            inputMode="email" autoCapitalize="none" autoCorrect="off"
             style={{ width: '100%', padding: 9, borderRadius: 8, border: `1px solid ${BRAND.border}`,
-              margin: '4px 0 18px', boxSizing: 'border-box', fontSize: 14 }} />
+              margin: '4px 0 18px', boxSizing: 'border-box', fontSize: isMobile ? 16 : 14 }} />
           <button type="submit"
             style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: 'none',
               background: BRAND.blue, color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
@@ -368,27 +416,33 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
   }
 
   const pages = Array.from({ length: pageCount }, (_, i) => i + 1);
+  const railProps = { pages, pageNumber, goToPage, comments, versionId: version.id, pdfUrl: version.pdfUrl };
 
   return (
     <div style={embedded
       ? { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }
-      : { display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      : { display: 'flex', flexDirection: 'column', height: isMobile ? '100dvh' : '100vh' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px',
+      <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 12,
+        padding: isMobile ? '10px 12px' : '12px 18px', flexShrink: 0,
         borderBottom: `1px solid ${BRAND.border}`, background: '#fff', flexWrap: 'wrap' }}>
         <Images size={20} color={BRAND.blue} />
-        <strong style={{ color: BRAND.ink, fontSize: 15 }}>{data.title}</strong>
-        {data.clientName && <span style={{ color: BRAND.muted, fontSize: 13 }}>· {data.clientName}</span>}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <strong style={{ color: BRAND.ink, fontSize: isMobile ? 14 : 15, minWidth: 0, overflow: 'hidden',
+          textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{data.title}</strong>
+        {data.clientName && !isMobile && <span style={{ color: BRAND.muted, fontSize: 13 }}>· {data.clientName}</span>}
+        <div style={{ marginLeft: isMobile ? 0 : 'auto', width: isMobile ? '100%' : undefined,
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {storyboards.length > 1 && (
             <div title="This project has more than one storyboard — switch between them here"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 8px 5px 12px',
-                borderRadius: 10, border: `2px solid ${BRAND.blue}`, background: '#EAF6FB' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px 5px 12px',
+                borderRadius: 10, border: `2px solid ${BRAND.blue}`, background: '#EAF6FB',
+                width: isMobile ? '100%' : undefined, boxSizing: 'border-box' }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: BRAND.blue, whiteSpace: 'nowrap' }}>
                 <Images size={14} /> Storyboard {storyboards.findIndex(s => s.id === activeStoryboard.id) + 1} of {storyboards.length}
               </span>
               <select value={storyboardId} onChange={e => selectStoryboard(e.target.value)}
-                style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${BRAND.blue}`, fontSize: 14,
+                style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${BRAND.blue}`,
+                  fontSize: isMobile ? 16 : 14, flex: isMobile ? 1 : undefined, minWidth: 0,
                   fontWeight: 700, color: BRAND.ink, background: '#fff', cursor: 'pointer' }}>
                 {storyboards.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
               </select>
@@ -396,26 +450,30 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
           )}
           {versions.length > 1 && (
             <select value={version.id} onChange={e => selectVersion(e.target.value)}
-              style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`, fontSize: 13 }}>
+              style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`,
+                fontSize: inputFont, minWidth: 0 }}>
               {versions.map(v => <option key={v.id} value={v.id}>{draftLabel(v)}</option>)}
             </select>
           )}
           {data.callUrl && (
             <a href={data.callUrl} target="_blank" rel="noreferrer"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: isMobile ? '9px 12px' : '7px 12px', borderRadius: 8,
                 border: `1px solid ${BRAND.border}`, background: '#fff', color: BRAND.ink, fontSize: 13,
                 fontWeight: 600, textDecoration: 'none' }}>
               <CalendarClock size={15} color={BRAND.blue} /> Schedule Review Call
             </a>
           )}
           {approvedAt ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
+            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              padding: isMobile ? '9px 12px' : '7px 12px', borderRadius: 8, flex: isMobile ? 1 : undefined,
               background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600 }}>
               <CheckCircle2 size={15} /> Storyboard finalised
             </span>
           ) : (
             <button onClick={finalise} disabled={approving}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: isMobile ? '10px 12px' : '7px 12px', borderRadius: 8, flex: isMobile ? 1 : undefined,
                 border: 'none', background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600,
                 cursor: approving ? 'default' : 'pointer' }}>
               <CheckCircle2 size={15} /> {approving ? 'Sending…' : 'Finalise and send revisions'}
@@ -426,39 +484,26 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
 
       <ConflictBanner activeViewers={activeViewers} />
 
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        {/* Slide thumbnail rail */}
-        <div style={{ width: 148, flexShrink: 0, overflowY: 'auto', background: '#0B1B26',
-          borderRight: '1px solid rgba(255,255,255,0.08)', padding: 10 }}>
-          {pages.map(n => {
-            const count = comments.filter(c => c.versionId === version.id && (c.pageNumber || 1) === n).length;
-            const active = n === pageNumber;
-            return (
-              <button key={n} onClick={() => goToPage(n)}
-                style={{ display: 'block', width: '100%', marginBottom: 10, padding: 4, borderRadius: 6,
-                  border: active ? `2px solid ${BRAND.blue}` : '2px solid transparent', background: 'transparent',
-                  cursor: 'pointer', position: 'relative' }}>
-                <PdfThumb url={version.pdfUrl} pageNumber={n} width={120} />
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                  color: active ? '#fff' : 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 3 }}>
-                  <span>Slide {n}</span>
-                  {count > 0 && (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                      <MessageSquare size={11} /> {count}
-                    </span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-        </div>
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', flex: 1, minHeight: 0 }}>
+        {/* Slide thumbnail rail — a left column on desktop, a horizontal
+            filmstrip under the slide on a phone (a 148px column would eat
+            two-fifths of the screen). */}
+        {!isMobile && <SlideRail {...railProps} />}
 
         {/* Current slide + bottom navigator */}
-        <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', background: '#0B1B26', minWidth: 0 }}>
+        <div style={{ flex: isMobile ? '0 0 auto' : '1 1 auto', display: 'flex', flexDirection: 'column',
+          background: '#0B1B26', minWidth: 0 }}>
           {/* Slide area: grows to fill the pane, slide centred; scrolls if a
               slide is taller than the space. The navigator below stays put. */}
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', padding: 18 }}>
-            <div style={{ position: 'relative', maxWidth: 900, width: '100%', margin: 'auto' }}>
+          <div style={{ flex: isMobile ? '0 0 auto' : 1, minHeight: 0,
+            maxHeight: isMobile ? '36dvh' : undefined,
+            // A tall slide inside a centred flex box can have its top clipped
+            // out of scroll reach, so on mobile (where that's likely) the slide
+            // sits at the top and scrolls normally.
+            overflow: 'auto', display: 'flex', alignItems: isMobile ? 'flex-start' : undefined,
+            padding: isMobile ? 10 : 18 }}>
+            <div style={{ position: 'relative', maxWidth: 900, width: '100%',
+              margin: isMobile ? '0 auto' : 'auto' }}>
               <PdfPage
                 url={version.pdfUrl}
                 pageNumber={pageNumber}
@@ -477,12 +522,13 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
 
           {/* Navigator pinned to the bottom of the pane (Frame.io-style) so it
               never moves when the slide's aspect ratio changes. */}
-          <div style={{ flexShrink: 0, padding: '12px 18px 14px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+          <div style={{ flexShrink: 0, padding: isMobile ? '8px 12px 10px' : '12px 18px 14px',
+            borderTop: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
               <button onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1}
                 title="Previous slide"
-                style={navBtn(pageNumber <= 1)}>
-                <ChevronUp size={18} />
+                style={navBtn(pageNumber <= 1, isMobile)}>
+                {isMobile ? <ChevronLeft size={20} /> : <ChevronUp size={18} />}
               </button>
               <span style={{ color: '#fff', fontSize: 13, minWidth: 64, textAlign: 'center' }}>
                 <strong>{pageNumber}</strong>
@@ -490,21 +536,26 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
               </span>
               <button onClick={() => goToPage(pageNumber + 1)} disabled={pageNumber >= pageCount}
                 title="Next slide"
-                style={navBtn(pageNumber >= pageCount)}>
-                <ChevronDown size={18} />
+                style={navBtn(pageNumber >= pageCount, isMobile)}>
+                {isMobile ? <ChevronRight size={20} /> : <ChevronDown size={18} />}
               </button>
             </div>
             {!approvedAt && (
               <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 8 }}>
-                Click anywhere on the slide to pin a comment to that spot.
+                {isMobile ? 'Tap the slide to pin a comment to that spot.'
+                  : 'Click anywhere on the slide to pin a comment to that spot.'}
               </div>
             )}
           </div>
+
+          {isMobile && <SlideRail {...railProps} horizontal />}
         </div>
 
         {/* Comment thread (current slide) */}
-        <div style={{ width: 380, flexShrink: 0, display: 'flex', flexDirection: 'column',
-          borderLeft: `1px solid ${BRAND.border}`, background: '#fff' }}>
+        <div style={{ width: isMobile ? '100%' : 380, flex: isMobile ? '1 1 auto' : '0 0 auto',
+          minHeight: 0, display: 'flex', flexDirection: 'column',
+          borderLeft: isMobile ? undefined : `1px solid ${BRAND.border}`,
+          borderTop: isMobile ? `1px solid ${BRAND.border}` : undefined, background: '#fff' }}>
           <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BRAND.border}`,
             display: 'flex', alignItems: 'center', gap: 8, color: BRAND.ink, fontWeight: 600, fontSize: 14 }}>
             <MessageSquare size={16} /> Slide {pageNumber} · {pageComments.length} comment{pageComments.length === 1 ? '' : 's'}
@@ -560,7 +611,7 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
                         rows={3}
                         autoFocus
                         style={{ width: '100%', resize: 'vertical', padding: 8, borderRadius: 8,
-                          border: `1px solid ${BRAND.border}`, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
+                          border: `1px solid ${BRAND.border}`, fontSize: inputFont, fontFamily: 'inherit', boxSizing: 'border-box' }}
                       />
                       <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
                         <button onClick={cancelEdit} disabled={savingEdit}
@@ -615,9 +666,9 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
                 value={draft}
                 onChange={e => setDraft(e.target.value)}
                 placeholder="Leave your comment here…"
-                rows={3}
+                rows={isMobile ? 2 : 3}
                 style={{ width: '100%', resize: 'none', padding: 8, borderRadius: 8,
-                  border: `1px solid ${BRAND.border}`, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
+                  border: `1px solid ${BRAND.border}`, fontSize: inputFont, fontFamily: 'inherit', boxSizing: 'border-box' }}
               />
               {(asset || assetUploading) && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12, color: BRAND.muted }}>

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock, Eye, Pencil, Trash2, MapPin } from 'lucide-react';
 import { BRAND } from '../../theme.js';
+import { useIsMobile } from '../../utils.js';
 import { ConflictBanner } from './ConflictBanner.jsx';
 
 const NAME_KEY = 'squideo.revision.name';
@@ -71,6 +72,12 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
   const preIdentified = !!(identity && isEmail(identity.email || ''));
   const videoRef = useRef(null);
   const composerRef = useRef(null);
+  // Phones get a stacked layout: the desktop split (player + fixed 380px thread)
+  // leaves the player a few pixels wide on a 390px screen, which reads to the
+  // client as "the video is missing".
+  const isMobile = useIsMobile();
+  // ≥16px inputs stop iOS Safari zooming in when the field takes focus.
+  const inputFont = isMobile ? 16 : 13;
 
   // ── Name + email gate (skipped for a pre-identified portal user) ────────────
   const [name, setName] = useState(() => identity?.name || localStorage.getItem(NAME_KEY) || '');
@@ -111,6 +118,7 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
   const [savingEdit, setSavingEdit] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [aspect, setAspect] = useState(0); // videoWidth / videoHeight, once known
   // Approval is per-video.
   const [approvals, setApprovals] = useState(() =>
     Object.fromEntries((data.videos || []).map(v => [v.id, v.approvedAt || null])));
@@ -393,13 +401,14 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
             Please enter your details to view and comment on this revision.
           </p>
           <label style={{ fontSize: 12, color: BRAND.muted }}>Your name</label>
-          <input value={gateName} onChange={e => setGateName(e.target.value)} autoFocus
+          <input value={gateName} onChange={e => setGateName(e.target.value)} autoFocus={!isMobile}
             style={{ width: '100%', padding: 9, borderRadius: 8, border: `1px solid ${BRAND.border}`,
-              margin: '4px 0 12px', boxSizing: 'border-box', fontSize: 14 }} />
+              margin: '4px 0 12px', boxSizing: 'border-box', fontSize: isMobile ? 16 : 14 }} />
           <label style={{ fontSize: 12, color: BRAND.muted }}>Your email</label>
           <input value={gateEmail} onChange={e => setGateEmail(e.target.value)} type="email"
+            inputMode="email" autoCapitalize="none" autoCorrect="off"
             style={{ width: '100%', padding: 9, borderRadius: 8, border: `1px solid ${BRAND.border}`,
-              margin: '4px 0 18px', boxSizing: 'border-box', fontSize: 14 }} />
+              margin: '4px 0 18px', boxSizing: 'border-box', fontSize: isMobile ? 16 : 14 }} />
           <button type="submit"
             style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: 'none',
               background: BRAND.blue, color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
@@ -422,23 +431,28 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
   return (
     <div style={embedded
       ? { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }
-      : { display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      : { display: 'flex', flexDirection: 'column', height: isMobile ? '100dvh' : '100vh' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px',
+      <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 12,
+        padding: isMobile ? '10px 12px' : '12px 18px', flexShrink: 0,
         borderBottom: `1px solid ${BRAND.border}`, background: '#fff', flexWrap: 'wrap' }}>
         <Clapperboard size={20} color={BRAND.blue} />
-        <strong style={{ color: BRAND.ink, fontSize: 15 }}>{data.title}</strong>
-        {data.clientName && <span style={{ color: BRAND.muted, fontSize: 13 }}>· {data.clientName}</span>}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <strong style={{ color: BRAND.ink, fontSize: isMobile ? 14 : 15, minWidth: 0, overflow: 'hidden',
+          textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{data.title}</strong>
+        {data.clientName && !isMobile && <span style={{ color: BRAND.muted, fontSize: 13 }}>· {data.clientName}</span>}
+        <div style={{ marginLeft: isMobile ? 0 : 'auto', width: isMobile ? '100%' : undefined,
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {videos.length > 1 && (
             <div title="This project has more than one video — switch between them here"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 8px 5px 12px',
-                borderRadius: 10, border: `2px solid ${BRAND.blue}`, background: '#EAF6FB' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px 5px 12px',
+                borderRadius: 10, border: `2px solid ${BRAND.blue}`, background: '#EAF6FB',
+                width: isMobile ? '100%' : undefined, boxSizing: 'border-box' }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: BRAND.blue, whiteSpace: 'nowrap' }}>
                 <Clapperboard size={14} /> Video {videos.findIndex(v => v.id === activeVideo.id) + 1} of {videos.length}
               </span>
               <select value={videoId} onChange={e => selectVideo(e.target.value)}
-                style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${BRAND.blue}`, fontSize: 14,
+                style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${BRAND.blue}`,
+                  fontSize: isMobile ? 16 : 14, flex: isMobile ? 1 : undefined, minWidth: 0,
                   fontWeight: 700, color: BRAND.ink, background: '#fff', cursor: 'pointer' }}>
                 {videos.map(v => <option key={v.id} value={v.id}>{v.title}</option>)}
               </select>
@@ -446,26 +460,30 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
           )}
           {versions.length > 1 && (
             <select value={version.id} onChange={e => setVersionId(e.target.value)}
-              style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`, fontSize: 13 }}>
+              style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`,
+                fontSize: inputFont, minWidth: 0 }}>
               {versions.map(v => <option key={v.id} value={v.id}>{draftLabel(v)}</option>)}
             </select>
           )}
           {data.callUrl && (
             <a href={data.callUrl} target="_blank" rel="noreferrer"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: isMobile ? '9px 12px' : '7px 12px', borderRadius: 8,
                 border: `1px solid ${BRAND.border}`, background: '#fff', color: BRAND.ink, fontSize: 13,
                 fontWeight: 600, textDecoration: 'none' }}>
               <CalendarClock size={15} color={BRAND.blue} /> Schedule Review Call
             </a>
           )}
           {approvedAt ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
+            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              padding: isMobile ? '9px 12px' : '7px 12px', borderRadius: 8, flex: isMobile ? 1 : undefined,
               background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600 }}>
               <CheckCircle2 size={15} /> {videos.length > 1 ? 'Video finalised' : 'Revisions finalised'}
             </span>
           ) : (
             <button onClick={finalise} disabled={approving}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8,
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: isMobile ? '10px 12px' : '7px 12px', borderRadius: 8, flex: isMobile ? 1 : undefined,
                 border: 'none', background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600,
                 cursor: approving ? 'default' : 'pointer' }}>
               <CheckCircle2 size={15} /> {approving ? 'Sending…' : 'Finalise and send revisions'}
@@ -476,22 +494,41 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
 
       <ConflictBanner activeViewers={activeViewers} />
 
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        {/* Player + marker strip */}
-        <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', background: '#0B1B26', minWidth: 0 }}>
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
-            <div style={{ position: 'relative', display: 'inline-flex', maxWidth: '100%', maxHeight: '100%' }}>
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', flex: 1, minHeight: 0 }}>
+        {/* Player + marker strip. On a phone the player takes a fixed slice of
+            the screen and the thread fills what's left, instead of the two
+            competing for a single row. */}
+        <div style={{ flex: isMobile ? '0 0 auto' : '1 1 auto', display: 'flex', flexDirection: 'column',
+          background: '#0B1B26', minWidth: 0 }}>
+          <div style={{ flex: isMobile ? '0 0 auto' : 1, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', minHeight: 0 }}>
+            {/* The pin overlay is positioned against this wrapper, so the
+                wrapper must hug the frame exactly. On mobile we cap the height
+                by sizing the wrapper from the video's own aspect ratio rather
+                than max-height'ing the <video> (which would letterbox inside it
+                and throw the pins out of alignment). */}
+            <div style={{ position: 'relative', display: 'inline-flex',
+              maxWidth: '100%', maxHeight: '100%',
+              width: isMobile ? (aspect ? `min(100%, ${(42 * aspect).toFixed(2)}dvh)` : '100%') : undefined }}>
               <video
                 ref={videoRef}
                 key={version.id}
                 src={version.videoUrl}
                 controls
+                playsInline
                 controlsList="nodownload nofullscreen"
                 disablePictureInPicture
                 onContextMenu={e => e.preventDefault()}
-                onLoadedMetadata={e => setDuration(e.target.duration || 0)}
+                onLoadedMetadata={e => {
+                  setDuration(e.target.duration || 0);
+                  const w = e.target.videoWidth, h = e.target.videoHeight;
+                  if (w && h) setAspect(w / h);
+                }}
                 onTimeUpdate={e => setCurrentTime(e.target.currentTime || 0)}
-                style={{ display: 'block', maxWidth: '100%', maxHeight: '100%' }}
+                style={{ display: 'block', maxWidth: '100%',
+                  width: isMobile ? '100%' : undefined,
+                  height: isMobile ? 'auto' : undefined,
+                  maxHeight: isMobile ? undefined : '100%' }}
               />
               <div aria-hidden style={{
                 position: 'absolute', inset: 0, pointerEvents: 'none',
@@ -506,7 +543,7 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
               <div
                 onClick={handleFrameClick}
                 style={{
-                  position: 'absolute', top: 0, left: 0, right: 0, bottom: 56,
+                  position: 'absolute', top: 0, left: 0, right: 0, bottom: isMobile ? 44 : 56,
                   cursor: placingSpot ? 'crosshair' : 'default',
                   pointerEvents: placingSpot ? 'auto' : 'none',
                 }}
@@ -553,24 +590,30 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
               )}
             </div>
           </div>
-          <div style={{ position: 'relative', height: 28, background: '#0B1B26',
+          <div style={{ position: 'relative', height: isMobile ? 34 : 28, flexShrink: 0, background: '#0B1B26',
             borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-            {duration > 0 && markers.map(c => (
-              <button
-                key={c.id}
-                title={`${tc(c.timecodeSeconds)} — ${c.authorName}`}
-                onClick={() => seekTo(c.timecodeSeconds)}
-                style={{ position: 'absolute', top: 6, left: `calc(${(c.timecodeSeconds / duration) * 100}% - 7px)`,
-                  width: 14, height: 14, borderRadius: '50%', background: BRAND.blue, border: '2px solid #fff',
-                  cursor: 'pointer', padding: 0 }}
-              />
-            ))}
+            {duration > 0 && markers.map(c => {
+              const dot = isMobile ? 18 : 14;
+              return (
+                <button
+                  key={c.id}
+                  title={`${tc(c.timecodeSeconds)} — ${c.authorName}`}
+                  onClick={() => seekTo(c.timecodeSeconds)}
+                  style={{ position: 'absolute', top: isMobile ? 7 : 6,
+                    left: `calc(${(c.timecodeSeconds / duration) * 100}% - ${dot / 2}px)`,
+                    width: dot, height: dot, borderRadius: '50%', background: BRAND.blue, border: '2px solid #fff',
+                    cursor: 'pointer', padding: 0 }}
+                />
+              );
+            })}
           </div>
         </div>
 
         {/* Comment thread */}
-        <div style={{ width: 380, flexShrink: 0, display: 'flex', flexDirection: 'column',
-          borderLeft: `1px solid ${BRAND.border}`, background: '#fff' }}>
+        <div style={{ width: isMobile ? '100%' : 380, flex: isMobile ? '1 1 auto' : '0 0 auto',
+          minHeight: 0, display: 'flex', flexDirection: 'column',
+          borderLeft: isMobile ? undefined : `1px solid ${BRAND.border}`,
+          borderTop: isMobile ? `1px solid ${BRAND.border}` : undefined, background: '#fff' }}>
           <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BRAND.border}`,
             display: 'flex', alignItems: 'center', gap: 8, color: BRAND.ink, fontWeight: 600, fontSize: 14 }}>
             <MessageSquare size={16} /> {versionComments.length} Comment{versionComments.length === 1 ? '' : 's'}
@@ -633,7 +676,7 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
                         rows={3}
                         autoFocus
                         style={{ width: '100%', resize: 'vertical', padding: 8, borderRadius: 8,
-                          border: `1px solid ${BRAND.border}`, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
+                          border: `1px solid ${BRAND.border}`, fontSize: inputFont, fontFamily: 'inherit', boxSizing: 'border-box' }}
                       />
                       <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
                         <button onClick={cancelEdit} disabled={savingEdit}
@@ -699,9 +742,9 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
               onChange={e => setDraft(e.target.value)}
               onFocus={onComposerFocus}
               placeholder="Leave your comment here…"
-              rows={3}
+              rows={isMobile ? 2 : 3}
               style={{ width: '100%', resize: 'none', padding: 8, borderRadius: 8,
-                border: `1px solid ${BRAND.border}`, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
+                border: `1px solid ${BRAND.border}`, fontSize: inputFont, fontFamily: 'inherit', boxSizing: 'border-box' }}
             />
             {(asset || assetUploading) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12, color: BRAND.muted }}>
