@@ -90,8 +90,12 @@ const NAV = [
 // anything — that number would anchor every quote they get afterwards. The
 // real enforcement is CLIENT_ONLY in api/portal.js; this is the door.
 function visibleNav(company) {
-  const prospect = company?.prospect === true;
-  return NAV.filter((n) => !(prospect && n.view === 'video-credit'));
+  // `creditVisible` is resolved server-side from the company's override plus
+  // the default rule, so the nav can't disagree with the API guard. Undefined
+  // (an older session payload) falls through to visible rather than hiding a
+  // paying client's own balance.
+  const hideCredit = company?.creditVisible === false;
+  return NAV.filter((n) => !(hideCredit && n.view === 'video-credit'));
 }
 
 // Header actions. The primary is the blue call-to-action; secondaries are
@@ -169,7 +173,7 @@ function Header() {
             {/* Prospects don't see the rate card — see CLIENT_ONLY in
                 api/portal.js for why, and for the check that actually enforces
                 it. This just keeps the door out of sight. */}
-            {!activeCompany?.prospect && (
+            {activeCompany?.creditVisible !== false && (
               <a href="#/video-credit" style={HEADER_BTN.secondary}>
                 <Wallet size={15} /> Order credit
               </a>

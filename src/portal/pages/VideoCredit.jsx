@@ -34,20 +34,27 @@ export default function VideoCredit() {
 
   // Read from the session so the "not yet" state renders on the first paint,
   // rather than flashing the page and then replacing it once a 403 comes back.
-  const prospect = (user?.companies || []).find((c) => c.id === companyId)?.prospect === true;
+  const hidden = (user?.companies || []).find((c) => c.id === companyId)?.creditVisible === false;
 
+  // Always ask, even when the session says hidden. The server allows a company
+  // that HOLDS credit through regardless of the switch — nobody is locked out
+  // of credit they've already paid for — and that exception is only knowable
+  // server-side. Asking anyway is what lets it reach them.
   const load = () => {
-    if (!companyId || prospect) return;
+    if (!companyId) return;
     portalApi.get(`video-credit?companyId=${encodeURIComponent(companyId)}`)
-      .then(setData)
+      .then((d) => { setData(d); setError(null); })
       .catch((err) => setError(err.message));
   };
 
-  useEffect(() => { setData(null); setError(null); load(); }, [companyId, prospect]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setData(null); setError(null); load(); }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Trust the session, but fall back to the server's verdict if the two ever
-  // disagree (a stale tab open across a company being converted, say).
-  const notYet = prospect || /available once your first project/i.test(error || '');
+  // The server is the authority: if it sent a balance, show it whatever the
+  // session thought. `hidden` only decides what to render while the first
+  // request is still in flight, so the page doesn't flash a rate card at
+  // someone who shouldn't see one.
+  const refused = /available once your first project/i.test(error || '');
+  const notYet = !data && (refused || hidden);
 
   // Handle the return from Stripe Checkout (?credit_paid / ?credit_cancelled).
   useEffect(() => {

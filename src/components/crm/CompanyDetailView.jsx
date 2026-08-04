@@ -6,6 +6,7 @@ import { useIsMobile, formatGBP, formatRelativeTime, effectiveAddress, formatAdd
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
 import { CompanyCreditsCard } from './CompanyCreditsCard.jsx';
+import { CreditAccessCard } from './CreditAccessCard.jsx';
 import { CompanyLogoCard } from './CompanyLogoCard.jsx';
 import { PortalMembersCard } from './PortalMembersCard.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
@@ -294,6 +295,13 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
           credit-based projects + matched partner credits). */}
       <div style={{ marginBottom: 16 }}>
         <CompanyCreditsCard companyId={companyId} />
+      </div>
+
+      {/* Whether this organisation sees the rate card in their portal, and at
+          what rate. Company-scoped, which is why the deal and contact pages
+          both write here. */}
+      <div style={{ marginBottom: 16 }}>
+        <CreditAccessCard companyId={companyId} />
       </div>
 
       {/* The client's own logo — used on every new proposal and in their portal. */}

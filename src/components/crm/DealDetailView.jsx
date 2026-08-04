@@ -25,6 +25,7 @@ import { OrderSummaryCard } from './OrderSummaryCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
 import { PortalDealCard, launchIntroEmail } from './PortalDealCard.jsx';
+import { CreditAccessCard } from './CreditAccessCard.jsx';
 import { ClientScriptCard } from './ClientScriptCard.jsx';
 import ClientLogo from '../ClientLogo.jsx';
 import { IntroCallButton } from './IntroCallCard.jsx';
@@ -909,6 +910,16 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         {state.session?.role !== 'freelancer' && !hideFinancials && (
           <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
             <PortalDealCard dealId={dealId} dealTitle={deal.title} />
+          </div>
+        )}
+
+        {/* Video-credit access, switchable from the deal you're already looking
+            at. It writes to the DEAL'S COMPANY, because the credit ledger and
+            the portal page are both company-scoped — enabling it here turns it
+            on for every deal that organisation has. */}
+        {state.session?.role !== 'freelancer' && !hideFinancials && deal.companyId && (
+          <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+            <CreditAccessCard companyId={deal.companyId} />
           </div>
         )}
 

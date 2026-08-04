@@ -9,6 +9,7 @@ import sql from '../db.js';
 import { ensurePortalTables } from './db.js';
 import { verifyPortalToken, readPortalCookie, readPreviewHeader } from './auth.js';
 import { portalLogoPath } from './logo.js';
+import { creditVisibleFor } from '../crm/companyCredit.js';
 
 // Cache key for the logo URL: null when the org has never had one uploaded (a
 // proposal-derived fallback logo doesn't change, so it needs no version).
@@ -38,7 +39,9 @@ export async function requirePortalAuth(req, res) {
       return null;
     }
     await ensurePortalTables();
-    const [co] = await sql`SELECT id, name, COALESCE(prospect, FALSE) AS prospect FROM companies WHERE id = ${pv.companyId}`;
+    const [co] = await sql`
+      SELECT id, name, COALESCE(prospect, FALSE) AS prospect, credit_enabled
+        FROM companies WHERE id = ${pv.companyId}`;
     if (!co) {
       res.status(404).json({ error: 'Organisation not found' });
       return null;
@@ -66,6 +69,7 @@ export async function requirePortalAuth(req, res) {
       // rate card included — otherwise the preview stops being a preview.
       companies: [{
         id: co.id, name: co.name, prospect: co.prospect === true,
+        creditVisible: creditVisibleFor({ creditEnabled: co.credit_enabled, prospect: co.prospect }),
         logoUrl: logo ? portalLogoPath(co.id, logoVersion(logo.logo_updated_at)) : null,
       }],
     };
@@ -104,6 +108,7 @@ export async function requirePortalAuth(req, res) {
   const memberships = await sql`
     SELECT m.company_id, c.name AS company_name, c.logo_updated_at,
            COALESCE(c.prospect, FALSE) AS prospect,
+           c.credit_enabled,
            (c.logo IS NOT NULL OR EXISTS (
              SELECT 1 FROM proposals p
                JOIN deals d ON d.id = p.deal_id
@@ -136,6 +141,9 @@ export async function requirePortalAuth(req, res) {
       // shown to: publishing £/min to someone we haven't scoped anything for
       // anchors every quote we send them afterwards.
       prospect: m.prospect === true,
+      // Resolved once, here, so the nav, the API guard and the CRM label can't
+      // disagree. See creditVisibleFor() for the rule and the tri-state.
+      creditVisible: creditVisibleFor({ creditEnabled: m.credit_enabled, prospect: m.prospect }),
     })),
   };
 }

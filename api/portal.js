@@ -515,15 +515,21 @@ export default async function handler(req, res) {
       }
     }
 
-    // Rate-card routes are refused for a prospect org, whatever the method.
+    // Rate-card routes, refused unless this org is meant to see credit.
     // Resolved from the SESSION's own company list, never from the query
     // string — a prospect who guesses a client's companyId is already blocked
     // by resolveCompanyId, and this check must not be the weaker of the two.
     if (CLIENT_ONLY.has(action)) {
       const cid = req.query.companyId ? String(req.query.companyId) : user.companyIds[0];
       const co = user.companies.find((c) => c.id === cid);
-      if (co?.prospect) {
-        return res.status(403).json({ error: 'Video credit is available once your first project is under way.' });
+      if (co && co.creditVisible === false) {
+        // Last line of defence: nobody is ever locked out of credit they have
+        // already paid for. A staff mis-click on "switch off" must not hide a
+        // client's own balance from them.
+        const held = await companyCreditBalance(co).catch(() => null);
+        if (!((held?.issued || 0) > 0)) {
+          return res.status(403).json({ error: 'Video credit is available once your first project is under way.' });
+        }
       }
     }
 
@@ -2823,7 +2829,7 @@ async function videoCreditRoute(req, res, user) {
   await reconcileVideoCreditOrders([companyId]).catch(() => {});
   const [balance, pricing] = await Promise.all([
     companyCreditBalance(company).catch(() => ({ issued: 0, used: 0, remaining: 0 })),
-    videoCreditPricingParams(),
+    videoCreditPricingParams(companyId),
   ]);
   return res.status(200).json({
     balance: {
@@ -2848,7 +2854,9 @@ async function videoCreditCheckoutRoute(req, res, user) {
   if (!Number.isFinite(minutes) || minutes < 1 || minutes > 120) {
     return res.status(400).json({ error: 'Choose between 1 and 120 minutes of credit.' });
   }
-  const ratePerMin = await videoCreditRatePerMin();
+  // Per-company rate, so the amount charged matches the price the stepper
+  // showed -- both go through videoCreditRatePerMin(companyId).
+  const ratePerMin = await videoCreditRatePerMin(companyId);
   const quote = videoCreditQuote(minutes, ratePerMin);
   try {
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -2895,7 +2903,9 @@ async function videoCreditInvoiceRoute(req, res, user) {
   if (!Number.isFinite(minutes) || minutes < 1 || minutes > 120) {
     return res.status(400).json({ error: 'Choose between 1 and 120 minutes of credit.' });
   }
-  const ratePerMin = await videoCreditRatePerMin();
+  // Per-company rate, so the amount charged matches the price the stepper
+  // showed -- both go through videoCreditRatePerMin(companyId).
+  const ratePerMin = await videoCreditRatePerMin(companyId);
   const quote = videoCreditQuote(minutes, ratePerMin);
   const money = (n) => '£' + n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 

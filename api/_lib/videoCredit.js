@@ -26,7 +26,17 @@ export { VIDEO_CREDIT, videoCreditDiscount, videoCreditQuote };
 // default proposal (settings.default_proposal.partnerProgramme.standardRatePerMin)
 // so portal credit stays aligned with what's quoted elsewhere; falls back to the
 // documented default.
-export async function videoCreditRatePerMin() {
+// Pass a companyId to honour a per-company override and their last proposal's
+// rate. Both the display quote and the checkout amount go through here, so a
+// client can never be shown one price and charged another.
+export async function videoCreditRatePerMin(companyId = null) {
+  if (companyId) {
+    try {
+      const { resolveCreditRate } = await import('./crm/companyCredit.js');
+      const r = await resolveCreditRate(companyId);
+      if (Number.isFinite(r.ratePerMin) && r.ratePerMin > 0) return r.ratePerMin;
+    } catch { /* fall through to the workspace rate */ }
+  }
   try {
     const [row] = await sql`SELECT default_proposal FROM settings WHERE id = 1`;
     const r = Number(row?.default_proposal?.partnerProgramme?.standardRatePerMin);
@@ -38,8 +48,8 @@ export async function videoCreditRatePerMin() {
 // The pricing parameters the portal needs to render the live stepper. The portal
 // mirrors videoCreditQuote() for display only — the purchase amount is always
 // recomputed server-side.
-export async function videoCreditPricingParams() {
-  const ratePerMin = await videoCreditRatePerMin();
+export async function videoCreditPricingParams(companyId = null) {
+  const ratePerMin = await videoCreditRatePerMin(companyId);
   return {
     ratePerMin,
     baseDiscount: VIDEO_CREDIT.baseDiscount,

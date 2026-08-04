@@ -11,6 +11,7 @@ import {
 } from '../partnerCredits.js';
 import { ensureCompanyLogoColumns, decodeLogo, portalLogoPath } from '../portal/logo.js';
 import { listVideoCreditOrders, raiseInvoiceForCreditOrder, cancelCreditOrder, reconcileVideoCreditOrders } from '../videoCredit.js';
+import { loadCompanyCredit, setCompanyCredit } from './companyCredit.js';
 
 // Self-heal for db/migrations/20260603_company_address.sql. Called at the top of
 // every companies code path so a workspace that skipped the manual Neon apply
@@ -382,6 +383,43 @@ export async function companiesRoute(req, res, id, action, user) {
   // POST /companies/:id/credit-order-raise { orderId } — raise the standalone
   // Xero invoice for a portal video-credit request. It then shows on Pending
   // Payments + counts as a sale; the minutes auto-credit when it's paid.
+  // GET  /companies/:id/credit-access — the switch, the resolved rate, and the
+  //   rate we'd suggest (their last proposal's, else the workspace default).
+  // POST /companies/:id/credit-access { enabled, ratePerMin }
+  //   `enabled` is tri-state: true / false / null (back to the default rule).
+  if (action === 'credit-access') {
+    if (!id) return res.status(400).json({ error: 'Company id required' });
+    if (req.method === 'GET') {
+      const info = await loadCompanyCredit(id);
+      if (!info) return res.status(404).json({ error: 'Company not found' });
+      return res.status(200).json(info);
+    }
+    if (req.method === 'POST') {
+      // This decides pricing a client can see, so it sits with the same
+      // permission as raising an invoice rather than general company editing.
+      if (!hasPermission(await getRole(user.role), 'finance.manage')) {
+        return res.status(403).json({ error: 'You do not have permission to change credit settings' });
+      }
+      const body = req.body || {};
+      const enabled = body.enabled === true ? true : body.enabled === false ? false : null;
+
+      // Never hide credit from someone who has bought some. A mis-click here
+      // would make a client's own paid-for balance vanish from their portal,
+      // which is the one failure this feature must not have.
+      if (enabled === false) {
+        const held = await companyCreditTotals({ id }).catch(() => null);
+        if ((held?.issued || 0) > 0) {
+          return res.status(409).json({
+            error: 'This organisation has bought credit — switching it off would hide their own balance from them. Leave it on, or zero the balance first.',
+          });
+        }
+      }
+      const info = await setCompanyCredit(id, { enabled, ratePerMin: body.ratePerMin }, user.email || null);
+      return res.status(200).json(info);
+    }
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
   if (action === 'credit-order-raise' && req.method === 'POST') {
     if (!hasPermission(await getRole(user.role), 'finance.manage')) {
       return res.status(403).json({ error: 'You do not have permission to raise invoices' });
