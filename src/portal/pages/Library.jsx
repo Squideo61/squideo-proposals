@@ -15,9 +15,10 @@ import { BRAND } from '../../theme.js';
 import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, fmtBytes, fmtDate } from '../components.jsx';
+import { PosterPicker } from '../../components/media/PosterPicker.jsx';
 import {
   Film, Download, Clapperboard, Upload, Trash2, PlusCircle, Pencil, Layers,
-  Image as ImageIcon, Camera, ChevronLeft, ChevronRight, PlayCircle,
+  Image as ImageIcon, ChevronLeft, ChevronRight, PlayCircle,
 } from 'lucide-react';
 
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|ogv|avi|mkv)$/i;
@@ -201,7 +202,7 @@ function FileTile({ dealId, file, manage, projects, seriesOptions, position, tot
       display: 'flex', flexDirection: 'column', background: '#fff',
     }}>
       {picking ? (
-        <PosterPicker
+        <LibraryPosterPicker
           file={file}
           companyId={companyId}
           onClose={() => setPicking(false)}
@@ -337,90 +338,29 @@ function FileTile({ dealId, file, manage, projects, seriesOptions, position, tot
   );
 }
 
-// Manage mode: pick the tile's thumbnail from a still in the video, the way
-// Vimeo does — scrub to the frame you want and grab it.
+// Manage mode: pick the tile's thumbnail from a still in the video. The picker
+// itself is shared with Admin → Crash course (src/components/media/PosterPicker.jsx);
+// this wrapper supplies the same-origin stream URL and the save call.
 //
 // The frame is drawn onto a canvas, which browsers refuse to read back from if
 // the video came from another origin. The player above streams via a 302 to the
 // blob host, so this one asks for the bytes to be relayed through us instead
 // (&stream=1) — same origin, clean canvas.
-function PosterPicker({ file, companyId, onClose, onSaved, onError }) {
-  const videoRef = useRef(null);
-  const [shot, setShot] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  const capture = () => {
-    const v = videoRef.current;
-    if (!v || !v.videoWidth) return;
-    // 960 wide is plenty for a tile on a retina screen and keeps the stored
-    // JPEG around 100 KB.
-    const width = Math.min(v.videoWidth, 960);
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = Math.round((v.videoHeight / v.videoWidth) * width);
-    canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
-    try {
-      setShot(canvas.toDataURL('image/jpeg', 0.78));
-    } catch {
-      onError("Couldn't read that frame — try reloading the page.");
-    }
-  };
-
-  const save = async (poster) => {
-    setBusy(true);
-    try {
-      await portalApi.patch(`library-item?companyId=${encodeURIComponent(companyId)}`, { id: file.itemId, poster });
-      onSaved();
-    } catch (err) {
-      onError(err.message);
-      setBusy(false);
-    }
-  };
-
+function LibraryPosterPicker({ file, companyId, onClose, onSaved, onError }) {
   return (
-    <div style={{ background: '#0F2A3D', padding: 10 }}>
-      {shot ? (
-        <img src={shot} alt="Chosen thumbnail" style={{ width: '100%', display: 'block', borderRadius: 6 }} />
-      ) : (
-        <video
-          ref={videoRef}
-          controls
-          preload="metadata"
-          playsInline
-          src={mediaUrl(`download?scope=archive&id=${encodeURIComponent(file.itemId)}&stream=1`)}
-          style={{ width: '100%', display: 'block', borderRadius: 6, background: '#000' }}
-        />
-      )}
-      <div style={{ fontSize: 11.5, color: '#B9CBD6', margin: '8px 0', lineHeight: 1.45 }}>
-        {shot ? 'Use this frame?' : 'Scrub to the frame you want, then grab it.'}
-      </div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {shot ? (
-          <>
-            <button className="btn" onClick={() => save(shot)} disabled={busy} style={{ flex: 1 }}>
-              {busy ? 'Saving…' : 'Use this frame'}
-            </button>
-            <button className="btn-ghost" onClick={() => setShot(null)} disabled={busy} style={{ color: '#DCEEF7', padding: '0 12px' }}>
-              Pick another
-            </button>
-          </>
-        ) : (
-          <>
-            <button className="btn" onClick={capture} style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-              <Camera size={15} /> Grab this frame
-            </button>
-            {file.posterVersion && (
-              <button className="btn-ghost" onClick={() => save(null)} disabled={busy} style={{ color: '#F5A3A3', padding: '0 12px' }}>
-                Clear
-              </button>
-            )}
-          </>
-        )}
-        <button className="btn-ghost" onClick={onClose} disabled={busy} style={{ color: '#B9CBD6', padding: '0 12px' }}>
-          Cancel
-        </button>
-      </div>
-    </div>
+    <PosterPicker
+      streamSrc={mediaUrl(`download?scope=archive&id=${encodeURIComponent(file.itemId)}&stream=1`)}
+      hasPoster={!!file.posterVersion}
+      onError={onError}
+      onClose={onClose}
+      onSave={async (poster) => {
+        await portalApi.patch(
+          `library-item?companyId=${encodeURIComponent(companyId)}`,
+          { id: file.itemId, poster },
+        );
+        onSaved();
+      }}
+    />
   );
 }
 

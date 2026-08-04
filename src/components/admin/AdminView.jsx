@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic, BellRing, FlaskConical, Activity } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic, BellRing, FlaskConical, Activity, GraduationCap } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -16,6 +16,7 @@ import { VoiceoverCatalogueTab } from './VoiceoverCatalogueTab.jsx';
 import { DemoTab } from './DemoTab.jsx';
 import { TaskRemindersTab } from './TaskRemindersTab.jsx';
 import { StaffActivityTab } from './StaffActivityTab.jsx';
+import { CourseTab } from './CourseTab.jsx';
 
 const TABS = [
   { id: 'users',         label: 'Users + invites',  icon: Users,    perm: 'users.manage' },
@@ -28,6 +29,7 @@ const TABS = [
   { id: 'intro-calls',   label: 'Intro call rules', icon: CalendarClock, perm: 'settings.manage' },
   { id: 'proposals', label: 'Proposals', icon: FileText, perm: 'settings.manage' },
   { id: 'voiceovers', label: 'Voiceovers', icon: Mic, perm: ['voiceovers.manage', 'settings.manage'] },
+  { id: 'course', label: 'Crash course', icon: GraduationCap, perm: 'settings.manage' },
   { id: 'task-reminders', label: 'Task reminders', icon: BellRing, perm: 'settings.manage' },
   { id: 'demo', label: 'Testing', icon: FlaskConical, perm: 'settings.manage' },
 ];
@@ -190,6 +192,7 @@ export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, o
           {active?.id === 'intro-calls' && <IntroCallRulesTab />}
           {active?.id === 'proposals' && <DefaultProposalTab onEditDefault={onEditDefault} onCreateTemplate={onCreateTemplate} onEditTemplate={onEditTemplate} />}
           {active?.id === 'voiceovers' && <VoiceoverCatalogueTab />}
+          {active?.id === 'course' && <CourseTab />}
           {active?.id === 'task-reminders' && <TaskRemindersTab />}
           {active?.id === 'demo' && <DemoTab />}
         </div>

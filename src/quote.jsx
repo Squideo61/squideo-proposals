@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { QuoteRequestForm } from './components/QuoteRequestForm.jsx';
+import { attributionFromUrl, storedAttribution } from './lib/attribution.js';
 
 // Marketing attribution lives outside React (it arrives asynchronously from the
 // parent page and the form just reads the latest value at submit time).
@@ -39,28 +40,10 @@ if (inIframe) {
 } else {
   // Direct visit / local QA: no embedding page to hand us attribution, so parse
   // it from our own URL (e.g. /quote?gclid=...&utm_source=...&campaignid=...).
-  try {
-    const p = new URLSearchParams(window.location.search);
-    const map = {
-      gclid: 'gclid', gbraid: 'gbraid', wbraid: 'wbraid', fbclid: 'fbclid', msclkid: 'msclkid',
-      utm_source: 'source', utm_medium: 'medium', utm_campaign: 'campaign',
-      utm_term: 'term', utm_content: 'content',
-      campaignid: 'campaignId', adgroupid: 'adgroupId', keyword: 'keyword',
-      matchtype: 'matchtype', network: 'network', device: 'device',
-    };
-    const a = {};
-    let any = false;
-    for (const [k, field] of Object.entries(map)) {
-      const v = p.get(k);
-      if (v) { a[field] = v; any = true; }
-    }
-    if (any) {
-      a.referrer = document.referrer || null;
-      a.landingUrl = window.location.href;
-      a.firstSeenAt = Date.now();
-      attribution = a;
-    }
-  } catch { /* ignore */ }
+  // Falls back to a first touch stored earlier by another top-level page (the
+  // course landing page does this), so someone who arrived from an ad, took the
+  // course, then came here still carries their real source.
+  attribution = attributionFromUrl() || storedAttribution();
 }
 
 const container = document.getElementById('quote-root');

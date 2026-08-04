@@ -12,6 +12,7 @@ export default defineConfig({
         quote: resolve(__dirname, 'quote.html'),
         contact: resolve(__dirname, 'contact.html'),
         portal: resolve(__dirname, 'portal.html'),
+        course: resolve(__dirname, 'course.html'),
       },
       output: {
         manualChunks(id) {

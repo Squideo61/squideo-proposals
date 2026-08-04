@@ -1,0 +1,370 @@
+// The public landing page for The Explainer Video Crash Course.
+//
+// The whole conversion strategy is the order of this page: module 1 plays
+// immediately, with no form anywhere above it. The signup only appears once
+// someone has watched something and knows whether we're any good. Asking first
+// converts on a promise; asking after converts on evidence.
+//
+// Locked modules are fully described — title, summary, duration, thumbnail —
+// and only the bytes are withheld. Curiosity converts; a paywall doesn't.
+
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Lock, Play, Check, ArrowRight } from 'lucide-react';
+import { BRAND } from '../../theme.js';
+import { SQUIDEO_LOGO } from '../../defaults.js';
+
+const NAVY = BRAND.ink;
+const PALE = '#DCEEF7';
+const MUTED = '#8FA9BA';
+const ACCENT = '#9FDFF5';
+
+const fmtDuration = (s) => {
+  if (!s) return null;
+  const mins = Math.floor(s / 60);
+  const secs = Math.round(s % 60);
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+};
+
+// "48 minutes" reads better than "0:48:12" in the hero, and a known finite
+// commitment is one of the few things that reliably lifts course starts.
+const fmtTotal = (s) => {
+  if (!s) return null;
+  const mins = Math.round(s / 60);
+  return mins < 60 ? `${mins} minutes` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+};
+
+export function CoursePage({ track }) {
+  const [data, setData] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
+  const signupRef = useRef(null);
+
+  useEffect(() => {
+    fetch('/api/course?action=public')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('unavailable'))))
+      .then(setData)
+      .catch(() => setFailed(true));
+  }, []);
+
+  // Someone who already has a session shouldn't be asked to sign up again —
+  // they get "continue the course" instead. A 401 here is the normal answer for
+  // an anonymous visitor, not an error.
+  useEffect(() => {
+    fetch('/api/portal/me', { credentials: 'include' })
+      .then((r) => setSignedIn(r.ok))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => { track('page_view'); }, [track]);
+
+  const scrollToSignup = useCallback(() => {
+    track('signup_open');
+    signupRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [track]);
+
+  const modules = data?.modules || [];
+  const free = modules.find((m) => m.free) || null;
+  const total = fmtTotal(data?.totalSeconds);
+
+  return (
+    <div style={{ background: NAVY, minHeight: '100vh', color: PALE }}>
+      <div style={{ maxWidth: 940, margin: '0 auto', padding: '36px 20px 72px' }}>
+
+        {/* ── Hero ─────────────────────────────────────────────────────────── */}
+        <header style={{ textAlign: 'center', marginBottom: 28 }}>
+          <img src={SQUIDEO_LOGO} alt="Squideo" style={{ height: 34, marginBottom: 18 }} />
+          <div style={{
+            color: ACCENT, fontSize: 12.5, fontWeight: 700, letterSpacing: 1.4,
+            textTransform: 'uppercase', marginBottom: 12,
+          }}>
+            Brief to Broadcast
+          </div>
+          <h1 style={{
+            margin: '0 0 14px', fontSize: 'clamp(28px, 5vw, 44px)', lineHeight: 1.12,
+            fontWeight: 800, color: '#fff', letterSpacing: '-0.02em',
+          }}>
+            The Explainer Video<br />Crash Course
+          </h1>
+          <p style={{ margin: '0 auto', maxWidth: 560, fontSize: 16, lineHeight: 1.6, color: PALE }}>
+            This is the same thinking we walk every client through before we start.
+            We've put all of it here, free.
+          </p>
+          {(total || modules.length > 0) && (
+            <div style={{ marginTop: 14, fontSize: 13.5, color: MUTED }}>
+              {modules.length > 0 && `${modules.length} videos`}
+              {total && modules.length > 0 && ' · '}
+              {total}
+              {' · no card'}
+            </div>
+          )}
+        </header>
+
+        {/* ── The free module ──────────────────────────────────────────────── */}
+        {free
+          ? <FreePlayer module={free} track={track} onEnded={signedIn ? null : scrollToSignup} />
+          : <PlayerPlaceholder failed={failed} loading={!data} />}
+
+        {/* ── The grid ─────────────────────────────────────────────────────── */}
+        {modules.length > 0 && (
+          <section style={{ marginTop: 40 }}>
+            <h2 style={{ fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: 'uppercase', color: ACCENT, margin: '0 0 16px' }}>
+              What's inside
+            </h2>
+            <div style={{
+              display: 'grid', gap: 12,
+              gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+            }}>
+              {modules.map((m) => (
+                <ModuleTile key={m.slug} module={m} onClick={m.locked ? scrollToSignup : undefined} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── Signup / continue ────────────────────────────────────────────── */}
+        <section ref={signupRef} style={{ marginTop: 44 }}>
+          {signedIn ? <ContinueCard /> : <SignupCard moduleCount={modules.length} />}
+        </section>
+
+        {/* ── What else you get ────────────────────────────────────────────── */}
+        <section style={{ marginTop: 44 }}>
+          <h2 style={{ fontSize: 13, fontWeight: 700, letterSpacing: 1.2, textTransform: 'uppercase', color: ACCENT, margin: '0 0 16px' }}>
+            And when you sign up
+          </h2>
+          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+            <Perk title="A brief you can actually use">
+              A guided brief builder that turns what you've learnt into a document any
+              production company could work from — including us.
+            </Perk>
+            <Perk title="A look inside the real thing">
+              You get an account on the same portal our clients use. Have a proper look
+              round: storyboard reviews, timestamped video feedback, the lot.
+            </Perk>
+            <Perk title="No sales call required">
+              Watch it, use it, and get on with your day. If you want a quote or a chat
+              afterwards it's one click — but nobody will chase you.
+            </Perk>
+          </div>
+        </section>
+
+        <footer style={{ marginTop: 48, textAlign: 'center', fontSize: 12.5, color: MUTED, lineHeight: 1.7 }}>
+          Squideo · <a href="mailto:enquiries@squideo.co.uk" style={{ color: ACCENT }}>enquiries@squideo.co.uk</a> · 01482 738 656
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+// ── The free player ──────────────────────────────────────────────────────────
+// Poster-first with preload="none": this page is served to anonymous traffic,
+// and preloading a video for every visitor who never presses play is the one
+// easy way to run up a blob egress bill on a free lead magnet.
+function FreePlayer({ module: m, track, onEnded }) {
+  const [playing, setPlaying] = useState(false);
+  const played = useRef(false);
+
+  const start = () => {
+    setPlaying(true);
+    if (!played.current) { played.current = true; track('play', { slug: m.slug }); }
+  };
+
+  return (
+    <div>
+      <div style={{
+        position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000',
+        aspectRatio: '16 / 9', boxShadow: '0 24px 60px rgba(0,0,0,0.42)',
+      }}>
+        {playing ? (
+          <video
+            controls
+            autoPlay
+            playsInline
+            preload="metadata"
+            controlsList="nodownload"
+            poster={m.posterUrl || undefined}
+            src={`/api/course?action=stream&slug=${encodeURIComponent(m.slug)}`}
+            onEnded={() => { track('progress', { slug: m.slug, ended: true }); onEnded?.(); }}
+            style={{ width: '100%', height: '100%', display: 'block', objectFit: 'contain' }}
+          />
+        ) : (
+          <button
+            onClick={start}
+            aria-label={`Play ${m.title}`}
+            style={{
+              position: 'absolute', inset: 0, width: '100%', height: '100%', padding: 0,
+              border: 'none', cursor: 'pointer', background: m.posterUrl ? '#000' : '#12384F',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            {m.posterUrl && (
+              <img src={m.posterUrl} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0.72 }} />
+            )}
+            <span style={{
+              position: 'relative', width: 76, height: 76, borderRadius: '50%',
+              background: BRAND.blue, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 8px 30px rgba(0,0,0,0.45)',
+            }}>
+              <Play size={30} color="#fff" fill="#fff" style={{ marginLeft: 4 }} />
+            </span>
+          </button>
+        )}
+      </div>
+      <div style={{ marginTop: 14, display: 'flex', gap: 12, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', color: '#7FE0A8' }}>
+          Video {m.moduleNumber} · watch now
+        </span>
+        <span style={{ fontSize: 17, fontWeight: 700, color: '#fff' }}>{m.title}</span>
+        {fmtDuration(m.durationSeconds) && (
+          <span style={{ fontSize: 12.5, color: MUTED }}>{fmtDuration(m.durationSeconds)}</span>
+        )}
+      </div>
+      {m.subtitle && (
+        <p style={{ margin: '6px 0 0', fontSize: 14, lineHeight: 1.6, color: PALE, maxWidth: 640 }}>{m.subtitle}</p>
+      )}
+    </div>
+  );
+}
+
+function PlayerPlaceholder({ failed, loading }) {
+  return (
+    <div style={{
+      borderRadius: 14, aspectRatio: '16 / 9', background: '#12384F',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      color: MUTED, fontSize: 14, textAlign: 'center', padding: 24,
+    }}>
+      {loading ? 'Loading…'
+        : failed ? "We couldn't load the course just now — please refresh."
+        : 'The first video is being uploaded — check back shortly.'}
+    </div>
+  );
+}
+
+// ── A grid tile ──────────────────────────────────────────────────────────────
+function ModuleTile({ module: m, onClick }) {
+  const [hover, setHover] = useState(false);
+  const interactive = !!onClick;
+  const duration = fmtDuration(m.durationSeconds);
+
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onKeyDown={interactive ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+      style={{
+        background: hover && interactive ? '#194A66' : '#153E56',
+        border: `1px solid ${hover && interactive ? '#2E6E90' : '#204F6B'}`,
+        borderRadius: 12, overflow: 'hidden', cursor: interactive ? 'pointer' : 'default',
+        transition: 'background 120ms, border-color 120ms',
+        display: 'flex', flexDirection: 'column',
+      }}
+    >
+      <div style={{ position: 'relative', aspectRatio: '16 / 9', background: '#0B2536' }}>
+        {m.posterUrl && (
+          <img src={m.posterUrl} alt="" loading="lazy" style={{
+            width: '100%', height: '100%', objectFit: 'cover',
+            opacity: m.locked ? 0.42 : 0.85,
+          }} />
+        )}
+        <span style={{
+          position: 'absolute', top: 8, left: 8, fontSize: 10.5, fontWeight: 800,
+          padding: '2px 7px', borderRadius: 999, letterSpacing: 0.4,
+          background: m.locked ? 'rgba(11,37,54,0.82)' : '#7FE0A8',
+          color: m.locked ? PALE : '#0B2536',
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+        }}>
+          {m.locked ? <Lock size={9} /> : <Check size={10} />}
+          {m.locked ? `Video ${m.moduleNumber}` : 'Free'}
+        </span>
+        {duration && (
+          <span style={{
+            position: 'absolute', bottom: 8, right: 8, fontSize: 11, fontWeight: 600,
+            padding: '1px 6px', borderRadius: 4, background: 'rgba(11,37,54,0.85)', color: PALE,
+          }}>
+            {duration}
+          </span>
+        )}
+      </div>
+      <div style={{ padding: '11px 13px 13px' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', lineHeight: 1.35 }}>{m.title}</div>
+        {m.subtitle && (
+          <div style={{ fontSize: 12.5, color: MUTED, marginTop: 4, lineHeight: 1.5 }}>{m.subtitle}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Signup ───────────────────────────────────────────────────────────────────
+// PHASE 2 replaces this card with the real two-field signup form, once
+// POST /api/portal/auth?op=course-signup exists.
+//
+// Until then the copy is deliberately honest about what the button does. A
+// button reading "Watch free" that opens a contact form is a bait-and-switch,
+// and this page's entire job is to earn trust before asking for anything —
+// nothing here is worth undermining that.
+function SignupCard({ moduleCount }) {
+  const remaining = Math.max(moduleCount - 1, 0);
+  return (
+    <div style={{
+      background: '#fff', color: BRAND.ink, borderRadius: 16, padding: 28,
+      boxShadow: '0 18px 50px rgba(0,0,0,0.28)', textAlign: 'center',
+    }}>
+      <h2 style={{ margin: '0 0 8px', fontSize: 21, fontWeight: 800 }}>
+        The other {remaining || 'seven'} are on the way
+      </h2>
+      <p style={{ margin: '0 auto 18px', maxWidth: 470, fontSize: 14, lineHeight: 1.6, color: BRAND.muted }}>
+        We're putting the rest of the course online now. Leave us your email and we'll
+        tell you the moment it's up — all of it unlocks at once, no drip-feed.
+      </p>
+      <a
+        href="/contact"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8, background: BRAND.blue,
+          color: '#fff', fontWeight: 700, fontSize: 15, padding: '12px 22px',
+          borderRadius: 10, textDecoration: 'none',
+        }}
+      >
+        Tell me when it's ready <ArrowRight size={16} />
+      </a>
+      <div style={{ marginTop: 12, fontSize: 12, color: BRAND.muted }}>
+        Free. No card. Unsubscribe any time.
+      </div>
+    </div>
+  );
+}
+
+function ContinueCard() {
+  return (
+    <div style={{
+      background: '#fff', color: BRAND.ink, borderRadius: 16, padding: 28,
+      boxShadow: '0 18px 50px rgba(0,0,0,0.28)', textAlign: 'center',
+    }}>
+      <h2 style={{ margin: '0 0 8px', fontSize: 21, fontWeight: 800 }}>You're already signed up</h2>
+      <p style={{ margin: '0 auto 18px', maxWidth: 420, fontSize: 14, lineHeight: 1.6, color: BRAND.muted }}>
+        Every video is unlocked in your portal — pick up where you left off.
+      </p>
+      <a
+        href="/portal"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8, background: BRAND.blue,
+          color: '#fff', fontWeight: 700, fontSize: 15, padding: '12px 22px',
+          borderRadius: 10, textDecoration: 'none',
+        }}
+      >
+        Continue the course <ArrowRight size={16} />
+      </a>
+    </div>
+  );
+}
+
+function Perk({ title, children }) {
+  return (
+    <div style={{ background: '#153E56', border: '1px solid #204F6B', borderRadius: 12, padding: '16px 17px' }}>
+      <div style={{ fontSize: 14.5, fontWeight: 700, color: '#fff', marginBottom: 6 }}>{title}</div>
+      <div style={{ fontSize: 13, lineHeight: 1.6, color: MUTED }}>{children}</div>
+    </div>
+  );
+}

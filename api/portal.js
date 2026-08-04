@@ -35,6 +35,7 @@ import Stripe from 'stripe';
 import { put, del, getDownloadUrl } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
 import sql, { batchWrite } from './_lib/db.js';
+import { streamBlob } from './_lib/blobStream.js';
 import { sendMail, APP_URL } from './_lib/email.js';
 import {
   sendNotification,
@@ -1487,37 +1488,9 @@ function blobRedirect(res, url, wantDownload) {
   return res.status(302).end();
 }
 
-// Relay a blob's bytes through this origin, passing the client's Range header
-// through so <video> scrubbing works. Mirrors streamDriveFile — used only where
-// the redirect won't do (a canvas capture needs a same-origin video).
-async function streamBlob(req, res, url, mimeType) {
-  const headers = {};
-  if (req.headers.range) headers.Range = req.headers.range;
-  const upstream = await fetch(url, { headers }).catch(() => null);
-  if (!upstream || (!upstream.ok && upstream.status !== 206)) {
-    return res.status(502).json({ error: 'Could not fetch the file — try again shortly' });
-  }
-  res.status(upstream.status === 206 ? 206 : 200);
-  for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
-    const v = upstream.headers.get(h);
-    if (v) res.setHeader(h, v);
-  }
-  if (!upstream.headers.get('content-type') && mimeType) res.setHeader('Content-Type', mimeType);
-  const reader = upstream.body.getReader();
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!res.write(Buffer.from(value))) {
-        await new Promise((resolve) => res.once('drain', resolve));
-      }
-    }
-  } catch (err) {
-    console.warn('[portal] blob stream interrupted', err.message);
-  } finally {
-    res.end();
-  }
-}
+// streamBlob (the Range-passthrough relay used where a 302 won't do, because a
+// canvas capture needs a same-origin video) now lives in api/_lib/blobStream.js
+// — Admin → Crash course needs the same thing for its thumbnails.
 
 async function downloadRoute(req, res, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

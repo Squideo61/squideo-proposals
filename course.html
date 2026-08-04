@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="/squideo-favicon.png" />
+    <link rel="canonical" href="https://app.squideo.com/course" />
+
+    <title>The Explainer Video Crash Course — Squideo</title>
+    <meta name="description" content="Brief to Broadcast: eight short videos on getting an explainer video that actually works — script, storyboard, visual style, distribution and the numbers that matter. Free, no card." />
+    <meta name="robots" content="index,follow" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Squideo" />
+    <meta property="og:url" content="https://app.squideo.com/course" />
+    <meta property="og:title" content="The Explainer Video Crash Course" />
+    <meta property="og:description" content="Brief to Broadcast — eight short videos on getting an explainer video that actually works. Free, no card." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="The Explainer Video Crash Course" />
+    <meta name="twitter:description" content="Brief to Broadcast — eight short videos on getting an explainer video that actually works. Free, no card." />
+
+    <style>
+      html, body { margin: 0; padding: 0; background: #0F2A3D; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      #course-root { min-height: 100vh; }
+      /* Hidden the moment React mounts. Exists so the page has real content for
+         a crawler and for anyone whose JS hasn't arrived yet — this is a public
+         marketing page, so it can't be a blank div. */
+      #course-fallback { max-width: 640px; margin: 0 auto; padding: 64px 20px; color: #DCEEF7; line-height: 1.6; }
+      #course-fallback h1 { font-size: 30px; margin: 0 0 12px; }
+      #course-fallback ol { padding-left: 20px; }
+      #course-fallback li { margin-bottom: 6px; }
+      #course-fallback a { color: #9FDFF5; }
+    </style>
+  </head>
+  <body>
+    <div id="course-root">
+      <div id="course-fallback">
+        <h1>The Explainer Video Crash Course</h1>
+        <p><strong>Brief to Broadcast</strong> — everything we know about making a video that works, in eight short videos. Free, no card.</p>
+        <ol>
+          <li>Why most explainer videos quietly fail</li>
+          <li>Writing a script that doesn't suck</li>
+          <li>The storyboard mistake almost everyone makes</li>
+          <li>How to choose your visual style</li>
+          <li>Your distribution plan (write it before you film)</li>
+          <li>The metrics that actually matter</li>
+          <li>The feedback trap</li>
+          <li>Where AI genuinely helps — and where it doesn't</li>
+        </ol>
+        <p>This page needs JavaScript to play the videos. Prefer to talk to a human? Email
+          <a href="mailto:enquiries@squideo.co.uk">enquiries@squideo.co.uk</a> or call 01482 738 656.</p>
+      </div>
+    </div>
+    <script type="module" src="/src/course.jsx"></script>
+  </body>
+</html>
