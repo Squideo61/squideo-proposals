@@ -455,7 +455,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
               <button onClick={() => setEditing(true)} className="btn-ghost"><Edit2 size={14} /> Edit deal</button>
               <button
                 onClick={() => {
-                  if (window.confirm('Delete this deal? Linked proposals will be unlinked but not removed.')) {
+                  if (window.confirm('Delete this deal permanently?\n\nIts proposals, signatures, invoices, extras, tasks, videos, review links and any predicted/pending payments go with it, so it stops counting anywhere in Finance. This cannot be undone.\n\nGoogle Drive files, Xero invoices and Stripe records are NOT touched — tidy those up separately.')) {
                     actions.deleteDeal(dealId);
                     onBack();
                   }

@@ -1928,6 +1928,24 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       await sql`DELETE FROM proposal_views      WHERE proposal_id = ANY(${propIds})`.catch(() => {});
       await sql`DELETE FROM proposals WHERE deal_id = ${id}`.catch(() => {});
     }
+    // Most deal_id tables carry ON DELETE CASCADE and clear themselves. These
+    // don't: some hold an opaque text key with no FK at all, others are
+    // ON DELETE SET NULL, which orphans the row rather than removing it. Left
+    // behind, the finance ones keep counting toward Predicted Payments and the
+    // outstanding-payments list long after the deal is gone. Must run BEFORE
+    // the deal delete — the SET NULL rows become unfindable once deal_id is
+    // nulled. Each guarded: a missing table never blocks the delete.
+    await sql`DELETE FROM predicted_payments        WHERE item_key = ${'deal:' + id}`.catch(() => {});
+    await sql`DELETE FROM manual_pending_payments   WHERE deal_id = ${id}`.catch(() => {});
+    await sql`DELETE FROM in_app_notifications      WHERE link = ${'#/deal/' + id}`.catch(() => {});
+    await sql`DELETE FROM scheduled_emails          WHERE deal_id = ${id}`.catch(() => {});
+    await sql`DELETE FROM tasks                     WHERE deal_id = ${id}`.catch(() => {});
+    await sql`DELETE FROM revision_projects         WHERE deal_id = ${id}`.catch(() => {});
+    await sql`DELETE FROM storyboard_projects       WHERE deal_id = ${id}`.catch(() => {});
+    await sql`DELETE FROM portal_library            WHERE deal_id = ${id}`.catch(() => {});
+    await sql`DELETE FROM portal_notifications      WHERE deal_id = ${id}`.catch(() => {});
+    await sql`DELETE FROM portal_activity           WHERE deal_id = ${id}`.catch(() => {});
+    await sql`DELETE FROM commission_disqualifications WHERE deal_id = ${id}`.catch(() => {});
     await sql`DELETE FROM deals WHERE id = ${id}`;
     return res.status(200).json({ ok: true });
   }
