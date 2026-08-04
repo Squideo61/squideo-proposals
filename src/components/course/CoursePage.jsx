@@ -20,6 +20,21 @@ const PALE = '#DCEEF7';
 const MUTED = '#8FA9BA';
 const ACCENT = '#9FDFF5';
 
+// Most visitors arrive here from squideo.com, and this page carries none of that
+// site's chrome — so without a way back it reads as a dead end on a domain they
+// don't recognise. The logo links home and the footer carries a handful of real
+// links, but there is deliberately NO full nav: every link in the header of a
+// landing page is an exit someone takes before they've seen anything. Footer
+// links are safe because you have to scroll past the signup to reach them.
+const SITE = 'https://squideo.com';
+const SITE_LINKS = [
+  ['Examples', '/video-examples'],
+  ['Pricing & Process', '/pricing-process'],
+  ['Reviews', '/reviews'],
+  ['Get a quote', '/get-quote'],
+  ['Contact', '/contact'],
+];
+
 const fmtDuration = (s) => {
   if (!s) return null;
   const mins = Math.floor(s / 60);
@@ -100,7 +115,9 @@ export function CoursePage({ track }) {
 
         {/* ── Hero ─────────────────────────────────────────────────────────── */}
         <header style={{ textAlign: 'center', marginBottom: 28 }}>
-          <img src={SQUIDEO_LOGO} alt="Squideo" style={{ height: 34, marginBottom: 18 }} />
+          <a href={SITE} style={{ display: 'inline-block', marginBottom: 18 }}>
+            <img src={SQUIDEO_LOGO} alt="Squideo" style={{ height: 34, display: 'block' }} />
+          </a>
           <div style={{
             color: ACCENT, fontSize: 12.5, fontWeight: 700, letterSpacing: 1.4,
             textTransform: 'uppercase', marginBottom: 12,
@@ -193,8 +210,26 @@ export function CoursePage({ track }) {
           </div>
         </section>
 
-        <footer style={{ marginTop: 48, textAlign: 'center', fontSize: 12.5, color: MUTED, lineHeight: 1.7 }}>
+        <footer style={{
+          marginTop: 48, paddingTop: 24, borderTop: '1px solid #204F6B',
+          textAlign: 'center', fontSize: 12.5, color: MUTED, lineHeight: 1.7,
+        }}>
+          <nav style={{
+            display: 'flex', flexWrap: 'wrap', gap: '8px 18px',
+            justifyContent: 'center', marginBottom: 14,
+          }}>
+            {SITE_LINKS.map(([label, path]) => (
+              <a key={path} href={SITE + path} style={{ color: PALE, textDecoration: 'none' }}>{label}</a>
+            ))}
+          </nav>
           Squideo · <a href="mailto:enquiries@squideo.co.uk" style={{ color: ACCENT }}>enquiries@squideo.co.uk</a> · 01482 738 656
+          <div style={{ marginTop: 8, fontSize: 12 }}>
+            {/* Required, not decorative: this page collects an email address and a
+                marketing consent tick, so it has to say what happens to the data. */}
+            <a href={`${SITE}/privacy-policy`} style={{ color: MUTED }}>Privacy policy</a>
+            {' · '}
+            <a href={`${SITE}/terms-conditions`} style={{ color: MUTED }}>Terms</a>
+          </div>
         </footer>
       </div>
     </div>
