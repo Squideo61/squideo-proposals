@@ -4,7 +4,16 @@
 //
 // This page is always top-level (Duda hard-links to it rather than iframing —
 // the sq_portal cookie is SameSite=Lax and would never be set inside a
-// third-party frame), so attribution is parsed from its own URL.
+// third-party frame), so attribution is parsed from its own URL, and the CSP
+// block for /course in vercel.json keeps frame-ancestors 'none'.
+//
+// Two things about that CSP block, since vercel.json can carry no comments of
+// its own (a "//" key fails Vercel's schema validation and breaks the build):
+//   - a `source` block REPLACES the default block rather than merging with it,
+//     so it has to repeat media-src for the blob host — the free video is a 302
+//     to https://*.public.blob.vercel-storage.com and won't play without it;
+//   - /course must also be added to the default block's negative lookahead, or
+//     both blocks match and the stricter one wins.
 
 import React from 'react';
 import { createRoot } from 'react-dom/client';

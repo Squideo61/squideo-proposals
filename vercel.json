@@ -246,7 +246,6 @@
       ]
     },
     {
-      "//": "The Explainer Video Crash Course landing page. Duda HARD-LINKS to this rather than iframing it (the sq_portal cookie is SameSite=Lax and would never be set in a third-party frame), so frame-ancestors stays 'none'. A source block REPLACES the default rather than merging with it, so media-src has to repeat the blob host here — the free video streams via a 302 to it.",
       "source": "/course(.html)?",
       "headers": [
         {
