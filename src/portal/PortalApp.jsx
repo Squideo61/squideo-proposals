@@ -61,16 +61,18 @@ const NAV = [
   // nav). The bar lays items out evenly with no scroll, so past about six they
   // stop being tappable — adding the course meant one had to give, and buying
   // video credit is the least likely thing anyone does on a phone.
-  // Crash course sits at the top deliberately. Most people arriving in this
-  // portal now come in through the course rather than through a project, and
-  // for them an empty "Current projects" is a worse first screen than the
-  // thing they actually signed up for.
+  // Ordered for the way people now ARRIVE, not for how a long-standing client
+  // uses it. Most new accounts come in through the course, so the course and
+  // then the brief sit above Current projects — for a prospect that page is
+  // empty, and an empty first screen is a bad first impression. A client with
+  // live work reaches their projects in one more glance; a prospect who lands
+  // on nothing may not come back at all.
   { view: 'course', label: 'Crash course', shortLabel: 'Course', hash: '#/course', Icon: GraduationCap },
-  { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home },
   { view: 'brief', label: 'Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobile: false },
+  { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home },
   { view: 'library', label: 'Video library', shortLabel: 'Library', hash: '#/library', Icon: Film },
-  { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
   { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet, mobile: false },
+  { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
   { view: 'request', label: 'New video', hash: '#/request', Icon: PlusCircle, highlight: true },
   { view: 'team', label: 'Team', hash: '#/team', Icon: Users },
   { view: 'settings', label: 'Settings', hash: '#/settings', Icon: SettingsIcon },
