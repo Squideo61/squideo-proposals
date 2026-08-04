@@ -31,13 +31,19 @@ export async function adminEmailsExcluding(excludeEmail) {
     .filter(e => e.toLowerCase() !== drop);
 }
 
-let client = null;
-function getClient() {
-  if (client) return client;
-  const key = process.env.RESEND_API_KEY;
+// Marketing may run through a SEPARATE Resend account (set
+// RESEND_API_KEY_MARKETING). That's a stronger separation than the sending
+// subdomain alone: if the marketing sender ever collects enough complaints to
+// get throttled or suspended, invoices and password resets are in a different
+// account entirely and never notice. Unset falls back to the single key, so
+// nothing breaks by omission.
+const clients = new Map();
+function getClient(scope = 'transactional') {
+  const key = (scope === 'marketing' && process.env.RESEND_API_KEY_MARKETING)
+    || process.env.RESEND_API_KEY;
   if (!key) return null;
-  client = new Resend(key);
-  return client;
+  if (!clients.has(key)) clients.set(key, new Resend(key));
+  return clients.get(key);
 }
 
 // Sends an email. Failures are caught and logged so the calling API route
@@ -68,7 +74,7 @@ export async function sendMail({
   to, cc, subject, html, text, replyTo = null, throwOnError = false,
   scope = 'transactional', headers = null,
 }) {
-  const c = getClient();
+  const c = getClient(scope);
   const clean = (v) => (Array.isArray(v) ? v : [v])
     .map(r => (typeof r === 'string' ? r.trim() : r))
     .filter(Boolean);
