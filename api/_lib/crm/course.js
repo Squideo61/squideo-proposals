@@ -136,13 +136,11 @@ async function patchModule(req, res, existing) {
      WHERE id = ${existing.id}
     RETURNING *`;
 
-  // Exactly one module is the free one. Enforced here rather than by a partial
-  // unique index so that ticking a new module silently unticks the old one,
-  // which is what the admin means by the click.
-  if (has('free') && b.free === true) {
-    await sql`UPDATE course_modules SET free = FALSE, updated_at = NOW()
-               WHERE id <> ${existing.id} AND free`;
-  }
+  // ANY number of videos can be free. This used to force exactly one, on the
+  // assumption the course was ~45 minutes and one taster was a fair trade. It
+  // came in at 5:48 total, so the gate moved to "videos 1-3 free, 4-8 gated" —
+  // asking for an email after 46 seconds reads as stingy, after two minutes of
+  // genuine value it reads as earned.
   return res.status(200).json(adminModule(row));
 }
 

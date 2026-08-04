@@ -57,6 +57,7 @@ async function publicRoute(req, res) {
   `;
   const modules = rows.map(publicModule);
   const totalSeconds = rows.reduce((n, r) => n + (r.duration_seconds || 0), 0);
+  const freeSlugs = modules.filter((m) => m.free).map((m) => m.slug);
 
   // A short cache is worth having — this is the payload every anonymous visitor
   // fetches — but it must stay short, or publishing a module looks broken.
@@ -65,7 +66,10 @@ async function publicRoute(req, res) {
     modules,
     totalSeconds,
     moduleCount: modules.length,
-    freeSlug: modules.find((m) => m.free)?.slug || null,
+    // Several videos are free (currently 1-3), so this is a list. The page
+    // plays them in order and only then shows the signup.
+    freeSlugs,
+    freeSeconds: rows.filter((r) => r.free).reduce((n, r) => n + (r.duration_seconds || 0), 0),
   });
 }
 

@@ -20,7 +20,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   GraduationCap, Plus, Upload, Trash2, Eye, EyeOff, Image as ImageIcon,
-  Loader2, PlayCircle, Unlock, ArrowUp, ArrowDown, ExternalLink,
+  Loader2, PlayCircle, Unlock, Lock, ArrowUp, ArrowDown, ExternalLink,
 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
@@ -107,9 +107,12 @@ export function CourseTab() {
     return <div style={{ padding: 24, color: BRAND.muted, fontSize: 13 }}>Loading the course…</div>;
   }
 
-  const published = modules.filter((m) => m.published).length;
-  const freeModule = modules.find((m) => m.free);
-  const totalSeconds = modules.filter((m) => m.published).reduce((n, m) => n + (m.durationSeconds || 0), 0);
+  const live = modules.filter((m) => m.published);
+  const published = live.length;
+  const freeLive = live.filter((m) => m.free);
+  const secs = (list) => list.reduce((n, m) => n + (m.durationSeconds || 0), 0);
+  const totalSeconds = secs(live);
+  const freeSeconds = secs(freeLive);
 
   return (
     <div style={{ maxWidth: 900 }}>
@@ -125,11 +128,21 @@ export function CourseTab() {
         </p>
       </header>
 
-      {!freeModule && modules.length > 0 && (
-        <Notice tone="warn">
-          No video is marked <strong>free</strong>. Anonymous visitors will see the grid but have
-          nothing to watch — and the whole point of the page is that they see the quality before
-          they’re asked for an email address. Tick <strong>Make free</strong> on video 1.
+      {published > 0 && (
+        <Notice tone={freeLive.length ? 'info' : 'warn'}>
+          {freeLive.length ? (
+            <>
+              <strong>{freeLive.length} of {published} free</strong> — anonymous visitors can watch{' '}
+              {fmtDuration(freeSeconds)} of {fmtDuration(totalSeconds)} before they’re asked to sign up.
+              {freeSeconds / totalSeconds > 0.75 && ' Almost the whole course is free; there may be little left to sign up for.'}
+            </>
+          ) : (
+            <>
+              No video is marked <strong>free</strong>. Anonymous visitors will see the grid but have
+              nothing to watch — and the whole point of the page is that they see the quality before
+              they’re asked for an email address. Tick <strong>Make free</strong> on video 1.
+            </>
+          )}
         </Notice>
       )}
 
@@ -276,11 +289,17 @@ function ModuleRow({ module: m, busy, isFirst, isLast, onMove, onPatch, onDelete
           >
             {m.published ? <><EyeOff size={13} /> Unpublish</> : <><Eye size={13} /> Publish</>}
           </button>
-          {!m.free && (
-            <button className="btn-ghost" onClick={() => onPatch({ free: true })} disabled={busy} style={{ fontSize: 12 }} title="Make this the video anonymous visitors can watch without signing up">
-              <Unlock size={13} /> Make free
-            </button>
-          )}
+          <button
+            className="btn-ghost"
+            onClick={() => onPatch({ free: !m.free })}
+            disabled={busy}
+            style={{ fontSize: 12 }}
+            title={m.free
+              ? 'Require a free account to watch this one'
+              : 'Let anonymous visitors watch this without signing up'}
+          >
+            {m.free ? <><Lock size={13} /> Require signup</> : <><Unlock size={13} /> Make free</>}
+          </button>
           <button className="btn-ghost" onClick={onDelete} disabled={busy} style={{ fontSize: 12, color: '#D32F2F', marginLeft: 'auto' }}>
             <Trash2 size={13} /> Delete
           </button>

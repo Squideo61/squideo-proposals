@@ -37,7 +37,12 @@ export function CoursePage({ track }) {
   const [data, setData] = useState(null);
   const [failed, setFailed] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
+  // Which free video the hero player is showing. null = the first one, not yet
+  // touched; `auto` means the visitor chose it, so it should start playing
+  // rather than sitting behind a play button.
+  const [chosen, setChosen] = useState(null);
   const signupRef = useRef(null);
+  const playerRef = useRef(null);
 
   useEffect(() => {
     fetch('/api/course?action=public')
@@ -63,8 +68,29 @@ export function CoursePage({ track }) {
   }, [track]);
 
   const modules = data?.modules || [];
-  const free = modules.find((m) => m.free) || null;
+  const freeModules = modules.filter((m) => m.free);
+  const gatedCount = modules.length - freeModules.length;
   const total = fmtTotal(data?.totalSeconds);
+
+  const active = freeModules.find((m) => m.slug === chosen?.slug) || freeModules[0] || null;
+
+  // Clicking a free tile swaps the hero player and scrolls back to it, rather
+  // than playing inline in the grid — one player keeps the page calm, and the
+  // hero is where the eye already is.
+  const playFree = useCallback((slug) => {
+    setChosen({ slug, auto: true });
+    playerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
+
+  // Roll straight on to the next free video, and only when they run out show
+  // the signup. Someone who has just watched all three unprompted is the
+  // warmest this page ever gets them.
+  const onFreeEnded = useCallback((slug) => {
+    const i = freeModules.findIndex((m) => m.slug === slug);
+    const next = i >= 0 ? freeModules[i + 1] : null;
+    if (next) { setChosen({ slug: next.slug, auto: true }); return; }
+    if (!signedIn) scrollToSignup();
+  }, [freeModules, signedIn, scrollToSignup]);
 
   return (
     <div style={{ background: NAVY, minHeight: '100vh', color: PALE }}>
@@ -99,10 +125,23 @@ export function CoursePage({ track }) {
           )}
         </header>
 
-        {/* ── The free module ──────────────────────────────────────────────── */}
-        {free
-          ? <FreePlayer module={free} track={track} onEnded={signedIn ? null : scrollToSignup} />
-          : <PlayerPlaceholder failed={failed} loading={!data} />}
+        {/* ── The free videos ──────────────────────────────────────────────── */}
+        <div ref={playerRef}>
+          {active
+            ? (
+              <FreePlayer
+                // Remount on change so the <video> reloads rather than keeping
+                // the previous source's buffered state.
+                key={active.slug}
+                module={active}
+                autoStart={!!chosen?.auto}
+                freeCount={freeModules.length}
+                track={track}
+                onEnded={() => onFreeEnded(active.slug)}
+              />
+            )
+            : <PlayerPlaceholder failed={failed} loading={!data} />}
+        </div>
 
         {/* ── The grid ─────────────────────────────────────────────────────── */}
         {modules.length > 0 && (
@@ -115,7 +154,12 @@ export function CoursePage({ track }) {
               gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
             }}>
               {modules.map((m) => (
-                <ModuleTile key={m.slug} module={m} onClick={m.locked ? scrollToSignup : undefined} />
+                <ModuleTile
+                  key={m.slug}
+                  module={m}
+                  playing={m.slug === active?.slug}
+                  onClick={m.locked ? scrollToSignup : () => playFree(m.slug)}
+                />
               ))}
             </div>
           </section>
@@ -123,7 +167,7 @@ export function CoursePage({ track }) {
 
         {/* ── Signup / continue ────────────────────────────────────────────── */}
         <section ref={signupRef} style={{ marginTop: 44 }}>
-          {signedIn ? <ContinueCard /> : <SignupCard moduleCount={modules.length} />}
+          {signedIn ? <ContinueCard /> : <SignupCard gatedCount={gatedCount} />}
         </section>
 
         {/* ── What else you get ────────────────────────────────────────────── */}
@@ -159,14 +203,20 @@ export function CoursePage({ track }) {
 // Poster-first with preload="none": this page is served to anonymous traffic,
 // and preloading a video for every visitor who never presses play is the one
 // easy way to run up a blob egress bill on a free lead magnet.
-function FreePlayer({ module: m, track, onEnded }) {
-  const [playing, setPlaying] = useState(false);
+function FreePlayer({ module: m, track, onEnded, autoStart = false, freeCount = 1 }) {
+  // autoStart means the visitor picked this one (a tile click, or it auto-
+  // advanced from the previous video), so waiting behind a play button would
+  // just be a second click for the same decision.
+  const [playing, setPlaying] = useState(autoStart);
   const played = useRef(false);
 
   const start = () => {
     setPlaying(true);
     if (!played.current) { played.current = true; track('play', { slug: m.slug }); }
   };
+
+  useEffect(() => { if (autoStart && !played.current) { played.current = true; track('play', { slug: m.slug }); } },
+    [autoStart, m.slug, track]);
 
   return (
     <div>
@@ -211,7 +261,7 @@ function FreePlayer({ module: m, track, onEnded }) {
       </div>
       <div style={{ marginTop: 14, display: 'flex', gap: 12, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', color: '#7FE0A8' }}>
-          Video {m.moduleNumber} · watch now
+          Video {m.moduleNumber} · {freeCount > 1 ? `${freeCount} free to watch` : 'watch now'}
         </span>
         <span style={{ fontSize: 17, fontWeight: 700, color: '#fff' }}>{m.title}</span>
         {fmtDuration(m.durationSeconds) && (
@@ -240,10 +290,11 @@ function PlayerPlaceholder({ failed, loading }) {
 }
 
 // ── A grid tile ──────────────────────────────────────────────────────────────
-function ModuleTile({ module: m, onClick }) {
+function ModuleTile({ module: m, onClick, playing = false }) {
   const [hover, setHover] = useState(false);
   const interactive = !!onClick;
   const duration = fmtDuration(m.durationSeconds);
+  const highlight = playing || (hover && interactive);
 
   return (
     <div
@@ -254,8 +305,8 @@ function ModuleTile({ module: m, onClick }) {
       tabIndex={interactive ? 0 : undefined}
       onKeyDown={interactive ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
       style={{
-        background: hover && interactive ? '#194A66' : '#153E56',
-        border: `1px solid ${hover && interactive ? '#2E6E90' : '#204F6B'}`,
+        background: highlight ? '#194A66' : '#153E56',
+        border: `1px solid ${playing ? BRAND.blue : (highlight ? '#2E6E90' : '#204F6B')}`,
         borderRadius: 12, overflow: 'hidden', cursor: interactive ? 'pointer' : 'default',
         transition: 'background 120ms, border-color 120ms',
         display: 'flex', flexDirection: 'column',
@@ -271,12 +322,12 @@ function ModuleTile({ module: m, onClick }) {
         <span style={{
           position: 'absolute', top: 8, left: 8, fontSize: 10.5, fontWeight: 800,
           padding: '2px 7px', borderRadius: 999, letterSpacing: 0.4,
-          background: m.locked ? 'rgba(11,37,54,0.82)' : '#7FE0A8',
-          color: m.locked ? PALE : '#0B2536',
+          background: m.locked ? 'rgba(11,37,54,0.82)' : (playing ? BRAND.blue : '#7FE0A8'),
+          color: m.locked ? PALE : (playing ? '#fff' : '#0B2536'),
           display: 'inline-flex', alignItems: 'center', gap: 4,
         }}>
-          {m.locked ? <Lock size={9} /> : <Check size={10} />}
-          {m.locked ? `Video ${m.moduleNumber}` : 'Free'}
+          {m.locked ? <Lock size={9} /> : (playing ? <Play size={9} fill="currentColor" /> : <Check size={10} />)}
+          {m.locked ? `Video ${m.moduleNumber}` : (playing ? 'Now playing' : 'Free')}
         </span>
         {duration && (
           <span style={{
@@ -305,19 +356,21 @@ function ModuleTile({ module: m, onClick }) {
 // button reading "Watch free" that opens a contact form is a bait-and-switch,
 // and this page's entire job is to earn trust before asking for anything —
 // nothing here is worth undermining that.
-function SignupCard({ moduleCount }) {
-  const remaining = Math.max(moduleCount - 1, 0);
+function SignupCard({ gatedCount }) {
   return (
     <div style={{
       background: '#fff', color: BRAND.ink, borderRadius: 16, padding: 28,
       boxShadow: '0 18px 50px rgba(0,0,0,0.28)', textAlign: 'center',
     }}>
       <h2 style={{ margin: '0 0 8px', fontSize: 21, fontWeight: 800 }}>
-        The other {remaining || 'seven'} are on the way
+        {gatedCount > 0 ? `Unlock the last ${gatedCount}` : 'Want the brief template?'}
       </h2>
       <p style={{ margin: '0 auto 18px', maxWidth: 470, fontSize: 14, lineHeight: 1.6, color: BRAND.muted }}>
-        We're putting the rest of the course online now. Leave us your email and we'll
-        tell you the moment it's up — all of it unlocks at once, no drip-feed.
+        {/* The remaining videos are barely three minutes, so they can't carry
+            the ask on their own — the account is what's actually worth having. */}
+        A free account unlocks the rest and gives you the brief builder: a guided
+        tool that turns all this into a document any production company could work
+        from. You'll also get a proper look inside the portal we run projects in.
       </p>
       <a
         href="/contact"
