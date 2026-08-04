@@ -2,6 +2,12 @@
 // Gated on settings.manage — it's a workspace-wide marketing asset, not
 // per-deal content.
 //
+// NAMING: this file and the schema say "module" (course_modules, module_number);
+// every string a human reads says "video". They're the same thing — there are
+// simply eight videos, and "module" is e-learning jargon nobody here uses. The
+// split is deliberate, not a half-finished rename: the table is already live in
+// production, so renaming it would cost a migration purely to fix wording.
+//
 //   GET    /api/crm/course                → list every module (published or not)
 //   POST   /api/crm/course                → create a module
 //   POST   /api/crm/course/upload-token   → mint a client-upload token
@@ -60,7 +66,7 @@ export async function courseRoute(req, res, id, action, user) {
   }
 
   const [existing] = await sql`SELECT * FROM course_modules WHERE id = ${id}`;
-  if (!existing) return res.status(404).json({ error: 'Module not found' });
+  if (!existing) return res.status(404).json({ error: 'Video not found' });
 
   if (action === 'video')  return attachVideo(req, res, existing);
   if (action === 'poster') return setPoster(req, res, existing);
@@ -85,7 +91,7 @@ async function createModule(req, res) {
   if (!slug) return res.status(400).json({ error: 'Could not derive a slug from that title' });
 
   const [clash] = await sql`SELECT 1 FROM course_modules WHERE slug = ${slug}`;
-  if (clash) return res.status(409).json({ error: 'A module with that slug already exists' });
+  if (clash) return res.status(409).json({ error: 'A video with that web address already exists' });
 
   // Default to the end of the running order rather than making the caller
   // work it out.
@@ -110,7 +116,7 @@ async function patchModule(req, res, existing) {
   // public page — the one mistake worth blocking outright.
   const willPublish = has('published') ? b.published === true : existing.published;
   if (willPublish && !existing.blob_url) {
-    return res.status(400).json({ error: 'Upload the video before publishing this module' });
+    return res.status(400).json({ error: 'Upload the video file before publishing it' });
   }
 
   const [row] = await sql`
@@ -169,7 +175,7 @@ async function uploadToken(req, res) {
 // Authentication rides the sq_session cookie, which a plain <video src> sends.
 async function attachVideo(req, res, existing) {
   if (req.method === 'GET') {
-    if (!existing.blob_url) return res.status(404).json({ error: 'No video on this module' });
+    if (!existing.blob_url) return res.status(404).json({ error: 'No video file uploaded yet' });
     return streamBlob(req, res, existing.blob_url, existing.mime_type || 'video/mp4');
   }
   if (req.method !== 'POST') return res.status(405).end();

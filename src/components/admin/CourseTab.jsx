@@ -1,9 +1,15 @@
-// Admin → Crash course. Manage the 8 modules of The Explainer Video Crash
-// Course: upload each video, pick its thumbnail, write the copy, and publish.
+// Admin → Crash course. Manage the 8 videos of The Explainer Video Crash
+// Course: upload each one, pick its thumbnail, write the copy, and publish.
 //
-// The landing page only ever shows PUBLISHED modules, which is what lets the
-// course go live with module 1 while the rest are still uploading. Exactly one
-// module is marked FREE — that's the one anonymous visitors can watch, and the
+// NAMING: the schema and the code say "module" (course_modules, moduleNumber);
+// everything a human reads says "video". They're the same thing — "module" is
+// e-learning jargon nobody at Squideo uses, and there are simply eight videos.
+// The split is deliberate rather than a half-finished rename: the table already
+// exists in production, so renaming it would cost a migration to fix wording.
+//
+// The landing page only ever shows PUBLISHED videos, which is what lets the
+// course go live with video 1 while the rest are still uploading. Exactly one
+// video is marked FREE — that's the one anonymous visitors can watch, and the
 // whole conversion strategy rests on it playing before anyone is asked for an
 // email address.
 //
@@ -71,7 +77,7 @@ export function CourseTab() {
     try {
       await api.delete(`${BASE}/${encodeURIComponent(m.id)}`);
       await load();
-      showMsg('Module deleted');
+      showMsg('Video deleted');
     } catch (err) {
       showMsg(err.message, 'error');
     } finally {
@@ -121,9 +127,9 @@ export function CourseTab() {
 
       {!freeModule && modules.length > 0 && (
         <Notice tone="warn">
-          No module is marked <strong>free</strong>. Anonymous visitors will see the grid but have
+          No video is marked <strong>free</strong>. Anonymous visitors will see the grid but have
           nothing to watch — and the whole point of the page is that they see the quality before
-          they’re asked for an email address. Tick <strong>Free</strong> on module 1.
+          they’re asked for an email address. Tick <strong>Make free</strong> on video 1.
         </Notice>
       )}
 
@@ -147,7 +153,7 @@ export function CourseTab() {
 
       {modules.length === 0 && (
         <div style={{ padding: 28, textAlign: 'center', color: BRAND.muted, fontSize: 13, border: '1px dashed ' + BRAND.border, borderRadius: 10 }}>
-          No modules yet. Add the first one below.
+          No videos yet. Add the first one below.
         </div>
       )}
 
@@ -155,7 +161,7 @@ export function CourseTab() {
         <NewModule onClose={() => setCreating(false)} onCreated={() => { setCreating(false); load(); }} onError={(msg) => showMsg(msg, 'error')} />
       ) : (
         <button className="btn-ghost" onClick={() => setCreating(true)} style={{ marginTop: 14 }}>
-          <Plus size={14} /> Add a module
+          <Plus size={14} /> Add a video
         </button>
       )}
     </div>
@@ -271,7 +277,7 @@ function ModuleRow({ module: m, busy, isFirst, isLast, onMove, onPatch, onDelete
             {m.published ? <><EyeOff size={13} /> Unpublish</> : <><Eye size={13} /> Publish</>}
           </button>
           {!m.free && (
-            <button className="btn-ghost" onClick={() => onPatch({ free: true })} disabled={busy} style={{ fontSize: 12 }} title="Make this the module anonymous visitors can watch">
+            <button className="btn-ghost" onClick={() => onPatch({ free: true })} disabled={busy} style={{ fontSize: 12 }} title="Make this the video anonymous visitors can watch without signing up">
               <Unlock size={13} /> Make free
             </button>
           )}
@@ -406,11 +412,11 @@ function NewModule({ onClose, onCreated, onError }) {
         <input className="input" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title — e.g. Writing a script that doesn't suck" style={{ fontSize: 13.5 }} />
         <input className="input" value={subtitle} onChange={(e) => setSubtitle(e.target.value)} placeholder="One-line summary for the grid tile" style={{ fontSize: 12.5 }} />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={create} disabled={busy || !title.trim()}>{busy ? 'Adding…' : 'Add module'}</button>
+          <button className="btn" onClick={create} disabled={busy || !title.trim()}>{busy ? 'Adding…' : 'Add video'}</button>
           <button className="btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
         </div>
         <div style={{ fontSize: 11.5, color: BRAND.muted }}>
-          The module is created as a draft. Upload its video, pick a thumbnail, then publish it.
+          Added as a draft. Upload the file, pick a thumbnail, then publish it.
         </div>
       </div>
     </div>
