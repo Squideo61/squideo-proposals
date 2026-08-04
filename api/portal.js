@@ -116,7 +116,7 @@ import { createCourseSignup, SignupError } from './_lib/course/signup.js';
 import { applyTag } from './_lib/crm/tags.js';
 import { scheduleCourseEmails, cancelCourseEmails } from './_lib/course/emails.js';
 import { ensureClientBriefs } from './_lib/brief/db.js';
-import { missingRequired, renderBriefText } from './_lib/brief/questions.js';
+import { missingRequired, renderBriefText, briefProgress } from './_lib/brief/questions.js';
 import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from './_lib/portal/drive.js';
 import {
   serialisePortalDeal,
@@ -1215,12 +1215,29 @@ async function overviewRoute(req, res, user) {
   `;
   const actionNeeded = projects.filter((p) => p.nextStep?.court === 'you').length;
 
+  // An unfinished brief, so the dashboard can offer to pick it up. Read-only on
+  // purpose — the brief route CREATES a draft on GET, and calling that from the
+  // dashboard would mark every visitor as having started one, turning a real
+  // sales signal into noise.
+  const [draft] = await sql`
+    SELECT id, answers, updated_at FROM client_briefs
+     WHERE portal_user_id = ${user.puid} AND submitted_at IS NULL
+       AND answers <> '{}'::jsonb
+     LIMIT 1
+  `.catch(() => []);
+
   return res.status(200).json({
     company: user.companies.find((c) => c.id === companyId) || { id: companyId },
     companies: user.companies,
     projects,
     actionNeeded,
     brandFileCount: brandCount?.n || 0,
+    briefDraft: draft ? {
+      id: draft.id,
+      updatedAt: draft.updated_at,
+      projectName: (draft.answers || {}).projectName || null,
+      ...briefProgress(draft.answers || {}),
+    } : null,
   });
 }
 

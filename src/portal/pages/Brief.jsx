@@ -30,7 +30,40 @@ import {
   SCREENS, briefProgress, missingRequired, suggestedLength,
 } from '../../../api/_lib/brief/questions.js';
 
-const SAVE_DEBOUNCE_MS = 900;
+// ═══ NOTHING THE CLIENT TYPES IS EVER LOST ═══════════════════════════════════
+// Three layers, because each one covers what the others can't:
+//
+//  1. localStorage, on EVERY keystroke. Synchronous, can't fail, survives a
+//     crashed tab, a flat battery or being offline on a train. This is the
+//     literal "every keystroke saved".
+//  2. A debounced PATCH to the server. Deliberately NOT per keystroke: that
+//     would be dozens of requests per sentence, and requests that arrive out
+//     of order lose data rather than saving it. It also flushes immediately
+//     on blur, on tab-hide and on navigating away.
+//  3. On load, if the local mirror is newer than what the server returned —
+//     which means a save was in flight when they closed the tab — the local
+//     copy wins and is pushed straight back up.
+//
+// The failure this prevents is someone spending twenty minutes on a brief,
+// losing it, and never coming back. There is no version of that we can
+// apologise our way out of.
+const SAVE_DEBOUNCE_MS = 700;
+const MIRROR_KEY = 'sq_brief_draft';
+
+const readMirror = (briefId) => {
+  try {
+    const raw = localStorage.getItem(MIRROR_KEY);
+    if (!raw) return null;
+    const m = JSON.parse(raw);
+    return m && m.briefId === briefId ? m : null;
+  } catch { return null; }
+};
+const writeMirror = (briefId, answers) => {
+  try {
+    localStorage.setItem(MIRROR_KEY, JSON.stringify({ briefId, answers, at: Date.now() }));
+  } catch { /* private mode / quota — the server save is still the real one */ }
+};
+const clearMirror = () => { try { localStorage.removeItem(MIRROR_KEY); } catch { /* ignore */ } };
 
 // Must agree with isEmpty() in api/_lib/brief/questions.js — if the client
 // thinks a question is answered and the server doesn't, "Send" bounces with no
@@ -162,7 +195,7 @@ function ScriptTable({ value, onChange }) {
   );
 }
 
-function Question({ q, value, onChange, answers, invalid }) {
+function Question({ q, value, onChange, onBlur, answers, invalid }) {
   const suggestion = q.suggestFrom ? suggestedLength(answers) : null;
   return (
     <div style={{ marginBottom: 26 }}>
@@ -174,17 +207,19 @@ function Question({ q, value, onChange, answers, invalid }) {
         {q.required && <span style={{ color: '#D14343', marginLeft: 4 }}>*</span>}
       </label>
 
+      {/* onBlur saves immediately rather than waiting out the debounce — moving
+          to the next question is the clearest signal that an answer is done. */}
       {q.type === 'text' && (
         <input
           type="text" value={value || ''} placeholder={q.placeholder || ''}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(e.target.value)} onBlur={onBlur}
           style={{ ...inputStyle, borderColor: invalid ? '#E9A0A0' : '#D8E0E8' }}
         />
       )}
       {q.type === 'textarea' && (
         <textarea
           value={value || ''} rows={q.rows || 3} placeholder={q.placeholder || ''}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(e.target.value)} onBlur={onBlur}
           style={{ ...inputStyle, resize: 'vertical', borderColor: invalid ? '#E9A0A0' : '#D8E0E8' }}
         />
       )}
@@ -225,15 +260,33 @@ export default function Brief() {
   const [showInvalid, setShowInvalid] = useState(false);
   const [scriptOpen, setScriptOpen] = useState(false);
 
+  const [dirty, setDirty] = useState(false);
   const pending = useRef({});
   const timer = useRef(null);
+  const briefId = useRef(null);
 
   useEffect(() => {
     (async () => {
       try {
         const d = await portalApi.get('brief');
         setData(d);
-        setAnswers(d.brief?.answers || {});
+        briefId.current = d.brief?.id || null;
+        const fromServer = d.brief?.answers || {};
+
+        // Recover anything that was typed but hadn't reached the server — a
+        // save in flight when the tab closed, or edits made while offline.
+        const mirror = readMirror(d.brief?.id);
+        const serverAt = d.brief?.updatedAt ? new Date(d.brief.updatedAt).getTime() : 0;
+        if (mirror && mirror.at > serverAt + 1000) {
+          const merged = { ...fromServer, ...mirror.answers };
+          setAnswers(merged);
+          // Push it back up straight away rather than waiting for them to type.
+          portalApi.patch('brief', { answers: mirror.answers })
+            .then(() => setSavedAt(new Date()))
+            .catch(() => {});
+        } else {
+          setAnswers(fromServer);
+        }
       } catch (err) { setError(err.message); }
     })();
   }, []);
@@ -248,26 +301,45 @@ export default function Brief() {
     try {
       await portalApi.patch('brief', { answers: patch });
       setSavedAt(new Date());
+      setDirty(false);
     } catch {
-      // Deliberately silent. The value is still in state and will go up with
-      // the next edit; a red banner over a half-typed sentence helps nobody.
+      // Deliberately quiet. The value is still in state AND in the local
+      // mirror, and will go up with the next edit or the next page load; a red
+      // banner over a half-typed sentence helps nobody. `dirty` stays true so
+      // the status line honestly says "not saved yet" rather than lying.
       Object.assign(pending.current, patch);
     } finally { setSaving(false); }
   }, []);
 
   const setAnswer = useCallback((key, value) => {
-    setAnswers((a) => ({ ...a, [key]: value }));
+    setAnswers((a) => {
+      const next = { ...a, [key]: value };
+      // Layer 1: synchronous, every keystroke, cannot fail.
+      writeMirror(briefId.current, next);
+      return next;
+    });
     pending.current[key] = value;
+    setDirty(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(flush, SAVE_DEBOUNCE_MS);
   }, [flush]);
 
-  // Don't lose the last few keystrokes to a tab close or a nav away.
+  // Don't lose the last few keystrokes to a tab close or a nav away. `pagehide`
+  // is the one that actually fires on iOS Safari, where `beforeunload` doesn't.
   useEffect(() => {
     const onHide = () => { if (document.visibilityState === 'hidden') flush(); };
+    const warn = (e) => {
+      if (!Object.keys(pending.current).length) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
     document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', warn);
     return () => {
       document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', warn);
       clearTimeout(timer.current);
       flush();
     };
@@ -292,9 +364,15 @@ export default function Brief() {
     try {
       await portalApi.post('brief');
       showToast('Brief sent — we\'ll come back to you shortly', 'success');
+      // The mirror belonged to the brief that's now been sent; leaving it would
+      // resurrect those answers into the next blank one.
+      clearMirror();
       const d = await portalApi.get('brief');
       setData(d);
+      briefId.current = d.brief?.id || null;
       setAnswers(d.brief?.answers || {});
+      setSavedAt(null);
+      setDirty(false);
       setStep(0);
     } catch (err) {
       showToast(err.message || "Couldn't send the brief", 'error');
@@ -304,9 +382,19 @@ export default function Brief() {
   if (error) return <EmptyState title="Couldn't open your brief" body={error} />;
   if (!data) return <div style={{ padding: 32, color: '#6B7785' }}>Loading…</div>;
 
-  const saveLabel = saving ? 'Saving…'
-    : savedAt ? `Saved ${savedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
-    : 'Saves as you type';
+  // Reassurance, not telemetry. Someone deciding whether they can close the tab
+  // and finish this tomorrow needs to be told they can, in words — a timestamp
+  // alone doesn't answer the question they're actually asking.
+  const save = saving
+    ? { text: 'Saving…', tone: '#5A7382', icon: null }
+    : dirty
+      ? { text: 'Unsaved changes — keep typing, we\'ll save them', tone: '#B45309', icon: null }
+      : savedAt
+        ? {
+            text: `Draft saved at ${savedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} — you can close this and come back`,
+            tone: '#15803D', icon: <Check size={13} />,
+          }
+        : { text: 'Saves automatically as you type', tone: '#9AA5B1', icon: null };
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto' }}>
@@ -340,7 +428,13 @@ export default function Brief() {
             }} />
           </div>
           <span style={{ whiteSpace: 'nowrap' }}>{progress.done} of {progress.total}</span>
-          <span style={{ whiteSpace: 'nowrap', color: saving ? BRAND.blue : '#9AA5B1' }}>{saveLabel}</span>
+        </div>
+
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 12,
+          fontSize: 12.5, color: save.tone, fontWeight: save.icon ? 600 : 500,
+        }}>
+          {save.icon}{save.text}
         </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -393,6 +487,7 @@ export default function Brief() {
                 key={q.key} q={q} answers={answers}
                 value={answers[q.key]}
                 onChange={(v) => setAnswer(q.key, v)}
+                onBlur={flush}
                 invalid={showInvalid && q.required && isBlank(answers[q.key])}
               />
             ))

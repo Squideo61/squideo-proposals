@@ -7,9 +7,42 @@ import { portalApi } from '../api.js';
 import {
   Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, SectionHeading, ProjectTasks,
 } from '../components.jsx';
-import { Film, FolderOpen, Sparkles, Handshake, ChevronRight, Video } from 'lucide-react';
+import { Film, FolderOpen, Sparkles, Handshake, ChevronRight, Video, FileText } from 'lucide-react';
 
 const PARTNER_URL = 'https://squideo.com/partner-programme';
+
+function BriefDraftCard({ draft }) {
+  const when = draft.updatedAt ? new Date(draft.updatedAt) : null;
+  const today = when && new Date().toDateString() === when.toDateString();
+  return (
+    <div style={{
+      background: '#F3F9FC', border: '1px solid #CFE6F2', borderRadius: 12,
+      padding: '16px 18px', display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap',
+    }}>
+      <FileText size={22} style={{ color: BRAND.blue, flexShrink: 0 }} />
+      <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: BRAND.ink }}>
+          {draft.projectName || 'Your video brief'} — {draft.pct}% done
+        </div>
+        <div style={{ fontSize: 13, color: BRAND.muted, marginTop: 2 }}>
+          {draft.done} of {draft.total} answered
+          {when && ` · saved ${today
+            ? when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+            : when.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`}
+        </div>
+        <div style={{
+          height: 5, background: '#DCEAF2', borderRadius: 999,
+          overflow: 'hidden', marginTop: 8, maxWidth: 320,
+        }}>
+          <div style={{ width: `${draft.pct}%`, height: '100%', background: BRAND.blue }} />
+        </div>
+      </div>
+      <a className="btn" href="#/brief" style={{ textDecoration: 'none', whiteSpace: 'nowrap' }}>
+        Pick up where you left off
+      </a>
+    </div>
+  );
+}
 
 export function runCta(cta, dealId) {
   if (!cta) return;
@@ -188,6 +221,12 @@ export default function Dashboard() {
               : 'Your projects will appear here.'}
         </p>
       </div>
+
+      {/* An unfinished brief, surfaced where they land. This is the single
+          thing most likely to bring someone back to finish it — a draft nobody
+          is reminded about is a draft nobody completes, and a half-finished
+          brief is already a warmer lead than a form that was never opened. */}
+      {overview?.briefDraft && <BriefDraftCard draft={overview.briefDraft} />}
 
       <section>
         <SectionHeading>Your projects</SectionHeading>
