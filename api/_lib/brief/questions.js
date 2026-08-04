@@ -187,14 +187,22 @@ export const SCREENS = [
         ],
       },
       {
+        // NO PRICE HERE, deliberately. Budget is asked once, as a band, in
+        // Practicalities. A cost signal attached to an option mid-brief makes
+        // people self-downgrade before they've decided what the video needs,
+        // and the answer stops describing the video and starts describing
+        // their nerve. Saying "an upgrade" in the why-we-ask is enough to stop
+        // the quote being a surprise without anchoring the choice.
         key: 'voiceover', type: 'chips',
         label: 'Voiceover?',
         options: [
-          { value: 'pro', label: 'Yes — professional voice' },
-          { value: 'ours', label: 'Yes — someone from our team' },
-          { value: 'none', label: 'No — text on screen' },
+          { value: 'ai', label: 'AI voice — your standard' },
+          { value: 'pro', label: 'A professional voice artist' },
+          { value: 'client', label: 'Someone on our side will record it' },
+          { value: 'none', label: 'No voiceover — text on screen' },
           { value: 'unsure', label: 'Not sure — recommend one' },
         ],
+        why: "Every video comes with a latest-generation AI voice as standard, and it's good enough now that most videos ship with one. A professional artist is an upgrade worth considering when the video is customer-facing and the voice is doing emotional work rather than just narrating. Say \"not sure\" and we'll tell you which we'd use.",
       },
       {
         key: 'music', type: 'chips',
