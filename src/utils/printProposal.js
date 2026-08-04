@@ -1,6 +1,7 @@
 import { SQUIDEO_LOGO, extraHasVariants, extraHasQuantity, extraUnitPrice, applyInclusionTokens } from '../defaults.js';
 import { CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { formatGBP, computeBaseDiscount } from '../utils.js';
+import { printButtonHTML, writeDoc } from './printWindow.js';
 
 // Resolve relative public paths to absolute so they load inside the popup window.
 const abs = (src) => src && src.startsWith('/') ? window.location.origin + src : src;
@@ -377,7 +378,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
 <body>
   <div class="no-print" style="background:#FFF8E1;border:1px solid #FFE082;padding:12px 20px;text-align:center;font-size:13px;color:#8A6D00;margin-bottom:24px;border-radius:6px;">
     Use your browser's <strong>File → Print</strong> (or Ctrl+P / ⌘P) to save as PDF or print.
-    <button onclick="window.print()" style="margin-left:16px;padding:6px 14px;background:#2BB8E6;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Print / Save as PDF</button>
+    ${printButtonHTML()}
   </div>
 
   <!-- Header -->
@@ -537,8 +538,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
 export function openPrintWindow(data, opts = {}) {
   const w = window.open('', '_blank');
   if (!w) return false;
-  w.document.write(buildPrintHTML(data, opts));
-  w.document.close();
+  writeDoc(w, buildPrintHTML(data, opts));
   return true;
 }
 
@@ -611,7 +611,7 @@ function buildReceiptHTML(data, signed, payment) {
 <body>
   <div class="no-print" style="background:#FFF8E1;border:1px solid #FFE082;padding:12px 20px;text-align:center;font-size:13px;color:#8A6D00;margin-bottom:24px;border-radius:6px;">
     Use your browser's <strong>File → Print</strong> (or Ctrl+P / ⌘P) to save as PDF or print.
-    <button onclick="window.print()" style="margin-left:16px;padding:6px 14px;background:#2BB8E6;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Print / Save as PDF</button>
+    ${printButtonHTML()}
   </div>
 
   <!-- Header -->
@@ -687,7 +687,6 @@ export function openReceiptWindow(data, signed, payment) {
   if (!signed || !payment) return false;
   const w = window.open('', '_blank');
   if (!w) return false;
-  w.document.write(buildReceiptHTML(data, signed, payment));
-  w.document.close();
+  writeDoc(w, buildReceiptHTML(data, signed, payment));
   return true;
 }

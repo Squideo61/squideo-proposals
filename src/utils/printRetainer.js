@@ -1,4 +1,5 @@
 import { SQUIDEO_LOGO } from '../defaults.js';
+import { printButtonHTML, writeDoc } from './printWindow.js';
 
 function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -121,15 +122,14 @@ export function openRetainerPrintWindow(retainer) {
   </div>
 
   <div class="no-print" style="margin-top:24px;text-align:center;">
-    <button onclick="window.print()" style="padding:10px 24px;background:#2BB8E6;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">
-      Print / Save as PDF
-    </button>
+    ${printButtonHTML('padding:10px 24px;background:#2BB8E6;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;')}
   </div>
 </body>
 </html>`;
 
-  const win = window.open('', '_blank', 'width=860,height=700,noopener');
+  // No `noopener` here: it makes window.open return null, and we need the
+  // handle to write the doc into it.
+  const win = window.open('', '_blank', 'width=860,height=700');
   if (!win) return;
-  win.document.write(html);
-  win.document.close();
+  writeDoc(win, html);
 }
