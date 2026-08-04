@@ -243,7 +243,8 @@ export default function Dashboard() {
               body="When a proposal is signed your project appears here with live status, review links and downloads. In the meantime, the crash course is all yours."
               action={
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <a className="btn" href="#/course">Watch the crash course</a>
+                  <a className="btn" href="#/demo">Take the sample project tour</a>
+                  <a className="btn-ghost" href="#/course">Watch the crash course</a>
                   <a className="btn-ghost" href="#/request">Request a video</a>
                 </div>
               }

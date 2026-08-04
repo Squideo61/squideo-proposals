@@ -33,6 +33,7 @@ import Storyboard from './pages/Storyboard.jsx';
 import VideoCredit from './pages/VideoCredit.jsx';
 import Course from './pages/Course.jsx';
 import Brief from './pages/Brief.jsx';
+import DemoProject from './pages/DemoProject.jsx';
 
 const MAX_WIDTH = 1080;
 // The left rail, plus the gap to the content. The shell is widened by exactly
@@ -275,6 +276,7 @@ function AuthedApp() {
     case 'storyboard': page = <Storyboard token={route.param} />; break;
     case 'course': page = <Course slug={route.param} />; break;
     case 'brief': page = <Brief />; break;
+    case 'demo': page = <DemoProject />; break;
     case 'library': page = <Library />; break;
     case 'documents': page = <Documents />; break;
     case 'extras': page = <Extras dealId={route.param} />; break;
@@ -293,7 +295,7 @@ function AuthedApp() {
   // the player narrow while its height stayed tall, letterboxing the video with
   // huge dark bands. Render them full-bleed and let them fill the space under
   // the nav instead.
-  const fullBleed = route.view === 'review' || route.view === 'storyboard';
+  const fullBleed = route.view === 'review' || route.view === 'storyboard' || route.view === 'demo';
 
   return (
     // On review routes the shell is pinned to exactly the viewport height (and

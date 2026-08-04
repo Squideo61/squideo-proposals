@@ -510,6 +510,7 @@ export default async function handler(req, res) {
       case 'course': return courseRoute(req, res, user);
       case 'course-progress': return courseProgressRoute(req, res, user);
       case 'brief': return briefRoute(req, res, user);
+      case 'demo-project': return demoProjectRoute(req, res, user);
       case 'overview': return overviewRoute(req, res, user);
       case 'project': return projectRoute(req, res, user);
       case 'library': return libraryRoute(req, res, user);
@@ -2601,6 +2602,24 @@ async function createPortalQuoteRequest({
   }
 
   return id;
+}
+
+// ═════════════════════════ sample project ═════════════════════════
+// Config only — the sample project itself is a fixture in the browser bundle
+// and never touches the database. All this returns is where Ben's video lives,
+// so it can be re-recorded and swapped from Admin without a deploy.
+async function demoProjectRoute(req, res, user) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  const [row] = await sql`SELECT demo_project FROM settings WHERE id = 1`.catch(() => []);
+  const cfg = row?.demo_project || {};
+  return res.status(200).json({
+    demo: {
+      videoUrl: cfg.videoUrl || null,
+      posterUrl: cfg.posterUrl || null,
+      title: cfg.title || null,
+      videoTitle: cfg.videoTitle || null,
+    },
+  });
 }
 
 // ═════════════════════════ the brief ═════════════════════════

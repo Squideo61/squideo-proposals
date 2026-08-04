@@ -47,6 +47,11 @@ function ensureFinanceTargetsColumn() {
     // — read by cronCourseNudges. Off until an admin turns it on, so the
     // sequence can never start sending the moment it deploys.
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS course_emails JSONB`;
+    // Sample project config (Admin → Crash course). { videoUrl, posterUrl,
+    // title, videoTitle } — the demo itself is a fixture in the portal bundle;
+    // this is only where the video lives, so it can be re-recorded and swapped
+    // without a deploy.
+    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS demo_project JSONB`;
   })().catch((err) => { financeTargetsColumnEnsured = null; throw err; });
   return financeTargetsColumnEnsured;
 }
