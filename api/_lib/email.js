@@ -11,6 +11,13 @@ const FROM = process.env.MAIL_FROM || 'Squideo CRM <noreply@squideo.co.uk>';
 // before the subdomain is set up, but set it before the first campaign.
 const MARKETING_FROM = process.env.MAIL_FROM_MARKETING || FROM;
 
+// Marketing goes out from a sending subdomain that has no inbox behind it, so
+// every marketing send gets a Reply-To pointing at a mailbox a human reads.
+// People DO reply to a nudge email — usually the ones worth the most — and a
+// warm lead's reply bouncing off a no-such-mailbox is the single most expensive
+// way to configure this wrong.
+const MARKETING_REPLY_TO = process.env.MAIL_REPLY_TO_MARKETING || 'enquiries@squideo.co.uk';
+
 export const APP_URL = process.env.APP_URL || 'https://app.squideo.com';
 
 // Admin recipients for payment-received notifications, minus the proposal
@@ -103,7 +110,10 @@ export async function sendMail({
       to: recipients, subject, html, text,
     };
     if (copied.length) message.cc = copied;
-    if (replyTo) message.replyTo = replyTo;
+    // Defaulted rather than required, so a future campaign can't ship without
+    // one by forgetting. An explicit replyTo still wins.
+    const reply = replyTo || (scope === 'marketing' ? MARKETING_REPLY_TO : null);
+    if (reply) message.replyTo = reply;
     if (headers && Object.keys(headers).length) message.headers = headers;
     await c.emails.send(message);
   } catch (err) {
