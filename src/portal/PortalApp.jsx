@@ -70,11 +70,13 @@ const NAV = [
   { view: 'course', label: 'Crash course', shortLabel: 'Course', hash: '#/course', Icon: GraduationCap },
   { view: 'brief', label: 'Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobile: false },
   { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home },
-  { view: 'library', label: 'Video library', shortLabel: 'Library', hash: '#/library', Icon: Film },
+  { view: 'library', label: 'Your Video Library', shortLabel: 'Library', hash: '#/library', Icon: Film },
   { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet, mobile: false },
   { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
   { view: 'request', label: 'New video', hash: '#/request', Icon: PlusCircle, highlight: true },
-  { view: 'team', label: 'Team', hash: '#/team', Icon: Users },
+  // shortLabel matters here now the full labels are possessive — "Your Video
+  // Library" under a phone tab-bar icon would wrap to three lines.
+  { view: 'team', label: 'Your Team', shortLabel: 'Team', hash: '#/team', Icon: Users },
   { view: 'settings', label: 'Settings', hash: '#/settings', Icon: SettingsIcon },
 ];
 
