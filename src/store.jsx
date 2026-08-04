@@ -477,6 +477,8 @@ export function StoreProvider({ children }) {
         // Automatic client-task reminder cadence + copy; null until first saved.
         taskReminders: settings?.taskReminders || null,
         courseEmails: settings?.courseEmails || null,
+        // Where the sample project's video lives; null until one is uploaded.
+        demoProject: settings?.demoProject || null,
         loading: false,
       }));
     });
@@ -2888,6 +2890,12 @@ export function StoreProvider({ children }) {
     saveCourseEmails(data) {
       setState(s => ({ ...s, courseEmails: data }));
       return api.put('/api/settings', { courseEmails: data });
+    },
+    // Sample-project video config. Not debounced, same reasoning: the caller
+    // needs to know a fresh upload actually landed before it tells anyone.
+    saveDemoProject(data) {
+      setState(s => ({ ...s, demoProject: data }));
+      return api.put('/api/settings', { demoProject: data });
     },
     getGmailSignature() {
       // Returns { signatureHtml, fetchedAt, diagnostics? } from the cached

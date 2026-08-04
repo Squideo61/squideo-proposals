@@ -66,7 +66,7 @@ export default async function handler(req, res) {
   await ensureFinanceTargetsColumn();
 
   if (req.method === 'GET') {
-    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal, project_tasks_email, voiceover_pricing, task_reminders, course_emails FROM settings WHERE id = 1`;
+    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal, project_tasks_email, voiceover_pricing, task_reminders, course_emails, demo_project FROM settings WHERE id = 1`;
     const row = rows[0];
     return res.status(200).json({
       extrasBank: row.extras_bank,
@@ -86,6 +86,8 @@ export default async function handler(req, res) {
       // Crash-course nudge sequence. null until first saved (cron treats that
       // as disabled).
       courseEmails: row.course_emails || null,
+      // Where the sample project's video lives. null until one is uploaded.
+      demoProject: row.demo_project || null,
       financeTargets: Array.isArray(row.finance_targets) && row.finance_targets.length
         ? row.finance_targets
         : DEFAULT_FINANCE_TARGETS,
@@ -105,7 +107,7 @@ export default async function handler(req, res) {
     if (!hasPermission(await getRole(user.role), 'settings.manage')) {
       return res.status(403).json({ error: 'You do not have permission to edit workspace settings' });
     }
-    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal, projectTasksEmail, voiceoverPricing, taskReminders, courseEmails } = req.body || {};
+    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal, projectTasksEmail, voiceoverPricing, taskReminders, courseEmails, demoProject } = req.body || {};
     await sql`
       UPDATE settings SET
         extras_bank             = COALESCE(${extrasBank ? JSON.stringify(extrasBank) : null}::jsonb, extras_bank),
@@ -119,7 +121,8 @@ export default async function handler(req, res) {
         project_tasks_email     = COALESCE(${projectTasksEmail ? JSON.stringify(projectTasksEmail) : null}::jsonb, project_tasks_email),
         voiceover_pricing       = COALESCE(${voiceoverPricing ? JSON.stringify(voiceoverPricing) : null}::jsonb, voiceover_pricing),
         task_reminders          = COALESCE(${taskReminders ? JSON.stringify(taskReminders) : null}::jsonb, task_reminders),
-        course_emails           = COALESCE(${courseEmails ? JSON.stringify(courseEmails) : null}::jsonb, course_emails)
+        course_emails           = COALESCE(${courseEmails ? JSON.stringify(courseEmails) : null}::jsonb, course_emails),
+        demo_project            = COALESCE(${demoProject ? JSON.stringify(demoProject) : null}::jsonb, demo_project)
       WHERE id = 1
     `;
     return res.status(200).json({ ok: true });

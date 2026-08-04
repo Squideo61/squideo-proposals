@@ -178,8 +178,140 @@ export function CourseTab() {
         </button>
       )}
 
+      <SampleProject />
       <NudgeEmails />
     </div>
+  );
+}
+
+// The sample project's video. The demo itself is a fixture in the portal
+// bundle; the only thing that lives in the database is this URL, so Ben's
+// explainer can be re-recorded and swapped without a deploy.
+//
+// Uploads go to the SAME public blob store as the course videos (the CSP
+// already allows media from it) via the course upload-token endpoint, so
+// there's no second token route to keep in step.
+function SampleProject() {
+  const { state, actions, showMsg } = useStore();
+  const cfg = state.demoProject || {};
+  const fileRef = useRef(null);
+  const [pct, setPct] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const pick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    setPct(0);
+    try {
+      const { upload } = await import('@vercel/blob/client');
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await upload(`course/sample-project/${Date.now()}-${safeName}`, file, {
+        access: 'public',
+        handleUploadUrl: `${BASE}/upload-token`,
+        contentType: file.type || 'video/mp4',
+        multipart: true,
+        onUploadProgress: (ev) => setPct(Math.round(ev.percentage)),
+      });
+      await actions.saveDemoProject({ ...cfg, videoUrl: blob.url });
+      showMsg('Sample project video updated');
+    } catch (err) {
+      showMsg(err.message || 'Upload failed', 'error');
+    } finally {
+      setBusy(false);
+      setPct(null);
+    }
+  };
+
+  const saveField = async (key, value) => {
+    const next = { ...cfg, [key]: value || null };
+    if (JSON.stringify(next) === JSON.stringify(cfg)) return;
+    try { await actions.saveDemoProject(next); }
+    catch (err) { showMsg(err.message, 'error'); }
+  };
+
+  const remove = async () => {
+    try {
+      await actions.saveDemoProject({ ...cfg, videoUrl: null });
+      showMsg('Sample video removed — the tour will say it isn\'t set up yet');
+    } catch (err) { showMsg(err.message, 'error'); }
+  };
+
+  return (
+    <section style={{ marginTop: 34, borderTop: '1px solid ' + BRAND.border, paddingTop: 22 }}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 15.5, fontWeight: 700, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <PlayCircle size={16} color={BRAND.blue} /> Sample project
+      </h3>
+      <p style={{ margin: '0 0 14px', fontSize: 12.5, color: BRAND.muted, lineHeight: 1.55 }}>
+        The guided tour at <code>/portal#/demo</code>. Prospects drive the real review
+        player — leaving timestamped comments, switching versions, approving — against
+        this one video. Nothing they do is saved anywhere, and it resets when they close
+        the tab.
+      </p>
+
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', marginBottom: 14,
+        borderRadius: 10,
+        background: cfg.videoUrl ? '#EDFBF2' : '#FFF8EB',
+        border: '1px solid ' + (cfg.videoUrl ? '#9BE0B7' : '#F5C26B'),
+      }}>
+        <div style={{ flex: 1, fontSize: 13, lineHeight: 1.5, color: cfg.videoUrl ? '#15803D' : '#B45309' }}>
+          <strong>{cfg.videoUrl ? 'Live' : 'Not set up'}</strong>
+          {' — '}
+          {cfg.videoUrl
+            ? 'the tour is playing this video.'
+            : "the tour tells visitors it isn't ready yet. Upload Ben's explainer to switch it on."}
+        </div>
+        {busy ? (
+          <span style={{ fontSize: 12.5, color: BRAND.muted, flexShrink: 0 }}>
+            <Loader2 size={13} className="spin" /> {pct != null ? `${pct}%` : 'Uploading…'}
+          </span>
+        ) : (
+          <>
+            {cfg.videoUrl && (
+              <button className="btn-ghost" onClick={remove} style={{ fontSize: 12.5, flexShrink: 0 }}>
+                <Trash2 size={13} /> Remove
+              </button>
+            )}
+            <button className="btn" onClick={() => fileRef.current?.click()} style={{ fontSize: 12.5, flexShrink: 0 }}>
+              <Upload size={13} /> {cfg.videoUrl ? 'Replace' : 'Upload video'}
+            </button>
+          </>
+        )}
+        <input ref={fileRef} type="file" accept="video/*" hidden onChange={pick} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <label style={{ flex: '1 1 220px', fontSize: 12.5, color: BRAND.muted }}>
+          Project name (what the tour is called)
+          <input
+            className="input" defaultValue={cfg.title || ''}
+            placeholder="Sample project — how this works"
+            onBlur={(e) => saveField('title', e.target.value.trim())}
+            style={{ width: '100%', marginTop: 4 }}
+          />
+        </label>
+        <label style={{ flex: '1 1 220px', fontSize: 12.5, color: BRAND.muted }}>
+          Video name (shown above the player)
+          <input
+            className="input" defaultValue={cfg.videoTitle || ''}
+            placeholder="Welcome to your portal"
+            onBlur={(e) => saveField('videoTitle', e.target.value.trim())}
+            style={{ width: '100%', marginTop: 4 }}
+          />
+        </label>
+      </div>
+
+      {cfg.videoUrl && (
+        <a
+          href="/portal#/demo" target="_blank" rel="noreferrer"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12, fontSize: 12.5, color: BRAND.blue, textDecoration: 'none', fontWeight: 600 }}
+        >
+          <ExternalLink size={13} /> Take the tour yourself
+        </a>
+      )}
+    </section>
   );
 }
 
