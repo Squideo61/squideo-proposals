@@ -35,6 +35,13 @@ import Course from './pages/Course.jsx';
 import Brief from './pages/Brief.jsx';
 
 const MAX_WIDTH = 1080;
+// The left rail, plus the gap to the content. The shell is widened by exactly
+// this much so the content column keeps the width every page was designed
+// against — otherwise adding the rail would have quietly narrowed every table
+// and player in the portal.
+const SIDEBAR_W = 208;
+const SIDEBAR_GAP = 26;
+const SHELL_MAX = MAX_WIDTH + SIDEBAR_W + SIDEBAR_GAP;
 
 function parseHash() {
   const h = (window.location.hash || '').replace(/^#\/?/, '');
@@ -54,14 +61,16 @@ const NAV = [
   // nav). The bar lays items out evenly with no scroll, so past about six they
   // stop being tappable — adding the course meant one had to give, and buying
   // video credit is the least likely thing anyone does on a phone.
-  { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home },
+  // Crash course sits at the top deliberately. Most people arriving in this
+  // portal now come in through the course rather than through a project, and
+  // for them an empty "Current projects" is a worse first screen than the
+  // thing they actually signed up for.
   { view: 'course', label: 'Crash course', shortLabel: 'Course', hash: '#/course', Icon: GraduationCap },
+  { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home },
+  { view: 'brief', label: 'Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobile: false },
   { view: 'library', label: 'Video library', shortLabel: 'Library', hash: '#/library', Icon: Film },
   { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
   { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet, mobile: false },
-  // Off the phone bar, not because it doesn't work on a phone — it does — but
-  // because the bar is already at its limit and a brief is a sit-down job.
-  { view: 'brief', label: 'Video brief', hash: '#/brief', Icon: FileText, mobile: false },
   { view: 'request', label: 'New video', hash: '#/request', Icon: PlusCircle, highlight: true },
   { view: 'team', label: 'Team', hash: '#/team', Icon: Users },
   { view: 'settings', label: 'Settings', hash: '#/settings', Icon: SettingsIcon },
@@ -97,7 +106,7 @@ function Header() {
       {/* Wraps rather than overflows: three action buttons plus the org
           switcher and account controls is a lot for one row on a laptop. */}
       <div style={{
-        maxWidth: MAX_WIDTH, margin: '0 auto',
+        maxWidth: SHELL_MAX, margin: '0 auto',
         display: 'flex', alignItems: 'center', gap: 10, rowGap: 8, flexWrap: 'wrap',
       }}>
         <a href="#/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
@@ -159,29 +168,51 @@ function Header() {
           <LogOut size={17} />
         </button>
       </div>
-      {!isMobile && (
-        <nav style={{ maxWidth: MAX_WIDTH, margin: '10px auto 0', display: 'flex', gap: 4 }}>
-          {NAV.filter((n) => n.view !== 'request').map(({ view, label, hash, Icon, highlight }) => {
-            const active = parseHash().view === view || (view === 'home' && parseHash().view === 'project');
-            return (
-              <a
-                key={view}
-                href={hash}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 7,
-                  padding: '7px 14px', borderRadius: 8, textDecoration: 'none',
-                  fontSize: 13.5, fontWeight: 600,
-                  color: highlight ? '#0F2A3D' : active ? '#fff' : '#B9CBD6',
-                  background: highlight ? BRAND.blue : active ? '#1B3A50' : 'transparent',
-                }}
-              >
-                <Icon size={15} /> {label}
-              </a>
-            );
-          })}
-        </nav>
-      )}
     </header>
+  );
+}
+
+// The desktop navigation, as a left rail rather than a row under the header.
+//
+// A row forced every item onto one line, which capped how many there could be
+// and made each new one a fight for horizontal space. A rail grows downwards,
+// so the labels can stay full words ("Brief Builder", not "Brief") and adding
+// a section later costs nothing. Light on the paper background rather than a
+// second dark band — one navy area at the top reads as the chrome; two starts
+// to feel like the content is boxed in.
+//
+// Phones keep the bottom tab bar; a rail at that width would eat a third of
+// the screen.
+function SideNav({ view }) {
+  return (
+    <nav style={{
+      width: SIDEBAR_W, flexShrink: 0, alignSelf: 'flex-start',
+      position: 'sticky', top: 18, padding: '4px 0',
+      display: 'flex', flexDirection: 'column', gap: 2,
+    }}>
+      {NAV.filter((n) => n.view !== 'request').map(({ view: v, label, hash, Icon }) => {
+        const active = view === v || (v === 'home' && view === 'project');
+        return (
+          <a
+            key={v}
+            href={hash}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 13px', borderRadius: 9, textDecoration: 'none',
+              fontSize: 14, fontWeight: active ? 700 : 500,
+              color: active ? BRAND.ink : '#61798A',
+              background: active ? '#fff' : 'transparent',
+              border: `1px solid ${active ? BRAND.border : 'transparent'}`,
+              // The active item is the one thing that should read instantly at
+              // a glance, so it gets the accent bar as well as the weight.
+              boxShadow: active ? `inset 3px 0 0 ${BRAND.blue}` : 'none',
+            }}
+          >
+            <Icon size={17} strokeWidth={active ? 2.3 : 2} /> {label}
+          </a>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -277,12 +308,20 @@ function AuthedApp() {
           {page}
         </div>
       ) : (
-        <main style={{
-          maxWidth: MAX_WIDTH, margin: '0 auto', width: '100%',
-          padding: isMobile ? '18px 16px 90px' : '26px 24px 60px',
+        <div style={{
+          maxWidth: SHELL_MAX, margin: '0 auto', width: '100%',
+          display: 'flex', gap: isMobile ? 0 : SIDEBAR_GAP,
+          padding: isMobile ? '18px 16px 90px' : '22px 24px 60px',
+          boxSizing: 'border-box', alignItems: 'flex-start',
         }}>
-          {page}
-        </main>
+          {!isMobile && <SideNav view={route.view} />}
+          {/* minWidth:0 matters — without it a wide table or a long unbroken
+              string inside the page pushes the whole flex row wider than the
+              shell and the rail slides off to the left. */}
+          <main style={{ flex: 1, minWidth: 0 }}>
+            {page}
+          </main>
+        </div>
       )}
       {isMobile && <MobileTabBar view={route.view} />}
       {toast && <Toast msg={toast} />}
