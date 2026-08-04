@@ -7,6 +7,7 @@ import { permissionsInclude } from '../../lib/permissions.js';
 import { api } from '../../api.js';
 import { Modal } from '../ui.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
+import { TagChips, TagChip } from './TagChips.jsx';
 
 export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXeroDuplicates }) {
   const { state, actions, showMsg } = useStore();
@@ -16,6 +17,8 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXer
   // Default OFF so newly-added organisations (which haven't signed yet)
   // show up the moment they're created. Flip on to focus on customers.
   const [customersOnly, setCustomersOnly] = useState(false);
+  const [selectedTags, setSelectedTags] = useState(() => new Set());
+  const [tagMode, setTagMode] = useState('any'); // 'any' | 'all'
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -47,11 +50,21 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXer
   );
 
   const isOrgsView = view === 'organisations';
-  const items = isOrgsView
+  const base = isOrgsView
     ? (customersOnly ? companies.filter(c => c.isCustomer) : companies)
     : (customersOnly
         ? contacts.filter(c => c.companyId && state.companies?.[c.companyId]?.isCustomer)
         : contacts);
+
+  // Tag filter, applied after the customers filter so the two intersect.
+  // 'any' is the default because it's what a first click means; 'all' only
+  // appears once two chips are lit, when the distinction starts to matter.
+  const items = (isOrgsView || selectedTags.size === 0) ? base : base.filter((c) => {
+    const own = c.tagIds || [];
+    return tagMode === 'all'
+      ? [...selectedTags].every((id) => own.includes(id))
+      : own.some((id) => selectedTags.has(id));
+  });
 
   const q = search.trim().toLowerCase();
   const filtered = q ? items.filter(c => {
@@ -121,6 +134,25 @@ export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXer
           Customers only ({isOrgsView ? customerCount : customerContactCount})
         </label>
       </div>
+
+      {/* Tag chips sit BELOW the search row and compose with everything above
+          it, so "course signups who became customers" is chip + checkbox. */}
+      {!isOrgsView && (
+        <div style={{ marginBottom: 12 }}>
+          <TagChips
+            contacts={contacts}
+            selected={selectedTags}
+            mode={tagMode}
+            onModeChange={setTagMode}
+            onToggle={(id) => setSelectedTags((prev) => {
+              const next = new Set(prev);
+              if (next.has(id)) next.delete(id); else next.add(id);
+              return next;
+            })}
+            onClear={() => setSelectedTags(new Set())}
+          />
+        </div>
+      )}
 
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden' }}>
         {filtered.length === 0 ? (
@@ -195,6 +227,7 @@ function Tab({ active, onClick, children }) {
 
 function ContactRow({ contact, onOpen, onEdit }) {
   const { state, actions, showMsg } = useStore();
+  const tagsById = useMemo(() => new Map((state.tags || []).map((t) => [t.id, t])), [state.tags]);
   // Delete is admin/director-only (matches the server's contacts.manage_all gate).
   const canDelete = permissionsInclude(state.session?.permissions, 'contacts.manage_all');
   const handleDelete = (e) => {
@@ -229,9 +262,13 @@ function ContactRow({ contact, onOpen, onEdit }) {
           {(contact.name || contact.email || '?')[0].toUpperCase()}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 7 }}>
+          <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
             {contact.name || contact.email || 'Unnamed'}
             <PortalBadge status={contact.portalStatus} invitePending={contact.portalInvitePending} />
+            {(contact.tagIds || []).map((id) => {
+              const tag = tagsById.get(id);
+              return tag ? <TagChip key={id} tag={tag} small /> : null;
+            })}
           </div>
           <div style={{ fontSize: 12, color: BRAND.muted, display: 'flex', gap: 12, marginTop: 2, flexWrap: 'wrap' }}>
             {contact.email && <span>{contact.email}</span>}

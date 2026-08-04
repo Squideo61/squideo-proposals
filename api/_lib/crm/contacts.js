@@ -3,6 +3,7 @@ import { makeId, trimOrNull, lowerOrNull, ensureDealContactsTable, ensureContact
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { ensurePortalTables } from '../portal/db.js';
+import { ensureCrmTagTables, contactTagsRoute } from './tags.js';
 
 // Re-read a contact with its full set of organisation ids (the join table is a
 // superset that already includes the primary company_id after backfill).
@@ -27,6 +28,8 @@ export async function contactsRoute(req, res, id, action, user, subaction = null
       // Portal status is matched by email — the customer portal has its own
       // identities (portal_users), deliberately not FK'd to contacts.
       await ensurePortalTables().catch(() => {});
+      // The tag tables must exist before the aggregate below references them.
+      await ensureCrmTagTables();
       const rows = await sql`
         SELECT id, email, name, phone, title, company_id, notes, provisional, source, created_at, updated_at,
                (SELECT COUNT(DISTINCT d.id)::int FROM deals d
@@ -40,7 +43,9 @@ export async function contactsRoute(req, res, id, action, user, subaction = null
                EXISTS (SELECT 1 FROM portal_invites i
                         WHERE LOWER(i.email) = LOWER(contacts.email)
                           AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > NOW()
-               ) AS portal_invite_pending
+               ) AS portal_invite_pending,
+               COALESCE((SELECT array_agg(ct.tag_id) FROM contact_tags ct
+                          WHERE ct.contact_id = contacts.id), '{}') AS tag_ids
         FROM contacts
         WHERE provisional = FALSE
         ORDER BY name ASC NULLS LAST, email ASC
@@ -139,6 +144,15 @@ export async function contactsRoute(req, res, id, action, user, subaction = null
   //   POST   { companyId }                  → add a membership (additive)
   //   DELETE /contacts/:id/companies/:cid   → remove that membership
   // Returns the updated contact (with companyIds) for the optimistic merge.
+  // /contacts/:id/tags[/:tagId] — apply or remove a tag. Sits beside the
+  // companies sub-resource and reuses the same :id/:action/:subaction rewrite.
+  if (action === 'tags') {
+    const contact = (await sql`SELECT id FROM contacts WHERE id = ${id}`)[0];
+    if (!contact) return res.status(404).json({ error: 'Not found' });
+    const updated = await contactTagsRoute(req, res, id, trimOrNull(subaction), user);
+    return updated;
+  }
+
   if (action === 'companies') {
     await ensureContactCompanies();
     const contact = (await sql`SELECT id, company_id FROM contacts WHERE id = ${id}`)[0];
@@ -266,6 +280,10 @@ export function serialiseContact(r) {
     notes: r.notes || null,
     provisional: r.provisional === true,
     source: r.source || null,
+    // Tag ids (list query only). Ids rather than whole tags: the store already
+    // holds the tag catalogue, so repeating labels and colours on every contact
+    // would bloat a payload that's fetched wholesale.
+    ...('tag_ids' in r ? { tagIds: (Array.isArray(r.tag_ids) ? r.tag_ids : []).filter(Boolean) } : {}),
     // Linked-deal count (list query only) so the UI can warn before deleting.
     dealCount: r.deal_count !== undefined ? Number(r.deal_count) : null,
     // Customer-portal status (list query only): 'active' | 'disabled' | null,

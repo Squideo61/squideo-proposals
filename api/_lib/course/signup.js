@@ -24,6 +24,7 @@ import { makeId, trimOrNull, lowerOrNull } from '../crm/shared.js';
 import { isDisposableEmail } from '../disposableEmail.js';
 import { pickAttribution } from '../leadAttribution.js';
 import { companyNameFromEmail, resolveContactForSigner } from '../portal/onboarding.js';
+import { applyTag } from '../crm/tags.js';
 import { ensureCourseTables } from './db.js';
 
 const SIGNUPS_PER_HOUR_PER_IP = 5;
@@ -151,6 +152,12 @@ export async function createCourseSignup({
     email, name, companyName, portalUserId: userId,
     contactId: contact?.id || null, companyId: company.id,
     marketingConsent, consentText, attribution, ip,
+  });
+
+  // Best-effort by design — applyTag swallows its own errors. A tagging
+  // failure must never cost someone the account they just created.
+  await applyTag(contact?.id, 'course-signup', {
+    label: 'Course signup', colour: '#2BB8E6', by: 'system:course',
   });
 
   const [user] = await sql`

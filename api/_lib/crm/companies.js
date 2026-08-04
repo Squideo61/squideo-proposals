@@ -4,6 +4,7 @@ import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { updateContactAddress, getOrCreateContact } from '../xero.js';
 import { reconcileProposalBillingPaid } from './invoices.js';
+import { ensureProspectColumns } from '../course/db.js';
 import {
   creditTotalsForKeys, clientKeysForCompany, companyCreditTotals,
   creditClientsWithCompany, setCreditClientCompany,
@@ -120,6 +121,9 @@ export async function companiesRoute(req, res, id, action, user) {
 
   if (!id) {
     if (req.method === 'GET') {
+      // The WHERE below references companies.prospect, which a workspace that
+      // hasn't applied 20260805_explainer_course.sql won't have yet.
+      await ensureProspectColumns();
       // EXISTS subquery joins signatures → proposals → deals → companies in
       // one shot, so the Customers view can flag every company that has had a
       // signed proposal land against it without a per-row round-trip.
@@ -143,6 +147,13 @@ export async function companiesRoute(req, res, id, action, user) {
                ) AS has_signed_proposal
           FROM companies c
           LEFT JOIN xero_contacts xc ON xc.id = c.xero_contact_id
+         -- Prospect orgs are created one-per-signup by the self-serve course
+         -- form purely to anchor a portal membership. They are not businesses
+         -- anyone has dealt with, and at a few hundred signups they would swamp
+         -- the Organisations tab and every company picker. A prospect that
+         -- earns a deal stops being hidden by the second condition.
+         WHERE COALESCE(c.prospect, FALSE) = FALSE
+            OR EXISTS (SELECT 1 FROM deals d WHERE d.company_id = c.id)
          ORDER BY c.name ASC
       `;
       return res.status(200).json(rows.map(serialiseCompany));

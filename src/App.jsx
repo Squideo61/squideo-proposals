@@ -744,6 +744,7 @@ function AppShell() {
           onBack={() => navigate('overview')}
           onOpenDeal={(id) => navigate('deal', id)}
           onOpenCompany={(id) => navigate('company', id)}
+          onOpenContact={(id) => navigate('contact', id)}
         />
       )}
       {view === 'sales-insights' && (

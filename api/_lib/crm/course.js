@@ -63,6 +63,11 @@ export async function courseRoute(req, res, id, action, user) {
     return uploadToken(req, res);
   }
 
+  if (id === 'analytics') {
+    if (req.method !== 'GET') return res.status(405).end();
+    return courseAnalytics(res);
+  }
+
   if (!id) {
     if (req.method === 'GET') return listModules(res);
     if (req.method === 'POST') return createModule(req, res);
@@ -244,6 +249,123 @@ async function setPoster(req, res, existing) {
     UPDATE course_modules SET poster = ${poster}, poster_updated_at = NOW(), updated_at = NOW()
      WHERE id = ${existing.id} RETURNING *`;
   return res.status(200).json(adminModule(row));
+}
+
+// ── Analytics ────────────────────────────────────────────────────────────────
+// The funnel, one row per signup, and per-video drop-off.
+//
+// The hot score is deliberately simple and, more importantly, EXPLAINABLE — a
+// score with no visible reasons gets ignored, and a sales team that doesn't
+// trust the number won't act on it. Every point that lands is named in
+// `reasons`, which the UI shows on hover.
+const HOT_THRESHOLD = 60;
+const WARM_THRESHOLD = 30;
+
+const FREEMAIL = /@(gmail|googlemail|outlook|hotmail|live|yahoo|ymail|icloud|me|mac|aol|protonmail|proton|gmx|mail|msn|btinternet|sky|virginmedia)\./i;
+
+function hotScore(row) {
+  const reasons = [];
+  const add = (points, why) => { reasons.push({ points, why }); };
+  if (row.quote_count > 0)      add(60, 'Submitted an enquiry');
+  if (row.completed_at)         add(20, 'Finished the course');
+  if (row.videos_done >= 4)     add(15, `Watched ${row.videos_done} videos`);
+  if (row.active_days >= 3)     add(10, `Came back on ${row.active_days} separate days`);
+  if (!FREEMAIL.test(row.email || '')) add(5, 'Work email address');
+  const score = reasons.reduce((n, r) => n + r.points, 0);
+  return {
+    score,
+    band: score >= HOT_THRESHOLD ? 'hot' : score >= WARM_THRESHOLD ? 'warm' : 'cool',
+    reasons,
+  };
+}
+
+async function courseAnalytics(res) {
+  const [signups, videos, events] = await Promise.all([
+    sql`
+      SELECT s.id, s.email, s.name, s.company_id, s.contact_id, s.completed_at,
+             s.created_at, s.marketing_consent, s.attr_channel,
+             c.name AS company_name,
+             (SELECT COUNT(*)::int FROM course_progress p
+                JOIN course_modules m ON m.id = p.module_id
+               WHERE p.portal_user_id = s.portal_user_id
+                 AND m.published AND p.completed_at IS NOT NULL) AS videos_done,
+             (SELECT COUNT(DISTINCT DATE(p.last_viewed_at))::int FROM course_progress p
+               WHERE p.portal_user_id = s.portal_user_id) AS active_days,
+             (SELECT MAX(p.last_viewed_at) FROM course_progress p
+               WHERE p.portal_user_id = s.portal_user_id) AS last_active_at,
+             (SELECT COUNT(*)::int FROM quote_requests q
+               WHERE LOWER(q.email) = LOWER(s.email)) AS quote_count,
+             COALESCE((SELECT array_agg(p.module_id) FROM course_progress p
+                        WHERE p.portal_user_id = s.portal_user_id
+                          AND p.completed_at IS NOT NULL), '{}') AS done_module_ids
+        FROM course_signups s
+        LEFT JOIN companies c ON c.id = s.company_id
+       ORDER BY s.created_at DESC
+       LIMIT 500
+    `.catch(() => []),
+    sql`
+      SELECT m.id, m.slug, m.module_number, m.title, m.free,
+             (SELECT COUNT(*)::int FROM course_progress p WHERE p.module_id = m.id) AS starts,
+             (SELECT COUNT(*)::int FROM course_progress p
+               WHERE p.module_id = m.id AND p.completed_at IS NOT NULL) AS completions
+        FROM course_modules m
+       WHERE m.published
+       ORDER BY COALESCE(m.sort_order, m.module_number)
+    `.catch(() => []),
+    sql`
+      SELECT event_key, COUNT(*)::int AS n, COUNT(DISTINCT visitor_key)::int AS people
+        FROM course_events
+       WHERE created_at > NOW() - INTERVAL '90 days'
+       GROUP BY event_key
+    `.catch(() => []),
+  ]);
+
+  const eventCount = (k) => events.find((e) => e.event_key === k)?.people || 0;
+
+  const rows = signups.map((s) => {
+    const hot = hotScore(s);
+    return {
+      id: s.id,
+      email: s.email,
+      name: s.name || null,
+      companyId: s.company_id || null,
+      contactId: s.contact_id || null,
+      companyName: s.company_name || null,
+      channel: s.attr_channel || null,
+      marketingConsent: s.marketing_consent === true,
+      signedUpAt: s.created_at,
+      lastActiveAt: s.last_active_at || null,
+      videosDone: Number(s.videos_done || 0),
+      doneModuleIds: Array.isArray(s.done_module_ids) ? s.done_module_ids.filter(Boolean) : [],
+      completedAt: s.completed_at || null,
+      enquiries: Number(s.quote_count || 0),
+      ...hot,
+    };
+  });
+
+  return res.status(200).json({
+    funnel: {
+      pageViews: eventCount('page_view'),
+      plays: eventCount('play'),
+      signupOpened: eventCount('signup_open'),
+      signups: rows.length,
+      started: rows.filter((r) => r.videosDone > 0).length,
+      completed: rows.filter((r) => r.completedAt).length,
+      enquiries: rows.filter((r) => r.enquiries > 0).length,
+    },
+    hot: rows.filter((r) => r.band === 'hot').length,
+    warm: rows.filter((r) => r.band === 'warm').length,
+    signups: rows,
+    videos: videos.map((v) => ({
+      id: v.id,
+      slug: v.slug,
+      moduleNumber: v.module_number,
+      title: v.title,
+      free: !!v.free,
+      starts: Number(v.starts || 0),
+      completions: Number(v.completions || 0),
+    })),
+  });
 }
 
 async function deleteModule(res, existing) {

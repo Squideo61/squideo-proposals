@@ -75,6 +75,9 @@ function emptyStore() {
     // CRM
     deals: {},
     contacts: {},
+    // Contact tag catalogue (crm_tags). Contacts carry only tagIds, so this is
+    // the single place labels and colours live.
+    tags: [],
     companies: {},
     tasks: [],
     dealDetail: {},
@@ -423,7 +426,8 @@ export function StoreProvider({ children }) {
       api.get('/api/crm/gmail').catch(() => null),
       api.get('/api/crm/triage').catch(() => []),
       api.get('/api/quote-requests-admin?status=new').catch(() => []),
-    ]).then(([proposals, templates, settings, users, roles, deals, contacts, companies, tasks, gmailAccount, triage, quoteRequests]) => {
+      api.get('/api/crm/tags').catch(() => []),
+    ]).then(([proposals, templates, settings, users, roles, deals, contacts, companies, tasks, gmailAccount, triage, quoteRequests, tags]) => {
       const dealsMap = {};
       for (const d of (Array.isArray(deals) ? deals : [])) dealsMap[d.id] = d;
       const contactsMap = {};
@@ -453,6 +457,7 @@ export function StoreProvider({ children }) {
         gmailAccount: gmailAccount || null,
         triage: Array.isArray(triage) ? triage : [],
         quoteRequests: Array.isArray(quoteRequests) ? quoteRequests : [],
+        tags: Array.isArray(tags) ? tags : [],
         extrasBank: settings?.extrasBank?.length ? settings.extrasBank : JSON.parse(JSON.stringify(DEFAULT_PROPOSAL.optionalExtras)),
         inclusionsBank: settings?.inclusionsBank?.length ? settings.inclusionsBank : DEFAULT_PROPOSAL.baseInclusions.map((inc, i) => ({ id: 'incl_default_' + i, title: inc.title, description: inc.description || '' })),
         notificationRecipients: settings?.notificationRecipients || [],
@@ -2339,6 +2344,55 @@ export function StoreProvider({ children }) {
         if (c && c.id) setState(s => ({ ...s, contacts: { ...s.contacts, [c.id]: c } }));
         return c;
       });
+    },
+
+    // ── Contact tags ─────────────────────────────────────────────────────────
+    // Applying and removing are optimistic: the chip has to flip the instant
+    // it's clicked or the filter row feels broken, and the failure mode (a tag
+    // that reappears on refresh) is obvious rather than silent.
+    createTag(label, colour) {
+      return api.post('/api/crm/tags', { label, colour }).then((t) => {
+        if (t?.id) setState(s => ({ ...s, tags: [...s.tags, t] }));
+        return t;
+      });
+    },
+    saveTag(id, patch) {
+      setState(s => ({ ...s, tags: s.tags.map(t => (t.id === id ? { ...t, ...patch } : t)) }));
+      return api.patch('/api/crm/tags/' + encodeURIComponent(id), patch).then((t) => {
+        if (t?.id) setState(s => ({ ...s, tags: s.tags.map(x => (x.id === id ? t : x)) }));
+        return t;
+      });
+    },
+    deleteTag(id) {
+      return api.delete('/api/crm/tags/' + encodeURIComponent(id)).then(() => {
+        setState(s => ({
+          ...s,
+          tags: s.tags.filter(t => t.id !== id),
+          // Drop it from every cached contact too, so the list stops filtering
+          // on a tag that no longer exists.
+          contacts: Object.fromEntries(Object.entries(s.contacts).map(([cid, c]) => [
+            cid, c.tagIds?.includes(id) ? { ...c, tagIds: c.tagIds.filter(t => t !== id) } : c,
+          ])),
+        }));
+      });
+    },
+    addContactTag(contactId, tagId) {
+      setState(s => {
+        const c = s.contacts[contactId];
+        if (!c || c.tagIds?.includes(tagId)) return s;
+        return { ...s, contacts: { ...s.contacts, [contactId]: { ...c, tagIds: [...(c.tagIds || []), tagId] } } };
+      });
+      return api.post('/api/crm/contacts/' + encodeURIComponent(contactId) + '/tags', { tagId })
+        .catch(() => {});
+    },
+    removeContactTag(contactId, tagId) {
+      setState(s => {
+        const c = s.contacts[contactId];
+        if (!c) return s;
+        return { ...s, contacts: { ...s.contacts, [contactId]: { ...c, tagIds: (c.tagIds || []).filter(t => t !== tagId) } } };
+      });
+      return api.delete('/api/crm/contacts/' + encodeURIComponent(contactId) + '/tags/' + encodeURIComponent(tagId))
+        .catch(() => {});
     },
     // Add a contact to an organisation (additive — the contact keeps any other
     // organisations). Merges the returned contact (incl. companyIds) into cache.

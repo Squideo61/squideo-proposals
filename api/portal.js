@@ -113,6 +113,7 @@ import {
 } from './_lib/portal/emails.js';
 import { ensureCourseTables } from './_lib/course/db.js';
 import { createCourseSignup, SignupError } from './_lib/course/signup.js';
+import { applyTag } from './_lib/crm/tags.js';
 import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from './_lib/portal/drive.js';
 import {
   serialisePortalDeal,
@@ -710,10 +711,14 @@ async function stampCourseCompletionIfDone(req, puid) {
   const updated = await sql`
     UPDATE course_signups SET completed_at = NOW()
      WHERE portal_user_id = ${puid} AND completed_at IS NULL
-    RETURNING id
+    RETURNING id, contact_id
   `;
   if (updated.length) {
     await logPortalActivity({ req, portalUserId: puid, eventKey: 'course.completed' });
+    // Tag the CRM contact so sales can filter on it. applyTag never throws.
+    await applyTag(updated[0].contact_id, 'course-completed', {
+      label: 'Course completed', colour: '#15803D', by: 'system:course',
+    });
   }
 }
 

@@ -16,6 +16,27 @@ const step = async (label, fn) => {
   try { await fn(); } catch (err) { console.warn('[ensureCourseTables] ' + label, err.message); }
 };
 
+// Just the two columns on `companies`, on their own.
+//
+// The CRM's company list filters on `prospect` to keep one-per-signup course
+// orgs out of the Organisations tab. That query runs on a hot path that has
+// nothing else to do with the course, so it can't pay for the whole
+// ensureCourseTables() run — but it also can't reference a column that a
+// workspace which never applied the migration doesn't have.
+let prospectEnsured = null;
+export function ensureProspectColumns() {
+  if (prospectEnsured) return prospectEnsured;
+  prospectEnsured = (async () => {
+    try {
+      await sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS prospect BOOLEAN NOT NULL DEFAULT FALSE`;
+      await sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS source TEXT`;
+    } catch (err) {
+      console.warn('[ensureProspectColumns]', err.message);
+    }
+  })();
+  return prospectEnsured;
+}
+
 let courseTablesEnsured = null;
 export function ensureCourseTables() {
   if (courseTablesEnsured) return courseTablesEnsured;

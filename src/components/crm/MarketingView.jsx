@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
-import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe, Users, UserCheck, FileText, Trophy, PoundSterling, Wallet, Target, Coins, Clock, Gauge, XCircle, ChevronLeft, ChevronRight, Plus, Mail, Phone, Link2, Inbox } from 'lucide-react';
+import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe, Users, UserCheck, FileText, Trophy, PoundSterling, Wallet, Target, Coins, Clock, Gauge, XCircle, ChevronLeft, ChevronRight, Plus, Mail, Phone, Link2, Inbox, GraduationCap } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
 import { CallLink, Modal } from './../ui.jsx';
 import { computeRange, rangeHeading, fmtRangeDates, segBtn, RangeControl, thisMonthStr } from './dateRange.jsx';
+import { CourseLeadsTab } from './CourseLeadsTab.jsx';
 
 // Remembers the Marketing page's view state across navigation (mirrors
 // financeViewMemory): the active tab, report grouping, date range and scroll.
@@ -59,6 +60,7 @@ const TABS = [
   { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'reports', label: 'Reports', icon: BarChart3 },
   { key: 'leads', label: 'Leads', icon: MailQuestion },
+  { key: 'course', label: 'Course', icon: GraduationCap },
   { key: 'search', label: 'Search', icon: Search },
   { key: 'traffic', label: 'Traffic', icon: Globe },
   { key: 'settings', label: 'Settings', icon: Megaphone },
@@ -71,7 +73,7 @@ const dash = (v, fmt) => (v == null ? '—' : fmt(v));
 const gbp0 = (n) => '£' + Math.round(Number(n) || 0).toLocaleString('en-GB');
 const fmtRoas = (v) => (v == null ? '—' : (Number(v) || 0).toFixed(2) + '×');
 
-export function MarketingView({ section: sectionProp, onBack, onOpenCompany }) {
+export function MarketingView({ section: sectionProp, onBack, onOpenCompany, onOpenContact }) {
   const { state, actions } = useStore();
   const isMobile = useIsMobile();
   const [section, setSection] = useState(sectionProp || marketingViewMemory.section);
@@ -222,6 +224,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany }) {
         />
       )}
       {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenCompany={onOpenCompany} onRetry={() => setReload((n) => n + 1)} />}
+      {section === 'course' && <CourseLeadsTab onOpenContact={onOpenContact} />}
       {section === 'search' && <SearchTab data={search} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'traffic' && <TrafficTab data={traffic} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'settings' && <SettingsTab snippet={snippet} onSync={() => actions.syncAdSpend()} onReloadStatus={() => actions.loadMarketingSnippet().then((d) => d && setSnippet(d))} cutoff={cutoff} onCutoffChange={onCutoffChange} />}
