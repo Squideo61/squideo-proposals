@@ -4,14 +4,15 @@
 // point means no future campaign can forget, and "did that cron remember to
 // check the unsubscribe list?" stops being a question anyone has to ask.
 //
-// SCOPES, and why there are two:
-//   'marketing'  — someone asked to stop being sold to. Suppresses marketing
-//                  sends ONLY. They must still get their invoices, password
-//                  resets, review requests and portal notifications; treating
-//                  an unsubscribe as "never email this person again" would
-//                  break the service they're paying for.
-//   'all'        — a hard bounce or a spam complaint. The address is unusable
-//                  or hostile, so nothing goes to it, transactional included.
+// SUPPRESSION NEVER BLOCKS TRANSACTIONAL EMAIL. See suppressedAmong() below —
+// a non-marketing send returns early and never even runs the query.
+//
+// `scope` on a row records WHY someone is on the list, for reporting and for
+// future bulk-send tooling. It does not widen what gets blocked:
+//   'marketing'  — they asked to stop being sold to.
+//   'all'        — hard bounce or spam complaint. Still only blocks marketing;
+//                  it means "don't put this address in a campaign", not "cut
+//                  this client off from their own project".
 //
 // Under UK PECR the unsubscribe has to be honoured across everything we send,
 // not per-campaign. The existing quote-resume drip had its own per-session
@@ -46,21 +47,39 @@ const norm = (e) => String(e || '').trim().toLowerCase();
 // Returns the set of suppressed addresses among those given. One query rather
 // than one per recipient — sendMail may be handing us a cc list.
 //
-// FAILS OPEN for transactional mail and CLOSED for marketing: if the lookup
-// itself errors we'd rather drop a marketing email than send to someone who
-// asked us not to, but we'd rather send a duplicate invoice than none at all.
+// ═══ SUPPRESSION ONLY EVER APPLIES TO MARKETING ══════════════════════════════
+// Nothing in this table can stop a transactional email. Not an unsubscribe, not
+// a complaint, not a bounce.
+//
+// A suppression row means "stop selling to me". It must never stop:
+//   · project notifications (a review is ready, a task is waiting on you)
+//   · invoices and payment confirmations
+//   · password resets and sign-in links
+//   · anything a member of staff sends by hand
+//
+// Those are the service someone is paying for, and withholding one because of
+// a marketing opt-out — or worse, because their mail server bounced once
+// eighteen months ago — silently breaks a live project. The cost of the
+// opposite mistake is an email that bounces again, which is free.
+//
+// (Staff-composed emails don't pass through here at all: they go out via the
+// Gmail API in performGmailSend. The early return below means that stays true
+// even if something reroutes them through sendMail one day.)
+// ═════════════════════════════════════════════════════════════════════════════
 export async function suppressedAmong(emails, scope = 'marketing') {
+  if (scope !== 'marketing') return new Set();
   const list = [...new Set((emails || []).map(norm).filter(Boolean))];
   if (!list.length) return new Set();
   await ensureSuppressionTable();
   try {
-    const rows = scope === 'marketing'
-      ? await sql`SELECT email FROM email_suppressions WHERE email = ANY(${list})`
-      : await sql`SELECT email FROM email_suppressions WHERE email = ANY(${list}) AND scope = 'all'`;
+    const rows = await sql`SELECT email FROM email_suppressions WHERE email = ANY(${list})`;
     return new Set(rows.map((r) => r.email));
   } catch (err) {
+    // Fails CLOSED, but only for marketing: if we can't tell whether someone
+    // opted out, not sending is the safe answer. Transactional already
+    // returned above, so no invoice is ever at risk from a database blip.
     console.warn('[suppression] lookup failed', err.message);
-    return scope === 'marketing' ? new Set(list) : new Set();
+    return new Set(list);
   }
 }
 

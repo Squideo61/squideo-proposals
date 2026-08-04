@@ -104,8 +104,9 @@ export default async function handler(req, res) {
       body: `We won't send <strong>${esc(parsed.email)}</strong> any more marketing email.
              <br /><br />
              You'll still get anything to do with work we're actually doing for you —
-             invoices, video reviews and project updates. Those aren't marketing, and
-             turning them off would break your projects.`,
+             project updates, video reviews, invoices, and emails from the team
+             written by an actual person. Those aren't marketing, and turning them
+             off would break your projects.`,
       footer: `<div style="margin-top:18px;font-size:13px;">
                  <a href="${esc(undo)}" style="color:#2BB8E6;">Unsubscribed by mistake? Undo it</a>
                </div>`,

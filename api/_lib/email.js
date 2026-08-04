@@ -39,12 +39,18 @@ function getClient() {
 // and handle the rejection.
 //
 // `scope` decides two things:
-//   'transactional' (default) — invoices, resets, review requests, portal
-//        notifications. Sent from MAIL_FROM. Only ever blocked by an 'all'
-//        suppression (a hard bounce or spam complaint).
+//   'transactional' (DEFAULT) — invoices, resets, review requests, project and
+//        portal notifications. Sent from MAIL_FROM and NEVER filtered by the
+//        suppression list. An unsubscribe means "stop selling to me", not
+//        "cut me off from my own project".
 //   'marketing' — the course nudges and anything else that sells rather than
 //        serves. Sent from MAIL_FROM_MARKETING when configured, and filtered
 //        through the suppression list.
+//
+// Because transactional is the default, a new sender is safe by omission: you
+// have to opt IN to being suppressible. Emails a member of staff writes by hand
+// never reach this function at all — they go out through the Gmail API in
+// performGmailSend.
 //
 // Enforcing it HERE rather than in each campaign is the whole point: a
 // suppression list that individual senders have to remember to consult is one
@@ -63,8 +69,9 @@ export async function sendMail({
   let copied = clean(cc);
   if (!recipients.length) return;
 
-  // Suppression check. A marketing send drops anyone who has unsubscribed; any
-  // send drops an address suppressed with scope 'all'.
+  // Suppression check — marketing only. suppressedAmong() returns an empty set
+  // for every other scope without touching the database, so a transactional
+  // send can't be blocked by a suppression row OR by a database problem here.
   try {
     const { suppressedAmong } = await import('./emailSuppression.js');
     const blocked = await suppressedAmong([...recipients, ...copied], scope);

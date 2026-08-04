@@ -11,10 +11,17 @@
 -- Self-healed at runtime by ensureSuppressionTable() (api/_lib/emailSuppression.js)
 -- and ensureCourseEmails() (api/_lib/course/emails.js).
 
+-- A row here ONLY EVER blocks marketing. It cannot stop a project
+-- notification, an invoice, a password reset, or an email a member of staff
+-- writes by hand (those go out through the Gmail API and never touch this
+-- code at all). Withholding a review notification because someone opted out
+-- of a newsletter — or because their mail server bounced once last year —
+-- would silently break a live project.
 CREATE TABLE IF NOT EXISTS email_suppressions (
   email      TEXT        PRIMARY KEY,        -- always stored lower-cased
-  -- 'marketing' = stop selling to me (invoices etc. still send).
-  -- 'all'       = hard bounce or spam complaint; nothing sends, ever.
+  -- Records WHY they're on the list, for reporting. Does not widen what is
+  -- blocked: 'all' means "never put this address in a campaign", not
+  -- "never contact this person".
   scope      TEXT        NOT NULL DEFAULT 'marketing',
   reason     TEXT        NOT NULL,           -- unsubscribe | bounce | complaint | manual
   source     TEXT,                           -- course | quote-resume | admin
