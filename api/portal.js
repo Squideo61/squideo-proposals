@@ -109,7 +109,10 @@ import {
   portalResetHtml,
   portalExtraConfirmHtml,
   portalVoiceoverConfirmHtml,
+  courseCrashCourseHtml,
 } from './_lib/portal/emails.js';
+import { ensureCourseTables } from './_lib/course/db.js';
+import { createCourseSignup, SignupError } from './_lib/course/signup.js';
 import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from './_lib/portal/drive.js';
 import {
   serialisePortalDeal,
@@ -500,6 +503,8 @@ export default async function handler(req, res) {
       case 'me': return meRoutes(req, res, user);
       case 'track': return trackRoute(req, res, user);
       case 'notifications': return notificationsRoute(req, res, user);
+      case 'course': return courseRoute(req, res, user);
+      case 'course-progress': return courseProgressRoute(req, res, user);
       case 'overview': return overviewRoute(req, res, user);
       case 'project': return projectRoute(req, res, user);
       case 'library': return libraryRoute(req, res, user);
@@ -568,6 +573,148 @@ async function trackRoute(req, res, user) {
     eventKey: 'view', detail: { view },
   });
   return res.status(200).json({ ok: true });
+}
+
+// ═════════════════════════ crash course ═════════════════════════
+// Every signed-in portal user gets all eight videos — clients and course
+// signups alike. There is nothing org-scoped here, which is why it needs no
+// resolveCompanyId: the entitlement IS having a session.
+
+// A video counts as watched at 90% rather than on `ended` — people stop before
+// the outro, and a course that refuses to tick off a video someone has plainly
+// watched is worse than one that's slightly generous.
+const COURSE_COMPLETE_RATIO = 0.9;
+
+async function courseRoute(req, res, user) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  await ensureCourseTables();
+
+  const modules = await sql`
+    SELECT id, slug, module_number, title, subtitle, description,
+           duration_seconds, poster IS NOT NULL AS has_poster, poster_updated_at
+      FROM course_modules
+     WHERE published
+     ORDER BY COALESCE(sort_order, module_number), module_number
+  `;
+
+  // A preview session has no puid and so no progress of its own — the staff
+  // member is looking at the shape of the page, not at anyone's watch history.
+  const progress = user.puid
+    ? await sql`
+        SELECT module_id, furthest_seconds, duration_seconds, completed_at, view_count
+          FROM course_progress WHERE portal_user_id = ${user.puid}
+      `
+    : [];
+  const byModule = new Map(progress.map((p) => [p.module_id, p]));
+
+  const items = modules.map((m) => {
+    const p = byModule.get(m.id) || null;
+    return {
+      id: m.id,
+      slug: m.slug,
+      moduleNumber: m.module_number,
+      title: m.title,
+      subtitle: m.subtitle || null,
+      description: m.description || null,
+      durationSeconds: m.duration_seconds ?? null,
+      posterUrl: m.has_poster
+        ? `/api/course?action=poster&slug=${encodeURIComponent(m.slug)}` +
+          (m.poster_updated_at ? `&v=${new Date(m.poster_updated_at).getTime()}` : '')
+        : null,
+      resumeSeconds: p?.furthest_seconds ?? 0,
+      completed: !!p?.completed_at,
+      started: !!p,
+    };
+  });
+
+  const completed = items.filter((i) => i.completed).length;
+  // "Continue watching" is the first thing they haven't finished — which after
+  // a completed course is nothing, so the page shows the completion card.
+  const next = items.find((i) => !i.completed) || null;
+
+  return res.status(200).json({
+    modules: items,
+    completedCount: completed,
+    totalCount: items.length,
+    percentComplete: items.length ? Math.round((completed / items.length) * 100) : 0,
+    continueSlug: next?.slug || null,
+    allComplete: items.length > 0 && completed === items.length,
+  });
+}
+
+// A 15-second heartbeat plus pause/ended/visibilitychange. Always 200: progress
+// is invisible plumbing, and a viewer must never see it fail.
+async function courseProgressRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const ok = () => res.status(200).json({ ok: true });
+  if (!user.puid) return ok();                 // preview session — nothing to record
+
+  try {
+    await ensureCourseTables();
+    const body = await readJsonBody(req);
+    const slug = trimOrNull(body.slug);
+    if (!slug) return ok();
+
+    const [m] = await sql`SELECT id, duration_seconds FROM course_modules WHERE slug = ${slug} AND published`;
+    if (!m) return ok();
+
+    const duration = Math.max(0, Math.round(Number(body.durationSeconds) || m.duration_seconds || 0));
+    const position = Math.max(0, Math.round(Number(body.positionSeconds) || 0));
+    // Clamp to the video's length: a corrupt or spoofed position must not be
+    // able to mark a video complete, or to poison the reporting.
+    const capped = duration ? Math.min(position, duration) : position;
+    const done = body.ended === true || (duration > 0 && capped / duration >= COURSE_COMPLETE_RATIO);
+
+    await sql`
+      INSERT INTO course_progress (
+        portal_user_id, module_id, furthest_seconds, seconds_watched,
+        duration_seconds, view_count, completed_at)
+      VALUES (${user.puid}, ${m.id}, ${capped}, ${capped}, ${duration || null}, 1,
+              ${done ? new Date() : null})
+      ON CONFLICT (portal_user_id, module_id) DO UPDATE SET
+        -- A high-water mark: scrubbing backwards must not lose their place.
+        furthest_seconds = GREATEST(course_progress.furthest_seconds, EXCLUDED.furthest_seconds),
+        seconds_watched  = course_progress.seconds_watched + EXCLUDED.seconds_watched,
+        duration_seconds = COALESCE(EXCLUDED.duration_seconds, course_progress.duration_seconds),
+        view_count       = course_progress.view_count + 1,
+        last_viewed_at   = NOW(),
+        -- Completion sticks. Re-watching half of a finished video doesn't
+        -- un-finish it.
+        completed_at     = COALESCE(course_progress.completed_at, EXCLUDED.completed_at)
+    `;
+
+    if (done) {
+      await logPortalActivity({
+        req, portalUserId: user.puid, eventKey: 'course.completed_video', detail: { slug },
+      });
+      await stampCourseCompletionIfDone(req, user.puid);
+    }
+  } catch (err) {
+    console.warn('[course] progress drop', err.message);
+  }
+  return ok();
+}
+
+// Stamp course_signups.completed_at the first time every published video is
+// done. Best-effort and idempotent — the WHERE clause means a second call after
+// completion changes nothing.
+async function stampCourseCompletionIfDone(req, puid) {
+  const [row] = await sql`
+    SELECT
+      (SELECT COUNT(*)::int FROM course_modules WHERE published) AS total,
+      (SELECT COUNT(*)::int FROM course_progress p
+         JOIN course_modules m ON m.id = p.module_id
+        WHERE p.portal_user_id = ${puid} AND m.published AND p.completed_at IS NOT NULL) AS done
+  `;
+  if (!row || !row.total || row.done < row.total) return;
+  const updated = await sql`
+    UPDATE course_signups SET completed_at = NOW()
+     WHERE portal_user_id = ${puid} AND completed_at IS NULL
+    RETURNING id
+  `;
+  if (updated.length) {
+    await logPortalActivity({ req, portalUserId: puid, eventKey: 'course.completed' });
+  }
 }
 
 // ═════════════════════════ notifications ═════════════════════════
@@ -792,6 +939,81 @@ async function authRoutes(req, res) {
     await clearFailedLogins(email, ip);
     await issuePortalSession(res, user, req);
     return res.status(200).json({ user: publicPortalUser(user) });
+  }
+
+  // ── course-signup ── the ONLY self-serve account creation in the product
+  //
+  // Two outcomes the caller can tell apart:
+  //   next:'portal' — brand new account, signed in, go straight to the course.
+  //   next:'email'  — that address already has a portal account, so a magic
+  //                   link is sent instead. It must NOT be signed in here: a
+  //                   public form that hands out a session for any address
+  //                   typed into it is an account takeover, not a signup.
+  //
+  // That difference is an enumeration oracle — it reveals whether an address
+  // has a Squideo portal account. Accepted deliberately: the alternative is a
+  // "check your email" wall for everyone, which is the single biggest drop-off
+  // on the page. The throttle (5/IP/hour, 20/day) makes bulk enumeration
+  // impractical, which is the part that actually matters.
+  if (bodyOp === 'course-signup') {
+    let result;
+    try {
+      result = await createCourseSignup({
+        email: body.email,
+        name: body.name,
+        companyName: body.companyName,
+        marketingConsent: body.marketingConsent === true,
+        consentText: body.consentText,
+        attribution: body.attribution,
+        honeypot: body.website,          // off-screen field; bots fill it in
+        ip: clientIp(req),
+      });
+    } catch (err) {
+      if (err instanceof SignupError) return res.status(err.status).json({ error: err.message });
+      throw err;
+    }
+
+    // Honeypot: answer exactly as a success would, and do nothing.
+    if (result.silent) return res.status(200).json({ ok: true, next: 'portal' });
+
+    if (result.outcome === 'created') {
+      await issuePortalSession(res, result.user, req);
+      await logPortalActivity({ req, portalUserId: result.user.id, eventKey: 'course.signup' });
+      // Best-effort: a failed welcome email must not cost them the account they
+      // just created and are already signed in to.
+      try {
+        await sendMail({
+          to: result.user.email,
+          subject: 'Your Explainer Video Crash Course is unlocked',
+          html: courseCrashCourseHtml({ name: result.user.name }),
+          text: `All eight videos are unlocked here: ${PORTAL_URL}#/course`,
+        });
+      } catch (err) { console.warn('[course] welcome email failed', err.message); }
+      return res.status(200).json({ ok: true, next: 'portal' });
+    }
+
+    // Existing account (or a disabled one — same answer either way). Send a
+    // sign-in link, reusing the magic-link machinery and its rate limit.
+    if (result.user) {
+      const recent = await sql`
+        SELECT COUNT(*)::int AS n FROM portal_login_tokens
+         WHERE portal_user_id = ${result.user.id} AND purpose = 'magic_link'
+           AND created_at > NOW() - INTERVAL '10 minutes'
+      `;
+      if ((recent[0]?.n || 0) < MAGIC_SENDS_PER_10MIN) {
+        const raw = await issueLoginToken(result.user.id, 'magic_link', 15);
+        const loginUrl = `${PORTAL_URL}?login=${encodeURIComponent(raw)}`;
+        try {
+          await sendMail({
+            to: result.user.email,
+            subject: 'Your Explainer Video Crash Course is unlocked',
+            html: courseCrashCourseHtml({ name: result.user.name, loginUrl, returning: true }),
+            text: `You already have a Squideo account — sign in here to watch the course: ${loginUrl}`,
+          });
+        } catch (err) { console.warn('[course] returning-user email failed', err.message); }
+      }
+    }
+    return res.status(200).json({ ok: true, next: 'email' });
   }
 
   // ── magic-request ── (always 200: no account enumeration)
@@ -1529,6 +1751,19 @@ async function downloadRoute(req, res, user) {
       return streamBlob(req, res, item.blob_url, item.mime_type || 'video/mp4');
     }
     return blobRedirect(res, item.blob_url, wantDownload);
+  }
+
+  // A crash-course video. No org check: the course is the same eight videos for
+  // every account, and having ANY live portal session is the entitlement. That
+  // is exactly what the signup buys, and it's why this can't live on the public
+  // /api/course endpoint, which serves only the free ones.
+  if (scope === 'course') {
+    const rows = await sql`
+      SELECT blob_url, mime_type FROM course_modules
+       WHERE id = ${id} AND published AND blob_url IS NOT NULL
+    `.catch(() => []);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    return blobRedirect(res, rows[0].blob_url, wantDownload);
   }
 
   // The thumbnail chosen for a library item — image bytes, org-checked.

@@ -195,11 +195,19 @@ export default function Dashboard() {
           <Card><div style={{ color: BRAND.muted, fontSize: 13, textAlign: 'center', padding: 20 }}>Loading projects…</div></Card>
         ) : projects.length === 0 ? (
           <Card>
+            {/* Most people seeing this arrived from the crash course and have
+                no project by definition — so lead with the thing they actually
+                came for, and keep "request a video" as the quieter option. */}
             <EmptyState
               icon={<Film size={34} />}
               title="No live projects just yet"
-              body="When a proposal is signed your project appears here with live status, review links and downloads."
-              action={<a className="btn" href="#/request">Request a video</a>}
+              body="When a proposal is signed your project appears here with live status, review links and downloads. In the meantime, the crash course is all yours."
+              action={
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <a className="btn" href="#/course">Watch the crash course</a>
+                  <a className="btn-ghost" href="#/request">Request a video</a>
+                </div>
+              }
             />
           </Card>
         ) : (

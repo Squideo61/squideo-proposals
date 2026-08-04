@@ -7,7 +7,7 @@ import { SQUIDEO_LOGO } from '../defaults.js';
 import { useIsMobile } from '../utils.js';
 import { Toast } from '../components/ui.jsx';
 import {
-  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus,
+  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus, GraduationCap,
 } from 'lucide-react';
 import { Eye, PencilLine } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
@@ -31,6 +31,7 @@ import Settings from './pages/Settings.jsx';
 import Review from './pages/Review.jsx';
 import Storyboard from './pages/Storyboard.jsx';
 import VideoCredit from './pages/VideoCredit.jsx';
+import Course from './pages/Course.jsx';
 
 const MAX_WIDTH = 1080;
 
@@ -47,10 +48,16 @@ export function navigate(hash) {
 const NAV = [
   // shortLabel is what the mobile tab bar uses — "Current projects" doesn't fit
   // under an icon at phone width.
+  //
+  // mobile:false drops an item from the phone tab bar (it stays in the desktop
+  // nav). The bar lays items out evenly with no scroll, so past about six they
+  // stop being tappable — adding the course meant one had to give, and buying
+  // video credit is the least likely thing anyone does on a phone.
   { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home },
+  { view: 'course', label: 'Crash course', shortLabel: 'Course', hash: '#/course', Icon: GraduationCap },
   { view: 'library', label: 'Video library', shortLabel: 'Library', hash: '#/library', Icon: Film },
   { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
-  { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet },
+  { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet, mobile: false },
   { view: 'request', label: 'New video', hash: '#/request', Icon: PlusCircle, highlight: true },
   { view: 'team', label: 'Team', hash: '#/team', Icon: Users },
   { view: 'settings', label: 'Settings', hash: '#/settings', Icon: SettingsIcon },
@@ -182,7 +189,7 @@ function MobileTabBar({ view }) {
       display: 'flex', justifyContent: 'space-around',
       paddingBottom: 'env(safe-area-inset-bottom)',
     }}>
-      {NAV.map(({ view: v, label, shortLabel, hash, Icon, highlight }) => {
+      {NAV.filter((n) => n.mobile !== false).map(({ view: v, label, shortLabel, hash, Icon, highlight }) => {
         const active = view === v || (v === 'home' && view === 'project');
         return (
           <a key={v} href={hash} style={{
@@ -227,6 +234,7 @@ function AuthedApp() {
     case 'project': page = <ProjectDetail dealId={route.param} />; break;
     case 'review': page = <Review token={route.param} />; break;
     case 'storyboard': page = <Storyboard token={route.param} />; break;
+    case 'course': page = <Course slug={route.param} />; break;
     case 'library': page = <Library />; break;
     case 'documents': page = <Documents />; break;
     case 'extras': page = <Extras dealId={route.param} />; break;

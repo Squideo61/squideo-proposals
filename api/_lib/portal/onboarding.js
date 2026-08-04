@@ -95,7 +95,11 @@ const FREEMAIL_DOMAINS = new Set([
 
 // An organisation name derived from the signer's email domain (acme.co.uk →
 // "Acme"), or null for personal addresses.
-function companyNameFromEmail(email) {
+//
+// Exported for the course signup, which uses it to NAME a fresh prospect
+// company. It must never be used there to FIND an existing one — see the
+// warning on resolveContactForSigner below.
+export function companyNameFromEmail(email) {
   if (!email || !email.includes('@')) return null;
   const domain = email.split('@')[1].trim().toLowerCase();
   if (!domain || FREEMAIL_DOMAINS.has(domain)) return null;
@@ -146,7 +150,13 @@ export async function resolveCompanyForDeal(dealId, proposalData, signerEmail, s
 
 // Find or create the CRM contact for the signer so the portal account links
 // back to the CRM person record (best-effort prefill source).
-async function resolveContactForSigner({ email, name, companyId }) {
+//
+// Matching an existing contact by EMAIL is safe and correct — an email address
+// identifies one person. Matching a COMPANY by email domain is not, and must
+// never happen on a self-serve path: it would let anyone at acme.co.uk sign
+// themselves into ACME's real client portal. Callers that create an org from an
+// untrusted signup pass a company they have just created.
+export async function resolveContactForSigner({ email, name, companyId, source = 'portal_signup' }) {
   const cleanEmail = lowerOrNull(email);
   if (!cleanEmail) return null;
   const found = await sql`
@@ -158,7 +168,7 @@ async function resolveContactForSigner({ email, name, companyId }) {
   const id = makeId('ct');
   await sql`
     INSERT INTO contacts (id, email, name, phone, title, company_id, provisional, source)
-    VALUES (${id}, ${cleanEmail}, ${trimOrNull(name)}, NULL, NULL, ${companyId || null}, FALSE, 'portal_signup')
+    VALUES (${id}, ${cleanEmail}, ${trimOrNull(name)}, NULL, NULL, ${companyId || null}, FALSE, ${source})
   `;
   return { id, name: trimOrNull(name), phone: null, title: null };
 }

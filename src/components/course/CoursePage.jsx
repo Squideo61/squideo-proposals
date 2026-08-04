@@ -12,6 +12,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Lock, Play, Check, ArrowRight } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { SQUIDEO_LOGO } from '../../defaults.js';
+import { storedAttribution } from '../../lib/attribution.js';
+import { MARKETING_CONSENT_TEXT, COURSE_EMAILS_NOTICE, consentRecord } from '../../lib/courseConsent.js';
 
 const NAVY = BRAND.ink;
 const PALE = '#DCEEF7';
@@ -349,21 +351,63 @@ function ModuleTile({ module: m, onClick, playing = false }) {
 }
 
 // ── Signup ───────────────────────────────────────────────────────────────────
-// PHASE 2 replaces this card with the real two-field signup form, once
-// POST /api/portal/auth?op=course-signup exists.
-//
-// Until then the copy is deliberately honest about what the button does. A
-// button reading "Watch free" that opens a contact form is a bait-and-switch,
-// and this page's entire job is to earn trust before asking for anything —
-// nothing here is worth undermining that.
+// Two fields and a button. No password: the account is created and signed in on
+// submit, and a magic link covers return visits. Removing the password field
+// and the "check your email" wall behind it is the biggest single conversion
+// lever on this page, and there is nothing here worth protecting with one — the
+// asset is a free marketing video, not a bank account.
 function SignupCard({ gatedCount }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [consent, setConsent] = useState(false);
+  const [website, setWebsite] = useState('');   // honeypot
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [sent, setSent] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/portal/auth?op=course-signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',       // the session cookie comes back on this response
+        body: JSON.stringify({
+          name, email, website,
+          marketingConsent: consent,
+          consentText: consentRecord(consent),
+          attribution: storedAttribution(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Something went wrong — try again.');
+      if (data.next === 'portal') { window.location.href = '/portal#/course'; return; }
+      setSent(true);                  // address already had an account
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div style={CARD}>
+        <h2 style={{ margin: '0 0 8px', fontSize: 21, fontWeight: 800 }}>Check your email</h2>
+        <p style={{ margin: '0 auto', maxWidth: 420, fontSize: 14, lineHeight: 1.6, color: BRAND.muted }}>
+          You already have a Squideo account, so the course is waiting for you.
+          We've sent a sign-in link to <strong>{email}</strong>.
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div style={{
-      background: '#fff', color: BRAND.ink, borderRadius: 16, padding: 28,
-      boxShadow: '0 18px 50px rgba(0,0,0,0.28)', textAlign: 'center',
-    }}>
+    <form onSubmit={submit} style={CARD}>
       <h2 style={{ margin: '0 0 8px', fontSize: 21, fontWeight: 800 }}>
-        {gatedCount > 0 ? `Unlock the last ${gatedCount}` : 'Want the brief template?'}
+        {gatedCount > 0 ? `Unlock the last ${gatedCount}` : 'Get the brief builder'}
       </h2>
       <p style={{ margin: '0 auto 18px', maxWidth: 470, fontSize: 14, lineHeight: 1.6, color: BRAND.muted }}>
         {/* The remaining videos are barely three minutes, so they can't carry
@@ -372,22 +416,64 @@ function SignupCard({ gatedCount }) {
         tool that turns all this into a document any production company could work
         from. You'll also get a proper look inside the portal we run projects in.
       </p>
-      <a
-        href="/contact"
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8, background: BRAND.blue,
-          color: '#fff', fontWeight: 700, fontSize: 15, padding: '12px 22px',
-          borderRadius: 10, textDecoration: 'none',
-        }}
-      >
-        Tell me when it's ready <ArrowRight size={16} />
-      </a>
-      <div style={{ marginTop: 12, fontSize: 12, color: BRAND.muted }}>
-        Free. No card. Unsubscribe any time.
+
+      {error && (
+        <div style={{
+          background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C',
+          borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 14,
+          lineHeight: 1.45, textAlign: 'left',
+        }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 380, margin: '0 auto' }}>
+        <input
+          className="input" required value={name} autoComplete="name"
+          onChange={(e) => setName(e.target.value)} placeholder="Your name"
+          style={{ fontSize: 15, padding: '11px 13px' }}
+        />
+        <input
+          className="input" required type="email" value={email} autoComplete="email"
+          onChange={(e) => setEmail(e.target.value)} placeholder="Work email"
+          style={{ fontSize: 15, padding: '11px 13px' }}
+        />
+        {/* Off-screen, not display:none — some bots skip hidden fields but fill
+            anything they can read in the DOM. Real people never see it. */}
+        <input
+          type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true"
+          value={website} onChange={(e) => setWebsite(e.target.value)}
+          style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, opacity: 0 }}
+        />
+        <button className="btn" type="submit" disabled={busy} style={{ fontSize: 15, padding: '12px 18px', justifyContent: 'center' }}>
+          {busy ? 'Unlocking…' : <>Watch the rest <ArrowRight size={16} /></>}
+        </button>
       </div>
-    </div>
+
+      <label style={{
+        display: 'flex', gap: 9, alignItems: 'flex-start', maxWidth: 380,
+        margin: '14px auto 0', textAlign: 'left', fontSize: 12.5,
+        color: BRAND.muted, lineHeight: 1.5, cursor: 'pointer',
+      }}>
+        <input
+          type="checkbox" checked={consent}
+          onChange={(e) => setConsent(e.target.checked)}
+          style={{ marginTop: 2, flexShrink: 0 }}
+        />
+        <span>{MARKETING_CONSENT_TEXT}</span>
+      </label>
+
+      <div style={{ marginTop: 12, fontSize: 12, color: BRAND.muted }}>
+        Free. No card. {COURSE_EMAILS_NOTICE}
+      </div>
+    </form>
   );
 }
+
+const CARD = {
+  background: '#fff', color: BRAND.ink, borderRadius: 16, padding: 28,
+  boxShadow: '0 18px 50px rgba(0,0,0,0.28)', textAlign: 'center',
+};
 
 function ContinueCard() {
   return (

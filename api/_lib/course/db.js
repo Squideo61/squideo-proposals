@@ -113,6 +113,37 @@ export function ensureCourseTables() {
         )`;
     });
 
+    // The same 20 attribution columns quote_requests carries, so a course
+    // signup can be written straight from pickAttribution() and read by the
+    // same reporting. Kept here rather than generalising ensureLeadAttribution()
+    // — that runs on the live quote-request path and isn't worth churning.
+    // Written out one per line rather than looped: `sql` is a tagged template,
+    // and building DDL by string-concatenating into it is the habit that ends
+    // in an injection. Mirrors ensureLeadAttribution() exactly.
+    await step('course_signups attribution', async () => {
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_channel       TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_source        TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_medium        TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_campaign      TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_term          TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_content       TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_gclid         TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_gbraid        TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_wbraid        TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_fbclid        TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_msclkid       TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_campaign_id   TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_adgroup_id    TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_keyword       TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_matchtype     TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_network       TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_device        TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_landing_url   TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_referrer      TEXT`;
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS attr_first_seen_at TIMESTAMPTZ`;
+      await sql`CREATE INDEX IF NOT EXISTS course_signups_channel_idx ON course_signups(attr_channel)`;
+    });
+
     // Prospect orgs (created by self-serve signup) and the lead-magnet
     // dimension on quote requests. See the migration for why lead_magnet is
     // its own column rather than an attr_channel value.
