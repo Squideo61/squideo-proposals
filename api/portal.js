@@ -115,6 +115,8 @@ import { ensureCourseTables } from './_lib/course/db.js';
 import { createCourseSignup, SignupError } from './_lib/course/signup.js';
 import { applyTag } from './_lib/crm/tags.js';
 import { scheduleCourseEmails, cancelCourseEmails } from './_lib/course/emails.js';
+import { ensureClientBriefs } from './_lib/brief/db.js';
+import { missingRequired, renderBriefText } from './_lib/brief/questions.js';
 import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from './_lib/portal/drive.js';
 import {
   serialisePortalDeal,
@@ -507,6 +509,7 @@ export default async function handler(req, res) {
       case 'notifications': return notificationsRoute(req, res, user);
       case 'course': return courseRoute(req, res, user);
       case 'course-progress': return courseProgressRoute(req, res, user);
+      case 'brief': return briefRoute(req, res, user);
       case 'overview': return overviewRoute(req, res, user);
       case 'project': return projectRoute(req, res, user);
       case 'library': return libraryRoute(req, res, user);
@@ -552,6 +555,7 @@ export default async function handler(req, res) {
 const TRACKED_VIEWS = new Set([
   'home', 'project', 'library', 'documents', 'extras', 'voiceover', 'kickoff',
   'script', 'request', 'video-credit', 'team', 'settings', 'review', 'storyboard',
+  'course', 'brief',
 ]);
 
 async function trackRoute(req, res, user) {
@@ -2450,10 +2454,45 @@ async function requestVideoRoute(req, res, user) {
   const projectDetails = trimOrNull(body.projectDetails);
   if (!projectDetails) return res.status(400).json({ error: 'Tell us a little about the video you need' });
 
+  const id = await createPortalQuoteRequest({
+    user, companyId, projectDetails,
+    timeline: trimOrNull(body.timeline),
+    budget: trimOrNull(body.budget),
+    useCredit: body.useCredit === true,
+    sourceUrl: `${PORTAL_URL}#/request`,
+    files: Array.isArray(body.files) ? body.files : [],
+  });
+  return res.status(201).json({ ok: true, id });
+}
+
+// Creates the quote_requests row and fires the team alert. Shared by the
+// "New video" form and by a submitted brief, so the two can't drift on the
+// things that are easy to get wrong — the prospect discount rule, the lead
+// magnet stamp, and the per-recipient qualify/disqualify links.
+async function createPortalQuoteRequest({
+  user, companyId, projectDetails, timeline = null, budget = null,
+  useCredit = false, sourceUrl = null, files = [], briefId = null,
+}) {
   const company = user.companies.find((c) => c.id === companyId) || null;
-  const useCredit = body.useCredit === true;
   const id = crypto.randomUUID();
   const createdAt = new Date();
+
+  // A crash-course signup gets a portal account and a `prospect` org, but they
+  // are NOT a client — so they aren't owed the 10% portal discount, and the
+  // team alert must not tell sales they are. Stamping lead_magnet at the same
+  // time is what makes "from the crash course: N leads · £X signed" countable;
+  // it's a separate dimension from attr_channel, which still records how they
+  // originally found us.
+  const [origin] = await sql`
+    SELECT COALESCE(c.prospect, FALSE) AS prospect,
+           (SELECT cs.id FROM course_signups cs
+             WHERE cs.portal_user_id = ${user.puid} LIMIT 1) AS course_signup_id
+      FROM companies c WHERE c.id = ${companyId}
+  `.catch(() => [{}]);
+  const isProspect = origin?.prospect === true;
+  const courseSignupId = origin?.course_signup_id || null;
+  const leadMagnet = courseSignupId ? 'explainer-course' : null;
+  const discount = !isProspect;
 
   // Identity comes from the SESSION, never the request body — the CRM sees
   // exactly who asked, and the row is pre-linked to the org.
@@ -2464,10 +2503,10 @@ async function requestVideoRoute(req, res, user) {
     phone: user.phone || null,
     company: company?.name || null,
     project_details: projectDetails,
-    timeline: trimOrNull(body.timeline),
-    budget: trimOrNull(body.budget),
+    timeline,
+    budget,
     opt_in: false,
-    source_url: `${PORTAL_URL}#/request`,
+    source_url: sourceUrl || `${PORTAL_URL}#/request`,
     created_at: createdAt,
     country_code: null,
     country_name: null,
@@ -2475,18 +2514,19 @@ async function requestVideoRoute(req, res, user) {
   await sql`
     INSERT INTO quote_requests (
       id, name, email, phone, company, project_details, timeline, budget,
-      opt_in, source_url, created_at, source, portal_user_id, portal_discount, company_id, use_credit
+      opt_in, source_url, created_at, source, portal_user_id, portal_discount, company_id, use_credit,
+      lead_magnet, course_signup_id
     ) VALUES (
       ${qr.id}, ${qr.name}, ${qr.email}, ${qr.phone}, ${qr.company},
       ${qr.project_details}, ${qr.timeline}, ${qr.budget}, ${qr.opt_in},
-      ${qr.source_url}, ${qr.created_at}, 'portal', ${user.puid}, TRUE, ${companyId}, ${useCredit}
+      ${qr.source_url}, ${qr.created_at}, 'portal', ${user.puid}, ${discount}, ${companyId}, ${useCredit},
+      ${leadMagnet}, ${courseSignupId}
     )
   `;
 
   // Attach any files already uploaded via the public quote upload endpoint.
   const storedFiles = [];
-  const files = Array.isArray(body.files) ? body.files.slice(0, 5) : [];
-  for (const f of files) {
+  for (const f of (Array.isArray(files) ? files.slice(0, 5) : [])) {
     if (!f || !f.blobUrl || !f.filename) continue;
     const filename = String(f.filename).slice(0, 255);
     const mimeType = f.mimeType ? String(f.mimeType).slice(0, 100) : null;
@@ -2502,7 +2542,16 @@ async function requestVideoRoute(req, res, user) {
   // per-recipient one-click Qualify/Disqualify links.
   const apiBase = APP_URL.replace(/\/$/, '');
   const crmUrl = `${apiBase}/api/quote-requests?action=open&id=${encodeURIComponent(qr.id)}`;
-  const subject = `New portal quote request (10% discount) from ${qr.name}${qr.company ? ` — ${qr.company}` : ''}${useCredit ? ' · wants to use video credit' : ''}`;
+  // The label sales reads first. "10% discount" on a prospect would be a
+  // pricing instruction nobody meant to give.
+  // A completed brief is a materially warmer lead than a one-box request, and
+  // it deserves a subject line that says so — it's the difference between "get
+  // to this today" and "get to this this week".
+  const leadLabel = briefId
+    ? (leadMagnet ? 'completed brief (crash course)' : 'completed video brief')
+    : (leadMagnet ? 'crash-course lead'
+                  : (discount ? 'portal quote request (10% discount)' : 'portal quote request'));
+  const subject = `New ${leadLabel} from ${qr.name}${qr.company ? ` — ${qr.company}` : ''}${useCredit ? ' · wants to use video credit' : ''}`;
   const subscribed = await resolveRecipients('quote_request.new', {});
   await Promise.allSettled(subscribed.map(async (to) => {
     const role = await getRoleForUser(to);
@@ -2517,7 +2566,7 @@ async function requestVideoRoute(req, res, user) {
     await sendMail({
       to,
       subject,
-      html: buildNotificationEmail(qr, storedFiles, { qualifyUrl, disqualifyUrl, crmUrl, leadLabel: 'portal quote request (10% discount)' }),
+      html: buildNotificationEmail(qr, storedFiles, { qualifyUrl, disqualifyUrl, crmUrl, leadLabel }),
     });
   }));
   if (subscribed.length) {
@@ -2525,13 +2574,138 @@ async function requestVideoRoute(req, res, user) {
       subject,
       inApp: {
         title: subject,
-        body: [qr.company, qr.budget, qr.timeline, 'Portal · 10% discount', useCredit ? 'wants to use video credit' : null].filter(Boolean).join(' · '),
+        body: [qr.company, qr.budget, qr.timeline,
+               briefId ? 'Full brief' : null,
+               leadMagnet ? 'Crash course' : (discount ? 'Portal · 10% discount' : 'Portal'),
+               useCredit ? 'wants to use video credit' : null].filter(Boolean).join(' · '),
         link: '#/quote-requests',
       },
     });
   }
 
-  return res.status(201).json({ ok: true, id });
+  return id;
+}
+
+// ═════════════════════════ the brief ═════════════════════════
+// GET   /api/portal/brief   → the open draft, creating one if there isn't one
+// PATCH /api/portal/brief   → autosave; merges answers, never replaces them
+// POST  /api/portal/brief   → send to Squideo (creates the quote request)
+//
+// Autosave is the whole point of this being a page rather than a document.
+// People fill a brief in over days, usually with someone else's answer to a
+// question they can't answer themselves, so every field has to survive them
+// closing the tab.
+async function briefRoute(req, res, user) {
+  await ensureClientBriefs();
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+
+  const loadOpen = async () => {
+    const [row] = await sql`
+      SELECT * FROM client_briefs
+       WHERE portal_user_id = ${user.puid} AND submitted_at IS NULL LIMIT 1`;
+    return row || null;
+  };
+
+  const serialise = (r) => ({
+    id: r.id,
+    answers: r.answers || {},
+    completedAt: r.completed_at || null,
+    submittedAt: r.submitted_at || null,
+    updatedAt: r.updated_at || null,
+  });
+
+  if (req.method === 'GET') {
+    let row = await loadOpen();
+    if (!row) {
+      // Created lazily on first open rather than at signup, so an untouched
+      // brief never shows up in the CRM as a lead signal that isn't real.
+      const id = crypto.randomUUID();
+      await sql`
+        INSERT INTO client_briefs (id, portal_user_id, company_id)
+        VALUES (${id}, ${user.puid}, ${companyId})
+        ON CONFLICT DO NOTHING`;
+      row = await loadOpen();
+      if (!row) return res.status(500).json({ error: "Couldn't start a brief" });
+    }
+    // Past briefs, so someone who has already sent one can look it up.
+    const past = await sql`
+      SELECT id, answers, submitted_at FROM client_briefs
+       WHERE portal_user_id = ${user.puid} AND submitted_at IS NOT NULL
+       ORDER BY submitted_at DESC LIMIT 10`.catch(() => []);
+    return res.status(200).json({
+      brief: serialise(row),
+      past: past.map((p) => ({
+        id: p.id,
+        submittedAt: p.submitted_at,
+        projectName: (p.answers || {}).projectName || 'Untitled brief',
+      })),
+    });
+  }
+
+  if (req.method === 'PATCH') {
+    const body = await readJsonBody(req);
+    const patch = (body && typeof body.answers === 'object' && !Array.isArray(body.answers))
+      ? body.answers : null;
+    if (!patch) return res.status(400).json({ error: 'answers must be an object' });
+
+    const row = await loadOpen();
+    if (!row) return res.status(404).json({ error: 'No open brief' });
+
+    // Merged server-side with ||, so two tabs (or a phone and a laptop) can't
+    // wipe each other's answers by each posting their own whole document.
+    // `completed` is only ever set from the server's own view of the answers.
+    const [updated] = await sql`
+      UPDATE client_briefs
+         SET answers = answers || ${JSON.stringify(patch)}::jsonb,
+             updated_at = NOW()
+       WHERE id = ${row.id}
+       RETURNING *`;
+    const done = missingRequired(updated.answers || {}).length === 0;
+    if (done && !updated.completed_at) {
+      await sql`UPDATE client_briefs SET completed_at = NOW() WHERE id = ${updated.id}`;
+    } else if (!done && updated.completed_at) {
+      await sql`UPDATE client_briefs SET completed_at = NULL WHERE id = ${updated.id}`;
+    }
+    return res.status(200).json({ ok: true, updatedAt: updated.updated_at, complete: done });
+  }
+
+  if (req.method === 'POST') {
+    const row = await loadOpen();
+    if (!row) return res.status(404).json({ error: 'No open brief' });
+    const answers = row.answers || {};
+
+    const missing = missingRequired(answers);
+    if (missing.length) {
+      return res.status(400).json({
+        error: 'A few questions still need an answer',
+        missing: missing.map((q) => ({ key: q.key, label: q.label, screen: q.screenKey })),
+      });
+    }
+
+    // Rendered from the STORED answers, never from the request body — what the
+    // team reads is always what the client actually filled in.
+    const projectDetails = renderBriefText(answers);
+    const quoteRequestId = await createPortalQuoteRequest({
+      user, companyId, projectDetails,
+      timeline: answers.deadline || null,
+      budget: answers.budget || null,
+      sourceUrl: `${PORTAL_URL}#/brief`,
+      briefId: row.id,
+    });
+
+    await sql`
+      UPDATE client_briefs
+         SET submitted_at = NOW(), completed_at = COALESCE(completed_at, NOW()),
+             quote_request_id = ${quoteRequestId}, updated_at = NOW()
+       WHERE id = ${row.id}`;
+    await logPortalActivity({ req, portalUserId: user.puid, eventKey: 'brief.submitted' })
+      .catch(() => {});
+
+    return res.status(201).json({ ok: true, id: row.id, quoteRequestId });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
 }
 
 // ═════════════════════════ video credit ═════════════════════════

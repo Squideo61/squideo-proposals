@@ -76,6 +76,12 @@ export default function Course({ slug }) {
         showToast={showToast}
       />
 
+      {/* Escalate the ask with engagement. Someone two videos in doesn't want a
+          sales call; they want to do something with what they just learnt. The
+          brief is that something, and it happens to be the warmest lead we can
+          get. Asking for a call at video 1 wastes the asset. */}
+      {!data.allComplete && <NextStepCard done={data.completedCount} />}
+
       <div style={{ marginTop: 22 }}>
         <div style={{ fontSize: 12.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 10 }}>
           All {modules.length} videos
@@ -93,6 +99,38 @@ export default function Course({ slug }) {
       </div>
 
       {data.allComplete && <CompletionCard />}
+    </div>
+  );
+}
+
+// One quiet, contextual card under the player — never a modal, never mid-video.
+// It stays out of the way until someone has actually watched something.
+function NextStepCard({ done }) {
+  if (!done) return null;
+  return (
+    <div style={{
+      marginTop: 16, padding: '14px 16px', borderRadius: 10,
+      background: '#F3F9FC', border: '1px solid #DCEBF3',
+      display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap',
+    }}>
+      <div style={{ flex: '1 1 260px', fontSize: 13.5, lineHeight: 1.55, color: BRAND.ink }}>
+        <strong>Put it to use.</strong>{' '}
+        <span style={{ color: BRAND.muted }}>
+          The brief builder asks these same questions about your video, and saves as you go.
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={() => navigate('#/brief')}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          background: BRAND.blue, color: '#fff', border: 'none', borderRadius: 8,
+          padding: '9px 15px', fontSize: 13.5, fontWeight: 600,
+          fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
+        }}
+      >
+        Start your brief <ArrowRight size={14} />
+      </button>
     </div>
   );
 }
@@ -254,12 +292,25 @@ function CompletionCard() {
         That's the lot. Now the useful bit.
       </h3>
       <p style={{ margin: '0 auto 16px', maxWidth: 440, fontSize: 13.5, lineHeight: 1.6, color: '#166534' }}>
-        Everything in those videos is what we'd ask you on a first call anyway. If you've
-        got a video in mind, tell us about it and we'll come back with a real number.
+        Everything in those videos is what we'd ask you on a first call anyway — so the
+        brief builder asks it properly, saves as you go, and gives you a document you can
+        send to anyone. Including us.
       </p>
-      <a href="#/request" className="btn" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-        Tell us about your video <ArrowRight size={15} />
-      </a>
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+        <a href="#/brief" className="btn" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          Build your brief <ArrowRight size={15} />
+        </a>
+        {/* Secondary on purpose. Someone who's just finished the course gets a better
+            video from a brief than from a one-box request — but forcing it on people
+            who already know exactly what they want is friction, not helpfulness. */}
+        <a href="#/request" style={{
+          textDecoration: 'none', display: 'inline-flex', alignItems: 'center',
+          padding: '10px 16px', borderRadius: 8, border: '1px solid #9BE0B7',
+          color: '#166534', fontSize: 13.5, fontWeight: 600, background: '#fff',
+        }}>
+          Just get me a price
+        </a>
+      </div>
     </div>
   );
 }

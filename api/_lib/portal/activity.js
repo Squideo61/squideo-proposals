@@ -165,6 +165,8 @@ export async function portalTimeline({ companyId = null, dealId = null, limit = 
 const ACTIVITY_LABELS = {
   login: 'Signed in',
   download: 'Downloaded a file',
+  'course.signup': 'Signed up for the crash course',
+  'brief.submitted': 'Sent us a completed brief',
 };
 
 const VIEW_LABELS = {
@@ -177,6 +179,8 @@ const VIEW_LABELS = {
   kickoff: 'Opened the kick-off booking',
   script: 'Opened script & visual direction',
   request: 'Opened the new-video request',
+  course: 'Watched the crash course',
+  brief: 'Worked on their video brief',
   'video-credit': 'Looked at video credit',
   team: 'Opened their team',
   settings: 'Opened settings',

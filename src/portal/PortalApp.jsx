@@ -7,7 +7,7 @@ import { SQUIDEO_LOGO } from '../defaults.js';
 import { useIsMobile } from '../utils.js';
 import { Toast } from '../components/ui.jsx';
 import {
-  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus, GraduationCap,
+  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus, GraduationCap, FileText,
 } from 'lucide-react';
 import { Eye, PencilLine } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
@@ -32,6 +32,7 @@ import Review from './pages/Review.jsx';
 import Storyboard from './pages/Storyboard.jsx';
 import VideoCredit from './pages/VideoCredit.jsx';
 import Course from './pages/Course.jsx';
+import Brief from './pages/Brief.jsx';
 
 const MAX_WIDTH = 1080;
 
@@ -58,6 +59,9 @@ const NAV = [
   { view: 'library', label: 'Video library', shortLabel: 'Library', hash: '#/library', Icon: Film },
   { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
   { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet, mobile: false },
+  // Off the phone bar, not because it doesn't work on a phone — it does — but
+  // because the bar is already at its limit and a brief is a sit-down job.
+  { view: 'brief', label: 'Video brief', hash: '#/brief', Icon: FileText, mobile: false },
   { view: 'request', label: 'New video', hash: '#/request', Icon: PlusCircle, highlight: true },
   { view: 'team', label: 'Team', hash: '#/team', Icon: Users },
   { view: 'settings', label: 'Settings', hash: '#/settings', Icon: SettingsIcon },
@@ -235,6 +239,7 @@ function AuthedApp() {
     case 'review': page = <Review token={route.param} />; break;
     case 'storyboard': page = <Storyboard token={route.param} />; break;
     case 'course': page = <Course slug={route.param} />; break;
+    case 'brief': page = <Brief />; break;
     case 'library': page = <Library />; break;
     case 'documents': page = <Documents />; break;
     case 'extras': page = <Extras dealId={route.param} />; break;
