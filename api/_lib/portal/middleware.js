@@ -38,7 +38,7 @@ export async function requirePortalAuth(req, res) {
       return null;
     }
     await ensurePortalTables();
-    const [co] = await sql`SELECT id, name FROM companies WHERE id = ${pv.companyId}`;
+    const [co] = await sql`SELECT id, name, COALESCE(prospect, FALSE) AS prospect FROM companies WHERE id = ${pv.companyId}`;
     if (!co) {
       res.status(404).json({ error: 'Organisation not found' });
       return null;
@@ -62,7 +62,12 @@ export async function requirePortalAuth(req, res) {
       email: pv.staffEmail || 'preview@squideo.co.uk',
       name: pv.manage === true ? (pv.staffEmail || 'Squideo') : 'Preview',
       companyIds: [co.id],
-      companies: [{ id: co.id, name: co.name, logoUrl: logo ? portalLogoPath(co.id, logoVersion(logo.logo_updated_at)) : null }],
+      // Staff previewing a prospect's portal must see what the prospect sees,
+      // rate card included — otherwise the preview stops being a preview.
+      companies: [{
+        id: co.id, name: co.name, prospect: co.prospect === true,
+        logoUrl: logo ? portalLogoPath(co.id, logoVersion(logo.logo_updated_at)) : null,
+      }],
     };
   }
 
@@ -98,6 +103,7 @@ export async function requirePortalAuth(req, res) {
   // where it belongs.
   const memberships = await sql`
     SELECT m.company_id, c.name AS company_name, c.logo_updated_at,
+           COALESCE(c.prospect, FALSE) AS prospect,
            (c.logo IS NOT NULL OR EXISTS (
              SELECT 1 FROM proposals p
                JOIN deals d ON d.id = p.deal_id
@@ -125,6 +131,11 @@ export async function requirePortalAuth(req, res) {
       id: m.company_id,
       name: m.company_name,
       logoUrl: m.has_logo ? portalLogoPath(m.company_id, logoVersion(m.logo_updated_at)) : null,
+      // A crash-course signup gets a portal account and a `prospect` org, but
+      // isn't a client. The portal uses this to decide what the rate card is
+      // shown to: publishing £/min to someone we haven't scoped anything for
+      // anchors every quote we send them afterwards.
+      prospect: m.prospect === true,
     })),
   };
 }

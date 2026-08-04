@@ -26,20 +26,28 @@ function quoteFor(minutes, p) {
 const fmtMins = (n) => `${Math.round((n + Number.EPSILON) * 10) / 10} min`;
 
 export default function VideoCredit() {
-  const { companyId, showToast } = usePortal();
+  const { companyId, user, showToast } = usePortal();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [minutes, setMinutes] = useState(2);
   const [busy, setBusy] = useState(null); // 'card' | 'invoice'
 
+  // Read from the session so the "not yet" state renders on the first paint,
+  // rather than flashing the page and then replacing it once a 403 comes back.
+  const prospect = (user?.companies || []).find((c) => c.id === companyId)?.prospect === true;
+
   const load = () => {
-    if (!companyId) return;
+    if (!companyId || prospect) return;
     portalApi.get(`video-credit?companyId=${encodeURIComponent(companyId)}`)
       .then(setData)
       .catch((err) => setError(err.message));
   };
 
-  useEffect(() => { setData(null); setError(null); load(); }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setData(null); setError(null); load(); }, [companyId, prospect]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Trust the session, but fall back to the server's verdict if the two ever
+  // disagree (a stale tab open across a company being converted, say).
+  const notYet = prospect || /available once your first project/i.test(error || '');
 
   // Handle the return from Stripe Checkout (?credit_paid / ?credit_cancelled).
   useEffect(() => {
@@ -86,6 +94,30 @@ export default function VideoCredit() {
   };
 
   const step = (delta) => setMinutes((m) => Math.max(MIN, Math.min(MAX, m + delta)));
+
+  // A prospect who deep-links here gets a 403 from the server. Answer it with
+  // the actual reason rather than a red error box: credit is the rung after a
+  // first project, and saying so is a nudge towards one — not a wall. Crucially
+  // this renders BEFORE the rate is ever mentioned.
+  if (notYet) {
+    return (
+      <div style={{ maxWidth: 620, margin: '0 auto' }}>
+        <Card>
+          <EmptyState
+            icon={<Wallet size={34} />}
+            title="Video credit comes a little later"
+            body="Once your first video is under way we'll open this up — you can buy production time in a block at a discount and spend it on everything after that. It works best when there's a style to repeat, so the first one comes first."
+            action={
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                <a className="btn" href="#/brief">Start a brief</a>
+                <a className="btn-ghost" href="#/course">Watch the crash course</a>
+              </div>
+            }
+          />
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>

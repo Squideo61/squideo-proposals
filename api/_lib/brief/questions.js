@@ -249,17 +249,39 @@ export const SCREENS = [
         why: "If a date is tied to something real we'll plan back from it. If it's a guess, we'll tell you honestly what's comfortable.",
       },
       {
+        // Asked BEFORE budget, because it changes what the budget answer means:
+        // "£5-10k" for one video and "£5-10k for the first of six" are entirely
+        // different projects. It's also the question that decides whether this
+        // is a one-off or the start of a programme — the thing that makes
+        // buying production time in bulk sensible later.
+        //
+        // Deliberately framed as a CREATIVE question, with no mention of credit
+        // or price. It genuinely changes how you build the first video (shared
+        // assets, a reusable style), and the commercial signal is a free side
+        // effect. Naming a rate here would reintroduce exactly the anchoring
+        // the note at the top of this file exists to prevent.
+        key: 'volume', type: 'chips',
+        label: 'Is this a one-off, or the first of a few?',
+        options: [
+          { value: 'one', label: 'Just this one' },
+          { value: 'few', label: 'Two or three over the next year' },
+          { value: 'programme', label: 'A steady stream — several a quarter' },
+          { value: 'unsure', label: 'Not sure yet' },
+        ],
+        why: "If there's more coming we'll build this one so the rest are faster and cheaper to make — same style, same assets, no starting from scratch every time. It changes how we'd approach the first one, so it's worth saying now.",
+      },
+      {
         key: 'budget', type: 'chips',
         label: 'Roughly what budget are you working to?',
         options: [
-          { value: 'under-2k', label: 'Under £2,000' },
-          { value: '2-5k', label: '£2,000 – £5,000' },
-          { value: '5-10k', label: '£5,000 – £10,000' },
-          { value: '10-20k', label: '£10,000 – £20,000' },
-          { value: '20k-plus', label: '£20,000+' },
+          { value: 'under-2k', label: 'Under £2,000 ex VAT' },
+          { value: '2-5k', label: '£2,000 – £5,000 ex VAT' },
+          { value: '5-10k', label: '£5,000 – £10,000 ex VAT' },
+          { value: '10-20k', label: '£10,000 – £20,000 ex VAT' },
+          { value: '20k-plus', label: '£20,000+ ex VAT' },
           { value: 'unsure', label: 'No idea — tell us what it costs' },
         ],
-        why: "A band, not a number. It tells us what's realistic to propose so we don't waste your time designing something you were never going to buy.",
+        why: "A band, not a number. It tells us what's realistic to propose so we don't waste your time designing something you were never going to buy. If you said more are coming above, answer for this first one.",
       },
       {
         key: 'approvers', type: 'textarea', rows: 3,
@@ -334,6 +356,20 @@ const labelFor = (q, value) => {
   }
   return value;
 };
+
+// The human label for one answer, for anywhere OUTSIDE the rendered brief that
+// needs to show a chip answer to a person.
+//
+// This exists because storing the raw slug bites twice: the CRM shows a budget
+// of "5-10k", and parseBudgetLower() (api/_lib/quoteRequestActions.js) scrapes
+// numbers out of it and takes the minimum — turning "5-10k" into a £5 deal.
+// The label parses to the correct lower bound of every band.
+export function answerLabel(key, answers = {}) {
+  const q = ALL_QUESTIONS.find((x) => x.key === key);
+  const v = answers?.[key];
+  if (!q || isEmpty(v)) return null;
+  return labelFor(q, v);
+}
 
 // Suggest a length from where they said it will be seen. Shortest wins: a video
 // that has to work as an ad can't be the two-minute cut.

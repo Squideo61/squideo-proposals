@@ -259,7 +259,7 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onS
           )}
           {request.useCredit && (
             <span style={{ background: '#16A34A22', color: '#15803D', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-              Uses credit
+              Has credit
             </span>
           )}
           {isQualified && (
@@ -349,9 +349,13 @@ function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClo
               Portal{request.portalDiscount ? ' · 10% discount' : ''}
             </span>
           )}
+          {/* Set two ways: the "New video" form has a tick box, and a submitted
+              brief sets it automatically when the company already holds a
+              balance. Either way the action is the same, so the copy says what
+              is true of both rather than claiming they asked. */}
           {request.useCredit && (
-            <span title="This client asked to spend their video credit — check their balance on the company page and draw it down when you build it." style={{ background: '#16A34A22', color: '#15803D', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-              Wants to use credit
+            <span title="This client has video credit — check the balance on the company page and draw it down when you build it." style={{ background: '#16A34A22', color: '#15803D', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              Has credit
             </span>
           )}
         </h2>

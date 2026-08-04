@@ -116,7 +116,7 @@ import { createCourseSignup, SignupError } from './_lib/course/signup.js';
 import { applyTag } from './_lib/crm/tags.js';
 import { scheduleCourseEmails, cancelCourseEmails } from './_lib/course/emails.js';
 import { ensureClientBriefs } from './_lib/brief/db.js';
-import { missingRequired, renderBriefText, briefProgress } from './_lib/brief/questions.js';
+import { missingRequired, renderBriefText, briefProgress, answerLabel } from './_lib/brief/questions.js';
 import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from './_lib/portal/drive.js';
 import {
   serialisePortalDeal,
@@ -158,6 +158,18 @@ const PV_QUERY_ACTIONS = new Set([
 // proper CRM path for each, and doing it "as them" would misattribute it.
 const MANAGE_BLOCKED = new Set([
   'me', 'extras-accept', 'video-credit-checkout', 'video-credit-invoice',
+]);
+
+// ═══ THE RATE CARD IS FOR CLIENTS, NOT PROSPECTS ═════════════════════════════
+// Video credit is the rung AFTER a first project: you buy production time in
+// bulk once a style exists to repeat. Showing £/min to a crash-course signup
+// we've never scoped anything for anchors every quote we send them afterwards
+// — they'll read a bespoke price as a mark-up on a number they already know.
+//
+// Enforced HERE and not only in the nav, because hiding a menu item is not
+// access control: all three routes are reachable by URL with a valid session.
+const CLIENT_ONLY = new Set([
+  'video-credit', 'video-credit-checkout', 'video-credit-invoice',
 ]);
 
 const UPLOAD_EXTENSIONS = new Set([
@@ -500,6 +512,18 @@ export default async function handler(req, res) {
       }
       if (MANAGE_BLOCKED.has(action)) {
         return res.status(403).json({ error: 'That one stays with the client — payments, extras and their own account settings can’t be actioned from manage mode. Use the CRM instead.' });
+      }
+    }
+
+    // Rate-card routes are refused for a prospect org, whatever the method.
+    // Resolved from the SESSION's own company list, never from the query
+    // string — a prospect who guesses a client's companyId is already blocked
+    // by resolveCompanyId, and this check must not be the weaker of the two.
+    if (CLIENT_ONLY.has(action)) {
+      const cid = req.query.companyId ? String(req.query.companyId) : user.companyIds[0];
+      const co = user.companies.find((c) => c.id === cid);
+      if (co?.prospect) {
+        return res.status(403).json({ error: 'Video credit is available once your first project is under way.' });
       }
     }
 
@@ -1227,11 +1251,23 @@ async function overviewRoute(req, res, user) {
      LIMIT 1
   `.catch(() => []);
 
+  // Credit is the rung AFTER a first project, so the dashboard only offers it
+  // to a client who has one and hasn't already bought any. Prospects never see
+  // it — they don't reach this branch, because their nav has no credit item and
+  // CLIENT_ONLY refuses the routes.
+  const activeCo = user.companies.find((c) => c.id === companyId) || null;
+  let suggestCredit = false;
+  if (!activeCo?.prospect && projects.length > 0) {
+    const bal = await companyCreditBalance(activeCo || { id: companyId }).catch(() => null);
+    suggestCredit = (bal?.issued || 0) === 0;
+  }
+
   return res.status(200).json({
     company: user.companies.find((c) => c.id === companyId) || { id: companyId },
     companies: user.companies,
     projects,
     actionNeeded,
+    suggestCredit,
     brandFileCount: brandCount?.n || 0,
     briefDraft: draft ? {
       id: draft.id,
@@ -2490,6 +2526,7 @@ async function requestVideoRoute(req, res, user) {
 async function createPortalQuoteRequest({
   user, companyId, projectDetails, timeline = null, budget = null,
   useCredit = false, sourceUrl = null, files = [], briefId = null,
+  volume = null,
 }) {
   const company = user.companies.find((c) => c.id === companyId) || null;
   const id = crypto.randomUUID();
@@ -2569,7 +2606,20 @@ async function createPortalQuoteRequest({
     ? (leadMagnet ? 'completed brief (crash course)' : 'completed video brief')
     : (leadMagnet ? 'crash-course lead'
                   : (discount ? 'portal quote request (10% discount)' : 'portal quote request'));
-  const subject = `New ${leadLabel} from ${qr.name}${qr.company ? ` — ${qr.company}` : ''}${useCredit ? ' · wants to use video credit' : ''}`;
+
+  // Volume is the signal that decides whether this is one project or the start
+  // of a programme — i.e. whether to propose production credit alongside the
+  // first quote. It belongs in the subject line because it changes what gets
+  // proposed, not just how it's followed up.
+  const VOLUME_NOTE = {
+    few: 'wants 2-3 videos',
+    programme: 'wants several a quarter',
+  };
+  const volumeNote = VOLUME_NOTE[volume] || null;
+
+  const subject = `New ${leadLabel} from ${qr.name}${qr.company ? ` — ${qr.company}` : ''}`
+    + (volumeNote ? ` · ${volumeNote}` : '')
+    + (useCredit ? ' · has credit to draw down' : '');
   const subscribed = await resolveRecipients('quote_request.new', {});
   await Promise.allSettled(subscribed.map(async (to) => {
     const role = await getRoleForUser(to);
@@ -2592,10 +2642,10 @@ async function createPortalQuoteRequest({
       subject,
       inApp: {
         title: subject,
-        body: [qr.company, qr.budget, qr.timeline,
+        body: [qr.company, qr.budget, qr.timeline, volumeNote,
                briefId ? 'Full brief' : null,
                leadMagnet ? 'Crash course' : (discount ? 'Portal · 10% discount' : 'Portal'),
-               useCredit ? 'wants to use video credit' : null].filter(Boolean).join(' · '),
+               useCredit ? 'has credit to draw down' : null].filter(Boolean).join(' · '),
         link: '#/quote-requests',
       },
     });
@@ -2722,10 +2772,25 @@ async function briefRoute(req, res, user) {
     // Rendered from the STORED answers, never from the request body — what the
     // team reads is always what the client actually filled in.
     const projectDetails = renderBriefText(answers);
+
+    // A client with a balance shouldn't have to TELL us they have one. The
+    // "New video" form asks with a tick box because it's a shorter surface;
+    // here we just look.
+    // Pass the whole company: the ledger is matched by id where possible but
+    // falls back to a normalised NAME match, so dropping the name silently
+    // misses balances on companies linked that way.
+    const creditCo = user.companies.find((c) => c.id === companyId) || { id: companyId };
+    const bal = await companyCreditBalance(creditCo).catch(() => null);
+    const hasCredit = (bal?.remaining || 0) > 0;
+
     const quoteRequestId = await createPortalQuoteRequest({
       user, companyId, projectDetails,
       timeline: answers.deadline || null,
-      budget: answers.budget || null,
+      // The LABEL, not the slug. `parseBudgetLower` in quoteRequestActions.js
+      // scrapes numbers and takes the minimum, so '5-10k' became a £5 deal.
+      budget: answerLabel('budget', answers),
+      volume: answers.volume || null,
+      useCredit: hasCredit,
       sourceUrl: `${PORTAL_URL}#/brief`,
       briefId: row.id,
     });

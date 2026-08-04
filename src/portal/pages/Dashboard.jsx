@@ -7,7 +7,7 @@ import { portalApi } from '../api.js';
 import {
   Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, SectionHeading, ProjectTasks,
 } from '../components.jsx';
-import { Film, FolderOpen, Sparkles, Handshake, ChevronRight, Video, FileText } from 'lucide-react';
+import { Film, FolderOpen, Sparkles, Handshake, ChevronRight, Video, FileText, Wallet } from 'lucide-react';
 
 const PARTNER_URL = 'https://squideo.com/partner-programme';
 
@@ -227,6 +227,29 @@ export default function Dashboard() {
           is reminded about is a draft nobody completes, and a half-finished
           brief is already a warmer lead than a form that was never opened. */}
       {overview?.briefDraft && <BriefDraftCard draft={overview.briefDraft} />}
+
+      {/* Credit, offered at the moment it starts making sense: they have a
+          project, so a style exists to repeat, and they haven't bought any yet.
+          Deliberately quiet and carries no number — the rate lives one click
+          away on a page they can now reach. */}
+      {overview?.suggestCredit && (
+        <div style={{
+          background: '#fff', border: `1px solid ${BRAND.border}`, borderRadius: 12,
+          padding: '14px 18px', display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap',
+        }}>
+          <Wallet size={20} style={{ color: BRAND.blue, flexShrink: 0 }} />
+          <div style={{ flex: '1 1 260px', minWidth: 0, fontSize: 13.5, lineHeight: 1.55, color: BRAND.ink }}>
+            <strong>Planning more like this?</strong>{' '}
+            <span style={{ color: BRAND.muted }}>
+              Now we've got your style, buying production time as a block works out cheaper
+              than quoting each one separately.
+            </span>
+          </div>
+          <a className="btn-ghost" href="#/video-credit" style={{ textDecoration: 'none', whiteSpace: 'nowrap' }}>
+            See how it works
+          </a>
+        </div>
+      )}
 
       <section>
         <SectionHeading>Your projects</SectionHeading>

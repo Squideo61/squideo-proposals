@@ -81,6 +81,19 @@ const NAV = [
   { view: 'settings', label: 'Settings', hash: '#/settings', Icon: SettingsIcon },
 ];
 
+// One filter, used by both the rail and the phone tab bar, so a section can't
+// end up hidden in one and visible in the other.
+//
+// `video-credit` is the rate card, and it belongs to clients: credit is the rung
+// AFTER a first project, when a style exists to repeat. A crash-course signup
+// has a `prospect` org and shouldn't be shown £/min before we've scoped
+// anything — that number would anchor every quote they get afterwards. The
+// real enforcement is CLIENT_ONLY in api/portal.js; this is the door.
+function visibleNav(company) {
+  const prospect = company?.prospect === true;
+  return NAV.filter((n) => !(prospect && n.view === 'video-credit'));
+}
+
 // Header actions. The primary is the blue call-to-action; secondaries are
 // outlined so they read as buttons against the navy chrome without competing.
 const HEADER_BTN = {
@@ -153,9 +166,14 @@ function Header() {
             <a href="#/team" style={HEADER_BTN.secondary}>
               <UserPlus size={15} /> Invite team
             </a>
-            <a href="#/video-credit" style={HEADER_BTN.secondary}>
-              <Wallet size={15} /> Order credit
-            </a>
+            {/* Prospects don't see the rate card — see CLIENT_ONLY in
+                api/portal.js for why, and for the check that actually enforces
+                it. This just keeps the door out of sight. */}
+            {!activeCompany?.prospect && (
+              <a href="#/video-credit" style={HEADER_BTN.secondary}>
+                <Wallet size={15} /> Order credit
+              </a>
+            )}
             <a href="#/request" style={HEADER_BTN.primary}>
               <PlusCircle size={15} /> New video
             </a>
@@ -188,14 +206,14 @@ function Header() {
 //
 // Phones keep the bottom tab bar; a rail at that width would eat a third of
 // the screen.
-function SideNav({ view }) {
+function SideNav({ view, company }) {
   return (
     <nav style={{
       width: SIDEBAR_W, flexShrink: 0, alignSelf: 'flex-start',
       position: 'sticky', top: 18, padding: '4px 0',
       display: 'flex', flexDirection: 'column', gap: 2,
     }}>
-      {NAV.filter((n) => n.view !== 'request').map(({ view: v, label, hash, Icon }) => {
+      {visibleNav(company).filter((n) => n.view !== 'request').map(({ view: v, label, hash, Icon }) => {
         const active = view === v || (v === 'home' && view === 'project');
         return (
           <a
@@ -221,7 +239,7 @@ function SideNav({ view }) {
   );
 }
 
-function MobileTabBar({ view }) {
+function MobileTabBar({ view, company }) {
   return (
     <nav style={{
       position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 40,
@@ -229,7 +247,7 @@ function MobileTabBar({ view }) {
       display: 'flex', justifyContent: 'space-around',
       paddingBottom: 'env(safe-area-inset-bottom)',
     }}>
-      {NAV.filter((n) => n.mobile !== false).map(({ view: v, label, shortLabel, hash, Icon, highlight }) => {
+      {visibleNav(company).filter((n) => n.mobile !== false).map(({ view: v, label, shortLabel, hash, Icon, highlight }) => {
         const active = view === v || (v === 'home' && view === 'project');
         return (
           <a key={v} href={hash} style={{
@@ -247,9 +265,10 @@ function MobileTabBar({ view }) {
 }
 
 function AuthedApp() {
-  const { toast, companyId, preview } = usePortal();
+  const { toast, companyId, preview, user } = usePortal();
   const isMobile = useIsMobile();
   const [route, setRoute] = useState(parseHash);
+  const activeCompany = (user?.companies || []).find((c) => c.id === companyId) || null;
 
   useEffect(() => {
     const onHash = () => { setRoute(parseHash()); window.scrollTo(0, 0); };
@@ -320,7 +339,7 @@ function AuthedApp() {
           padding: isMobile ? '18px 16px 90px' : '22px 24px 60px',
           boxSizing: 'border-box', alignItems: 'flex-start',
         }}>
-          {!isMobile && <SideNav view={route.view} />}
+          {!isMobile && <SideNav view={route.view} company={activeCompany} />}
           {/* minWidth:0 matters — without it a wide table or a long unbroken
               string inside the page pushes the whole flex row wider than the
               shell and the rail slides off to the left. */}
@@ -329,7 +348,7 @@ function AuthedApp() {
           </main>
         </div>
       )}
-      {isMobile && <MobileTabBar view={route.view} />}
+      {isMobile && <MobileTabBar view={route.view} company={activeCompany} />}
       {toast && <Toast msg={toast} />}
     </div>
   );
