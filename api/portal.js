@@ -102,6 +102,7 @@ import {
   sectionName,
 } from './_lib/voiceover.js';
 import { ensureIntroCallTables } from './_lib/crm/introCallSlots.js';
+import { ensureLeadAttribution } from './_lib/leadAttribution.js';
 import { bookSlot, computeBookingSlots } from './_lib/introCallBooking.js';
 import {
   companyHasLogo, portalLogoPath, emailLogoUrl, decodeLogo, ensureCompanyLogoColumns,
@@ -2597,16 +2598,56 @@ async function createPortalQuoteRequest({
     country_code: null,
     country_name: null,
   };
+  // Attribution follows the PERSON, not the form.
+  //
+  // Someone who clicked an ad, took the crash course and came back a fortnight
+  // later to ask for a quote is still that ad's conversion — but the portal is
+  // on app.squideo.com and the ad landed them on squideo.com, so nothing in the
+  // browser (cookie, localStorage, referrer) survives the hop. track.js can't
+  // help here.
+  //
+  // What does survive is the signup: /course captured the gclid and campaign at
+  // the time, and this request already knows which signup it belongs to. Copy
+  // it forward, or Marketing counts a PPC-sourced lead as direct and the
+  // campaign that actually paid for it looks worthless.
+  //
+  // Only from the course signup — deliberately. Falling back to "whatever
+  // campaign this email ever touched" would credit a two-year-old ad for a
+  // long-standing client's routine reorder.
+  const [attr] = courseSignupId
+    ? await sql`
+        SELECT attr_channel, attr_source, attr_medium, attr_campaign, attr_term, attr_content,
+               attr_gclid, attr_gbraid, attr_wbraid, attr_fbclid, attr_msclkid,
+               attr_campaign_id, attr_adgroup_id, attr_keyword, attr_matchtype,
+               attr_network, attr_device, attr_landing_url, attr_referrer, attr_first_seen_at
+          FROM course_signups WHERE id = ${courseSignupId}
+      `.catch(() => [])
+    : [];
+  const a = attr || {};
+
+  await ensureLeadAttribution();
   await sql`
     INSERT INTO quote_requests (
       id, name, email, phone, company, project_details, timeline, budget,
       opt_in, source_url, created_at, source, portal_user_id, portal_discount, company_id, use_credit,
-      lead_magnet, course_signup_id
+      lead_magnet, course_signup_id,
+      attr_channel, attr_source, attr_medium, attr_campaign, attr_term, attr_content,
+      attr_gclid, attr_gbraid, attr_wbraid, attr_fbclid, attr_msclkid,
+      attr_campaign_id, attr_adgroup_id, attr_keyword, attr_matchtype,
+      attr_network, attr_device, attr_landing_url, attr_referrer, attr_first_seen_at
     ) VALUES (
       ${qr.id}, ${qr.name}, ${qr.email}, ${qr.phone}, ${qr.company},
       ${qr.project_details}, ${qr.timeline}, ${qr.budget}, ${qr.opt_in},
       ${qr.source_url}, ${qr.created_at}, 'portal', ${user.puid}, ${discount}, ${companyId}, ${useCredit},
-      ${leadMagnet}, ${courseSignupId}
+      ${leadMagnet}, ${courseSignupId},
+      ${a.attr_channel ?? null}, ${a.attr_source ?? null}, ${a.attr_medium ?? null},
+      ${a.attr_campaign ?? null}, ${a.attr_term ?? null}, ${a.attr_content ?? null},
+      ${a.attr_gclid ?? null}, ${a.attr_gbraid ?? null}, ${a.attr_wbraid ?? null},
+      ${a.attr_fbclid ?? null}, ${a.attr_msclkid ?? null},
+      ${a.attr_campaign_id ?? null}, ${a.attr_adgroup_id ?? null},
+      ${a.attr_keyword ?? null}, ${a.attr_matchtype ?? null},
+      ${a.attr_network ?? null}, ${a.attr_device ?? null},
+      ${a.attr_landing_url ?? null}, ${a.attr_referrer ?? null}, ${a.attr_first_seen_at ?? null}
     )
   `;
 
