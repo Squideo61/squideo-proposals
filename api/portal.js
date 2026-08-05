@@ -28,8 +28,9 @@
 //   team-contact    — search the CRM contact book / attach someone to this
 //                     organisation (manage mode only)
 //   partner         — Partner Programme page data + call availability
-//   partner-book    — book the Partner Programme call (this is what alerts
-//                     the team; reading the page does not)
+//   partner-enquire — Partner Programme enquiry: how much video a month, and
+//                     a date that suits. This is what alerts the team;
+//                     reading the page does not.
 
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
@@ -570,7 +571,7 @@ export default async function handler(req, res) {
       case 'team-contact': return teamContactRoute(req, res, user);
       case 'team-revoke-invite': return teamRevokeInviteRoute(req, res, user);
       case 'partner': return partnerRoute(req, res, user);
-      case 'partner-book': return partnerBookRoute(req, res, user);
+      case 'partner-enquire': return partnerEnquireRoute(req, res, user);
       default: return res.status(404).json({ error: 'Not found' });
     }
   } catch (err) {
@@ -3217,131 +3218,155 @@ async function teamRevokeInviteRoute(req, res, user) {
 }
 
 // ═════════════════════════ partner programme ═════════════════════════
-// The Partner Programme, explained inside the portal and ending in a booked
-// call rather than a trip to squideo.com.
+// The Partner Programme, explained inside the portal and ending in an enquiry
+// rather than a trip to squideo.com.
 //
-// There is deliberately no notification for reading the page. The old flow
-// pinged the team the moment anyone clicked the dashboard card, so "interest"
-// meant "someone was curious enough to click once" — which is not a lead, and
-// after a few of those the alert stops being read at all. The team hears about
-// it when a call is actually in the calendar.
+// This deliberately does NOT book a real calendar slot the way the kick-off
+// call does. That machinery is right there — the project is sold, the producer
+// is known, and their diary is the constraint — but wrong here. It needs a host
+// with a connected Google Calendar and free time in the next fortnight, and
+// when either is missing the client is told "there's nothing open": a dead end
+// at the exact moment they were ready to talk. Two questions and a date they
+// choose can never be empty, and a human confirms it.
+//
+// There is no notification for reading the page. The old dashboard card pinged
+// the team the moment anyone clicked it, so "interest" meant "curious enough to
+// click once" — not a lead, and after a few of those the alert stops being read.
 //
 // No price on the page either, for the same reason the brief builder has none:
 // the programme is scoped on the call, and a rate seen beforehand becomes the
 // anchor every later conversation argues against.
 
-// Who hosts the call. Their own account manager if they have one — the person
-// they already deal with — otherwise whoever handles new enquiries.
-//
-// One host, not the whole team: the slot engine requires EVERY attendee to be
-// free, so adding people to be safe empties the calendar instead.
-async function partnerCallHost(companyId) {
-  const [owner] = await sql`
-    SELECT owner_email FROM deals
-     WHERE company_id = ${companyId} AND owner_email IS NOT NULL
-     ORDER BY updated_at DESC NULLS LAST, created_at DESC
-     LIMIT 1
-  `.catch(() => []);
-  if (owner?.owner_email) return String(owner.owner_email).toLowerCase();
-  const fallback = await resolveRecipients('quote_request.new', {}).catch(() => []);
-  return fallback.length ? String(fallback[0]).toLowerCase() : null;
-}
+// What they can ask for. Text, not a number, because "not sure yet" is a real
+// and common answer and forcing a figure would either lose it or invent one.
+const PARTNER_MINUTES = new Set(['1-2', '3-4', '5-9', '10+', 'unsure']);
+const PARTNER_TIMES = new Set(['morning', 'afternoon', 'either']);
 
-// GET partner — any call already booked, plus live availability.
+const MINUTES_LABEL = {
+  '1-2': '1–2 minutes a month',
+  '3-4': '3–4 minutes a month',
+  '5-9': '5–9 minutes a month',
+  '10+': '10+ minutes a month',
+  unsure: 'Not sure yet',
+};
+
+// GET partner — the video, plus any enquiry already in with us.
 async function partnerRoute(req, res, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const companyId = resolveCompanyId(req, res, user);
   if (!companyId) return;
-  await ensureIntroCallTables();
+  await ensurePortalTables();
 
-  const [[booking], [cfg]] = await Promise.all([
+  const [[enquiry], [cfg]] = await Promise.all([
     sql`
-      SELECT starts_at, ends_at, meet_url FROM intro_call_bookings
-       WHERE client_key = ${'company:' + companyId} AND kind = 'partner' AND status = 'confirmed'
-       ORDER BY starts_at DESC LIMIT 1
+      SELECT id, minutes_per_month, preferred_date, preferred_time, created_at
+        FROM partner_enquiries
+       WHERE company_id = ${companyId} AND handled_at IS NULL
+       ORDER BY created_at DESC LIMIT 1
     `.catch(() => []),
     sql`SELECT partner_video FROM settings WHERE id = 1`.catch(() => []),
   ]);
+
   // Set in Admin → Crash course. Null until then, and the page simply omits the
   // player rather than showing a broken frame.
   const video = cfg?.partner_video?.url
     ? { url: cfg.partner_video.url, title: cfg.partner_video.title || null }
     : null;
 
-  // Already booked? Don't spend a round-trip on Google's free/busy — the page
-  // shows the confirmation, not the picker.
-  if (booking) {
-    return res.status(200).json({
-      video,
-      booking: { startsAt: booking.starts_at, endsAt: booking.ends_at, meetUrl: booking.meet_url },
-      ready: true, slots: [], timezone: 'Europe/London', durationMinutes: 30,
-    });
-  }
-
-  const host = await partnerCallHost(companyId);
-  const { rules, result } = await computeBookingSlots({ hostEmails: host ? [host] : [] });
   return res.status(200).json({
     video,
-    booking: null,
-    durationMinutes: rules.durationMinutes,
-    timezone: rules.timezone,
-    ready: result.blocked.length === 0,
-    slots: result.slots,
+    enquiry: enquiry ? {
+      minutesPerMonth: enquiry.minutes_per_month || null,
+      minutesLabel: MINUTES_LABEL[enquiry.minutes_per_month] || null,
+      preferredDate: enquiry.preferred_date || null,
+      preferredTime: enquiry.preferred_time || null,
+      createdAt: enquiry.created_at,
+    } : null,
   });
 }
 
-// POST partner-book { startsAt, timezone }
-async function partnerBookRoute(req, res, user) {
+// POST partner-enquire { minutesPerMonth, preferredDate, preferredTime, note }
+async function partnerEnquireRoute(req, res, user) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const body = await readJsonBody(req);
   const companyId = resolveCompanyId(req, res, user);
   if (!companyId) return;
-  await ensureIntroCallTables();
+  await ensurePortalTables();
   const company = user.companies.find((c) => c.id === companyId) || null;
-  const clientKey = 'company:' + companyId;
 
-  const [existing] = await sql`
-    SELECT id FROM intro_call_bookings
-     WHERE client_key = ${clientKey} AND kind = 'partner' AND status = 'confirmed' LIMIT 1
+  const minutes = PARTNER_MINUTES.has(String(body.minutesPerMonth)) ? String(body.minutesPerMonth) : null;
+  if (!minutes) return res.status(400).json({ error: 'Tell us roughly how much video you need each month.' });
+
+  // A date only, no time — the client picks the day, we confirm the hour. Must
+  // be today or later: a request for last Tuesday is a typo, not a preference.
+  const rawDate = trimOrNull(body.preferredDate);
+  let preferredDate = null;
+  if (rawDate) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) return res.status(400).json({ error: 'That date didn\'t look right — pick one from the calendar.' });
+    const today = new Date().toISOString().slice(0, 10);
+    if (rawDate < today) return res.status(400).json({ error: 'Pick a date from today onwards.' });
+    preferredDate = rawDate;
+  }
+  const preferredTime = PARTNER_TIMES.has(String(body.preferredTime)) ? String(body.preferredTime) : 'either';
+  const note = trimOrNull(body.note)?.slice(0, 2000) || null;
+
+  // One open enquiry per organisation. A second submission updates the first
+  // rather than stacking duplicates in front of whoever picks these up.
+  const [open] = await sql`
+    SELECT id FROM partner_enquiries
+     WHERE company_id = ${companyId} AND handled_at IS NULL
+     ORDER BY created_at DESC LIMIT 1
   `.catch(() => []);
-  if (existing) return res.status(409).json({ error: 'Your Partner Programme call is already booked.' });
 
-  const host = await partnerCallHost(companyId);
-  if (!host) return res.status(503).json({ error: 'Booking is temporarily unavailable — drop us a line and we\'ll sort a time.' });
-
-  const out = await bookSlot({
-    clientKey,
-    hostEmails: [host],
-    projectName: company?.name ? `${company.name} — Partner Programme` : 'Partner Programme',
-    name: user.name || user.email,
-    email: user.email,
-    company: company?.name || '',
-    startISO: body.startsAt,
-    timezone: trimOrNull(body.timezone),
-    kind: 'partner',
-  });
-  if (!out.ok) {
-    const payload = { error: out.error };
-    if (out.slots) payload.slots = out.slots;
-    return res.status(out.status).json(payload);
+  if (open) {
+    await sql`
+      UPDATE partner_enquiries
+         SET minutes_per_month = ${minutes}, preferred_date = ${preferredDate},
+             preferred_time = ${preferredTime}, note = ${note},
+             portal_user_id = ${user.puid || null}, created_at = NOW()
+       WHERE id = ${open.id}`;
+  } else {
+    await sql`
+      INSERT INTO partner_enquiries
+        (id, company_id, portal_user_id, minutes_per_month, preferred_date, preferred_time, note)
+      VALUES (${makeId('pen')}, ${companyId}, ${user.puid || null}, ${minutes},
+              ${preferredDate}, ${preferredTime}, ${note})`;
   }
 
-  // NOW the team hears about it — a time in the calendar, not a click.
+  // NOW the team hears about it — a real ask with a size and a date on it.
+  const when = preferredDate
+    ? `${preferredDate}${preferredTime !== 'either' ? ` (${preferredTime})` : ''}`
+    : 'no date given';
   try {
     await ensurePortalNotificationDefaults();
     await sendNotification('portal.partner_interest', {
-      subject: `🤝 Partner Programme call booked — ${company?.name || user.email}`,
-      text: `${user.name || user.email} (${company?.name || 'client portal'}) booked a Partner Programme call from the client portal.\n\n${new Date(out.start).toUTCString()}\n${out.meetUrl || ''}`,
+      subject: `🤝 Partner Programme enquiry — ${company?.name || user.email}`,
+      text: [
+        `${user.name || user.email} (${company?.name || 'client portal'}) asked about the Partner Programme.`,
+        '',
+        `Volume: ${MINUTES_LABEL[minutes]}`,
+        `Preferred call: ${when}`,
+        note ? `\nThey added:\n${note}` : '',
+      ].join('\n'),
       inApp: {
-        title: 'Partner Programme call booked',
-        body: `${user.name || user.email} · ${company?.name || ''}`,
+        title: 'Partner Programme enquiry',
+        body: `${company?.name || user.email} · ${MINUTES_LABEL[minutes]} · ${when}`,
         link: `#/company/${companyId}`,
       },
     });
   } catch (err) {
-    // The call is in the diary either way — never fail the booking over an alert.
-    console.warn('[portal] partner booking notify failed', err.message);
+    // The enquiry is saved either way — never fail it over an alert.
+    console.warn('[portal] partner enquiry notify failed', err.message);
   }
 
-  return res.status(200).json({ ok: true, booking: { startsAt: out.start, endsAt: out.end, meetUrl: out.meetUrl } });
+  return res.status(200).json({
+    ok: true,
+    enquiry: {
+      minutesPerMonth: minutes,
+      minutesLabel: MINUTES_LABEL[minutes],
+      preferredDate,
+      preferredTime,
+      createdAt: new Date().toISOString(),
+    },
+  });
 }

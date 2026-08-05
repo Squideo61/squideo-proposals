@@ -9,20 +9,48 @@
 // how often, what shape — and a number seen beforehand becomes the anchor every
 // later conversation has to argue against. Same reason the brief builder asks
 // for a budget band instead of publishing a rate.
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
-import { Card, EmptyState, SectionHeading } from '../components.jsx';
+import { Card, EmptyState } from '../components.jsx';
 import {
-  CalendarClock, Check, Clock, Video, PiggyBank, PlayCircle, Shuffle, Zap, TrendingDown, Handshake,
+  CalendarClock, Check, PiggyBank, PlayCircle, Shuffle, Zap, TrendingDown, Handshake,
 } from 'lucide-react';
 
-const browserTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'Europe/London'; } };
+// Sizing, in the language of the offer: 1 credit = 60 seconds, so "minutes a
+// month" and "credits a month" are the same question. "Not sure yet" is a real
+// answer — forcing a figure would either lose the enquiry or invent a number
+// the client doesn't stand behind. Kept in step with PARTNER_MINUTES in
+// api/portal.js, which is the authority.
+const MINUTES_OPTIONS = [
+  { value: '1-2', label: '1–2 minutes' },
+  { value: '3-4', label: '3–4 minutes' },
+  { value: '5-9', label: '5–9 minutes' },
+  { value: '10+', label: '10+ minutes' },
+  { value: 'unsure', label: 'Not sure yet' },
+];
 
-function fmt(dateISO, tz, opts) {
-  try { return new Date(dateISO).toLocaleString('en-GB', { timeZone: tz, ...opts }); }
-  catch { return new Date(dateISO).toLocaleString('en-GB', opts); }
+const TIME_OPTIONS = [
+  { value: 'morning', label: 'Morning' },
+  { value: 'afternoon', label: 'Afternoon' },
+  { value: 'either', label: 'Either' },
+];
+
+// Local date, not UTC — toISOString() would roll the min back a day for anyone
+// west of Greenwich and forward for anyone east of it after their evening.
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function longDate(value) {
+  // A plain YYYY-MM-DD parsed as UTC midnight, then read back in UTC, so the
+  // day the client picked is the day the page shows them.
+  const s = String(value).slice(0, 10);
+  const d = new Date(s + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return s;
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
 }
 
 // Vimeo / YouTube / Loom go in an iframe; a file we host plays natively.
@@ -96,16 +124,6 @@ function VideoBlock({ video }) {
   );
 }
 
-function groupByDay(slots, tz) {
-  const groups = [];
-  const index = {};
-  for (const s of slots) {
-    const dayKey = fmt(s.start, tz, { weekday: 'long', day: 'numeric', month: 'long' });
-    if (index[dayKey] === undefined) { index[dayKey] = groups.length; groups.push({ day: dayKey, slots: [] }); }
-    groups[index[dayKey]].slots.push(s);
-  }
-  return groups;
-}
 
 // The four pillars from the public page, in the second person — they're already
 // a client, so "your team" and "your content", not "organisations that…".
@@ -137,7 +155,11 @@ export default function Partner() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [picking, setPicking] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [minutes, setMinutes] = useState(null);
+  const [date, setDate] = useState('');
+  const [timeOfDay, setTimeOfDay] = useState('either');
+  const [note, setNote] = useState('');
 
   const load = async () => {
     try { setData(await portalApi.get('partner')); }
@@ -145,21 +167,32 @@ export default function Partner() {
   };
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const tz = data?.timezone || 'Europe/London';
-  const days = useMemo(() => groupByDay(data?.slots || [], tz), [data, tz]);
-
-  const bookAt = async (startsAt) => {
+  const submit = async () => {
+    if (!minutes) { showToast('Pick roughly how much video you need each month.'); return; }
     setBusy(true);
     try {
-      const res = await portalApi.post('partner-book', { startsAt, timezone: browserTz() });
-      setData((d) => ({ ...d, booking: res.booking }));
-      showToast('Your Partner Programme call is booked 🎉');
+      const res = await portalApi.post('partner-enquire', {
+        minutesPerMonth: minutes, preferredDate: date || null, preferredTime: timeOfDay, note: note.trim() || null,
+      });
+      setData((d) => ({ ...d, enquiry: res.enquiry }));
+      setEditing(false);
+      showToast('Thanks — we\'ll be in touch to confirm 🎉');
     } catch (err) {
       showToast(err.message);
-      if (err.status === 409) load(); // slot gone — refresh availability
     } finally {
       setBusy(false);
     }
+  };
+
+  // Editing an existing enquiry starts from what they told us, not from blank.
+  const startEditing = () => {
+    const e = data?.enquiry;
+    if (e) {
+      setMinutes(e.minutesPerMonth || null);
+      setDate(e.preferredDate ? String(e.preferredDate).slice(0, 10) : '');
+      setTimeOfDay(e.preferredTime || 'either');
+    }
+    setEditing(true);
   };
 
   if (error) {
@@ -222,81 +255,130 @@ export default function Partner() {
         </p>
       </Card>
 
-      {/* ── Book the call ── */}
-      {data.booking ? (
+      {/* ── Tell us what you need ──
+          Two questions and a date, not a calendar. See the route comment in
+          api/portal.js for why this doesn't book a real slot. */}
+      {data.enquiry && !editing ? (
         <Card>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
             <div style={{ width: 40, height: 40, borderRadius: 10, background: '#DCFCE7', color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               <Check size={20} />
             </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 15.5, fontWeight: 800, color: BRAND.ink, marginBottom: 4 }}>Your call is booked</div>
-              <div style={{ fontSize: 13.5, color: BRAND.ink }}>
-                {fmt(data.booking.startsAt, tz, { weekday: 'long', day: 'numeric', month: 'long' })}
-                {' at '}{fmt(data.booking.startsAt, tz, { hour: '2-digit', minute: '2-digit' })}
-              </div>
-              <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>The invite is in your inbox and calendar.</div>
-              {data.booking.meetUrl && (
-                <a href={data.booking.meetUrl} target="_blank" rel="noreferrer" className="btn" style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                  <Video size={14} /> Join Google Meet
-                </a>
-              )}
-            </div>
-          </div>
-        </Card>
-      ) : !data.ready || days.length === 0 ? (
-        <Card>
-          <EmptyState
-            icon={<CalendarClock size={30} />}
-            title="Let's find a time"
-            body="There's nothing open in the next couple of weeks. Reply to any email from your Squideo team and we'll get a Partner Programme chat in the diary."
-          />
-        </Card>
-      ) : !picking ? (
-        <Card>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
-            <div style={{ width: 40, height: 40, borderRadius: 10, background: '#EAF7FC', color: BRAND.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <CalendarClock size={20} />
-            </div>
             <div style={{ flex: 1, minWidth: 240 }}>
-              <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.ink, marginBottom: 4 }}>
-                Talk it through with us
+              <div style={{ fontSize: 15.5, fontWeight: 800, color: BRAND.ink, marginBottom: 4 }}>
+                We've got your details
               </div>
-              <div style={{ fontSize: 13.5, color: BRAND.muted, lineHeight: 1.55 }}>
-                About {data.durationMinutes} minutes on Google Meet. We'll look at what you're
-                planning to make and what a monthly plan would look like for you — no obligation.
+              <div style={{ fontSize: 13.5, color: BRAND.ink, lineHeight: 1.6 }}>
+                {data.enquiry.minutesLabel || MINUTES_OPTIONS.find((m) => m.value === data.enquiry.minutesPerMonth)?.label}
+                {data.enquiry.preferredDate && (
+                  <> · you're free <strong>{longDate(data.enquiry.preferredDate)}</strong>
+                    {data.enquiry.preferredTime && data.enquiry.preferredTime !== 'either'
+                      ? ` (${data.enquiry.preferredTime})` : ''}</>
+                )}
               </div>
-              <button className="btn" style={{ marginTop: 14 }} onClick={() => setPicking(true)}>
-                <CalendarClock size={14} /> Book a call
+              <div style={{ fontSize: 12.5, color: BRAND.muted, marginTop: 4 }}>
+                Someone from the team will email you to confirm the time.
+              </div>
+              <button className="btn-ghost" style={{ marginTop: 12 }} onClick={startEditing}>
+                Change my answers
               </button>
             </div>
           </div>
         </Card>
       ) : (
-        <>
-          <SectionHeading>Pick a time</SectionHeading>
-          <div style={{ fontSize: 12.5, color: BRAND.muted, marginTop: -8 }}>
-            Times shown in {tz.replace(/_/g, ' ')}. Each call is about {data.durationMinutes} minutes.
+        <Card>
+          <div style={{ fontSize: 15.5, fontWeight: 800, color: BRAND.ink, marginBottom: 3 }}>
+            Talk it through with us
           </div>
-          {days.map((d) => (
-            <Card key={d.day}>
-              <SectionHeading>{d.day}</SectionHeading>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {d.slots.map((s) => (
+          <p style={{ margin: '0 0 18px', fontSize: 13.5, color: BRAND.muted, lineHeight: 1.55 }}>
+            Two quick questions and we'll come back to you with a plan built around what you're
+            actually making. No obligation.
+          </p>
+
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink, marginBottom: 8 }}>
+            Roughly how much video do you need each month?
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
+            {MINUTES_OPTIONS.map((m) => {
+              const on = minutes === m.value;
+              return (
+                <button
+                  key={m.value}
+                  type="button"
+                  onClick={() => setMinutes(m.value)}
+                  style={{
+                    padding: '8px 14px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 13, fontWeight: on ? 700 : 500,
+                    background: on ? BRAND.blue : 'white',
+                    color: on ? '#0F2A3D' : BRAND.ink,
+                    border: '1px solid ' + (on ? BRAND.blue : '#D5DEE5'),
+                  }}
+                >
+                  {m.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink, marginBottom: 8 }}>
+            When suits you for a chat?
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+            <input
+              type="date"
+              className="input"
+              value={date}
+              min={todayISO()}
+              onChange={(e) => setDate(e.target.value)}
+              style={{ maxWidth: 200 }}
+            />
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {TIME_OPTIONS.map((t) => {
+                const on = timeOfDay === t.value;
+                return (
                   <button
-                    key={s.start}
-                    className="btn-ghost"
-                    disabled={busy}
-                    onClick={() => bookAt(s.start)}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 88, justifyContent: 'center' }}
+                    key={t.value}
+                    type="button"
+                    onClick={() => setTimeOfDay(t.value)}
+                    style={{
+                      padding: '7px 13px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
+                      fontSize: 12.5, fontWeight: on ? 700 : 500,
+                      background: on ? '#EAF7FC' : 'white',
+                      color: on ? '#0B6E93' : BRAND.muted,
+                      border: '1px solid ' + (on ? '#9FDCEF' : '#D5DEE5'),
+                    }}
                   >
-                    <Clock size={13} /> {fmt(s.start, tz, { hour: '2-digit', minute: '2-digit' })}
+                    {t.label}
                   </button>
-                ))}
-              </div>
-            </Card>
-          ))}
-        </>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 18 }}>
+            A day is enough — we'll email you to fix the exact time.
+          </div>
+
+          <label style={{ display: 'block', fontSize: 12.5, color: BRAND.muted, marginBottom: 18 }}>
+            Anything else we should know? (optional)
+            <textarea
+              className="input"
+              rows={3}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="What you're planning to make, who else needs to be on the call…"
+              style={{ width: '100%', marginTop: 5, resize: 'vertical' }}
+            />
+          </label>
+
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button className="btn" disabled={busy || !minutes} onClick={submit}>
+              <CalendarClock size={14} /> {busy ? 'Sending…' : 'Send my details'}
+            </button>
+            {editing && data.enquiry && (
+              <button className="btn-ghost" disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
+            )}
+          </div>
+        </Card>
       )}
     </div>
   );

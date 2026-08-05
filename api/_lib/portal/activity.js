@@ -45,6 +45,13 @@ export async function logPortalActivity({ req = null, portalUserId, companyId = 
   }
 }
 
+// Mirrors MINUTES_LABEL in api/portal.js. Duplicated rather than shared: this
+// module is the CRM's reader and shouldn't import the portal router.
+const PARTNER_MINUTES_LABEL = {
+  '1-2': '1-2 min/month', '3-4': '3-4 min/month', '5-9': '5-9 min/month',
+  '10+': '10+ min/month', unsure: 'volume not decided',
+};
+
 function locLabel(r) {
   return [r.city, r.country].filter(Boolean).join(', ') || null;
 }
@@ -136,7 +143,7 @@ export async function portalTimeline({ companyId = null, dealId = null, limit = 
 
   // --- Company-only breadcrumbs (org brand files, joins, quote requests) ---
   if (!dealId && company) {
-    const [brand, joined, quotes] = await Promise.all([
+    const [brand, joined, quotes, partner] = await Promise.all([
       sql`SELECT f.created_at AS at, f.filename, pu.name AS actor
             FROM portal_company_files f LEFT JOIN portal_users pu ON pu.id = f.uploaded_by_portal_user
            WHERE f.company_id = ${company} ORDER BY f.created_at DESC LIMIT ${limit}`,
@@ -145,10 +152,29 @@ export async function portalTimeline({ companyId = null, dealId = null, limit = 
            WHERE m.company_id = ${company}`,
       sql`SELECT created_at AS at, status FROM quote_requests
            WHERE company_id = ${company} ORDER BY created_at DESC LIMIT ${limit}`.catch(() => []),
+      // Partner Programme enquiries. These need somewhere to live besides the
+      // notification that announced them — an alert scrolls away, the org page
+      // is where someone looks when they pick the account up a week later.
+      sql`SELECT created_at AS at, minutes_per_month, preferred_date, preferred_time, handled_at
+            FROM partner_enquiries
+           WHERE company_id = ${company} ORDER BY created_at DESC LIMIT ${limit}`.catch(() => []),
     ]);
     for (const r of brand) push({ type: 'file', at: r.at, actor: r.actor || null, text: `Uploaded ${r.filename} to brand & documents`, link: '#/company/' + company });
     for (const r of joined) push({ type: 'joined', at: r.at, actor: r.actor || r.email || null, text: 'Joined the portal', link: null });
     for (const r of quotes) push({ type: 'quote', at: r.at, actor: null, text: 'Requested a new video (portal)', link: '#/quote-requests' });
+    for (const r of partner) {
+      const when = r.preferred_date
+        ? new Date(r.preferred_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+        : null;
+      push({
+        type: 'partner', at: r.at, actor: null,
+        text: 'Asked about the Partner Programme'
+          + (r.minutes_per_month ? ` — ${PARTNER_MINUTES_LABEL[r.minutes_per_month] || r.minutes_per_month}` : '')
+          + (when ? `, free ${when}` : '')
+          + (r.handled_at ? ' (handled)' : ''),
+        link: '#/company/' + company,
+      });
+    }
   }
 
   items.sort((a, b) => new Date(b.at) - new Date(a.at));
