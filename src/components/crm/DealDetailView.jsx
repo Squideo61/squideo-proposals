@@ -594,11 +594,11 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             defaultCompanyId={deal.companyId || null}
           />
         )}
-        {deal.notes && (
-          <div style={{ marginTop: 16, padding: 12, background: '#F8FAFC', borderRadius: 8, fontSize: 13, color: BRAND.ink, whiteSpace: 'pre-wrap' }}>
-            <Linkify text={deal.notes} />
-          </div>
-        )}
+        <DealBriefCard
+          dealId={dealId}
+          notes={deal.notes}
+          canEdit={state.session?.role !== 'freelancer'}
+        />
         {deal.stage === 'lost' && deal.lostReason && (
           <div style={{ marginTop: 12, fontSize: 13, color: '#92400E', background: '#FEF3C7', padding: '8px 12px', borderRadius: 6 }}>
             Lost — {deal.lostReason}
@@ -2988,6 +2988,95 @@ function describeEvent(e) {
 
 function labelForStage(id) {
   return PIPELINE_STAGES.find(s => s.id === id)?.label || id || '—';
+}
+
+// The deal's brief — what the client asked for, usually pasted in from the
+// enquiry. Scope moves (extra minutes, a changed deadline, new reference
+// videos), so it's editable in place rather than only through the Edit deal
+// form. Saving goes through saveDeal, so it's optimistic and undoable.
+function DealBriefCard({ dealId, notes, canEdit }) {
+  const { actions } = useStore();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(notes || '');
+  const [saving, setSaving] = useState(false);
+  const areaRef = useRef(null);
+
+  const open = () => { setDraft(notes || ''); setEditing(true); };
+  const cancel = () => { setEditing(false); setDraft(notes || ''); };
+
+  useEffect(() => {
+    if (!editing) return;
+    const el = areaRef.current;
+    if (!el) return;
+    el.focus();
+    // Caret at the end — you're nearly always appending a scope change.
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing]);
+
+  const save = async () => {
+    const next = draft.trim();
+    if (next === (notes || '').trim()) { setEditing(false); return; }
+    setSaving(true);
+    try {
+      await actions.saveDeal(dealId, { notes: next || null });
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <div style={{ marginTop: 16, padding: 12, background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 8 }}>
+        <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Brief</div>
+        <textarea
+          ref={areaRef}
+          className="input"
+          rows={Math.min(20, Math.max(6, draft.split('\n').length + 1))}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
+          }}
+          placeholder="What the client wants — length, style, reference videos, timeline, budget…"
+          style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.5, resize: 'vertical' }}
+        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+          <button onClick={save} className="btn" disabled={saving}>{saving ? 'Saving…' : 'Save brief'}</button>
+          <button onClick={cancel} className="btn-ghost" disabled={saving}>Cancel</button>
+          <span style={{ fontSize: 11.5, color: BRAND.muted }}>Ctrl+Enter saves · Esc cancels</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!notes) {
+    if (!canEdit) return null;
+    return (
+      <div style={{ marginTop: 16 }}>
+        <button onClick={open} className="btn-ghost" title="Add the brief — what the client asked for">
+          <Plus size={14} /> Add brief
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 16, padding: 12, background: '#F8FAFC', borderRadius: 8, fontSize: 13, color: BRAND.ink }}>
+      {canEdit && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: -6 }}>
+          <button
+            onClick={open}
+            className="btn-ghost"
+            title="Edit the brief — keep it current if the scope changes"
+            style={{ fontSize: 12, padding: '2px 8px' }}
+          ><Edit2 size={12} /> Edit</button>
+        </div>
+      )}
+      <div style={{ whiteSpace: 'pre-wrap' }}><Linkify text={notes} /></div>
+    </div>
+  );
 }
 
 // Marketing attribution summary for the lead that became this deal.
