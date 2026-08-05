@@ -182,6 +182,10 @@ export function ensurePortalTables() {
     await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS script_status_by TEXT`;
     await sql`ALTER TABLE deal_files ADD COLUMN IF NOT EXISTS category TEXT`;
     await sql`CREATE INDEX IF NOT EXISTS deal_files_category_idx ON deal_files(deal_id, category)`;
+    // Portal accounts that are ours, not a client's — see
+    // db/migrations/20260809_portal_internal_accounts.sql. Not the same as
+    // disabled: these are live logins we keep using, they just aren't leads.
+    await sql`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS internal BOOLEAN NOT NULL DEFAULT FALSE`;
     // Partner Programme enquiries — what they want and when they're free,
     // rather than a booked calendar slot. See
     // db/migrations/20260808_partner_enquiries.sql for why.

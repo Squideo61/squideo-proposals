@@ -40,6 +40,23 @@ const isoDay = (v, fallback) => {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : fallback;
 };
 
+// Our own accounts. Testing the portal means signing up to it, and without this
+// every test lands in the figures as a course lead.
+//
+// Resolved to a list of ids rather than repeated as a join condition, because
+// most of what's counted below (course progress, briefs, sign-ins) hangs off
+// portal_user_id and never touches portal_users. One list, applied identically
+// everywhere, is the only way the tiles and the chart can agree.
+async function internalAccountIds() {
+  const rows = await sql`
+    SELECT id FROM portal_users
+     WHERE COALESCE(internal, FALSE)
+        OR email LIKE '%@squideo.co.uk'
+        OR email LIKE '%@squideo.com'
+  `.catch(() => []);
+  return rows.map((r) => r.id);
+}
+
 export async function portalAnalyticsRoute(req, res, id, action, user) {
   const role = await getRole(user.role);
   if (!hasPermission(role, 'marketing.access')) {
@@ -60,6 +77,8 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
   // means. Compared as a half-open interval so an index can still be used.
   const start = from + 'T00:00:00Z';
   const endEx = new Date(new Date(to + 'T00:00:00Z').getTime() + 86400000).toISOString();
+
+  const skip = await internalAccountIds();
 
   const [
     signupRows, signupsByDay, loginRows, loginsByDay,
@@ -85,12 +104,14 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
            WHERE LOWER(email) = pu.email AND accepted_at IS NOT NULL LIMIT 1
         ) inv ON TRUE
        WHERE pu.created_at >= ${start} AND pu.created_at < ${endEx}
+         AND pu.id <> ALL(${skip})
        GROUP BY 1
     `.catch(() => []),
     sql`
       SELECT TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
         FROM portal_users
        WHERE created_at >= ${start} AND created_at < ${endEx}
+         AND id <> ALL(${skip})
        GROUP BY 1 ORDER BY 1
     `.catch(() => []),
     // Visits. A "visit" is a sign-in: the portal keeps a session, so page views
@@ -100,11 +121,13 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
              COUNT(DISTINCT portal_user_id)::int AS people
         FROM portal_activity
        WHERE event_key = 'login' AND created_at >= ${start} AND created_at < ${endEx}
+         AND portal_user_id <> ALL(${skip})
     `.catch(() => [{ visits: 0, people: 0 }]),
     sql`
       SELECT TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
         FROM portal_activity
        WHERE event_key = 'login' AND created_at >= ${start} AND created_at < ${endEx}
+         AND portal_user_id <> ALL(${skip})
        GROUP BY 1 ORDER BY 1
     `.catch(() => []),
     // What they actually did once inside. These are the numbers that say
@@ -112,15 +135,20 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
     sql`
       SELECT
         (SELECT COUNT(DISTINCT portal_user_id)::int FROM course_progress
-          WHERE last_viewed_at >= ${start} AND last_viewed_at < ${endEx}) AS watched_course,
+          WHERE last_viewed_at >= ${start} AND last_viewed_at < ${endEx}
+            AND portal_user_id <> ALL(${skip})) AS watched_course,
         (SELECT COUNT(DISTINCT portal_user_id)::int FROM course_progress
-          WHERE completed_at >= ${start} AND completed_at < ${endEx}) AS finished_a_video,
+          WHERE completed_at >= ${start} AND completed_at < ${endEx}
+            AND portal_user_id <> ALL(${skip})) AS finished_a_video,
         (SELECT COUNT(*)::int FROM client_briefs
-          WHERE created_at >= ${start} AND created_at < ${endEx}) AS briefs_started,
+          WHERE created_at >= ${start} AND created_at < ${endEx}
+            AND portal_user_id <> ALL(${skip})) AS briefs_started,
         (SELECT COUNT(*)::int FROM client_briefs
-          WHERE submitted_at >= ${start} AND submitted_at < ${endEx}) AS briefs_sent,
+          WHERE submitted_at >= ${start} AND submitted_at < ${endEx}
+            AND portal_user_id <> ALL(${skip})) AS briefs_sent,
         (SELECT COUNT(*)::int FROM quote_requests
-          WHERE source = 'portal' AND created_at >= ${start} AND created_at < ${endEx}) AS video_requests
+          WHERE source = 'portal' AND created_at >= ${start} AND created_at < ${endEx}
+            AND (portal_user_id IS NULL OR portal_user_id <> ALL(${skip}))) AS video_requests
     `.catch(() => []),
     // Came back on a different day. One long session isn't a return visit, so
     // this counts distinct days rather than logins.
@@ -129,6 +157,7 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
         SELECT portal_user_id
           FROM portal_activity
          WHERE event_key = 'login' AND created_at >= ${start} AND created_at < ${endEx}
+         AND portal_user_id <> ALL(${skip})
          GROUP BY portal_user_id
         HAVING COUNT(DISTINCT (created_at AT TIME ZONE 'UTC')::date) > 1
       ) t
@@ -137,8 +166,10 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
     // signups reads differently against 20 accounts than against 2,000.
     sql`
       SELECT
-        (SELECT COUNT(*)::int FROM portal_users WHERE disabled_at IS NULL) AS accounts,
-        (SELECT COUNT(*)::int FROM portal_users WHERE last_login_at IS NULL) AS never_signed_in
+        (SELECT COUNT(*)::int FROM portal_users
+          WHERE disabled_at IS NULL AND id <> ALL(${skip})) AS accounts,
+        (SELECT COUNT(*)::int FROM portal_users
+          WHERE last_login_at IS NULL AND id <> ALL(${skip})) AS never_signed_in
     `.catch(() => []),
   ]);
 
@@ -169,5 +200,9 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
       watched_course: 0, finished_a_video: 0, briefs_started: 0, briefs_sent: 0, video_requests: 0,
     },
     totals: totals[0] || { accounts: 0, never_signed_in: 0 },
+    // Said out loud on the page. Numbers that quietly drop rows are how a
+    // report stops being trusted — and if this ever excludes a real client by
+    // accident, the count is the thing that gives it away.
+    excluded: skip.length,
   });
 }

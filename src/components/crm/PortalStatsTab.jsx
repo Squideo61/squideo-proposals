@@ -166,6 +166,10 @@ export function PortalStatsTab({ from, to }) {
         {data.totals.accounts} portal accounts in total
         {data.totals.never_signed_in > 0 && ` · ${data.totals.never_signed_in} have never signed in`}.
         Staff previews aren't counted anywhere here.
+        {data.excluded > 0 && (
+          <> {data.excluded} internal {data.excluded === 1 ? 'account is' : 'accounts are'} excluded
+            {' '}— our own test signups and anyone on a @squideo address.</>
+        )}
       </div>
     </div>
   );
