@@ -13,6 +13,7 @@ export default defineConfig({
         contact: resolve(__dirname, 'contact.html'),
         portal: resolve(__dirname, 'portal.html'),
         course: resolve(__dirname, 'course.html'),
+        reviews: resolve(__dirname, 'reviews.html'),
       },
       output: {
         manualChunks(id) {

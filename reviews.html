@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="/squideo-favicon.png" />
+    <title>Client reviews — Squideo</title>
+    <!-- Embed-only strip. It lives inside a section of squideo.com that already
+         has its own heading, so it must not be indexed as a page in its own
+         right and must not duplicate the /reviews content on the main site. -->
+    <meta name="robots" content="noindex,nofollow" />
+    <style>
+      :root {
+        --card-w: 330px;
+        --gap: 14px;
+        --fade: 44px;
+        --ink: #0F2A3D;
+        --muted: #6B7785;
+        --card-bg: #FFFFFF;
+        --card-border: #E5E9EE;
+        --card-shadow: 0 1px 2px rgba(15, 42, 61, .06), 0 6px 16px rgba(15, 42, 61, .06);
+        --star: #FBBC04;
+        --star-off: #D9DEE4;
+        --pill-bg: #FFFFFF;
+      }
+      :root[data-theme="dark"] {
+        --ink: #F2F7FA;
+        --muted: #9DB0BE;
+        --card-bg: rgba(255, 255, 255, .07);
+        --card-border: rgba(255, 255, 255, .14);
+        --card-shadow: none;
+        --star-off: rgba(255, 255, 255, .22);
+        --pill-bg: rgba(255, 255, 255, .07);
+      }
+
+      /* Transparent so the banner picks up whatever background the surrounding
+         Duda section uses. */
+      html, body { margin: 0; padding: 0; background: transparent; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+      }
+
+      .wrap {
+        display: flex;
+        align-items: stretch;
+        gap: 16px;
+        padding: 12px 0;
+        /* The strip is intentionally one row. Overall height lands ~186px, so
+           the host iframe wants height="190". */
+      }
+
+      /* ---- pinned summary pill ---------------------------------------- */
+
+      .summary {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-left: 16px;
+        padding: 0 18px;
+        border: 1px solid var(--card-border);
+        border-radius: 14px;
+        background: var(--pill-bg);
+        box-shadow: var(--card-shadow);
+        text-decoration: none;
+        color: inherit;
+      }
+      .summary-top { display: flex; align-items: center; gap: 8px; }
+      .summary-rating { font-size: 22px; font-weight: 700; line-height: 1; }
+      .summary-count { margin-top: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+      .summary .stars { font-size: 14px; }
+
+      /* Below this the pill eats too much of a phone screen to be worth it. */
+      @media (max-width: 700px) { .summary { display: none; } }
+
+      /* ---- marquee ----------------------------------------------------- */
+
+      .marquee {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        -webkit-mask-image: linear-gradient(90deg, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
+        mask-image: linear-gradient(90deg, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
+      }
+      /* prefers-reduced-motion: no animation, just a normal scrollable strip. */
+      .marquee.static { overflow-x: auto; scrollbar-width: none; padding-left: 16px; }
+      .marquee.static::-webkit-scrollbar { display: none; }
+
+      .track {
+        display: flex;
+        align-items: stretch;
+        width: max-content;
+        animation: marquee var(--dur, 40s) linear infinite;
+        will-change: transform;
+      }
+      .track.reverse { animation-direction: reverse; }
+      .marquee.static .track { animation: none; }
+
+      /* --shift is one full copy of the list, measured in JS (see reviews.js);
+         the 50% fallback only applies for the frame before that lands. */
+      @keyframes marquee {
+        from { transform: translate3d(0, 0, 0); }
+        to   { transform: translate3d(calc(-1 * var(--shift, 50%)), 0, 0); }
+      }
+
+      /* Give people a chance to actually finish reading one. */
+      .marquee:hover .track,
+      .marquee:focus-within .track { animation-play-state: paused; }
+
+      /* ---- card -------------------------------------------------------- */
+
+      .card {
+        flex: 0 0 auto;
+        box-sizing: border-box;
+        width: var(--card-w);
+        margin-right: var(--gap);
+        padding: 15px 16px;
+        border: 1px solid var(--card-border);
+        border-radius: 14px;
+        background: var(--card-bg);
+        box-shadow: var(--card-shadow);
+      }
+
+      .card-head { display: flex; align-items: center; gap: 10px; }
+
+      .avatar {
+        flex: 0 0 auto;
+        width: 34px; height: 34px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        color: #fff;
+        font-size: 13px; font-weight: 700; letter-spacing: .3px;
+      }
+
+      .who { min-width: 0; flex: 1 1 auto; }
+      .name {
+        font-size: 14px; font-weight: 600; line-height: 1.2;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+
+      .stars { margin-top: 2px; font-size: 13px; line-height: 1; letter-spacing: 1px; }
+      .star { color: var(--star-off); }
+      .star.on { color: var(--star); }
+
+      .badge { flex: 0 0 auto; display: flex; align-items: center; }
+      .gmark { display: block; }
+
+      .text {
+        margin: 9px 0 0;
+        font-size: 14px;
+        line-height: 1.5;
+        color: var(--muted);
+        /* Four lines keeps every card the same height without the longer
+           reviews being cut mid-thought — trim them in reviewsData.js. */
+        display: -webkit-box;
+        -webkit-line-clamp: 4;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      @media (max-width: 480px) {
+        :root { --card-w: 280px; --fade: 24px; }
+        .marquee.static { padding-left: 12px; }
+      }
+    </style>
+  </head>
+  <body>
+    <section id="reviews-root" aria-label="What our clients say"></section>
+    <script type="module" src="/src/reviews.js"></script>
+  </body>
+</html>
