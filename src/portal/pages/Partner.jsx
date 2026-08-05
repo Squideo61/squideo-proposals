@@ -13,9 +13,10 @@ import React, { useEffect, useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
+import { useIsMobile } from '../../utils.js';
 import { Card, EmptyState } from '../components.jsx';
 import {
-  CalendarClock, Check, PiggyBank, PlayCircle, Shuffle, Zap, TrendingDown, Handshake,
+  CalendarClock, Check, PiggyBank, PlayCircle, Repeat, Shuffle, Unlock, Zap, TrendingDown, Handshake,
 } from 'lucide-react';
 
 // Sizing, in the language of the offer: 1 credit = 60 seconds, so "minutes a
@@ -125,6 +126,74 @@ function VideoBlock({ video }) {
 }
 
 
+const CREDIT_USES = [
+  'New animated explainer videos',
+  'Additional modules or chapters (shorter videos)',
+  'Edits and updates to existing videos',
+  'Alternate versions — different audience, messaging or language',
+  'Cutdowns for social, email and intranet',
+  'Reformatting and resizing for each channel',
+  'Extras like thumbnails, end screens and subtitled versions',
+];
+
+const STEPS = [
+  {
+    title: 'Choose a credit level',
+    body: 'Pick a monthly level that sits comfortably with your budget and the content you have planned.',
+  },
+  {
+    title: 'Build a video plan',
+    body: "Tell us what's coming up. We'll help you prioritise it and plan the production around it.",
+  },
+  {
+    title: 'Use credits as you need them',
+    body: 'Spend them on a single video, on smaller updates, or save them up and combine them for something bigger.',
+  },
+];
+
+const ASSURANCES = [
+  { Icon: Repeat, title: 'Credits roll over', body: "Anything you don't use carries forward. A quiet month isn't a wasted one." },
+  { Icon: Shuffle, title: 'Spend them how you like', body: 'Allocate them any way you need, pause, or combine months for a bigger piece of work.' },
+  { Icon: Unlock, title: 'Cancel any time', body: 'No long-term commitment — you stay because it works, not because you signed something.' },
+];
+
+// A text/image row that becomes one column on a phone. The image is optional in
+// practice: if the file isn't there yet it removes itself rather than leaving a
+// broken-image icon in the middle of a sales page.
+function Split({ title, image, imageAlt, reverse = false, isMobile, children }) {
+  const [broken, setBroken] = useState(false);
+  const showImage = image && !broken;
+  const text = (
+    <div style={{ fontSize: 13.5, color: BRAND.ink, lineHeight: 1.65 }}>
+      <h2 style={{ margin: '0 0 10px', fontSize: 19, fontWeight: 800, color: BRAND.blue }}>{title}</h2>
+      {children}
+    </div>
+  );
+  const pic = showImage ? (
+    <img
+      src={image}
+      alt={imageAlt || ''}
+      loading="lazy"
+      onError={() => setBroken(true)}
+      style={{ width: '100%', height: 'auto', display: 'block', borderRadius: 10 }}
+    />
+  ) : null;
+  return (
+    <Card>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isMobile || !showImage ? '1fr' : '1fr 1fr',
+        gap: isMobile ? 16 : 28,
+        alignItems: 'center',
+      }}>
+        {/* On a phone the image always follows the words — a reversed row would
+            otherwise open with a picture and no context. */}
+        {reverse && !isMobile ? <>{pic}{text}</> : <>{text}{pic}</>}
+      </div>
+    </Card>
+  );
+}
+
 // The four pillars from the public page, in the second person — they're already
 // a client, so "your team" and "your content", not "organisations that…".
 const PILLARS = [
@@ -152,6 +221,7 @@ const PILLARS = [
 
 export default function Partner() {
   const { showToast } = usePortal();
+  const isMobile = useIsMobile();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -241,6 +311,71 @@ export default function Partner() {
           <Card key={title}>
             <Icon size={20} color={BRAND.blue} />
             <div style={{ fontSize: 14.5, fontWeight: 700, color: BRAND.ink, margin: '10px 0 5px' }}>{title}</div>
+            <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.55 }}>{body}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* ── The explainer sections, mirroring squideo.com/partner-programme ── */}
+      <Split
+        isMobile={isMobile}
+        title="What are video credits?"
+        image="/partner/what-are-credits.png"
+        imageAlt="Video credits spent across clarity, conversion and SEO"
+      >
+        <p style={{ margin: '0 0 14px' }}>
+          Video credits are <strong>pre-purchased production time</strong> you can use across
+          different types of video work.
+        </p>
+        <p style={{ margin: '0 0 8px' }}>Think of it like a content account:</p>
+        <ul style={{ margin: '0 0 14px', paddingLeft: 20 }}>
+          <li style={{ marginBottom: 4 }}>You pay a fixed monthly amount</li>
+          <li>You receive a set amount of credits</li>
+        </ul>
+        <p style={{ margin: 0 }}>You spend credits on whatever video output you need most.</p>
+      </Split>
+
+      <Split
+        isMobile={isMobile}
+        reverse
+        title="What can credits be used for?"
+        image="/partner/what-credits-do.png"
+        imageAlt="A video being edited for focal point, call to action and pace"
+      >
+        <ul style={{ margin: 0, paddingLeft: 20 }}>
+          {CREDIT_USES.map((u) => <li key={u} style={{ marginBottom: 6 }}>{u}</li>)}
+        </ul>
+      </Split>
+
+      {/* ── How it works ── */}
+      <div>
+        <h2 style={{ margin: '4px 0 14px', fontSize: 19, fontWeight: 800, color: BRAND.ink, textAlign: 'center' }}>
+          How it works
+        </h2>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12 }}>
+          {STEPS.map((s, i) => (
+            <Card key={s.title}>
+              <div style={{
+                width: 28, height: 28, borderRadius: 999, background: BRAND.blue, color: '#0F2A3D',
+                display: 'grid', placeItems: 'center', fontSize: 13.5, fontWeight: 800, marginBottom: 10,
+              }}>
+                {i + 1}
+              </div>
+              <div style={{ fontSize: 14.5, fontWeight: 700, color: BRAND.ink, marginBottom: 5 }}>{s.title}</div>
+              <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.55 }}>{s.body}</div>
+            </Card>
+          ))}
+        </div>
+      </div>
+
+      {/* ── The three promises that decide whether it's safe to commit ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12 }}>
+        {ASSURANCES.map(({ Icon, title, body }) => (
+          <Card key={title}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <Icon size={17} color="#16A34A" />
+              <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>{title}</span>
+            </div>
             <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.55 }}>{body}</div>
           </Card>
         ))}
