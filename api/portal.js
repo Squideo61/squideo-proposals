@@ -27,7 +27,9 @@
 //                     revoke via team-revoke-invite
 //   team-contact    — search the CRM contact book / attach someone to this
 //                     organisation (manage mode only)
-//   partner-interest— "I'm interested" ping to the team
+//   partner         — Partner Programme page data + call availability
+//   partner-book    — book the Partner Programme call (this is what alerts
+//                     the team; reading the page does not)
 
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
@@ -567,7 +569,8 @@ export default async function handler(req, res) {
       case 'team': return teamRoutes(req, res, user);
       case 'team-contact': return teamContactRoute(req, res, user);
       case 'team-revoke-invite': return teamRevokeInviteRoute(req, res, user);
-      case 'partner-interest': return partnerInterestRoute(req, res, user);
+      case 'partner': return partnerRoute(req, res, user);
+      case 'partner-book': return partnerBookRoute(req, res, user);
       default: return res.status(404).json({ error: 'Not found' });
     }
   } catch (err) {
@@ -589,7 +592,7 @@ export default async function handler(req, res) {
 // been busy when all they'd done was reload.
 const TRACKED_VIEWS = new Set([
   'home', 'project', 'library', 'documents', 'extras', 'voiceover', 'kickoff',
-  'script', 'request', 'video-credit', 'team', 'settings', 'review', 'storyboard',
+  'script', 'request', 'video-credit', 'partner', 'team', 'settings', 'review', 'storyboard',
   'brief',
 ]);
 
@@ -3213,26 +3216,122 @@ async function teamRevokeInviteRoute(req, res, user) {
   return res.status(200).json({ ok: true });
 }
 
-// ═════════════════════════ partner-interest ═════════════════════════
-async function partnerInterestRoute(req, res, user) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+// ═════════════════════════ partner programme ═════════════════════════
+// The Partner Programme, explained inside the portal and ending in a booked
+// call rather than a trip to squideo.com.
+//
+// There is deliberately no notification for reading the page. The old flow
+// pinged the team the moment anyone clicked the dashboard card, so "interest"
+// meant "someone was curious enough to click once" — which is not a lead, and
+// after a few of those the alert stops being read at all. The team hears about
+// it when a call is actually in the calendar.
+//
+// No price on the page either, for the same reason the brief builder has none:
+// the programme is scoped on the call, and a rate seen beforehand becomes the
+// anchor every later conversation argues against.
+
+// Who hosts the call. Their own account manager if they have one — the person
+// they already deal with — otherwise whoever handles new enquiries.
+//
+// One host, not the whole team: the slot engine requires EVERY attendee to be
+// free, so adding people to be safe empties the calendar instead.
+async function partnerCallHost(companyId) {
+  const [owner] = await sql`
+    SELECT owner_email FROM deals
+     WHERE company_id = ${companyId} AND owner_email IS NOT NULL
+     ORDER BY updated_at DESC NULLS LAST, created_at DESC
+     LIMIT 1
+  `.catch(() => []);
+  if (owner?.owner_email) return String(owner.owner_email).toLowerCase();
+  const fallback = await resolveRecipients('quote_request.new', {}).catch(() => []);
+  return fallback.length ? String(fallback[0]).toLowerCase() : null;
+}
+
+// GET partner — any call already booked, plus live availability.
+async function partnerRoute(req, res, user) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const companyId = resolveCompanyId(req, res, user);
   if (!companyId) return;
+  await ensureIntroCallTables();
+
+  const [booking] = await sql`
+    SELECT starts_at, ends_at, meet_url FROM intro_call_bookings
+     WHERE client_key = ${'company:' + companyId} AND kind = 'partner' AND status = 'confirmed'
+     ORDER BY starts_at DESC LIMIT 1
+  `.catch(() => []);
+
+  // Already booked? Don't spend a round-trip on Google's free/busy — the page
+  // shows the confirmation, not the picker.
+  if (booking) {
+    return res.status(200).json({
+      booking: { startsAt: booking.starts_at, endsAt: booking.ends_at, meetUrl: booking.meet_url },
+      ready: true, slots: [], timezone: 'Europe/London', durationMinutes: 30,
+    });
+  }
+
+  const host = await partnerCallHost(companyId);
+  const { rules, result } = await computeBookingSlots({ hostEmails: host ? [host] : [] });
+  return res.status(200).json({
+    booking: null,
+    durationMinutes: rules.durationMinutes,
+    timezone: rules.timezone,
+    ready: result.blocked.length === 0,
+    slots: result.slots,
+  });
+}
+
+// POST partner-book { startsAt, timezone }
+async function partnerBookRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const body = await readJsonBody(req);
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+  await ensureIntroCallTables();
   const company = user.companies.find((c) => c.id === companyId) || null;
+  const clientKey = 'company:' + companyId;
+
+  const [existing] = await sql`
+    SELECT id FROM intro_call_bookings
+     WHERE client_key = ${clientKey} AND kind = 'partner' AND status = 'confirmed' LIMIT 1
+  `.catch(() => []);
+  if (existing) return res.status(409).json({ error: 'Your Partner Programme call is already booked.' });
+
+  const host = await partnerCallHost(companyId);
+  if (!host) return res.status(503).json({ error: 'Booking is temporarily unavailable — drop us a line and we\'ll sort a time.' });
+
+  const out = await bookSlot({
+    clientKey,
+    hostEmails: [host],
+    projectName: company?.name ? `${company.name} — Partner Programme` : 'Partner Programme',
+    name: user.name || user.email,
+    email: user.email,
+    company: company?.name || '',
+    startISO: body.startsAt,
+    timezone: trimOrNull(body.timezone),
+    kind: 'partner',
+  });
+  if (!out.ok) {
+    const payload = { error: out.error };
+    if (out.slots) payload.slots = out.slots;
+    return res.status(out.status).json(payload);
+  }
+
+  // NOW the team hears about it — a time in the calendar, not a click.
   try {
     await ensurePortalNotificationDefaults();
     await sendNotification('portal.partner_interest', {
-      subject: `🤝 Partner Programme interest — ${company?.name || user.email}`,
-      text: `${user.name || user.email} (${company?.name || 'client portal'}) clicked "I'm interested" on the Partner Programme card in the client portal. Reach out!`,
+      subject: `🤝 Partner Programme call booked — ${company?.name || user.email}`,
+      text: `${user.name || user.email} (${company?.name || 'client portal'}) booked a Partner Programme call from the client portal.\n\n${new Date(out.start).toUTCString()}\n${out.meetUrl || ''}`,
       inApp: {
-        title: 'Partner Programme interest',
+        title: 'Partner Programme call booked',
         body: `${user.name || user.email} · ${company?.name || ''}`,
         link: `#/company/${companyId}`,
       },
     });
   } catch (err) {
-    console.warn('[portal] partner_interest notify failed', err.message);
-    return res.status(502).json({ error: 'Could not send — try again shortly' });
+    // The call is in the diary either way — never fail the booking over an alert.
+    console.warn('[portal] partner booking notify failed', err.message);
   }
-  return res.status(200).json({ ok: true });
+
+  return res.status(200).json({ ok: true, booking: { startsAt: out.start, endsAt: out.end, meetUrl: out.meetUrl } });
 }

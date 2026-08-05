@@ -3,13 +3,10 @@
 import React from 'react';
 import { BRAND } from '../../theme.js';
 import { usePortal } from '../PortalContext.jsx';
-import { portalApi } from '../api.js';
 import {
   Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, SectionHeading, ProjectTasks,
 } from '../components.jsx';
 import { Film, FolderOpen, Sparkles, Handshake, ChevronRight, Video, FileText, Wallet } from 'lucide-react';
-
-const PARTNER_URL = 'https://squideo.com/partner-programme';
 
 function BriefDraftCard({ draft }) {
   const when = draft.updatedAt ? new Date(draft.updatedAt) : null;
@@ -171,7 +168,7 @@ function timeOfDayGreeting() {
 }
 
 export default function Dashboard() {
-  const { user, preview, overview, overviewLoading, companyId, showToast, refreshOverview } = usePortal();
+  const { user, preview, overview, overviewLoading, companyId, refreshOverview } = usePortal();
   // Refetch whenever the client lands on Home so task / next-step / phase state
   // reflects anything that changed elsewhere (uploaded brand files, booked the
   // kick-off, or their project just moved to Completed after final payment)
@@ -196,16 +193,6 @@ export default function Dashboard() {
     : ((user?.name || '').split(' ')[0] || null);
   const projects = overview?.projects || [];
   const actionNeeded = overview?.actionNeeded || 0;
-
-  const partnerInterest = async () => {
-    try {
-      await portalApi.post(`partner-interest?companyId=${encodeURIComponent(companyId)}`);
-      showToast("Nice one — we'll be in touch about the Partner Programme ✓");
-    } catch (err) {
-      showToast(err.message);
-    }
-    window.open(PARTNER_URL, '_blank', 'noopener');
-  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
@@ -306,8 +293,8 @@ export default function Dashboard() {
           <QuickAction
             Icon={Handshake}
             title="Partner Programme"
-            body="Regular videos? Earn bigger discounts every month — tap to learn more and register interest."
-            onClick={partnerInterest}
+            body="Making videos regularly? Bank monthly credits and spend them at your pace."
+            onClick={() => { window.location.hash = '#/partner'; }}
             accent="#7C3AED"
           />
         </div>

@@ -7,7 +7,7 @@ import { SQUIDEO_LOGO } from '../defaults.js';
 import { useIsMobile } from '../utils.js';
 import { Toast } from '../components/ui.jsx';
 import {
-  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus, GraduationCap, FileText,
+  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus, GraduationCap, FileText, Handshake,
 } from 'lucide-react';
 import { Eye, PencilLine } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
@@ -33,6 +33,7 @@ import Storyboard from './pages/Storyboard.jsx';
 import VideoCredit from './pages/VideoCredit.jsx';
 import Course from './pages/Course.jsx';
 import Brief from './pages/Brief.jsx';
+import Partner from './pages/Partner.jsx';
 import DemoProject from './pages/DemoProject.jsx';
 
 const MAX_WIDTH = 1080;
@@ -73,6 +74,10 @@ const NAV = [
   { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home },
   { view: 'library', label: 'Your Video Library', shortLabel: 'Library', hash: '#/library', Icon: Film },
   { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet, mobile: false },
+  // Sits under Video credit because it's the same idea committed to monthly.
+  // Unlike Video credit it shows no rate — the plan is scoped on a call — so
+  // it needs no prospect gate.
+  { view: 'partner', label: 'Partner Programme', shortLabel: 'Partner', hash: '#/partner', Icon: Handshake, mobile: false },
   { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
   { view: 'request', label: 'New video', hash: '#/request', Icon: PlusCircle, highlight: true },
   // shortLabel matters here now the full labels are possessive — "Your Video
@@ -308,6 +313,7 @@ function AuthedApp() {
     case 'script': page = <Script dealId={route.param} />; break;
     case 'request': page = <RequestVideo />; break;
     case 'video-credit': page = <VideoCredit />; break;
+    case 'partner': page = <Partner />; break;
     case 'team': page = <Team />; break;
     case 'settings': page = <Settings />; break;
     default: page = <Dashboard />;

@@ -212,6 +212,7 @@ const VIEW_LABELS = {
   course: 'Watched the crash course',
   brief: 'Worked on their video brief',
   'video-credit': 'Looked at video credit',
+  partner: 'Read about the Partner Programme',
   team: 'Opened their team',
   settings: 'Opened settings',
   review: 'Opened a video review',
